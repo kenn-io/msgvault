@@ -131,6 +131,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	loops                LoopBackend
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	downloads            *downloadCache

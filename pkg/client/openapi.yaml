@@ -2718,6 +2718,12 @@ components:
       required:
         - stats
       type: object
+    CloseOpenLoopRequest:
+      additionalProperties: false
+      properties:
+        note:
+          type: string
+      type: object
     CodexModel:
       properties:
         default_reasoning_effort:
@@ -6131,6 +6137,45 @@ components:
         - retryable
         - bytes
       type: object
+    FreshnessReport:
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        projections:
+          additionalProperties:
+            allOf:
+              - $ref: "#/components/schemas/ProjectionFreshness"
+            nullable: true
+            type: object
+          type: object
+          x-go-type: map[string]*ProjectionFreshness
+        sources:
+          items:
+            $ref: "#/components/schemas/SourceFreshness"
+          type: array
+        stale:
+          type: boolean
+        stale_after_seconds:
+          format: int64
+          type: integer
+        stale_reasons:
+          items:
+            type: string
+          type: array
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+        - as_of
+        - stale_after_seconds
+        - stale
+        - stale_reasons
+        - warnings
+        - sources
+        - projections
+      type: object
     GCalAttendee:
       additionalProperties: false
       properties:
@@ -7245,6 +7290,465 @@ components:
           type: array
       required:
         - manifests
+      type: object
+    Loop:
+      properties:
+        age_seconds:
+          format: int64
+          type: integer
+        agenda_state:
+          type: string
+        anchor_message_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        channel:
+          type: string
+        closed_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        closed_message_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        closed_reason:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        conversation_id:
+          format: int64
+          type: integer
+        counterparty:
+          $ref: "#/components/schemas/LoopCounterparty"
+        cycle:
+          format: int64
+          type: integer
+        detector:
+          type: string
+        due_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        evidence:
+          items:
+            $ref: "#/components/schemas/LoopEvidence"
+          type: array
+        id:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        last_activity_at:
+          format: date-time
+          type: string
+        last_activity_message_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        opens_at:
+          format: date-time
+          type: string
+        owed_since_at:
+          format: date-time
+          type: string
+        snoozed_until:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        source_id:
+          format: int64
+          type: integer
+        status:
+          type: string
+        summary:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        turn_key:
+          type: string
+      required:
+        - id
+        - turn_key
+        - cycle
+        - kind
+        - status
+        - channel
+        - conversation_id
+        - source_id
+        - counterparty
+        - owed_since_at
+        - last_activity_at
+        - opens_at
+        - age_seconds
+        - evidence
+        - detector
+        - agenda_state
+      type: object
+    LoopCounterparty:
+      properties:
+        display_name:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - participant_id
+      type: object
+    LoopDerivationState:
+      properties:
+        account_identity_revision:
+          format: int64
+          type: integer
+        applied_through:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        config_fingerprint:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        feed_cursor_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        feed_cursor_message_id:
+          format: int64
+          type: integer
+        feed_frontier:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        identity_revision:
+          format: int64
+          type: integer
+        last_error:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_reconcile_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_run_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_success_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        queue_depth:
+          format: int64
+          type: integer
+        rescan_epoch:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        rescan_last_conversation_id:
+          format: int64
+          type: integer
+        rescan_reason:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        rescan_started_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ruleset_version:
+          format: int64
+          type: integer
+        signals_backfill_complete:
+          type: boolean
+        signals_backfill_last_message_id:
+          format: int64
+          type: integer
+        singleton:
+          format: int64
+          type: integer
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - singleton
+        - feed_cursor_message_id
+        - identity_revision
+        - account_identity_revision
+        - ruleset_version
+        - rescan_last_conversation_id
+        - signals_backfill_complete
+        - signals_backfill_last_message_id
+        - updated_at
+        - queue_depth
+      type: object
+    LoopDetailResponse:
+      properties:
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        loop:
+          $ref: "#/components/schemas/Loop"
+      required:
+        - loop
+        - freshness
+      type: object
+    LoopEvidence:
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        coverage_gap:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+        owner_note:
+          type: string
+        quote:
+          type: string
+        quote_end_rune:
+          format: int64
+          type: integer
+        quote_start_rune:
+          format: int64
+          type: integer
+        subject:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        truncated_run:
+          type: boolean
+      required:
+        - message_id
+        - conversation_id
+        - occurred_at
+      type: object
+    LoopListResponse:
+      properties:
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        items:
+          items:
+            $ref: "#/components/schemas/Loop"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+        - freshness
+      type: object
+    LoopRunResponse:
+      properties:
+        disposition:
+          type: string
+      required:
+        - disposition
+      type: object
+    LoopStatusResponse:
+      properties:
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        state:
+          $ref: "#/components/schemas/LoopDerivationState"
+      required:
+        - state
+        - freshness
+      type: object
+    LoopSuppression:
+      properties:
+        conversation_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        note:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        participant_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        person_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        target_kind:
+          type: string
+      required:
+        - id
+        - target_kind
+        - created_at
+      type: object
+    LoopSuppressionListResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/LoopSuppression"
+          type: array
+      required:
+        - items
+      type: object
+    LoopSuppressionRequest:
+      additionalProperties: false
+      properties:
+        conversation_id:
+          format: int64
+          type: integer
+        dry_run:
+          type: boolean
+        note:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        target_kind:
+          type: string
+      required:
+        - target_kind
+      type: object
+    LoopSuppressionResult:
+      properties:
+        suppression:
+          allOf:
+            - $ref: "#/components/schemas/LoopSuppression"
+          nullable: true
+          type: object
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        would_close:
+          format: int64
+          type: integer
+      required:
+        - would_close
+      type: object
+    LoopWaitingGroup:
+      properties:
+        counterparty:
+          $ref: "#/components/schemas/LoopCounterparty"
+        loop_count:
+          format: int64
+          type: integer
+        loops:
+          items:
+            $ref: "#/components/schemas/Loop"
+          type: array
+        oldest_owed_since_at:
+          format: date-time
+          type: string
+      required:
+        - counterparty
+        - loop_count
+        - oldest_owed_since_at
+        - loops
+      type: object
+    LoopWaitingResponse:
+      properties:
+        count:
+          format: int64
+          type: integer
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        groups:
+          items:
+            $ref: "#/components/schemas/LoopWaitingGroup"
+          type: array
+      required:
+        - groups
+        - count
+        - freshness
+      type: object
+    LoopsStaleResponse:
+      properties:
+        error:
+          type: string
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        message:
+          type: string
+      required:
+        - error
+        - message
+        - freshness
       type: object
     MCPCapabilities:
       properties:
@@ -13190,6 +13694,36 @@ components:
         - done
         - total
       type: object
+    ProjectionFreshness:
+      properties:
+        age_seconds:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        backfill_complete:
+          type: boolean
+        computed_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        extra:
+          additionalProperties:
+            x-go-type: any
+          type: object
+        last_success_at:
+          format: date-time
+          type: string
+        stale:
+          type: boolean
+      required:
+        - stale
+      type: object
     ProjectionRef:
       properties:
         kind:
@@ -14731,6 +15265,15 @@ components:
         - generation
         - messages
       type: object
+    SnoozeOpenLoopRequest:
+      additionalProperties: false
+      properties:
+        until:
+          format: date-time
+          type: string
+      required:
+        - until
+      type: object
     Source:
       additionalProperties: false
       properties:
@@ -14758,6 +15301,57 @@ components:
       required:
         - source_type
         - count
+      type: object
+    SourceFreshness:
+      properties:
+        age_seconds:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        identifier:
+          type: string
+        last_successful_sync_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_sync_errors:
+          format: int64
+          type: integer
+        outcome:
+          type: string
+        reason:
+          type: string
+        scheduling:
+          type: string
+        source_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        source_type:
+          type: string
+        stale:
+          type: boolean
+        sync_command:
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+      required:
+        - source_type
+        - identifier
+        - scheduling
+        - last_sync_errors
+        - outcome
+        - stale
       type: object
     SourceIdentitiesResponse:
       properties:
@@ -16270,7 +16864,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.25.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23406,6 +24000,1040 @@ paths:
       summary: Test task integration discovery, authentication, capabilities, and project
       tags:
         - API
+  /api/v1/loops:
+    get:
+      operationId: listOpenLoops
+      parameters:
+        - description: Loop kind
+          in: query
+          name: kind
+          schema:
+            enum:
+              - reply_owed
+              - awaiting_reply
+              - commitment_owed_by_me
+              - commitment_owed_to_me
+            type: string
+        - description: Loop status
+          in: query
+          name: status
+          schema:
+            default: open
+            enum:
+              - open
+              - held
+              - closed
+              - all
+            type: string
+        - description: Filter by person
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Filter by archive source
+          in: query
+          name: source_id
+          schema:
+            format: int64
+            type: integer
+        - description: Include currently snoozed loops
+          in: query
+          name: include_snoozed
+          schema:
+            type: boolean
+        - description: Maximum rows
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: Opaque next cursor
+          in: query
+          name: cursor
+          schema:
+            maxLength: 512
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List open-loop history
+      tags:
+        - API
+  /api/v1/loops/rebuild:
+    post:
+      operationId: rebuildLoops
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopRunResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Request a preserving loop rebuild
+      tags:
+        - API
+  /api/v1/loops/run:
+    post:
+      operationId: runLoops
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopRunResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Request one bounded derivation pass
+      tags:
+        - API
+  /api/v1/loops/status:
+    get:
+      operationId: getLoopsStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopStatusResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get certified loop progress and archive freshness
+      tags:
+        - API
+  /api/v1/loops/suppressions:
+    get:
+      operationId: listLoopSuppressions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopSuppressionListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List owner loop suppressions
+      tags:
+        - API
+    post:
+      operationId: createLoopSuppression
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoopSuppressionRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopSuppressionResult"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopSuppressionResult"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Mute a loop target or preview affected loops
+      tags:
+        - API
+  /api/v1/loops/suppressions/{id}:
+    delete:
+      operationId: deleteLoopSuppression
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Unmute a suppressed target
+      tags:
+        - API
+  /api/v1/loops/waiting:
+    get:
+      operationId: getWaitingLoops
+      parameters:
+        - description: Maximum counterpart groups
+          in: query
+          name: top
+          schema:
+            default: 10
+            format: int64
+            maximum: 50
+            minimum: 1
+            type: integer
+        - description: Return a stale ranking with warnings
+          in: query
+          name: allow_stale
+          schema:
+            type: boolean
+        - description: RFC3339 evaluation time; snooze eligibility remains current
+          in: query
+          name: as_of
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopWaitingResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopsStaleResponse"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Rank people waiting for the owner's reply
+      tags:
+        - API
+  /api/v1/loops/{id}:
+    get:
+      operationId: getOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDetailResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get one loop and archived evidence references
+      tags:
+        - API
+  /api/v1/loops/{id}/done:
+    post:
+      operationId: closeOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseOpenLoopRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDetailResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Mark an unanswered turn done
+      tags:
+        - API
+  /api/v1/loops/{id}/snooze:
+    delete:
+      operationId: unsnoozeOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDetailResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Remove a loop's snooze
+      tags:
+        - API
+    post:
+      operationId: snoozeOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SnoozeOpenLoopRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopDetailResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Snooze an open loop
+      tags:
+        - API
   /api/v1/mcp/capabilities:
     get:
       operationId: getMCPCapabilities
@@ -28431,6 +30059,99 @@ paths:
       security:
         - apiKey: []
       summary: List a durable person's archived identities
+      tags:
+        - API
+  /api/v1/people/{id}/loops:
+    get:
+      operationId: listPersonLoops
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Maximum open loops
+          in: query
+          name: limit
+          schema:
+            default: 50
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's open loops
       tags:
         - API
   /api/v1/people/{id}/merge:

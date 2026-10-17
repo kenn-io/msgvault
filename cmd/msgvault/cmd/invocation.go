@@ -226,6 +226,8 @@ func clearInvocationFlags(root *cobra.Command) {
 	if root == nil {
 		return
 	}
+	resetLoopsInvocationFlags(root)
+	resetMCPLoopWriteFlag(root)
 	for _, name := range []string{
 		"config", "home", "verbose", localValue, "log-file", "log-level",
 		"no-log-file", "log-sql", "log-sql-slow-ms", "agent-url",

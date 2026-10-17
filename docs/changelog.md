@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,16 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- [Open loops](usage/open-loops.md) track unanswered email and chat turns with
+  24h/72h grace periods, retained history, completion, snooze and mute controls.
+  Owner CLI, HTTP, MCP and the Directory card share freshness reports; the
+  ranked waiting view refuses stale data unless explicitly overridden. This
+  requires archive schema 11 and API schema 3.25.0. Upgrade through the daemon
+  before opening with an embedded reader. SQLite and PostgreSQL gain five
+  additive projection tables, fourteen indexes and seven invalidation triggers;
+  bounded background backfill reads existing raw MIME. User decisions survive
+  rebuilds. The previous release does not include these surfaces.
 
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.

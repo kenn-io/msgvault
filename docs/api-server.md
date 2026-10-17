@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -631,6 +631,47 @@ importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
 
 ## API Endpoints
+
+### Open loops {#open-loops}
+
+On unreleased `main`, owner-only loop endpoints share the daemon's
+[unanswered-turn state](usage/open-loops.md). List and detail responses include
+archive and projection freshness; evidence contains archived references and
+optional quote spans, never whole message bodies.
+
+| Method | Route | Result or input |
+|---|---|---|
+| GET | `/api/v1/loops` | `{items, next_cursor, freshness}`; `kind`, `status`, `person_id`, `source_id`, `include_snoozed`, `limit`, `cursor` |
+| GET | `/api/v1/loops/waiting` | `{groups, count, freshness}`; `top`, `allow_stale`, `as_of` |
+| GET | `/api/v1/loops/{id}` | `{loop, freshness}` with evidence |
+| POST | `/api/v1/loops/{id}/done` | Optional `{note}`; complete this turn |
+| POST | `/api/v1/loops/{id}/snooze` | `{until}` as a future RFC3339 instant |
+| DELETE | `/api/v1/loops/{id}/snooze` | Remove the snooze |
+| GET, POST | `/api/v1/loops/suppressions` | List mutes, or create `{target_kind, participant_id|person_id|conversation_id, note?, dry_run?}` |
+| DELETE | `/api/v1/loops/suppressions/{id}` | Remove this mute and enqueue affected conversations |
+| GET | `/api/v1/loops/status` | Derivation state, queue/backfill progress and freshness |
+| POST | `/api/v1/loops/run`, `/api/v1/loops/rebuild` | `{disposition}`: started, pending or coalesced |
+| GET | `/api/v1/people/{id}/loops` | Open person loops with freshness; optional `limit` |
+
+Lists default to open, unsnoozed loops, oldest `owed_since_at` then ID, with
+50 items and a maximum of 200. Pass the opaque `next_cursor` unchanged.
+Waiting defaults to 10 counterparty groups, maximum 50, ordered by their oldest
+obligation owed by you. `as_of` changes age and freshness evaluation of the
+current projection; it does not reconstruct past state or bypass current
+snoozes.
+
+Waiting returns HTTP 409 with the typed
+`{error:"loops_stale", message, freshness}` envelope when a source or certified
+projection is stale. `allow_stale=true` returns the ranking with its stale
+report. Other reads return their data and freshness even when stale. A repeated
+done returns 409 `loop_already_closed`; invalid filters or a past snooze return
+400. Disabled loop services return 503. Delegated agent tokens receive 403 for
+all loop operations; owner writes use the daemon operation gate.
+
+Run and rebuild return before background work acquires the gate. A rebuild
+reconciles live rows and retains owner completion, snoozes and suppressions.
+See [`[loops]`](configuration.md#loops) for the 15-minute schedule, 24h/72h
+grace periods, 365-day lookback and bounded work limits.
 
 ### Query the analytics cache {#post-apiv1query}
 

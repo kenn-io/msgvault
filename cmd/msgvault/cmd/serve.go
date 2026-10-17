@@ -542,6 +542,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
 	}
+	loopRuntime, err := newLoopRuntime(ctx, sched, operationGate, s, cfg)
+	if err != nil {
+		return fmt.Errorf("configure open loops: %w", err)
+	}
 	if cfg.People.Sweep.Enabled {
 		if err := cfg.People.Sweep.Validate(); err != nil {
 			return fmt.Errorf("validate people sweep: %w", err)
@@ -917,6 +921,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter, cfg.Data.DataDir),
 		MessageRecordings:             messageRecordings,
 		DocbankAttachments:            docbankAttachments,
+	}
+	if loopRuntime != nil {
+		apiOpts.LoopService = loopRuntime.service
+		apiOpts.LoopRunner = loopRuntime.runner
+		apiOpts.LoopState = loopRuntime.deriver.State
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(
