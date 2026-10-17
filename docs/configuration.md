@@ -835,6 +835,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+| `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 | `remote_clients` | `[]` | Read-only API keys for remote CLIs; requires an effective server API key. See below. |
 
@@ -1743,6 +1744,8 @@ native completion hook are available on `main` and are not yet released.
 identifier = "mac"                  # stable source label; defaults to "default" for one entry
 account_email = "you@example.com"   # required; you, the person who records
 db_path = "~/Library/Application Support/Muesli/muesli.db"  # optional; this is the default
+recordings = false                 # opt in to retained M4A/WAV audio
+recording_max_bytes = 4294967296    # optional; 4 GiB per file by default
 phone_country_code = "1"            # optional; convert national-format Contacts phones
 schedule = "*/30 * * * *"           # optional 5-field cron, no seconds
 enabled = true
@@ -1753,6 +1756,8 @@ enabled = true
 | `identifier` | `default` (single entry) | Source name used by `sync-muesli <identifier>` and scheduler logs |
 | `account_email` | (required) | Normalized primary identity; attributed as the organizer of every meeting |
 | `db_path` | `~/Library/Application Support/Muesli/muesli.db` | Muesli database path; `~` expands, and a relative path resolves against the config directory when `--config` is used |
+| `recordings` | `false` | Archive retained M4A or WAV audio as meeting attachments; works in same-host and native remote mode |
+| `recording_max_bytes` | `4294967296` (4 GiB) | Per-file recording cap; `0` uses the default. Increase it and the remote daemon's cap to retry oversized files |
 | `contacts` | `true` | Resolve attendees through Apple Contacts; the process reading the files needs Full Disk Access |
 | `contacts_path` | `~/Library/Application Support/AddressBook` | Apple Contacts data folder; expands like `db_path` |
 | `phone_country_code` | — | Country calling code (1–3 digits, such as `"1"` or `"44"`) used for Contacts phone numbers typed without one; unset means only international numbers are used |

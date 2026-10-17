@@ -264,7 +264,7 @@ func TestMeetingProviderErrorsMatchBase(t *testing.T) {
 			`granola source "work" is not registered; run msgvault add-granola work`)
 		require.EqualError(runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{Identifier: "work"}),
 			`circleback source "work" is not registered; run msgvault add-circleback work first`)
-		require.EqualError(runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"}),
+		require.EqualError(runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"}, t.TempDir()),
 			`muesli source "work" is not registered; run msgvault add-muesli work first`)
 		require.EqualError(runConfiguredNotionMeetingsSync(ctx, st, config.NotionMeetingsSource{Identifier: "work", Token: "ntn_test"}),
 			`notion meeting source "work" is not registered; run msgvault add-notion-meetings work first`)

@@ -1294,6 +1294,16 @@ Contacts unless `contacts = false`; the summary reports whether Contacts was
 wait for a later run, and meetings deleted in Muesli stay archived. With no
 identifier, every configured `[[muesli]]` source is synced.
 
+Set `recordings = true` in the source's `[[muesli]]` configuration to archive
+retained M4A and WAV audio as attachments. Recordings are off by default.
+`recording_max_bytes` caps each file at 4 GiB by default. The remote daemon
+also enforces `[server].muesli_recording_max_bytes` (4 GiB by default).
+Oversized recordings report a retryable error; increase both applicable caps
+and sync again. Missing, incomplete or recently written files wait for a later
+sync without failing the meeting import. The summary reports stored and
+deferred recordings. No recording flags are needed for manual sync, watch,
+scheduled sync or the completion hook. See [recording capture](usage/meetings.md#muesli-recordings).
+
 | Flag | Default | Description |
 |---|---|---|
 | `--limit` | `0` | Maximum meetings processed per run (`0` = unlimited) |
@@ -1315,7 +1325,7 @@ Routine imports respect the existing automatic cache-refresh policy. Unchanged
 remote uploads do not request a refresh. A same-host scheduled scan always
 checks the cache, so a build that `min_rebuild_interval` held back after a hook
 or manual import still runs once the interval ends. Cache flags are mutually
-exclusive. Remote transfers are limited to 16 MiB per request, 200 participants,
+exclusive. Remote meeting JSON is limited to 16 MiB per request, 200 participants,
 and 50 distinct identities and 50 enrichment entries per participant. Review-only
 Contacts suggestions that would exceed either limit are dropped, and the meeting
 still imports. Other invalid or oversized records do not prevent later valid
@@ -1326,7 +1336,11 @@ Remote scans read every meeting but upload only those that are new or changed
 since the daemon acknowledged them, plus meetings with pending duplicate-card
 suggestions. The record of acknowledged meetings lives in
 `<data_dir>/muesli-sync` on the recorder. `--full` uploads every meeting, and
-`add-muesli` clears the record.
+`add-muesli` clears the record. Audio streams separately with owner credentials;
+its hash is acknowledged only after attachment storage succeeds. A lost response
+is safe to retry. The daemon never receives the Muesli database or local paths.
+Audio uploads have the daemon's existing 30-minute read deadline; a failed
+transfer is retried from the beginning on the next sync.
 
 Remote sync, watch, and the native hook are available on `main` and are not yet
 released. See [Meeting Transcripts](/docs/usage/meetings/#muesli) for setup and

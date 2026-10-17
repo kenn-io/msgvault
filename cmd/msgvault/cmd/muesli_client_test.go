@@ -85,9 +85,13 @@ func TestMuesliCommandsReadRecorderConfiguration(t *testing.T) {
 }
 
 func TestMuesliRecordErrorsDoNotMaskTransportFailure(t *testing.T) {
-	assert.True(t, muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, muesli.ErrRemoteTooLarge)))
-	assert.False(t, muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, context.Canceled)))
-	assert.False(t, muesliRecordErrorsOnly(errors.New("server failure")))
+	assert := assert.New(t)
+
+	assert.True(muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, muesli.ErrRemoteTooLarge)))
+	assert.True(muesliRecordErrorsOnly(muesli.ErrRecordingTooLarge))
+	assert.False(muesliRecordErrorsOnly(errors.Join(muesli.ErrRecordingTooLarge, context.Canceled)))
+	assert.False(muesliRecordErrorsOnly(errors.Join(muesli.ErrRemoteValidation, context.Canceled)))
+	assert.False(muesliRecordErrorsOnly(errors.New("server failure")))
 }
 
 func TestMuesliBuildCacheRefreshesThroughRegisteredSource(t *testing.T) {

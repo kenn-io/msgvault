@@ -213,6 +213,7 @@ import type {
   IdentityMatchRejectResponse,
   ImportJobRequest,
   ImportJobResponse,
+  ImportMuesliRecordingParams,
   KataEvidenceLinkRequest,
   KataEvidencePrepareRequest,
   KataEvidencePrepareResponse,
@@ -1982,6 +1983,25 @@ export const importMuesli = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: muesliRemoteRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Stream retained audio for an archived Muesli meeting
+ */
+export const importMuesliRecording = (
+  importMuesliRecordingBody: Blob,
+  params: ImportMuesliRecordingParams,
+  options?: SecondParameter<typeof orvalFetch<MuesliRemoteResult>>,
+) => {
+  return orvalFetch<MuesliRemoteResult>(
+    {
+      url: `/api/v1/import/muesli/recording`,
+      method: "POST",
+      headers: { "Content-Type": "audio/mp4" },
+      data: importMuesliRecordingBody,
+      params,
     },
     options,
   );

@@ -14,6 +14,13 @@ All notable changes to msgvault, grouped by release.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
 - Optional [attachment mirror](configuration.md#mirror-stored-attachments-to-docbank-unreleased) copies stored attachments to a Docbank folder. Files retained after source deletion are included. Duplicate bytes share one delivery across sources. Temporary errors retry automatically; backfill retries failed files. Status reports progress and failure reasons. Attachment and message details in the CLI, HTTP API and MCP show delivery receipts; list and search views omit them. The attachment mirror requires archive schema version 8 and HTTP API schema 3.21.0.
 
+- Muesli sources can opt in to retaining M4A and WAV recordings as meeting
+  attachments with `recordings = true`. Same-host and native remote sync use
+  content-addressed storage, retry late audio and preserve archived recordings
+  after source deletion. Remote uploads stream with owner authentication and
+  configurable 4 GiB recorder/server caps. Stored audio follows the shared
+  Docbank consent and discovery pipeline.
+
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
 

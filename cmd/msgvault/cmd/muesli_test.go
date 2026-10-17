@@ -38,7 +38,7 @@ func TestRunConfiguredMuesliSyncRefusesUnregisteredSource(t *testing.T) {
 
 	err := runConfiguredMuesliSync(context.Background(), st, config.MuesliSource{
 		Identifier: "removed", AccountEmail: "you@example.com",
-	})
+	}, t.TempDir())
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "add-muesli removed")
@@ -145,7 +145,8 @@ func TestMuesliImportOptionsCarryContactsSettings(t *testing.T) {
 	})
 
 	assert.Equal(t, muesli.ImportOptions{
-		Identifier: "mac", AccountEmail: "you@example.com", DBPath: "/tmp/muesli.db",
+		RecordingMaxBytes: muesli.DefaultRecordingMaxBytes,
+		Identifier:        "mac", AccountEmail: "you@example.com", DBPath: "/tmp/muesli.db",
 		ContactsEnabled: false, ContactsPath: "/tmp/AddressBook", PhoneCountryCode: "44",
 	}, opts)
 }

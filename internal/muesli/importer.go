@@ -29,9 +29,14 @@ func NewImporter(st *store.Store) *Importer {
 }
 
 type ImportOptions struct {
-	Identifier   string
-	AccountEmail string
-	DBPath       string
+	Recordings        bool
+	RecordingMaxBytes int64
+	AttachmentsDir    string
+	// SendRecording streams a prepared, immutable recording to the remote daemon.
+	SendRecording func(context.Context, RecordingUpload, *Recording) error
+	Identifier    string
+	AccountEmail  string
+	DBPath        string
 	// Full rewrites every archived meeting even when its evidence matches,
 	// which refreshes attribution after identity changes.
 	Full bool
@@ -55,6 +60,8 @@ type ImportOptions struct {
 }
 
 type ImportSummary struct {
+	RecordingsStored  int64
+	RecordingsSkipped int64
 	SourceID          int64
 	MeetingsProcessed int64
 	MeetingsAdded     int64
@@ -202,6 +209,26 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		}
 		if err := imp.recordContactReviewCandidates(ctx, source.ID, meeting); err != nil {
 			return sum, err
+		}
+		if opts.Recordings {
+			recording, err := PrepareRecording(ctx, opts.DBPath, meeting.SavedRecordingPath, opts.RecordingMaxBytes)
+			if recording != nil {
+				changed, archiveErr := NewImporter(scoped).storeRecording(ctx, result.MessageID, opts.AttachmentsDir, recording)
+				err = archiveErr
+				_ = recording.Close()
+				if archiveErr == nil {
+					sum.RecordingsStored++
+					if changed && !result.Created && !result.Changed {
+						sum.MeetingsUpdated++
+					}
+				}
+			} else if meeting.SavedRecordingPath != "" {
+				sum.RecordingsSkipped++
+			}
+			if err != nil {
+				sum.Errors++
+				meetingErrors = append(meetingErrors, fmt.Errorf("muesli meeting %d recording: %w", meeting.ID, err))
+			}
 		}
 		if sum.MeetingsProcessed%checkpointInterval == 0 {
 			if err := scoped.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {

@@ -25,7 +25,8 @@ emails connect meetings to the people you already know in msgvault.
 | [Another meeting source](#import-from-any-meeting-source) | Authenticated JSON import | Your integration supplies each meeting and its updates |
 
 Provider sync reads meeting data without changing the source service. Recording
-media is not downloaded by the Omi, Notion, Plaud, Circleback, Muesli, or Twenty integrations.
+media is not downloaded by the Omi, Notion, Plaud, Circleback, or Twenty integrations.
+Muesli can optionally archive locally retained recordings.
 
 ## Browse and search
 
@@ -1063,6 +1064,54 @@ checks the cache even when nothing changed, so a build that
 `min_rebuild_interval` delayed after a hook or manual import still happens. Use
 `--build-cache` for an explicit refresh or `--no-build-cache` to skip it.
 
+### Muesli recordings
+
+Recording capture is available on `main` and is not yet released. Enable it
+per source on the Mac that reads Muesli:
+
+```toml
+[[muesli]]
+identifier = "mac"
+account_email = "you@example.com"
+recordings = true
+recording_max_bytes = 4294967296  # optional; 4 GiB by default
+```
+
+Muesli must retain the audio through `meeting_recording_save_policy`. Its
+`meeting_recording_file_format` can be M4A or WAV; msgvault detects the actual
+file format. It reads `meetings.saved_recording_path` within the
+`meeting-recordings` folder beside the configured database. Older databases
+without that column still sync transcripts. Temporary mic and system captures,
+paths outside that folder, and symlinks to files are skipped.
+
+Run `msgvault sync-muesli mac` normally. Audio becomes an ordinary attachment
+on the meeting message, available through the Web UI and message/file API.
+The archive stores bytes by content hash and updates one recording attachment
+per meeting. Rescanning also checks unchanged meetings for late audio. Missing,
+unreadable, incomplete or recently modified files wait for a later sync;
+a file must be untouched for at least five seconds. Keep scheduled rescanning
+or remote `--watch` enabled to pick up deferred files. Source deletion never
+removes an archived recording.
+
+Remote mode snapshots the local audio and streams it separately with owner
+credentials. Neither the database nor the recording path reaches the daemon.
+The recorder's `recording_max_bytes` and the daemon's
+`[server].muesli_recording_max_bytes` each default to 4 GiB per file. An
+oversized recording reports a retryable error while its meeting still imports;
+increase both applicable caps and sync again. Transfers use bounded memory
+and the existing 30-minute upload read deadline. Interrupted transfers restart
+on the next sync and cannot publish truncated audio.
+
+Stored recordings use the shared Docbank attachment and audio classification,
+consent, and content-hash deduplication. The existing audio worker uploads WAV
+(up to its 1 GiB inspection limit) when `[integrations.docbank].enabled` and
+`all_sources_upload_consent` are true. Disabled Docbank sends nothing; enabling
+it without upload consent only records local discovery. M4A and larger files
+need the general attachment mirror proposed in
+[PR #1240](https://github.com/kenn-io/msgvault/pull/1240), with its separate
+`attachment_upload_consent`. See [Docbank configuration](../configuration.md#send-stored-audio-to-docbank)
+for the shared integration's settings and limits.
+
 ### What gets stored (Muesli)
 
 Each meeting becomes one `meeting_transcript` message in a `meeting`
@@ -1078,7 +1127,7 @@ such as a contact picked by name, appear only by name.
 The raw archive (`muesli_json`) keeps the meeting's text, times, status,
 template name, calendar event ID, folder path, and participant names, emails,
 phones, review-only phone suggestions, and sources. Suggestions never become
-attendee recipients or automatic links. It never stores audio or audio file paths, screen text,
+attendee recipients or automatic links. It never stores audio file paths, screen text,
 template prompts, or Apple Contacts identifiers.
 
 Remove the archive source with:

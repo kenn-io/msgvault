@@ -803,7 +803,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			Name:     jobName,
 			Schedule: source.Schedule,
 			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
-				return runConfiguredMuesliSync(ctx, s, source)
+				return runConfiguredMuesliSync(ctx, s, source, cfg.AttachmentsDir())
 			}),
 		}); err != nil {
 			logger.Error("failed to schedule muesli source", "source", source.Identifier, "error", err)
@@ -2089,6 +2089,22 @@ func (a *storeAPIAdapter) ImportMeeting(
 		return meetingimport.Result{}, meetingimport.ErrUnavailable
 	}
 	return a.meetingImporter.Import(ctx, req)
+}
+
+// ImportMuesliRecording uses the shared attachment writer; Docbank discovers it
+// through ordinary stored audio classification and attachment journal changes.
+func (a *storeAPIAdapter) ImportMuesliRecording(ctx context.Context, upload muesli.RecordingUpload, input io.Reader, maxBytes int64) (bool, error) {
+	if a == nil || a.store == nil || a.config == nil {
+		return false, errors.New("muesli recording import unavailable")
+	}
+	changed, err := muesli.NewImporter(a.store).ImportRecording(ctx, upload, a.config.AttachmentsDir(), input, maxBytes)
+	if changed && !upload.NoBuildCache {
+		refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+		if refreshErr := rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Muesli cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return changed, err
 }
 
 // ImportMuesli receives bounded recorder-local evidence under the API gate.

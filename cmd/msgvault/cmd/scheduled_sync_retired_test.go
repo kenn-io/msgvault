@@ -93,7 +93,7 @@ func TestConfiguredScheduledSyncSkipsMergedSources(t *testing.T) {
 		err := runConfiguredMuesliSync(context.Background(), st, config.MuesliSource{
 			Identifier: "history", AccountEmail: "person@example.test",
 			DBPath: filepath.Join(t.TempDir(), "missing-muesli.db"),
-		})
+		}, t.TempDir())
 
 		require.NoError(t, err)
 	})
