@@ -16270,7 +16270,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -22762,6 +22762,70 @@ paths:
       security:
         - apiKey: []
       summary: Import one recorder-local Muesli meeting
+      tags:
+        - API
+  /api/v1/import/muesli/recording:
+    post:
+      operationId: importMuesliRecording
+      parameters:
+        - in: query
+          name: identifier
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: account_email
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: message_id
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: sha256
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: size
+          required: true
+          schema:
+            type: integer
+        - in: query
+          name: no_build_cache
+          schema:
+            type: boolean
+      requestBody:
+        content:
+          audio/mp4:
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+          audio/wav:
+            schema:
+              format: binary
+              type: string
+              x-contentMediaType: application/octet-stream
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MuesliRemoteResult"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Stream retained audio for an archived Muesli meeting
       tags:
         - API
   /api/v1/imports:

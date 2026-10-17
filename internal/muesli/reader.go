@@ -198,6 +198,7 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 		col("calendar_series_id") + `, ` +
 		col("folder_id") + `, ` +
 		col("follow_up_to_id") + `, ` +
+		col("saved_recording_path") + `, ` +
 		col("deleted_at") + ` IS NOT NULL
 		FROM meetings m WHERE (? = 0 OR m.id = ?) ORDER BY m.id`
 	rows, err := tx.QueryContext(ctx, query, id, id)
@@ -214,12 +215,13 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 			end, created, status, source, transcript, notes sql.NullString
 			manual, templateName, templateKind, eventID     sql.NullString
 			calendarSource, seriesID                        sql.NullString
+			recording                                       sql.NullString
 			duration                                        sql.NullFloat64
 			wordCount, folderID, followUpID                 sql.NullInt64
 		)
 		if err := rows.Scan(&m.ID, &title, &start, &end, &created, &duration, &status, &source,
 			&transcript, &notes, &manual, &wordCount, &templateName, &templateKind,
-			&eventID, &calendarSource, &seriesID, &folderID, &followUpID, &m.Deleted); err != nil {
+			&eventID, &calendarSource, &seriesID, &folderID, &followUpID, &recording, &m.Deleted); err != nil {
 			return nil, fmt.Errorf("read Muesli meeting row: %w", err)
 		}
 		m.Title, m.StartTime, m.EndTime, m.CreatedAt = title.String, start.String, end.String, created.String
@@ -228,6 +230,7 @@ func (r *Reader) meetings(ctx context.Context, tx *sql.Tx, folders map[int64]str
 		m.WordCount, m.TemplateName, m.TemplateKind = wordCount.Int64, templateName.String, templateKind.String
 		m.CalendarEventID, m.CalendarSource, m.CalendarSeriesID = eventID.String, calendarSource.String, seriesID.String
 		m.FollowUpToID = followUpID.Int64
+		m.SavedRecordingPath = recording.String
 		if folderID.Valid {
 			m.Folder = folders[folderID.Int64]
 		}
