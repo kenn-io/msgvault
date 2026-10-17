@@ -33,11 +33,9 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	if mode == "vector" {
 		kind = "semantic"
 	}
-	defer func() {
-		if result == nil && strings.TrimSpace(queryStr) != "" {
-			reportCLIAction(cmd, s, "search_run", "search_type", kind)
-		}
-	}()
+	if strings.TrimSpace(queryStr) != "" {
+		defer reportSuccessfulCLIAction(cmd, s, "search_run", "search_type", kind, &result)
+	}
 
 	logger.Info("vector search start",
 		"mode", mode,

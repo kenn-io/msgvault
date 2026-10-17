@@ -189,11 +189,9 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	defer func() {
-		if result == nil && searchOffset == 0 && strings.TrimSpace(queryStr) != "" {
-			reportCLIAction(cmd, s, "search_run", "search_type", "text")
-		}
-	}()
+	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" {
+		defer reportSuccessfulCLIAction(cmd, s, "search_run", "search_type", "text", &result)
+	}
 
 	prefix := "Searching..."
 	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {

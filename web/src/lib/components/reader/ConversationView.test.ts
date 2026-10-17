@@ -386,38 +386,12 @@ describe('ConversationView', () => {
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/conversations/7');
   });
 
-  it('fetches an omitted body through the message endpoint when its card expands', async () => {
+  it('fetches an omitted body on expansion and reports it only while readable', async () => {
     const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      const url = new URL(request.url);
-      if (url.pathname === '/api/v1/messages/1') {
-        return Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
-      }
-      return Response.json({
-        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
-        has_before: false, has_after: false, total: 2
-      });
-    });
-
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
-    });
-
-    await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
-
-    const card = await screen.findByRole('article', { name: 'Message 1' });
-    await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
-    expect(requests).toHaveLength(2);
-    expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
-  });
-
-  it('reports an opened message only after expansion and a readable body', async () => {
     let resolveBody!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
       const url = new URL(request.url);
       if (url.pathname === '/api/v1/messages/1') {
         return new Promise<Response>((resolve) => { resolveBody = resolve; });
@@ -441,6 +415,10 @@ describe('ConversationView', () => {
     expect(telemetryEvents).toHaveLength(0);
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
 
+    const card = await screen.findByRole('article', { name: 'Message 1' });
+    await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
+    expect(requests).toHaveLength(2);
+    expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
     await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
   });
 

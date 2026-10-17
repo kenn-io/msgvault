@@ -31,6 +31,12 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	_ = sendActionTelemetry(ctx, client, "cli", event, property, value)
 }
 
+func reportSuccessfulCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, property, value string, result *error) {
+	if *result == nil {
+		reportCLIAction(cmd, client, event, property, value)
+	}
+}
+
 func sendActionTelemetry(ctx context.Context, client *daemonclient.Client, surface, event, property, value string) error {
 	generated, err := client.GeneratedClient()
 	if err != nil {

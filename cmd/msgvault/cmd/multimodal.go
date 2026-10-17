@@ -106,11 +106,9 @@ var multimodalSearchCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = client.Close() }()
-		defer func() {
-			if result == nil && multimodalSearchCursor == "" {
-				reportCLIAction(cmd, client, "search_run", "search_type", "semantic")
-			}
-		}()
+		if multimodalSearchCursor == "" {
+			defer reportSuccessfulCLIAction(cmd, client, "search_run", "search_type", "semantic", &result)
+		}
 		var after, before *time.Time
 		if multimodalSearchAfter != "" {
 			parsed, parseErr := time.Parse("2006-01-02", multimodalSearchAfter)
