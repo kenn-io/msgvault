@@ -8,6 +8,8 @@ import (
 
 	Assert "github.com/stretchr/testify/assert"   //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	Require "github.com/stretchr/testify/require" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
+	"go.kenn.io/msgvault/internal/calsync"
+	"go.kenn.io/msgvault/internal/gcal"
 )
 
 func TestRetainedEventAndMessageReadsRecheckAuthorization(t *testing.T) {
@@ -74,6 +76,21 @@ func TestCalendarSourceRecipeUsesActualRuntimeGate(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	s, f, _ := eventService(t)
+	provider := gcal.NewMockAPI()
+	provider.Calendars = []gcal.Calendar{
+		{ID: "personal", Summary: "Personal Calendar", AccessRole: "owner"},
+		{ID: "team", Summary: "Team Calendar", AccessRole: "owner"},
+	}
+	syncer := calsync.New(provider, f.Store, calsync.Options{AccountEmail: "owner@example.net"})
+	_, err := syncer.RegisterCalendars(t.Context())
+	require.NoError(err)
+	personal, err := f.Store.GetSourceByIdentifier("owner@example.net/personal")
+	require.NoError(err)
+	team, err := f.Store.GetSourceByIdentifier("owner@example.net/team")
+	require.NoError(err)
+	// A source display name must not replace the registered calendar title.
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET display_name=? WHERE id=?`), "Account label", personal.ID)
+	require.NoError(err)
 	source, err := f.Store.GetOrCreateSource("gcal", "synthetic-calendar@example.net")
 	require.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET display_name=?,sync_config=? WHERE id=?`), "Synthetic Calendar", `{"account_email":"owner@example.net"}`, source.ID)
@@ -82,7 +99,11 @@ func TestCalendarSourceRecipeUsesActualRuntimeGate(t *testing.T) {
 	require.NoError(err)
 	sources, err := s.CalendarSources(t.Context(), s.principal)
 	require.NoError(err)
-	assert.Equal([]CalendarSource{{SourceID: strconv.FormatInt(source.ID, 10), Summary: "Synthetic Calendar", Account: "owner@example.net"}}, sources)
+	assert.ElementsMatch([]CalendarSource{
+		{SourceID: strconv.FormatInt(personal.ID, 10), Summary: "Personal Calendar", Account: "owner@example.net"},
+		{SourceID: strconv.FormatInt(team.ID, 10), Summary: "Team Calendar", Account: "owner@example.net"},
+		{SourceID: strconv.FormatInt(source.ID, 10), Summary: "Synthetic Calendar", Account: "owner@example.net"},
+	}, sources)
 	args, err := canonicalArguments(calendarFamily, map[string]any{"calendar_source_id": strconv.FormatInt(source.ID, 10)})
 	require.NoError(err)
 	_, gotID, err := s.st.ValidateMCPEventScope(t.Context(), calendarFamily, args.scopeKind, args.scopeID, nil)

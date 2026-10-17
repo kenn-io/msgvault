@@ -1,6 +1,7 @@
 package mcpevents
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/tls"
@@ -365,13 +366,14 @@ func (s *Service) CalendarSources(ctx context.Context, principal string) ([]Cale
 			}
 			var config struct {
 				Account string `json:"account_email"`
+				Summary string `json:"calendar_summary"`
 			}
 			if row.SyncConfig.Valid {
 				if err := json.Unmarshal([]byte(row.SyncConfig.String), &config); err != nil {
 					return errors.New("events_storage_unavailable")
 				}
 			}
-			result = append(result, CalendarSource{SourceID: strconv.FormatInt(row.ID, 10), Summary: row.DisplayName.String, Account: config.Account})
+			result = append(result, CalendarSource{SourceID: strconv.FormatInt(row.ID, 10), Summary: cmp.Or(config.Summary, row.DisplayName.String), Account: config.Account})
 		}
 		return nil
 	})
