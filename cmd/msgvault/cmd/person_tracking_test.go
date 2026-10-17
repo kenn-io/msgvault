@@ -49,10 +49,10 @@ func TestPersonTrackAndUntrackReplaceState(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if body.Tracked {
-			_, _ = w.Write([]byte(`{"person_id":7,"tracked":true,"tracked_at":"2026-08-19T12:00:00Z"}`))
+			_, _ = w.Write([]byte(`{"person_id":7,"tracked":true,"tracked_at":"2026-08-19T12:00:00Z","provenance":"manual","actor":"api"}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"person_id":7,"tracked":false,"tracked_at":null}`))
+		_, _ = w.Write([]byte(`{"person_id":7,"tracked":false,"tracked_at":null,"provenance":"","actor":""}`))
 	}))
 	t.Cleanup(server.Close)
 	testCtx := withStoreResolverConfig(t, &config.Config{
@@ -60,11 +60,15 @@ func TestPersonTrackAndUntrackReplaceState(t *testing.T) {
 	})
 	output, err := runPersonTrackingCommand(testCtx, t, personTrackCmd, false, "7")
 	require.NoError(err)
-	assert.Equal("Person 7: tracked\n", output)
+	assert.Contains(output, "Person 7: tracked\n")
+	assert.Contains(output, "provenance: manual; actor: api")
 
 	output, err = runPersonTrackingCommand(testCtx, t, personUntrackCmd, false, "7")
 	require.NoError(err)
-	assert.Equal("Person 7: untracked\n", output)
+	assert.Contains(output, "Person 7: untracked\n")
+	assert.Contains(output, "recorded opt-outs")
+	assert.Contains(output, "person tiers opt-in 7 --lane tracking")
+	assert.Contains(output, "person tiers opt-in 7 --lane briefs")
 	assert.Equal(int32(2), requests.Load())
 }
 

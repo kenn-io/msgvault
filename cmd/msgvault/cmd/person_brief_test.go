@@ -231,33 +231,36 @@ func TestPersonBriefGenerateReportsADeferredBrief(t *testing.T) {
 }
 
 func TestPersonBriefEnrollAndUnenrollReplaceState(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assert := assert.New(t)
+	require := require.New(t)
 	daemon := newPersonBriefTestDaemon(t,
-		`{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api"}`)
+		`{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api","provenance":"manual"}`)
 
 	output, err := runPersonBriefCommand(daemon.ctx, t, "enroll", "7", "--track")
-	requirements.NoError(err)
-	assertions.Equal(http.MethodPut, daemon.method)
-	assertions.Equal("/api/v1/people/7/brief-enrollment", daemon.path)
-	assertions.JSONEq(`{"enrolled":true,"track":true}`, daemon.body)
-	assertions.Contains(output, "Person 7 brief: enrolled")
+	require.NoError(err)
+	assert.Equal(http.MethodPut, daemon.method)
+	assert.Equal("/api/v1/people/7/brief-enrollment", daemon.path)
+	assert.JSONEq(`{"enrolled":true,"track":true}`, daemon.body)
+	assert.Contains(output, "Person 7 brief: enrolled")
+	assert.Contains(output, "provenance: manual; actor: api")
 
-	daemon.response = `{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api"}`
+	daemon.response = `{"person_id":7,"enrolled":true,"enabled_at":"2026-08-29T18:42:10Z","actor":"api","provenance":"manual"}`
 	_, err = runPersonBriefCommand(daemon.ctx, t, "enroll", "7")
-	requirements.NoError(err)
-	assertions.JSONEq(`{"enrolled":true,"track":false}`, daemon.body)
+	require.NoError(err)
+	assert.JSONEq(`{"enrolled":true,"track":false}`, daemon.body)
 
-	daemon.response = `{"person_id":7,"enrolled":false,"enabled_at":null,"actor":""}`
+	daemon.response = `{"person_id":7,"enrolled":false,"enabled_at":null,"actor":"","provenance":""}`
 	output, err = runPersonBriefCommand(daemon.ctx, t, "unenroll", "7")
-	requirements.NoError(err)
-	assertions.JSONEq(`{"enrolled":false,"track":false}`, daemon.body)
-	assertions.Contains(output, "Person 7 brief: not enrolled")
+	require.NoError(err)
+	assert.JSONEq(`{"enrolled":false,"track":false}`, daemon.body)
+	assert.Contains(output, "Person 7 brief: not enrolled")
+	assert.Contains(output, "recorded opt-out")
+	assert.Contains(output, "person tiers opt-in 7 --lane briefs")
 
 	jsonOutput, err := runPersonBriefCommand(daemon.ctx, t, "unenroll", "7", "--json")
-	requirements.NoError(err)
-	assertions.JSONEq(
-		`{"person_id":7,"enrolled":false,"enabled_at":null,"actor":""}`, jsonOutput)
+	require.NoError(err)
+	assert.JSONEq(
+		`{"person_id":7,"enrolled":false,"enabled_at":null,"actor":"","provenance":""}`, jsonOutput)
 }
 
 func TestPersonBriefEnrollReportsAnUntrackedPerson(t *testing.T) {
