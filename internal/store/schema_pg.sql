@@ -419,7 +419,9 @@ CREATE TABLE IF NOT EXISTS person_participants (
 -- no row means the person is not tracked.
 CREATE TABLE IF NOT EXISTS person_tracking (
     person_id  BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
-    tracked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    tracked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto')),
+    actor TEXT NOT NULL DEFAULT ''
 );
 
 -- Immutable, commit-ordered discovery for tracked-person archive changes.
@@ -1108,7 +1110,8 @@ CREATE TABLE IF NOT EXISTS person_fact_pin_events (
 CREATE TABLE IF NOT EXISTS person_brief_enrollments (
     person_id   BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
     enabled_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    actor       TEXT NOT NULL
+    actor       TEXT NOT NULL,
+    provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto'))
 );
 
 -- Immutable dated brief versions. structured_json and rendered_text are never
@@ -4226,3 +4229,66 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Signal-based tier authority, observations, and decision history.
+CREATE TABLE IF NOT EXISTS person_tier_opt_outs (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    person_id  BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    lane       TEXT    NOT NULL CHECK (lane IN ('tracking', 'briefs', 'enrichment')),
+    actor      TEXT    NOT NULL,
+    reason     TEXT    NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (person_id, lane)
+);
+
+CREATE TABLE IF NOT EXISTS person_tier_state (
+    person_id           BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    tier                INTEGER NOT NULL CHECK (tier IN (1, 2, 3)),
+    tier_since          TIMESTAMPTZ NOT NULL,
+    candidate_tier      INTEGER CHECK (candidate_tier IS NULL OR candidate_tier IN (1, 2, 3)),
+    candidate_since     TEXT CHECK (candidate_since IS NULL OR LENGTH(candidate_since) = 10),  -- local date
+    lanes_json          TEXT    NOT NULL,            -- the lanes applied for this tier, from the run's frozen config
+    enrichment_eligible BOOLEAN NOT NULL,            -- 'enrichment' in the applied lanes; read by the authority predicate
+    rule                TEXT    NOT NULL,
+    rule_version        INTEGER NOT NULL,
+    config_fingerprint  TEXT    NOT NULL,
+    as_of_local_date    TEXT    NOT NULL CHECK (LENGTH(as_of_local_date) = 10),
+    run_id              TEXT    NOT NULL,
+    run_started_at      TIMESTAMPTZ NOT NULL,           -- stale-continuation guard, see Scheduler
+    applied_at          TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_person_tier_state_tier ON person_tier_state(tier, person_id);
+
+CREATE TABLE IF NOT EXISTS person_tier_observations (
+    person_id           BIGINT PRIMARY KEY REFERENCES persons(id) ON DELETE CASCADE,
+    computed_tier       INTEGER NOT NULL CHECK (computed_tier IN (1, 2, 3)),
+    rule                TEXT    NOT NULL,            -- 'tier1_intensity', 'tier1_breadth', 'tier2_two_way', 'tier2_meetings', 'minimum_tier', 'none', or an exclusion name
+    signals_json        TEXT    NOT NULL,            -- counts table plus exclusion counters, activity_ready and its failing condition
+    shadow_tier         INTEGER NOT NULL CHECK (shadow_tier IN (1, 2, 3)),
+    shadow_since        TEXT    NOT NULL CHECK (LENGTH(shadow_since) = 10),
+    shadow_candidate_tier  INTEGER CHECK (shadow_candidate_tier IS NULL OR shadow_candidate_tier IN (1, 2, 3)),
+    shadow_candidate_since TEXT CHECK (shadow_candidate_since IS NULL OR LENGTH(shadow_candidate_since) = 10),
+    rule_version        INTEGER NOT NULL,
+    config_fingerprint  TEXT    NOT NULL,
+    as_of_local_date    TEXT    NOT NULL CHECK (LENGTH(as_of_local_date) = 10),
+    activity_ready      BOOLEAN NOT NULL,
+    evaluated_at        TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS person_tier_events (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,   -- PostgreSQL: BIGINT GENERATED ALWAYS AS IDENTITY
+    person_id       BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+    merged_from_person_id BIGINT,                        -- set when a merge moved the row to the survivor
+    from_tier       INTEGER CHECK (from_tier IS NULL OR from_tier IN (1, 2, 3)),
+    to_tier         INTEGER NOT NULL CHECK (to_tier IN (1, 2, 3)),
+    reason          TEXT NOT NULL CHECK (reason IN ('promotion', 'demotion', 'config_change', 'minimum_tier', 'manual_blocked', 'deferred', 'apply_failed', 'reset')),
+    mode            TEXT NOT NULL CHECK (mode IN ('preview', 'apply')),
+    lanes_json      TEXT NOT NULL,                   -- {"tracking":"created|kept|removed|blocked_manual|blocked_opt_out|unchanged", ...}
+    signals_json    TEXT NOT NULL,
+    rule            TEXT NOT NULL,
+    rule_version    INTEGER NOT NULL,
+    actor           TEXT NOT NULL,                   -- 'people-tiers' for the scheduler, the CLI/API actor for manual apply
+    run_id          TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_person_tier_events_person ON person_tier_events(person_id, id);
