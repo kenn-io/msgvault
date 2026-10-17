@@ -140,3 +140,42 @@ func TestPersonMergeAuthorizationAcceptsExactlyHundredResources(t *testing.T) {
 	_, err = st.GetPerson(absorbed.ID)
 	requirements.ErrorIs(err, store.ErrPersonNotFound)
 }
+
+func TestPersonMergeAuthorizationExcludesSurvivorOnlyRelationshipResources(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, account, _ := newCardDAVResourceStore(t)
+	survivor := mustPromotedPerson(t, st, "survivor-relationship@example.test", "Synthetic Survivor")
+	absorbed := mustPromotedPerson(t, st, "absorbed-relationship@example.test", "Synthetic Absorbed")
+	counterpart := mustPromotedPerson(t, st, "unaffected-counterpart@example.test", "Synthetic Counterpart")
+	discovered := make([]store.CardDAVDiscoveredBook, 99)
+	for i := range discovered {
+		discovered[i] = store.CardDAVDiscoveredBook{CanonicalURL: fmt.Sprintf("%sunaffected-%d/", account.HomeURL, i), DisplayName: "Synthetic unaffected scope"}
+	}
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{BaseURL: account.BaseURL, Username: account.Username, PrincipalURL: account.PrincipalURL, HomeURL: account.HomeURL, Books: discovered})
+	requirements.NoError(err)
+	requirements.Len(books, 99)
+	for _, book := range books {
+		seedMergeBookResource(t, st, book, counterpart)
+	}
+	_, err = st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{SourcePersonID: survivor.ID, TargetPersonID: counterpart.ID, TypeSlug: "friend", Source: store.ProvenanceUser, Actor: "synthetic-owner"})
+	requirements.NoError(err)
+	survivor, err = st.GetPerson(survivor.ID)
+	requirements.NoError(err)
+	absorbed, err = st.GetPerson(absorbed.ID)
+	requirements.NoError(err)
+	request := store.PersonMergeRequest{SurvivorID: survivor.ID, AbsorbedID: absorbed.ID, ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision, IdempotencyKey: "synthetic-survivor-only-limit", Actor: "agent:synthetic-grant"}
+	called := false
+	_, err = st.MergePersonsAuthorizedContext(t.Context(), request, func(_ context.Context, scope *store.IdentityGrantSelection) error {
+		called = true
+		ids := make([]int64, len(scope.Persons))
+		for i, person := range scope.Persons {
+			ids[i] = person.ID
+		}
+		assertions.ElementsMatch([]int64{survivor.ID, absorbed.ID}, ids)
+		assertions.Empty(scope.AddressBooks)
+		return nil
+	})
+	requirements.NoError(err)
+	assertions.True(called)
+}

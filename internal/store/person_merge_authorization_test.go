@@ -12,17 +12,11 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-type scopedPersonMergeStore interface {
-	MergePersonsAuthorizedContext(ctx context.Context, request store.PersonMergeRequest, authorize store.PersonEditAuthorizer) (*store.PersonMergeResult, error)
-}
-
 // The callback must run before mutation and again before a receipt is replayed.
 func TestPersonMergeAuthorizationDenialAndFreshReplay(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := storetest.New(t).Store
-	backend, available := any(st).(scopedPersonMergeStore)
-	requirements.True(available, "native scoped merge admission must exist")
 	first := newTestPerson(t, st)
 	participant, err := st.EnsureParticipant("absorbed-scope@example.test", "Absorbed Scope", "example.test")
 	requirements.NoError(err)
@@ -42,7 +36,7 @@ func TestPersonMergeAuthorizationDenialAndFreshReplay(t *testing.T) {
 		assertions.Equal(map[int64]string{first: survivor.VCardUID, absorbed.ID: absorbed.VCardUID}, identities)
 		return denied
 	}
-	_, err = backend.MergePersonsAuthorizedContext(t.Context(), request, authorize)
+	_, err = st.MergePersonsAuthorizedContext(t.Context(), request, authorize)
 	requirements.ErrorIs(err, denied)
 	assertions.Equal(1, attempts)
 	actualSurvivor, err := st.GetPerson(first)
@@ -51,7 +45,7 @@ func TestPersonMergeAuthorizationDenialAndFreshReplay(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(survivor, actualSurvivor)
 	assertions.Equal(absorbed, actualAbsorbed)
-	committed, err := backend.MergePersonsAuthorizedContext(t.Context(), request, func(context.Context, *store.IdentityGrantSelection) error { return nil })
+	committed, err := st.MergePersonsAuthorizedContext(t.Context(), request, func(context.Context, *store.IdentityGrantSelection) error { return nil })
 	requirements.NoError(err)
 	_, err = st.GetPerson(absorbed.ID)
 	requirements.ErrorIs(err, store.ErrPersonNotFound)
@@ -65,11 +59,11 @@ func TestPersonMergeAuthorizationDenialAndFreshReplay(t *testing.T) {
 		assertions.Equal(map[int64]string{first: survivor.VCardUID, absorbed.ID: absorbed.VCardUID}, identities)
 		return denied
 	}
-	replay, err := backend.MergePersonsAuthorizedContext(t.Context(), request, replayAuthorize)
+	replay, err := st.MergePersonsAuthorizedContext(t.Context(), request, replayAuthorize)
 	requirements.ErrorIs(err, denied)
 	assertions.Nil(replay)
 	assertions.True(replayScopeSeen)
-	replay, err = backend.MergePersonsAuthorizedContext(t.Context(), request, func(context.Context, *store.IdentityGrantSelection) error { return nil })
+	replay, err = st.MergePersonsAuthorizedContext(t.Context(), request, func(context.Context, *store.IdentityGrantSelection) error { return nil })
 	requirements.NoError(err)
 	wantReceipt, err := json.Marshal(committed)
 	requirements.NoError(err)

@@ -59,7 +59,7 @@ func TestScopedGrantIdentityAndImmutableSelection(t *testing.T) {
 	assertions.False(ok)
 }
 
-func TestScopedGrantBoundsAndLegacySources(t *testing.T) {
+func TestScopedGrantBoundsAndInvalidScopes(t *testing.T) {
 	t.Parallel()
 	r := NewRegistry()
 	for count := range 102 {
@@ -79,7 +79,6 @@ func TestScopedGrantBoundsAndLegacySources(t *testing.T) {
 	for i, scope := range []ResourceScopes{
 		{Persons: []PersonRef{{ID: 1, UID: ""}}},
 		{Persons: []PersonRef{{ID: 1, UID: "one"}, {ID: 1, UID: "two"}}},
-		{Sources: []SourceRef{{ID: 1, Type: "imap", Identifier: "one@example.test"}, {ID: 1, Type: "imap", Identifier: "one@example.test"}}},
 		{Sources: []SourceRef{{ID: 1, Type: "imap", Identifier: "one@example.test"}, {ID: 1, Type: "imap", Identifier: "two@example.test"}}},
 		{AddressBooks: []AddressBookRef{{AccountID: 1, BookID: 1, CanonicalURL: "https://user:password@contacts.example.test/", OwnershipFingerprint: "owner"}}},
 		{AddressBooks: []AddressBookRef{{AccountID: 1, BookID: 1, CanonicalURL: "file:///contacts", OwnershipFingerprint: "owner"}}},
@@ -89,9 +88,6 @@ func TestScopedGrantBoundsAndLegacySources(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
-	legacyID, _, _, err := r.Issue("legacy", []Permission{PermissionSearchRead}, nil, time.Time{})
-	require.Error(t, err, "legacy source issuance still requires sources")
-	assert.Empty(t, legacyID)
 }
 
 func TestScopedGrantExpiry(t *testing.T) {

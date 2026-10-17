@@ -181,3 +181,51 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
 }
+
+func TestIssueScopedAgentTokenContactSelectionSchemaBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		wantErr bool
+	}{
+		{version: "3.14.0", wantErr: true},
+		{version: "3.15.0"},
+	} {
+		t.Run(tc.version, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			postCount := 0
+			var request struct {
+				PersonIDs []int64 `json:"person_ids"`
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + tc.version + `"}`))
+			})
+			mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
+				postCount++
+				requirements.NoError(json.NewDecoder(r.Body).Decode(&request))
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"secret":"synthetic"}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
+			requirements.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+
+			grant, err := client.IssueScopedAgentToken(t.Context(), "synthetic-contact-reader", []string{"person.read"}, nil, []int64{7}, nil, nil, time.Time{})
+			if tc.wantErr {
+				requirements.Error(err)
+				assertions.Contains(err.Error(), "requires daemon API schema 3.15.0")
+				assertions.Zero(postCount, "older daemons must not receive scoped contact grants")
+				return
+			}
+			requirements.NoError(err)
+			requirements.NotNil(grant)
+			assertions.Equal(1, postCount)
+			assertions.Equal([]int64{7}, request.PersonIDs)
+		})
+	}
+}

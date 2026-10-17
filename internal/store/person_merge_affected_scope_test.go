@@ -87,3 +87,44 @@ func TestPersonMergeAuthorizationIncludesNativeAffectedOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonMergeAuthorizationIgnoresUnchangedSurvivorRelationship(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	survivor := mustPromotedPerson(t, st, "merge-survivor-only@example.test", "Synthetic Survivor")
+	absorbed := mustPromotedPerson(t, st, "merge-absorbed-only@example.test", "Synthetic Absorbed")
+	counterpart := mustPromotedPerson(t, st, "merge-survivor-counterpart@example.test", "Synthetic Counterpart")
+	edge, err := st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
+		SourcePersonID: survivor.ID, TargetPersonID: counterpart.ID, TypeSlug: "friend",
+		Source: store.ProvenanceUser, Actor: "synthetic-owner",
+	})
+	requirements.NoError(err)
+	otherBefore, err := st.GetPerson(counterpart.ID)
+	requirements.NoError(err)
+	denied := errors.New("synthetic merge scope denied")
+	request := store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "synthetic-survivor-only-relationship", Actor: "agent:synthetic-grant",
+	}
+	result, err := st.MergePersonsAuthorizedContext(t.Context(), request, func(_ context.Context, selection *store.IdentityGrantSelection) error {
+		ids := make([]int64, len(selection.Persons))
+		for i, person := range selection.Persons {
+			ids[i] = person.ID
+			if person.ID == counterpart.ID {
+				return denied
+			}
+		}
+		assertions.ElementsMatch([]int64{survivor.ID, absorbed.ID}, ids)
+		return nil
+	})
+	requirements.NoError(err)
+	requirements.NotNil(result)
+	otherAfter, err := st.GetPerson(counterpart.ID)
+	requirements.NoError(err)
+	assertions.Equal(otherBefore, otherAfter)
+	edgeAfter, err := st.GetPersonRelationshipContext(t.Context(), edge.ID)
+	requirements.NoError(err)
+	assertions.Equal(edge, edgeAfter)
+}

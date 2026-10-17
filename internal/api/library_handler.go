@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
+	"go.kenn.io/msgvault/internal/authz"
 )
 
 // Operation identifies a registered operation. It is never taken from headers.
@@ -44,7 +45,14 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		// The humago context retains this request pointer. Update it after
 		// admission so both raw handlers and the gate see caller authorization.
 		security, _ := securityFromRequest(r)
-		security.auth = requestAuthentication{Mode: AuthModeCaller}
+		security.auth = requestAuthentication{
+			Mode:      AuthModeCaller,
+			Principal: authz.Principal{ID: "caller", Kind: authz.KindCaller, Role: authz.RoleAdmin},
+		}
+		if !security.auth.Principal.Has(operationPolicy(op.OperationID).Permission) {
+			writeHumaError(ctx, http.StatusForbidden, "permission_denied", "Principal does not authorize this operation")
+			return
+		}
 		*r = *r.WithContext(context.WithValue(r.Context(), requestSecurityContextKey{}, security))
 		// Select timeout policy after admission. Keep Huma's request pointer in
 		// sync with the context and body passed through timeout and gate handling.

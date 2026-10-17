@@ -6,23 +6,13 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/authz"
 )
 
-// PersonRef binds an explicit archive person ID to its durable identity. An ID
-// reused after deletion does not inherit the former person's grant.
-type PersonRef struct {
-	ID  int64
-	UID string
-}
-
-// AddressBookRef binds native account/book identity and account ownership.
-// The native issuer resolves these fields; clients select book IDs only.
-type AddressBookRef struct {
-	AccountID            int64
-	BookID               int64
-	CanonicalURL         string
-	OwnershipFingerprint string
-}
+// PersonRef and AddressBookRef retain their durable identity bindings.
+type PersonRef = authz.PersonRef
+type AddressBookRef = authz.AddressBookRef
 
 type ResourceScopes struct {
 	Sources      []SourceRef

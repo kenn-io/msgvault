@@ -11,6 +11,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // Validate rejects duplicate, unknown, or case-variant object keys recursively.
@@ -48,7 +49,8 @@ func validate(
 	for targetType.Kind() == reflect.Pointer {
 		targetType = targetType.Elem()
 	}
-	if targetType == reflect.TypeFor[jsontext.Value]() || bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+	if targetType == reflect.TypeFor[jsontext.Value]() || targetType == reflect.TypeFor[time.Time]() ||
+		bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return nil
 	}
 

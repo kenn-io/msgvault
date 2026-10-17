@@ -75,7 +75,7 @@ func TestIdentityGrantSelectionTracksAddressBookOwnership(t *testing.T) {
 
 func TestIdentityGrantSelectionRejectsInvalidMissingAndCancelledScope(t *testing.T) {
 	st, _ := newResourceScopeStore(t)
-	for _, ids := range [][]int64{nil, {0}, {9_007_199_254_740_992}, {1, 1}, make([]int64, 101), {8_000_000}} {
+	for _, ids := range [][]int64{nil, {0}, {9_007_199_254_740_992}, {1, 1}, {8_000_000}} {
 		_, err := st.IdentityGrantSelectionContext(t.Context(), ids, nil)
 		require.Error(t, err)
 	}

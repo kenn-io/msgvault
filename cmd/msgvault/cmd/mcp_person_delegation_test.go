@@ -25,11 +25,14 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 		name               string
 		permissions        []string
 		optIn, read, write bool
+		schemaVersion      string
 	}{
-		{"reader", []string{"person.read"}, true, true, false},
-		{"editor", []string{"person.read", "person.edit"}, true, true, true},
-		{"writes disabled", []string{"person.read", "person.edit"}, false, true, false},
-		{"missing read", []string{"person.edit"}, true, false, false},
+		{"reader", []string{"person.read"}, true, true, false, ""},
+		{"editor", []string{"person.read", "person.edit"}, true, true, true, ""},
+		{"writes disabled", []string{"person.read", "person.edit"}, false, true, false, ""},
+		{"missing read", []string{"person.edit"}, true, false, false, ""},
+		{"schema 3.14.0", []string{"person.read"}, true, false, false, "3.14.0"},
+		{"schema 3.15.0", []string{"person.read"}, true, true, false, "3.15.0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -56,7 +59,7 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 				slug      string
 				valueType store.AttributeValueType
 				fieldType store.AttributeFieldType
-			}{{"synthetic_integer", store.AttributeValueInteger, store.AttributeFieldDuration}, {"synthetic_json", store.AttributeValueJSON, store.AttributeFieldJSON}} {
+			}{{"synthetic_integer", store.AttributeValueInteger, store.AttributeFieldDuration}, {"synthetic_json", store.AttributeValueJSON, store.AttributeFieldJSON}, {"synthetic_timestamp", store.AttributeValueTimestamp, store.AttributeFieldTimestamp}} {
 				_, err := fixture.store.CreateAttributeDefinitionContext(t.Context(), store.AttributeDefinitionInput{UniversalID: typed.slug, ObjectType: store.AttributeObjectPerson, Slug: typed.slug, Label: typed.slug, ValueType: typed.valueType, FieldType: typed.fieldType, APIMutable: true, IsDeletable: true})
 				requirements.NoError(err)
 			}
@@ -66,6 +69,11 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 			server := mcpDraftTestDaemon(t, fixture.grantedAdapter(), func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					r.RemoteAddr = fmt.Sprintf("192.0.2.%d:12345", requestNumber.Add(1))
+					if tc.schemaVersion != "" && r.URL.Path == "/api/v1/health" {
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + tc.schemaVersion + `"}`))
+						return
+					}
 					next.ServeHTTP(w, r)
 				})
 			})
@@ -109,6 +117,28 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 				structuredRead, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_structured_profile", Arguments: map[string]any{"person_id": person.ID}})
 				requirements.NoError(err)
 				requirements.False(structuredRead.IsError, mcpDraftResultText(t, structuredRead))
+				if tc.write {
+					encoded, err := json.Marshal(structuredRead.StructuredContent)
+					requirements.NoError(err)
+					var profileContext daemonclient.PersonStructuredContext
+					requirements.NoError(json.Unmarshal(encoded, &profileContext))
+					requirements.NotEmpty(profileContext.ETag)
+					patch := map[string]any{"dates": map[string]any{"add": []any{map[string]any{
+						"date_kind": "custom", "date_text": "Synthetic MCP contact window", "original_value": "Synthetic MCP contact window",
+						"envelope": map[string]any{
+							"source": "user", "active_from": "2026-01-01T00:00:00Z", "active_until": "2026-12-31T00:00:00Z",
+						},
+					}}}}
+					pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{
+						Name: "patch_person_profile", Arguments: map[string]any{"person_id": person.ID, "etag": profileContext.ETag, "patch": patch},
+					})
+					requirements.NoError(err)
+					assertions.False(pending.IsError, "typed profile envelope timestamps should pass MCP key validation")
+					requirements.True(pending.NeedsInput())
+					dates, err := fixture.store.ListPersonDatesContext(t.Context(), person.ID, false)
+					requirements.NoError(err)
+					assertions.Empty(dates, "the profile patch must remain uncommitted pending confirmation")
+				}
 				structuredOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_structured_profile", Arguments: map[string]any{"person_id": int64(999999)}})
 				requirements.NoError(err)
 				assertions.True(structuredOutside.IsError)
@@ -124,6 +154,18 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 				requirements.NoError(json.Unmarshal(attributeJSON, &attributeContext))
 				assertions.NotEmpty(attributeContext.ETag)
 				assertions.Equal(person.ID, attributeContext.Attributes.PersonID)
+				if tc.write {
+					timestampPending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{
+						Name: "set_person_attribute",
+						Arguments: map[string]any{
+							"person_id": person.ID, "etag": attributeContext.ETag, "attribute_slug": "synthetic_timestamp", "expected_value_id": int64(0),
+							"value": map[string]any{"type": "timestamp", "timestamp": "2026-10-17T12:00:00Z"},
+						},
+					})
+					requirements.NoError(err)
+					assertions.False(timestampPending.IsError, "typed timestamp attributes should pass MCP key validation and native preview")
+					requirements.True(timestampPending.NeedsInput())
+				}
 				attributeOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_attributes", Arguments: map[string]any{"person_id": int64(999999)}})
 				requirements.NoError(err)
 				assertions.True(attributeOutside.IsError)

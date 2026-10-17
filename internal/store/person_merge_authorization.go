@@ -22,15 +22,15 @@ func (s *Store) personMergeScopeTx(ctx context.Context, tx *loggedTx, survivorID
 	err := identityReadRows(ctx, tx, `SELECT p.id FROM persons p
  WHERE p.id IN (?, ?) OR EXISTS (
  SELECT 1 FROM person_relationships r
- WHERE (r.source_person_id = p.id AND r.target_person_id IN (?, ?))
- OR (r.target_person_id = p.id AND r.source_person_id IN (?, ?))) OR EXISTS (
+ WHERE (r.source_person_id = p.id AND r.target_person_id = ?)
+ OR (r.target_person_id = p.id AND r.source_person_id = ?)) OR EXISTS (
  SELECT 1 FROM person_attribute_values v WHERE v.person_id = p.id
  AND v.value_record_type = 'person' AND v.value_record_id = ?) OR EXISTS (
  SELECT 1 FROM person_relationship_reviews review WHERE review.person_id = p.id
  AND (review.matched_person_id = ? OR EXISTS (
  SELECT 1 FROM person_relationships r WHERE r.id = review.accepted_relationship_id
  AND (r.source_person_id = ? OR r.target_person_id = ?))))
- ORDER BY p.id LIMIT 101`, []any{survivorID, absorbedID, survivorID, absorbedID, survivorID, absorbedID, absorbedID, absorbedID, absorbedID, absorbedID}, func(rows *loggedRows) error {
+	ORDER BY p.id LIMIT 101`, []any{survivorID, absorbedID, absorbedID, absorbedID, absorbedID, absorbedID, absorbedID, absorbedID}, func(rows *loggedRows) error {
 		var id int64
 		if err := rows.Scan(&id); err != nil {
 			return err

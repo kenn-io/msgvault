@@ -13,21 +13,17 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 )
 
-// Every admitted read has either a source filter or an object-source check.
-// SQL, export, administrative reads, and unsupported analytics remain owner-only.
-var agentReadPermissions = map[string]agentgrant.Permission{
-	"searchCLI": agentgrant.PermissionSearchRead, "searchMessages": agentgrant.PermissionSearchRead,
-	"fastSearch": agentgrant.PermissionSearchRead, "deepSearch": agentgrant.PermissionSearchRead,
-	"getAggregates": agentgrant.PermissionSearchRead, "getSubAggregates": agentgrant.PermissionSearchRead,
-	"filterMessages": agentgrant.PermissionSearchRead, "listMessages": agentgrant.PermissionSearchRead,
-	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
-	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
-	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
-	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
-	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
-	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
-}
+// These legacy reads have grant-specific snapshot and resource authorization.
+// Native source support for role credentials is classified separately.
+var agentReadPermissions = func() map[string]agentgrant.Permission {
+	permissions := make(map[string]agentgrant.Permission)
+	for id, policy := range operationPolicies {
+		if policy.AgentReadPermission != "" {
+			permissions[id] = policy.AgentReadPermission
+		}
+	}
+	return permissions
+}()
 
 func agentReadDenied(permission agentgrant.Permission) *apiHTTPError {
 	return newAPIHTTPError(http.StatusForbidden, "permission_denied", "Agent grant requires "+string(permission)+" on the requested sources")

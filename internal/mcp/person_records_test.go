@@ -95,6 +95,29 @@ func TestPersonAttributePreviewMustBeDryRun(t *testing.T) {
 	}
 }
 
+func TestDecodePersonRecordArgsAcceptsTimestamps(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	attributeTimestamp := time.Date(2026, 10, 18, 1, 2, 3, 0, time.UTC)
+	args, err := decodePersonRecordArgs(toolRequest{argumentsJSON: []byte(`{"person_id":7,"etag":"\"person-7-r1\"","attribute_slug":"synthetic_timestamp","expected_value_id":0,"value":{"type":"timestamp","timestamp":"2026-10-18T01:02:03Z"}}`)}, true)
+	require.NoError(err)
+	require.NotNil(args.Value)
+	require.NotNil(args.Value.Timestamp)
+	assert.Equal(attributeTimestamp, *args.Value.Timestamp)
+
+	profileFrom := time.Date(2026, 10, 18, 2, 3, 4, 0, time.UTC)
+	profileUntil := time.Date(2027, 10, 18, 2, 3, 4, 0, time.UTC)
+	profile, err := decodePersonRecordArgs(toolRequest{argumentsJSON: []byte(`{"person_id":7,"etag":"\"person-7-r1\"","patch":{"dates":{"add":[{"date_kind":"anniversary","envelope":{"source":"user","active_from":"2026-10-18T02:03:04Z","active_until":"2027-10-18T02:03:04Z"}}]}}}`)}, true)
+	require.NoError(err)
+	require.NotNil(profile.Patch)
+	require.NotNil(profile.Patch.Dates)
+	require.Len(profile.Patch.Dates.Add, 1)
+	require.NotNil(profile.Patch.Dates.Add[0].Envelope.ActiveFrom)
+	require.NotNil(profile.Patch.Dates.Add[0].Envelope.ActiveUntil)
+	assert.Equal(profileFrom, *profile.Patch.Dates.Add[0].Envelope.ActiveFrom)
+	assert.Equal(profileUntil, *profile.Patch.Dates.Add[0].Envelope.ActiveUntil)
+}
+
 type personAttributeNativePreviewFixture struct {
 	session       *sdkmcp.ClientSession
 	store         *store.Store
@@ -362,10 +385,7 @@ func TestPersonAttributeConfirmationBindsStablePreview(t *testing.T) {
 			}
 			assertions.Equal(prompt.Message, secondPrompt.Message, "equivalent raw JSON and changed native trial clocks must preserve disclosure and hash")
 			firstHash := hashPattern.FindStringSubmatch(prompt.Message)
-			secondHash := hashPattern.FindStringSubmatch(secondPrompt.Message)
 			requirements.Len(firstHash, 2)
-			requirements.Len(secondHash, 2)
-			assertions.Equal(firstHash[1], secondHash[1])
 
 			result, err := fixture.session.CallTool(t.Context(), &sdkmcp.CallToolParams{
 				Name: tool, Arguments: jsontext.Value(reorderedArgs), RequestState: pending.RequestState,

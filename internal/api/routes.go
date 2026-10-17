@@ -237,7 +237,11 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 		return
 	}
 	if auth.Mode != AuthModeRequired {
-		next(ctx)
+		if op := ctx.Operation(); op != nil && auth.Principal.Has(operationPolicy(op.OperationID).Permission) {
+			next(ctx)
+			return
+		}
+		writeHumaError(ctx, http.StatusForbidden, "permission_denied", "Principal does not authorize this operation")
 		return
 	}
 
