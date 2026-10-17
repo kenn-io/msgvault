@@ -134,7 +134,7 @@ func (w *PersonWorker) runOnce(
 		// A stop request lands between published batches. The scan returns
 		// before deleted-person reconciliation; the next pass recomputes the
 		// changed set from vector revisions and resumes with the rest.
-		if start > 0 && jobctx.PreemptionRequested(ctx) {
+		if (start > 0 || jobctx.HasProgress(ctx)) && jobctx.PreemptionRequested(ctx) {
 			return result, runErr
 		}
 		end := min(start+w.deps.BatchSize, len(changed))
@@ -414,6 +414,9 @@ func (w *GenerationWorker) RunOnce(
 		return RunResult{}, fmt.Errorf("message embedding pass scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunOnce(ctx, gen, messageScope)
+	if jobctx.PreemptionRequested(ctx) && jobctx.HasProgress(ctx) {
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	var personResult RunResult
 	var personErr error
 	if w.personScanned == nil {
@@ -476,6 +479,9 @@ func (w *GenerationWorker) RunBackstop(
 		return RunResult{}, fmt.Errorf("person embedding backstop scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunBackstop(ctx, gen, messageScope)
+	if jobctx.PreemptionRequested(ctx) && jobctx.HasProgress(ctx) {
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	personResult, personErr := w.persons.RunOnce(ctx, gen, personScope)
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }

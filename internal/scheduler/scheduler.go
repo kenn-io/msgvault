@@ -469,9 +469,7 @@ func (s *Scheduler) SetDocumentVectorJob(job func(context.Context) error, schedu
 
 func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context) error, schedule string, runAfterSync bool) error {
 	if run == nil {
-		if s.IsJobScheduled(name) {
-			s.RemoveJob(name)
-		}
+		s.RemoveJob(name)
 		return nil
 	}
 	return s.addJob(Job{
@@ -998,8 +996,15 @@ func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.D
 	preemptCtx, requestStop := jobctx.WithPreemption(baseCtx)
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	yc, canYield := s.work.(YieldChecker)
+	cleanup := func() { cancel(nil); stopBudget() }
+	if !preemptible && !canYield && !(cooperative && maxRuntime > 0) {
+		return ctx, cleanup
+	}
+	pollInterval, yieldAfter := yieldPollInterval, preemptAfter
+	done := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(yieldPollInterval)
+		defer close(done)
+		ticker := time.NewTicker(pollInterval)
 		defer ticker.Stop()
 		var expired <-chan time.Time
 		if cooperative && maxRuntime > 0 {
@@ -1026,7 +1031,7 @@ func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.D
 				case preempted:
 					cancel(ErrYieldedToWaiter)
 					return
-				case preemptible && (cooperative || time.Since(started) >= preemptAfter) && s.hasQueuedRuns():
+				case preemptible && (cooperative || time.Since(started) >= yieldAfter) && s.hasQueuedRuns():
 					reason = "scheduled work waiting"
 				default:
 					continue
@@ -1041,7 +1046,7 @@ func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.D
 			preempted = true
 		}
 	}()
-	return ctx, func() { cancel(nil); stopBudget() }
+	return ctx, func() { cleanup(); <-done }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {

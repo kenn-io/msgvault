@@ -2367,8 +2367,10 @@ func TestGenericJobShutdownContextFinishesCleanly(t *testing.T) {
 	started := make(chan struct{})
 	s := New(func(context.Context, string) error { return nil })
 	require.NoError(s.AddJob(Job{
-		Name:     "attachment-maintenance",
-		Schedule: "17 3 * * *",
+		Name:        "attachment-maintenance",
+		Schedule:    "17 3 * * *",
+		Cooperative: true,
+		MaxRuntime:  time.Minute,
 		Run: func(ctx context.Context) error {
 			close(started)
 			<-ctx.Done()
@@ -3610,5 +3612,17 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 		assert.Empty(t, status.LastError, "a pass that saved progress clears the earlier failure")
 		close(release)
 		synctest.Wait()
+	})
+}
+
+func TestJobContextCleanupStopsMonitor(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		s := New(nil)
+		defer func() { <-s.Stop().Done() }()
+		ctx, cleanup := s.jobContext("indexing", true, time.Minute, true)
+		cleanup()
+		time.Sleep(2 * time.Minute)
+		assert.ErrorIs(t, ctx.Err(), context.Canceled)
+		assert.False(t, jobctx.PreemptionRequested(ctx), "the monitor cannot request a stop after cleanup")
 	})
 }

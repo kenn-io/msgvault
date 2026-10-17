@@ -792,14 +792,17 @@ func TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion(t *testing.T) {
 	source := newPersonWorkerSource(personDocument(99, "rev-99", "Synthetic Ninety-Nine"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
-	worker := newTestPersonWorker(source, backend, client, 2)
-	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	persons := newTestPersonWorker(source, backend, client, 2)
+	_, err := persons.RunOnce(t.Context(), 9, testEmbeddingPassScope())
 	must.NoError(err)
 
 	source.delete(99)
 	source.put(personDocument(10, "rev-10", "Synthetic Ten"))
 	source.put(personDocument(20, "rev-20", "Synthetic Twenty"))
 	source.put(personDocument(30, "rev-30", "Synthetic Thirty"))
+	backend.building = &vector.Generation{ID: 9}
+	messages := &personWorkerMessageRunner{runOnceResult: &RunResult{Contextual: &ContextConvergence{}}}
+	worker := NewGenerationWorker(messages, persons)
 	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
 	client.onEmbed = requestStop
 	result, err := worker.RunOnce(ctx, 9, testEmbeddingPassScope())
@@ -1017,11 +1020,15 @@ type personWorkerMessageRunner struct {
 	runOnceResult  *RunResult
 	runOnceErr     error
 	runBackstopErr error
+	onRun          func(context.Context)
 }
 
 func (r *personWorkerMessageRunner) RunOnce(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
+	if r.onRun != nil {
+		r.onRun(ctx)
+	}
 	r.runOnce = append(r.runOnce, gen)
 	if r.runOnceResult != nil {
 		return *r.runOnceResult, r.runOnceErr
@@ -1030,8 +1037,11 @@ func (r *personWorkerMessageRunner) RunOnce(
 }
 
 func (r *personWorkerMessageRunner) RunBackstop(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
+	if r.onRun != nil {
+		r.onRun(ctx)
+	}
 	r.runBackstop = append(r.runBackstop, gen)
 	return RunResult{}, r.runBackstopErr
 }
@@ -1105,33 +1115,6 @@ func TestGenerationWorkerScansPeopleOnlyAtContextualBuildBoundaries(t *testing.T
 	must.Len(client.calls, 2, "final contextual pass must recheck the person corpus")
 }
 
-// TestGenerationWorkerRescansPeopleAfterStoppedScan catches an intermediate
-// contextual pass skipping people whose first scan stopped early.
-func TestGenerationWorkerRescansPeopleAfterStoppedScan(t *testing.T) {
-	must := require.New(t)
-	source := newPersonWorkerSource(
-		personDocument(10, "rev-10", "Synthetic Ten"),
-		personDocument(20, "rev-20", "Synthetic Twenty"),
-	)
-	backend := newPersonWorkerBackend()
-	backend.building = &vector.Generation{ID: 44}
-	ctx, requestStop := jobctx.WithPreemption(t.Context())
-	client := &personWorkerClient{onEmbed: requestStop}
-	messages := &personWorkerMessageRunner{runOnceResult: &RunResult{
-		Contextual: &ContextConvergence{Converged: false},
-	}}
-	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 1))
-
-	_, err := worker.RunOnce(ctx, 44, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 1)
-	client.onEmbed = nil
-	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 2, "the next intermediate pass finishes the stopped person scan")
-	must.Equal([][]string{{"Synthetic Twenty"}}, client.calls[1])
-}
-
 // TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans catches the
 // coordinator opening person rows for skipped intermediate contextual passes.
 func TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans(t *testing.T) {
@@ -1203,4 +1186,43 @@ func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
 	must.NoError(err)
 	check.Equal([]vector.GenerationID{45}, messages.runBackstop)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+}
+
+func TestGenerationWorkerStopBetweenPhases(t *testing.T) {
+	for _, backstop := range []bool{false, true} {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("backstop=%t/committed=%t", backstop, committed), func(t *testing.T) {
+				backend := newPersonWorkerBackend()
+				client := &personWorkerClient{}
+				ctx, stop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+				messages := &personWorkerMessageRunner{onRun: func(ctx context.Context) {
+					if committed {
+						jobctx.RecordProgress(ctx)
+					}
+					stop()
+				}}
+				worker := NewGenerationWorker(messages, newTestPersonWorker(
+					newPersonWorkerSource(personDocument(1, "rev", "Synthetic Person")), backend, client, 1))
+				run := worker.RunOnce
+				if backstop {
+					run = worker.RunBackstop
+				}
+				_, err := run(ctx, 42, testEmbeddingPassScope())
+				require.NoError(t, err)
+				if committed {
+					assert.Empty(t, client.calls, "committed message work yields before person requests")
+					_, err = worker.RunPersonsOnce(ctx, 42, testEmbeddingPassScope())
+					require.NoError(t, err)
+					assert.Empty(t, client.calls, "person-only maintenance shares the pass progress")
+				} else {
+					assert.Len(t, client.calls, 1, "an empty pass may publish its first person batch")
+				}
+				_, err = run(jobctx.WithProgress(t.Context()), 42, testEmbeddingPassScope())
+				require.NoError(t, err)
+				revisions, err := backend.ListPersonRevisions(t.Context(), 42)
+				require.NoError(t, err)
+				assert.Equal(t, map[int64]string{1: "rev"}, revisions, "the continuation reconciles pending people")
+			})
+		}
+	}
 }

@@ -2506,7 +2506,9 @@ sync, other scheduled work, or an API request waits, or after one minute, the
 pass finishes its current publication, such as a message batch or a
 conversation day, and releases the gate. A pass that committed work then
 queues one continuation behind the waiting work. Post-sync embedding starts
-after the sync releases the gate and waits for its own turn.
+after the sync releases the gate and waits for its own turn. Each embedding
+request uses `vector.embeddings.timeout`. A publication can make several
+requests, so one minute requests a stop rather than setting a hard deadline.
 Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
 state for every scheduled source as `scheduler_queued`, `scheduler_queued_at`,

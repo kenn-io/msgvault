@@ -243,6 +243,9 @@ func (e EmbeddingsConfig) Validate() error {
 	if e.Dimension <= 0 {
 		return fmt.Errorf("vector.embeddings.dimension: must be positive, got %d", e.Dimension)
 	}
+	if e.Timeout < 0 {
+		return errors.New("vector.embeddings.timeout: must be zero or positive")
+	}
 	if e.BatchSize <= 0 {
 		return fmt.Errorf("vector.embeddings.batch_size: must be positive, got %d", e.BatchSize)
 	}
