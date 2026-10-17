@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- MCP result pagination advances past offset 1000, up to a 10,000,000 offset ceiling. `search_by_domains` returns `returned`, `offset`, and `has_more` with pages capped at 500; a zero limit now consistently uses the default 100.
+
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
