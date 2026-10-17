@@ -545,6 +545,109 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 	checks.Equal("expired cursor", run.ErrorMessage.String)
 }
 
+// Missing FTS objects must not let a superseded importer report success.
+//
+//nolint:testifylint // Write outcomes are independent checks and must remain nonfatal.
+func TestScopedStoreRejectsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	// Use a SQLite file in both database lanes: only removing the index is
+	// dialect-specific; the generation fence is shared.
+	dbPath := filepath.Join(t.TempDir(), "no-fts.db")
+	seed, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	seedClosed := false
+	t.Cleanup(func() {
+		if !seedClosed {
+			_ = seed.Close()
+		}
+	})
+	requirements.NoError(seed.InitSchema())
+	_, err = seed.DB().Exec(`DROP TABLE IF EXISTS messages_fts`)
+	requirements.NoError(err)
+	requirements.NoError(seed.Close())
+	seedClosed = true
+
+	// InitSchema would recreate the index, so reopen with only the real
+	// open-time availability probe.
+	st, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.False(st.FTS5Available())
+
+	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "generation-fence-message",
+		MessageType:     "email",
+		SizeEstimate:    1000,
+	})
+	requirements.NoError(err)
+	otherSource, err := st.GetOrCreateSource("gmail", "other@example.com")
+	requirements.NoError(err)
+	otherConversationID, err := st.EnsureConversation(otherSource.ID, "other-thread", "Other Thread")
+	requirements.NoError(err)
+	otherMessageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  otherConversationID,
+		SourceID:        otherSource.ID,
+		SourceMessageID: "other-generation-message",
+		MessageType:     "email",
+	})
+	requirements.NoError(err)
+
+	oldID, err := st.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	stale := st.ScopedToSync(source.ID, oldID)
+	requirements.NoError(st.FailSync(oldID, "worker stopped"))
+	newID, err := st.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	live := st.ScopedToSync(source.ID, newID)
+	missingMessageID := otherMessageID + 1
+
+	for _, entry := range []struct {
+		name  string
+		write func(*store.Store, int64) error
+	}{
+		{"UpsertFTS", func(view *store.Store, id int64) error {
+			return view.UpsertFTS(id, "", "", "", "", "")
+		}},
+		{"UpsertFTSContext", func(view *store.Store, id int64) error {
+			return view.UpsertFTSContext(t.Context(), id, "", "", "", "", "")
+		}},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			checks := assert.New(t)
+			for _, id := range []int64{messageID, otherMessageID, missingMessageID} {
+				checks.ErrorIs(entry.write(stale, id), store.ErrSyncRunSuperseded)
+			}
+			checks.NoError(entry.write(live, messageID))
+			checks.ErrorContains(entry.write(live, otherMessageID), "is scoped to source")
+			checks.ErrorIs(entry.write(live, missingMessageID), sql.ErrNoRows)
+			for _, id := range []int64{messageID, otherMessageID, missingMessageID, 0, -1} {
+				checks.NoError(entry.write(st, id))
+			}
+		})
+	}
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	expired, expire := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+	defer expire()
+	for _, view := range []*store.Store{stale, live} {
+		checks.ErrorIs(view.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""), context.Canceled)
+		checks.ErrorIs(view.UpsertFTSContext(expired, messageID, "", "", "", "", ""), context.DeadlineExceeded)
+	}
+	checks.NoError(st.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""))
+	checks.NoError(st.UpsertFTSContext(expired, messageID, "", "", "", "", ""))
+	var indexCount int
+	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'messages_fts'`).Scan(&indexCount))
+	checks.Zero(indexCount)
+}
+
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)
