@@ -65,7 +65,7 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
-  import { reportSearch } from '../../telemetry/actions';
+  import { reportAction, reportSearch } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
   type IdentityFileScope =
@@ -527,7 +527,7 @@
     }
     if (!cursor) {
       reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text');
-      if (body.visual_query || body.visual_image_base64) reportSearch(client, body.visual_query || 'image', 'semantic');
+      if (body.visual_query || body.visual_image_base64) reportAction(client, 'search_run', 'search_type', 'semantic');
     }
     if (cursor) seenCursors.add(cursor);
     error = '';

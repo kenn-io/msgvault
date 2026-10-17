@@ -315,6 +315,14 @@ func TestRunScheduledSourceSkipsPackWithoutNewBlobs(t *testing.T) {
 	assert.NotContains(f.logs.String(), "automatic attachment maintenance")
 	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
 	assert.Nil(f.packedEntry(hash), "nothing was pending")
+
+	err := runScheduledSource(t.Context(), f.maintenance, true, func(context.Context) error {
+		return scheduler.ErrDeferUntilNextTrigger
+	})
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "a clean lease release preserves the bare deferral")
+	lease, err := f.maintenance.coordinator.AcquireMaintenance(t.Context())
+	require.NoError(t, err, "the deferred run released its mutation lease")
+	require.NoError(t, lease.Release())
 }
 
 func TestRunScheduledSourceDefersPackAfterNewBlobs(t *testing.T) {

@@ -1766,8 +1766,8 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceType := r.URL.Query().Get("source_type")
-	security, _ := r.Context().Value(requestSecurityContextKey{}).(requestSecurity)
-	manual := (security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback) && requestOriginMatches(r, security.scheme, security.host)
+	security, _ := securityFromRequest(r)
+	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
 	scheduling := classifySourceScheduling(sourceType, account)
 	switch scheduling.kind {

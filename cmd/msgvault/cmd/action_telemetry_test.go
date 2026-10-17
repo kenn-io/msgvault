@@ -2,13 +2,11 @@ package cmd
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -19,22 +17,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
-	setup := require.New(t)
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
-	path := filepath.Join(t.TempDir(), "muesli.db")
-	db, err := sql.Open("sqlite3", path)
-	setup.NoError(err)
-	_, err = db.Exec(`CREATE TABLE meetings (id INTEGER PRIMARY KEY,title TEXT,start_time TEXT,created_at TEXT,raw_transcript TEXT)`)
-	setup.NoError(err)
-	setup.NoError(db.Close())
+	path := newMuesliMeetingsFixture(t, false)
 	disabled := false
 	for action, run := range map[string]func(*cobra.Command) error{
 		"search":       func(cmd *cobra.Command) error { return runHTTPSearch(cmd, "needle") },
@@ -144,6 +142,10 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 }
 
 func TestCLIActionDeliveryDeadline(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
@@ -166,9 +168,30 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 	terminal := cliActionTerminal
 	t.Cleanup(func() { cliActionTerminal = terminal })
-	for _, stream := range []string{"none", "stdin", "stdout", "stderr"} {
-		t.Run(stream, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, stream, env string
+		agent             bool
+		want              bool
+	}{
+		{name: "none"},
+		{name: "stdin", stream: "stdin", want: true},
+		{name: "stdout", stream: "stdout", want: true},
+		{name: "stderr", stream: "stderr", want: true},
+		{name: "Codex", stream: "stdout", env: "CODEX_THREAD_ID"},
+		{name: "Claude Code", stream: "stdout", env: "CLAUDECODE"},
+		{name: "daemon subprocess", stream: "stdout", env: daemonCLISubprocessEnv},
+		{name: "delegated agent", stream: "stdout", agent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CODEX_THREAD_ID", "")
+			t.Setenv("CLAUDECODE", "")
+			t.Setenv(daemonCLISubprocessEnv, "")
+			if tc.env != "" {
+				t.Setenv(tc.env, strconv.Itoa(os.Getppid()))
+			}
+			stream := tc.stream
 			cmd := &cobra.Command{Use: "sync"}
+			cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: tc.agent}}))
 			cmd.SetIn(strings.NewReader(""))
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
@@ -184,15 +207,39 @@ func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 				cmd.SetErr(os.Stderr)
 				terminalFD = os.Stderr.Fd()
 			}
-			cliActionTerminal = func(fd uintptr) bool { return stream != "none" && fd == terminalFD }
-			assert.Equal(t, stream != "none", humanCLIAction(cmd))
+			cliActionTerminal = func(fd uintptr) bool { return stream != "" && fd == terminalFD }
+			assert.Equal(t, tc.want, humanCLIAction(cmd))
 		})
 	}
-	assert, cmd := assert.New(t), &cobra.Command{Use: "search"}
-	assert.True(reportsCLIAction(cmd, true))
-	cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: true}}))
-	assert.False(reportsCLIAction(cmd, true))
-	cmd.SetContext(t.Context())
-	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-	assert.False(reportsCLIAction(cmd, true))
+}
+
+func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	terminal := cliActionTerminal
+	cliActionTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { cliActionTerminal = terminal })
+	for _, tc := range []struct {
+		name, prefixed, generic string
+		configEnabled           bool
+	}{
+		{name: "config"},
+		{name: "prefixed env", prefixed: "0", configEnabled: true},
+		{name: "generic env", prefixed: "1", generic: "0", configEnabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(telemetry.EnabledEnv, tc.prefixed)
+			t.Setenv(posthog.GenericEnabledEnv, tc.generic)
+			client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				assert.Fail(t, "disabled telemetry sent a request", r.URL.String())
+				return nil, fmt.Errorf("unexpected request")
+			})}})
+			require.NoError(t, err)
+			cmd := &cobra.Command{Use: "search"}
+			cfg := config.NewDefaultConfig()
+			cfg.Telemetry.Enabled = &tc.configEnabled
+			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			reportCLIAction(cmd, client, "search_run", "search_type", "text")
+		})
+	}
 }

@@ -8,12 +8,9 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/telemetry"
 	apiclient "go.kenn.io/msgvault/pkg/client/generated"
 )
-
-func reportsCLIAction(cmd *cobra.Command, terminal bool) bool {
-	return terminal && !isAgentMode(invocationFromCommand(cmd)) && !isDaemonCLISubprocess()
-}
 
 var cliActionTerminal = func(fd uintptr) bool { return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd) }
 
@@ -25,11 +22,18 @@ func humanCLIAction(cmd *cobra.Command) bool {
 			break
 		}
 	}
-	return reportsCLIAction(cmd, terminal)
+	return terminal && !isAgentMode(invocationFromCommand(cmd)) && !isDaemonCLISubprocess() && os.Getenv("CODEX_THREAD_ID") == "" && os.Getenv("CLAUDECODE") == ""
 }
 
 func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, property, value string) {
 	if !humanCLIAction(cmd) {
+		return
+	}
+	enabled := true
+	if inv := invocationFromCommand(cmd); inv != nil && inv.cfg != nil {
+		enabled = inv.cfg.Telemetry.EnabledOrDefault()
+	}
+	if !telemetry.Enabled(enabled) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 250*time.Millisecond)

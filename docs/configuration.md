@@ -2087,15 +2087,16 @@ features once published. No startup hook or entrypoint wrapper is required.
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
-  `show-message`, including meeting transcripts. Each surface counts once per install
+  `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.
 - `sync_finished` after each successful manual archive sync, including no-change runs
   and remote Muesli scans. The daemon reports browser-started sync completions even
   after you leave Sources. The CLI reports its own completions with a best-effort
   250 ms bound. Delivery failures leave
   successful commands successful. CLI actions require a terminal on stdin, stdout,
-  or stderr, so a person can pipe output while unattended runs stay excluded. Agents,
-  subprocesses, probes, hooks, and watch loops don't report CLI actions. CardDAV contact
+  or stderr, so a person can pipe output while unattended runs stay excluded. Agent shells
+  (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
+  and watch loops don't report CLI actions. CardDAV contact
   sync is separate.
 - `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
   terminal UI exits normally or after an interrupt. Browser sessions add visible

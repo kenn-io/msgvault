@@ -76,6 +76,11 @@ func CaptureHandler(reporter *posthog.Reporter, dataDir string) http.Handler {
 	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter), captureEvent: reporter.Capture, dir: dataDir, now: time.Now}
 }
 
+// Enabled applies the environment overrides to the configured telemetry choice.
+func Enabled(configEnabled bool) bool {
+	return (strings.TrimSpace(os.Getenv(EnabledEnv)) != "" || configEnabled) && posthog.EnabledFromEnv(envPrefix)
+}
+
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),
@@ -94,7 +99,7 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 		}
 		allowed = append(allowed, posthog.WithAllowedEvent(event, properties...))
 	}
-	if strings.TrimSpace(os.Getenv(EnabledEnv)) == "" && !opts.ConfigEnabled {
+	if !Enabled(opts.ConfigEnabled) {
 		// Only the daemon reports, so the process-wide switch is this reporter's switch.
 		posthog.DisableProcess()
 	}
