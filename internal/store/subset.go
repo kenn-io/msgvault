@@ -576,6 +576,11 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			`person_id IN (SELECT id FROM persons)`); err != nil {
 			return nil, fmt.Errorf("copy person tracking: %w", err)
 		}
+		for _, table := range []string{"person_tier_opt_outs", "person_tier_state", "person_tier_observations", "person_tier_events"} {
+			if _, err := copyByName(tx, table, `person_id IN (SELECT id FROM persons)`); err != nil {
+				return nil, fmt.Errorf("copy %s: %w", table, err)
+			}
+		}
 		if options.IncludeVCardResources {
 			if err := copyVCardResourceEnvelopes(tx); err != nil {
 				return nil, err
