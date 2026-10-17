@@ -33,9 +33,13 @@ import (
 )
 
 const (
-	maxLimit               = 1000
-	maxSearchMessagesLimit = 50
-	defaultSearchLimit     = 20
+	maxLimit = 1000
+	// An offset walks a result set rather than sizing one page. Keep its
+	// conversion and SQL OFFSET bounded independently of maxLimit.
+	maxOffset               = 10_000_000
+	maxSearchByDomainsLimit = 500
+	maxSearchMessagesLimit  = 50
+	defaultSearchLimit      = 20
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
 	searchContextChars   = 300
@@ -752,7 +756,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		return toolErrorResult(err.Error()), nil
 	}
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := offsetArg(args)
 
 	account, _ := args[toolArgAccount].(string)
 	selection, err := h.resolveAccount(ctx, account)
@@ -938,7 +942,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 		return toolErrorResult(err.Error()), nil
 	}
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := offsetArg(args)
 
 	account, _ := args[toolArgAccount].(string)
 	selection, err := h.resolveAccount(ctx, account)
@@ -1097,7 +1101,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	sourceID := selection.sourceID
 
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := offsetArg(args)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 
@@ -1249,7 +1253,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := offsetArg(args)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
@@ -1862,7 +1866,7 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 
 	mode, _ := args[toolArgMode].(string)
 	limit := limitArg(args, toolArgLimit, 10)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := offsetArg(args)
 
 	switch mode {
 	case "", "keyword":
@@ -2090,7 +2094,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	filter := query.MessageFilter{
 		Pagination: query.Pagination{
 			Limit:  listLimitArg(args) + 1,
-			Offset: limitArg(args, toolArgOffset, 0),
+			Offset: offsetArg(args),
 		},
 	}
 	selection.applyToFilter(&filter)
@@ -2258,6 +2262,18 @@ func limitArg(args map[string]any, key string, def int) int {
 	}
 	if math.IsInf(v, 1) || v > float64(maxLimit) {
 		return maxLimit
+	}
+	return int(v)
+}
+
+// offsetArg reads a pagination offset without the page-size clamp.
+func offsetArg(args map[string]any) int {
+	v, ok := args[toolArgOffset].(float64)
+	if !ok || math.IsNaN(v) || v < 0 {
+		return 0
+	}
+	if math.IsInf(v, 1) || v > float64(maxOffset) {
+		return maxOffset
 	}
 	return int(v)
 }
@@ -2573,8 +2589,11 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("at least one domain is required"), nil
 	}
 
-	limit := limitArg(args, toolArgLimit, 100)
-	offset := limitArg(args, toolArgOffset, 0)
+	limit := min(limitArg(args, toolArgLimit, 100), maxSearchByDomainsLimit)
+	if limit == 0 {
+		limit = 100
+	}
+	offset := offsetArg(args)
 
 	afterDate, err := getDateArg(args, toolArgAfter)
 	if err != nil {
@@ -2585,12 +2604,36 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
+	results, err := h.pageSearchByDomains(ctx, domains, afterDate, beforeDate, limit+1, offset)
 	if err != nil {
 		return nil, newInternalError("search messages by domain", err)
 	}
 
-	return jsonResult(searchByDomainsResponse{Data: nonNilSlice(results)})
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+	return jsonResult(searchByDomainsResponse{
+		Data: nonNilSlice(results), Returned: len(results), Offset: offset, HasMore: hasMore,
+	})
+}
+
+// pageSearchByDomains collects the probe row even when the daemon caps each
+// returned page at 500. A full-size MCP page needs a second call for its probe.
+func (h *handlers) pageSearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int) ([]query.MessageSummary, error) {
+	results := make([]query.MessageSummary, 0, limit)
+	for len(results) < limit {
+		pageLimit := min(limit-len(results), maxSearchByDomainsLimit)
+		page, err := h.engine.SearchByDomains(ctx, domains, after, before, pageLimit, offset+len(results), nil)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, page...)
+		if len(page) < pageLimit {
+			break
+		}
+	}
+	return results, nil
 }
 
 func nonNilSlice[T any](values []T) []T {
