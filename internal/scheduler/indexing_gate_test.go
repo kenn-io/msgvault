@@ -18,15 +18,17 @@ import (
 
 func TestQueuedSyncGetsGateAfterIndexingPublication(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		var events []string
 		s := New(func(context.Context, string) error {
 			events = append(events, "sync")
 			return nil
 		}).WithWorkTracker(newSerialWorkTracker())
 		defer func() { <-s.Stop().Done() }()
-		require.NoError(t, s.AddAccount("user-a@example.com", "0 0 1 1 *"))
+		require.NoError(s.AddAccount("user-a@example.com", "0 0 1 1 *"))
 		committed := 0
-		require.NoError(t, s.AddJob(Job{Name: "indexing", Schedule: "0 0 1 1 *", Cooperative: true, Preemptible: true, Background: true, MaxRuntime: time.Minute,
+		require.NoError(s.AddJob(Job{Name: "indexing", Schedule: "0 0 1 1 *", Cooperative: true, Preemptible: true, Background: true, MaxRuntime: time.Minute,
 			Run: func(ctx context.Context) error {
 				for committed < 3 {
 					if jobctx.HasProgress(ctx) && jobctx.PreemptionRequested(ctx) {
@@ -40,13 +42,13 @@ func TestQueuedSyncGetsGateAfterIndexingPublication(t *testing.T) {
 				return nil
 			}}))
 		_, err := s.StartJob("indexing")
-		require.NoError(t, err)
+		require.NoError(err)
 		time.Sleep(3 * time.Second)
-		require.NoError(t, s.TriggerSync("user-a@example.com"))
+		require.NoError(s.TriggerSync("user-a@example.com"))
 		time.Sleep(time.Minute)
 		synctest.Wait()
-		assert.Equal(t, []string{"batch 1", "sync", "batch 2", "batch 3"}, events)
-		assert.False(t, s.JobStatus()[0].Running)
+		assert.Equal([]string{"batch 1", "sync", "batch 2", "batch 3"}, events)
+		assert.False(s.JobStatus()[0].Running)
 	})
 }
 
@@ -119,6 +121,8 @@ func TestEmbedJob_Run_StopRequestEndsPassAtPhaseBoundary(t *testing.T) {
 func TestContextualBackstopCompletionCountsForInterval(t *testing.T) {
 	for _, completed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
 			runner := &fakeRunner{
 				backstopResult: embed.RunResult{Contextual: &embed.ContextConvergence{ReconcileComplete: completed}},
@@ -132,12 +136,12 @@ func TestContextualBackstopCompletionCountsForInterval(t *testing.T) {
 			}
 			job.Run(ctx)
 			n, _ := runner.backstops()
-			require.Equal(t, 1, n)
+			require.Equal(1, n)
 			if completed {
-				assert.WithinDuration(t, now, job.lastBackstop[1], 0)
-				assert.Empty(t, job.interruptedBackstop)
+				assert.WithinDuration(now, job.lastBackstop[1], 0)
+				assert.Empty(job.interruptedBackstop)
 			} else {
-				assert.Empty(t, job.lastBackstop)
+				assert.Empty(job.lastBackstop)
 			}
 			// The forward pass resumes and completes the durable backstop cursor.
 			runner.runOnceResult = embed.RunResult{Contextual: &embed.ContextConvergence{ReconcileComplete: true}}
@@ -145,14 +149,14 @@ func TestContextualBackstopCompletionCountsForInterval(t *testing.T) {
 			now = now.Add(time.Minute)
 			job.Run(t.Context())
 			n, _ = runner.backstops()
-			assert.Equal(t, 1, n, "completion satisfies the interval instead of restarting the scan")
+			assert.Equal(1, n, "completion satisfies the interval instead of restarting the scan")
 			if !completed {
-				assert.WithinDuration(t, now, job.lastBackstop[1], 0)
+				assert.WithinDuration(now, job.lastBackstop[1], 0)
 			}
 			now = now.Add(time.Hour)
 			job.Run(t.Context())
 			n, _ = runner.backstops()
-			assert.Equal(t, 2, n, "the next interval starts a fresh backstop")
+			assert.Equal(2, n, "the next interval starts a fresh backstop")
 		})
 	}
 }

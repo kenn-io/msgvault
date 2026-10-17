@@ -447,7 +447,15 @@ func (s *Scheduler) SetEmbedJob(job *EmbedJob, schedule string, runAfterSync boo
 	if job != nil {
 		run = func(ctx context.Context) error { job.Run(ctx); return nil }
 	}
-	return s.setIndexingJob(embedJobName, "scheduled embedding", run, schedule, runAfterSync)
+	return embedScheduleError(schedule, s.setIndexingJob(embedJobName, "scheduled embedding", run, schedule, runAfterSync))
+}
+
+// embedScheduleError names the embed schedule in a rejected-cron error.
+func embedScheduleError(schedule string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("invalid embed cron expression %q: %w", schedule, err)
 }
 
 // SetDocumentVectorJob installs the bounded document-vector convergence job
@@ -997,7 +1005,7 @@ func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.D
 	ctx, cancel := context.WithCancelCause(preemptCtx)
 	yc, canYield := s.work.(YieldChecker)
 	cleanup := func() { cancel(nil); stopBudget() }
-	if !preemptible && !canYield && !(cooperative && maxRuntime > 0) {
+	if !preemptible && !canYield && (!cooperative || maxRuntime <= 0) {
 		return ctx, cleanup
 	}
 	pollInterval, yieldAfter := yieldPollInterval, preemptAfter

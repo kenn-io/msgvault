@@ -490,32 +490,33 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
 	}
 
-	// The desired generation is created by a continuation pass.
-	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2), scheduler.ErrReschedule)
-	stillActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
+	finished := make(chan error, 1)
+	s := scheduler.New(nil)
+	defer func() { <-s.Stop().Done() }()
+	require.NoError(s.SetDocumentVectorJob(func(context.Context) error {
+		err := runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2)
+		if !errors.Is(err, scheduler.ErrReschedule) {
+			finished <- err
+		}
+		return err
+	}, "", false))
+	_, err = s.StartJob("document-vector")
 	require.NoError(err)
-	require.NotNil(stillActive)
-	assert.Equal(active.ID, stillActive.ID)
-	retired, err := fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
-	require.NoError(err)
-	assert.Equal(store.DocumentVectorGenerationRetired, retired.State)
-	require.Len(backend.deletes, 1)
-	assert.Len(backend.deletes[0], 2)
-
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
-	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
-	require.ErrorContains(err, "not found")
-	require.Len(backend.deletes, 2)
-	assert.Len(backend.deletes[1], 1)
-	stillActive, err = fixture.Store.GetActiveDocumentVectorGeneration(t.Context())
-	require.NoError(err)
-	assert.Equal(active.ID, stillActive.ID)
-
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
+	select {
+	case err = <-finished:
+		require.NoError(err)
+	case <-time.After(10 * time.Second):
+		require.FailNow("document rotation did not finish")
+	}
 	newActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
 	require.NotNil(newActive)
 	assert.Equal(desired, newActive.DocumentVectorGenerationSpec)
+	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
+	require.ErrorContains(err, "not found")
+	require.Len(backend.deletes, 2)
+	assert.Len(backend.deletes[0], 2)
+	assert.Len(backend.deletes[1], 1)
 	assert.Zero(client.documentCalls)
 }
 
@@ -561,7 +562,7 @@ func TestScheduledDocumentVectorCleansRetiredWithoutConsentOrProvider(t *testing
 	backend := &commandDocumentVectorBackend{}
 	vf := &vectorFeatures{DocumentBackend: backend, Cfg: cfg.Vector}
 
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 10))
+	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 10), scheduler.ErrReschedule)
 
 	assert.Equal([][]string{{token}}, backend.deletes)
 	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, generation.ID)

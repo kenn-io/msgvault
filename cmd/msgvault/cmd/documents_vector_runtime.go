@@ -281,15 +281,15 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 }
 
 // documentVectorContinuation asks the scheduler for another bounded pass,
-// queued behind waiting work, when this pass committed its page and left
-// unscanned chunks or obsolete vectors. Chunks waiting for a retry time do
-// not count, so a pass that only finds them ends until the next trigger.
+// queued behind waiting work, after a committed page leaves more work or a
+// retired generation is purged. The next pass can select its replacement.
+// Chunks waiting for a retry time end the pass until the next trigger.
 func documentVectorContinuation(result vectordocument.ReconcileResult, err error) error {
 	if err != nil {
 		return err
 	}
 	if (result.WorkerRan && !result.Worker.Exhausted) ||
-		(result.CleanupListed > 0 && result.Status.CleanupPending > 0) {
+		(result.CleanupListed > 0 && result.Status.CleanupPending > 0) || result.Purged {
 		return scheduler.ErrReschedule
 	}
 	return nil

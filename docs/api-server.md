@@ -2509,14 +2509,16 @@ queues one continuation behind the waiting work. Post-sync embedding starts
 after the sync releases the gate and waits for its own turn. Each embedding
 request uses `vector.embeddings.timeout`. A publication can make several
 requests, so one minute requests a stop rather than setting a hard deadline.
+This target also applies when no sync or other work is waiting.
 Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
 state for every scheduled source as `scheduler_queued`, `scheduler_queued_at`,
 `scheduler_pending`, and `scheduler_started_at`. CardDAV status reports the
 earliest `queued_at` of its selected connections, and `scheduler_running`
-while a connection holds the gate before its run record appears. Compare queued state and the last successful sync
-to detect a source that is waiting too long. Health's `operation.label` names
-the job holding the gate, such as `activity-projection` or `attachment-pack`.
+while a connection holds the gate before its run record appears. Compare
+queued state and the last successful sync to detect a source that is waiting
+too long. Health's `operation.label` names the job holding the gate, such as
+`activity-projection` or `attachment-pack`.
 
 ---
 

@@ -2023,7 +2023,7 @@ func TestScheduler_SetEmbedJob_InvalidCron(t *testing.T) {
 	job := &EmbedJob{Worker: runner, Backend: backend}
 
 	err := s.SetEmbedJob(job, "not a cron", false)
-	require.Error(t, err, "SetEmbedJob with invalid cron")
+	require.ErrorContains(t, err, `invalid embed cron expression "not a cron"`)
 	assert.False(t, s.EmbeddingStatus().Scheduler.Registered, "an invalid cron registers nothing")
 }
 
@@ -3622,7 +3622,7 @@ func TestJobContextCleanupStopsMonitor(t *testing.T) {
 		ctx, cleanup := s.jobContext("indexing", true, time.Minute, true)
 		cleanup()
 		time.Sleep(2 * time.Minute)
-		assert.ErrorIs(t, ctx.Err(), context.Canceled)
+		require.ErrorIs(t, ctx.Err(), context.Canceled)
 		assert.False(t, jobctx.PreemptionRequested(ctx), "the monitor cannot request a stop after cleanup")
 	})
 }
