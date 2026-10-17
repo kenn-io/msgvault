@@ -62,7 +62,7 @@ describe('FilesWorkspace', () => {
       sort: { field: 'occurred_at', direction: 'desc' },
     });
     await screen.findByText('fixture.pdf');
-    expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'text' || kind === 'combined' ? ['text'] : []);
+    await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'text' || kind === 'combined' ? ['text'] : []));
     if (kind === 'text') {
       const search = (query: string, search_mode: 'full_text' | 'semantic' = 'full_text') => rendered.rerender({ predicate: { query, search_mode, filters: [], presentation: 'table' } });
       await search('superseded', 'semantic');
@@ -74,13 +74,16 @@ describe('FilesWorkspace', () => {
       return expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
     }
     await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    if (kind === 'combined') await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']));
+    events.length = 0;
     if (kind === 'image') {
       await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
     } else {
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Search attachment pixels' }), { target: { value: 'blue sky' } });
     }
     await waitFor(() => expect(events.at(-1)?.properties.search_type).toBe('semantic'), { timeout: 5000 });
-    expect(events.slice(kind === 'combined' ? -2 : -1).map((e) => e.properties.search_type)).toEqual(kind === 'combined' ? ['text', 'semantic'] : ['semantic']);
+    expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'combined' ? ['text', 'semantic'] : ['semantic']);
   });
 
   it.each([
