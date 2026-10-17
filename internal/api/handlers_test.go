@@ -4672,15 +4672,15 @@ func TestHandleTriggerSyncManualAttributionAcrossAuthModes(t *testing.T) {
 	cfg := &config.Config{
 		Server: config.ServerConfig{APIPort: 8080, APIKey: testSessionAPIKey},
 		Accounts: []config.AccountSchedule{
-			{Email: "test@gmail.com", Schedule: "0 2 * * *", Enabled: true},
+			{Email: "test@example.com", Schedule: "0 2 * * *", Enabled: true},
 		},
 	}
 
 	sched := newMockScheduler()
-	sched.scheduled["test@gmail.com"] = true
+	sched.scheduled["test@example.com"] = true
 	var reserved bool
 	sched.triggerFn = func(email string, manual bool) error {
-		assert.Equal("test@gmail.com", email)
+		assert.Equal("test@example.com", email)
 		reserved = manual
 		return nil
 	}
@@ -4699,7 +4699,7 @@ func TestHandleTriggerSyncManualAttributionAcrossAuthModes(t *testing.T) {
 		if test.mode == AuthModeLoopback {
 			cfg.Server.APIKey = ""
 		}
-		req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/test@gmail.com", nil)
+		req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/test@example.com", nil)
 		req.Header = test.headers
 		req.Header.Set("Origin", "http://localhost:8080")
 		w := httptest.NewRecorder()
