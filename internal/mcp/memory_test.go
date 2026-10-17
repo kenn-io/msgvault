@@ -58,6 +58,8 @@ func TestMCPMemoryChild(t *testing.T) {
 		names := task3ToolNames(t, listed)
 		require.Contains(names, ToolDraftReply)
 		require.Contains(names, ToolGetIdentityScoringStatus)
+		require.Contains(names, ToolListOpenLoops)
+		require.Contains(names, ToolGetOpenLoop)
 		t.Logf("tools=%d", len(names))
 		// The transport goroutine and cleanup keep the server alive through GC.
 	}
@@ -75,6 +77,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 	return ServeOptions{
 		EmbeddingStatus:      struct{ EmbeddingStatusReader }{},
 		Engine:               &querytest.MockEngine{},
+		Loops:                struct{ LoopBackend }{},
 		AttachmentReader:     struct{ AttachmentReader }{},
 		ManifestSaver:        struct{ DeletionManifestSaver }{},
 		HybridSearcher:       struct{ HybridSearcher }{},
