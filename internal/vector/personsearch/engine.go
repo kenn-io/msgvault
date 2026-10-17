@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -110,11 +111,31 @@ func NewEngine(backend Backend, data Store, embedder QueryEmbedder, config Confi
 	return &Engine{backend: backend, store: data, embedder: embedder, config: config}
 }
 
+// ErrGenerationMismatch prevents reusing a vector across generation changes.
+var ErrGenerationMismatch = errors.New("person search generation mismatch")
+
 // Search embeds query once, searches only the person corpus, drops stale or
 // deleted hits, and returns durable person roots in ANN rank order.
 func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+	return e.search(ctx, query, nil, 0, limit, false)
+}
+
+// SearchVector applies the same gate and revision checks without query egress.
+func (e *Engine) SearchVector(ctx context.Context, queryVector []float32, generation vector.GenerationID, limit int) ([]Result, error) {
+	if len(queryVector) == 0 {
+		return nil, errors.New("empty person query vector")
+	}
+	for _, v := range queryVector {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return nil, errors.New("non-finite person query vector")
+		}
+	}
+	return e.search(ctx, "", queryVector, generation, limit, true)
+}
+
+func (e *Engine) search(ctx context.Context, query string, queryVector []float32, generation vector.GenerationID, limit int, reuse bool) ([]Result, error) {
 	query = strings.TrimSpace(query)
-	if query == "" {
+	if query == "" && !reuse {
 		return nil, errors.New("empty person search query")
 	}
 	if limit <= 0 {
@@ -146,13 +167,23 @@ func (e *Engine) Search(ctx context.Context, query string, limit int) ([]Result,
 			}
 		}
 	}
-	queryVector, err := e.embedder.EmbedQuery(ctx, query)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return nil, fmt.Errorf("embed person query: %w: %w", vector.ErrEmbeddingTimeout, err)
+	if reuse {
+		if active.ID != generation {
+			return nil, ErrGenerationMismatch
 		}
-		return nil, fmt.Errorf("embed person query: %w", err)
+		if active.Dimension > 0 && len(queryVector) != active.Dimension {
+			return nil, errors.New("person query vector dimension mismatch")
+		}
+	} else {
+		queryVector, err = e.embedder.EmbedQuery(ctx, query)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				return nil, fmt.Errorf("embed person query: %w: %w", vector.ErrEmbeddingTimeout, err)
+			}
+			return nil, fmt.Errorf("embed person query: %w", err)
+		}
 	}
+
 	searchLimit := limit
 	seen := make(map[store.PersonSemanticCandidate]struct{})
 	valid := make(map[store.PersonSemanticCandidate]struct{})
