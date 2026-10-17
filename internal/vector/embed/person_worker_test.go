@@ -176,6 +176,7 @@ type personWorkerClient struct {
 	failOnceAfter   int
 	failureReturned bool
 	malformed       bool
+	providerErr     error
 	onEmbed         func()
 }
 
@@ -229,6 +230,9 @@ func (c *personWorkerClient) EmbedDocuments(
 
 	if onEmbed != nil {
 		onEmbed()
+	}
+	if c.providerErr != nil {
+		return nil, c.providerErr
 	}
 	if c.malformed {
 		return nil, nil
@@ -815,6 +819,33 @@ func TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion(t *testing.T) {
 	check.Equal(map[int64]string{10: "rev-10", 20: "rev-20", 30: "rev-30"}, revisions)
 	must.Len(client.calls, 3)
 	check.Equal([][]string{{"Synthetic Thirty"}}, client.calls[2], "the next pass embeds only the remaining person")
+}
+
+func TestPersonWorkerStoppedProviderFailureDoesNotRecordProgress(t *testing.T) {
+	source := newPersonWorkerSource(
+		personDocument(10, "rev-10", "Synthetic Ten"),
+		personDocument(20, "rev-20", "Synthetic Twenty"),
+	)
+	backend := newPersonWorkerBackend()
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	providerErr := errors.New("synthetic transient provider failure")
+	client := &personWorkerClient{providerErr: providerErr, onEmbed: requestStop}
+	worker := newTestPersonWorker(source, backend, client, 1)
+
+	result, err := worker.RunOnce(ctx, 9, testEmbeddingPassScope())
+	require.ErrorIs(t, err, providerErr)
+	assert.Zero(t, result.Succeeded)
+	assert.False(t, jobctx.HasProgress(ctx), "a stopped pass without publication must wait for the next scheduled trigger")
+	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
+	require.NoError(t, err)
+	assert.Empty(t, revisions)
+	require.Len(t, client.calls, 1, "stop before attempting the next person")
+
+	client.providerErr = nil
+	client.onEmbed = nil
+	result, err = worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Succeeded, "the next trigger retries both unpublished people")
 }
 
 // TestPersonWorkerDiscardsPostEmbedMutation catches publication of a provider

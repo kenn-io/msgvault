@@ -474,11 +474,6 @@ func (s *Scheduler) setIndexingJob(name, label string, run func(context.Context)
 		}
 		return nil
 	}
-	if schedule != "" {
-		if err := ValidateCronExpr(schedule); err != nil {
-			return fmt.Errorf("invalid %s cron expression %q: %w", label, schedule, err)
-		}
-	}
 	return s.addJob(Job{
 		Name: name, Schedule: schedule, Run: run, WorkLabel: label, AfterSync: runAfterSync,
 		Preemptible: true, Background: true, Cooperative: true, MaxRuntime: indexingPassTarget,
@@ -564,7 +559,7 @@ func (s *Scheduler) runSync(email string) {
 	preemptionPolicy := s.accountPreemptionPolicy
 	s.mu.RUnlock()
 	preemptible := preemptionPolicy == nil || preemptionPolicy(email)
-	runCtx, endRun := s.jobContext("sync "+email, preemptible, 0)
+	runCtx, endRun := s.jobContext("sync "+email, preemptible, 0, false)
 	err := s.syncFunc(runCtx, email)
 	endRun()
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
@@ -695,7 +690,7 @@ func (s *Scheduler) startVisualPostSync() {
 			return
 		}
 		defer done()
-		visualCtx, endVisual := s.jobContext("post-sync multimodal", false, 0)
+		visualCtx, endVisual := s.jobContext("post-sync multimodal", false, 0, false)
 		defer endVisual()
 		if err := run(visualCtx); err != nil {
 			s.logger.Error("post-sync multimodal pass failed", "error", err)
@@ -867,13 +862,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	}
 	defer done()
 
-	var runCtx context.Context
-	var endRun func()
-	if cooperative {
-		runCtx, endRun = s.cooperativeJobContext(name, preemptible, maxRuntime)
-	} else {
-		runCtx, endRun = s.jobContext(name, preemptible, maxRuntime)
-	}
+	runCtx, endRun := s.jobContext(name, preemptible, maxRuntime, cooperative)
 	err := run(runCtx)
 	endRun()
 	s.mu.Lock()
@@ -994,86 +983,34 @@ func (s *Scheduler) beginWork(label string, counted bool) (func(), bool) {
 // so tests can shorten it.
 var preemptAfter = time.Minute
 
-// jobContext derives the context a scheduled job runs with. When the work
-// tracker can report waiters, the context is cancelled with cause
-// ErrYieldedToWaiter so the resumable job steps aside for the waiter and
-// is queued to resume after the waiter. Preemptible contexts also carry a
-// cooperative preemption request (see jobctx.WithPreemption), raised once the
-// run has held the gate for preemptAfter while other scheduled runs queue
-// behind it. Jobs that have not stopped at the next poll are cancelled with
-// ErrYieldedToWaiter. A positive maxRuntime ends the run with cause
-// jobctx.ErrRunBudgetExceeded. Other jobs keep their own runtime budgets. The
-// returned stop function must be called when the job finishes.
-func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.Duration) (context.Context, func()) {
+// jobContext monitors the runtime and work-gate waiters for a scheduled job.
+// Cooperative jobs finish their current publication after a stop request.
+// Ordinary jobs retain hard runtime limits and cancel one poll after a queued
+// scheduled run requests preemption. Shutdown cancels both kinds of job.
+// The caller must stop the monitor when the job finishes.
+func (s *Scheduler) jobContext(label string, preemptible bool, maxRuntime time.Duration, cooperative bool) (context.Context, func()) {
 	started := time.Now()
 	baseCtx := jobctx.WithProgress(s.ctx)
 	stopBudget := func() {}
-	if maxRuntime > 0 {
+	if !cooperative && maxRuntime > 0 {
 		baseCtx, stopBudget = context.WithTimeoutCause(baseCtx, maxRuntime, jobctx.ErrRunBudgetExceeded)
 	}
-	preemptCtx, requestPreemption := jobctx.WithPreemption(baseCtx)
-	yc, canYield := s.work.(YieldChecker)
-	if s.work == nil {
-		return preemptCtx, stopBudget
-	}
+	preemptCtx, requestStop := jobctx.WithPreemption(baseCtx)
 	ctx, cancel := context.WithCancelCause(preemptCtx)
-	go func() {
-		ticker := time.NewTicker(yieldPollInterval)
-		defer ticker.Stop()
-		preempted := false
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if canYield && yc.ShouldYield() {
-					cancel(ErrYieldedToWaiter)
-					return
-				}
-				if preempted {
-					cancel(ErrYieldedToWaiter)
-					return
-				}
-				if preemptible && !preempted && time.Since(started) >= preemptAfter && s.hasQueuedRuns() {
-					preempted = true
-					s.logger.Info("scheduled job asked to yield to queued work",
-						"job", label,
-						"held", time.Since(started).Round(time.Second))
-					requestPreemption()
-					// Give cooperative jobs one poll interval to reach a safe
-					// checkpoint, then cancel with the recognized yield cause so
-					// other sources still release the work gate.
-				}
-			}
-		}
-	}()
-	return ctx, func() { cancel(nil); stopBudget() }
-}
-
-// cooperativeJobContext derives the context for a job that must finish its
-// current publication. A waiting request, queued scheduled work (when
-// preemptible), or reaching target raises the job's stop request
-// (jobctx.PreemptionRequested) instead of cancelling it; only scheduler
-// shutdown cancels. The returned stop function must be called when the job
-// finishes.
-func (s *Scheduler) cooperativeJobContext(label string, preemptible bool, target time.Duration) (context.Context, func()) {
-	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(s.ctx))
 	yc, canYield := s.work.(YieldChecker)
-	finished := make(chan struct{})
 	go func() {
 		ticker := time.NewTicker(yieldPollInterval)
 		defer ticker.Stop()
 		var expired <-chan time.Time
-		if target > 0 {
-			timer := time.NewTimer(target)
+		if cooperative && maxRuntime > 0 {
+			timer := time.NewTimer(maxRuntime)
 			defer timer.Stop()
 			expired = timer.C
 		}
+		preempted := false
 		for {
 			var reason string
 			select {
-			case <-finished:
-				return
 			case <-ctx.Done():
 				return
 			case <-expired:
@@ -1081,8 +1018,15 @@ func (s *Scheduler) cooperativeJobContext(label string, preemptible bool, target
 			case <-ticker.C:
 				switch {
 				case canYield && yc.ShouldYield():
+					if !cooperative {
+						cancel(ErrYieldedToWaiter)
+						return
+					}
 					reason = "request waiting"
-				case preemptible && s.hasQueuedRuns():
+				case preempted:
+					cancel(ErrYieldedToWaiter)
+					return
+				case preemptible && (cooperative || time.Since(started) >= preemptAfter) && s.hasQueuedRuns():
 					reason = "scheduled work waiting"
 				default:
 					continue
@@ -1091,10 +1035,13 @@ func (s *Scheduler) cooperativeJobContext(label string, preemptible bool, target
 			s.logger.Info("scheduled job asked to stop after its current publication",
 				"job", label, "reason", reason)
 			requestStop()
-			return
+			if cooperative {
+				return
+			}
+			preempted = true
 		}
 	}()
-	return ctx, sync.OnceFunc(func() { close(finished) })
+	return ctx, func() { cancel(nil); stopBudget() }
 }
 
 func (s *Scheduler) hasQueuedRuns() bool {

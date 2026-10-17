@@ -187,3 +187,34 @@ func TestEmbedJob_Run_StopRequestEndsPassAtPhaseBoundary(t *testing.T) {
 	assert.Empty(backend.activations(), "activation calls")
 	assert.Contains(logs.String(), "embed run complete", "the finished forward pass is still reported")
 }
+
+func TestInterruptedContextualBackstopCompletionCountsForInterval(t *testing.T) {
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	runner := &fakeRunner{
+		backstopResult: embed.RunResult{Contextual: &embed.ContextConvergence{}},
+		onBackstop:     requestStop,
+	}
+	now := time.Now()
+	job := &EmbedJob{
+		Worker: runner, Backend: &fakeBackend{active: vector.Generation{ID: 1}},
+		BackstopInterval: time.Hour, Now: func() time.Time { return now },
+	}
+	job.Run(ctx)
+	n, _ := runner.backstops()
+	require.Equal(t, 1, n)
+	assert.Empty(t, job.lastBackstop)
+
+	// ContextWorker.RunOnce resumes the durable cursor and returns done.
+	runner.runOnceResult = embed.RunResult{Contextual: &embed.ContextConvergence{ReconcileComplete: true}}
+	runner.onBackstop = nil
+	now = now.Add(time.Minute)
+	job.Run(t.Context())
+	n, _ = runner.backstops()
+	assert.Equal(t, 1, n, "the resumed scan must satisfy this interval instead of resetting its completed cursor")
+	assert.WithinDuration(t, now, job.lastBackstop[1], 0)
+
+	now = now.Add(time.Hour)
+	job.Run(t.Context())
+	n, _ = runner.backstops()
+	assert.Equal(t, 2, n, "the next interval still starts a fresh backstop")
+}

@@ -176,6 +176,9 @@ type EmbedJob struct {
 	// no pruning is needed.
 	lastBackstop map[vector.GenerationID]time.Time
 
+	// Contextual backstops resume their durable reconcile cursor in RunOnce.
+	interruptedBackstop map[vector.GenerationID]bool
+
 	// running guards against overlapping Run calls (cron fires while a
 	// post-sync hook is still draining, etc). sync.Mutex.TryLock gives
 	// us "skip if busy" without serializing a queue of waiters.
@@ -266,6 +269,13 @@ func (j *EmbedJob) Run(ctx context.Context) {
 	if err != nil {
 		log.Warn("embed run failed", "gen", target, "error", err)
 		return
+	}
+	if j.interruptedBackstop[target] && res.Contextual != nil && res.Contextual.ReconcileComplete {
+		if j.lastBackstop == nil {
+			j.lastBackstop = make(map[vector.GenerationID]time.Time)
+		}
+		j.lastBackstop[target] = occurrence
+		delete(j.interruptedBackstop, target)
 	}
 	log.Info("embed run complete",
 		"gen", target,
@@ -501,8 +511,14 @@ func (j *EmbedJob) maybeRunBackstop(
 		return true
 	}
 	if passStopped(ctx) {
-		// A stopped backstop may have covered only a prefix; leave
-		// lastBackstop unchanged so the continuation pass runs it again.
+		// RunOnce resumes contextual reconciliation on the continuation.
+		// Count its completed cursor before considering another backstop.
+		if res.Contextual != nil && !res.Contextual.ReconcileComplete {
+			if j.interruptedBackstop == nil {
+				j.interruptedBackstop = make(map[vector.GenerationID]bool)
+			}
+			j.interruptedBackstop[gen] = true
+		}
 		log.Info("embed backstop stopped before completion", "gen", gen, "scanned", res.Claimed, "succeeded", res.Succeeded)
 		return true
 	}
@@ -510,6 +526,7 @@ func (j *EmbedJob) maybeRunBackstop(
 		j.lastBackstop = make(map[vector.GenerationID]time.Time)
 	}
 	j.lastBackstop[gen] = t
+	delete(j.interruptedBackstop, gen)
 	log.Info("embed backstop complete",
 		"gen", gen,
 		"scanned", res.Claimed,
