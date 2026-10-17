@@ -1,0 +1,296 @@
+package cmd
+
+import (
+	"bytes"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
+	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
+)
+
+func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	terminal := cliActionTerminal
+	cliActionTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { cliActionTerminal = terminal })
+	path := newMuesliMeetingsFixture(t, false)
+	disabled := false
+	for action, run := range map[string]func(*cobra.Command) error{
+		"search": func(cmd *cobra.Command) error { return runHTTPSearch(cmd, "needle") },
+		"media": func(cmd *cobra.Command) error {
+			search, _, err := rootCmd.Find([]string{"media", "search"})
+			require.NoError(t, err)
+			return search.RunE(cmd, []string{"needle"})
+		},
+		"show-message": func(cmd *cobra.Command) error { return showHTTPMessage(cmd, "1") },
+		"documents": func(cmd *cobra.Command) error {
+			return runSearchDocuments(cmd, store.DocumentSearchRequest{Query: "needle", SearchMode: " Hybrid "}, true, defaultDocumentsCommandDeps())
+		},
+		"visual": func(cmd *cobra.Command) error { return multimodalSearchCmd.RunE(cmd, []string{"needle"}) },
+		"vector": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"hybrid": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"sync":   func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{}) },
+		"muesli-hook": func(cmd *cobra.Command) error {
+			return muesliHookCmd.RunE(cmd, nil)
+		},
+		"sync-muesli": func(cmd *cobra.Command) error {
+			invocationFromCommand(cmd).cfg.Muesli = []config.MuesliSource{{Identifier: "archive", AccountEmail: "user@example.com", DBPath: path, Contacts: &disabled}}
+			return runMuesliClientSync(cmd, nil, 0)
+		},
+		"sync-omi": func(cmd *cobra.Command) error {
+			return runDaemonCLICommandHTTPWithEnv(cmd, []string{"sync-omi"}, nil, false, false)
+		},
+		"sync-slack": func(cmd *cobra.Command) error {
+			return runDaemonCLICommandHTTPWithEnv(cmd, []string{"sync-slack"}, nil, false, false)
+		},
+	} {
+		for _, outcome := range []struct {
+			name                                   string
+			fails, paused, outputFails, json, body bool
+		}{
+			{name: "success"},
+			{name: "failure", fails: true},
+			{name: "paused", paused: true},
+			{name: "output failure", outputFails: true},
+			{name: "JSON output failure", outputFails: true, json: true},
+			{name: "body output failure", outputFails: true, body: true},
+		} {
+			fails, outputFails := outcome.fails, outcome.outputFails
+			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
+				continue
+			}
+			if (action == "muesli-hook" || action == "sync-muesli") && fails {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				var events []map[string]any
+				mux := http.NewServeMux()
+				registerStatsProbeHandler(mux)
+				mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
+				mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.URL.Path == "/api/v1/telemetry/events" {
+						var event map[string]any
+						assert.NoError(json.UnmarshalRead(r.Body, &event))
+						events = append(events, event)
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					if action == "muesli-hook" {
+						var request daemonclient.CLIRunRequest
+						assert.NoError(json.UnmarshalRead(r.Body, &request))
+					}
+					if fails {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					switch action {
+					case "show-message":
+						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
+					case "documents":
+						_, _ = w.Write([]byte(`{"results":[],"effective_mode":"hybrid"}`))
+					case "sync-omi":
+						w.Header().Set("Content-Type", "application/x-ndjson")
+						_, _ = fmt.Fprintln(w, `{"type":"stdout","data":"Omi sync output"}`)
+						var waitErr error
+						if outcome.paused {
+							waitErr = helperProcessCommand(r.Context(), "paused").Run()
+						}
+						assert.NoError(classifyDaemonCLIWaitErr(waitErr, []string{"sync-omi"}, func(stream, data string) error {
+							return json.MarshalWrite(w, map[string]string{"type": stream, "data": data})
+						}))
+						_, _ = fmt.Fprintln(w, "\n"+`{"type":"complete"}`)
+					case "sync", "sync-slack", "muesli-hook":
+						w.Header().Set("Content-Type", "application/x-ndjson")
+						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
+					default:
+						_, _ = w.Write([]byte(`{"results":[]}`))
+					}
+				}))
+				server := httptest.NewServer(mux)
+				t.Cleanup(server.Close)
+				resetSearchFlags()
+				t.Cleanup(resetSearchFlags)
+				cmd := &cobra.Command{Use: action}
+				cmd.SetContext(configureRemoteSyncTest(t, server.URL))
+				if strings.HasPrefix(action, "sync") {
+					cmd.SetOut(&bytes.Buffer{})
+				} else {
+					cmd.SetOut(os.Stdout)
+				}
+				var stderr bytes.Buffer
+				cmd.SetErr(&stderr)
+				if action == "muesli-hook" {
+					state := invocationFromCommand(cmd)
+					state.cfg.Remote.URL = ""
+					state.cfg.Muesli = []config.MuesliSource{{Identifier: "archive"}}
+					writeStatsHTTPDaemonRuntime(t, state.cfg.Data.DataDir, server)
+					cmd.SetIn(strings.NewReader(`{"schemaVersion":1,"event":"meeting.completed","kind":"meeting","id":42,"completedAt":"2026-09-01T16:00:00Z"}`))
+				}
+				if outputFails {
+					cmd.SetOut(failingSearchWriter{})
+					oldJSON, oldBody := showMessageJSON, showMessageBodyOnly
+					showMessageJSON, showMessageBodyOnly = outcome.json, outcome.body
+					t.Cleanup(func() { showMessageJSON, showMessageBodyOnly = oldJSON, oldBody })
+				}
+				err := run(cmd)
+				if fails || outputFails {
+					require.Error(err)
+					if outputFails {
+						require.ErrorIs(err, io.ErrClosedPipe)
+					}
+				} else {
+					require.NoError(err, "telemetry failures leave the action successful")
+				}
+				kind := map[string]string{"search": "text", "media": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
+				if action == "sync-omi" && !fails {
+					output, ok := cmd.OutOrStdout().(*bytes.Buffer)
+					require.True(ok)
+					assert.Equal("Omi sync output", output.String())
+				}
+				if action == "muesli-hook" || fails || outputFails || outcome.paused {
+					assert.Empty(events)
+					return
+				}
+				properties, event := map[string]any{"surface": "cli"}, "message_opened"
+				if strings.HasPrefix(action, "sync") {
+					event = "sync_finished"
+				}
+				if kind != "" {
+					properties["search_type"], event = kind, "search_run"
+				}
+				assert.Equal([]map[string]any{{"event": event, "properties": properties}}, events)
+				if action == "search" {
+					searchOffset = 1
+					require.NoError(run(cmd))
+					assert.Len(events, 1, "continuation pages do not count")
+				}
+			})
+		}
+	}
+}
+
+func TestCLIActionDeliveryDeadline(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	terminal := cliActionTerminal
+	cliActionTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { cliActionTerminal = terminal })
+	synctest.Test(t, func(t *testing.T) {
+		client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+			assert.Equal(t, "/api/v1/telemetry/events", r.URL.Path)
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		})}})
+		require.NoError(t, err)
+		cmd := &cobra.Command{Use: "search"}
+		cmd.SetContext(t.Context())
+		cmd.SetOut(os.Stdout)
+		start := time.Now()
+		reportCLIAction(cmd, client, "search_run", "search_type", "text")
+		assert.Equal(t, 250*time.Millisecond, time.Since(start))
+	})
+}
+
+func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
+	terminal := cliActionTerminal
+	t.Cleanup(func() { cliActionTerminal = terminal })
+	for _, tc := range []struct {
+		name, stream, env string
+		agent             bool
+		want              bool
+	}{
+		{name: "none"},
+		{name: "stdin", stream: "stdin", want: true},
+		{name: "stdout", stream: "stdout", want: true},
+		{name: "stderr", stream: "stderr", want: true},
+		{name: "Codex", stream: "stdout", env: "CODEX_THREAD_ID"},
+		{name: "Claude Code", stream: "stdout", env: "CLAUDECODE"},
+		{name: "daemon subprocess", stream: "stdout", env: daemonCLISubprocessEnv},
+		{name: "delegated agent", stream: "stdout", agent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CODEX_THREAD_ID", "")
+			t.Setenv("CLAUDECODE", "")
+			t.Setenv(daemonCLISubprocessEnv, "")
+			if tc.env != "" {
+				t.Setenv(tc.env, strconv.Itoa(os.Getppid()))
+			}
+			stream := tc.stream
+			cmd := &cobra.Command{Use: "sync"}
+			cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: tc.agent}}))
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			var terminalFD uintptr
+			switch stream {
+			case "stdin":
+				cmd.SetIn(os.Stdin)
+				terminalFD = os.Stdin.Fd()
+			case "stdout":
+				cmd.SetOut(os.Stdout)
+				terminalFD = os.Stdout.Fd()
+			case "stderr":
+				cmd.SetErr(os.Stderr)
+				terminalFD = os.Stderr.Fd()
+			}
+			cliActionTerminal = func(fd uintptr) bool { return stream != "" && fd == terminalFD }
+			assert.Equal(t, tc.want, humanCLIAction(cmd))
+		})
+	}
+}
+
+func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	terminal := cliActionTerminal
+	cliActionTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { cliActionTerminal = terminal })
+	for _, tc := range []struct {
+		name, prefixed, generic string
+		configEnabled           bool
+	}{
+		{name: "config"},
+		{name: "prefixed env", prefixed: "0", configEnabled: true},
+		{name: "generic env", prefixed: "1", generic: "0", configEnabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(telemetry.EnabledEnv, tc.prefixed)
+			t.Setenv(posthog.GenericEnabledEnv, tc.generic)
+			client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+				assert.Fail(t, "disabled telemetry sent a request", r.URL.String())
+				return nil, errors.New("unexpected request")
+			})}})
+			require.NoError(t, err)
+			cmd := &cobra.Command{Use: "search"}
+			cfg := config.NewDefaultConfig()
+			cfg.Telemetry.Enabled = &tc.configEnabled
+			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			reportCLIAction(cmd, client, "search_run", "search_type", "text")
+		})
+	}
+}

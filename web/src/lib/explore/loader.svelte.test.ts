@@ -74,6 +74,30 @@ function setup(
 }
 
 describe('ExploreLoader', () => {
+  it('reports current successful results across retries', async ({ onTestFinished }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'needle' }))}`);
+    const onSearchAccepted = vi.fn(), state = new ExploreState(window);
+    let resolveStale!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse({ rows: [entry(1)] }))).mockResolvedValueOnce(Response.json(exploreResponse())).mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveStale = resolve; })).mockResolvedValueOnce(Response.json({ error: 'archive unavailable' }, { status: 500 }));
+    const { loader, cleanup } = setup(fetchFn, state, { onSearchAccepted });
+    onTestFinished(() => { cleanup(); state.destroy(); });
+    await vi.waitFor(() => expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text', expect.any(AbortSignal)]]), { timeout: 5000 });
+    state.commitSearch('other', 'semantic'); flushSync();
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    state.commitSearch('replacement', 'full_text'); flushSync();
+    await vi.waitFor(() => expect(loader.error).toBe('Exploration request failed (500)'));
+    expect(onSearchAccepted).toHaveBeenCalledTimes(1);
+    resolveStale(Response.json(exploreResponse({ rows: [entry(99)] })));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loader.rows).toEqual([]);
+    expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text', expect.any(AbortSignal)]]);
+    expect(onSearchAccepted.mock.calls[0]![2].aborted).toBe(true);
+    loader.retry();
+    await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
+    expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text', expect.any(AbortSignal)], ['replacement', 'full_text', expect.any(AbortSignal)]]);
+    loader.retry();
+    await vi.waitFor(() => expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text', expect.any(AbortSignal)], ['replacement', 'full_text', expect.any(AbortSignal)], ['replacement', 'full_text', expect.any(AbortSignal)]]));
+  });
   it('issues exactly one fetch for one filter commit', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     let exploreCount = 0;

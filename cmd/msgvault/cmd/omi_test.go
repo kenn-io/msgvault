@@ -460,7 +460,7 @@ func TestOmiPacingSpansScheduledRunsAliasesAndManualCommands(t *testing.T) {
 	command.SetContext(withStoreResolverConfig(t, cfg))
 	command.SetOut(output)
 	command.SetErr(&bytes.Buffer{})
-	require.NoError(syncOmiCmd.RunE(command, []string{"alias"}))
+	require.Same(ErrSyncPaused, syncOmiCmd.RunE(command, []string{"alias"}))
 
 	assert.Contains(output.String(), "Omi sync for alias paused")
 	assert.Contains(output.String(), "Omi provider cooldown until")
@@ -489,7 +489,7 @@ func TestScheduledOmiYieldsWhileWaitingWithCheckpoint(t *testing.T) {
 	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "omi")).WithLogger(testDiscardLogger())
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	require.NoError(registerScheduledOmiJob(sched, state, st, config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL, Schedule: "0 0 1 1 *"}))
-	_, err = sched.StartJob("omi:work")
+	_, err = sched.StartJob("omi:work", false)
 	require.NoError(err)
 	require.Eventually(func() bool {
 		checkpoint, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
@@ -553,7 +553,7 @@ func TestManualOmiContinuesAfterSourceCooldown(t *testing.T) {
 	command.SetContext(ctx)
 	command.SetOut(output)
 	command.SetErr(&bytes.Buffer{})
-	require.NoError(syncOmiCmd.RunE(command, nil))
+	require.Same(ErrSyncPaused, syncOmiCmd.RunE(command, nil))
 	assert.Contains(output.String(), "Omi sync for deferred paused")
 	assert.Contains(output.String(), "Syncing Omi for ready")
 	assert.Equal(1, refreshes)

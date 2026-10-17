@@ -80,7 +80,7 @@ func (s *Server) registerDocbankAttachmentRoutes(api huma.API) {
 		if err := reader.Store.RetryDocbankAttachments(ctx, reader.Destination); err != nil {
 			return nil, huma.Error500InternalServerError("restart attachment mirror")
 		}
-		if _, err := s.scheduler.StartJob(DocbankAttachmentMirrorJob); err != nil {
+		if _, err := s.scheduler.StartJob(DocbankAttachmentMirrorJob, false); err != nil {
 			return nil, huma.Error503ServiceUnavailable("start attachment mirror job")
 		}
 		return &struct {

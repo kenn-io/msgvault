@@ -12,20 +12,24 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
-func TestTUIScreenReporterUsesSelectedDaemon(t *testing.T) {
-	requests := 0
+func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	var requests []map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
 		var body map[string]any
-		assert.NoError(t, json.UnmarshalRead(r.Body, &body))
-		assert.Equal(t, map[string]any{"event": "screen_viewed", "properties": map[string]any{"screen": "settings", "surface": "tui"}}, body)
+		assert.NoError(json.UnmarshalRead(r.Body, &body))
+		requests = append(requests, body)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"status":"queued"}`))
 	}))
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "selected-daemon-key", AllowInsecure: true})
-	require.NoError(t, err)
-	require.NoError(t, tuiScreenReporter(client)(context.Background(), "settings"))
-	assert.Equal(t, 1, requests)
+	require.NoError(err)
+	require.NoError(tuiScreenReporter(client)(context.Background(), "settings"))
+	require.NoError(tuiActionReporter(client)(context.Background(), "search_run", "search_type", "hybrid"))
+	assert.Equal([]map[string]any{
+		{"event": "screen_viewed", "properties": map[string]any{"screen": "settings", "surface": "tui"}},
+		{"event": "search_run", "properties": map[string]any{"search_type": "hybrid", "surface": "tui"}},
+	}, requests)
 }

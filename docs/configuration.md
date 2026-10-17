@@ -2078,9 +2078,28 @@ features once published. No startup hook or entrypoint wrapper is required.
   while it runs.
 - `app_opened` when the web UI opens, then on its first window focus on a later
   UTC day. The browser reports it to the daemon, never to PostHog.
-- `screen_viewed` when a web or terminal screen opens, counted once per installation
-  per UTC day across both interfaces and daemon restarts. The daemon keeps the
-  current day's screens in `telemetry-screen-views.json` beside its install ID.
+- `screen_viewed` when a web or terminal screen opens, counted once per installation per
+  UTC day across both interfaces and daemon restarts. The daemon keeps the current day's
+  screen and action claims in `telemetry-screen-views.json` beside its install ID.
+- `search_run` after current first-page message, extracted-document, or visual-search
+  results load, including empty results, restored queries, retries, and reloads. Failed or stale
+  replies and continuation pages don't count. Each surface and search type counts once
+  per install and UTC day. Visual queries and images use `semantic`; combined searches
+  report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
+  CLI recording transcript searches (`media search`) use `text`.
+- `message_opened` when a selected message becomes readable in web, TUI, or CLI
+  `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
+  and UTC day. Event and item readers don't count.
+- `sync_finished` after each successful manual archive sync, including no-change runs
+  and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count
+  on any surface. The daemon reports browser-started sync completions even
+  after you leave Sources. The CLI reports its own completions with a best-effort
+  250 ms bound. Delivery failures leave
+  successful commands successful. CLI actions require a terminal on stdin, stdout,
+  or stderr, so a person can pipe output while unattended runs stay excluded. Agent shells
+  (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
+  and watch loops don't report CLI actions. CardDAV contact
+  sync is separate.
 - `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
   terminal UI exits normally or after an interrupt. Browser sessions add visible
   time across tab switches;
@@ -2099,6 +2118,9 @@ that blocks storage, can also each send one. Each event carries only:
 
 - the product name and source (`msgvault`, `daemon`)
 - on `app_opened`, the surface (`web`)
+- on core actions, `surface=web|tui|cli`; `search_run` also requires
+  `search_type=text|semantic|hybrid`. Invalid required values drop the event; extra
+  properties are stripped. Query text, message IDs, and archive content stay local.
 - on `session_ended`, the surface (`web` or `tui`) and `duration_bucket`:
   `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
   30 minutes, and `over_30m` above 30 minutes
@@ -2152,7 +2174,7 @@ home; `[log].dir` can override the log location.
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
-| `telemetry-screen-views.json` | Current UTC day's screen claims shared by web and terminal UIs; created only while telemetry is on |
+| `telemetry-screen-views.json` | Current UTC day's screen, search, and message claims; created only while telemetry is on |
 
 ## Example configuration
 

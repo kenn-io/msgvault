@@ -794,11 +794,35 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it('updates Everything results as the global search is typed', async () => {
-      const state = shellState('everything');
-      render(AppShell, { client: exploreClient(), state, enabled: false });
+    it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
+      const state = shellState('everything'), events: string[] = [];
+      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+        if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
+          const event = await (input as Request).json();
+          if (event.event === 'search_run') events.push(event.properties.search_type);
+        }
+        const request = input as Request;
+        const predicate = request.method === 'POST' ? await request.clone().json() : {};
+        return Response.json(exploreResponse({ rows: predicate.query === 'gas' ? [entry(1)] : [] }));
+      }));
+      const view = render(AppShell, { client, state });
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'gas' } });
       expect(state.current.query).toBe('gas');
+      await screen.findByText('Synthetic subject 1');
+      if (trigger !== 'visible') {
+        expect(events).toHaveLength(0);
+        if (trigger === 'destroy') view.unmount();
+        visibility.mockReturnValue('visible');
+        await fireEvent(window, new Event('focus'));
+      }
+      if (trigger === 'destroy') expect(events).toHaveLength(0);
+      else {
+        await waitFor(() => expect(events).toEqual(['text']));
+        await fireEvent(window, new Event('focus'));
+        expect(events).toEqual(['text']);
+      }
+      visibility.mockRestore();
     });
 
     it('remembers the collapsed sidebar across reloads', async () => {

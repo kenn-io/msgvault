@@ -170,10 +170,16 @@ func (s serveSchedulers) Stop() context.Context {
 // Media passes do not count as activity; shutdown cancels and drains them.
 func newServeSchedulers(
 	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
+	capture func(string, map[string]any) error,
 ) (*scheduler.Scheduler, *scheduler.Scheduler) {
 	sched := scheduler.New(syncFunc).WithLogger(logger).
 		WithWorkTracker(combineWorkTrackers(scheduleIdleWorkTracker(idle), labelWorkTracker(gate, "a scheduled sync")))
 	media := scheduler.New(nil).WithLogger(logger)
+	if capture != nil {
+		for _, target := range []*scheduler.Scheduler{sched, media} {
+			target.WithCompletion(func() { _ = capture(telemetry.EventSyncFinished, map[string]any{"surface": "web"}) })
+		}
+	}
 	return sched, media
 }
 
@@ -429,7 +435,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
-	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate)
+	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
 	})
@@ -4032,8 +4038,8 @@ func (a *schedulerAdapter) IsScheduled(email string) bool {
 	return a.scheduler.IsScheduled(email)
 }
 
-func (a *schedulerAdapter) TriggerSync(email string) error {
-	return a.scheduler.TriggerSync(email)
+func (a *schedulerAdapter) TriggerSync(email string, manual bool) error {
+	return a.scheduler.TriggerSync(email, manual)
 }
 
 func (a *schedulerAdapter) AddAccount(email, schedule string) error {
@@ -4065,8 +4071,8 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.jobScheduler(name).TriggerJob(name)
 }
 
-func (a *schedulerAdapter) StartJob(name string) (scheduler.JobDisposition, error) {
-	return a.jobScheduler(name).StartJob(name)
+func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisposition, error) {
+	return a.jobScheduler(name).StartJob(name, manual)
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves
@@ -4109,7 +4115,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	if len(srcs) == 0 {
 		if retiredMatch {
 			logger.Info("skipping scheduled sync for retired source", "identifier", identifier)
-			return nil
+			return scheduler.ErrDeferUntilNextTrigger
 		}
 		startTime := time.Now()
 		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr, state)

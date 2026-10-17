@@ -51,7 +51,7 @@ func TestSchedulerGenericIntervalRejectsInvalid(t *testing.T) {
 			job.Name, job.Run = "synthetic-interval", func(context.Context) error { return nil }
 			err := s.AddJob(job)
 			require.Error(t, err)
-			_, err = s.StartJob("synthetic-interval")
+			_, err = s.StartJob("synthetic-interval", false)
 			assert.Error(t, err, "invalid interval cannot leave a registered job")
 		})
 	}

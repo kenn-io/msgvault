@@ -3241,7 +3241,7 @@ func TestScheduledSyncSkipsRetiredSourcesWithoutGmailFallback(t *testing.T) {
 	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("retired source incorrectly reached Gmail fallback")
 	}, state)
-	assert.NoError(err, "retired source should be skipped instead of entering the token-first fallback")
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "retired source defers without entering the Gmail fallback")
 }
 
 func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T) {
@@ -3271,7 +3271,7 @@ func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T)
 	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("retired legacy source incorrectly reached Gmail fallback")
 	}, state)
-	assert.NoError(err, "retired legacy source should be skipped instead of entering the token-first fallback")
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "retired legacy source defers without entering the Gmail fallback")
 }
 
 func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
@@ -3577,9 +3577,9 @@ func TestScheduledDiscordGuildFailureDoesNotBlockLaterGuild(t *testing.T) {
 		}
 	}
 
-	require.NoError(sched.TriggerSync(first.Identifier))
+	require.NoError(sched.TriggerSync(first.Identifier, false))
 	assert.Equal(first.Identifier, awaitCompletion())
-	require.NoError(sched.TriggerSync(second.Identifier))
+	require.NoError(sched.TriggerSync(second.Identifier, false))
 	assert.Equal(second.Identifier, awaitCompletion())
 
 	assert.Equal([]int64{first.ID, second.ID}, imported)

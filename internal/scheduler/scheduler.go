@@ -114,6 +114,7 @@ type JobStatus struct {
 
 // Scheduler manages cron-based email sync scheduling.
 type Scheduler struct {
+	onCompletion            func()
 	cron                    *cron.Cron
 	syncFunc                SyncFunc
 	logger                  *slog.Logger
@@ -128,6 +129,7 @@ type Scheduler struct {
 	lastErr   map[string]error        // email -> last error
 	queued    map[string]bool         // email -> run waiting for the gate
 	pending   map[string]bool         // email -> follow-up requested by a tick or yield
+	manual    map[string]bool         // accepted manual run
 	startedAt map[string]time.Time    // email -> current run began executing
 
 	genericJobs        map[string]cron.EntryID
@@ -142,6 +144,8 @@ type Scheduler struct {
 	genericQueued      map[string]bool
 	genericPending     map[string]bool
 	genericStartedAt   map[string]time.Time
+	genericManual      map[string]bool
+	genericNextManual  map[string]bool
 
 	// queuedRuns counts runs blocked waiting for the work gate.
 	queuedRuns int
@@ -185,6 +189,12 @@ func (s *Scheduler) SetVisualPostSyncJob(run func(context.Context) error) {
 	s.mu.Unlock()
 }
 
+// WithCompletion sets the callback for successful manually requested runs.
+func (s *Scheduler) WithCompletion(completion func()) *Scheduler {
+	s.onCompletion = completion
+	return s
+}
+
 // New creates a new Scheduler with the given sync callback.
 func New(syncFunc SyncFunc) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,6 +212,7 @@ func New(syncFunc SyncFunc) *Scheduler {
 		queued:             make(map[string]bool),
 		pending:            make(map[string]bool),
 		startedAt:          make(map[string]time.Time),
+		manual:             make(map[string]bool),
 		genericJobs:        make(map[string]cron.EntryID),
 		genericSchedules:   make(map[string]string),
 		genericRunning:     make(map[string]bool),
@@ -214,6 +225,8 @@ func New(syncFunc SyncFunc) *Scheduler {
 		genericQueued:      make(map[string]bool),
 		genericPending:     make(map[string]bool),
 		genericStartedAt:   make(map[string]time.Time),
+		genericManual:      make(map[string]bool),
+		genericNextManual:  make(map[string]bool),
 		embed:              cronSlot{label: "embed", workLabel: "scheduled embedding", jobName: "embed", announce: true},
 		documentVector:     cronSlot{label: "document vector", workLabel: "scheduled document indexing", jobName: "document-vector"},
 		ctx:                ctx,
@@ -390,6 +403,8 @@ func (s *Scheduler) RemoveJob(name string) {
 	delete(s.genericJobs, name)
 	delete(s.genericSchedules, name)
 	delete(s.genericFuncs, name)
+	delete(s.genericManual, name)
+	delete(s.genericNextManual, name)
 	delete(s.genericPreemptible, name)
 	delete(s.genericMaxRuntime, name)
 	delete(s.genericBackground, name)
@@ -407,6 +422,7 @@ func (s *Scheduler) RemoveJob(name string) {
 func (s *Scheduler) RemoveAccount(email string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.manual, email)
 
 	if entryID, exists := s.jobs[email]; exists {
 		s.cron.Remove(entryID)
@@ -594,6 +610,13 @@ func (s *Scheduler) runSync(email string) {
 	yielded := yieldedToWaiter(runCtx) || jobctx.PreemptionRequested(runCtx)
 
 	s.mu.Lock()
+	var completion func()
+	if !yielded || jobctx.ErrorAfterYield(runCtx, err) != nil {
+		if err == nil && !yielded && !s.stopped && s.ctx.Err() == nil && s.manual[email] {
+			completion = s.onCompletion
+		}
+		delete(s.manual, email)
+	}
 	if yielded {
 		if callbackErr := jobctx.ErrorAfterYield(runCtx, err); callbackErr != nil {
 			s.lastErr[email] = callbackErr
@@ -605,7 +628,7 @@ func (s *Scheduler) runSync(email string) {
 		s.logger.Info("scheduled sync yielded to a waiting operation; queued follow-up",
 			"email", email,
 			"duration", time.Since(start))
-	} else if err != nil {
+	} else if err != nil && err != ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		s.lastErr[email] = err
 		logScheduledSyncError(s.logger, email, time.Since(start), err)
 	} else {
@@ -616,11 +639,14 @@ func (s *Scheduler) runSync(email string) {
 			"duration", time.Since(start))
 	}
 	s.mu.Unlock()
+	if completion != nil {
+		completion()
+	}
 
-	// Post-sync embed hook: only fire on successful sync, and only
+	// Post-sync embed hook: fire on success or clean no-work deferral, and only
 	// when configured. Runs synchronously in this goroutine so it's
 	// naturally covered by the wg.Done deferred above.
-	if err != nil || yielded {
+	if (err != nil && err != ErrDeferUntilNextTrigger) || yielded { //nolint:errorlint // Only a bare deferral is a clean no-work run.
 		return
 	}
 	for _, slot := range []*cronSlot{&s.embed, &s.documentVector} {
@@ -678,6 +704,7 @@ func (s *Scheduler) finishAccountRun(email string) {
 		return
 	}
 	delete(s.pending, email)
+	delete(s.manual, email)
 	s.running[email] = false
 }
 
@@ -739,7 +766,7 @@ func (s *Scheduler) IsScheduled(email string) bool {
 // TriggerSync manually triggers a sync for an account (outside of schedule).
 // Returns an error if a sync is already running, the account is not scheduled,
 // or the scheduler has been stopped.
-func (s *Scheduler) TriggerSync(email string) error {
+func (s *Scheduler) TriggerSync(email string, manual bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -756,6 +783,7 @@ func (s *Scheduler) TriggerSync(email string) error {
 
 	s.running[email] = true
 	s.queued[email] = true
+	s.manual[email] = manual
 	s.wg.Add(1)
 	go s.runSync(email)
 	return nil
@@ -773,7 +801,7 @@ func (s *Scheduler) IsJobScheduled(name string) bool {
 // no gate held) and relies on running to completion before returning so
 // lastRun/lastErr are recorded synchronously.
 func (s *Scheduler) TriggerJob(name string) error {
-	run, disp, err := s.reserveGenericJob(name, false)
+	run, disp, err := s.reserveGenericJob(name, false, false)
 	if err != nil {
 		return err
 	}
@@ -808,8 +836,8 @@ const (
 // at most one follow-up run is kept, and the returned disposition says
 // whether a run started, a follow-up was queued, or the request was merged
 // into one already pending.
-func (s *Scheduler) StartJob(name string) (JobDisposition, error) {
-	run, disp, err := s.reserveGenericJob(name, true)
+func (s *Scheduler) StartJob(name string, manual bool) (JobDisposition, error) {
+	run, disp, err := s.reserveGenericJob(name, true, manual)
 	if err != nil {
 		return "", err
 	}
@@ -825,7 +853,7 @@ func (s *Scheduler) StartJob(name string) (JobDisposition, error) {
 // onJobTick handles one cron firing for a generic job, coalescing a tick
 // that arrives while the job is active like onAccountTick does.
 func (s *Scheduler) onJobTick(name string) {
-	run, disp, err := s.reserveGenericJob(name, true)
+	run, disp, err := s.reserveGenericJob(name, true, false)
 	if err != nil || disp != JobStarted {
 		return
 	}
@@ -837,7 +865,7 @@ func (s *Scheduler) onJobTick(name string) {
 // disposition is JobStarted when the caller now owns a run. When the job is
 // already running it is JobPending or JobCoalesced if coalesce is set (one
 // follow-up run is remembered), and empty otherwise (a no-op, not an error).
-func (s *Scheduler) reserveGenericJob(name string, coalesce bool) (run func(context.Context) error, disp JobDisposition, err error) {
+func (s *Scheduler) reserveGenericJob(name string, coalesce bool, manual bool) (run func(context.Context) error, disp JobDisposition, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -852,12 +880,18 @@ func (s *Scheduler) reserveGenericJob(name string, coalesce bool) (run func(cont
 		if !coalesce {
 			return nil, "", nil
 		}
+		target := s.genericNextManual
+		if s.genericQueued[name] {
+			target = s.genericManual
+		}
+		target[name] = target[name] || manual
 		if s.coalesceTickLocked("job", name, s.genericQueued, s.genericPending) {
 			return nil, JobPending, nil
 		}
 		return nil, JobCoalesced, nil
 	}
 	s.genericRunning[name] = true
+	s.genericManual[name] = manual
 	s.genericQueued[name] = true
 	s.wg.Add(1)
 	return run, JobStarted, nil
@@ -892,9 +926,18 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	err := run(runCtx)
 	endRun()
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var completion func()
+	defer func() {
+		s.mu.Unlock()
+		if completion != nil {
+			completion()
+		}
+	}()
+	manual := s.genericManual[name]
+	delete(s.genericManual, name)
 	if err == ErrDeferUntilNextTrigger { //nolint:errorlint // Only a bare deferral suppresses failure; joined errors must remain visible.
 		delete(s.genericPending, name)
+		delete(s.genericNextManual, name)
 		delete(s.genericLastErr, name)
 		s.genericLastRun[name] = time.Now()
 		return nil
@@ -902,6 +945,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
 	if budgetExpired && !jobctx.HasProgress(runCtx) {
 		delete(s.genericPending, name)
+		delete(s.genericNextManual, name)
 		err = errors.Join(fmt.Errorf("%w before committing progress", jobctx.ErrRunBudgetExceeded),
 			jobctx.ErrorAfterYield(runCtx, err))
 		s.genericLastErr[name] = err
@@ -918,6 +962,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 			s.genericLastErr[name] = err
 			return err
 		}
+		s.genericNextManual[name] = s.genericNextManual[name] || manual
 		s.logger.Info("scheduled job has remaining work; queued follow-up",
 			"job", name)
 		return nil
@@ -931,6 +976,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 				"error", callbackErr)
 			return callbackErr
 		}
+		s.genericNextManual[name] = s.genericNextManual[name] || manual
 		delete(s.genericLastErr, name)
 		s.logger.Info("scheduled job yielded to waiting work; queued follow-up",
 			"job", name)
@@ -939,6 +985,9 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	if err != nil {
 		s.genericLastErr[name] = err
 		return err
+	}
+	if manual && !s.stopped && s.genericFuncs[name] != nil && s.ctx.Err() == nil {
+		completion = s.onCompletion
 	}
 	s.genericLastRun[name] = time.Now()
 	delete(s.genericLastErr, name)
@@ -956,6 +1005,8 @@ func (s *Scheduler) finishGenericRun(name string) {
 	current := s.genericFuncs[name]
 	if s.genericPending[name] && !s.stopped && current != nil {
 		delete(s.genericPending, name)
+		s.genericManual[name] = s.genericNextManual[name]
+		delete(s.genericNextManual, name)
 		s.genericQueued[name] = true
 		s.wg.Add(1)
 		go func() { _ = s.runJob(name, current) }()
@@ -970,6 +1021,8 @@ func (s *Scheduler) finishGenericRun(name string) {
 			"job", name, "stopped", s.stopped, "job_registered", current != nil)
 		delete(s.genericPending, name)
 	}
+	delete(s.genericManual, name)
+	delete(s.genericNextManual, name)
 	s.genericRunning[name] = false
 }
 

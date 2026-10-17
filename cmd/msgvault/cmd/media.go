@@ -20,7 +20,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 	var request daemonclient.MediaSearchOptions
 	var directions []string
 	var jsonOutput bool
-	search := &cobra.Command{Use: "search <query>", Short: "Find spoken words in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) error {
+	search := &cobra.Command{Use: "search <query>", Short: "Find spoken words in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
 		request.Query = strings.Join(args, " ")
 		if request.Limit < 1 || (command.Flags().Changed("person") && request.PersonID <= 0) {
 			return errors.New("limit and explicit --person must be positive")
@@ -37,6 +37,9 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		response, err := client.SearchMedia(command.Context(), request)
 		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(request.Query) != "" {
+			defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", "text", &result)
 		}
 		if jsonOutput {
 			return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

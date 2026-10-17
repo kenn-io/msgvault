@@ -1766,6 +1766,8 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sourceType := r.URL.Query().Get("source_type")
+	security, _ := securityFromRequest(r)
+	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
 	scheduling := classifySourceScheduling(sourceType, account)
 	switch scheduling.kind {
@@ -1777,7 +1779,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		disp, err := s.scheduler.StartJob(scheduling.jobName)
+		disp, err := s.scheduler.StartJob(scheduling.jobName, manual)
 		if err != nil {
 			s.logger.Error("failed to trigger generic sync job",
 				"job", scheduling.jobName, "identifier", account, "error", err)
@@ -1806,7 +1808,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "Account is not scheduled: "+account)
 			return
 		}
-		if err := s.scheduler.TriggerSync(account); err != nil {
+		if err := s.scheduler.TriggerSync(account, manual); err != nil {
 			s.logger.Error("failed to trigger sync", "account", account, "error", err)
 			writeError(w, http.StatusConflict, "sync_error", err.Error())
 			return

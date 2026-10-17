@@ -208,7 +208,7 @@ type StoreStats = store.Stats
 // SyncScheduler defines the scheduler operations the API needs.
 type SyncScheduler interface {
 	IsScheduled(email string) bool
-	TriggerSync(email string) error
+	TriggerSync(email string, manual bool) error
 	AddAccount(email, schedule string) error
 	Status() []AccountStatus
 	IsRunning() bool
@@ -224,7 +224,7 @@ type SyncScheduler interface {
 	// acquires the daemon's operation gate, avoiding a self-deadlock when
 	// the request itself is holding that gate.
 	IsJobScheduled(name string) bool
-	StartJob(name string) (scheduler.JobDisposition, error)
+	StartJob(name string, manual bool) (scheduler.JobDisposition, error)
 	TriggerJob(name string) error
 }
 

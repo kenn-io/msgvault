@@ -30,6 +30,7 @@ type textAggregateLoadedMsg struct {
 // textMessagesLoadedMsg is sent when text conversation messages are loaded.
 type textMessagesLoadedMsg struct {
 	messages               []query.MessageSummary
+	query                  string
 	err                    error
 	requestID              uint64
 	presentationGeneration uint64
@@ -47,6 +48,7 @@ type textMessageLoadedMsg struct {
 // textSearchResultMsg is sent when text search results are loaded.
 type textSearchResultMsg struct {
 	messages               []query.MessageSummary
+	query                  string
 	err                    error
 	requestID              uint64
 	presentationGeneration uint64
@@ -154,7 +156,7 @@ func (m *Model) loadTextMessages() tea.Cmd {
 				context.Background(), convID, filter,
 			)
 			return textMessagesLoadedMsg{
-				messages: msgs, err: err, requestID: requestID,
+				messages: msgs, query: filter.SearchQuery, err: err, requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
 		},
@@ -231,7 +233,7 @@ func (m *Model) loadTextSearch(searchQuery string) tea.Cmd {
 				context.Background(), searchQuery, sourceID, 100, 0,
 			)
 			return textSearchResultMsg{
-				messages: msgs, err: err, requestID: requestID,
+				messages: msgs, query: searchQuery, err: err, requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
 		},

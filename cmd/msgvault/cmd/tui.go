@@ -124,6 +124,7 @@ HTTP Mode:
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
 			ReportScreen:          tuiScreenReporter(backend.client),
+			ReportAction:          tuiActionReporter(backend.client),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -182,14 +183,7 @@ func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInf
 
 func tuiScreenReporter(client *daemonclient.Client) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
-		generated, err := client.GeneratedClient()
-		if err != nil {
-			return err
-		}
-		_, err = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
-			Body: &apiclient.CaptureTelemetryEventBody{Event: "screen_viewed", Properties: map[string]any{"screen": screen, "surface": "tui"}},
-		})
-		return err
+		return sendActionTelemetry(ctx, client, "tui", "screen_viewed", "screen", screen)
 	}
 }
 
@@ -398,4 +392,10 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("force-sql")
 	_ = tuiCmd.Flags().MarkHidden("no-cache-build")
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
+}
+
+func tuiActionReporter(client *daemonclient.Client) func(context.Context, string, string, string) error {
+	return func(ctx context.Context, event, property, value string) error {
+		return sendActionTelemetry(ctx, client, "tui", event, property, value)
+	}
 }

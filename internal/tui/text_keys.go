@@ -554,6 +554,8 @@ func (m Model) textGoBack() (tea.Model, tea.Cmd) {
 	// them directly without reloading. This is instant and avoids
 	// re-querying the database.
 	if m.textState.unfilteredMessages != nil {
+		m.nextTextRequestID()
+		m.loading = false
 		m.textState.messages = m.textState.unfilteredMessages
 		m.textState.unfilteredMessages = nil
 		// Pop the search breadcrumb

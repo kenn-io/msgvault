@@ -65,8 +65,10 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
+  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
+
   type IdentityFileScope =
     | {
         kind: 'person';
@@ -523,6 +525,10 @@
     } else if (result.cache_revision !== cacheRevision || authority !== pageAuthority) {
       failPaging('Results changed while loading another page. Reload this view.');
       return false;
+    }
+    if (!cursor) {
+      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), signal);
+      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), signal);
     }
     if (cursor) seenCursors.add(cursor);
     error = '';
