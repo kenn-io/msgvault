@@ -159,7 +159,7 @@ func defaultSetupProvidersDeps(contexts ...context.Context) setupProvidersDeps {
 // operator's home directory when the file does not exist yet so recommended
 // manifest paths land beside the config that setup is about to create.
 func loadSetupConfig(snapshot config.ConfigFile, homeDir string) (*config.Config, error) {
-	loaded, err := config.LoadConfigFile(snapshot, homeDir)
+	loaded, err := config.LoadConfigFileForSections(snapshot, homeDir, setupConfigSections()...)
 	if err != nil {
 		return nil, err
 	}

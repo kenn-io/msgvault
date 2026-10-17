@@ -580,7 +580,7 @@ func personProviderConfigFromSnapshot(
 	if deps.configHomeDir != nil {
 		homeDir = deps.configHomeDir()
 	}
-	loaded, err := config.LoadConfigFile(snapshot, homeDir)
+	loaded, err := config.LoadConfigFileForSections(snapshot, homeDir, "people.sweep")
 	if err != nil {
 		return peoplesweep.Config{}, err
 	}

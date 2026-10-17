@@ -34,9 +34,12 @@ func newMCPStatusCommand() *cobra.Command {
 			if inv == nil {
 				return errors.New("missing invocation state")
 			}
-			cfg, err := config.Load(inv.options.cfgFile, inv.options.homeDir)
+			cfg, err := config.LoadForSections(inv.options.cfgFile, inv.options.homeDir, config.RuntimeOverrides{})
 			if err != nil {
 				return err
+			}
+			for _, warning := range cfg.UnusedSectionErrors() {
+				_, _ = fmt.Fprintf(command.ErrOrStderr(), "Warning: unused config section %v\n", warning)
 			}
 			inv.cfg = cfg
 			directory := filepath.Join(cfg.HomeDir, "mcp")

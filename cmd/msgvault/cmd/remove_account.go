@@ -196,6 +196,12 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 		}
 		return nil
 	}
+	if source.SourceType == sourceTypeGmail {
+		if err := cfg.ValidateFor("oauth"); err != nil {
+			cleanup()
+			return err
+		}
+	}
 	if source.SourceType == sourceTypeMatrix && !matrixLockHeld {
 		cleanup()
 		return matrixsource.WithCredentialLifecycleLock(cfg.TokensDir(), func() error {

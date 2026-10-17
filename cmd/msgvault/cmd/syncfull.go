@@ -277,6 +277,9 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 	logger := state.logger
 	switch src.SourceType {
 	case sourceTypeGmail, "":
+		if err := cfg.ValidateFor("oauth"); err != nil {
+			return nil, err
+		}
 		appName := sourceOAuthApp(src)
 		var tokenSource oauth2.TokenSource
 

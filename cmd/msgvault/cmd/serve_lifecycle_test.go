@@ -1843,20 +1843,12 @@ func httptestPingDaemon(t *testing.T) lifecyclePingServer {
 }
 
 func lifecycleTestConfig(dataDir string) *config.Config {
-	return &config.Config{
-		HomeDir: dataDir,
-		Data: config.DataConfig{
-			DataDir: dataDir,
-		},
-		Server: config.ServerConfig{
-			BindAddr: "127.0.0.1",
-			APIPort:  8080,
-		},
-		Analytics: config.AnalyticsConfig{
-			Engine:         config.AnalyticsEngineAuto,
-			AutoBuildCache: true,
-		},
-	}
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = dataDir
+	cfg.Data.DataDir = dataDir
+	cfg.Server.BindAddr = "127.0.0.1"
+	cfg.Server.APIPort = 8080
+	return cfg
 }
 
 func restoreStopWaitPacing(t *testing.T, quiet, interval time.Duration) {

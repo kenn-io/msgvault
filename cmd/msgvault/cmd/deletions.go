@@ -1075,6 +1075,9 @@ Examples:
 		// token), so the scope-escalation prompt only applies to browser OAuth.
 		var clientSecretsPath config.OAuthApp
 		if src.SourceType == sourceTypeGmail {
+			if err := cfg.ValidateFor("oauth"); err != nil {
+				return err
+			}
 			if !cfg.OAuth.HasAnyConfig() {
 				return errOAuthNotConfigured(cfg)
 			}
