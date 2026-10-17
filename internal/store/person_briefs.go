@@ -50,10 +50,11 @@ func (e *PersonBriefNotTrackedError) Unwrap() error { return ErrPersonBriefNotTr
 // PersonBriefEnrollment reports whether a person is opted in to generated
 // briefs. An absent person_brief_enrollments row means not enrolled.
 type PersonBriefEnrollment struct {
-	PersonID  int64      `json:"person_id"`
-	Enrolled  bool       `json:"enrolled"`
-	EnabledAt *time.Time `json:"enabled_at"`
-	Actor     string     `json:"actor"`
+	PersonID   int64      `json:"person_id"`
+	Enrolled   bool       `json:"enrolled"`
+	EnabledAt  *time.Time `json:"enabled_at"`
+	Actor      string     `json:"actor"`
+	Provenance string     `json:"-"`
 }
 
 // PersonBrief is one immutable dated brief version. Structured and RenderedText
@@ -163,47 +164,98 @@ func (s *Store) GetPersonBriefEnrollmentContext(
 func (s *Store) SetPersonBriefEnrollmentContext(
 	ctx context.Context, personID int64, enabled bool, actor string, track bool,
 ) (*PersonBriefEnrollment, error) {
-	actor = strings.TrimSpace(actor)
-	if enabled && actor == "" {
-		return nil, errors.New("set person brief enrollment: actor is required")
-	}
 	var enrollment *PersonBriefEnrollment
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if !enabled {
-			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM person_brief_enrollments WHERE person_id = ?`, personID); err != nil {
-				return fmt.Errorf("unenroll person %d from briefs: %w", personID, err)
-			}
-			var err error
-			enrollment, err = s.getPersonBriefEnrollmentTx(ctx, tx, personID)
-			return err
-		}
-		tracking, err := s.getPersonTrackingTx(ctx, tx, personID)
-		if err != nil {
-			return err
-		}
-		if !tracking.Tracked {
-			if !track {
-				return &PersonBriefNotTrackedError{PersonID: personID}
-			}
-			if _, err := s.setPersonTrackingTx(ctx, tx, personID, true); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO person_brief_enrollments (person_id, enabled_at, actor)
-			VALUES (?, ?, ?)
-			ON CONFLICT (person_id) DO NOTHING
-		`, personID, time.Now().UTC(), actor); err != nil {
-			return fmt.Errorf("enroll person %d in briefs: %w", personID, err)
-		}
-		enrollment, err = s.getPersonBriefEnrollmentTx(ctx, tx, personID)
+		var err error
+		enrollment, err = s.setPersonBriefEnrollmentWithOptionsTx(ctx, tx, personID, enabled, track, personTierGrantOptions{
+			Provenance: PersonTierProvenanceManual, Actor: actor, RecordOptOut: true,
+		})
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
 	return enrollment, nil
+}
+
+func (s *Store) setPersonBriefEnrollmentWithOptionsTx(
+	ctx context.Context, tx *loggedTx, personID int64, enabled, track bool, opts personTierGrantOptions,
+) (*PersonBriefEnrollment, error) {
+	opts, err := s.normalizePersonTierGrantOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+	if enabled && opts.Actor == "" {
+		return nil, errors.New("set person brief enrollment: actor is required")
+	}
+	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+		return nil, err
+	}
+	if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "person-fact-generation", personID); err != nil {
+		return nil, err
+	}
+	if _, err := lockPersonEnrichmentPersonTx(ctx, tx, s.dialect, personID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("set person %d brief enrollment: %w", personID, ErrPersonNotFound)
+		}
+		return nil, err
+	}
+	automatic := opts.Provenance == PersonTierProvenanceAuto
+	if !enabled {
+		predicate := "person_id=?"
+		if automatic {
+			predicate += " AND provenance='auto'"
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM person_brief_enrollments WHERE `+predicate, personID); err != nil {
+			return nil, fmt.Errorf("unenroll person %d from briefs: %w", personID, err)
+		}
+		if !automatic && opts.RecordOptOut {
+			if err := s.recordPersonTierOptOutTx(ctx, tx, personID, PersonTierLaneBriefs, opts.Actor, "", opts.At); err != nil {
+				return nil, err
+			}
+		}
+		return s.getPersonBriefEnrollmentTx(ctx, tx, personID)
+	}
+	if automatic {
+		blocked, err := s.personTierOptedOutTx(ctx, tx, personID, PersonTierLaneBriefs)
+		if err != nil {
+			return nil, err
+		}
+		if blocked {
+			return s.getPersonBriefEnrollmentTx(ctx, tx, personID)
+		}
+	}
+	tracking, err := s.getPersonTrackingTx(ctx, tx, personID)
+	if err != nil {
+		return nil, err
+	}
+	if !tracking.Tracked && !track {
+		return nil, &PersonBriefNotTrackedError{PersonID: personID}
+	}
+	// Every manual brief rests on a manual tracking grant. An existing auto
+	// grant is upgraded even when --track was not needed to create it.
+	if !tracking.Tracked || !automatic {
+		tracking, err = s.setPersonTrackingWithOptionsTx(ctx, tx, personID, true, opts)
+		if err != nil {
+			return nil, err
+		}
+		if !tracking.Tracked {
+			return nil, &PersonBriefNotTrackedError{PersonID: personID}
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO person_brief_enrollments(person_id,enabled_at,actor,provenance)
+  VALUES(?,?,?,?) ON CONFLICT(person_id) DO NOTHING`, personID, opts.At, opts.Actor, opts.Provenance); err != nil {
+		return nil, fmt.Errorf("enroll person %d in briefs: %w", personID, err)
+	}
+	if !automatic {
+		if _, err := tx.ExecContext(ctx, `UPDATE person_brief_enrollments SET provenance='manual',actor=? WHERE person_id=? AND provenance='auto'`, opts.Actor, personID); err != nil {
+			return nil, fmt.Errorf("upgrade person %d brief enrollment to manual: %w", personID, err)
+		}
+		if err := s.clearPersonTierOptOutTx(ctx, tx, personID, PersonTierLaneBriefs); err != nil {
+			return nil, err
+		}
+	}
+	return s.getPersonBriefEnrollmentTx(ctx, tx, personID)
 }
 
 // ListPersonBriefEnrollmentsContext returns a bounded ascending page of enrolled
@@ -217,7 +269,7 @@ func (s *Store) ListPersonBriefEnrollmentsContext(
 			maxPersonBriefEnrollmentList)
 	}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`
-		SELECT person_id, enabled_at, actor FROM person_brief_enrollments
+		SELECT person_id, enabled_at, actor, provenance FROM person_brief_enrollments
 		WHERE person_id > ?
 		ORDER BY person_id
 		LIMIT ?`), afterID, limit)
@@ -229,7 +281,7 @@ func (s *Store) ListPersonBriefEnrollmentsContext(
 	for rows.Next() {
 		enrollment := PersonBriefEnrollment{Enrolled: true}
 		var enabledAt nullableTimestamp
-		if err := rows.Scan(&enrollment.PersonID, &enabledAt, &enrollment.Actor); err != nil {
+		if err := rows.Scan(&enrollment.PersonID, &enabledAt, &enrollment.Actor, &enrollment.Provenance); err != nil {
 			return nil, fmt.Errorf("scan person brief enrollment: %w", err)
 		}
 		if enabledAt.Valid {
@@ -567,15 +619,16 @@ func (s *Store) getPersonBriefEnrollmentTx(
 ) (*PersonBriefEnrollment, error) {
 	enrollment := &PersonBriefEnrollment{PersonID: personID}
 	var (
-		enabledAt nullableTimestamp
-		actor     sql.NullString
+		enabledAt  nullableTimestamp
+		actor      sql.NullString
+		provenance sql.NullString
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT p.id, enrollment.enabled_at, enrollment.actor
+		SELECT p.id, enrollment.enabled_at, enrollment.actor,enrollment.provenance
 		FROM persons p
 		LEFT JOIN person_brief_enrollments enrollment ON enrollment.person_id = p.id
 		WHERE p.id = ?
-	`, personID).Scan(&enrollment.PersonID, &enabledAt, &actor)
+	`, personID).Scan(&enrollment.PersonID, &enabledAt, &actor, &provenance)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get person %d brief enrollment: %w", personID, ErrPersonNotFound)
 	}
@@ -586,6 +639,7 @@ func (s *Store) getPersonBriefEnrollmentTx(
 		enrollment.Enrolled = true
 		enrollment.EnabledAt = &enabledAt.Time
 		enrollment.Actor = actor.String
+		enrollment.Provenance = provenance.String
 	}
 	return enrollment, nil
 }

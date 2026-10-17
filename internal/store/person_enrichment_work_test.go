@@ -1482,6 +1482,44 @@ func TestPersonEnrichmentTerminalRefreshBecomesUnboundWork(t *testing.T) {
 	}))
 }
 
+func TestPersonEnrichmentManualRunCompletesAfterScheduledRefresh(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentWorkFixture(t)
+	require.NoError(f.store.SetPersonTierOptOutContext(
+		t.Context(), f.person.ID, store.PersonTierLaneEnrichment, true, "owner", "explicit preference",
+	))
+	run, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profile.Fingerprint, "manual-refresh-opt-out", f.now,
+	)
+	require.NoError(err)
+	require.True(created)
+	lease := f.claim(t, run.ID, "manual-refresh-worker")
+	start := testAttemptStart(&f, run.ID, "a")
+	start.Trigger = lease.Trigger
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+	require.NoError(err)
+	refreshAt := f.now.Add(24 * time.Hour)
+	require.NoError(store.CompletePersonEnrichmentAttemptForTest(t.Context(), f.store, attempt.Token,
+		store.PersonEnrichmentAttemptCompletion{
+			State: "succeeded", ActualCost: personenrichment.Cost{},
+			RefreshAt: &refreshAt, RefreshGeneration: "refresh:revision:2",
+		}))
+
+	work := f.work(t)
+	require.Len(work, 1)
+	assert.Nil(work[0].RunID)
+	assert.Equal("refresh:revision:2", work[0].TriggerGeneration)
+	assert.Equal(refreshAt, work[0].DueAt)
+
+	require.NoError(f.store.CompleteRun(t.Context(), run.ID, personenrichment.RunCompletion{
+		State: "succeeded", CompletedAt: f.now,
+	}))
+	completed, err := f.store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
+	require.NoError(err)
+	assert.Equal("succeeded", completed.State)
+}
+
 func TestPersonEnrichmentSuccessfulCompletionComposesInsideCallerTransaction(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
