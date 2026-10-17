@@ -36,10 +36,14 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		defer cleanup()
 		response, err := client.SearchMedia(command.Context(), request)
 		if err != nil {
+			reportCLIActionResult(command, client, "search_run", "search_type", "text", &err)
 			return err
 		}
 		if strings.TrimSpace(request.Query) != "" {
-			defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", "text", &result)
+			defer reportCLIActionResult(command, client, "search_run", "search_type", "text", &result)
+		}
+		if strings.TrimSpace(request.Query) != "" {
+			defer reportCLIEmptySearch(command, client, "text", len(response.Results) == 0, &result)
 		}
 		if jsonOutput {
 			return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

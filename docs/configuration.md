@@ -2100,6 +2100,9 @@ features once published. No startup hook or entrypoint wrapper is required.
   (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
   and watch loops don't report CLI actions. CardDAV contact
   sync is separate.
+- `search_empty` once per settled empty search. Browser tabs retain a digest of the normalized query and search type in origin-scoped session storage, so retries, identical submissions, and reloads share a claim. TUI claims last for that session; a CLI invocation reports its completed result. Hidden, canceled, stale, and continuation results stay excluded.
+- `error_shown` once for a displayed search, message-open, or manual sync failure. Its fixed `kind` is `auth`, `not_found`, `rate_limited`, `provider`, `network`, or `other`. Unknown kinds become `other`. Retries share the action's claim.
+- `sync_failed` once per archive source outage, including CLI and scheduled runs. A successful sync clears that source's claim; a successful all-sources CLI run clears all claims. The daemon stores only source hashes in `telemetry-outages.json`. An unscoped CLI failure has one aggregate claim. Pauses, cancellations, yields, deferrals, maintenance jobs, and contact syncs stay excluded. Its `reason` uses the same fixed categories as `error_shown.kind`.
 - `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
   terminal UI exits normally or after an interrupt. Browser sessions add visible
   time across tab switches;
@@ -2174,6 +2177,7 @@ home; `[log].dir` can override the log location.
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
 | `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created only while telemetry is on |
+| `telemetry-outages.json` | Hashed source claims for ongoing archive sync outages; created only while telemetry is on |
 | `telemetry-screen-views.json` | Current UTC day's screen, search, and message claims; created only while telemetry is on |
 
 ## Example configuration

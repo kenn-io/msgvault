@@ -825,6 +825,44 @@ describe('AppShell', () => {
       visibility.mockRestore();
     });
 
+    it('reports an accepted empty search', async () => {
+      sessionStorage.clear();
+      const events: string[] = [];
+      const state = shellState('everything');
+      const client = createAPIClient(async (input) => {
+        const request = input as Request;
+        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+          const body = await request.json();
+          if (body.event === 'search_empty') events.push(body.properties.search_type);
+          return Response.json({ status: 'queued' });
+        }
+        return Response.json(exploreResponse({ rows: [] }));
+      });
+      const view = render(AppShell, { client, state });
+      state.commitSearch('missing item', 'full_text');
+      await waitFor(() => expect(events).toEqual(['text']));
+      view.unmount();
+    });
+
+    it('reports a displayed rate limit failure', async () => {
+      sessionStorage.clear();
+      const events: unknown[] = [];
+      const state = shellState('everything');
+      const client = createAPIClient(async (input) => {
+        const request = input as Request;
+        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+          const body = await request.json();
+          if (body.event === 'error_shown') events.push(body.properties);
+          return Response.json({ status: 'queued' });
+        }
+        return Response.json({ message: 'Too many requests' }, { status: 429 });
+      });
+      const view = render(AppShell, { client, state });
+      state.commitSearch('failed search', 'full_text');
+      await waitFor(() => expect(events).toEqual([{ surface: 'web', kind: 'rate_limited' }]));
+      view.unmount();
+    });
+
     it('remembers the collapsed sidebar across reloads', async () => {
       const state = shellState('everything');
       const first = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });

@@ -5,7 +5,7 @@ import { createAPIClient as createClient } from '../../api/client';
 import ConversationView from './ConversationView.svelte';
 
 const telemetryEvents: unknown[] = [];
-beforeEach(() => { telemetryEvents.length = 0; });
+beforeEach(() => { telemetryEvents.length = 0; sessionStorage.clear(); });
 function createAPIClient(fetchFn: typeof fetch) {
   return createClient(async (input, init) => {
     if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
@@ -460,6 +460,7 @@ describe('ConversationView', () => {
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
     expect((await screen.findByRole('alert')).textContent).toContain('Failed to retrieve message');
+    await waitFor(() => expect(telemetryEvents).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: 'provider' } }));
 
     await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));

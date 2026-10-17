@@ -1825,19 +1825,20 @@ func TestAcceptedSearchActions(t *testing.T) {
 		msg    tea.Msg
 		want   []string
 	}{
-		{"fast", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
-		{"deep", modeEmail, searchModeDeep, searchResultsMsg{requestID: 2, query: "needle", searchMode: searchModeDeep}, []string{"search_run:search_type:text"}},
-		{"semantic request keeps its type during fast editing", modeEmail, searchModeSemantic, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:hybrid"}},
+		{"fast", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{"deep", modeEmail, searchModeDeep, searchResultsMsg{requestID: 2, query: "needle", searchMode: searchModeDeep}, []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{"semantic request keeps its type during fast editing", modeEmail, searchModeSemantic, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:hybrid", "search_empty:search_type:hybrid"}},
+		{"reader failure", modeEmail, searchModeFast, messageDetailLoadedMsg{requestID: 2, messageID: 7, err: errors.New("private")}, []string{"error_shown:kind:other"}},
 		{"stale matching query", modeEmail, searchModeFast, searchResultsMsg{requestID: 1, query: "needle"}, nil},
-		{"failed", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", err: errors.New("offline")}, nil},
+		{"failed", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", err: errors.New("offline")}, []string{"error_shown:kind:other"}},
 		{"continuation", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", append: true}, nil},
-		{"texts conversation", modeTexts, searchModeFast, textMessagesLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
-		{"meetings", modeMeetings, searchModeFast, meetingSearchLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
+		{"texts conversation", modeTexts, searchModeFast, textMessagesLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{"meetings", modeMeetings, searchModeFast, meetingSearchLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text", "search_empty:search_type:text"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, m, events := assert.New(t), NewBuilder().Build(), []string(nil)
 			m.width, m.height, m.mode, m.searchMode = 100, 24, tc.mode, tc.search
-			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID = 2, 2, 2
+			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID, m.detailRequestID = 2, 2, 2, 2
 			m.reportAction = func(_ context.Context, e, p, v string) error {
 				events = append(events, e+":"+p+":"+v)
 				return nil
@@ -1889,4 +1890,39 @@ func TestSearchFilterRetryReportsAcceptedResults(t *testing.T) {
 			assert.Equal(1, calls)
 		})
 	}
+}
+
+func TestSearchOutcomeClaimsSurviveRetriesAndResubmission(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	m := NewBuilder().Build()
+	m.width, m.height = 100, 24
+	var outcomes []string
+	m.reportAction = func(_ context.Context, event, _, _ string) error {
+		if event != "search_run" {
+			outcomes = append(outcomes, event)
+		}
+		return nil
+	}
+	for _, query := range []string{" missing   item ", "missing item", "another", "missing item"} {
+		m.searchRequestID++
+		updated, cmd := m.Update(searchResultsMsg{requestID: m.searchRequestID, query: query})
+		next, ok := updated.(Model)
+		require.True(ok)
+		m = next
+		if cmd != nil {
+			_ = runBatchCommand(t, cmd)
+		}
+	}
+	assert.Equal([]string{"search_empty", "search_empty"}, outcomes)
+	for range 2 {
+		m.searchRequestID++
+		updated, cmd := m.Update(searchResultsMsg{requestID: m.searchRequestID, query: "failed", err: errors.New("private")})
+		next, ok := updated.(Model)
+		require.True(ok)
+		m = next
+		if cmd != nil {
+			_ = runBatchCommand(t, cmd)
+		}
+	}
+	assert.Equal([]string{"search_empty", "search_empty", "error_shown"}, outcomes)
 }

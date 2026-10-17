@@ -37,6 +37,7 @@ export interface ExploreLoaderCallbacks {
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
   onSearchAccepted?: (query: string, mode: ExploreSearchMode, signal: AbortSignal) => void;
+  onSearchOutcome?: (query: string, mode: ExploreSearchMode, empty: boolean, signal: AbortSignal, cause?: unknown) => void;
 }
 
 const REPEATED_CURSOR_NOTICE = 'Pagination stopped because the server repeated a cursor without progress.';
@@ -194,6 +195,7 @@ export class ExploreLoader {
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
         if (loaded.status !== 'unavailable') {
+          this.callbacks.onSearchOutcome?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', loaded.result.rows.length === 0, controller.signal);
           this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal);
         }
         if (loaded.status === 'unavailable') {
@@ -244,6 +246,7 @@ export class ExploreLoader {
         this.groupRows = [];
         this.result = undefined;
         this.error = cause instanceof Error ? cause.message : 'Could not load Everything.';
+        this.callbacks.onSearchOutcome?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', false, controller.signal, cause);
       })
       .finally(() => {
         if (generation === this.requestGeneration) {

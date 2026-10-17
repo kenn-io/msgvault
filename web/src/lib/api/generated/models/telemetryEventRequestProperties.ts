@@ -3,6 +3,6 @@
  */
 
 /**
- * Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. Invalid core actions are dropped; unknown properties are stripped
+ * Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. search_empty uses search_type after a settled empty first page; error_shown uses kind (auth, not_found, rate_limited, provider, network, other), with unknown kinds normalized to other. These outcomes have no daily suppression; callers claim retries locally. sync_failed is daemon-owned and cannot be posted. Invalid core actions are dropped; unknown properties are stripped
  */
 export type TelemetryEventRequestProperties = { [key: string]: unknown };

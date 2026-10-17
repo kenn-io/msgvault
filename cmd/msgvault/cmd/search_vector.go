@@ -34,7 +34,7 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		kind = "semantic"
 	}
 	if strings.TrimSpace(queryStr) != "" {
-		defer reportSuccessfulCLIAction(cmd, s, "search_run", "search_type", kind, &result)
+		defer reportCLIActionResult(cmd, s, "search_run", "search_type", kind, &result)
 	}
 
 	logger.Info("vector search start",
@@ -62,6 +62,9 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 		return err
 	}
 
+	if strings.TrimSpace(queryStr) != "" {
+		defer reportCLIEmptySearch(cmd, s, kind, len(resp.Results) == 0, &result)
+	}
 	if searchCollection != "" {
 		label := resp.ScopeLabel
 		if label == "" {

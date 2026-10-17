@@ -68,9 +68,19 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
+	if req.Event == EventSyncFailed {
+		acceptedScreen(w)
+		return
+	}
 	if _, action := actionProperties[req.Event]; !action && req.Event != EventScreenViewed {
 		h.capture.ServeHTTP(w, r)
 		return
+	}
+	if req.Event == EventErrorShown {
+		if req.Properties == nil {
+			req.Properties = map[string]any{}
+		}
+		req.Properties["kind"] = normalizeFailure(req.Properties["kind"])
 	}
 	req.Properties, _ = h.reporter.SanitizeProperties(req.Event, req.Properties)
 	if required, action := actionProperties[req.Event]; action {
@@ -80,6 +90,14 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
+	}
+	if req.Event == EventSearchEmpty || req.Event == EventErrorShown {
+		if err := h.captureEvent(req.Event, req.Properties); err != nil {
+			http.Error(w, "capture telemetry event failed", http.StatusInternalServerError)
+			return
+		}
+		acceptedScreen(w)
+		return
 	}
 	surface, _ := req.Properties[propertySurface].(string)
 	if req.Event == EventSyncFinished {

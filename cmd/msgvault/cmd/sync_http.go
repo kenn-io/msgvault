@@ -66,12 +66,13 @@ func runSyncFullHTTP(cmd *cobra.Command, args []string) error {
 	return runSyncHTTP(cmd, req)
 }
 
-func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
+func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) (result error) {
 	st, info, err := OpenHTTPStore(cmd.Context())
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+	defer reportCLIActionResult(cmd, st, "sync_finished", "", "", &result)
 
 	if err := preflightReauth(cmd.Context(), buildSyncPreflight(st, info, invocationFromCommand(cmd)), req.Email, req.SourceID); err != nil {
 		return err
@@ -90,9 +91,6 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		}
 		return nil
 	})
-	if err == nil {
-		reportCLIAction(cmd, st, "sync_finished", "", "")
-	}
 	return err
 }
 

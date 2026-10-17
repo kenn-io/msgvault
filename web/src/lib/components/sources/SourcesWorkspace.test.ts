@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -393,6 +393,54 @@ describe('SourcesWorkspace', () => {
     expect(triggerURL.searchParams.get('source_type')).toBe('granola');
     expect(screen.queryByRole('alert')).toBeNull();
     rendered.unmount();
+  });
+
+  it('discards a manual sync refusal after the workspace is destroyed', async () => {
+    sessionStorage.clear();
+    vi.spyOn(crypto.subtle, 'digest').mockResolvedValue(new ArrayBuffer(32));
+    const events: unknown[] = [];
+    let triggerSignal: AbortSignal | undefined;
+    let refuse!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { refuse = resolve; });
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+        events.push(await request.json());
+        return Response.json({ status: 'queued' });
+      }
+      if (request.method === 'POST') {
+        triggerSignal = request.signal;
+        return pending;
+      }
+      return Response.json({ sources: [source()] });
+    });
+    const view = render(SourcesWorkspace, { client });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    view.unmount();
+    expect(triggerSignal?.aborted).toBe(true);
+    await act(async () => {
+      refuse(Response.json({ message: 'Authorization required' }, { status: 403 }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(events).toEqual([]);
+  });
+
+  it('reports a displayed manual sync refusal', async () => {
+    sessionStorage.clear();
+    const events: unknown[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+        events.push(await request.json());
+        return Response.json({ status: 'queued' });
+      }
+      if (request.method === 'POST') return Response.json({ message: 'Authorization required' }, { status: 403 });
+      return Response.json({ sources: [source()] });
+    });
+    const view = render(SourcesWorkspace, { client });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'auth' } }]));
+    view.unmount();
   });
 
   it('names conflicting runs', async () => {

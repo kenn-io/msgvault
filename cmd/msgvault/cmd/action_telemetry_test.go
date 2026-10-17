@@ -26,7 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
-func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
+func TestCLIActionOwnersReportOutcomesAndSuppressHooks(t *testing.T) {
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
@@ -80,7 +80,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
 				continue
 			}
-			if (action == "muesli-hook" || action == "sync-muesli") && fails {
+			if (action == "muesli-hook" || action == "sync-muesli" || action == "sync-slack") && fails {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {
@@ -170,7 +170,15 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					require.True(ok)
 					assert.Equal("Omi sync output", output.String())
 				}
-				if action == "muesli-hook" || fails || outputFails || outcome.paused {
+				if fails || outputFails {
+					expectedKind := "other"
+					if fails && !strings.HasPrefix(action, "sync") {
+						expectedKind = "provider"
+					}
+					assert.Equal([]map[string]any{{"event": "error_shown", "properties": map[string]any{"surface": "cli", "kind": expectedKind}}}, events)
+					return
+				}
+				if action == "muesli-hook" || outcome.paused {
 					assert.Empty(events)
 					return
 				}
@@ -181,11 +189,15 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				if kind != "" {
 					properties["search_type"], event = kind, "search_run"
 				}
-				assert.Equal([]map[string]any{{"event": event, "properties": properties}}, events)
+				want := []map[string]any{{"event": event, "properties": properties}}
+				if kind != "" {
+					want = append([]map[string]any{{"event": "search_empty", "properties": properties}}, want...)
+				}
+				assert.Equal(want, events)
 				if action == "search" {
 					searchOffset = 1
 					require.NoError(run(cmd))
-					assert.Len(events, 1, "continuation pages do not count")
+					assert.Len(events, 2, "continuation pages do not count")
 				}
 			})
 		}

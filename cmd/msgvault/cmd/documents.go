@@ -1206,6 +1206,9 @@ func runSearchDocuments(
 	defer cleanup()
 	response, err := reader.SearchDocuments(command.Context(), request)
 	if err != nil {
+		if client, remote := reader.(*daemonclient.Client); remote {
+			reportCLIActionResult(command, client, "search_run", "search_type", "text", &err)
+		}
 		return err
 	}
 	client, remote := reader.(*daemonclient.Client)
@@ -1214,7 +1217,8 @@ func runSearchDocuments(
 		if kind != "semantic" && kind != "hybrid" {
 			kind = "text"
 		}
-		defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", kind, &result)
+		defer reportCLIActionResult(command, client, "search_run", "search_type", kind, &result)
+		defer reportCLIEmptySearch(command, client, kind, len(response.Results) == 0, &result)
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

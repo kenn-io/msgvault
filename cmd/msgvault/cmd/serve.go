@@ -170,11 +170,22 @@ func (s serveSchedulers) Stop() context.Context {
 // Media passes do not count as activity; shutdown cancels and drains them.
 func newServeSchedulers(
 	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
-	capture func(string, map[string]any) error,
+	capture func(string, map[string]any) error, outcomes *telemetry.Outcomes,
 ) (*scheduler.Scheduler, *scheduler.Scheduler) {
 	sched := scheduler.New(syncFunc).WithLogger(logger).
 		WithWorkTracker(combineWorkTrackers(scheduleIdleWorkTracker(idle), labelWorkTracker(gate, "a scheduled sync")))
 	media := scheduler.New(nil).WithLogger(logger)
+	sched.WithResult(func(key string, generic bool, err error) {
+		if generic && !api.IsArchiveSyncJobName(key) {
+			return
+		}
+		if !generic {
+			key = "account:" + strings.ToLower(strings.TrimSpace(key))
+		}
+		if reportErr := outcomes.SyncResult(key, err); reportErr != nil {
+			logger.Warn("record sync outcome", "error", reportErr)
+		}
+	})
 	if capture != nil {
 		for _, target := range []*scheduler.Scheduler{sched, media} {
 			target.WithCompletion(func() { _ = capture(telemetry.EventSyncFinished, map[string]any{"surface": "web"}) })
@@ -435,7 +446,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
-	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
+	var outcomes *telemetry.Outcomes
+	if telemetryReporter.Enabled() {
+		outcomes = telemetry.NewOutcomes(cfg.Data.DataDir, telemetryReporter.Capture)
+	}
+	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture, outcomes)
+
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
 	})
@@ -865,6 +881,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		outcomes:               outcomes,
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
@@ -1750,6 +1767,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	outcomes                  *telemetry.Outcomes
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -2310,7 +2328,15 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
 	}
 	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
-		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
+		paused := false
+		err := run(ctx, cliSyncSubprocessArgs(req), func(stream, data string) error {
+			paused = paused || stream == "outcome" && data == "paused"
+			return emitSubprocess(stream, data)
+		})
+		if !paused && ctx.Err() == nil {
+			a.recordSyncOutcome(req, err)
+		}
+		return err
 	}, emitWarning)
 }
 
@@ -2531,7 +2557,13 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		if req.GrantDecided {
 			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
 		}
-		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
+		paused := false
+		err := run(ctx, args, req.Env, req.Cwd, func(stream, data string) error {
+			paused = paused || stream == "outcome" && data == "paused"
+			return emitSubprocess(stream, data)
+		})
+		a.recordCLICommandSyncOutcome(ctx, req.Args, paused, err)
+		return err
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
 		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {

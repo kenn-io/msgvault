@@ -1192,6 +1192,9 @@ func (m Model) handlePeopleActivityMessageLoaded(
 		m.updateDetailLineCount()
 	}
 	m.updatePeopleLoading()
+	if m.peopleState.activityErr != nil {
+		return m, m.failedAction(fmt.Sprintf("message:%d", msg.messageID), m.peopleState.activityErr)
+	}
 	return m, nil
 }
 
@@ -1322,6 +1325,9 @@ func (m Model) handlePeopleConversationMessagesLoaded(
 		m.peopleState.inboxErr = nil
 	}
 	m.updatePeopleLoading()
+	if m.peopleState.inboxErr != nil {
+		return m, m.failedAction(fmt.Sprintf("conversation:%d", msg.conversationID), m.peopleState.inboxErr)
+	}
 	return m, nil
 }
 
@@ -1389,6 +1395,9 @@ func (m Model) handlePeopleMessageLoaded(msg peopleMessageLoadedMsg) (tea.Model,
 		m.updateDetailLineCount()
 	}
 	m.updatePeopleLoading()
+	if m.peopleState.inboxErr != nil {
+		return m, m.failedAction(fmt.Sprintf("message:%d", msg.messageID), m.peopleState.inboxErr)
+	}
 	return m, nil
 }
 

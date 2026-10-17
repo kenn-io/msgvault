@@ -115,6 +115,7 @@ type JobStatus struct {
 // Scheduler manages cron-based email sync scheduling.
 type Scheduler struct {
 	onCompletion            func()
+	onResult                func(string, bool, error)
 	cron                    *cron.Cron
 	syncFunc                SyncFunc
 	logger                  *slog.Logger
@@ -192,6 +193,12 @@ func (s *Scheduler) SetVisualPostSyncJob(run func(context.Context) error) {
 // WithCompletion sets the callback for successful manually requested runs.
 func (s *Scheduler) WithCompletion(completion func()) *Scheduler {
 	s.onCompletion = completion
+	return s
+}
+
+// WithResult observes terminal account and generic-job results after releasing the scheduler lock.
+func (s *Scheduler) WithResult(result func(string, bool, error)) *Scheduler {
+	s.onResult = result
 	return s
 }
 
@@ -638,7 +645,12 @@ func (s *Scheduler) runSync(email string) {
 			"email", email,
 			"duration", time.Since(start))
 	}
+	result := s.onResult
+	terminal := !yielded && err != ErrDeferUntilNextTrigger && !errors.Is(err, context.Canceled) && !s.stopped && s.ctx.Err() == nil //nolint:errorlint // Only a bare deferral is a clean no-work run.
 	s.mu.Unlock()
+	if terminal && result != nil {
+		result(email, false, err)
+	}
 	if completion != nil {
 		completion()
 	}
@@ -927,8 +939,14 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 	endRun()
 	s.mu.Lock()
 	var completion func()
+	var terminal bool
 	defer func() {
+		result := s.onResult
+		report := terminal && !s.stopped && s.ctx.Err() == nil && !errors.Is(err, context.Canceled)
 		s.mu.Unlock()
+		if report && result != nil {
+			result(name, true, err)
+		}
 		if completion != nil {
 			completion()
 		}
@@ -982,6 +1000,7 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 			"job", name)
 		return nil
 	}
+	terminal = true
 	if err != nil {
 		s.genericLastErr[name] = err
 		return err

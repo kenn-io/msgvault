@@ -65,7 +65,7 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
-  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportAction, reportSearch, reportSearchOutcome, reportWhenVisible } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
 
@@ -442,6 +442,8 @@
       ...(effectiveMIMEFamilies.length ? { mime_families: effectiveMIMEFamilies } : {}),
       ...(cursor ? { cursor } : {}),
     };
+    const outcomeQuery = requestPredicate.query || body.visual_query || body.visual_image_base64 || '';
+    const outcomeMode = body.visual_query || body.visual_image_base64 ? requestPredicate.query ? 'hybrid' : 'semantic' : requestPredicate.search_mode ?? 'full_text';
     let searchResponse;
     try {
       searchResponse =
@@ -478,7 +480,7 @@
         // A network throw is transient: keep the cursor so a retry can
         // re-attempt the same page.
         if (cursor) pageError = message;
-        else error = message;
+        else { error = message; void reportSearchOutcome(client, outcomeQuery, outcomeMode, false, cause, signal); }
         loading = false;
         loadingMore = false;
       }
@@ -511,6 +513,7 @@
         }
       } else if (response.status === 503) error = message;
       else error = message;
+      if (!cursor && error) void reportSearchOutcome(client, outcomeQuery, outcomeMode, false, response.status, signal);
       return false;
     }
     const result = data as FileSearchResponse | PersonFileSearchResponse;
@@ -527,6 +530,7 @@
       return false;
     }
     if (!cursor) {
+      void reportSearchOutcome(client, outcomeQuery, outcomeMode, (result.files ?? []).length === 0, undefined, signal);
       reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), signal);
       if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), signal);
     }

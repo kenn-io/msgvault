@@ -209,7 +209,7 @@ func (m Model) handleTextMessageLoaded(msg textMessageLoadedMsg) (tea.Model, tea
 		m.err = query.HintRepairEncoding(msg.err)
 		m.modal = modalError
 		m.modalResult = m.err.Error()
-		return m, nil
+		return m, m.failedAction(fmt.Sprintf("message:%d", msg.messageID), msg.err)
 	}
 	m.err = nil
 	if m.modal == modalError {

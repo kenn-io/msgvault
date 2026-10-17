@@ -83,17 +83,17 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	defer reportSuccessfulCLIAction(cmd, s, "message_opened", "", "", &result)
+	defer reportCLIActionResult(cmd, s, "message_opened", "", "", &result)
 
 	msg, err := s.GetCLIMessage(cmd.Context(), idStr)
 	if errors.Is(err, store.ErrMessageNotFound) {
-		return fmt.Errorf("message not found: %s", idStr)
+		return fmt.Errorf("%w: %s", store.ErrMessageNotFound, idStr)
 	}
 	if err != nil {
 		return fmt.Errorf("get message: %w", err)
 	}
 	if msg == nil {
-		return fmt.Errorf("message not found: %s", idStr)
+		return fmt.Errorf("%w: %s", store.ErrMessageNotFound, idStr)
 	}
 
 	if showMessageJSON {

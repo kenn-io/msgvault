@@ -7,7 +7,7 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_WINDOW, type EvidenceSelector } from '../../kata/evidence';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
-  import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportSearch, reportSearchOutcome, reportWhenVisible } from '../../telemetry/actions';
   import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
   let { client, attachmentID, messageID, filename }: {
@@ -33,14 +33,15 @@
     controller = requestController;
     busy = true; error = ''; hits = []; searched = true;
     try {
-      const { data, error: failure } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, { ...client, signal: requestController.signal });
+      const { data, error: failure, response } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, { ...client, signal: requestController.signal });
       if (request !== generation) return;
-      if (!data) throw new Error(errorMessage(failure, 'This file has no searchable text yet.'));
+      if (!data) throw Object.assign(new Error(errorMessage(failure, 'This file has no searchable text yet.')), { status: response.status });
       reportWhenVisible(() => reportSearch(client, submitted, 'full_text'), requestController.signal);
       // A filename match names the file, not a passage in it.
       hits = data.results.filter((hit) => hit.attachment_id === attachmentID && hit.message_id === messageID && hit.extraction_id && hit.chunk_key && hit.matched_signals.includes('content'));
+      void reportSearchOutcome(client, submitted, 'full_text', hits.length === 0, undefined, requestController.signal);
     } catch (cause) {
-      if (request === generation) error = errorMessage(cause, 'Unable to search this file.');
+      if (request === generation && !requestController.signal.aborted) { error = errorMessage(cause, 'Unable to search this file.'); void reportSearchOutcome(client, submitted, 'full_text', false, cause, requestController.signal); }
     } finally {
       if (request === generation) busy = false;
     }

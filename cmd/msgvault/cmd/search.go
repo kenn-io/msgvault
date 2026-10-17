@@ -190,7 +190,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	}
 	defer func() { _ = s.Close() }()
 	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" {
-		defer reportSuccessfulCLIAction(cmd, s, "search_run", "search_type", "text", &result)
+		defer reportCLIActionResult(cmd, s, "search_run", "search_type", "text", &result)
 	}
 
 	prefix := "Searching..."
@@ -239,6 +239,9 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 			"error", err.Error(),
 		)
 		return query.HintRepairEncoding(fmt.Errorf("search: %w", err))
+	}
+	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" {
+		defer reportCLIEmptySearch(cmd, s, "text", len(resp.Results) == 0, &result)
 	}
 	if resp.IndexBuilt {
 		// Pre-0.18 daemons built the index synchronously inside the request.

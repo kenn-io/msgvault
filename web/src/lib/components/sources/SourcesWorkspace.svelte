@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportError } from '../../telemetry/actions';
   import {
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
@@ -46,6 +47,7 @@
   let triggerError = $state('');
   let triggering = $state<string>();
   let controller: AbortController | undefined;
+  let triggerController: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let pollDelay = MIN_POLL_MS;
@@ -73,6 +75,7 @@
   });
   onDestroy(() => {
     disposed = true;
+    triggerController?.abort();
     stopPolling();
   });
   function stopPolling(clearAwaiting = true): void {
@@ -231,10 +234,13 @@
     }
   }
   async function syncNow(source: Source): Promise<void> {
-    if (!source.can_sync || triggering) return;
+    if (disposed || !source.can_sync || triggering) return;
     triggering = source.identifier;
     triggerError = '';
-    const signal = AbortSignal.timeout(requestTimeoutMs);
+    triggerController?.abort();
+    const requestController = new AbortController();
+    triggerController = requestController;
+    const signal = AbortSignal.any([requestController.signal, AbortSignal.timeout(requestTimeoutMs)]);
     try {
       const {
         data,
@@ -244,8 +250,9 @@
         ...client,
         signal,
       });
+      if (disposed || requestController.signal.aborted) return;
       if (response.status !== 202 || !data) {
-        throw new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`));
+        throw Object.assign(new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`)), { status: response.status });
       }
       stopPolling();
       pollDelay = MIN_POLL_MS;
@@ -255,12 +262,14 @@
       awaitingState = 'awaiting';
       await load();
     } catch (cause) {
+      if (disposed || requestController.signal.aborted) return;
       triggerError = signal.aborted
         ? 'Starting sync timed out. Check source status before trying again.'
         : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
+      void reportError(client, `sync:${source.id}`, cause, requestController.signal);
       schedulePoll(MIN_POLL_MS);
     } finally {
-      triggering = undefined;
+      if (!disposed && triggerController === requestController) triggering = undefined;
     }
   }
   function label(source: Source): string {
