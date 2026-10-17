@@ -225,6 +225,10 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 			next(ctx)
 			return
 		}
+		if op := ctx.Operation(); op != nil && (loopOperation(op.OperationID) || op.OperationID == "deleteLoopTarget") {
+			writeHumaError(ctx, http.StatusForbidden, "forbidden", "Open loops require owner access")
+			return
+		}
 		s.logUnauthorizedAPIRequest(req)
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
@@ -328,6 +332,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerOrganizationRoutes(apiV1)
 	s.registerEmploymentRoutes(apiV1)
 	s.registerActivityRoutes(apiV1)
+	s.registerLoopRoutes(apiV1)
 	s.registerPersonProfileValueRoutes(apiV1)
 	s.registerCommunicationServiceRoutes(apiV1)
 	s.registerAttributeDefinitionRoutes(apiV1)
@@ -1434,17 +1439,21 @@ func registerRawHumaRoute(api huma.API, op huma.Operation, handler http.HandlerF
 		op.Responses = rawHumaResponses(status)
 	}
 
-	if documenter, ok := api.(huma.OperationDocumenter); ok {
-		documenter.DocumentOperation(&op)
-	} else if !op.Hidden {
-		api.OpenAPI().AddOperation(&op)
-	}
+	documentRawHumaOperation(api, &op)
 
 	handlerWithMiddleware := api.Middlewares().Handler(op.Middlewares.Handler(func(ctx huma.Context) {
 		req, w := humago.Unwrap(ctx)
 		handler(w, req)
 	}))
 	api.Adapter().Handle(&op, handlerWithMiddleware)
+}
+
+func documentRawHumaOperation(api huma.API, op *huma.Operation) {
+	if documenter, ok := api.(huma.OperationDocumenter); ok {
+		documenter.DocumentOperation(op)
+	} else if !op.Hidden {
+		api.OpenAPI().AddOperation(op)
+	}
 }
 
 func rawHumaResponses(successStatuses ...int) map[string]*huma.Response {

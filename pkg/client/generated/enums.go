@@ -2937,6 +2937,44 @@ func (t TelemetryEventResponseStatus) Validate() error {
 	}
 }
 
+type ListOpenLoopsQueryKind string
+
+const (
+	AwaitingReply      ListOpenLoopsQueryKind = "awaiting_reply"
+	CommitmentOwedByMe ListOpenLoopsQueryKind = "commitment_owed_by_me"
+	CommitmentOwedToMe ListOpenLoopsQueryKind = "commitment_owed_to_me"
+	ReplyOwed          ListOpenLoopsQueryKind = "reply_owed"
+)
+
+// Validate checks if the ListOpenLoopsQueryKind value is valid
+func (l ListOpenLoopsQueryKind) Validate() error {
+	switch l {
+	case AwaitingReply, CommitmentOwedByMe, CommitmentOwedToMe, ReplyOwed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOpenLoopsQueryKind value, got: %v", l))
+	}
+}
+
+type ListOpenLoopsQueryStatus string
+
+const (
+	All    ListOpenLoopsQueryStatus = "all"
+	Closed ListOpenLoopsQueryStatus = "closed"
+	Held   ListOpenLoopsQueryStatus = "held"
+	Open   ListOpenLoopsQueryStatus = "open"
+)
+
+// Validate checks if the ListOpenLoopsQueryStatus value is valid
+func (l ListOpenLoopsQueryStatus) Validate() error {
+	switch l {
+	case All, Closed, Held, Open:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListOpenLoopsQueryStatus value, got: %v", l))
+	}
+}
+
 type ListOperationRunsQueryKind string
 
 const (
