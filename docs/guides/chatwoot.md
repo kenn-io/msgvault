@@ -82,16 +82,18 @@ identity evidence. Removing then reintroducing its configured ID grants ownershi
 again. Manually confirmed identities remain. Captain assistant replies keep their own sender.
 Contacts without an email address retain their phone or provider identity.
 
-Media downloads are enabled by default, with a 250 MiB cap per attachment.
+Media downloads are enabled by default. Call recordings have a separate 4 GiB
+per-file cap (`recording_max_bytes`); other media keeps the 250 MiB cap
+(`max_media_mb`). Zero selects each default.
 Set `media = false` for metadata and existing transcripts only, or use
 `sync-chatwoot --no-media` to defer downloads for one run. Eligible recent files
 retry during normal syncs for seven days; older files need `--full`.
 Location and fallback attachments can
 contain metadata without downloadable files. Source access, unavailable files,
 size limits, and download failures can leave metadata without stored bytes.
-The archive keeps a readable recording when its replacement fails; an
-oversized replacement retries after you raise `max_media_mb` enough or the
-resource changes.
+The archive keeps a readable recording when its replacement fails. An oversized
+call recording retries after you raise `recording_max_bytes` enough or the
+resource changes. Other oversized media uses `max_media_mb`.
 Failed downloads retry for seven days from the resource's first failure.
 Signed URL rotation and reconciliation preserve that deadline. `--full` permits
 another attempt after expiry without extending automatic retries.
@@ -128,10 +130,24 @@ stays unavailable.
 
 Twilio recordings come from Chatwoot's stored recording URL. WhatsApp call
 recordings can arrive as audio attachments. msgvault archives both source
-shapes and does not require Twilio credentials or a transcription API key.
+shapes as real audio in shared attachment storage, detects the served audio
+format, and does not require Twilio credentials or a transcription API key.
 Chatwoot's own transcription settings and availability determine whether it
 supplies text. Optional msgvault attachment processing has its own configuration
 and consent; see [document indexing](../usage/document-indexing.md).
+
+### Send call audio to Docbank
+
+Stored call recordings use the [shared audio delivery path](../configuration.md#send-stored-audio-to-docbank).
+Enable `[integrations.docbank]` and set `all_sources_upload_consent = true` to
+send them. Without that consent, discovery records local state and sends no
+audio. An optional `asr_profile` requests processing for recordings without
+source text; Docbank also controls its own processing consent.
+
+The current audio path accepts WAV and MP3 files up to 1 GiB. Larger recordings
+remain archived under the separate recording cap; unsupported formats and sizes
+keep a local status without an upload. Raising `recording_max_bytes` changes
+capture only.
 
 ## Understand sync limits
 
