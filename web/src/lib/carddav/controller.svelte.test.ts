@@ -252,6 +252,7 @@ describe('CardDAVController', () => {
   it('uses progress-aware polling, caps backoff, pauses while hidden, and reconciles terminal state', async () => {
     vi.useFakeTimers();
     let statusReads = 0;
+    let stage = 'queued';
     let bookReads = 0;
     let runReads = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -264,6 +265,9 @@ describe('CardDAVController', () => {
         runReads += 1;
         return Response.json({ runs: [] });
       }
+      if (stage === 'queued') return Response.json({ ...idleStatus, queued_at: '2026-10-01T15:01:00Z' });
+      if (stage === 'admitted') return Response.json({ ...idleStatus, scheduler_running: true });
+      if (stage === 'active') return Response.json({ ...idleStatus, active: run(8) });
       statusReads += 1;
       if (statusReads <= 2) return Response.json({ ...idleStatus, active: run(8, 'running', 1) });
       if (statusReads === 3) return Response.json({ ...idleStatus, active: run(8, 'running', 2) });
@@ -272,6 +276,23 @@ describe('CardDAVController', () => {
     });
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
+    expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+    stage = 'admitted';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.scheduler_running).toBe(true);
+    expect(controller.canSync).toBe(false);
+    stage = 'active';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active?.id).toBe(8);
+    stage = 'queued';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active).toBeUndefined();
+    expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+    stage = 'active';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active?.id).toBe(8);
+    stage = 'progress';
+    await vi.advanceTimersByTimeAsync(500);
 
     await vi.advanceTimersByTimeAsync(500); // unchanged -> next 1s
     await vi.advanceTimersByTimeAsync(1_000); // progress -> next 500ms
@@ -324,8 +345,6 @@ describe('CardDAVController', () => {
       return Response.json({ ...idleStatus, scheduled: true,
         ...(entirelyHidden && stage !== 'completed' ? { next_scheduled_at: '2026-10-01T15:01:00Z' } : {}),
         ...(stage === 'queued' ? { queued_at: '2026-10-01T15:01:00Z' } : {}),
-        ...(stage === 'admitted' ? { scheduler_running: true } : {}),
-        ...(stage === 'active' ? { active: { ...run(1), trigger: 'scheduled' } } : {}),
         ...(stage === 'completed' ? { latest: { ...run(1, 'succeeded'), trigger: 'scheduled' } } : {}) });
     });
     const controller = new CardDAVController(createAPIClient(fetchFn));
@@ -342,20 +361,6 @@ describe('CardDAVController', () => {
       document.dispatchEvent(new Event('visibilitychange'));
       await vi.advanceTimersByTimeAsync(0);
       expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
-      stage = 'admitted';
-      await vi.advanceTimersByTimeAsync(500);
-      expect(controller.status?.scheduler_running).toBe(true);
-      expect(controller.canSync).toBe(false);
-      stage = 'active';
-      await vi.advanceTimersByTimeAsync(500);
-      expect(controller.status?.active?.id).toBe(1);
-      stage = 'queued';
-      await vi.advanceTimersByTimeAsync(500);
-      expect(controller.status?.active).toBeUndefined();
-      expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
-      stage = 'active';
-      await vi.advanceTimersByTimeAsync(500);
-      expect(controller.status?.active?.id).toBe(1);
     }
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     document.dispatchEvent(new Event('visibilitychange'));

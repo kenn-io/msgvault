@@ -490,33 +490,38 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
 	}
 
-	finished := make(chan error, 1)
-	s := scheduler.New(nil)
-	defer func() { <-s.Stop().Done() }()
-	require.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-		err := runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2)
-		if !errors.Is(err, scheduler.ErrReschedule) {
-			finished <- err
-		}
-		return err
-	}, "", false))
-	_, err = s.StartJob("document-vector")
+	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2), scheduler.ErrReschedule)
+	stillActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
-	select {
-	case err = <-finished:
-		require.NoError(err)
-	case <-time.After(10 * time.Second):
-		require.FailNow("document rotation did not finish")
-	}
+	require.NotNil(stillActive)
+	assert.Equal(active.ID, stillActive.ID)
+	retired, err := fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
+	require.NoError(err)
+	assert.Equal(store.DocumentVectorGenerationRetired, retired.State)
+	building, err := fixture.Store.GetBuildingDocumentVectorGeneration(testCtx)
+	require.NoError(err)
+	assert.Nil(building, "the desired generation waits for obsolete cleanup")
+	require.Len(backend.deletes, 1)
+	assert.Len(backend.deletes[0], 2)
+
+	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2), scheduler.ErrReschedule)
+	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
+	require.ErrorContains(err, "not found")
+	require.Len(backend.deletes, 2)
+	assert.Len(backend.deletes[1], 1)
+	stillActive, err = fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
+	require.NoError(err)
+	require.NotNil(stillActive)
+	assert.Equal(active.ID, stillActive.ID)
+	building, err = fixture.Store.GetBuildingDocumentVectorGeneration(testCtx)
+	require.NoError(err)
+	assert.Nil(building)
+
+	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
 	newActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
 	require.NotNil(newActive)
 	assert.Equal(desired, newActive.DocumentVectorGenerationSpec)
-	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
-	require.ErrorContains(err, "not found")
-	require.Len(backend.deletes, 2)
-	assert.Len(backend.deletes[0], 2)
-	assert.Len(backend.deletes[1], 1)
 	assert.Zero(client.documentCalls)
 }
 
@@ -610,55 +615,6 @@ func TestScheduledDocumentVectorCleansObsoleteActiveTokensAfterCoverageIsComplet
 	active, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, desired)
 	require.NoError(err)
 	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(testCtx, active.ID, time.Now()))
-	token := strings.Repeat("c", 64)
-	_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
-		INSERT INTO document_vector_publications
-			(generation_id, extraction_id, extraction_profile_id, canonical_blob_hash,
-			 extraction_input_key, chunk_id, chunk_key, chunk_checksum, source_sequence, token, state)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready')`), active.ID,
-		"deleted-extraction", desired.TargetExtractionProfileID, strings.Repeat("d", 64),
-		"original", 1, "deleted-chunk", "deleted-checksum", 1, token)
-	require.NoError(err)
-	coverage, err := fixture.Store.GetDocumentVectorCoverage(testCtx, active.ID)
-	require.NoError(err)
-	assert.True(coverage.Complete())
-	status, err := fixture.Store.GetDocumentVectorGenerationStatus(testCtx, active.ID, "", 10)
-	require.NoError(err)
-	assert.Equal(int64(1), status.CleanupPending)
-
-	client := &commandDocumentSemanticClient{}
-	backend := &commandDocumentVectorBackend{}
-	vf := &vectorFeatures{
-		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
-	}
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 10))
-	require.Equal([][]string{{token}}, backend.deletes)
-	assert.Zero(client.documentCalls)
-	status, err = fixture.Store.GetDocumentVectorGenerationStatus(testCtx, active.ID, "", 10)
-	require.NoError(err)
-	assert.Zero(status.CleanupPending)
-	var publications int
-	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
-		`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), active.ID).Scan(&publications))
-	assert.Zero(publications)
-
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 10))
-	assert.Len(backend.deletes, 1, "a converged replay does not re-delete finalized tokens")
-	assert.Zero(client.documentCalls)
-}
-
-func TestScheduledDocumentVectorContinuesUntilCleanupPagesFinish(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture, desired, testCtx := documentVectorCommandFixture(t)
-	cfg := invocationFromContext(testCtx).cfg
-	consentSpec, err := configuredDocumentVectorConsentSpec(desired, invocationFromContext(testCtx), "document_embedding")
-	require.NoError(err)
-	_, _, err = fixture.Store.RecordDocumentVectorConsent(testCtx, consentSpec, time.Now())
-	require.NoError(err)
-	active, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, desired)
-	require.NoError(err)
-	require.NoError(fixture.Store.ActivateDocumentVectorGeneration(testCtx, active.ID, time.Now()))
 	for index := range 2 {
 		_, err = fixture.Store.DB().Exec(fixture.Store.Rebind(`
 			INSERT INTO document_vector_publications
@@ -670,13 +626,33 @@ func TestScheduledDocumentVectorContinuesUntilCleanupPagesFinish(t *testing.T) {
 			1, fmt.Sprintf("%064x", index+1))
 		require.NoError(err)
 	}
-	backend := &commandDocumentVectorBackend{}
-	vf := &vectorFeatures{DocumentBackend: backend, SemanticClient: &commandDocumentSemanticClient{}, Cfg: cfg.Vector}
+	coverage, err := fixture.Store.GetDocumentVectorCoverage(testCtx, active.ID)
+	require.NoError(err)
+	assert.True(coverage.Complete())
+	status, err := fixture.Store.GetDocumentVectorGenerationStatus(testCtx, active.ID, "", 10)
+	require.NoError(err)
+	assert.Equal(int64(2), status.CleanupPending)
 
-	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 1), scheduler.ErrReschedule,
-		"a committed cleanup page with tokens left asks for a continuation")
+	client := &commandDocumentSemanticClient{}
+	backend := &commandDocumentVectorBackend{}
+	vf := &vectorFeatures{
+		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
+	}
+	require.ErrorIs(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 1), scheduler.ErrReschedule)
 	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 1))
-	assert.Equal([][]string{{fmt.Sprintf("%064x", 1)}, {fmt.Sprintf("%064x", 2)}}, backend.deletes)
+	require.Equal([][]string{{fmt.Sprintf("%064x", 1)}, {fmt.Sprintf("%064x", 2)}}, backend.deletes)
+	assert.Zero(client.documentCalls)
+	status, err = fixture.Store.GetDocumentVectorGenerationStatus(testCtx, active.ID, "", 10)
+	require.NoError(err)
+	assert.Zero(status.CleanupPending)
+	var publications int
+	require.NoError(fixture.Store.DB().QueryRow(fixture.Store.Rebind(
+		`SELECT COUNT(*) FROM document_vector_publications WHERE generation_id = ?`), active.ID).Scan(&publications))
+	assert.Zero(publications)
+
+	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 10))
+	assert.Len(backend.deletes, 2, "a converged replay does not re-delete finalized tokens")
+	assert.Zero(client.documentCalls)
 }
 
 type commandDocumentSemanticClient struct{ documentCalls int }

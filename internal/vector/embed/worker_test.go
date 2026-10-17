@@ -485,7 +485,7 @@ func TestWorker_YieldCancellationDuringDownshiftStampLogsOnce(t *testing.T) {
 
 // TestWorker_FailureLeavesUnstampedThenRecovers: a transient failure on
 // the first attempt leaves rows unstamped; a second run (embedder now
-// healthy) completes them. Idempotent re-do.
+// healthy) completes them and clears the error even when a stop was requested.
 func TestWorker_FailureLeavesUnstampedThenRecovers(t *testing.T) {
 	f := newWorkerFixture(t, 3)
 	ctx, stop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))

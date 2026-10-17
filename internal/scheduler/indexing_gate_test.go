@@ -91,33 +91,6 @@ func TestCooperativeJobStopsAtPassTargetWithoutCancellation(t *testing.T) {
 	})
 }
 
-func TestEmbedJob_Run_StopRequestEndsPassAtPhaseBoundary(t *testing.T) {
-	assert := assert.New(t)
-	building := &vector.Generation{ID: 77, State: vector.GenerationBuilding, Fingerprint: "m:768"}
-	backend := &fakeBackend{activeErr: vector.ErrNoActiveGeneration, building: building}
-	ctx, requestStop := jobctx.WithPreemption(context.Background())
-	runner := &fakeRunner{onRunOnce: func(vector.GenerationID) { requestStop() }}
-	coverage := &fakeCoverage{}
-	var logs bytes.Buffer
-	job := &EmbedJob{
-		Worker:      runner,
-		Backend:     backend,
-		Store:       coverage,
-		Fingerprint: "m:768",
-		Log:         slog.New(slog.NewTextHandler(&logs, nil)),
-	}
-
-	job.Run(ctx)
-
-	_, run, _ := runner.calls()
-	assert.Equal(1, run, "RunOnce calls")
-	n, _ := runner.backstops()
-	assert.Equal(0, n, "RunBackstop calls")
-	assert.Equal(0, coverage.calls, "coverage queries")
-	assert.Empty(backend.activations(), "activation calls")
-	assert.Contains(logs.String(), "embed run complete", "the finished forward pass is still reported")
-}
-
 func TestContextualBackstopCompletionCountsForInterval(t *testing.T) {
 	for _, completed := range []bool{false, true} {
 		t.Run(fmt.Sprintf("completed=%t", completed), func(t *testing.T) {
