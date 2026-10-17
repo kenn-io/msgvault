@@ -18,7 +18,7 @@ import (
 // runHybridSearch executes vector or hybrid search through the configured
 // remote server or local daemon. It preserves the historical CLI renderer while
 // keeping vector backend ownership inside the daemon.
-func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) error {
+func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (result error) {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is unavailable")
@@ -29,6 +29,15 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) er
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
+	kind := "hybrid"
+	if mode == "vector" {
+		kind = "semantic"
+	}
+	defer func() {
+		if result == nil && strings.TrimSpace(queryStr) != "" {
+			reportCLIAction(cmd, s, "search_run", "search_type", kind)
+		}
+	}()
 
 	logger.Info("vector search start",
 		"mode", mode,

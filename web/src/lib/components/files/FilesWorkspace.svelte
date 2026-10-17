@@ -65,6 +65,7 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
+  import { reportSearch } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
   type IdentityFileScope =
@@ -185,6 +186,7 @@
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
+  let searchPending = true;
   let cacheRevision = '';
   let pageAuthority = '';
   let seenCursors = new Set<string>();
@@ -272,6 +274,7 @@
     if (signature === requestSignature) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
+    searchPending = true;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -484,6 +487,11 @@
     }
     const { data, error: responseError, response } = searchResponse;
     if (signal.aborted || currentGeneration !== generation) return false;
+    if (data && !cursor && searchPending) {
+      searchPending = false;
+      reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text');
+      if (body.visual_query || body.visual_image_base64) reportSearch(client, body.visual_query || 'image', 'semantic');
+    }
     loading = false;
     loadingMore = false;
     if (!data) {

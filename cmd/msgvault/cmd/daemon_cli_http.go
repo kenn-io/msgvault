@@ -112,6 +112,9 @@ func runDaemonCLICommandHTTPWithEnv(
 		cmd.SilenceErrors = true
 		return errCLISubprocessProxied
 	}
+	if runErr == nil && manualSyncCLICommand(args) && cmd.Name() != "muesli-hook" {
+		reportCLIAction(cmd, st, "sync_finished", "", "")
+	}
 	return runErr
 }
 

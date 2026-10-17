@@ -1231,7 +1231,7 @@ type ClientInterface interface {
 	TriggerSync(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResponseJSON, error)
 	TriggerSyncWithResponse(ctx context.Context, options *TriggerSyncRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TriggerSyncResp, error)
 
-	// CaptureTelemetryEvent Report a web or terminal UI usage event
+	// CaptureTelemetryEvent Report a web, terminal UI, or interactive CLI usage event
 	CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error)
 	CaptureTelemetryEventWithResponse(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResp, error)
 
@@ -19795,7 +19795,7 @@ func (c *Client) TriggerSync(ctx context.Context, options *TriggerSyncRequestOpt
 	return responseParser(ctx, resp)
 }
 
-// CaptureTelemetryEvent Report a web or terminal UI usage event
+// CaptureTelemetryEvent Report a web, terminal UI, or interactive CLI usage event
 func (c *Client) CaptureTelemetryEvent(ctx context.Context, options *CaptureTelemetryEventRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CaptureTelemetryEventResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

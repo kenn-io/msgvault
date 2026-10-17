@@ -1,9 +1,21 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
+import { createAPIClient as createClient } from '../../api/client';
 import ConversationView from './ConversationView.svelte';
 
+const telemetryEvents: unknown[] = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+function createAPIClient(fetchFn: typeof fetch) {
+  return createClient(async (input, init) => {
+    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+      telemetryEvents.push(await (input as Request).json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    return fetchFn(input, init);
+  });
+}
 function message(id: number, type = 'email') {
   return {
     id,
@@ -400,6 +412,36 @@ describe('ConversationView', () => {
     await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
     expect(requests).toHaveLength(2);
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
+  });
+
+  it('reports an opened message only after expansion and a readable body', async () => {
+    let resolveBody!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/messages/1') {
+        return new Promise<Response>((resolve) => { resolveBody = resolve; });
+      }
+      return Response.json({
+        id: 7, anchor_id: 1, messages: [omittedMessage(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+
+    const client = createAPIClient(fetchFn);
+    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+
+    await waitFor(() => expect(resolveBody).toBeDefined());
+    expect(telemetryEvents).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+    const response = Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
+    resolveBody(response);
+    await waitFor(() => expect(response.bodyUsed).toBe(true));
+    await tick();
+    expect(telemetryEvents).toHaveLength(0);
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+
+    await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
   });
 
   it('surfaces a failed body fetch inside the card and retries on re-expand', async () => {

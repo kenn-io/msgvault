@@ -489,7 +489,7 @@ func TestScheduledOmiYieldsWhileWaitingWithCheckpoint(t *testing.T) {
 	sched := scheduler.New(nil).WithWorkTracker(labelWorkTracker(gate, "omi")).WithLogger(testDiscardLogger())
 	t.Cleanup(func() { <-sched.Stop().Done() })
 	require.NoError(registerScheduledOmiJob(sched, state, st, config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL, Schedule: "0 0 1 1 *"}))
-	_, err = sched.StartJob("omi:work")
+	_, err = sched.StartJob("omi:work", false)
 	require.NoError(err)
 	require.Eventually(func() bool {
 		checkpoint, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)

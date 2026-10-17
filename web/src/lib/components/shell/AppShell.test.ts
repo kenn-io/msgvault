@@ -794,11 +794,19 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it('updates Everything results as the global search is typed', async () => {
-      const state = shellState('everything');
-      render(AppShell, { client: exploreClient(), state, enabled: false });
+    it('updates Everything results and reports accepted searches as the global search is typed', async () => {
+      const state = shellState('everything'), events: string[] = [];
+      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+        if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
+          const event = await (input as Request).json();
+          if (event.event === 'search_run') events.push(event.properties.search_type);
+        }
+        return Response.json(exploreResponse());
+      }));
+      render(AppShell, { client, state });
       await fireEvent.input(screen.getByRole('searchbox', { name: 'Search everything' }), { target: { value: 'gas' } });
       expect(state.current.query).toBe('gas');
+      await waitFor(() => expect(events).toEqual(['text']));
     });
 
     it('remembers the collapsed sidebar across reloads', async () => {

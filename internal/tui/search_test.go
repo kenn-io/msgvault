@@ -1819,3 +1819,87 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 
 // TestHighlightedColumnsAligned verifies that highlighting search terms in
 // aggregate rows doesn't break column alignment.
+
+func TestAcceptedSearchActions(t *testing.T) {
+	t.Run("readable transitions", func(t *testing.T) {
+		for _, mode := range []tuiMode{modeEmail, modeTexts, modeMeetings, modePeople} {
+			t.Run(fmt.Sprint(mode), func(t *testing.T) {
+				assert, m, calls := assert.New(t), NewBuilder().Build(), 0
+				m.width, m.height, m.mode = 100, 24, mode
+				m.level, m.textState.level, m.meetingState.level, m.peopleState.level = levelMessageDetail, textLevelDetail, meetingLevelDetail, peopleLevelMessage
+				m.messageDetail, m.meetingState.detail = &query.MessageDetail{ID: 1}, &query.MessageDetail{ID: 1}
+				m.reportAction = func(_ context.Context, event, _, _ string) error {
+					assert.Equal("message_opened", event)
+					calls++
+					return errors.New("capture failed")
+				}
+				update := func(msg tea.Msg) {
+					updated, cmd := m.Update(msg)
+					m = asModel(t, updated)
+					if cmd != nil {
+						_ = runBatchCommand(t, cmd)
+					}
+				}
+				update(tea.WindowSizeMsg{Width: 100, Height: 24})
+				assert.Equal(1, calls)
+				update(spinnerTickMsg{})
+				update(key('x'))
+				update(tea.WindowSizeMsg{Width: 110, Height: 24})
+				assert.Equal(1, calls, "unrelated updates do not retry a failed report")
+				m.settings.active = true
+				update(tea.WindowSizeMsg{Width: 100, Height: 24})
+				m.settings.active = false
+				update(tea.WindowSizeMsg{Width: 100, Height: 24})
+				assert.Equal(2, calls, "returning to cached readable content is a new transition")
+				m.messageDetail.ID, m.meetingState.detail.ID = 2, 2
+				update(tea.WindowSizeMsg{Width: 100, Height: 24})
+				assert.Equal(3, calls)
+			})
+		}
+	})
+	for _, tc := range []struct {
+		name   string
+		mode   tuiMode
+		search searchModeKind
+		msg    tea.Msg
+		want   []string
+	}{
+		{"fast", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
+		{"deep", modeEmail, searchModeDeep, searchResultsMsg{requestID: 2, query: "needle", searchMode: searchModeDeep}, []string{"search_run:search_type:text"}},
+		{"semantic request keeps its type during fast editing", modeEmail, searchModeSemantic, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:hybrid"}},
+		{"stale matching query", modeEmail, searchModeFast, searchResultsMsg{requestID: 1, query: "needle"}, nil},
+		{"failed", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", err: errors.New("offline")}, nil},
+		{"continuation", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", append: true}, nil},
+		{"texts conversation", modeTexts, searchModeFast, textMessagesLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
+		{"meetings", modeMeetings, searchModeFast, meetingSearchLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, m, events := assert.New(t), NewBuilder().Build(), []string(nil)
+			m.width, m.height, m.mode, m.searchMode = 100, 24, tc.mode, tc.search
+			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID = 2, 2, 2
+			enabled := false
+			m.reportAction = func(_ context.Context, e, p, v string) error {
+				if enabled {
+					events = append(events, e+":"+p+":"+v)
+				}
+				return nil
+			}
+			if tc.search == searchModeSemantic {
+				m.level, m.semanticSearch = levelMessageList, &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+				pending := m.loadSearch("needle")
+				m, _ = sendKey(t, m, key('/'))
+				assert.Equal(searchModeFast, m.searchMode)
+				tc.msg = pending()
+			}
+			for range 2 {
+				updated, cmd := m.Update(tc.msg)
+				m = asModel(t, updated)
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
+				enabled = true
+			}
+			assert.Equal(tc.want, events)
+		})
+	}
+}

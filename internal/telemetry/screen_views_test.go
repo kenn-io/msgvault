@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,4 +119,82 @@ func TestScreenViewsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	messages = screenMessages()
 	requirements.Len(messages, 5)
 	assertions.NotEqual(install.ID, messages[4]["distinct_id"])
+}
+
+func exerciseActions(t *testing.T, reporter *posthog.Reporter, opts Options) {
+	t.Helper()
+	assert, require := assert.New(t), require.New(t)
+	h, ok := CaptureHandler(reporter, opts.DataDir).(*screenCaptureHandler)
+	require.True(ok)
+	valid := `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`
+	if !reporter.Enabled() {
+		assert.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
+		assert.NoFileExists(filepath.Join(opts.DataDir, screenViewsFile))
+		return
+	}
+	if os.Getenv("MSGVAULT_ACTIONS_TEST") == "restart" {
+		h.now = func() time.Time { return time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC) }
+		assert.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
+		h.now = func() time.Time { return time.Date(2026, 1, 3, 0, 1, 0, 0, time.UTC) }
+		assert.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
+		return
+	}
+	browser, _ := reporter.SanitizeProperties(EventSyncFinished, map[string]any{propertySurface: "web"})
+	assert.Equal("web", browser[propertySurface])
+	day := time.Date(2026, 1, 2, 23, 59, 0, 0, time.UTC)
+	h.now = func() time.Time { return day }
+	for _, event := range []string{EventSearchRun, EventMessageOpened, EventSyncFinished} {
+		for _, props := range []string{`{}`, `{"surface":"other"}`, `{"surface":42}`} {
+			assert.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
+		}
+	}
+	for _, value := range []string{`null`, `"other"`, `42`} {
+		assert.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":"search_run","properties":{"surface":"web","search_type":%s}}`, value)).Code)
+	}
+	assert.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"web"}}`).Code)
+	for _, surface := range []string{"web", "tui", "cli"} {
+		for _, kind := range []string{"text", "semantic", "hybrid"} {
+			body := fmt.Sprintf(`{"event":"search_run","properties":{"surface":%q,"search_type":%q,"query":"private"}}`, surface, kind)
+			for range 2 {
+				assert.Equal(http.StatusAccepted, screenRequest(h, body).Code)
+			}
+		}
+	}
+	capture := h.captureEvent
+	h.captureEvent = func(string, map[string]any) error { return errors.New("queue full") }
+	path := filepath.Join(opts.DataDir, screenViewsFile)
+	previous, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(http.StatusInternalServerError, screenRequest(h, `{"event":"message_opened","properties":{"surface":"web"}}`).Code)
+	restored, err := os.ReadFile(path)
+	require.NoError(err)
+	assert.Equal(previous, restored, "failed capture rolls the daily claim back")
+	h.captureEvent = capture
+	for _, surface := range []string{"web", "tui", "cli"} {
+		for _, event := range []string{EventMessageOpened, EventSyncFinished} {
+			for range 2 {
+				assert.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":{"surface":%q,"message_id":1}}`, event, surface)).Code)
+			}
+		}
+	}
+}
+func TestCoreActionDailyClaimsAndValidation(t *testing.T) {
+	assert, require, stub := assert.New(t), require.New(t), newWireStub(t)
+	dir := t.TempDir()
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_ACTIONS_TEST=1", wireConfigOffEnv+"=1")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_ACTIONS_TEST=1")
+	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_ACTIONS_TEST=restart")
+	events := batchEvents(t, stub)
+	require.Len(events, 15)
+	counts := map[string]int{}
+	for _, event := range events {
+		props, ok := event["properties"].(map[string]any)
+		require.True(ok)
+		assert.NotContains(props, "query")
+		assert.NotContains(props, "message_id")
+		counts[fmt.Sprint(event["event"], ":", props["surface"], ":", props["search_type"])]++
+	}
+	assert.Equal(2, counts["search_run:cli:text"])
+	assert.Equal(2, counts["sync_finished:cli:<nil>"], "successful CLI syncs count individually")
+	assert.Len(counts, 13)
 }

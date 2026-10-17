@@ -236,7 +236,7 @@ func TestStartJobIsAsync(t *testing.T) {
 
 		returned := make(chan error, 1)
 		go func() {
-			_, err := s.StartJob("granola:default")
+			_, err := s.StartJob("granola:default", false)
 			returned <- err
 		}()
 
@@ -329,7 +329,7 @@ func TestStopCancelsRunningSync(t *testing.T) {
 	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	// Trigger sync
-	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+	require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 
 	// Wait for sync to start
 	select {
@@ -377,7 +377,7 @@ func TestTriggerSync(t *testing.T) {
 		}()
 		require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync()")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync()")
 		synctest.Wait()
 		select {
 		case <-started:
@@ -385,7 +385,7 @@ func TestTriggerSync(t *testing.T) {
 			require.FailNow("sync did not start")
 		}
 
-		err := s.TriggerSync("test@gmail.com")
+		err := s.TriggerSync("test@gmail.com", false)
 		require.Error(err, "TriggerSync() while running")
 
 		releaseOnce.Do(func() { close(release) })
@@ -419,7 +419,7 @@ func TestScheduler_WorkTrackerWrapsTriggeredSync(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 
 		select {
 		case <-started:
@@ -480,7 +480,7 @@ func TestSchedulerStopCancelsWorkTrackerWait(t *testing.T) {
 		s.AddAccount("test@example.com", "* * * * *"), "AddAccount")
 
 	require.NoError(
-		s.TriggerSync("test@example.com"), "TriggerSync")
+		s.TriggerSync("test@example.com", false), "TriggerSync")
 
 	select {
 	case <-tracker.begin:
@@ -517,7 +517,7 @@ func TestSyncPreventsDoubleRun(t *testing.T) {
 
 		// Try to trigger multiple times concurrently
 		for range 5 {
-			_ = s.TriggerSync("test@gmail.com")
+			_ = s.TriggerSync("test@gmail.com", false)
 		}
 		synctest.Wait()
 		assert.LessOrEqual(t, maxConcurrent.Load(), int32(1), "max concurrent")
@@ -565,7 +565,7 @@ func TestStatusAfterSyncSuccess(t *testing.T) {
 		})
 
 		require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 		synctest.Wait()
 
 		statuses := s.Status()
@@ -589,7 +589,7 @@ func TestStatusAfterSyncError(t *testing.T) {
 		})
 
 		require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 		synctest.Wait()
 
 		statuses := s.Status()
@@ -617,7 +617,7 @@ func TestTriggerSyncAfterStop(t *testing.T) {
 		require.Fail(t, "Stop() did not complete in time")
 	}
 
-	err := s.TriggerSync("test@gmail.com")
+	err := s.TriggerSync("test@gmail.com", false)
 	assert.Error(t, err, "TriggerSync() after Stop()")
 }
 
@@ -1962,7 +1962,7 @@ func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
 				requirements.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
 				s.Start()
 				defer func() { <-s.Stop().Done() }()
-				requirements.NoError(s.TriggerSync("test@example.test"))
+				requirements.NoError(s.TriggerSync("test@example.test", false))
 				select {
 				case <-syncDone:
 				case <-time.After(time.Second):
@@ -2041,7 +2041,7 @@ func TestScheduler_SetEmbedJob_InvalidReplacePreservesPrevious(t *testing.T) {
 		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
 		s.Start()
 		defer func() { <-s.Stop().Done() }()
-		require.NoError(s.TriggerSync("test@example.test"))
+		require.NoError(s.TriggerSync("test@example.test", false))
 		synctest.Wait()
 		_, run1, _ := runner1.calls()
 		_, run2, _ := runner2.calls()
@@ -2085,7 +2085,7 @@ func TestScheduler_RunAfterSync_Fires(t *testing.T) {
 		<-ctx.Done()
 	}()
 
-	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+	require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 
 	select {
 	case <-syncDone:
@@ -2121,7 +2121,7 @@ func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 		synctest.Wait()
 
 		_, run, _ := runner.calls()
@@ -2147,7 +2147,7 @@ func TestScheduler_RunAfterSync_SkipOnStopped(t *testing.T) {
 	require.NoError(s.AddAccount("test@gmail.com", "0 0 1 1 *"), "AddAccount")
 
 	s.Start()
-	require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+	require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 
 	// Ask the scheduler to stop while the sync is still in-flight.
 	stopCtx := s.Stop()
@@ -2177,7 +2177,7 @@ func TestScheduler_RunAfterSync_SkipOnSyncError(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 		synctest.Wait()
 
 		_, run, _ := runner.calls()
@@ -2208,7 +2208,7 @@ func TestScheduler_VisualRunAfterSyncDoesNotExtendSync(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		requirements.NoError(s.TriggerSync("test@gmail.com"))
+		requirements.NoError(s.TriggerSync("test@gmail.com", false))
 		select {
 		case <-visualStarted:
 		case <-time.After(time.Second):
@@ -2437,7 +2437,7 @@ func TestScheduledSyncYieldsToWaiter(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		require.NoError(s.TriggerSync("test@gmail.com"), "TriggerSync")
+		require.NoError(s.TriggerSync("test@gmail.com", false), "TriggerSync")
 		select {
 		case <-started:
 		case <-time.After(time.Second):
@@ -2494,7 +2494,7 @@ func TestScheduler_VisualPostSyncQueuesPendingRunWhileActive(t *testing.T) {
 			<-ctx.Done()
 		}()
 
-		requirements.NoError(s.TriggerSync("test@gmail.com"))
+		requirements.NoError(s.TriggerSync("test@gmail.com", false))
 		select {
 		case <-firstStarted:
 		case <-time.After(time.Second):
@@ -2507,7 +2507,7 @@ func TestScheduler_VisualPostSyncQueuesPendingRunWhileActive(t *testing.T) {
 			"the first sync must finish before triggering another")
 		// A second sync completes while the first pass is still running; its
 		// changes must be processed by a queued follow-up pass, not dropped.
-		requirements.NoError(s.TriggerSync("test@gmail.com"))
+		requirements.NoError(s.TriggerSync("test@gmail.com", false))
 		synctest.Wait()
 		requirements.False(s.Status()[0].Running,
 			"the second sync must queue its visual pass before releasing the first")
@@ -2645,7 +2645,7 @@ func TestStatusReportsStartedWhileExecuting(t *testing.T) {
 			return nil
 		}}))
 
-		require.NoError(s.TriggerSync("a@example.com"))
+		require.NoError(s.TriggerSync("a@example.com", false))
 		synctest.Wait()
 		go s.onJobTick("job")
 		synctest.Wait()
@@ -2745,7 +2745,7 @@ func TestLongCooperativeJobYieldsToQueuedJob(t *testing.T) {
 		go s.onJobTick("long")
 		synctest.Wait()
 		time.Sleep(10 * time.Second)
-		require.NoError(s.TriggerSync("short@example.com"))
+		require.NoError(s.TriggerSync("short@example.com", false))
 		time.Sleep(preemptAfter + 5*time.Second)
 		synctest.Wait()
 
@@ -2805,7 +2805,7 @@ func TestPreemptedDailyRunResumesBehindWaiter(t *testing.T) {
 				defer func() { <-s.Stop().Done() }()
 				if account {
 					require.NoError(t, s.AddAccount("daily@example.com", "0 0 * * *"))
-					require.NoError(t, s.TriggerSync("daily@example.com"))
+					require.NoError(t, s.TriggerSync("daily@example.com", false))
 				} else {
 					require.NoError(t, s.AddJob(Job{Name: "daily", Preemptible: true, Schedule: "0 0 * * *", Run: run}))
 					mustStartJob(t, s, "daily")
@@ -2861,7 +2861,7 @@ func TestBoundedMaintenanceCompletesWithQueuedWork(t *testing.T) {
 		started := time.Now()
 		mustStartJob(t, s, "maintenance")
 		synctest.Wait()
-		require.NoError(s.TriggerSync("short@example.com"))
+		require.NoError(s.TriggerSync("short@example.com", false))
 		time.Sleep(90 * time.Second)
 		synctest.Wait()
 		assert.True(completed, "maintenance keeps its full budget despite a queued source")
@@ -3324,115 +3324,9 @@ func TestBudgetFiltersCancellationCause(t *testing.T) {
 
 func mustStartJob(tb testing.TB, s *Scheduler, name string) JobDisposition {
 	tb.Helper()
-	disp, err := s.StartJob(name)
+	disp, err := s.StartJob(name, false)
 	require.NoError(tb, err, "StartJob %s", name)
 	return disp
-}
-
-// TestStartJobCoalescesDuringRun proves manual triggers coalesce like cron
-// ticks: many concurrent StartJob calls during a run produce exactly one
-// extra run, never a concurrent one, and each reply says what happened.
-func TestStartJobCoalescesDuringRun(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-
-		started := make(chan struct{}, 8)
-		release := make(chan struct{})
-		var releaseOnce sync.Once
-		releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
-		var runs, active, maxActive atomic.Int32
-		s := New(func(context.Context, string) error { return nil })
-		defer func() {
-			releaseJob()
-			<-s.Stop().Done()
-		}()
-		require.NoError(s.AddJob(Job{
-			Name:     "job",
-			Schedule: "0 0 1 1 *",
-			Run: func(context.Context) error {
-				n := active.Add(1)
-				for {
-					m := maxActive.Load()
-					if n <= m || maxActive.CompareAndSwap(m, n) {
-						break
-					}
-				}
-				runs.Add(1)
-				started <- struct{}{}
-				<-release
-				active.Add(-1)
-				return nil
-			},
-		}))
-
-		assert.Equal(JobStarted, mustStartJob(t, s, "job"))
-		<-started
-
-		const callers = 10
-		type result struct {
-			disp JobDisposition
-			err  error
-		}
-		results := make(chan result, callers)
-		var wg sync.WaitGroup
-		for range callers {
-			wg.Go(func() {
-				disp, err := s.StartJob("job")
-				results <- result{disp, err}
-			})
-		}
-		wg.Wait()
-		close(results)
-		counts := map[JobDisposition]int{}
-		for r := range results {
-			require.NoError(r.err, "concurrent StartJob")
-			counts[r.disp]++
-		}
-		assert.Equal(1, counts[JobPending], "exactly one trigger records the follow-up")
-		assert.Equal(callers-1, counts[JobCoalesced], "the rest merge into it")
-		assert.Zero(counts[JobStarted], "nothing is reported started while the job runs")
-		assert.True(s.JobStatus()[0].Pending, "follow-up is visible in JobStatus")
-
-		releaseJob()
-		synctest.Wait()
-		assert.Equal(int32(2), runs.Load(), "one run plus exactly one follow-up")
-		assert.Equal(int32(1), maxActive.Load(), "runs never overlap")
-		assert.False(s.JobStatus()[0].Pending)
-		assert.False(s.JobStatus()[0].Running)
-	})
-}
-
-// TestStartJobWhileInitialRunWaitsForGate proves a trigger that arrives while
-// the first run is still queued behind the operation gate is reported as
-// coalesced, not queued: no follow-up is recorded and only the original run
-// executes.
-func TestStartJobWhileInitialRunWaitsForGate(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		gate := newSerialWorkTracker()
-		release, ok := gate.BeginWork()
-		require.True(ok)
-		var runs atomic.Int32
-		s := New(nil).WithWorkTracker(gate)
-		defer func() { <-s.Stop().Done() }()
-		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
-			runs.Add(1)
-			return nil
-		}}))
-
-		assert.Equal(JobStarted, mustStartJob(t, s, "job"))
-		synctest.Wait()
-		require.True(s.JobStatus()[0].Queued, "initial run waits for the gate")
-
-		assert.Equal(JobCoalesced, mustStartJob(t, s, "job"))
-		assert.False(s.JobStatus()[0].Pending, "no follow-up is recorded")
-
-		release()
-		synctest.Wait()
-		assert.Equal(int32(1), runs.Load(), "only the original run executes")
-	})
 }
 
 // TestStartJobDroppedFollowUpIsLogged proves a follow-up that cannot run
@@ -3487,7 +3381,7 @@ func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
 		s.Start()
 		defer func() { <-s.Stop().Done() }()
 
-		require.NoError(s.TriggerSync("test@example.test"))
+		require.NoError(s.TriggerSync("test@example.test", false))
 		synctest.Wait()
 		got := make([]string, 0, 2)
 		for len(order) > 0 {
@@ -3550,7 +3444,7 @@ func TestGenericJobDefersUntilNextTrigger(t *testing.T) {
 					return ErrDeferUntilNextTrigger
 				}}))
 				require.Error(t, s.TriggerJob("deferred"))
-				_, err := s.StartJob("deferred")
+				_, err := s.StartJob("deferred", false)
 				require.NoError(t, err)
 				time.Sleep(5 * time.Minute)
 				synctest.Wait()
@@ -3601,4 +3495,140 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 		close(release)
 		synctest.Wait()
 	})
+}
+func TestManualCompletionAcrossOutcomes(t *testing.T) {
+	t.Run("queued and repeated clicks", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			assert, require, gate := assert.New(t), require.New(t), newSerialWorkTracker()
+			release, ok := gate.BeginWork()
+			require.True(ok)
+			s := New(nil).WithWorkTracker(gate)
+			defer func() { <-s.Stop().Done() }()
+			runs, events, firstStarted, finishFirst := 0, 0, make(chan struct{}), make(chan struct{})
+			s.WithCompletion(func() { events++ })
+			require.NoError(s.AddJob(Job{Name: "sync", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+				runs++
+				if runs == 1 {
+					close(firstStarted)
+					<-finishFirst
+				}
+				return nil
+			}}))
+			go s.onJobTick("sync")
+			synctest.Wait()
+			// A click while the scheduled run is queued attributes that same run.
+			for range 2 {
+				disp, err := s.StartJob("sync", true)
+				require.NoError(err)
+				assert.Equal(JobCoalesced, disp)
+			}
+			assert.True(s.JobStatus()[0].Queued)
+			assert.False(s.JobStatus()[0].Pending)
+			release()
+			<-firstStarted
+			const callers = 10
+			results := make(chan JobDisposition, callers)
+			var group sync.WaitGroup
+			for range callers {
+				group.Go(func() {
+					disposition, err := s.StartJob("sync", true)
+					assert.NoError(err)
+					results <- disposition
+				})
+			}
+			group.Wait()
+			close(results)
+			counts := map[JobDisposition]int{}
+			for disposition := range results {
+				counts[disposition]++
+			}
+			synctest.Wait()
+			assert.Equal(map[JobDisposition]int{JobPending: 1, JobCoalesced: callers - 1}, counts)
+			assert.Equal(1, runs, "follow-up waits until the active run finishes")
+			assert.True(s.JobStatus()[0].Pending)
+			close(finishFirst)
+			synctest.Wait()
+			assert.Equal(2, runs)
+			assert.Equal(2, events)
+			assert.False(s.JobStatus()[0].Pending)
+			assert.False(s.JobStatus()[0].Running)
+		})
+	})
+	t.Run("account deferral keeps post-sync hooks", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			events, hooks := 0, 0
+			s := New(func(context.Context, string) error { return ErrDeferUntilNextTrigger }).WithCompletion(func() { events++ })
+			defer func() { <-s.Stop().Done() }()
+			s.SetVisualPostSyncJob(func(context.Context) error { hooks++; return nil })
+			require.NoError(t, s.AddAccount("account@example.com", "0 0 1 1 *"))
+			require.NoError(t, s.TriggerSync("account@example.com", true))
+			synctest.Wait()
+			assert.Zero(t, events)
+			assert.Equal(t, 1, hooks)
+		})
+	})
+	for _, test := range []struct {
+		name     string
+		outcome  error
+		expected int
+	}{
+		{"success", nil, 1}, {"continuation", ErrReschedule, 1}, {"deferred", ErrDeferUntilNextTrigger, 0},
+		{"scheduled success pending failure", nil, 0},
+		{"failed", errors.New("sync failed"), 0}, {"failed pass", &RescheduleError{Err: errors.New("pass failed")}, 0},
+		{"removed", nil, 0}, {"stopped", nil, 0}, {"yielded", nil, 1}, {"cron followup", nil, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert, require, tracker := assert.New(t), require.New(t), &yieldingWorkTracker{}
+				events, runs, release := 0, 0, make(chan struct{})
+				run := func(ctx context.Context) error {
+					runs++
+					if runs == 2 && test.name == "scheduled success pending failure" {
+						return errors.New("manual follow-up failed")
+					}
+					if runs == 1 {
+						if test.name == "yielded" {
+							tracker.yield.Store(true)
+							<-ctx.Done()
+							tracker.yield.Store(false)
+							return ctx.Err()
+						}
+						<-release
+						return test.outcome
+					}
+					return nil
+				}
+				s := New(nil).WithWorkTracker(tracker)
+				s.WithCompletion(func() { events++; _ = s.JobStatus() })
+				defer func() { <-s.Stop().Done() }()
+				require.NoError(s.AddJob(Job{Name: "sync", Schedule: "0 0 1 1 *", Run: run}))
+				_, err := s.StartJob("sync", test.name != "scheduled success pending failure")
+				require.NoError(err)
+				synctest.Wait()
+				if test.name == "removed" {
+					s.RemoveJob("sync")
+				}
+				if test.name == "stopped" {
+					s.Stop()
+				}
+				if test.name == "cron followup" {
+					s.onJobTick("sync")
+				}
+				if test.name == "scheduled success pending failure" {
+					disp, err := s.StartJob("sync", true)
+					require.NoError(err)
+					assert.Equal(JobPending, disp)
+				}
+				close(release)
+				if test.name == "yielded" {
+					synctest.Sleep(yieldPollInterval)
+				}
+				synctest.Wait()
+				assert.Equal(test.expected, events)
+				if test.name == "yielded" || test.name == "cron followup" || test.name == "scheduled success pending failure" {
+					assert.Equal(2, runs)
+				}
+			})
+		})
+	}
 }

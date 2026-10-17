@@ -4133,10 +4133,17 @@ func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 			assert := assert.New(t)
 			sched := newMockScheduler()
 			sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
-			sched.startJobFn = func(string) (scheduler.JobDisposition, error) { return disp, nil }
+			sched.startJobFn = func(_ string, manual bool) (scheduler.JobDisposition, error) {
+				if disp == scheduler.JobStarted {
+					assert.True(manual, "browser intent remains with the scheduler after the page leaves")
+				}
+				return disp, nil
+			}
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
-			resp := servePOSTTestRequest(srv, "/api/v1/sync/acct-1?source_type=granola")
+			resp, request := httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/acct-1?source_type=granola", nil)
+			request.Header.Set("Origin", "http://localhost:8080")
+			srv.Router().ServeHTTP(resp, request)
 
 			require.Equal(http.StatusAccepted, resp.Code, resp.Body.String())
 			var body TriggerSyncResponse
@@ -4320,7 +4327,7 @@ func TestAccountScheduledSourceTypesSupportStatusAndTrigger(t *testing.T) {
 				Schedule: "0 */6 * * *",
 			}}
 			var triggeredIdentifier string
-			sched.triggerFn = func(identifier string) error {
+			sched.triggerFn = func(identifier string, _ bool) error {
 				triggeredIdentifier = identifier
 				return nil
 			}
@@ -4661,10 +4668,11 @@ func TestHandleSearchAccountLookupErrorReturnsInternal(t *testing.T) {
 	assert.Equal("Failed to resolve CLI scope", resp.Message, "error message")
 }
 
-func TestHandleTriggerSync(t *testing.T) {
+func TestHandleTriggerSyncManualAttributionAcrossAuthModes(t *testing.T) {
 	t.Parallel()
+	assert, require := assert.New(t), require.New(t)
 	cfg := &config.Config{
-		Server: config.ServerConfig{APIPort: 8080},
+		Server: config.ServerConfig{APIPort: 8080, APIKey: testSessionAPIKey},
 		Accounts: []config.AccountSchedule{
 			{Email: "test@gmail.com", Schedule: "0 2 * * *", Enabled: true},
 		},
@@ -4672,15 +4680,35 @@ func TestHandleTriggerSync(t *testing.T) {
 
 	sched := newMockScheduler()
 	sched.scheduled["test@gmail.com"] = true
+	var reserved bool
+	sched.triggerFn = func(email string, manual bool) error {
+		assert.Equal("test@gmail.com", email)
+		reserved = manual
+		return nil
+	}
 
 	srv := NewServer(cfg, nil, sched, testLogger())
 
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/sync/test@gmail.com", nil)
-	w := httptest.NewRecorder()
-
-	srv.Router().ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code, "status (body: %s)", w.Body.String())
+	browser := loginSavedViewSession(t, srv)
+	for _, test := range []struct {
+		mode    AuthMode
+		headers http.Header
+	}{
+		{AuthModeSession, browser.mutationHeaders()},
+		{AuthModeAPIKey, http.Header{"X-Api-Key": {testSessionAPIKey}}},
+		{AuthModeLoopback, http.Header{}},
+	} {
+		if test.mode == AuthModeLoopback {
+			cfg.Server.APIKey = ""
+		}
+		req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/test@gmail.com", nil)
+		req.Header = test.headers
+		req.Header.Set("Origin", "http://localhost:8080")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		require.Equal(http.StatusAccepted, w.Code, w.Body.String())
+		assert.Equal(test.mode != AuthModeAPIKey, reserved, string(test.mode))
+	}
 }
 
 func TestHandleTriggerSyncNotFound(t *testing.T) {
@@ -4708,7 +4736,7 @@ func TestHandleTriggerSyncConflict(t *testing.T) {
 
 	sched := newMockScheduler()
 	sched.scheduled["test@gmail.com"] = true
-	sched.triggerFn = func(email string) error {
+	sched.triggerFn = func(email string, _ bool) error {
 		return errors.New("sync already running for test@gmail.com")
 	}
 

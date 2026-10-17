@@ -285,8 +285,8 @@ type mockScheduler struct {
 	triggeredJobs []string        // generic job names passed to TriggerJob
 	triggerJobFn  func(name string) error
 	startedJobs   []string // generic job names passed to StartJob
-	startJobFn    func(name string) (scheduler.JobDisposition, error)
-	triggerFn     func(email string) error
+	startJobFn    func(name string, manual bool) (scheduler.JobDisposition, error)
+	triggerFn     func(email string, manual bool) error
 	addedAccts    []string // emails added via AddAccount
 }
 
@@ -301,9 +301,9 @@ func (m *mockScheduler) IsScheduled(email string) bool {
 	return m.scheduled[email]
 }
 
-func (m *mockScheduler) TriggerSync(email string) error {
+func (m *mockScheduler) TriggerSync(email string, manual bool) error {
 	if m.triggerFn != nil {
-		return m.triggerFn(email)
+		return m.triggerFn(email, manual)
 	}
 	return nil
 }
@@ -338,10 +338,10 @@ func (m *mockScheduler) TriggerJob(name string) error {
 	return nil
 }
 
-func (m *mockScheduler) StartJob(name string) (scheduler.JobDisposition, error) {
+func (m *mockScheduler) StartJob(name string, manual bool) (scheduler.JobDisposition, error) {
 	m.startedJobs = append(m.startedJobs, name)
 	if m.startJobFn != nil {
-		return m.startJobFn(name)
+		return m.startJobFn(name, manual)
 	}
 	return scheduler.JobStarted, nil
 }

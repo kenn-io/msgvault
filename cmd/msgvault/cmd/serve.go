@@ -430,6 +430,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Create and configure scheduler
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate)
+	for _, scheduler := range []*scheduler.Scheduler{sched, mediaSched} {
+		scheduler.WithCompletion(func() { _ = telemetryReporter.Capture(telemetry.EventSyncFinished, map[string]any{"surface": "web"}) })
+	}
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
 	})
@@ -4032,8 +4035,8 @@ func (a *schedulerAdapter) IsScheduled(email string) bool {
 	return a.scheduler.IsScheduled(email)
 }
 
-func (a *schedulerAdapter) TriggerSync(email string) error {
-	return a.scheduler.TriggerSync(email)
+func (a *schedulerAdapter) TriggerSync(email string, manual bool) error {
+	return a.scheduler.TriggerSync(email, manual)
 }
 
 func (a *schedulerAdapter) AddAccount(email, schedule string) error {
@@ -4065,8 +4068,8 @@ func (a *schedulerAdapter) TriggerJob(name string) error {
 	return a.jobScheduler(name).TriggerJob(name)
 }
 
-func (a *schedulerAdapter) StartJob(name string) (scheduler.JobDisposition, error) {
-	return a.jobScheduler(name).StartJob(name)
+func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisposition, error) {
+	return a.jobScheduler(name).StartJob(name, manual)
 }
 
 // runScheduledSync performs a sync for a scheduled account. It resolves
@@ -4109,7 +4112,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 	if len(srcs) == 0 {
 		if retiredMatch {
 			logger.Info("skipping scheduled sync for retired source", "identifier", identifier)
-			return nil
+			return scheduler.ErrDeferUntilNextTrigger
 		}
 		startTime := time.Now()
 		summary, syncErr := runScheduledGmailSync(ctx, identifier, nil, s, getOAuthMgr, state)

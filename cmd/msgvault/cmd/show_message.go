@@ -76,12 +76,17 @@ func resolveMessageIDArg(raw string) (string, error) {
 	return trimmed, nil
 }
 
-func showHTTPMessage(cmd *cobra.Command, idStr string) error {
+func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 	s, _, err := OpenHTTPStore(cmd.Context(), daemonclient.AgentReadMinAPISchemaVersion)
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
+	defer func() {
+		if result == nil {
+			reportCLIAction(cmd, s, "message_opened", "", "")
+		}
+	}()
 
 	msg, err := s.GetCLIMessage(cmd.Context(), idStr)
 	if errors.Is(err, store.ErrMessageNotFound) {

@@ -13,6 +13,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { reportSearch } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
     MeetingRef,
@@ -524,6 +525,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
+      onSearchAccepted: (query, mode) => reportSearch(client, query, mode),
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the

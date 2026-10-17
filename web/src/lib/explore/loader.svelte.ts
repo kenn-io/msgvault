@@ -8,6 +8,7 @@ import type {
   ExploreGroupResult,
   ExploreGroupRow,
   ExploreResult,
+  ExploreSearchMode,
   FileMIMEFamily
 } from './models';
 import { createExploreAPI, type ExploreAPI } from './api';
@@ -35,6 +36,7 @@ export interface ExploreLoaderCallbacks {
   onPredicateChange: () => void;
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
+  onSearchAccepted?: (query: string, mode: ExploreSearchMode) => void;
 }
 
 const REPEATED_CURSOR_NOTICE = 'Pagination stopped because the server repeated a cursor without progress.';
@@ -96,6 +98,7 @@ export class ExploreLoader {
   private pageRequest: Promise<PageLoadOutcome> | undefined;
   private seenCursors = new Set<string>();
   private restorationCycleCompleted = false;
+  private searchPending = true;
   private selectionFingerprint = '';
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   #retryRevision = $state(0);
@@ -128,6 +131,7 @@ export class ExploreLoader {
     if (fingerprint !== this.selectionFingerprint) {
       this.callbacks.onPredicateChange();
       this.selectionFingerprint = fingerprint;
+      this.searchPending = true;
     }
     const filesGrouping = workspace === 'files' && this.state.current.groupingChain.length > 0;
     const fileFilenameQuery = this.state.current.fileFilenameQuery;
@@ -191,6 +195,10 @@ export class ExploreLoader {
     void request
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
+        if (loaded.status !== 'unavailable' && this.searchPending) {
+          this.searchPending = false;
+          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text');
+        }
         if (loaded.status === 'unavailable') {
           this.rows = [];
           this.groupRows = [];

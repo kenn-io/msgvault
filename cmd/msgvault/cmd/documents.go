@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/attachmentstore"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/operations"
@@ -1197,12 +1198,23 @@ func runSearchDocuments(
 	request store.DocumentSearchRequest,
 	jsonOutput bool,
 	deps documentsCommandDeps,
-) error {
+) (result error) {
 	reader, cleanup, err := openDocumentReadClient(command.Context(), deps)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer func() {
+		client, ok := reader.(*daemonclient.Client)
+		mode, err := vectordocument.ParseSearchMode(request.SearchMode)
+		if result == nil && ok && err == nil && request.Cursor == "" && strings.TrimSpace(request.Query) != "" {
+			kind := string(mode)
+			if kind != "semantic" && kind != "hybrid" {
+				kind = "text"
+			}
+			reportCLIAction(command, client, "search_run", "search_type", kind)
+		}
+	}()
 	response, err := reader.SearchDocuments(command.Context(), request)
 	if err != nil {
 		return err
