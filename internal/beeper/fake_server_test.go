@@ -114,6 +114,8 @@ type fakeBeeper struct {
 	cancelOnMessageListChatID string
 	blockMessageListChatID    string
 	messageListStarted        chan struct{}
+	blockChatGetID            string
+	chatGetStarted            chan struct{}
 	reqs                      []string // "PATH?QUERY" per request, in order
 }
 
@@ -270,6 +272,14 @@ func (f *fakeBeeper) cancelMessageListFor(chatID string, cancelFn func()) {
 	f.cancelFn = cancelFn
 }
 
+func (f *fakeBeeper) blockChatGetFor(chatID string) <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blockChatGetID = chatID
+	f.chatGetStarted = make(chan struct{})
+	return f.chatGetStarted
+}
+
 func (f *fakeBeeper) server() *httptest.Server {
 	return httptest.NewServer(f.handler())
 }
@@ -297,6 +307,18 @@ func (f *fakeBeeper) handler() http.HandlerFunc {
 			rest := strings.TrimPrefix(path, "/v1/chats/")
 			switch parts := strings.SplitN(rest, "/", 3); {
 			case len(parts) == 1:
+				f.mu.Lock()
+				blocked := f.blockChatGetID == parts[0]
+				started := f.chatGetStarted
+				if blocked {
+					f.blockChatGetID = ""
+				}
+				f.mu.Unlock()
+				if blocked {
+					close(started)
+					<-r.Context().Done()
+					return
+				}
 				f.writeChat(w, parts[0])
 			case len(parts) == 2 && parts[1] == "messages":
 				f.mu.Lock()
