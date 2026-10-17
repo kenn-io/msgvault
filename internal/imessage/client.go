@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver (database/sql)
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -21,14 +24,19 @@ const defaultPageSize = 500
 // Client reads from macOS's iMessage chat.db and imports messages
 // directly into the msgvault store.
 type Client struct {
-	db             *sql.DB
-	afterDate      time.Time // only import messages after this date
-	beforeDate     time.Time // only import messages before this date
-	limit          int       // max total messages to import (0 = unlimited)
-	useNanoseconds bool      // whether chat.db uses nanosecond timestamps
-	ownerHandle    string    // phone/email of device owner (from --me flag)
-	logger         *slog.Logger
-	pageSize       int
+	db                *sql.DB
+	afterDate         time.Time // only import messages after this date
+	beforeDate        time.Time // only import messages before this date
+	limit             int       // max total messages to import (0 = unlimited)
+	useNanoseconds    bool      // whether chat.db uses nanosecond timestamps
+	ownerHandle       string    // phone/email of device owner (from --me flag)
+	logger            *slog.Logger
+	pageSize          int
+	attachmentsDir    string
+	attachmentsRoot   string
+	rebaseAttachments bool
+	mediaPolicy       attachmentpolicy.Policy
+	attachmentQuery   string
 }
 
 // ClientOption configures a Client.
@@ -63,7 +71,7 @@ func WithImessageLogger(l *slog.Logger) ClientOption {
 // NewClient opens a read-only connection to an iMessage chat.db file.
 func NewClient(dbPath string, opts ...ClientOption) (*Client, error) {
 	dsn := fmt.Sprintf(
-		"file:%s?mode=ro&_journal_mode=WAL&_busy_timeout=5000",
+		"file:%s?mode=ro&_busy_timeout=5000",
 		dbPath,
 	)
 	db, err := sql.Open("sqlite3", dsn)
@@ -80,13 +88,29 @@ func NewClient(dbPath string, opts ...ClientOption) (*Client, error) {
 	}
 
 	c := &Client{
-		db:       db,
-		logger:   slog.Default(),
-		pageSize: defaultPageSize,
+		db:          db,
+		logger:      slog.Default(),
+		pageSize:    defaultPageSize,
+		mediaPolicy: attachmentpolicy.Policy{MaxBytes: attachmentpolicy.DefaultChatMaxBytes, MaxParticipants: 50},
 	}
 
 	for _, opt := range opts {
 		opt(c)
+	}
+	if err := c.mediaPolicy.Validate(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if c.mediaPolicy.MaxBytes == 0 {
+		c.mediaPolicy.MaxBytes = attachmentpolicy.DefaultChatMaxBytes
+	}
+	if c.attachmentsRoot == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			_ = db.Close()
+			return nil, err
+		}
+		c.attachmentsRoot = filepath.Join(home, "Library", "Messages", "Attachments")
 	}
 
 	if err := c.detectTimestampFormat(); err != nil {
@@ -151,6 +175,9 @@ func (c *Client) Import(
 	sourceID int64,
 ) (*ImportSummary, error) {
 	summary := &ImportSummary{}
+	if err := c.prepareAttachments(ctx); err != nil {
+		return summary, fmt.Errorf("read attachment schema: %w", err)
+	}
 
 	// Pre-create iMessage and SMS labels
 	imessageLabelID, err := s.EnsureLabel(
@@ -230,13 +257,8 @@ func (c *Client) Import(
 				phoneCache, emailCache, convCache,
 				ownerPID, summary,
 			); err != nil {
-				c.logger.Warn(
-					"failed to import message",
-					"rowid", msg.ROWID,
-					"error", err,
-				)
 				summary.Skipped++
-				continue
+				return summary, fmt.Errorf("import message row %d: %w", msg.ROWID, err)
 			}
 
 			imported++
@@ -461,12 +483,8 @@ func (c *Client) importMessage(
 		return fmt.Errorf("link label: %w", err)
 	}
 
-	// Warn about attachments
-	if msg.HasAttachments != 0 {
-		c.logger.Debug(
-			"message has attachments (extraction not yet implemented)",
-			"rowid", msg.ROWID,
-		)
+	if err := c.importAttachments(ctx, s, msgID, msg); err != nil {
+		return fmt.Errorf("%w for row %d: %w", errAttachmentImport, msg.ROWID, err)
 	}
 
 	summary.MessagesImported++

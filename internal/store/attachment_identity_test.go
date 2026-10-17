@@ -20,6 +20,9 @@ func TestReplaceAttachmentsKeepsRetainedOccurrenceIDs(t *testing.T) {
 		{"discord", "discord:", (*store.Store).ReplaceMessageDiscordAttachments},
 		{"slack", "slack:", (*store.Store).ReplaceMessageSlackAttachments},
 		{"beeper", "beeper:", (*store.Store).ReplaceMessageBeeperAttachments},
+		{"imessage", "imessage:", func(st *store.Store, id int64, refs []store.AttachmentRef) error {
+			return st.ReplaceMessageIMessageAttachmentsContext(t.Context(), id, refs)
+		}},
 		{"teams-inline", "teams:inline:", func(st *store.Store, messageID int64, refs []store.AttachmentRef) error {
 			return st.ReplaceMessageInlineAttachments(messageID, refs, true)
 		}},
