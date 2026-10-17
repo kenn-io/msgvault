@@ -3021,6 +3021,24 @@ func (l ListDirectoryPeopleQuerySort) Validate() error {
 	}
 }
 
+type FindPeopleWhoKnowQueryTiebreak string
+
+const (
+	FindPeopleWhoKnowQueryTiebreakNone FindPeopleWhoKnowQueryTiebreak = "none"
+	LastContact                        FindPeopleWhoKnowQueryTiebreak = "last_contact"
+	Temperature                        FindPeopleWhoKnowQueryTiebreak = "temperature"
+)
+
+// Validate checks if the FindPeopleWhoKnowQueryTiebreak value is valid
+func (f FindPeopleWhoKnowQueryTiebreak) Validate() error {
+	switch f {
+	case FindPeopleWhoKnowQueryTiebreakNone, LastContact, Temperature:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid FindPeopleWhoKnowQueryTiebreak value, got: %v", f))
+	}
+}
+
 type SetPersonFactPinPathKind string
 
 const (
