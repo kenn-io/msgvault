@@ -138,6 +138,7 @@ type WhoKnowsContactCoverage struct {
 	RankedPeople     int        `json:"ranked_people"`
 	Missing          int        `json:"missing"`
 	Dirty            int        `json:"dirty"`
+	Outdated         int        `json:"outdated"`
 	OldestComputedAt *time.Time `json:"oldest_computed_at"`
 }
 type WhoKnowsTimings struct {

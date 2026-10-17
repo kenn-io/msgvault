@@ -131,10 +131,10 @@ func buildPGFilterClauses(f vector.Filter, bind func(any) string) []string {
 		clauses = append(clauses, "m.has_attachments = "+bind(*f.HasAttachment))
 	}
 	if f.After != nil {
-		clauses = append(clauses, "m.sent_at >= "+bind(*f.After))
+		clauses = append(clauses, "COALESCE(m.sent_at, m.received_at, m.internal_date) >= "+bind(*f.After))
 	}
 	if f.Before != nil {
-		clauses = append(clauses, "m.sent_at < "+bind(*f.Before))
+		clauses = append(clauses, "COALESCE(m.sent_at, m.received_at, m.internal_date) < "+bind(*f.Before))
 	}
 	if f.LargerThan != nil {
 		clauses = append(clauses, "m.size_estimate > "+bind(*f.LargerThan))

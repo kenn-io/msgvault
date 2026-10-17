@@ -17,8 +17,6 @@ func TestVisualBackendStoresSearchesAndDeletesActivePublication(t *testing.T) {
 	assertions := assert.New(t)
 	backend, ctx, db := newBackendForTest(t)
 	statements := []string{
-		`ALTER TABLE messages ADD COLUMN received_at TIMESTAMPTZ`,
-		`ALTER TABLE messages ADD COLUMN internal_date TIMESTAMPTZ`,
 		`ALTER TABLE messages ADD COLUMN conversation_id BIGINT`,
 		`ALTER TABLE messages ADD COLUMN is_from_me BOOLEAN NOT NULL DEFAULT FALSE`,
 		`CREATE TABLE conversations (

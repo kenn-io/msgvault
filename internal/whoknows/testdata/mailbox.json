@@ -1,0 +1,149 @@
+{
+  "description": "Synthetic topical people evaluation; no personal archive data.",
+  "people": [
+    {
+      "email": "owner@example.net",
+      "name": "Archive Owner",
+      "ask_me_about": []
+    },
+    {
+      "email": "author@example.net",
+      "name": "Author Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "received@example.net",
+      "name": "Received Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "declared@example.net",
+      "name": "Declared Example",
+      "ask_me_about": [
+        "kubernetes",
+        "C++ templates",
+        "Stra\u00dfe"
+      ]
+    },
+    {
+      "email": "go@example.net",
+      "name": "Go Example",
+      "ask_me_about": [
+        "go"
+      ]
+    },
+    {
+      "email": "google@example.net",
+      "name": "Search Example",
+      "ask_me_about": [
+        "google"
+      ]
+    },
+    {
+      "email": "recent@example.net",
+      "name": "Recent Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "old@example.net",
+      "name": "Old Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "attendee@example.net",
+      "name": "Attendee Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "list-expert@example.net",
+      "name": "List Example",
+      "ask_me_about": []
+    },
+    {
+      "email": "newsletter@example.net",
+      "name": "Automated Example",
+      "ask_me_about": []
+    }
+  ],
+  "messages": [
+    {"message_id": "network-author-0","conversation_id": "network-author-0","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "author@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-author-1","conversation_id": "network-author-1","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "author@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-0","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-1","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-2","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-3","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-4","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-5","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-owner-6","conversation_id": "owner-network","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "owner@example.net","to": ["received@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-list","conversation_id": "network-list","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "list-expert@example.net","to": ["owner@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": "discuss.example.net"},
+    {"message_id": "network-news","conversation_id": "network-news","date": "2026-10-15T00:00:00Z","topic": "kubernetes networking","from": "newsletter@example.net","to": ["owner@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "network-unsaved","conversation_id": "network-unsaved","date": "2026-09-17T00:00:00Z","topic": "kubernetes networking","from": "unsaved@example.net","to": ["owner@example.net"],"cc": [],"subject": "kubernetes networking","body": "Synthetic archived explanation of kubernetes networking","message_type": "email","list_id": ""},
+    {"message_id": "recent-cert","conversation_id": "recent-cert","date": "2026-09-17T00:00:00Z","topic": "certificate rotation","from": "recent@example.net","to": ["owner@example.net"],"cc": [],"subject": "certificate rotation","body": "Synthetic archived explanation of certificate rotation","message_type": "email","list_id": ""},
+    {"message_id": "old-cert","conversation_id": "old-cert","date": "2025-09-12T00:00:00Z","topic": "certificate rotation","from": "old@example.net","to": ["owner@example.net"],"cc": [],"subject": "certificate rotation","body": "Synthetic archived explanation of certificate rotation","message_type": "email","list_id": ""},
+    {"message_id": "calendar","conversation_id": "calendar","date": "2026-10-17T00:00:00Z","topic": "deployment automation","from": "author@example.net","to": ["owner@example.net"],"cc": [],"subject": "deployment automation","body": "Synthetic archived explanation of deployment automation","message_type": "calendar_event","list_id": ""},
+    {"message_id": "deploy-author","conversation_id": "deploy-author","date": "2026-10-17T00:00:00Z","topic": "deployment automation","from": "author@example.net","to": ["owner@example.net"],"cc": [],"subject": "deployment automation","body": "Synthetic archived explanation of deployment automation","message_type": "email","list_id": ""},
+    {"message_id": "deploy-news","conversation_id": "deploy-news","date": "2026-10-17T00:00:00Z","topic": "deployment automation","from": "newsletter@example.net","to": ["owner@example.net"],"cc": [],"subject": "deployment automation","body": "Synthetic archived explanation of deployment automation","message_type": "email","list_id": ""},
+    {"message_id": "starvation-0","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-1","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-2","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-3","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-4","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-5","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-6","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-7","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-8","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-9","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-10","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-11","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-12","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-13","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-14","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-15","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-16","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-17","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-18","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-19","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-20","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-21","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-22","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-23","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-24","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-25","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-26","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-27","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-28","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-29","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-30","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-31","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-32","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-33","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-34","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-35","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-36","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-37","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-38","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-39","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-40","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-41","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-42","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-43","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-44","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-45","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-46","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-47","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-48","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-49","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-50","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-51","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-52","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-53","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-54","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-55","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-56","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-57","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-58","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "starvation-59","conversation_id": "owner-pool","date": "2026-10-17T00:00:00Z","topic": "owner dominated pool","from": "owner@example.net","to": [],"cc": [],"subject": "owner dominated pool","body": "Synthetic archived explanation of owner dominated pool","message_type": "email","list_id": ""},
+    {"message_id": "received-date-fallback","conversation_id": "received-date-fallback","date": "","received_date": "2026-09-18T12:00:00Z","topic": "dated fallback","from": "author@example.net","to": ["owner@example.net"],"cc": [],"subject": "dated fallback","body": "Synthetic archived message with a received date.","message_type": "email","list_id": ""},
+    {"message_id": "internal-date-fallback","conversation_id": "internal-date-fallback","date": "","internal_date": "2026-09-18T13:00:00Z","topic": "dated fallback","from": "declared@example.net","to": ["owner@example.net"],"cc": [],"subject": "dated fallback","body": "Synthetic archived message with an internal date.","message_type": "email","list_id": ""}
+  ]
+}
