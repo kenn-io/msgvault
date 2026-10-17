@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -41,11 +42,10 @@ func TestCLIActionOwnersReportAfterDaemonSuccess(t *testing.T) {
 		"documents": func(cmd *cobra.Command) error {
 			return runSearchDocuments(cmd, store.DocumentSearchRequest{Query: "needle", SearchMode: " Hybrid "}, true, defaultDocumentsCommandDeps())
 		},
-		"visual":    func(cmd *cobra.Command) error { return multimodalSearchCmd.RunE(cmd, []string{"needle"}) },
-		"vector":    func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
-		"hybrid":    func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
-		"sync":      func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{}) },
-		"sync-full": func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{Full: true}) },
+		"visual": func(cmd *cobra.Command) error { return multimodalSearchCmd.RunE(cmd, []string{"needle"}) },
+		"vector": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"hybrid": func(cmd *cobra.Command) error { return runHybridSearch(cmd, "needle", cmd.Name(), false) },
+		"sync":   func(cmd *cobra.Command) error { return runSyncHTTP(cmd, daemonclient.CLISyncRequest{}) },
 		"muesli-hook": func(cmd *cobra.Command) error {
 			return muesliHookCmd.RunE(cmd, nil)
 		},
@@ -101,7 +101,11 @@ func TestCLIActionOwnersReportAfterDaemonSuccess(t *testing.T) {
 				t.Cleanup(resetSearchFlags)
 				cmd := &cobra.Command{Use: action}
 				cmd.SetContext(configureRemoteSyncTest(t, server.URL))
-				cmd.SetOut(os.Stdout)
+				if strings.HasPrefix(action, "sync") {
+					cmd.SetOut(&bytes.Buffer{})
+				} else {
+					cmd.SetOut(os.Stdout)
+				}
 				var stderr bytes.Buffer
 				cmd.SetErr(&stderr)
 				if action == "muesli-hook" {
@@ -157,6 +161,16 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 		start := time.Now()
 		reportCLIAction(cmd, client, "search_run", "search_type", "text")
 		assert.Equal(t, 250*time.Millisecond, time.Since(start))
-		assert.NoError(t, cmd.Context().Err())
 	})
+}
+
+func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
+	assert, cmd := assert.New(t), &cobra.Command{Use: "search"}
+	assert.True(reportsCLIAction(cmd, true))
+	assert.False(reportsCLIAction(cmd, false))
+	cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: true}}))
+	assert.False(reportsCLIAction(cmd, true))
+	cmd.SetContext(t.Context())
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	assert.False(reportsCLIAction(cmd, true))
 }

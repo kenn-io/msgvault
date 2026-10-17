@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +29,7 @@ func TestSyncTriggerAnsweredWhileScheduledRunHoldsGate(t *testing.T) {
 	assert := assert.New(t)
 	const job = "granola:acct-1"
 	gate := api.NewSerialOperationGate()
-	sched, _ := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, gate)
+	sched, _ := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, gate, nil)
 	defer func() { <-sched.Stop().Done() }()
 
 	started := make(chan struct{}, 2)
@@ -77,5 +80,39 @@ func TestSyncTriggerAnsweredWhileScheduledRunHoldsGate(t *testing.T) {
 	case <-started:
 	case <-time.After(10 * time.Second):
 		require.FailNow("queued follow-up run did not start")
+	}
+}
+
+func TestServeSchedulersCaptureManualCompletion(t *testing.T) {
+	for _, mediaJob := range []bool{false, true} {
+		t.Run(strconv.FormatBool(mediaJob), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var events []map[string]any
+				sched, media := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, nil, func(event string, properties map[string]any) error {
+					events = append(events, map[string]any{"event": event, "properties": properties})
+					return nil
+				})
+				defer func() { <-sched.Stop().Done(); <-media.Stop().Done() }()
+				target := sched
+				if mediaJob {
+					target = media
+				}
+				outcome := error(nil)
+				require.NoError(t, target.AddJob(scheduler.Job{Name: "sync", Schedule: "0 0 1 1 *", Run: func(context.Context) error { return outcome }}))
+				for _, manual := range []bool{false, true, true} {
+					_, err := target.StartJob("sync", manual)
+					require.NoError(t, err)
+					synctest.Wait()
+				}
+				outcome = errors.New("sync failed")
+				_, err := target.StartJob("sync", true)
+				require.NoError(t, err)
+				synctest.Wait()
+				assert.Equal(t, []map[string]any{
+					{"event": "sync_finished", "properties": map[string]any{"surface": "web"}},
+					{"event": "sync_finished", "properties": map[string]any{"surface": "web"}},
+				}, events)
+			})
+		})
 	}
 }

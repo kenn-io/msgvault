@@ -96,7 +96,7 @@ describe('ExploreLoader', () => {
     expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text'], ['replacement', 'full_text']]);
     loader.retry();
     await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(5));
-    expect(onSearchAccepted).toHaveBeenCalledTimes(2);
+    expect(onSearchAccepted).toHaveBeenCalledTimes(3);
   });
   it('issues exactly one fetch for one filter commit', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);

@@ -130,7 +130,7 @@ func TestFilenameDiscoveryWarmMaintenanceDoesNotExtendIdleTimeout(t *testing.T) 
 		timeout := 100 * time.Millisecond
 		fired := make(chan struct{})
 		idle := api.NewIdleTracker(timeout, func() { close(fired) })
-		sched, media := newServeSchedulers(nil, testDiscardLogger(), idle, nil)
+		sched, media := newServeSchedulers(nil, testDiscardLogger(), idle, nil, nil)
 		t.Cleanup(func() { <-sched.Stop().Done(); <-media.Stop().Done() })
 		require.NoError(registerFilenameDiscoveryJob(sched, f.Store))
 		started := time.Now()

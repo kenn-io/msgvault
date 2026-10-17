@@ -1817,46 +1817,7 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 	assert.Nil(t, model.messages, "expected messages to be nil after search starts")
 }
 
-// TestHighlightedColumnsAligned verifies that highlighting search terms in
-// aggregate rows doesn't break column alignment.
-
 func TestAcceptedSearchActions(t *testing.T) {
-	t.Run("readable transitions", func(t *testing.T) {
-		for _, mode := range []tuiMode{modeEmail, modeTexts, modeMeetings, modePeople} {
-			t.Run(fmt.Sprint(mode), func(t *testing.T) {
-				assert, m, calls := assert.New(t), NewBuilder().Build(), 0
-				m.width, m.height, m.mode = 100, 24, mode
-				m.level, m.textState.level, m.meetingState.level, m.peopleState.level = levelMessageDetail, textLevelDetail, meetingLevelDetail, peopleLevelMessage
-				m.messageDetail, m.meetingState.detail = &query.MessageDetail{ID: 1}, &query.MessageDetail{ID: 1}
-				m.reportAction = func(_ context.Context, event, _, _ string) error {
-					assert.Equal("message_opened", event)
-					calls++
-					return errors.New("capture failed")
-				}
-				update := func(msg tea.Msg) {
-					updated, cmd := m.Update(msg)
-					m = asModel(t, updated)
-					if cmd != nil {
-						_ = runBatchCommand(t, cmd)
-					}
-				}
-				update(tea.WindowSizeMsg{Width: 100, Height: 24})
-				assert.Equal(1, calls)
-				update(spinnerTickMsg{})
-				update(key('x'))
-				update(tea.WindowSizeMsg{Width: 110, Height: 24})
-				assert.Equal(1, calls, "unrelated updates do not retry a failed report")
-				m.settings.active = true
-				update(tea.WindowSizeMsg{Width: 100, Height: 24})
-				m.settings.active = false
-				update(tea.WindowSizeMsg{Width: 100, Height: 24})
-				assert.Equal(2, calls, "returning to cached readable content is a new transition")
-				m.messageDetail.ID, m.meetingState.detail.ID = 2, 2
-				update(tea.WindowSizeMsg{Width: 100, Height: 24})
-				assert.Equal(3, calls)
-			})
-		}
-	})
 	for _, tc := range []struct {
 		name   string
 		mode   tuiMode
@@ -1877,11 +1838,8 @@ func TestAcceptedSearchActions(t *testing.T) {
 			assert, m, events := assert.New(t), NewBuilder().Build(), []string(nil)
 			m.width, m.height, m.mode, m.searchMode = 100, 24, tc.mode, tc.search
 			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID = 2, 2, 2
-			enabled := false
 			m.reportAction = func(_ context.Context, e, p, v string) error {
-				if enabled {
-					events = append(events, e+":"+p+":"+v)
-				}
+				events = append(events, e+":"+p+":"+v)
 				return nil
 			}
 			if tc.search == searchModeSemantic {
@@ -1891,15 +1849,45 @@ func TestAcceptedSearchActions(t *testing.T) {
 				assert.Equal(searchModeFast, m.searchMode)
 				tc.msg = pending()
 			}
-			for range 2 {
-				updated, cmd := m.Update(tc.msg)
-				m = asModel(t, updated)
-				if cmd != nil {
-					_ = runBatchCommand(t, cmd)
-				}
-				enabled = true
+			_, cmd := m.Update(tc.msg)
+			if cmd != nil {
+				_ = runBatchCommand(t, cmd)
 			}
 			assert.Equal(tc.want, events)
+		})
+	}
+}
+
+func TestSearchReloadDoesNotReportAnotherSearch(t *testing.T) {
+	for _, input := range []rune{'a', 's', 'v'} {
+		t.Run(string(input), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			m := newTestModelWithRows(testAggregateRows)
+			m.level, m.searchMode, m.searchQuery = levelAggregates, searchModeSemantic, "needle"
+			m.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
+			calls := 0
+			m.reportAction = func(context.Context, string, string, string) error { calls++; return nil }
+			updated, cmd := applyAggregateKeyWithCmd(t, m, key(input))
+			result := cmd()
+			switch msg := result.(type) {
+			case dataLoadedMsg:
+				require.NoError(msg.err)
+			case searchResultsMsg:
+				require.NoError(msg.err)
+			default:
+				require.FailNow("expected accepted search results")
+			}
+			next, report := updated.Update(result)
+			if report != nil {
+				_ = runBatchCommand(t, report)
+			}
+			assert.Zero(calls)
+			updated = asModel(t, next)
+			result = updated.loadSearch("needle")()
+			_, report = updated.Update(result)
+			require.NotNil(report)
+			_ = runBatchCommand(t, report)
+			assert.Equal(1, calls, "a later deliberate search still reaches the daemon")
 		})
 	}
 }

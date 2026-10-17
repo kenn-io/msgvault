@@ -348,7 +348,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 			m.aggregateRequestID++
 			statsCmd := m.refreshStats()
 			spinCmd := m.startSpinner()
-			return m, tea.Batch(spinCmd, m.loadData(), statsCmd), true
+			return m, tea.Batch(spinCmd, m.loadAggregateData(true), statsCmd), true
 		}
 	}
 	return m, nil, false
@@ -390,7 +390,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.contextStats = nil
 				m.searchInput.SetValue("")
 				m.aggregateRequestID++
-				return m, m.loadData()
+				return m, m.loadAggregateData(true)
 			}
 			return m.goBack()
 		}
@@ -400,7 +400,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.contextStats = nil
 			m.searchInput.SetValue("")
 			m.aggregateRequestID++
-			return m, m.loadData()
+			return m, m.loadAggregateData(true)
 		}
 
 	// Account selector
@@ -450,7 +450,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.syncSearchScope()
 			m.loadRequestID++ // Invalidate stale loadMessages responses
 			m.searchRequestID++
-			return m, m.loadSearch(m.searchQuery)
+			return m, m.loadSearchWithOffset(m.searchQuery, 0, false, true)
 		}
 		m.loadRequestID++
 		return m, m.loadMessages()
@@ -493,7 +493,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.resetViewState()
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	case "shift+tab":
 		skipView := query.ViewType(-1)
@@ -504,7 +504,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.resetViewState()
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	// Lists view: jump directly to List ID aggregates.
 	case "l":
@@ -516,7 +516,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.resetViewState()
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	// Time view: jump to Time view, or cycle granularity if already there
 	case "t":
@@ -531,14 +531,14 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	// Sorting
 	case "s":
 		m.sortField = (m.sortField + 1) % 4
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	case "r", "v":
 		if m.sortDirection == query.SortDesc {
@@ -548,7 +548,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.loading = true
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 	}
 
 	return m, nil
@@ -607,7 +607,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.searchLoadingMore = true
 		m.searchRequestID++
 		spinCmd := m.startSpinner()
-		return m, tea.Batch(spinCmd, m.loadSearchWithOffset(m.searchQuery, m.searchOffset, true))
+		return m, tea.Batch(spinCmd, m.loadSearchWithOffset(m.searchQuery, m.searchOffset, true, false))
 	}
 
 	if handled {
@@ -698,7 +698,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selection.aggregateKeys = make(map[string]bool)
 			m.selection.aggregateViewType = m.viewType
 			m.aggregateRequestID++
-			return m, m.loadData()
+			return m, m.loadAggregateData(true)
 		}
 
 	// Drill down to message detail
@@ -741,7 +741,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selection.aggregateKeys = make(map[string]bool)
 			m.selection.aggregateViewType = m.viewType
 			m.aggregateRequestID++
-			return m, m.loadData()
+			return m, m.loadAggregateData(true)
 		}
 
 	// Time sub-grouping: jump directly to sub-aggregate Time view
@@ -762,7 +762,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selection.aggregateKeys = make(map[string]bool)
 			m.selection.aggregateViewType = m.viewType
 			m.aggregateRequestID++
-			return m, m.loadData()
+			return m, m.loadAggregateData(true)
 		}
 
 	// Sub-grouping: 'g' switches to aggregate breakdown within current filter (like tab)
@@ -786,7 +786,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.selection.aggregateKeys = make(map[string]bool)
 			m.selection.aggregateViewType = m.viewType
 			m.aggregateRequestID++
-			return m, m.loadData()
+			return m, m.loadAggregateData(true)
 		}
 		// No drill filter (e.g., All Messages or search results) - go back to aggregate view
 		// Clear search state (mirroring goBack behavior)
@@ -800,7 +800,7 @@ func (m Model) handleMessageListKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		m.err = nil
 		m.aggregateRequestID++
-		return m, m.loadData()
+		return m, m.loadAggregateData(true)
 
 	// Sorting - use explicit field list to avoid hidden coupling
 	case "s":
@@ -896,7 +896,7 @@ func (m *Model) maybeLoadMoreSearchResults() tea.Cmd {
 	if m.cursor >= len(m.messages)-threshold {
 		m.searchLoadingMore = true
 		m.searchRequestID++
-		return m.loadSearchWithOffset(m.searchQuery, m.searchOffset, true)
+		return m.loadSearchWithOffset(m.searchQuery, m.searchOffset, true, false)
 	}
 
 	return nil
@@ -1332,7 +1332,7 @@ func (m Model) handleAccountSelectorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cm
 		}
 		m.aggregateRequestID++
 		statsCmd := m.refreshStats()
-		return m, tea.Batch(m.loadData(), statsCmd)
+		return m, tea.Batch(m.loadAggregateData(true), statsCmd)
 	case keyNameEsc:
 		m.modal = modalNone
 	}
@@ -1384,7 +1384,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				m.searchRequestID++
 				m.prepareSearchReplacement()
 				statsCmd := m.refreshStats()
-				return m, tea.Batch(m.loadSearch(m.searchQuery), statsCmd)
+				return m, tea.Batch(m.loadSearchWithOffset(m.searchQuery, 0, false, true), statsCmd)
 			}
 			m.loadRequestID++
 			statsCmd := m.refreshStats()
@@ -1392,7 +1392,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		m.aggregateRequestID++
 		statsCmd := m.refreshStats()
-		return m, tea.Batch(m.loadData(), statsCmd)
+		return m, tea.Batch(m.loadAggregateData(true), statsCmd)
 	}
 	return m, nil
 }
@@ -1623,7 +1623,7 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 		m.syncSearchScope()
 		m.loadRequestID++ // Invalidate stale loadMessages responses
 		m.searchRequestID++
-		return m, m.loadSearch(m.searchQuery)
+		return m, m.loadSearchWithOffset(m.searchQuery, 0, false, true)
 	}
 
 	m.loadRequestID++
@@ -1749,7 +1749,7 @@ func (m Model) reloadCurrentView() (tea.Model, tea.Cmd) {
 		return m, m.loadMessages()
 	}
 	m.aggregateRequestID++
-	return m, m.loadData()
+	return m, m.loadAggregateData(true)
 }
 
 // commitInlineSearch finalizes the search and exits inline mode.

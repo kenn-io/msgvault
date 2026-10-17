@@ -412,6 +412,10 @@
     loading = true;
     return { generation: currentGeneration, signal: nextController.signal };
   }
+  function retryListing(): void {
+    searchPending = true;
+    reloadListing();
+  }
   function reloadListing(): void {
     // Reload restarts from page one; when a restoration epoch is still
     // unacknowledged the deep restoration restarts against the fresh listing.
@@ -876,7 +880,7 @@
       onLoadMore={() => {
         void loadMore();
       }}
-      onReload={reloadListing}
+      onReload={retryListing}
     />
   {:else}
     <section class="files-table" aria-label="Files table">
@@ -935,7 +939,7 @@
               <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
                 <div class="notice" role="alert">
                   <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
+                  <Button size="sm" surface="outline" label="Retry request" onclick={retryListing} />
                 </div>
               </div>
             </div>
@@ -1025,7 +1029,7 @@
               <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
                 <div class="page-error" role="alert">
                   <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
+                  <Button size="sm" surface="outline" label="Reload files" onclick={retryListing} />
                 </div>
               </div>
             </div>

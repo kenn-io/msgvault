@@ -3557,7 +3557,8 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 	t.Run("account deferral keeps post-sync hooks", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			events, hooks := 0, 0
-			s := New(func(context.Context, string) error { return ErrDeferUntilNextTrigger }).WithCompletion(func() { events++ })
+			outcome := ErrDeferUntilNextTrigger
+			s := New(func(context.Context, string) error { return outcome }).WithCompletion(func() { events++ })
 			defer func() { <-s.Stop().Done() }()
 			s.SetVisualPostSyncJob(func(context.Context) error { hooks++; return nil })
 			require.NoError(t, s.AddAccount("account@example.com", "0 0 1 1 *"))
@@ -3565,6 +3566,11 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 			synctest.Wait()
 			assert.Zero(t, events)
 			assert.Equal(t, 1, hooks)
+			outcome = nil
+			require.NoError(t, s.TriggerSync("account@example.com", true))
+			synctest.Wait()
+			assert.Equal(t, 1, events)
+			assert.Equal(t, 2, hooks)
 		})
 	})
 	for _, test := range []struct {
@@ -3602,8 +3608,9 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 				s.WithCompletion(func() { events++; _ = s.JobStatus() })
 				defer func() { <-s.Stop().Done() }()
 				require.NoError(s.AddJob(Job{Name: "sync", Schedule: "0 0 1 1 *", Run: run}))
-				_, err := s.StartJob("sync", test.name != "scheduled success pending failure")
+				disposition, err := s.StartJob("sync", test.name != "scheduled success pending failure")
 				require.NoError(err)
+				assert.Equal(JobStarted, disposition)
 				synctest.Wait()
 				if test.name == "removed" {
 					s.RemoveJob("sync")

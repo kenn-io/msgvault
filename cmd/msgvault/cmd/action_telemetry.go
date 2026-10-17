@@ -17,13 +17,13 @@ func reportsCLIAction(cmd *cobra.Command, terminal bool) bool {
 
 var cliActionTerminal = func(fd uintptr) bool { return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd) }
 
-func humanCLIAction(cmd *cobra.Command) bool {
+func humanCLIAction(cmd *cobra.Command, event string) bool {
 	out, ok := cmd.OutOrStdout().(*os.File)
-	return reportsCLIAction(cmd, ok && cliActionTerminal(out.Fd()))
+	return reportsCLIAction(cmd, event == "sync_finished" || ok && cliActionTerminal(out.Fd()))
 }
 
 func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, property, value string) {
-	if !humanCLIAction(cmd) {
+	if !humanCLIAction(cmd, event) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 250*time.Millisecond)

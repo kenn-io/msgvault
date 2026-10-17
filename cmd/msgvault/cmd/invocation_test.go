@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -357,15 +356,4 @@ func TestInvocationMCPStatusOptions(t *testing.T) {
 	for _, home := range []string{homeA, homeB, defaultHome} {
 		assert.NoFileExists(filepath.Join(home, "config.toml"))
 	}
-}
-
-func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
-	assert, cmd := assert.New(t), &cobra.Command{Use: "search"}
-	assert.True(reportsCLIAction(cmd, true))
-	assert.False(reportsCLIAction(cmd, false))
-	cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: true}}))
-	assert.False(reportsCLIAction(cmd, true))
-	cmd.SetContext(t.Context())
-	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-	assert.False(reportsCLIAction(cmd, true))
 }

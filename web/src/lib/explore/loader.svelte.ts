@@ -99,6 +99,7 @@ export class ExploreLoader {
   private seenCursors = new Set<string>();
   private restorationCycleCompleted = false;
   private searchPending = true;
+  private searchRestorationEpoch: number | undefined;
   private selectionFingerprint = '';
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   #retryRevision = $state(0);
@@ -126,6 +127,8 @@ export class ExploreLoader {
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
     void this.#retryRevision;
+    if (restorationEpoch !== undefined && restorationEpoch !== this.searchRestorationEpoch) this.searchPending = true;
+    this.searchRestorationEpoch = restorationEpoch;
     const predicate = untrack(() => this.state.predicate());
     const fingerprint = requestFingerprint;
     if (fingerprint !== this.selectionFingerprint) {
@@ -444,6 +447,7 @@ export class ExploreLoader {
    * action after a failed request), without changing any URL state. */
   retry = (): void => {
     this.clearCacheBuildRetry();
+    this.searchPending = true;
     this.#retryRevision += 1;
   };
 
