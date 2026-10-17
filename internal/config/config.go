@@ -580,6 +580,7 @@ type Config struct {
 	Discord            DiscordConfig                   `toml:"discord"`
 	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity           ActivityConfig                  `toml:"activity"`
+	Loops              LoopsConfig                     `toml:"loops"`
 	People             PeopleConfig                    `toml:"people"`
 	Teams              TeamsConfig                     `toml:"teams"`
 	Deletion           DeletionConfig                  `toml:"deletion"`
@@ -869,6 +870,7 @@ func NewDefaultConfig() *Config {
 			BatchSize:             500,
 			Schedule:              "17 * * * *",
 		},
+		Loops:       DefaultLoopsConfig(),
 		Accounts:    []AccountSchedule{},
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
@@ -1173,6 +1175,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.Loops.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.People.Sweep.Validate(); err != nil {
