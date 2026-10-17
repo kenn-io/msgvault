@@ -2086,6 +2086,7 @@ features once published. No startup hook or entrypoint wrapper is required.
   replies and continuation pages don't count. Each surface and search type counts once
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
+  CLI recording transcript searches (`media search`) use `text`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
   `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.

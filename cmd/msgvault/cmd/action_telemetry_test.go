@@ -36,7 +36,12 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	path := newMuesliMeetingsFixture(t, false)
 	disabled := false
 	for action, run := range map[string]func(*cobra.Command) error{
-		"search":       func(cmd *cobra.Command) error { return runHTTPSearch(cmd, "needle") },
+		"search": func(cmd *cobra.Command) error { return runHTTPSearch(cmd, "needle") },
+		"media": func(cmd *cobra.Command) error {
+			search, _, err := rootCmd.Find([]string{"media", "search"})
+			require.NoError(t, err)
+			return search.RunE(cmd, []string{"needle"})
+		},
 		"show-message": func(cmd *cobra.Command) error { return showHTTPMessage(cmd, "1") },
 		"documents": func(cmd *cobra.Command) error {
 			return runSearchDocuments(cmd, store.DocumentSearchRequest{Query: "needle", SearchMode: " Hybrid "}, true, defaultDocumentsCommandDeps())
@@ -158,7 +163,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				} else {
 					require.NoError(err, "telemetry failures leave the action successful")
 				}
-				kind := map[string]string{"search": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
+				kind := map[string]string{"search": "text", "media": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
 				if action == "sync-omi" && !fails {
 					assert.Equal("Omi sync output", cmd.OutOrStdout().(*bytes.Buffer).String())
 				}
