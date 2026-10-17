@@ -60,16 +60,30 @@ func TestRankDecayFlagsAndDeterminism(t *testing.T) {
 }
 
 func TestParamsValidation(t *testing.T) {
+	must := require.New(t)
 	for _, change := range []func(*Params){func(p *Params) { p.Limit = 0 }, func(p *Params) { p.Evidence = 11 }, func(p *Params) { p.Candidates = 1001 }, func(p *Params) { p.MinScore = math.NaN() }, func(p *Params) { p.MinProfileScore = 1.1 }, func(p *Params) { p.HalfLifeDays = -1 }, func(p *Params) { p.Tiebreak = "random" }} {
 		p := DefaultParams()
 		change(&p)
-		require.Error(t, p.Validate())
+		must.Error(p.Validate())
+	}
+	for _, change := range []func(*Params){
+		func(p *Params) { p.MaxRosterEdges = 0 },
+		func(p *Params) { p.MaxRosterEdges = 65 },
+		func(p *Params) { p.MaxCandidatePeople = 0 },
+		func(p *Params) { p.MaxCandidatePeople = MaxCandidatePeople + 1 },
+	} {
+		p := DefaultParams()
+		change(&p)
+		must.Error(p.Validate())
 	}
 	p := DefaultParams()
-	require.NoError(t, p.Validate())
+	must.NoError(p.Validate())
 	p.Evidence = 0
 	p.HalfLifeDays = 0
-	require.NoError(t, p.Validate())
+	must.NoError(p.Validate())
+	p.MaxRosterEdges = 1
+	p.MaxCandidatePeople = 1
+	must.NoError(p.Validate())
 }
 
 func TestRankWorkedExample(t *testing.T) {

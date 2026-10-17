@@ -379,8 +379,8 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s
 	   %s
        AND (:has_attachment IS NULL OR m.has_attachments = :has_attachment)
-       AND (:after IS NULL OR julianday(m.sent_at) >= julianday(:after))
-       AND (:before IS NULL OR julianday(m.sent_at) < julianday(:before))
+       AND (:after IS NULL OR julianday(COALESCE(m.sent_at, m.received_at, m.internal_date)) >= julianday(:after))
+       AND (:before IS NULL OR julianday(COALESCE(m.sent_at, m.received_at, m.internal_date)) < julianday(:before))
        AND (:larger_than IS NULL OR m.size_estimate > :larger_than)
        AND (:smaller_than IS NULL OR m.size_estimate < :smaller_than)
        AND (:subject_patterns IS NULL OR NOT EXISTS (

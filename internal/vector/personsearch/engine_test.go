@@ -600,3 +600,29 @@ func TestEngineSearchPropagatesPersonStoreError(t *testing.T) {
 	require.ErrorContains(t, err, "resolve final person search hits")
 	assert.Nil(t, results)
 }
+
+func TestSearchVectorChecksAndReuse(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	backend := &testBackend{active: &vector.Generation{ID: 7, Fingerprint: "test:3:rperson-semantic-v1"}}
+	embedder := &testEmbedder{vec: []float32{1, 0, 0}}
+	data := &testStore{}
+	engine := newTestEngine(backend, data, embedder)
+	got, err := engine.SearchVector(t.Context(), embedder.vec, 7, 10)
+	must.NoError(err)
+	check.Empty(got)
+	check.Empty(embedder.calls)
+	_, err = engine.SearchVector(t.Context(), embedder.vec, 8, 10)
+	must.ErrorIs(err, ErrGenerationMismatch)
+	engine.config.Gate = vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return vector.ErrSemanticPersonEmbeddingsDisabled })
+	_, err = engine.SearchVector(t.Context(), embedder.vec, 7, 10)
+	must.ErrorIs(err, vector.ErrSemanticPersonEmbeddingsDisabled)
+	engine.config.Gate = vector.SemanticPersonEmbeddingGateFunc(func(context.Context) error { return nil })
+	engine.config.PersonCoverage = func(context.Context, vector.GenerationID) (Coverage, error) { return Coverage{Mismatched: 1}, nil }
+	_, err = engine.SearchVector(t.Context(), embedder.vec, 7, 10)
+	must.ErrorIs(err, ErrPersonCoverageIncomplete)
+	engine.config.PersonCoverage = nil
+	backend.active.Fingerprint = "foreign"
+	_, err = engine.SearchVector(t.Context(), embedder.vec, 7, 10)
+	must.Error(err)
+}

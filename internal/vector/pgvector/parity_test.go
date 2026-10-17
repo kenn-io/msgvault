@@ -74,6 +74,8 @@ CREATE TABLE messages (
     sender_id INTEGER,
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
+    received_at DATETIME,
+    internal_date DATETIME,
     sent_at DATETIME,
     deleted_at DATETIME,
     deleted_from_source_at DATETIME

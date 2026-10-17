@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -39,10 +40,12 @@ func (s *Store) PeopleDeclaredTopics(ctx context.Context) ([]PersonDeclaredTopic
 
 type PeopleProfile struct {
 	ParticipantIDs                                     []int64
+	ParticipantEmails                                  map[int64]string
 	PersonID                                           int64
 	VCardUID, DisplayName                              string
 	IsOwner                                            bool
 	ContactPresent                                     bool
+	ContactStateFresh                                  bool
 	LastContactAt, LastOutboundAt, DirtyAt, ComputedAt *time.Time
 	InteractionCount                                   int64
 }
@@ -98,31 +101,61 @@ func (s *Store) PeopleProfiles(ctx context.Context, ids []int64) (map[int64]Peop
  OR native_message.sender_id IS NULL AND EXISTS (SELECT 1 FROM message_recipients native_from WHERE native_from.message_id=native_message.id AND LOWER(native_from.recipient_type)='from' AND native_from.participant_id IS NOT NULL AND native_from.participant_id<>part.id)))))
  ))`
 	q := `SELECT p.id,p.vcard_uid,COALESCE(p.display_name,''),` + owner + `,
- pcs.person_id,pcs.last_contact_at,pcs.last_outbound_at,pcs.dirty_at,pcs.computed_at,COALESCE(pcs.interaction_count,0), members.participant_id
- FROM persons p LEFT JOIN person_contact_state pcs ON pcs.person_id=p.id LEFT JOIN person_participants members ON members.person_id=p.id WHERE p.id IN (` + ph + `) ORDER BY p.id, members.participant_id`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(q), args...)
+	 pcs.person_id,pcs.last_contact_at,pcs.last_outbound_at,pcs.dirty_at,pcs.computed_at,COALESCE(pcs.interaction_count,0),pcs.identity_revision,pcs.account_identity_revision,
+	 members.participant_id,NULLIF(TRIM(member_participants.email_address),'')
+ FROM persons p LEFT JOIN person_contact_state pcs ON pcs.person_id=p.id LEFT JOIN person_participants members ON members.person_id=p.id
+ LEFT JOIN participants member_participants ON member_participants.id=members.participant_id
+ WHERE p.id IN (` + ph + `) ORDER BY p.id, members.participant_id`
+	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		currentRevisions, globalStale, err := s.contactStateFreshnessTxContext(ctx, tx)
+		if err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, s.dialect.Rebind(q), args...)
+		if err != nil {
+			return fmt.Errorf("read people profiles: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var p PeopleProfile
+			var contactID, participantID *int64
+			var identityRevision, accountIdentityRevision sql.NullInt64
+			var participantEmail sql.NullString
+			if err := rows.Scan(
+				&p.PersonID, &p.VCardUID, &p.DisplayName, &p.IsOwner,
+				&contactID, &p.LastContactAt, &p.LastOutboundAt, &p.DirtyAt,
+				&p.ComputedAt, &p.InteractionCount, &identityRevision,
+				&accountIdentityRevision, &participantID, &participantEmail,
+			); err != nil {
+				return fmt.Errorf("scan people profile: %w", err)
+			}
+			p.ContactPresent = contactID != nil
+			p.ContactStateFresh = p.ContactPresent && p.DirtyAt == nil &&
+				identityRevision.Valid && accountIdentityRevision.Valid &&
+				identityRevision.Int64 == currentRevisions.IdentityRevision &&
+				accountIdentityRevision.Int64 == currentRevisions.AccountIdentityRevision &&
+				!globalStale
+			if existing, ok := out[p.PersonID]; ok {
+				p.ParticipantIDs = existing.ParticipantIDs
+				p.ParticipantEmails = existing.ParticipantEmails
+			} else {
+				p.ParticipantIDs = []int64{}
+				p.ParticipantEmails = map[int64]string{}
+			}
+			if participantID != nil {
+				p.ParticipantIDs = append(p.ParticipantIDs, *participantID)
+				if participantEmail.Valid {
+					p.ParticipantEmails[*participantID] = participantEmail.String
+				}
+			}
+			out[p.PersonID] = p
+		}
+		return rows.Err()
+	})
 	if err != nil {
-		return nil, fmt.Errorf("read people profiles: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var p PeopleProfile
-		var contactID, participantID *int64
-		if err := rows.Scan(&p.PersonID, &p.VCardUID, &p.DisplayName, &p.IsOwner, &contactID, &p.LastContactAt, &p.LastOutboundAt, &p.DirtyAt, &p.ComputedAt, &p.InteractionCount, &participantID); err != nil {
-			return nil, fmt.Errorf("scan people profile: %w", err)
-		}
-		p.ContactPresent = contactID != nil
-		if existing, ok := out[p.PersonID]; ok {
-			p.ParticipantIDs = existing.ParticipantIDs
-		} else {
-			p.ParticipantIDs = []int64{}
-		}
-		if participantID != nil {
-			p.ParticipantIDs = append(p.ParticipantIDs, *participantID)
-		}
-		out[p.PersonID] = p
-	}
-	return out, rows.Err()
+	return out, nil
 }
 func (s *Store) PeopleEmployments(ctx context.Context, ids []int64) ([]PeopleEmployment, error) {
 	out := []PeopleEmployment{}
