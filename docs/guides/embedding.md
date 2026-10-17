@@ -33,6 +33,16 @@ without running schema DDL. It fails if the file does not exist and never
 creates the file or its directory. Stop and drain operations before closing it.
 SQLite uses msgvault's normal CGO build with the `fts5 sqlite_vec` build tags.
 
+The library does not capture [MCP Events](../usage/chat.md#events). If a
+daemon has Events enabled on the same archive, Open records a capture gap:
+active Events subscriptions stop with reason `capture_gap`, and subscribers
+must subscribe again. A daemon that keeps running refuses new subscriptions
+with `events_unavailable` until it restarts.
+If the daemon restarts while the library handle remains open, the next library
+mutation records another gap in the same transaction. A failed mutation leaves
+capture unchanged. Close library writers before restarting Events capture;
+renewed subscriptions report `truncated: true` after a gap.
+
 For PostgreSQL, supply a URL or libpq keyword DSN and an optional schema:
 
 ```go

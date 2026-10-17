@@ -34,7 +34,7 @@ type DiscordAttachmentMessage = PendingAttachmentMessage
 
 func (s *Store) replaceMessageProviderAttachmentsContext(ctx context.Context, messageID int64, providerPrefix string, refs []AttachmentRef) error {
 	return s.replaceMessageAttachmentsWhereContext(ctx,
-		messageID, `source_attachment_id LIKE ?`, false, refs, providerPrefix+"%",
+		messageID, `source_attachment_id LIKE ?`, refs, providerPrefix+"%",
 	)
 }
 

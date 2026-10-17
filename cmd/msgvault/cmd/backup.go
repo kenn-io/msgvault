@@ -911,6 +911,9 @@ func backupExtrasSpec(cfg *config.Config) (backup.ExtrasSpec, error) {
 	if backupCreateIncludeTokens {
 		spec.Dirs = append(spec.Dirs, backup.ExtrasDirSpec{Name: "tokens", Sensitive: true})
 		spec.Globs = append(spec.Globs, backup.ExtrasGlobSpec{Pattern: "client_secret*.json", Sensitive: true})
+		// Without this key a restored archive cannot decrypt its Events
+		// subscription secrets, and Events refuses to start.
+		spec.Globs = append(spec.Globs, backup.ExtrasGlobSpec{Pattern: mcpEventsKeyFile, Sensitive: true})
 	}
 	return spec, nil
 }
@@ -1064,7 +1067,7 @@ func init() {
 
 	backupCreateCmd.Flags().StringVar(&backupCreateRepo, "repo", "", "Backup repository directory")
 	backupCreateCmd.Flags().BoolVar(&backupCreateIncludeConfig, "include-config", false, "Include config.toml verbatim (may contain API keys) in the snapshot")
-	backupCreateCmd.Flags().BoolVar(&backupCreateIncludeTokens, "include-tokens", false, "Include the tokens directory in the snapshot")
+	backupCreateCmd.Flags().BoolVar(&backupCreateIncludeTokens, "include-tokens", false, "Include the tokens directory, client secrets, and the MCP Events key in the snapshot")
 	backupCreateCmd.Flags().BoolVar(&backupCreateAllowPlaintextSecrets, "allow-plaintext-secrets", false, "Allow capturing secrets in plaintext (required with --include-config/--include-tokens on an unencrypted repository)")
 	backupCreateCmd.Flags().StringVar(&backupCreateTag, "tag", "", "Optional label recorded on the snapshot manifest")
 	backupCreateCmd.Flags().BoolVar(&backupCreateForceUnlock, "force-unlock", false, "Break a stale exclusive repository lock before creating")

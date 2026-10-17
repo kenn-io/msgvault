@@ -545,6 +545,7 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
+	MCP                MCPConfig                       `toml:"mcp"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
 	OAuth              OAuthConfig                     `toml:"oauth"`
@@ -887,6 +888,7 @@ func NewDefaultConfig() *Config {
 	cfg.Integrations.Tasks.ApplyDefaults()
 	cfg.Integrations.Kata.ApplyDefaults()
 	cfg.Activity.ApplyDefaults()
+	cfg.MCP.Events.ApplyDefaults()
 	cfg.People.Sweep.ApplyDefaults()
 	cfg.People.Enrichment.ApplyDefaults()
 	cfg.People.IdentityScoring.ApplyDefaults()
@@ -1187,6 +1189,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.Backup.Validate(); err != nil {
+		return nil, err
+	}
+	if err := cfg.MCP.Events.Validate(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateMediaPolicies(); err != nil {

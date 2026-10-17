@@ -182,9 +182,9 @@ func recordSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status strin
 	recordSyncRunItemsOfType(t, env, sourceID, "full", status, items...)
 }
 
-func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, status string, items ...store.SyncRunItem) {
+func recordIncrementalSyncRunItems(t *testing.T, env *TestEnv, sourceID int64, items ...store.SyncRunItem) {
 	t.Helper()
-	recordSyncRunItemsOfType(t, env, sourceID, "incremental", status, items...)
+	recordSyncRunItemsOfType(t, env, sourceID, "incremental", store.SyncStatusCompleted, items...)
 }
 
 func recordSyncRunItemsOfType(t *testing.T, env *TestEnv, sourceID int64, syncType, status string, items ...store.SyncRunItem) {
@@ -236,7 +236,7 @@ func TestIncrementalSyncReplayRecordsEachErrorResultClass(t *testing.T) {
 			ErrorKind:       syncItemKindFetchError,
 		})
 	}
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, items...)
+	recordIncrementalSyncRunItems(t, env, source.ID, items...)
 	env.SetHistory(1000)
 
 	env.Mock.GetMessageError["b-nil"] = errors.New("temporary transport failure")
@@ -1618,7 +1618,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 		eligibleID    = "replay-eligible"
 		batchEligible = "replay-batch-eligible"
 	)
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted, store.SyncRunItem{
+	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncRunItem{
 		SourceMessageID: olderID,
 		Phase:           syncItemPhaseFetch,
 		Status:          store.SyncRunItemStatusError,
@@ -1630,7 +1630,7 @@ func TestIncrementalSyncFiltersFetchReplayCandidates(t *testing.T) {
 		Status:          store.SyncRunItemStatusError,
 		ErrorKind:       syncItemKindFetchError,
 	})
-	recordIncrementalSyncRunItems(t, env, source.ID, store.SyncStatusCompleted,
+	recordIncrementalSyncRunItems(t, env, source.ID,
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindFetchError},
 		store.SyncRunItem{SourceMessageID: eligibleID, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},
 		store.SyncRunItem{SourceMessageID: batchEligible, Phase: syncItemPhaseFetch, Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindBatchFetchError},

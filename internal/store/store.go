@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -57,6 +58,14 @@ type Store struct {
 	// the projection tables and dirty-marking triggers. Every writable Store
 	// transaction then refreshes its affected Directory rows before commit.
 	directoryProjectionReady bool
+
+	// Events configuration and wake callbacks belong to the root Store.
+	// Immutable ingestion and sync views point back to that shared state.
+	mcpConfig   atomic.Pointer[mcpRuntime]
+	mcpWake     atomic.Pointer[mcpWakeCallback]
+	mcpConfigMu sync.Mutex
+	mcpBase     *Store
+	mcpIngest   IngestContext
 
 	// syncGeneration is immutable metadata on a per-run Store view.
 	// Mutating transactions on that view fence the exact running source
@@ -911,7 +920,15 @@ func (s *Store) withTxLockedContext(
 ) error {
 	start := time.Now()
 	slog.Debug("sql tx begin")
-	tx, err := s.db.BeginTx(ctx, opts)
+	eventsRuntime := s.mcpRoot().mcpConfig.Load()
+	fenceEvents := (opts == nil || !opts.ReadOnly) && eventsRuntime != nil
+	var tx *loggedTx
+	var err error
+	if fenceEvents {
+		tx, err = s.beginMCPWriterTx(ctx, opts, eventsRuntime)
+	} else {
+		tx, err = s.db.BeginTx(ctx, opts)
+	}
 	if err != nil {
 		level := slog.LevelWarn
 		if errors.Is(err, context.Canceled) {
@@ -930,6 +947,12 @@ func (s *Store) withTxLockedContext(
 		if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
 			_ = tx.Rollback()
 			return err
+		}
+	}
+	if fenceEvents {
+		if err := s.mcpFenceWriterTx(ctx, tx.Tx, eventsRuntime); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("fence Events capture: %w", err)
 		}
 	}
 	if err := fn(tx); err != nil {
@@ -956,15 +979,26 @@ func (s *Store) withTxLockedContext(
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		commitErr := err
+		if tx.mcpEventsWritten {
+			// Deferred Events constraints can fail only at commit. Keep their
+			// driver diagnostics out of both generic logs and caller errors.
+			commitErr = mcpSafeError(err)
+		}
 		slog.Warn("sql tx commit failed",
-			"error", err.Error(),
+			"error", commitErr.Error(),
 			"duration_ms", time.Since(start).Milliseconds())
 		if errors.Is(err, sql.ErrTxDone) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 		}
-		return err
+		return commitErr
+	}
+	if tx.mcpEventsWritten {
+		// Only a committed occurrence can make delivery ready or preempt a
+		// resumable scheduled operation; ordinary archive writes stay quiet.
+		s.wakeMCPEvents()
 	}
 	// A tx crossing the slow threshold is a diagnostic, not a problem —
 	// bulk syncs routinely commit 100ms+ batches — so it logs at Info and
@@ -1647,6 +1681,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				`CREATE INDEX IF NOT EXISTS `+index.name+` `+index.definition); err != nil {
 				return fmt.Errorf("create message index %s: %w", index.name, err)
 			}
+		}
+	}
+	for _, table := range []string{"gmail_drafts", "imap_drafts", "beeper_drafts", "chat_drafts"} {
+		addColumn := "ADD COLUMN "
+		if s.IsPostgreSQL() {
+			addColumn += "IF NOT EXISTS "
+		}
+		// Existing drafts have no trustworthy creator attribution. Leave the
+		// added column NULL instead of inferring an actor from their contents.
+		query := "ALTER TABLE " + table + " " + addColumn + "created_by_principal TEXT"
+		if _, err := s.db.ExecContext(ctx, query); err != nil && !s.dialect.IsDuplicateColumnError(err) {
+			return fmt.Errorf("migrate draft creator (%s): %w", table, err)
 		}
 	}
 	if err := s.runOnceMigration(ctx, migrationCardDAVMultipleAccounts, 1, false, s.ensureCardDAVMultiAccountSchema); err != nil {
