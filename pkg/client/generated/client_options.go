@@ -7645,6 +7645,226 @@ func (o *CreatePersonRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ApplyPersonTiersRequestOptions is the options needed to make a request to ApplyPersonTiers.
+type ApplyPersonTiersRequestOptions struct {
+	Body *ApplyPersonTiersBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ApplyPersonTiersRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyPersonTiersRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyPersonTiersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyPersonTiersRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyPersonTiersRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPersonTierCandidatesRequestOptions is the options needed to make a request to ListPersonTierCandidates.
+type ListPersonTierCandidatesRequestOptions struct {
+	Query *ListPersonTierCandidatesQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListPersonTierCandidatesRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonTierCandidatesRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonTierCandidatesRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonTierCandidatesRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonTierCandidatesRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListPersonTierEventsRequestOptions is the options needed to make a request to ListPersonTierEvents.
+type ListPersonTierEventsRequestOptions struct {
+	Query *ListPersonTierEventsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListPersonTierEventsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListPersonTierEventsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListPersonTierEventsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListPersonTierEventsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListPersonTierEventsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewPersonTiersRequestOptions is the options needed to make a request to PreviewPersonTiers.
+type PreviewPersonTiersRequestOptions struct {
+	Query *PreviewPersonTiersQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *PreviewPersonTiersRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewPersonTiersRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewPersonTiersRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewPersonTiersRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewPersonTiersRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ResetPersonTiersRequestOptions is the options needed to make a request to ResetPersonTiers.
+type ResetPersonTiersRequestOptions struct {
+	Body *ResetPersonTiersBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ResetPersonTiersRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ResetPersonTiersRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ResetPersonTiersRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ResetPersonTiersRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ResetPersonTiersRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetPersonByUIDRequestOptions is the options needed to make a request to GetPersonByUID.
 type GetPersonByUIDRequestOptions struct {
 	Query *GetPersonByUIDQuery
@@ -9938,6 +10158,103 @@ func (o *SplitPersonMergeRequestOptions) GetBody() any {
 // GetHeader returns the headers as a map.
 func (o *SplitPersonMergeRequestOptions) GetHeader() (map[string]string, error) {
 	return runtime.AsMap[string](o.Header)
+}
+
+// GetPersonTierRequestOptions is the options needed to make a request to GetPersonTier.
+type GetPersonTierRequestOptions struct {
+	PathParams *GetPersonTierPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetPersonTierRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetPersonTierRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetPersonTierRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetPersonTierRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetPersonTierRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SetPersonTierOptOutRequestOptions is the options needed to make a request to SetPersonTierOptOut.
+type SetPersonTierOptOutRequestOptions struct {
+	PathParams *SetPersonTierOptOutPath
+	Body       *SetPersonTierOptOutBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SetPersonTierOptOutRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SetPersonTierOptOutRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *SetPersonTierOptOutRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SetPersonTierOptOutRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SetPersonTierOptOutRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
 }
 
 // GetPersonTrackingRequestOptions is the options needed to make a request to GetPersonTracking.

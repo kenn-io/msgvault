@@ -17,8 +17,8 @@ type PersonTracking struct {
 	PersonID   int64      `json:"person_id"`
 	Tracked    bool       `json:"tracked"`
 	TrackedAt  *time.Time `json:"tracked_at"`
-	Provenance string     `json:"-"`
-	Actor      string     `json:"-"`
+	Provenance string     `json:"provenance"`
+	Actor      string     `json:"actor"`
 }
 
 const maxTrackedPeopleList = 1_000

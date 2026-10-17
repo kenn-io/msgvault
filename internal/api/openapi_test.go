@@ -1626,15 +1626,17 @@ func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
 func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
 	t.Parallel()
 	state := generated.PersonTracking{
-		PersonID:  7,
-		Tracked:   false,
-		TrackedAt: nil,
+		Actor:      "api",
+		PersonID:   7,
+		Provenance: "manual",
+		Tracked:    false,
+		TrackedAt:  nil,
 	}
 
 	require.NoError(t, state.Validate())
 	encoded, err := json.Marshal(state)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"person_id":7,"tracked":false,"tracked_at":null}`, string(encoded))
+	assert.JSONEq(t, `{"actor":"api","person_id":7,"provenance":"manual","tracked":false,"tracked_at":null}`, string(encoded))
 }
 
 func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {

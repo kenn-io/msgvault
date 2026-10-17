@@ -3,7 +3,9 @@
  */
 
 export interface PersonTracking {
+  actor: string;
   person_id: number;
+  provenance: string;
   tracked: boolean;
   /** @nullable */
   tracked_at: string | null;

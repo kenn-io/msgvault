@@ -14,8 +14,8 @@ type PersonTrackingStore interface {
 	GetPersonTrackingContext(
 		ctx context.Context, personID int64,
 	) (*store.PersonTracking, error)
-	SetPersonTrackingContext(
-		ctx context.Context, personID int64, tracked bool,
+	SetPersonTrackingActorContext(
+		ctx context.Context, personID int64, tracked bool, actor string,
 	) (*store.PersonTracking, error)
 }
 
@@ -85,7 +85,7 @@ func (s *Server) handleSetPersonTracking(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "bad_request", "tracked must be a boolean")
 		return
 	}
-	state, err := tracking.SetPersonTrackingContext(r.Context(), personID, request.Tracked)
+	state, err := tracking.SetPersonTrackingActorContext(r.Context(), personID, request.Tracked, personBriefActor)
 	if err != nil {
 		s.writePersonError(w, err)
 		return

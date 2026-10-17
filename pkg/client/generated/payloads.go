@@ -166,6 +166,10 @@ type GetParticipantTimelineBody = ExploreHTTPRequest
 
 type CreatePersonBody = CreatePersonRequest
 
+type ApplyPersonTiersBody = ApplyPersonTiersRequest
+
+type ResetPersonTiersBody = ResetPersonTiersRequest
+
 type SearchPeopleBody = PersonSearchRequest
 
 type PatchPersonBody = PatchPersonRequest
@@ -195,6 +199,8 @@ type AppendPersonNoteBody = AppendPersonNoteRequest
 type PatchPersonStructuredProfileBody = PersonProfilePatchRequest
 
 type SplitPersonMergeBody = SplitPersonRequest
+
+type SetPersonTierOptOutBody = PutPersonTierOptOutRequest
 
 type SetPersonTrackingBody = PutPersonTrackingRequest
 

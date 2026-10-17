@@ -739,6 +739,16 @@ type SplitPersonMergePath struct {
 	ID int64 `json:"id"`
 }
 
+type GetPersonTierPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
+type SetPersonTierOptOutPath struct {
+	// ID Durable person ID
+	ID int64 `json:"id"`
+}
+
 type GetPersonTrackingPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
