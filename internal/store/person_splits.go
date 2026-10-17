@@ -85,6 +85,9 @@ func (s *Store) splitPersonMergeOnce(
 		if s.personOperationBeforeIdentityLockHook != nil {
 			s.personOperationBeforeIdentityLockHook()
 		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
