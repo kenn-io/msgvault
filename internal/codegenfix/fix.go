@@ -128,6 +128,10 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	}
 	// Required strings a response may send empty keep presence but lose their non-empty check.
 	for _, target := range [][3]string{
+		{"Decision", "CandidateSince", "d"},
+		{"Decision", "DeferredReason", "d"},
+		{"Decision", "DemotionDue", "d"},
+		{"Decision", "Reason", "d"},
 		{"ExploreCacheUnavailableResponse", "RecoveryAction", "e"},
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
@@ -136,6 +140,11 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"MessagingRoute", "NetworkLabel", "m"},
 		{"MessagingRoute", "ProviderChatID", "m"},
 		{"PersonMessagingRoutesPage", "AliasReason", "p"},
+		{"PersonTierExplanation", "SignalNote", "p"},
+		{"PersonTierExplanation", "Name", "p"},
+		{"PersonTierPage", "NextCursor", "p"},
+		{"PersonTierPage", "RunID", "p"},
+		{"PersonTierInput", "Name", "p"},
 	} {
 		typeName, field, receiver := target[0], target[1], target[2]
 		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)

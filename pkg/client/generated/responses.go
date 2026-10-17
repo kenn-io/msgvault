@@ -2319,6 +2319,56 @@ type CreatePersonErrorResponse = ErrorResponse
 
 type CreatePersonErrorResponseJSON = ErrorResponse
 
+type ApplyPersonTiersResponse = PersonTierPage
+
+type ApplyPersonTiersErrorResponse = ErrorResponse
+
+type ApplyPersonTiersErrorResponseJSON = ErrorResponse
+
+type ApplyPersonTiersErrorResponseJSON409 = ErrorResponse
+
+type ApplyPersonTiersErrorResponseJSON503 = ErrorResponse
+
+type ListPersonTierCandidatesResponse = PersonTierCandidatePage
+
+type ListPersonTierCandidatesErrorResponse = ErrorResponse
+
+type ListPersonTierCandidatesErrorResponseJSON = ErrorResponse
+
+type ListPersonTierCandidatesErrorResponseJSON409 = ErrorResponse
+
+type ListPersonTierCandidatesErrorResponseJSON503 = ErrorResponse
+
+type ListPersonTierEventsResponse = PersonTierHistoryResponse
+
+type ListPersonTierEventsErrorResponse = ErrorResponse
+
+type ListPersonTierEventsErrorResponseJSON = ErrorResponse
+
+type ListPersonTierEventsErrorResponseJSON409 = ErrorResponse
+
+type ListPersonTierEventsErrorResponseJSON503 = ErrorResponse
+
+type PreviewPersonTiersResponse = PersonTierPage
+
+type PreviewPersonTiersErrorResponse = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSON = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSON409 = ErrorResponse
+
+type PreviewPersonTiersErrorResponseJSON503 = ErrorResponse
+
+type ResetPersonTiersResponse = PersonTierResetResult
+
+type ResetPersonTiersErrorResponse = ErrorResponse
+
+type ResetPersonTiersErrorResponseJSON = ErrorResponse
+
+type ResetPersonTiersErrorResponseJSON409 = ErrorResponse
+
+type ResetPersonTiersErrorResponseJSON503 = ErrorResponse
+
 type GetPersonByUIDResponse = Person
 
 type GetPersonByUIDErrorResponse = ErrorResponse
@@ -2804,6 +2854,26 @@ type SplitPersonMergeErrorResponseJSON428 = ErrorResponse
 type SplitPersonMergeErrorResponseJSON500 = ErrorResponse
 
 type SplitPersonMergeErrorResponseJSON503 = ErrorResponse
+
+type GetPersonTierResponse = PersonTierExplanation
+
+type GetPersonTierErrorResponse = ErrorResponse
+
+type GetPersonTierErrorResponseJSON = ErrorResponse
+
+type GetPersonTierErrorResponseJSON409 = ErrorResponse
+
+type GetPersonTierErrorResponseJSON503 = ErrorResponse
+
+type SetPersonTierOptOutResponse = PersonTierOptOutsResponse
+
+type SetPersonTierOptOutErrorResponse = ErrorResponse
+
+type SetPersonTierOptOutErrorResponseJSON = ErrorResponse
+
+type SetPersonTierOptOutErrorResponseJSON409 = ErrorResponse
+
+type SetPersonTierOptOutErrorResponseJSON503 = ErrorResponse
 
 type GetPersonTrackingResponse = PersonTracking
 
@@ -5646,6 +5716,61 @@ type CreatePersonResp struct {
 	JSON503      *CreatePersonErrorResponseJSON
 }
 
+type ApplyPersonTiersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ApplyPersonTiersResponse
+	JSON400      *ApplyPersonTiersErrorResponse
+	JSON404      *ApplyPersonTiersErrorResponseJSON
+	JSON409      *ApplyPersonTiersErrorResponseJSON409
+	JSON503      *ApplyPersonTiersErrorResponseJSON503
+}
+
+type ListPersonTierCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonTierCandidatesResponse
+	JSON400      *ListPersonTierCandidatesErrorResponse
+	JSON404      *ListPersonTierCandidatesErrorResponseJSON
+	JSON409      *ListPersonTierCandidatesErrorResponseJSON409
+	JSON503      *ListPersonTierCandidatesErrorResponseJSON503
+}
+
+type ListPersonTierEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonTierEventsResponse
+	JSON400      *ListPersonTierEventsErrorResponse
+	JSON404      *ListPersonTierEventsErrorResponseJSON
+	JSON409      *ListPersonTierEventsErrorResponseJSON409
+	JSON503      *ListPersonTierEventsErrorResponseJSON503
+}
+
+type PreviewPersonTiersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewPersonTiersResponse
+	JSON400      *PreviewPersonTiersErrorResponse
+	JSON404      *PreviewPersonTiersErrorResponseJSON
+	JSON409      *PreviewPersonTiersErrorResponseJSON409
+	JSON503      *PreviewPersonTiersErrorResponseJSON503
+}
+
+type ResetPersonTiersResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ResetPersonTiersResponse
+	JSON400      *ResetPersonTiersErrorResponse
+	JSON404      *ResetPersonTiersErrorResponseJSON
+	JSON409      *ResetPersonTiersErrorResponseJSON409
+	JSON503      *ResetPersonTiersErrorResponseJSON503
+}
+
 type GetPersonByUIDResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6169,6 +6294,28 @@ type SplitPersonMergeResp struct {
 	JSON428      *SplitPersonMergeErrorResponseJSON428
 	JSON500      *SplitPersonMergeErrorResponseJSON500
 	JSON503      *SplitPersonMergeErrorResponseJSON503
+}
+
+type GetPersonTierResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonTierResponse
+	JSON400      *GetPersonTierErrorResponse
+	JSON404      *GetPersonTierErrorResponseJSON
+	JSON409      *GetPersonTierErrorResponseJSON409
+	JSON503      *GetPersonTierErrorResponseJSON503
+}
+
+type SetPersonTierOptOutResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetPersonTierOptOutResponse
+	JSON400      *SetPersonTierOptOutErrorResponse
+	JSON404      *SetPersonTierOptOutErrorResponseJSON
+	JSON409      *SetPersonTierOptOutErrorResponseJSON409
+	JSON503      *SetPersonTierOptOutErrorResponseJSON503
 }
 
 type GetPersonTrackingResp struct {

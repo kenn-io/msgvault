@@ -54,7 +54,7 @@ type PersonBriefEnrollment struct {
 	Enrolled   bool       `json:"enrolled"`
 	EnabledAt  *time.Time `json:"enabled_at"`
 	Actor      string     `json:"actor"`
-	Provenance string     `json:"-"`
+	Provenance string     `json:"provenance"`
 }
 
 // PersonBrief is one immutable dated brief version. Structured and RenderedText

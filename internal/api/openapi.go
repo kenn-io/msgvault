@@ -374,7 +374,9 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds people tier preview, apply, reset, history, candidates, explanations
+// and opt-out controls, with tracking and brief grant provenance and actors.
+const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -986,8 +988,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	// These response properties stay required in JSON, but an empty string is
-	// meaningful for canonical aliases, direct routes, unresolved routes, and
-	// candidates whose saved display name has been cleared.
+	// meaningful when the associated state or evidence is absent.
 	for _, field := range []struct{ schema, property string }{
 		{"ContactCandidate", "display_name"},
 		{"MessagingRoute", "merged_into_chat_id"},
@@ -995,6 +996,26 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MessagingRoute", "network_label"},
 		{"MessagingRoute", "provider_chat_id"},
 		{"PersonMessagingRoutesPage", "alias_reason"},
+		{"Decision", "candidate_since"},
+		{"Decision", "deferred_reason"},
+		{"Decision", "demotion_due"},
+		{"Decision", "reason"},
+		{"ManualState", "tracking_provenance"},
+		{"ManualState", "briefs_provenance"},
+		{"ManualState", "open_manual_run_id"},
+		{"PersonBriefEnrollment", "actor"},
+		{"PersonBriefEnrollment", "provenance"},
+		{"PersonTierExplanation", "signal_note"},
+		{"PersonTierExplanation", "name"},
+		{"PersonTierOptOut", "reason"},
+		{"PersonTierPage", "next_cursor"},
+		{"PersonTierPage", "run_id"},
+		{"PersonTierInput", "name"},
+		{"PersonTracking", "actor"},
+		{"PersonTracking", "provenance"},
+		{"Prior", "candidate_since"},
+		{"Prior", "config_fingerprint"},
+		{"Prior", "tier_since"},
 	} {
 		if schema := schemas[field.schema]; schema != nil {
 			if property := schema.Properties[field.property]; property != nil {
@@ -1008,6 +1029,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			}
 		}
 	}
+	// Activity may not include a direct event yet. Keep the required nullable
+	// timestamp representable without requiring a non-nil Go pointer.
+	nullableSchemaProperty(schemas["Signals"], "last_direct_at")
 	const emailProperty = "email"
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {

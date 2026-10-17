@@ -2428,6 +2428,24 @@ func (p ProvenanceRoles) Validate() error {
 	}
 }
 
+type PutPersonTierOptOutRequestLane string
+
+const (
+	Briefs                                   PutPersonTierOptOutRequestLane = "briefs"
+	PutPersonTierOptOutRequestLaneEnrichment PutPersonTierOptOutRequestLane = "enrichment"
+	Tracking                                 PutPersonTierOptOutRequestLane = "tracking"
+)
+
+// Validate checks if the PutPersonTierOptOutRequestLane value is valid
+func (p PutPersonTierOptOutRequestLane) Validate() error {
+	switch p {
+	case Briefs, PutPersonTierOptOutRequestLaneEnrichment, Tracking:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PutPersonTierOptOutRequestLane value, got: %v", p))
+	}
+}
+
 type ReferenceKind string
 
 const (

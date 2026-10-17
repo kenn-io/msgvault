@@ -8,5 +8,6 @@ export interface PersonBriefEnrollment {
   enabled_at: string | null;
   enrolled: boolean;
   person_id: number;
+  provenance: string;
   [key: string]: unknown;
 }

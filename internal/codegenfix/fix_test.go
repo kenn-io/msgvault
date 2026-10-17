@@ -64,6 +64,24 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 }
 
+func TestRewriteGeneratedValidatorsAllowsEmptyPersonTierResponseStrings(t *testing.T) {
+	assertions := assert.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	for _, field := range []struct{ receiver, name string }{
+		{"d", "CandidateSince"},
+		{"d", "DeferredReason"},
+		{"d", "DemotionDue"},
+		{"d", "Reason"},
+		{"p", "SignalNote"},
+		{"p", "Name"},
+		{"p", "NextCursor"},
+		{"p", "RunID"},
+	} {
+		assertions.NotContains(string(got), requiredStringFieldValidatorBlock(field.receiver, field.name))
+	}
+}
+
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
 	assert := assert.New(t)
 	methods := `type RunQueryClientInterface interface {
@@ -185,7 +203,57 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() +
+		personTierEmptyStringValidatorFixture()
+}
+
+func personTierEmptyStringValidatorFixture() string {
+	return `type Decision struct {
+	CandidateSince string
+	DeferredReason string
+	DemotionDue string
+	Reason string
+}
+func (d Decision) Validate() error {
+	var errors runtime.ValidationErrors
+` + requiredStringFieldValidatorBlock("d", "CandidateSince") +
+		requiredStringFieldValidatorBlock("d", "DeferredReason") +
+		requiredStringFieldValidatorBlock("d", "DemotionDue") +
+		requiredStringFieldValidatorBlock("d", "Reason") + `
+}
+type PersonTierExplanation struct {
+	SignalNote string
+	Name string
+}
+func (p PersonTierExplanation) Validate() error {
+	var errors runtime.ValidationErrors
+` + requiredStringFieldValidatorBlock("p", "SignalNote") +
+		requiredStringFieldValidatorBlock("p", "Name") + `
+}
+type PersonTierPage struct {
+	NextCursor string
+	RunID string
+}
+func (p PersonTierPage) Validate() error {
+	var errors runtime.ValidationErrors
+` + requiredStringFieldValidatorBlock("p", "NextCursor") +
+		requiredStringFieldValidatorBlock("p", "RunID") + `
+}
+type PersonTierInput struct {
+	Name string
+}
+func (p PersonTierInput) Validate() error {
+	var errors runtime.ValidationErrors
+` + requiredStringFieldValidatorBlock("p", "Name") + `
+}
+`
+}
+
+func requiredStringFieldValidatorBlock(receiver, field string) string {
+	return `	if err := typesValidator.Var(` + receiver + `.` + field + `, "required"); err != nil {
+		errors = errors.Append("` + field + `", err)
+	}
+`
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

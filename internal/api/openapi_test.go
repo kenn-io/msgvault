@@ -1626,15 +1626,17 @@ func TestGeneratedPersonAndDomainDetailsExposeServiceUnavailable(t *testing.T) {
 func TestGeneratedPersonTrackingPreservesRequiredNullTimestamp(t *testing.T) {
 	t.Parallel()
 	state := generated.PersonTracking{
-		PersonID:  7,
-		Tracked:   false,
-		TrackedAt: nil,
+		Actor:      "api",
+		PersonID:   7,
+		Provenance: "manual",
+		Tracked:    false,
+		TrackedAt:  nil,
 	}
 
 	require.NoError(t, state.Validate())
 	encoded, err := json.Marshal(state)
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"person_id":7,"tracked":false,"tracked_at":null}`, string(encoded))
+	assert.JSONEq(t, `{"actor":"api","person_id":7,"provenance":"manual","tracked":false,"tracked_at":null}`, string(encoded))
 }
 
 func TestOpenAPIExplorationFiniteRequiredFieldsAreNonNull(t *testing.T) {
@@ -1688,6 +1690,51 @@ func TestOpenAPIContactCandidateAllowsEmptySavedDisplayName(t *testing.T) {
 	assertions.Contains(candidate.Required, "display_name")
 	assertions.Equal(false, displayName.Extensions["x-omitempty"])
 	assertions.Equal(map[string]any{"validate": "omitempty"}, displayName.Extensions["x-oapi-codegen-extra-tags"])
+}
+
+func TestOpenAPITierResponseStringsAllowEmptyClientValidation(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schemas := openAPIClientDocument().Components.Schemas.Map()
+	for _, field := range []struct{ schema, property string }{
+		{"Decision", "candidate_since"},
+		{"Decision", "deferred_reason"},
+		{"Decision", "demotion_due"},
+		{"Decision", "reason"},
+		{"ManualState", "tracking_provenance"},
+		{"ManualState", "briefs_provenance"},
+		{"ManualState", "open_manual_run_id"},
+		{"PersonBriefEnrollment", "actor"},
+		{"PersonBriefEnrollment", "provenance"},
+		{"PersonTierExplanation", "signal_note"},
+		{"PersonTierExplanation", "name"},
+		{"PersonTierOptOut", "reason"},
+		{"PersonTierPage", "next_cursor"},
+		{"PersonTierPage", "run_id"},
+		{"PersonTierInput", "name"},
+		{"PersonTracking", "actor"},
+		{"PersonTracking", "provenance"},
+		{"Prior", "candidate_since"},
+		{"Prior", "config_fingerprint"},
+		{"Prior", "tier_since"},
+	} {
+		schema := schemas[field.schema]
+		requirements.NotNil(schema, field.schema)
+		property := schema.Properties[field.property]
+		requirements.NotNil(property, "%s.%s", field.schema, field.property)
+		assertions.Contains(schema.Required, field.property, "%s.%s stays required in JSON", field.schema, field.property)
+		assertions.Equal(false, property.Extensions["x-omitempty"], "%s.%s stays present in JSON", field.schema, field.property)
+		assertions.Equal(map[string]any{"validate": "omitempty"}, property.Extensions["x-oapi-codegen-extra-tags"], "%s.%s accepts empty strings", field.schema, field.property)
+	}
+	signals := schemas["Signals"]
+	requirements.NotNil(signals)
+	lastDirectAt := signals.Properties["last_direct_at"]
+	requirements.NotNil(lastDirectAt)
+	assertions.Contains(signals.Required, "last_direct_at", "Signals.last_direct_at stays present in JSON")
+	assertions.True(lastDirectAt.Nullable, "Signals.last_direct_at remains nullable")
+	assertions.Equal(false, lastDirectAt.Extensions["x-omitempty"], "Signals.last_direct_at stays present in generated JSON")
+	assertions.Equal(map[string]any{"validate": "omitempty"}, lastDirectAt.Extensions["x-oapi-codegen-extra-tags"], "Signals.last_direct_at accepts null")
 }
 
 func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
