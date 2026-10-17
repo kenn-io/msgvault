@@ -648,7 +648,6 @@ type dataLoadedMsg struct {
 	rows                   []query.AggregateRow
 	filteredStats          *query.TotalStats // distinct message stats when search is active
 	searchQuery            string
-	reload                 bool
 	err                    error
 	requestID              uint64 // To detect stale responses
 	presentationGeneration uint64
@@ -711,10 +710,6 @@ type AnalyticsNoticeMsg struct {
 
 // loadData fetches aggregate data based on current view settings.
 func (m Model) loadData() tea.Cmd {
-	return m.loadAggregateData(false)
-}
-
-func (m Model) loadAggregateData(reload bool) tea.Cmd {
 	requestID := m.aggregateRequestID
 	presentationGeneration := m.presentationGeneration
 	scopeLabel := m.scopeLabelForLog()
@@ -791,7 +786,7 @@ func (m Model) loadAggregateData(reload bool) tea.Cmd {
 			}
 
 			return dataLoadedMsg{
-				rows: rows, filteredStats: filteredStats, searchQuery: searchTerm, reload: reload, err: err, requestID: requestID,
+				rows: rows, filteredStats: filteredStats, searchQuery: searchTerm, err: err, requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
 		},
@@ -917,7 +912,6 @@ type searchResultsMsg struct {
 	stats                  *query.TotalStats // Aggregate stats for the search results (size, attachments, etc.)
 	query                  string
 	searchMode             searchModeKind
-	reload                 bool
 	err                    error
 	requestID              uint64 // To detect stale responses
 	append                 bool   // True if these results should be appended (pagination)
@@ -994,11 +988,11 @@ const headerFooterLines = 5
 
 // loadSearch executes the search query based on current mode.
 func (m Model) loadSearch(queryStr string) tea.Cmd {
-	return m.loadSearchWithOffset(queryStr, 0, false, false)
+	return m.loadSearchWithOffset(queryStr, 0, false)
 }
 
 // loadSearchWithOffset executes the search query with pagination.
-func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults, reload bool) tea.Cmd {
+func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults bool) tea.Cmd {
 	requestID := m.searchRequestID
 	presentationGeneration := m.presentationGeneration
 	modeLabel := "fast"
@@ -1110,7 +1104,6 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults, 
 				stats:                  stats,
 				query:                  queryStr,
 				searchMode:             m.searchMode,
-				reload:                 reload,
 				err:                    err,
 				requestID:              requestID,
 				append:                 appendResults,
@@ -1396,10 +1389,8 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			command = tea.Batch(command, reportTelemetryCmd(func(ctx context.Context) error { return report(ctx, screen) }))
 		}
 		var detailID int64
-		if updated.transitionBuffer == "" && !updated.settings.active {
-			if detail := updated.displayedDetail(); detail != nil {
-				detailID = detail.ID
-			}
+		if detail := updated.displayedDetail(); detail != nil && updated.transitionBuffer == "" && !updated.settings.active {
+			detailID = detail.ID
 		}
 		if detailID != 0 && (detailID != updated.visibleDetailID || updated.mode != m.mode) {
 			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
@@ -1725,7 +1716,7 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 		// Clear contextStats when no search filter at top level
 		m.contextStats = nil
 	}
-	if active && !msg.reload {
+	if active {
 		return m, m.acceptedSearchAction(msg.searchQuery, searchModeFast)
 	}
 	return m, nil
@@ -2001,7 +1992,7 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 	} else {
 		m.replaceSearchResults(msg)
 	}
-	if active && !msg.append && !msg.reload {
+	if active && !msg.append {
 		return m, m.acceptedSearchAction(msg.query, msg.searchMode)
 	}
 	return m, nil

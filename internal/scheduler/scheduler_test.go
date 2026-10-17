@@ -3350,6 +3350,121 @@ func mustStartJob(tb testing.TB, s *Scheduler, name string) JobDisposition {
 	return disp
 }
 
+// TestStartJobCoalescesDuringRun proves manual triggers coalesce like cron
+// ticks: many concurrent StartJob calls during a run produce exactly one
+// extra run, never a concurrent one, and each reply says what happened.
+func TestStartJobCoalescesDuringRun(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+
+		started := make(chan struct{}, 8)
+		release := make(chan struct{})
+		var releaseOnce sync.Once
+		releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
+		var runs, active, maxActive atomic.Int32
+		var events atomic.Int32
+		s := New(func(context.Context, string) error { return nil }).WithCompletion(func() { events.Add(1) })
+		defer func() {
+			releaseJob()
+			<-s.Stop().Done()
+		}()
+		require.NoError(s.AddJob(Job{
+			Name:     "job",
+			Schedule: "0 0 1 1 *",
+			Run: func(context.Context) error {
+				n := active.Add(1)
+				for {
+					m := maxActive.Load()
+					if n <= m || maxActive.CompareAndSwap(m, n) {
+						break
+					}
+				}
+				runs.Add(1)
+				started <- struct{}{}
+				<-release
+				active.Add(-1)
+				return nil
+			},
+		}))
+
+		disposition, err := s.StartJob("job", true)
+		require.NoError(err)
+		assert.Equal(JobStarted, disposition)
+		<-started
+
+		const callers = 10
+		type result struct {
+			disp JobDisposition
+			err  error
+		}
+		results := make(chan result, callers)
+		var wg sync.WaitGroup
+		for range callers {
+			wg.Go(func() {
+				disp, err := s.StartJob("job", true)
+				results <- result{disp, err}
+			})
+		}
+		wg.Wait()
+		close(results)
+		counts := map[JobDisposition]int{}
+		for r := range results {
+			require.NoError(r.err, "concurrent StartJob")
+			counts[r.disp]++
+		}
+		assert.Equal(1, counts[JobPending], "exactly one trigger records the follow-up")
+		assert.Equal(callers-1, counts[JobCoalesced], "the rest merge into it")
+		assert.Zero(counts[JobStarted], "nothing is reported started while the job runs")
+		assert.True(s.JobStatus()[0].Pending, "follow-up is visible in JobStatus")
+
+		releaseJob()
+		synctest.Wait()
+		assert.Equal(int32(2), runs.Load(), "one run plus exactly one follow-up")
+		assert.Equal(int32(2), events.Load())
+		assert.Equal(int32(1), maxActive.Load(), "runs never overlap")
+		assert.False(s.JobStatus()[0].Pending)
+		assert.False(s.JobStatus()[0].Running)
+	})
+}
+
+// TestStartJobWhileInitialRunWaitsForGate proves a trigger that arrives while
+// the first run is still queued behind the operation gate is reported as
+// coalesced, not queued: no follow-up is recorded and only the original run
+// executes.
+func TestStartJobWhileInitialRunWaitsForGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		gate := newSerialWorkTracker()
+		release, ok := gate.BeginWork()
+		require.True(ok)
+		var runs, events atomic.Int32
+		s := New(nil).WithWorkTracker(gate).WithCompletion(func() { events.Add(1) })
+		defer func() { <-s.Stop().Done() }()
+		require.NoError(s.AddJob(Job{Name: "job", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+			runs.Add(1)
+			return nil
+		}}))
+
+		go s.onJobTick("job")
+		synctest.Wait()
+		require.True(s.JobStatus()[0].Queued, "initial run waits for the gate")
+
+		for range 2 {
+			disposition, err := s.StartJob("job", true)
+			require.NoError(err)
+			assert.Equal(JobCoalesced, disposition)
+		}
+		assert.False(s.JobStatus()[0].Pending, "no follow-up is recorded")
+
+		release()
+		synctest.Wait()
+		assert.Equal(int32(1), runs.Load(), "only the original run executes")
+		assert.Equal(int32(1), events.Load())
+	})
+}
+
 // TestStartJobDroppedFollowUpIsLogged proves a follow-up that cannot run
 // (job removed while it was pending) is reported, not discarded silently.
 func TestStartJobDroppedFollowUpIsLogged(t *testing.T) {
@@ -3518,64 +3633,6 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 	})
 }
 func TestManualCompletionAcrossOutcomes(t *testing.T) {
-	t.Run("queued and coalesced manual runs complete without overlap", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			assert, require, gate := assert.New(t), require.New(t), newSerialWorkTracker()
-			release, ok := gate.BeginWork()
-			require.True(ok)
-			s := New(nil).WithWorkTracker(gate)
-			defer func() { <-s.Stop().Done() }()
-			runs, events, firstStarted, finishFirst := 0, 0, make(chan struct{}), make(chan struct{})
-			s.WithCompletion(func() { events++ })
-			require.NoError(s.AddJob(Job{Name: "sync", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
-				runs++
-				if runs == 1 {
-					close(firstStarted)
-					<-finishFirst
-				}
-				return nil
-			}}))
-			go s.onJobTick("sync")
-			synctest.Wait()
-			// A click while the scheduled run is queued attributes that same run.
-			for range 2 {
-				disp, err := s.StartJob("sync", true)
-				require.NoError(err)
-				assert.Equal(JobCoalesced, disp)
-			}
-			assert.True(s.JobStatus()[0].Queued)
-			assert.False(s.JobStatus()[0].Pending)
-			release()
-			<-firstStarted
-			const callers = 10
-			results := make(chan JobDisposition, callers)
-			var group sync.WaitGroup
-			for range callers {
-				group.Go(func() {
-					disposition, err := s.StartJob("sync", true)
-					assert.NoError(err)
-					results <- disposition
-				})
-			}
-			group.Wait()
-			close(results)
-			counts := map[JobDisposition]int{}
-			for disposition := range results {
-				counts[disposition]++
-			}
-			synctest.Wait()
-			assert.Equal(map[JobDisposition]int{JobPending: 1, JobCoalesced: callers - 1}, counts)
-			assert.Equal(1, runs, "follow-up waits until the active run finishes")
-			assert.True(s.JobStatus()[0].Pending)
-			close(finishFirst)
-			synctest.Wait()
-			assert.Equal(2, runs)
-			assert.Equal(2, events)
-			assert.False(s.JobStatus()[0].Pending)
-			assert.False(s.JobStatus()[0].Running)
-		})
-	})
-
 	for _, test := range []struct {
 		name            string
 		outcome         error

@@ -11,7 +11,7 @@ const telemetryEventsPath = "/api/v1/telemetry/events"
 // TelemetryEventRequest documents the body kit's capture handler accepts.
 type TelemetryEventRequest struct {
 	Event      string         `json:"event" doc:"Allowlisted event name, app_opened, screen_viewed, session_ended, search_run, message_opened, or sync_finished"`
-	Properties map[string]any `json:"properties,omitempty" doc:"Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after current first-page results load; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions; the CLI posts its successful sync_finished events. Invalid core actions are dropped; unknown properties are stripped"`
+	Properties map[string]any `json:"properties,omitempty" doc:"Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. Invalid core actions are dropped; unknown properties are stripped"`
 }
 
 // TelemetryEventResponse documents kit's accepted response.

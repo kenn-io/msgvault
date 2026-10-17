@@ -1858,30 +1858,35 @@ func TestAcceptedSearchActions(t *testing.T) {
 	}
 }
 
-func TestSearchReloadDoesNotReportAnotherSearch(t *testing.T) {
-	for _, input := range []rune{'a', 's', 'v'} {
-		t.Run(string(input), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			m := newTestModelWithRows(testAggregateRows)
-			m.level, m.searchMode, m.searchQuery = levelAggregates, searchModeSemantic, "needle"
+func TestSearchFilterRetryReportsAcceptedResults(t *testing.T) {
+	for _, level := range []viewLevel{levelAggregates, levelMessageList} {
+		t.Run(fmt.Sprint(level), func(t *testing.T) {
+			assert, require, m := assert.New(t), require.New(t), newTestModelWithRows(testAggregateRows)
+			m.level, m.searchMode, m.searchQuery = level, searchModeSemantic, "needle"
 			m.semanticSearch = &recordingSemanticSearcher{response: &query.SemanticMessageSearchResult{}}
 			calls := 0
 			m.reportAction = func(context.Context, string, string, string) error { calls++; return nil }
-			updated, cmd := applyAggregateKeyWithCmd(t, m, key(input))
-			result := cmd()
-			switch msg := result.(type) {
-			case dataLoadedMsg:
-				require.NoError(msg.err)
-			case searchResultsMsg:
-				require.NoError(msg.err)
-			default:
-				require.FailNow("expected accepted search results")
+			var failed tea.Msg = searchResultsMsg{query: "needle", err: errors.New("offline")}
+			if level == levelAggregates {
+				failed = dataLoadedMsg{searchQuery: "needle", err: errors.New("offline")}
 			}
-			_, report := updated.Update(result)
-			if report != nil {
-				_ = runBatchCommand(t, report)
+			m = sendMsg(t, m, failed)
+			require.Equal(modalError, m.modal)
+			m, _ = sendKey(t, m, keyEsc())
+			m, _ = sendKey(t, m, key('f'))
+			require.Equal(modalFilterToggle, m.modal)
+			m, _ = sendKey(t, m, key(' '))
+			m, cmd := sendKey(t, m, keyEnter())
+			require.True(m.filters.attachmentsOnly)
+			for _, result := range runBatchCommand(t, cmd) {
+				updated, report := m.Update(result)
+				m = asModel(t, updated)
+				if report != nil {
+					_ = runBatchCommand(t, report)
+				}
 			}
-			assert.Zero(calls)
+			require.NoError(m.err)
+			assert.Equal(1, calls)
 		})
 	}
 }

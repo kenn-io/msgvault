@@ -2082,7 +2082,7 @@ features once published. No startup hook or entrypoint wrapper is required.
   UTC day across both interfaces and daemon restarts. The daemon keeps the current day's
   screen and action claims in `telemetry-screen-views.json` beside its install ID.
 - `search_run` after current first-page message, extracted-document, or visual-search
-  results load, including empty results, restored queries, and retries. Failed or stale
+  results load, including empty results, restored queries, retries, and reloads. Failed or stale
   replies and continuation pages don't count. Each surface and search type counts once
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
@@ -2090,8 +2090,9 @@ features once published. No startup hook or entrypoint wrapper is required.
   `show-message`, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.
 - `sync_finished` after each successful manual archive sync, including no-change runs
-  and remote Muesli scans. Browser completion reports after you leave Sources. The CLI
-  reports its own completions with a best-effort 250 ms bound. Delivery failures leave
+  and remote Muesli scans. The daemon reports browser-started sync completions even
+  after you leave Sources. The CLI reports its own completions with a best-effort
+  250 ms bound. Delivery failures leave
   successful commands successful. CLI actions require a terminal on stdin, stdout,
   or stderr, so a person can pipe output while unattended runs stay excluded. Agents,
   subprocesses, probes, hooks, and watch loops don't report CLI actions. CardDAV contact

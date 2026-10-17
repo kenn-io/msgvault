@@ -71,7 +71,9 @@ describe('FilesWorkspace', () => {
       await waitFor(() => expect(textSearchRequests).toBe(3));
       resolveStale(Response.json(response()));
       await new Promise((resolve) => setTimeout(resolve, 0));
-      return expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
+      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
+      await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' } });
+      return waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text']));
     }
     await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
@@ -939,10 +941,10 @@ describe('FilesWorkspace', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Reload files' }));
       expect(await screen.findByText('recovered.pdf')).toBeDefined();
       expect(screen.queryByRole('alert')).toBeNull();
-      expect(events).toEqual([
+      await waitFor(() => expect(events).toEqual([
         { event: 'search_run', properties: { surface: 'web', search_type: 'text' } },
         { event: 'search_run', properties: { surface: 'web', search_type: 'text' } },
-      ]);
+      ]));
       expect(initialCalls).toBe(2);
       expect(cursorCalls).toBe(1);
     }

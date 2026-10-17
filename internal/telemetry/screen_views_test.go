@@ -38,6 +38,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 		day = day.Add(2 * time.Minute)
 		assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
 		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
 		return
 	}
 	for _, body := range []string{
@@ -119,6 +120,7 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	requirements.NoError(os.WriteFile(claimsPath, previous, 0o600))
 	assertions.Equal(http.StatusAccepted, screenRequest(h, valid).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"tui","search_type":"text"}}`).Code)
 }
 
 func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
@@ -129,7 +131,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	screenMessages := func() []map[string]any {
 		return slices.DeleteFunc(batchEvents(t, stub), func(event map[string]any) bool { return event["event"] != EventScreenViewed })
 	}
-	requirements.Len(batchEvents(t, stub), 22)
+	requirements.Len(batchEvents(t, stub), 23)
 	counts := map[string]int{}
 	for _, event := range batchEvents(t, stub) {
 		if event["event"] == EventScreenViewed || event["event"] == EventAppOpened {
@@ -142,6 +144,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 		counts[fmt.Sprint(event["event"], ":", props["surface"], ":", props["search_type"])]++
 	}
 	assertions.Equal(2, counts["search_run:cli:text"])
+	assertions.Equal(2, counts["search_run:tui:text"])
 	assertions.Equal(2, counts["sync_finished:cli:<nil>"], "successful CLI syncs count individually")
 	assertions.Len(counts, 13)
 	messages := screenMessages()
@@ -159,7 +162,7 @@ func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	assertions.Equal(2, strings.Count(strings.Join(screens, ","), "settings"))
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=restart")
 	assertions.Len(screenMessages(), 4)
-	assertions.Len(batchEvents(t, stub), 22)
+	assertions.Len(batchEvents(t, stub), 23)
 	install, err := posthog.LoadOrCreateInstall(dir)
 	requirements.NoError(err)
 	requirements.NoError(os.Remove(filepath.Join(dir, posthog.InstallFileName)))

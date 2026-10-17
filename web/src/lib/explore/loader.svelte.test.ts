@@ -95,8 +95,7 @@ describe('ExploreLoader', () => {
     await vi.waitFor(() => expect(loader.rows).toHaveLength(1));
     expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text'], ['replacement', 'full_text']]);
     loader.retry();
-    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(5));
-    expect(onSearchAccepted).toHaveBeenCalledTimes(3);
+    await vi.waitFor(() => expect(onSearchAccepted.mock.calls).toEqual([['needle', 'full_text'], ['replacement', 'full_text'], ['replacement', 'full_text']]));
   });
   it('issues exactly one fetch for one filter commit', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);

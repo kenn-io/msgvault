@@ -186,7 +186,6 @@
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
-  let searchPending = true;
   let cacheRevision = '';
   let pageAuthority = '';
   let seenCursors = new Set<string>();
@@ -274,7 +273,6 @@
     if (signature === requestSignature) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
-    searchPending = true;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -412,10 +410,6 @@
     loading = true;
     return { generation: currentGeneration, signal: nextController.signal };
   }
-  function retryListing(): void {
-    searchPending = true;
-    reloadListing();
-  }
   function reloadListing(): void {
     // Reload restarts from page one; when a restoration epoch is still
     // unacknowledged the deep restoration restarts against the fresh listing.
@@ -491,11 +485,6 @@
     }
     const { data, error: responseError, response } = searchResponse;
     if (signal.aborted || currentGeneration !== generation) return false;
-    if (data && !cursor && searchPending) {
-      searchPending = false;
-      reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text');
-      if (body.visual_query || body.visual_image_base64) reportSearch(client, body.visual_query || 'image', 'semantic');
-    }
     loading = false;
     loadingMore = false;
     if (!data) {
@@ -535,6 +524,10 @@
     } else if (result.cache_revision !== cacheRevision || authority !== pageAuthority) {
       failPaging('Results changed while loading another page. Reload this view.');
       return false;
+    }
+    if (!cursor) {
+      reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text');
+      if (body.visual_query || body.visual_image_base64) reportSearch(client, body.visual_query || 'image', 'semantic');
     }
     if (cursor) seenCursors.add(cursor);
     error = '';
@@ -880,7 +873,7 @@
       onLoadMore={() => {
         void loadMore();
       }}
-      onReload={retryListing}
+      onReload={reloadListing}
     />
   {:else}
     <section class="files-table" aria-label="Files table">
@@ -939,7 +932,7 @@
               <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
                 <div class="notice" role="alert">
                   <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Retry request" onclick={retryListing} />
+                  <Button size="sm" surface="outline" label="Retry request" onclick={reloadListing} />
                 </div>
               </div>
             </div>
@@ -1029,7 +1022,7 @@
               <div role="gridcell" aria-colspan={personScoped ? 9 : 8}>
                 <div class="page-error" role="alert">
                   <span>{error}</span>
-                  <Button size="sm" surface="outline" label="Reload files" onclick={retryListing} />
+                  <Button size="sm" surface="outline" label="Reload files" onclick={reloadListing} />
                 </div>
               </div>
             </div>
