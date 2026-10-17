@@ -315,6 +315,11 @@ func TestRunScheduledSourceSkipsPackWithoutNewBlobs(t *testing.T) {
 	assert.NotContains(f.logs.String(), "automatic attachment maintenance")
 	require.NoError(t, f.maintenance.runPendingPack(context.Background()))
 	assert.Nil(f.packedEntry(hash), "nothing was pending")
+}
+
+func TestRunScheduledSourcePreservesBareDeferralAndReleasesLease(t *testing.T) {
+	assert := assert.New(t)
+	f := newAttachmentMaintenanceFixture(t)
 
 	err := runScheduledSource(t.Context(), f.maintenance, true, func(context.Context) error {
 		return scheduler.ErrDeferUntilNextTrigger

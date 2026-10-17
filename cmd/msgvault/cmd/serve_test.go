@@ -3241,7 +3241,7 @@ func TestScheduledSyncSkipsRetiredSourcesWithoutGmailFallback(t *testing.T) {
 	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("retired source incorrectly reached Gmail fallback")
 	}, state)
-	assert.ErrorIs(err, scheduler.ErrDeferUntilNextTrigger, "retired source defers without entering the Gmail fallback")
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "retired source defers without entering the Gmail fallback")
 }
 
 func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T) {
@@ -3271,7 +3271,7 @@ func TestScheduledSyncSkipsRetiredLegacyGmailSourceWithoutFallback(t *testing.T)
 	err = runScheduledSync(ctx, retired.Identifier, f.Store, func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("retired legacy source incorrectly reached Gmail fallback")
 	}, state)
-	assert.ErrorIs(err, scheduler.ErrDeferUntilNextTrigger, "retired legacy source defers without entering the Gmail fallback")
+	assert.Same(scheduler.ErrDeferUntilNextTrigger, err, "retired legacy source defers without entering the Gmail fallback")
 }
 
 func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {

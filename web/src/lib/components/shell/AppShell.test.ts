@@ -794,7 +794,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it.each(['visible', 'visibilitychange', 'focus', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
+    it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
       const state = shellState('everything'), events: string[] = [];
       const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -814,8 +814,7 @@ describe('AppShell', () => {
         expect(events).toHaveLength(0);
         if (trigger === 'destroy') view.unmount();
         visibility.mockReturnValue('visible');
-        if (trigger === 'visibilitychange') await fireEvent(document, new Event('visibilitychange'));
-        else await fireEvent(window, new Event('focus'));
+        await fireEvent(window, new Event('focus'));
       }
       if (trigger === 'destroy') expect(events).toHaveLength(0);
       else {

@@ -4129,13 +4129,11 @@ func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 	sched := newMockScheduler()
 	sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
 	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
-	var manual bool
 	for _, disp := range []scheduler.JobDisposition{scheduler.JobStarted, scheduler.JobPending, scheduler.JobCoalesced} {
 		t.Run(string(disp), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			sched.startJobFn = func(_ string, requestedManual bool) (scheduler.JobDisposition, error) {
-				manual = requestedManual
+			sched.startJobFn = func(_ string, _ bool) (scheduler.JobDisposition, error) {
 				return disp, nil
 			}
 
@@ -4159,7 +4157,6 @@ func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 			}
 		})
 	}
-	assert.True(t, manual, "browser intent remains with the scheduler after the page leaves")
 }
 
 // TestHandleTriggerSyncBeeperSource confirms a beeper source (one of many under
@@ -4679,11 +4676,17 @@ func TestHandleTriggerSyncManualAttributionAcrossAuthModes(t *testing.T) {
 
 	sched := newMockScheduler()
 	sched.scheduled["test@example.com"] = true
+	sched.scheduledJobs = map[string]bool{"granola:test@example.com": true}
 	var reserved bool
 	sched.triggerFn = func(email string, manual bool) error {
 		assert.Equal("test@example.com", email)
 		reserved = manual
 		return nil
+	}
+	sched.startJobFn = func(name string, manual bool) (scheduler.JobDisposition, error) {
+		assert.Equal("granola:test@example.com", name)
+		reserved = manual
+		return scheduler.JobStarted, nil
 	}
 
 	srv := NewServer(cfg, nil, sched, testLogger())
@@ -4700,13 +4703,16 @@ func TestHandleTriggerSyncManualAttributionAcrossAuthModes(t *testing.T) {
 		if test.mode == AuthModeLoopback {
 			cfg.Server.APIKey = ""
 		}
-		req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/test@example.com", nil)
-		req.Header = test.headers
-		req.Header.Set("Origin", "http://localhost:8080")
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusAccepted, w.Code, w.Body.String())
-		assert.Equal(test.mode != AuthModeAPIKey, reserved, string(test.mode))
+		for _, sourceType := range []string{"gmail", "granola"} {
+			reserved = test.mode == AuthModeAPIKey
+			req := httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/test@example.com?source_type="+sourceType, nil)
+			req.Header = test.headers
+			req.Header.Set("Origin", "http://localhost:8080")
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusAccepted, w.Code, w.Body.String())
+			assert.Equal(test.mode != AuthModeAPIKey, reserved, "%s/%s", test.mode, sourceType)
+		}
 	}
 }
 

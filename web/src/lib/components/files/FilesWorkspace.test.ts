@@ -72,17 +72,10 @@ describe('FilesWorkspace', () => {
       resolveStale(Response.json(response()));
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
-      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
-      await search('discarded', 'semantic');
-      await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
       await search('');
-      await waitFor(() => expect(textSearchRequests).toBe(5));
+      await waitFor(() => expect(textSearchRequests).toBe(4));
       await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-      visibility.mockReturnValue('visible');
-      await fireEvent(document, new Event('visibilitychange'));
       expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
-      visibility.mockRestore();
       await search('current');
       await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text']));
       await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' } });

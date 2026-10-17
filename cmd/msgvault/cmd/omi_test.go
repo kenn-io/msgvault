@@ -460,7 +460,7 @@ func TestOmiPacingSpansScheduledRunsAliasesAndManualCommands(t *testing.T) {
 	command.SetContext(withStoreResolverConfig(t, cfg))
 	command.SetOut(output)
 	command.SetErr(&bytes.Buffer{})
-	require.NoError(syncOmiCmd.RunE(command, []string{"alias"}))
+	require.Same(ErrSyncPaused, syncOmiCmd.RunE(command, []string{"alias"}))
 
 	assert.Contains(output.String(), "Omi sync for alias paused")
 	assert.Contains(output.String(), "Omi provider cooldown until")
@@ -553,7 +553,7 @@ func TestManualOmiContinuesAfterSourceCooldown(t *testing.T) {
 	command.SetContext(ctx)
 	command.SetOut(output)
 	command.SetErr(&bytes.Buffer{})
-	require.NoError(syncOmiCmd.RunE(command, nil))
+	require.Same(ErrSyncPaused, syncOmiCmd.RunE(command, nil))
 	assert.Contains(output.String(), "Omi sync for deferred paused")
 	assert.Contains(output.String(), "Syncing Omi for ready")
 	assert.Equal(1, refreshes)
