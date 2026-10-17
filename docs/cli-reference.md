@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -5329,3 +5330,19 @@ msgvault agent-token revoke <id>
 The grant is removed from the in-memory registry immediately. Any request in flight that
 already passed authentication completes, but the next authentication attempt with the
 revoked secret is denied without fallback.
+
+## policy
+
+Inspect staged conversation archive tiers and source-qualified overrides.
+See [conversation archive tiers](configuration.md#conversation-archive-tiers-staged)
+for defaults and the staged-release limitation.
+
+```sh
+msgvault policy list
+msgvault policy set SOURCE_ID CONVERSATION_ID full
+msgvault policy reset SOURCE_ID CONVERSATION_ID
+```
+
+`list` always prints JSON. Saved CLI overrides win over config. `reset` restores
+config or automatic selection. Effective tiers remain `full` in this release;
+`stub` and `skip` are rejected. No messages are removed.

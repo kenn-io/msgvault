@@ -2367,7 +2367,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
+	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",

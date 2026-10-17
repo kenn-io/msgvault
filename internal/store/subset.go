@@ -436,6 +436,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("conversations rows affected: %w", err)
 	}
 
+	if exists, err := sourceTableExists(tx, "conversation_policy"); err != nil {
+		return nil, fmt.Errorf("check conversation policy schema: %w", err)
+	} else if exists {
+		if _, err := copyByName(tx, "conversation_policy", `conversation_id IN (SELECT id FROM conversations)`); err != nil {
+			return nil, fmt.Errorf("copy conversation policy: %w", err)
+		}
+	}
+
 	res, err = copyByName(tx, "participants", `id IN (
 			SELECT sender_id FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages)

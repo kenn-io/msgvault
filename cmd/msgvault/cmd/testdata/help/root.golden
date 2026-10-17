@@ -161,6 +161,7 @@ Maintenance and repair:
   init-db              Initialize the database schema
   migrate              Apply this binary's archive schema migrations offline
   pack-attachments     Pack loose attachment files into sealed pack files
+  policy               Inspect staged conversation tiers and overrides
   purge-excluded-media Reclaim locally stored media excluded by current policy
   repack-attachments   Reclaim dead bytes from sparse attachment packs
   repair-dates         Repair missing or implausible email sent dates
