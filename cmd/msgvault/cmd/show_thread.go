@@ -97,7 +97,7 @@ Examples:
 				return json.MarshalEncode(enc, map[string]any{"conversation_id": page.ConversationID, "total": page.Total, "offset": page.Offset, "has_more": page.HasMore, "messages": values}, json.Deterministic(true))
 			}
 			if _, err := fmt.Printf("Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset); err != nil {
-				return err
+				return fmt.Errorf("write thread: %w", err)
 			}
 			for _, msg := range messages {
 				date := "undated"
@@ -105,7 +105,7 @@ Examples:
 					date = msg.SentAt.Format("2006-01-02 15:04:05Z07:00")
 				}
 				if _, err := fmt.Printf("\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted))); err != nil {
-					return err
+					return fmt.Errorf("write thread: %w", err)
 				}
 			}
 			return nil

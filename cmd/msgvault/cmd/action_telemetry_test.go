@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,7 +166,9 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				}
 				kind := map[string]string{"search": "text", "media": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
 				if action == "sync-omi" && !fails {
-					assert.Equal("Omi sync output", cmd.OutOrStdout().(*bytes.Buffer).String())
+					output, ok := cmd.OutOrStdout().(*bytes.Buffer)
+					require.True(ok)
+					assert.Equal("Omi sync output", output.String())
 				}
 				if action == "muesli-hook" || fails || outputFails || outcome.paused {
 					assert.Empty(events)
@@ -280,7 +283,7 @@ func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
 			t.Setenv(posthog.GenericEnabledEnv, tc.generic)
 			client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
 				assert.Fail(t, "disabled telemetry sent a request", r.URL.String())
-				return nil, fmt.Errorf("unexpected request")
+				return nil, errors.New("unexpected request")
 			})}})
 			require.NoError(t, err)
 			cmd := &cobra.Command{Use: "search"}

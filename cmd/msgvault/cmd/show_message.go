@@ -106,81 +106,87 @@ func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 	output := bufio.NewWriter(w)
 	body := messageTextBody(msg, showMessageStripQuoted)
 	if showMessageBodyOnly {
-		fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
-		return output.Flush()
+		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
+		if err := output.Flush(); err != nil {
+			return fmt.Errorf("write message: %w", err)
+		}
+		return nil
 	}
 	// Header section
-	fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
-	fmt.Fprintf(output, "Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
+	_, _ = fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintf(output, "Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
 	if msg.RelatedMessageID != nil {
-		fmt.Fprintf(output, "Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
+		_, _ = fmt.Fprintf(output, "Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
 	}
-	fmt.Fprintln(output, "───────────────────────────────────────────────────────────────────────────────")
+	_, _ = fmt.Fprintln(output, "───────────────────────────────────────────────────────────────────────────────")
 
 	// From
 	if len(msg.From) > 0 {
-		fmt.Fprintf(output, "From:    %s\n", formatAddresses(msg.From))
+		_, _ = fmt.Fprintf(output, "From:    %s\n", formatAddresses(msg.From))
 	}
 
 	// To
 	if len(msg.To) > 0 {
-		fmt.Fprintf(output, "To:      %s\n", formatAddresses(msg.To))
+		_, _ = fmt.Fprintf(output, "To:      %s\n", formatAddresses(msg.To))
 	}
 
 	// CC
 	if len(msg.Cc) > 0 {
-		fmt.Fprintf(output, "Cc:      %s\n", formatAddresses(msg.Cc))
+		_, _ = fmt.Fprintf(output, "Cc:      %s\n", formatAddresses(msg.Cc))
 	}
 
 	// BCC
 	if len(msg.Bcc) > 0 {
-		fmt.Fprintf(output, "Bcc:     %s\n", formatAddresses(msg.Bcc))
+		_, _ = fmt.Fprintf(output, "Bcc:     %s\n", formatAddresses(msg.Bcc))
 	}
 
 	// Subject
-	fmt.Fprintf(output, "Subject: %s\n", msg.Subject)
+	_, _ = fmt.Fprintf(output, "Subject: %s\n", msg.Subject)
 
 	// Date
-	fmt.Fprintf(output, "Date:    %s\n", msg.SentAt.Format(time.RFC1123))
+	_, _ = fmt.Fprintf(output, "Date:    %s\n", msg.SentAt.Format(time.RFC1123))
 
 	// Size
-	fmt.Fprintf(output, "Size:    %s\n", formatSize(msg.SizeEstimate))
+	_, _ = fmt.Fprintf(output, "Size:    %s\n", formatSize(msg.SizeEstimate))
 
 	// Labels
 	if len(msg.Labels) > 0 {
-		fmt.Fprintf(output, "Labels:  %s\n", textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
+		_, _ = fmt.Fprintf(output, "Labels:  %s\n", textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
 	}
 	if msg.DeletedAt != nil {
-		fmt.Fprintf(output, "Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
+		_, _ = fmt.Fprintf(output, "Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
 	}
 
 	// Attachments
 	if len(msg.Attachments) > 0 {
-		fmt.Fprintln(output, "\nAttachments:")
+		_, _ = fmt.Fprintln(output, "\nAttachments:")
 		for _, att := range msg.Attachments {
 			if att.URL != "" {
-				fmt.Fprintf(output, "  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
+				_, _ = fmt.Fprintf(output, "  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
 			} else {
-				fmt.Fprintf(output, "  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+				_, _ = fmt.Fprintf(output, "  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
 			}
 			for _, ref := range att.Docbank {
-				fmt.Fprintf(output, "    Docbank node %d (%s)\n", ref.NodeID, textutil.SanitizeTerminal(ref.Endpoint+ref.Folder))
+				_, _ = fmt.Fprintf(output, "    Docbank node %d (%s)\n", ref.NodeID, textutil.SanitizeTerminal(ref.Endpoint+ref.Folder))
 			}
 		}
 	}
 
 	// Body
-	fmt.Fprintln(output, "\n═══════════════════════════════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(output, "\n═══════════════════════════════════════════════════════════════════════════════")
 	if msg.BodyText != "" {
-		fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
+		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 	} else if msg.Snippet != "" {
-		fmt.Fprintf(output, "[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
+		_, _ = fmt.Fprintf(output, "[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
 	} else {
-		fmt.Fprintln(output, "[No body content available]")
+		_, _ = fmt.Fprintln(output, "[No body content available]")
 	}
-	fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
+	_, _ = fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
 
-	return output.Flush()
+	if err := output.Flush(); err != nil {
+		return fmt.Errorf("write message: %w", err)
+	}
+	return nil
 }
 
 func messageJSONValue(msg *query.MessageDetail) map[string]any {

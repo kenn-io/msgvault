@@ -59,19 +59,20 @@ func helperProcessCommand(ctx context.Context, mode string) *exec.Cmd {
 func TestClassifyDaemonCLIWaitErrExitStatus(t *testing.T) {
 	for _, mode := range []string{"exit3", "paused"} {
 		t.Run(mode, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			waitErr := helperProcessCommand(t.Context(), mode).Run()
-			require.Error(t, waitErr)
+			require.Error(waitErr)
 			var events []string
 			got := classifyDaemonCLIWaitErr(waitErr, []string{"sync-omi"}, func(stream, data string) error {
 				events = append(events, stream+"="+data)
 				return nil
 			})
 			if mode == "paused" {
-				require.NoError(t, got)
-				assert.Equal(t, []string{"outcome=paused"}, events)
+				require.NoError(got)
+				assert.Equal([]string{"outcome=paused"}, events)
 			} else {
-				require.EqualError(t, got, cliSubprocessExitSentinel)
-				assert.Empty(t, events)
+				require.EqualError(got, cliSubprocessExitSentinel)
+				assert.Empty(events)
 			}
 		})
 	}
