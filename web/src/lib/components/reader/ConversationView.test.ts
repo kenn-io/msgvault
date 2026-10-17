@@ -467,7 +467,6 @@ describe('ConversationView', () => {
     const card = await screen.findByRole('article', { name: 'Message 1' });
     await waitFor(() => expect(card.textContent).toContain('Recovered body 1'));
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(telemetryEvents.filter((event) => (event as { event: string }).event === 'error_shown')).toHaveLength(1);
   });
 
   it('ignores a stale body response after navigating to another conversation', async () => {

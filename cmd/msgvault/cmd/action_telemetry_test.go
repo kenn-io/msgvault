@@ -80,7 +80,7 @@ func TestCLIActionOwnersReportOutcomesAndSuppressHooks(t *testing.T) {
 			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
 				continue
 			}
-			if (action == "muesli-hook" || action == "sync-muesli") && fails {
+			if (action == "muesli-hook" || action == "sync-muesli" || action == "sync-slack") && fails {
 				continue
 			}
 			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {

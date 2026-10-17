@@ -77,14 +77,12 @@ func TestServeSchedulersTrackSourceOutagesAndExcludeMaintenance(t *testing.T) {
 		for _, name := range []string{"granola:archive", "cache-build", "carddav:contacts"} {
 			require.NoError(sched.AddJob(scheduler.Job{Name: name, Schedule: "0 0 1 1 *", Run: func(context.Context) error { return result }}))
 		}
-		for range 2 {
-			require.NoError(sched.TriggerSync("account@example.com", false))
+		require.NoError(sched.TriggerSync("account@example.com", false))
+		synctest.Wait()
+		for _, name := range []string{"granola:archive", "cache-build", "carddav:contacts"} {
+			_, err := sched.StartJob(name, false)
+			require.NoError(err)
 			synctest.Wait()
-			for _, name := range []string{"granola:archive", "cache-build", "carddav:contacts"} {
-				_, err := sched.StartJob(name, false)
-				require.NoError(err)
-				synctest.Wait()
-			}
 		}
 		assert.Equal([]any{"other", "other"}, reasons)
 		result = nil

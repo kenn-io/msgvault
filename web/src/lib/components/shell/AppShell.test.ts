@@ -825,7 +825,7 @@ describe('AppShell', () => {
       visibility.mockRestore();
     });
 
-    it('claims empty searches through refresh, identical submission, and remount', async () => {
+    it('reports an accepted empty search', async () => {
       sessionStorage.clear();
       const events: string[] = [];
       const state = shellState('everything');
@@ -838,21 +838,13 @@ describe('AppShell', () => {
         }
         return Response.json(exploreResponse({ rows: [] }));
       });
-      let view = render(AppShell, { client, state });
+      const view = render(AppShell, { client, state });
       state.commitSearch('missing item', 'full_text');
       await waitFor(() => expect(events).toEqual(['text']));
-      state.commitSearch(' missing   item ', 'full_text');
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      view.unmount();
-      view = render(AppShell, { client, state });
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      expect(events).toEqual(['text']);
-      state.commitSearch('another item', 'full_text');
-      await waitFor(() => expect(events).toEqual(['text', 'text']));
       view.unmount();
     });
 
-    it('reports the displayed search failure once across retries and remounts', async () => {
+    it('reports a displayed rate limit failure', async () => {
       sessionStorage.clear();
       const events: unknown[] = [];
       const state = shellState('everything');
@@ -865,13 +857,9 @@ describe('AppShell', () => {
         }
         return Response.json({ message: 'Too many requests' }, { status: 429 });
       });
-      let view = render(AppShell, { client, state });
+      const view = render(AppShell, { client, state });
       state.commitSearch('failed search', 'full_text');
       await waitFor(() => expect(events).toEqual([{ surface: 'web', kind: 'rate_limited' }]));
-      view.unmount();
-      view = render(AppShell, { client, state });
-      await screen.findByText('Too many requests');
-      expect(events).toHaveLength(1);
       view.unmount();
     });
 

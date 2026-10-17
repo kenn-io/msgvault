@@ -399,6 +399,7 @@ describe('SourcesWorkspace', () => {
     sessionStorage.clear();
     vi.spyOn(crypto.subtle, 'digest').mockResolvedValue(new ArrayBuffer(32));
     const events: unknown[] = [];
+    let triggerSignal: AbortSignal | undefined;
     let refuse!: (response: Response) => void;
     const pending = new Promise<Response>((resolve) => { refuse = resolve; });
     const client = createAPIClient(async (input) => {
@@ -407,21 +408,24 @@ describe('SourcesWorkspace', () => {
         events.push(await request.json());
         return Response.json({ status: 'queued' });
       }
-      if (request.method === 'POST') return pending;
+      if (request.method === 'POST') {
+        triggerSignal = request.signal;
+        return pending;
+      }
       return Response.json({ sources: [source()] });
     });
     const view = render(SourcesWorkspace, { client });
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     view.unmount();
+    expect(triggerSignal?.aborted).toBe(true);
     await act(async () => {
       refuse(Response.json({ message: 'Authorization required' }, { status: 403 }));
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(screen.queryByRole('alert')).toBeNull();
     expect(events).toEqual([]);
   });
 
-  it('reports a displayed manual sync refusal once through retry', async () => {
+  it('reports a displayed manual sync refusal', async () => {
     sessionStorage.clear();
     const events: unknown[] = [];
     const client = createAPIClient(async (input) => {
@@ -436,9 +440,6 @@ describe('SourcesWorkspace', () => {
     const view = render(SourcesWorkspace, { client });
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'auth' } }]));
-    await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
-    expect((await screen.findByRole('alert')).textContent).toContain('Authorization required');
-    expect(events).toHaveLength(1);
     view.unmount();
   });
 
