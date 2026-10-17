@@ -59,6 +59,8 @@ func TestConfig_Validate(t *testing.T) {
 		wantErr string
 	}{
 		{"OK", func(c *Config) {}, ""},
+		{"NegativeTimeout", func(c *Config) { c.Embeddings.Timeout = -time.Second }, "timeout"},
+		{"ZeroTimeout", func(c *Config) { c.Embeddings.Timeout = 0; c.ApplyDefaults() }, ""},
 		{"MissingEndpoint", func(c *Config) { c.Embeddings.Endpoint = "" }, "endpoint"},
 		{"InvalidEndpoint", func(c *Config) { c.Embeddings.Endpoint = "::not a url" }, "endpoint"},
 		{"MissingScheme", func(c *Config) { c.Embeddings.Endpoint = "mac-studio:8080/v1" }, "endpoint"},

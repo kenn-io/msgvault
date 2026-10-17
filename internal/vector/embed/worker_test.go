@@ -485,9 +485,11 @@ func TestWorker_YieldCancellationDuringDownshiftStampLogsOnce(t *testing.T) {
 
 // TestWorker_FailureLeavesUnstampedThenRecovers: a transient failure on
 // the first attempt leaves rows unstamped; a second run (embedder now
-// healthy) completes them. Idempotent re-do.
+// healthy) completes them and clears the error even when a stop was requested.
 func TestWorker_FailureLeavesUnstampedThenRecovers(t *testing.T) {
 	f := newWorkerFixture(t, 3)
+	ctx, stop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	f.FakeClient.preReturn = stop
 	// Fail the first batch, then succeed.
 	f.FakeClient.FailNext(1)
 	w := NewWorker(WorkerDeps{
@@ -502,7 +504,7 @@ func TestWorker_FailureLeavesUnstampedThenRecovers(t *testing.T) {
 	})
 	// First run: the single batch fails once, then the loop re-scans the
 	// same (unstamped) ids and succeeds.
-	res, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(t, 3, res.Succeeded, "Succeeded after recovery")
 	assert.Equal(t, 0, countMissing(t, f.MainDB, int64(f.BuildingGen)), "missing after recovery")
@@ -781,6 +783,57 @@ func TestWorker_AdvancesWatermark(t *testing.T) {
 	_, err := w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
 	require.NoError(t, err, "RunOnce")
 	assert.Equal(t, int64(5), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)), "watermark at max id")
+}
+
+// TestWorker_StopRequestEndsAfterCommittedBatch: a scheduler stop request
+// lets the batch in flight stamp and advance the watermark, then the next pass
+// resumes without embedding that batch again.
+func TestWorker_StopRequestEndsAfterCommittedBatch(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newWorkerFixture(t, 5)
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(context.Background()))
+	f.FakeClient.preReturn = requestStop
+	w := newTestWorker(f, 2)
+
+	res, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+	require.NoError(err)
+	assert.Equal(2, res.Succeeded)
+	assert.Equal(3, countMissing(t, f.MainDB, int64(f.BuildingGen)))
+	assert.Equal(int64(2), readWatermark(t, f.VectorsDB, int64(f.BuildingGen)))
+	assert.True(jobctx.HasProgress(ctx), "the committed batch is resumable progress")
+
+	f.FakeClient.preReturn = nil
+	res, err = w.RunOnce(context.Background(), f.BuildingGen, testEmbeddingPassScope())
+	require.NoError(err)
+	assert.Equal(3, res.Succeeded)
+	assert.Equal(0, countMissing(t, f.MainDB, int64(f.BuildingGen)))
+	assert.Equal(3, f.FakeClient.calls, "five messages in batches of two need three provider calls in total")
+}
+
+func TestWorkerStopRequestPreservesFailedBatch(t *testing.T) {
+	for _, boundary := range []string{"provider", "storage"} {
+		t.Run(boundary, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newWorkerFixture(t, 1)
+			ctx, stop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+			w := newTestWorker(f, 1)
+			requestStop := func(error) { stop() }
+			wantError := "embedding operation failed"
+			if boundary == "provider" {
+				w.deps.Client = &yieldingEmbedClient{EmbeddingClient: f.FakeClient, cancel: requestStop}
+			} else {
+				w.deps.Backend = &yieldingBackend{Backend: f.Backend, cancel: requestStop}
+				wantError = "SQL logic error"
+			}
+			result, err := w.RunOnce(ctx, f.BuildingGen, testEmbeddingPassScope())
+			require.ErrorContains(err, wantError)
+			assert.Equal(1, result.Failed)
+			assert.False(jobctx.HasProgress(ctx))
+			assert.Equal(1, countMissing(t, f.MainDB, int64(f.BuildingGen)))
+		})
+	}
 }
 
 // TestWorker_WatermarkLossHarmless: dropping the watermark and rerunning

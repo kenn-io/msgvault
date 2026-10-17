@@ -105,6 +105,23 @@ func TestReconcilerRunContinuesSafeWorkAfterWorkerErrorWithoutActivation(t *test
 	assertions.Equal([][]string{{ledger.obsolete[0].Token}}, backend.deletes)
 }
 
+func TestReconcilerRunShutdownKeepsWorkerFailure(t *testing.T) {
+	requirements := require.New(t)
+	workerErr := errors.New("provider unavailable")
+	ledger := newFakeDocumentVectorReconcileLedger(store.DocumentVectorGenerationBuilding)
+	reconciler := NewReconciler(ReconcilerDeps{
+		Ledger: ledger, Worker: &fakeDocumentVectorWorkerRunner{err: workerErr},
+		Backend: &fakeDocumentVectorBackend{}, Now: func() time.Time { return workerNow },
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := reconciler.Run(ctx, 1, 10)
+	requirements.ErrorIs(err, workerErr)
+	requirements.ErrorIs(err, context.Canceled)
+	requirements.Zero(ledger.activateCalls)
+}
+
 func TestReconcilerRunReportsTerminalGenerationAsBlocked(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

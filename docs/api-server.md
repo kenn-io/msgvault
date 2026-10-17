@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,9 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.24.0 adds `queued_at` to scheduler account status and CardDAV status,
+`scheduler_queued_at` to Sources status, and CardDAV `scheduler_running`.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -2482,7 +2485,8 @@ Scheduler state and per-account schedule details.
 ```
 
 The daemon runs scheduled work one job at a time. While a sync waits for
-another job to finish, its entry reports `"queued": true` and `"running": false`.
+another job to finish, its entry reports `"queued": true` and `"running": false`,
+and `queued_at` gives when the wait began.
 `"running": true` means it acquired the operation gate; `started_at` gives when
 it began. The top-level `running` field reports whether the scheduler is active.
 A schedule tick that fires during a run
@@ -2497,12 +2501,24 @@ stops after its current batch, limits each pass to ten batches, and stops at
 two minutes regardless. It saves its reconciliation progress. Attachment
 packing and daily attachment maintenance stop after one minute and resume
 behind waiting work. IMAP full passes do not support scheduled preemption.
+Automatic message and document embedding is never cancelled to yield. When a
+sync, other scheduled work, or an API request waits, or after one minute, the
+pass finishes its current publication, such as a message batch or a
+conversation day, and releases the gate. A pass that committed work then
+queues one continuation behind the waiting work. Post-sync embedding starts
+after the sync releases the gate and waits for its own turn. Each embedding
+request uses `vector.embeddings.timeout`. A publication can make several
+requests, so one minute requests a stop rather than setting a hard deadline.
+This target also applies when no sync or other work is waiting.
 Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
-state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
-and `scheduler_started_at`. Compare queued state and the last successful sync
-to detect a source that is waiting too long. Health's `operation.label` names
-the job holding the gate, such as `activity-projection` or `attachment-pack`.
+state for every scheduled source as `scheduler_queued`, `scheduler_queued_at`,
+`scheduler_pending`, and `scheduler_started_at`. CardDAV status reports the
+earliest `queued_at` of its selected connections, and `scheduler_running`
+while a connection holds the gate before its run record appears. Compare
+queued state and the last successful sync to detect a source that is waiting
+too long. Health's `operation.label` names the job holding the gate, such as
+`activity-projection` or `attachment-pack`.
 
 ---
 

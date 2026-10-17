@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -763,7 +764,10 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		// Assembly and source reads consume bounded work even when durable
 		// vectors can be preserved or a scope now needs only a tombstone.
 		scopeBytes = max(scopeBytes, 1)
-		if budget != nil && !budget.reserve(scopeBytes) {
+		// A stop request defers the remaining scopes like an exhausted budget.
+		// Scopes already planned in this page still publish whole, with their
+		// cursor, and the first scope of a pass always runs.
+		if budget != nil && ((budget.used > 0 && jobctx.PreemptionRequested(ctx)) || !budget.reserve(scopeBytes)) {
 			budgetExhausted = true
 			break
 		}

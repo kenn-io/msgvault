@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -175,6 +176,7 @@ type personWorkerClient struct {
 	failOnceAfter   int
 	failureReturned bool
 	malformed       bool
+	providerErr     error
 	onEmbed         func()
 }
 
@@ -228,6 +230,9 @@ func (c *personWorkerClient) EmbedDocuments(
 
 	if onEmbed != nil {
 		onEmbed()
+	}
+	if c.providerErr != nil {
+		return nil, c.providerErr
 	}
 	if c.malformed {
 		return nil, nil
@@ -778,6 +783,76 @@ func TestPersonWorkerReconcilesDeletedPeople(t *testing.T) {
 	check.Len(client.calls, 1, "deletion reconciliation must not call the provider")
 }
 
+// TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion catches a stop
+// that interrupts a person batch, or that reconciles deletions before every
+// changed person is published.
+func TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	source := newPersonWorkerSource(personDocument(99, "rev-99", "Synthetic Ninety-Nine"))
+	backend := newPersonWorkerBackend()
+	client := &personWorkerClient{}
+	persons := newTestPersonWorker(source, backend, client, 2)
+	_, err := persons.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	must.NoError(err)
+
+	source.delete(99)
+	source.put(personDocument(10, "rev-10", "Synthetic Ten"))
+	source.put(personDocument(20, "rev-20", "Synthetic Twenty"))
+	source.put(personDocument(30, "rev-30", "Synthetic Thirty"))
+	backend.building = &vector.Generation{ID: 9}
+	messages := &personWorkerMessageRunner{runOnceResult: &RunResult{Contextual: &ContextConvergence{}}}
+	worker := NewGenerationWorker(messages, persons)
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	client.onEmbed = requestStop
+	result, err := worker.RunOnce(ctx, 9, testEmbeddingPassScope())
+	must.NoError(err)
+	check.Equal(2, result.Succeeded)
+	check.True(jobctx.HasProgress(ctx))
+	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
+	must.NoError(err)
+	check.Equal(map[int64]string{10: "rev-10", 20: "rev-20", 99: "rev-99"}, revisions,
+		"deletion waits until the changed people are published")
+
+	client.onEmbed = nil
+	_, err = worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	must.NoError(err)
+	revisions, err = backend.ListPersonRevisions(t.Context(), 9)
+	must.NoError(err)
+	check.Equal(map[int64]string{10: "rev-10", 20: "rev-20", 30: "rev-30"}, revisions)
+	must.Len(client.calls, 3)
+	check.Equal([][]string{{"Synthetic Thirty"}}, client.calls[2], "the next pass embeds only the remaining person")
+}
+
+func TestPersonWorkerStoppedProviderFailureDoesNotRecordProgress(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	source := newPersonWorkerSource(
+		personDocument(10, "rev-10", "Synthetic Ten"),
+		personDocument(20, "rev-20", "Synthetic Twenty"),
+	)
+	backend := newPersonWorkerBackend()
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	providerErr := errors.New("synthetic transient provider failure")
+	client := &personWorkerClient{providerErr: providerErr, onEmbed: requestStop}
+	worker := newTestPersonWorker(source, backend, client, 1)
+
+	result, err := worker.RunOnce(ctx, 9, testEmbeddingPassScope())
+	require.ErrorIs(err, providerErr)
+	assert.Zero(result.Succeeded)
+	assert.False(jobctx.HasProgress(ctx), "a stopped pass without publication must wait for the next scheduled trigger")
+	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
+	require.NoError(err)
+	assert.Empty(revisions)
+	require.Len(client.calls, 1, "stop before attempting the next person")
+
+	client.providerErr = nil
+	client.onEmbed = nil
+	result, err = worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	require.NoError(err)
+	assert.Equal(2, result.Succeeded, "the next trigger retries both unpublished people")
+}
+
 // TestPersonWorkerDiscardsPostEmbedMutation catches publication of a provider
 // response generated from a revision that changed during the request.
 func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
@@ -947,11 +1022,15 @@ type personWorkerMessageRunner struct {
 	runOnceResult  *RunResult
 	runOnceErr     error
 	runBackstopErr error
+	onRun          func(context.Context)
 }
 
 func (r *personWorkerMessageRunner) RunOnce(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
+	if r.onRun != nil {
+		r.onRun(ctx)
+	}
 	r.runOnce = append(r.runOnce, gen)
 	if r.runOnceResult != nil {
 		return *r.runOnceResult, r.runOnceErr
@@ -960,8 +1039,11 @@ func (r *personWorkerMessageRunner) RunOnce(
 }
 
 func (r *personWorkerMessageRunner) RunBackstop(
-	_ context.Context, gen vector.GenerationID, _ operations.PassScope,
+	ctx context.Context, gen vector.GenerationID, _ operations.PassScope,
 ) (RunResult, error) {
+	if r.onRun != nil {
+		r.onRun(ctx)
+	}
 	r.runBackstop = append(r.runBackstop, gen)
 	return RunResult{}, r.runBackstopErr
 }
@@ -1106,4 +1188,45 @@ func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
 	must.NoError(err)
 	check.Equal([]vector.GenerationID{45}, messages.runBackstop)
 	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+}
+
+func TestGenerationWorkerStopBetweenPhases(t *testing.T) {
+	for _, backstop := range []bool{false, true} {
+		for _, committed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("backstop=%t/committed=%t", backstop, committed), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				backend := newPersonWorkerBackend()
+				client := &personWorkerClient{}
+				ctx, stop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+				messages := &personWorkerMessageRunner{onRun: func(ctx context.Context) {
+					if committed {
+						jobctx.RecordProgress(ctx)
+					}
+					stop()
+				}}
+				worker := NewGenerationWorker(messages, newTestPersonWorker(
+					newPersonWorkerSource(personDocument(1, "rev", "Synthetic Person")), backend, client, 1))
+				run := worker.RunOnce
+				if backstop {
+					run = worker.RunBackstop
+				}
+				_, err := run(ctx, 42, testEmbeddingPassScope())
+				require.NoError(err)
+				if committed {
+					assert.Empty(client.calls, "committed message work yields before person requests")
+					_, err = worker.RunPersonsOnce(ctx, 42, testEmbeddingPassScope())
+					require.NoError(err)
+					assert.Empty(client.calls, "person-only maintenance shares the pass progress")
+				} else {
+					assert.Len(client.calls, 1, "an empty pass may publish its first person batch")
+				}
+				_, err = run(jobctx.WithProgress(t.Context()), 42, testEmbeddingPassScope())
+				require.NoError(err)
+				revisions, err := backend.ListPersonRevisions(t.Context(), 42)
+				require.NoError(err)
+				assert.Equal(map[int64]string{1: "rev"}, revisions, "the continuation reconciles pending people")
+			})
+		}
+	}
 }

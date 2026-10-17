@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -130,6 +131,12 @@ func (w *PersonWorker) runOnce(
 	}
 	var runErr error
 	for start := 0; start < len(changed); start += w.deps.BatchSize {
+		// A stop request lands between published batches. The scan returns
+		// before deleted-person reconciliation; the next pass recomputes the
+		// changed set from vector revisions and resumes with the rest.
+		if (start > 0 || jobctx.HasProgress(ctx)) && jobctx.PreemptionRequested(ctx) {
+			return result, runErr
+		}
 		end := min(start+w.deps.BatchSize, len(changed))
 		batch := changed[start:end]
 		result.Claimed += len(batch)
@@ -284,6 +291,9 @@ func (w *PersonWorker) embedPersonBatch(
 		result.Failed += len(batch)
 		return fmt.Errorf("upsert person vectors for generation %d: %w", gen, err)
 	}
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
+	}
 	result.Succeeded += len(publications)
 	result.Failed += len(vectors) - len(publications)
 	if embedErr != nil {
@@ -318,6 +328,9 @@ func (w *PersonWorker) recordRejectedPersons(
 		return vector.ErrGenerationRetired
 	} else if err != nil {
 		return fmt.Errorf("record rejected person revisions for generation %d: %w", gen, err)
+	}
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
 	}
 	return nil
 }
@@ -401,6 +414,9 @@ func (w *GenerationWorker) RunOnce(
 		return RunResult{}, fmt.Errorf("message embedding pass scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunOnce(ctx, gen, messageScope)
+	if jobctx.PreemptionRequested(ctx) && jobctx.HasProgress(ctx) {
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	var personResult RunResult
 	var personErr error
 	if w.personScanned == nil {
@@ -423,7 +439,9 @@ func (w *GenerationWorker) RunOnce(
 		} else {
 			personResult, personErr = w.persons.RunOnce(ctx, gen, personScope)
 		}
-		w.personScanned[gen] = true
+		// A stopped person scan may have left changed people; scan again on
+		// the next pass.
+		w.personScanned[gen] = !jobctx.PreemptionRequested(ctx)
 	}
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }
@@ -461,6 +479,9 @@ func (w *GenerationWorker) RunBackstop(
 		return RunResult{}, fmt.Errorf("person embedding backstop scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunBackstop(ctx, gen, messageScope)
+	if jobctx.PreemptionRequested(ctx) && jobctx.HasProgress(ctx) {
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	personResult, personErr := w.persons.RunOnce(ctx, gen, personScope)
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }

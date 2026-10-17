@@ -485,7 +485,8 @@ run_after_sync = true     # and opportunistically after every scheduled sync
 ```
 
 With `run_after_sync = true`, every successful scheduled sync
-triggers an immediate embed pass over messages still missing coverage.
+queues an embed pass over messages still missing coverage. The pass waits for
+the sync to release the daemon's work slot.
 The standalone cron ensures embedding catches up even when syncs are
 quiet (e.g. overnight). An empty `cron = ""` disables the
 standalone schedule (useful if you only want the post-sync

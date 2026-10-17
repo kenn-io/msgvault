@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -146,6 +147,7 @@ func contextWithOperationPass(ctx context.Context, pass *operationPass) context.
 }
 
 func checkpointContextOperationPass(ctx context.Context, result RunResult) {
+	jobctx.RecordProgress(ctx)
 	pass, _ := ctx.Value(operationPassContextKey{}).(*operationPass)
 	pass.checkpoint(ctx, checkpointRunCounters(result))
 }
@@ -219,6 +221,7 @@ func (o *messagePassOutcomes) counters(final bool) operations.InvocationCounters
 }
 
 func (o *messagePassOutcomes) checkpoint(ctx context.Context) {
+	jobctx.RecordProgress(ctx)
 	o.pass.checkpoint(ctx, o.counters(false))
 }
 

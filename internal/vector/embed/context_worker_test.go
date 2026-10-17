@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -2489,6 +2490,59 @@ func TestContextWorker_ReconcileSourceResumesInsideBudgetLimitedPage(t *testing.
 		require.NoError(t, err)
 	}
 	assert.True(t, result.Contextual.Converged, "the source cursor must resume after the processed prefix")
+}
+
+// TestContextWorker_StopRequestPublishesWholeAnchorReplacement catches a stop
+// that splits a chat-day replacement whose window lost its anchor, or that
+// repeats the published scope on the next pass.
+func TestContextWorker_StopRequestPublishesWholeAnchorReplacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) { deps.ChangeBatchSize = 1 })
+	day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	anchorID := f.seed("beeper", f.chatID, day, "window anchor")
+	secondID := f.seed("beeper", f.chatID, day.Add(20*time.Minute), "window second")
+	thirdID := f.seed("beeper", f.chatID, day.Add(40*time.Minute), "window third")
+	nextDayID := f.seed("beeper", f.chatID, day.AddDate(0, 0, 1), "next day")
+	result, err := f.run()
+	require.NoError(err)
+	require.True(result.Contextual.Converged)
+	scopeKey := fmt.Sprintf("chat:%d:2026-08-08", f.chatID)
+	before, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, scopeKey)
+	require.NoError(err)
+	require.Len(before, 1)
+	require.Equal([]int64{anchorID, secondID, thirdID}, before[0].Members)
+
+	_, err = f.store.DB().Exec(`DELETE FROM messages WHERE id = ?`, anchorID)
+	require.NoError(err)
+	require.NoError(f.store.UpsertMessageBody(nextDayID,
+		sql.NullString{String: "next day edited", Valid: true}, sql.NullString{}))
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	f.client.before = requestStop
+	callsBefore, documentsBefore := f.client.Calls(), f.client.Documents()
+
+	_, err = f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.NoError(err)
+	assert.True(jobctx.HasProgress(ctx))
+	assert.Equal(1, f.client.Calls()-callsBefore, "the stop lands after the replacement page")
+	after, err := f.backend.ListDocumentsForScope(t.Context(), f.gen, scopeKey)
+	require.NoError(err)
+	require.Len(after, 1)
+	assert.Equal([]int64{secondID, thirdID}, after[0].Members, "the replacement window publishes whole")
+	assert.NotEqual(before[0].Key, after[0].Key)
+	old, err := f.backend.GetDocument(t.Context(), f.gen, before[0].Key)
+	require.NoError(err)
+	assert.Equal(vector.DocumentTombstoned, old.State)
+	assert.Equal(1, f.missing(), "only the deferred next-day edit remains uncovered")
+
+	f.client.before = nil
+	documentsAfterStop := f.client.Documents()
+	result, err = f.run()
+	require.NoError(err)
+	assert.True(result.Contextual.Converged)
+	assert.Zero(f.missing())
+	assert.Equal(1, f.client.Documents()-documentsAfterStop, "the next pass embeds only the deferred scope")
+	assert.Equal(1, documentsAfterStop-documentsBefore, "the replacement embedded one window")
 }
 
 func TestContextWorker_ReconcileOrphansResumeInsideBudgetLimitedPage(t *testing.T) {

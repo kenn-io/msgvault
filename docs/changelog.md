@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Automatic embedding lets a waiting sync run after its current publication instead of holding the daemon's work slot, then resumes from committed progress. Post-sync embedding starts after the sync finishes.
+- Sources and CardDAV show when a waiting sync entered the queue. The CardDAV page refreshes address books and history when you return after a sync finished while the page was hidden. API schema 3.24.0 adds the queue timestamps.
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.

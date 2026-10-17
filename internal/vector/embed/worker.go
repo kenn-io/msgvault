@@ -363,6 +363,13 @@ func (w *Worker) run(
 			}
 			return res, fmt.Errorf("RunOnce: %w", err)
 		}
+		// Every batch ends after its stamps and watermark are recorded, so a
+		// stop request resumes from durable progress. The first batch always
+		// runs so repeated stops cannot starve the pass.
+		if res.Claimed > 0 && jobctx.PreemptionRequested(ctx) {
+			w.deps.Log.Info("embed run stopping after its last committed batch", "gen", gen)
+			return res, lastErr
+		}
 		// Close the previous batch so this scan is not charged to it.
 		diagnosticRun(ctx).completeBatch()
 		batchStart := time.Now()
@@ -453,8 +460,8 @@ func (w *Worker) run(
 					w.advanceWatermark(ctx, gen, safeAdvanceID, backstop)
 				}
 
+				lastErr = drainErr
 				if drainErr != nil {
-					lastErr = drainErr
 					diagnosticRun(ctx).failure(drainErr)
 					// A retired generation cancels this pass rather than retrying it.
 					if errors.Is(drainErr, vector.ErrGenerationRetired) {
@@ -530,7 +537,7 @@ func (w *Worker) run(
 				completedRows += stampedRows
 				w.reportProgress(completedRows, stampedRows, 0, time.Since(batchStart))
 			}
-			consecutiveFailures = 0
+			consecutiveFailures, lastErr = 0, nil
 			afterID = batchMax
 			w.advanceWatermark(ctx, gen, batchMax, backstop)
 			continue
@@ -625,7 +632,7 @@ func (w *Worker) run(
 		missedEmbedded := countMembers(eb.embeddedIDs, missed)
 		succeeded := len(eb.embeddedIDs) - missedEmbedded
 		res.Succeeded += succeeded
-		consecutiveFailures = 0
+		consecutiveFailures, lastErr = 0, nil
 		// Advance the watermark exactly as before — to batchMax — even on a
 		// whole-batch CAS miss. Holding it back would head-of-line-block the
 		// drain; the backstop is the recovery path for missed rows. Because the

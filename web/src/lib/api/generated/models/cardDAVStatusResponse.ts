@@ -15,8 +15,10 @@ export interface CardDAVStatusResponse {
   latest?: CardDAVRunResponse;
   latest_successful?: CardDAVRunResponse;
   next_scheduled_at?: string;
+  queued_at?: string;
   repair_reason?: CardDAVStatusResponseRepairReason;
   schedule: string;
   scheduled: boolean;
+  scheduler_running: boolean;
   [key: string]: unknown;
 }

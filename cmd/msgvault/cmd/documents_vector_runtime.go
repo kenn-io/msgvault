@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	vectordocument "go.kenn.io/msgvault/internal/vector/document"
@@ -204,8 +205,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		reconciler := vectordocument.NewReconciler(vectordocument.ReconcilerDeps{
 			Ledger: st, Backend: vf.DocumentBackend, Now: func() time.Time { return time.Now().UTC() },
 		})
-		_, err := reconciler.Run(ctx, vectordocument.GenerationID(retired.ID), limit)
-		return err
+		return documentVectorContinuation(reconciler.Run(ctx, vectordocument.GenerationID(retired.ID), limit))
 	}
 	if vf.SemanticClient == nil {
 		return nil
@@ -238,8 +238,10 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 		}
 		// Reconcile only the obsolete generation this pass. The next bounded
 		// run creates the desired generation without exceeding one cleanup page.
-		_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
-		return reconcileErr
+		if _, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope); reconcileErr != nil {
+			return reconcileErr
+		}
+		return scheduler.ErrReschedule
 	}
 	if building == nil {
 		active, err := st.GetActiveDocumentVectorGeneration(ctx)
@@ -259,8 +261,7 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 				return statusErr
 			}
 			if status.CleanupPending > 0 {
-				_, reconcileErr := runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope)
-				return reconcileErr
+				return documentVectorContinuation(runDocumentVectorWithFeatures(ctx, st, vf, active.ID, limit, scope))
 			}
 			coverage, coverageErr := st.GetDocumentVectorCoverage(ctx, active.ID)
 			if coverageErr != nil {
@@ -276,6 +277,20 @@ func runScheduledDocumentVectorGenerationLocked(ctx context.Context, st *store.S
 			building = &generation
 		}
 	}
-	_, err = runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope)
-	return err
+	return documentVectorContinuation(runDocumentVectorWithFeatures(ctx, st, vf, building.ID, limit, scope))
+}
+
+// documentVectorContinuation asks the scheduler for another bounded pass,
+// queued behind waiting work, after a committed page leaves more work or a
+// retired generation is purged. The next pass can select its replacement.
+// Chunks waiting for a retry time end the pass until the next trigger.
+func documentVectorContinuation(result vectordocument.ReconcileResult, err error) error {
+	if err != nil {
+		return err
+	}
+	if (result.WorkerRan && !result.Worker.Exhausted) ||
+		(result.CleanupListed > 0 && result.Status.CleanupPending > 0) || result.Purged {
+		return scheduler.ErrReschedule
+	}
+	return nil
 }

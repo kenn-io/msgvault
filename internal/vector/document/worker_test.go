@@ -647,6 +647,31 @@ func TestWorkerRunContextInterruptionLeavesClaimsLeasedForTakeover(t *testing.T)
 	assertions.Equal([]string{"token-a"}, ledger.committed)
 }
 
+func TestWorkerRunShutdownKeepsIndependentFailures(t *testing.T) {
+	for _, boundary := range []string{"provider", "backend"} {
+		t.Run(boundary, func(t *testing.T) {
+			failure := errors.New("independent failure")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			provider := &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+			backend := &fakeDocumentVectorBackend{}
+			if boundary == "provider" {
+				provider.call = func(context.Context, []embed.DocumentInput) ([][][]float32, error) {
+					cancel()
+					return nil, failure
+				}
+			} else {
+				backend.put = func(context.Context, []Embedding) error { cancel(); return failure }
+			}
+			ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+			_, err := newFakeWorker(ledger, provider, backend).Run(ctx, 1, 1)
+			require.ErrorIs(t, err, failure, "shutdown must preserve the independent failure")
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Empty(t, ledger.committed)
+		})
+	}
+}
+
 func TestWorkerRunReplayDoesNotRepublishReadyWork(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

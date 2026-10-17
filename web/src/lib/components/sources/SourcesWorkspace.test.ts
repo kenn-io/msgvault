@@ -32,7 +32,7 @@ afterEach(() => {
 describe('SourcesWorkspace', () => {
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
-      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
+      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true, scheduler_queued_at: '2026-10-01T15:04:00Z',
         can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: run('cancelled', 5) }),
       source({ id: 2, display_name: 'Broken archive', scheduled: true, scheduler_queued: true,
         can_sync: false, sync_unavailable_reason: 'sync_already_running',
@@ -42,6 +42,8 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('Queued')).toBeDefined();
     expect(screen.getByText('Failed')).toBeDefined();
     expect(screen.getAllByText('Sync queued')).toHaveLength(2);
+    const queuedTime = screen.getByText('Queued since', { exact: false }).querySelector('time');
+    expect(queuedTime?.getAttribute('datetime')).toBe('2026-10-01T15:04:00Z');
     expect(screen.queryByText('Sync in progress')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Show details for Resuming archive' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Show details for Broken archive' })).toBeDefined();
