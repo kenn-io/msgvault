@@ -148,7 +148,8 @@ func (s *Store) grantPersonEnrichmentConsentOnce(
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO person_enrichment_work
 					(person_id, profile_fingerprint, trigger_mask, trigger_generation, due_at)
-				SELECT pt.person_id, ?, 1, ?, ? FROM person_tracking pt WHERE 1 = 1`+
+				SELECT pt.person_id, ?, 1, ?, ? FROM person_tracking pt
+				WHERE `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+
 				personEnrichmentWorkConflictClause,
 				fingerprint, generation, dueAt); err != nil {
 				return fmt.Errorf("publish person enrichment consent work: %w", err)
