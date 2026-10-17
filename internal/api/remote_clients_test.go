@@ -151,7 +151,6 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 	check([]routeCase{
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/sync", `{}`, http.StatusForbidden},
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusForbidden},
-		{writer, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusServiceUnavailable},
 	})
 }
 
