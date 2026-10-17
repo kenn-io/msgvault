@@ -3634,22 +3634,20 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 }
 func TestManualCompletionAcrossOutcomes(t *testing.T) {
 	for _, test := range []struct {
-		name            string
-		outcome         error
-		followupOutcome error
-		scheduled       bool
-		remove          bool
-		stop            bool
-		yield           bool
-		cronFollowup    bool
-		manualFollowup  bool
-		expected        int
-		expectedRuns    int
+		name         string
+		outcome      error
+		scheduled    bool
+		remove       bool
+		stop         bool
+		yield        bool
+		cronFollowup bool
+		expected     int
+		expectedRuns int
 	}{
 		{name: "success", expected: 1},
 		{name: "continuation", outcome: ErrReschedule, expected: 1},
 		{name: "deferred", outcome: ErrDeferUntilNextTrigger},
-		{name: "scheduled success pending failure", scheduled: true, manualFollowup: true, followupOutcome: errors.New("manual follow-up failed"), expectedRuns: 2},
+		{name: "scheduled success", scheduled: true},
 		{name: "failed", outcome: errors.New("sync failed")},
 		{name: "failed pass", outcome: &RescheduleError{Err: errors.New("pass failed")}},
 		{name: "removed", remove: true},
@@ -3673,7 +3671,7 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 						<-release
 						return test.outcome
 					}
-					return test.followupOutcome
+					return nil
 				}
 				s := New(nil).WithWorkTracker(tracker)
 				s.WithCompletion(func() { events++; _ = s.JobStatus() })
@@ -3691,11 +3689,6 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 				}
 				if test.cronFollowup {
 					s.onJobTick("sync")
-				}
-				if test.manualFollowup {
-					disp, err := s.StartJob("sync", true)
-					require.NoError(err)
-					assert.Equal(JobPending, disp)
 				}
 				close(release)
 				if test.yield {

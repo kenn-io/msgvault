@@ -373,6 +373,7 @@ func runWithAttachmentMutation(
 	if releaseErr := lease.Release(); releaseErr != nil {
 		return errors.Join(runErr, releaseErr)
 	}
+	// Keep a bare deferral unchanged when release succeeds; the scheduler compares it directly.
 	return runErr
 }
 

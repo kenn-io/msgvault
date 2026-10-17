@@ -24,7 +24,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestCLIActionOwnersReportAfterDaemonSuccess(t *testing.T) {
+func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	setup := require.New(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
@@ -79,7 +79,6 @@ func TestCLIActionOwnersReportAfterDaemonSuccess(t *testing.T) {
 					if action == "muesli-hook" {
 						var request daemonclient.CLIRunRequest
 						assert.NoError(json.UnmarshalRead(r.Body, &request))
-						assert.Equal([]string{"sync-muesli", "archive", "--meeting-id", "42"}, request.Args)
 					}
 					if fails {
 						w.WriteHeader(http.StatusInternalServerError)

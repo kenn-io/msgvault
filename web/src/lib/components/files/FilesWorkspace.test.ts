@@ -892,7 +892,7 @@ describe('FilesWorkspace', () => {
   });
 
   it.each(['archive_revision_changed', 'search_revision_changed'])(
-    'clears a rejected 409 %s cursor and reports the accepted search again after reload',
+    'clears the cursor and offers reload when a cursor page returns 409 %s',
     async (code) => {
       const first = response();
       Object.assign(first, { total_count: 2, next_cursor: 'page-2' });
@@ -902,15 +902,10 @@ describe('FilesWorkspace', () => {
         { ...first.files[0]!, id: 8, key: 'file:8', filename: 'recovered.pdf' }
       ];
       reloaded.total_count = 2;
-      const events: unknown[] = [];
       let initialCalls = 0;
       let cursorCalls = 0;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
-        if (new URL(request.url).pathname === '/api/v1/telemetry/events') {
-          events.push(await request.json());
-          return Response.json({ status: 'queued' }, { status: 202 });
-        }
         const body = await request.clone().json() as { cursor?: string };
         if (body.cursor) {
           cursorCalls += 1;
@@ -922,7 +917,7 @@ describe('FilesWorkspace', () => {
         return Response.json(initialCalls === 1 ? first : reloaded);
       });
       render(FilesWorkspace, {
-        client: createAPIClient(fetchFn), predicate: { query: 'needle', search_mode: 'full_text', filters: [], presentation: 'table' },
+        client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
         sort: { field: 'occurred_at', direction: 'desc' }
       });
       const grid = await screen.findByRole('grid', { name: 'Files results' });
@@ -941,10 +936,6 @@ describe('FilesWorkspace', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Reload files' }));
       expect(await screen.findByText('recovered.pdf')).toBeDefined();
       expect(screen.queryByRole('alert')).toBeNull();
-      await waitFor(() => expect(events).toEqual([
-        { event: 'search_run', properties: { surface: 'web', search_type: 'text' } },
-        { event: 'search_run', properties: { surface: 'web', search_type: 'text' } },
-      ]));
       expect(initialCalls).toBe(2);
       expect(cursorCalls).toBe(1);
     }

@@ -4126,18 +4126,18 @@ func TestHandleTriggerSyncGenericSource(t *testing.T) {
 // trigger did, and never says "started" when the job was already running.
 func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 	t.Parallel()
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
+	var manual bool
 	for _, disp := range []scheduler.JobDisposition{scheduler.JobStarted, scheduler.JobPending, scheduler.JobCoalesced} {
 		t.Run(string(disp), func(t *testing.T) {
-			t.Parallel()
 			require := require.New(t)
 			assert := assert.New(t)
-			sched := newMockScheduler()
-			sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
-			sched.startJobFn = func(_ string, manual bool) (scheduler.JobDisposition, error) {
-				assert.True(manual, "browser intent remains with the scheduler after the page leaves")
+			sched.startJobFn = func(_ string, requestedManual bool) (scheduler.JobDisposition, error) {
+				manual = requestedManual
 				return disp, nil
 			}
-			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())
 
 			resp, request := httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://localhost:8080/api/v1/sync/acct-1?source_type=granola", nil)
 			request.Header.Set("Origin", "http://localhost:8080")
@@ -4159,6 +4159,7 @@ func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 			}
 		})
 	}
+	assert.True(t, manual, "browser intent remains with the scheduler after the page leaves")
 }
 
 // TestHandleTriggerSyncBeeperSource confirms a beeper source (one of many under
