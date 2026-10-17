@@ -85,6 +85,8 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					switch action {
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
+					case "documents":
+						_, _ = w.Write([]byte(`{"results":[],"effective_mode":"hybrid"}`))
 					case "sync", "sync-slack", "muesli-hook":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))

@@ -1204,18 +1204,17 @@ func runSearchDocuments(
 		return err
 	}
 	defer cleanup()
+	response, err := reader.SearchDocuments(command.Context(), request)
+	if err != nil {
+		return err
+	}
 	client, remote := reader.(*daemonclient.Client)
-	mode, modeErr := vectordocument.ParseSearchMode(request.SearchMode)
-	if remote && modeErr == nil && request.Cursor == "" && strings.TrimSpace(request.Query) != "" {
-		kind := string(mode)
+	if remote && request.Cursor == "" && strings.TrimSpace(request.Query) != "" {
+		kind := response.EffectiveMode
 		if kind != "semantic" && kind != "hybrid" {
 			kind = "text"
 		}
 		defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", kind, &result)
-	}
-	response, err := reader.SearchDocuments(command.Context(), request)
-	if err != nil {
-		return err
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

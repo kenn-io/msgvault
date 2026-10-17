@@ -450,7 +450,7 @@ func (m Model) handleAggregateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.syncSearchScope()
 			m.loadRequestID++ // Invalidate stale loadMessages responses
 			m.searchRequestID++
-			return m, m.loadSearchWithOffset(m.searchQuery, 0, false)
+			return m, m.loadSearch(m.searchQuery)
 		}
 		m.loadRequestID++
 		return m, m.loadMessages()
@@ -1384,7 +1384,7 @@ func (m Model) handleFilterToggleKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 				m.searchRequestID++
 				m.prepareSearchReplacement()
 				statsCmd := m.refreshStats()
-				return m, tea.Batch(m.loadSearchWithOffset(m.searchQuery, 0, false), statsCmd)
+				return m, tea.Batch(m.loadSearch(m.searchQuery), statsCmd)
 			}
 			m.loadRequestID++
 			statsCmd := m.refreshStats()
@@ -1623,7 +1623,7 @@ func (m Model) enterDrillDown(row query.AggregateRow) (tea.Model, tea.Cmd) {
 		m.syncSearchScope()
 		m.loadRequestID++ // Invalidate stale loadMessages responses
 		m.searchRequestID++
-		return m, m.loadSearchWithOffset(m.searchQuery, 0, false)
+		return m, m.loadSearch(m.searchQuery)
 	}
 
 	m.loadRequestID++
