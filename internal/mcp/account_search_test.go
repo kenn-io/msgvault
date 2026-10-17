@@ -159,16 +159,17 @@ func TestGetStatsKeepsLastKnownVirtualAccounts(t *testing.T) {
 func TestUnattributedAccountNarrowsTextQueries(t *testing.T) {
 	assert := assert.New(t)
 	source := int64(1)
-	var bodyQuery, fastQuery *search.Query
+	var bodyQuery, exactQuery *search.Query
+	var exactFilter query.MessageFilter
 	engine := &querytest.MockEngine{
-		Accounts: []query.AccountInfo{{ID: 1, Identifier: "alice@example.com", SourceType: "gmail"}},
+		Accounts: []query.AccountInfo{{ID: 1, Identifier: "reader@example.test", SourceType: "gmail"}},
 		SearchMessageBodiesFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
 			bodyQuery = q
 			return nil, nil
 		},
-		SearchFastFunc: func(_ context.Context, q *search.Query, _ query.MessageFilter, _, _ int) ([]query.MessageSummary, error) {
-			fastQuery = q
-			return []query.MessageSummary{{ID: 100, SourceID: 1, SourceMessageID: "m100"}}, nil
+		GetDeletionTargetsBySearchFunc: func(_ context.Context, q *search.Query, f query.MessageFilter, _ query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+			exactQuery, exactFilter = q, f
+			return []query.DeletionTarget{{MessageID: 100, SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.test", SourceMessageID: "m100"}}, nil
 		},
 	}
 	h := &handlers{engine: engine, dataDir: t.TempDir()}
@@ -181,8 +182,9 @@ func TestUnattributedAccountNarrowsTextQueries(t *testing.T) {
 	if assert.NotNil(bodyQuery) {
 		assert.Equal(want, bodyQuery.AccountScopes)
 	}
-	if assert.NotNil(fastQuery) {
-		assert.Equal(want, fastQuery.AccountScopes)
+	if assert.NotNil(exactQuery) {
+		assert.Empty(exactQuery.AccountScopes)
+		assert.Equal(want, exactFilter.AccountScopes)
 	}
 }
 

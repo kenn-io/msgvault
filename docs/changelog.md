@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,8 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+- MCP [`stage_deletion`](usage/chat.md#staged-deletion-via-mcp) now stages every eligible match in its selected search mode or refuses without saving a batch. It no longer silently stages a capped search page. Metadata-first search and its full-text fallback are unchanged. Selections above 100000 messages must be narrowed; source-deleted messages, archive-only history and non-deletable sources are excluded.
 
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.

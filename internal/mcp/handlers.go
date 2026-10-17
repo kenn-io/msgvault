@@ -2380,15 +2380,6 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
-	accounts, err := h.engine.ListAccounts(ctx)
-	if err != nil {
-		return dependencyError("list deletion sources", err)
-	}
-	accountsByID := make(map[int64]query.AccountInfo, len(accounts))
-	for _, info := range accounts {
-		accountsByID[info.ID] = info
-	}
-
 	var targets []query.DeletionTarget
 	var description string
 	var searchNote string
@@ -2402,41 +2393,35 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if q.IsEmpty() {
 			return toolErrorResult("query must contain at least one search term or filter"), nil
 		}
-		// The selection travels in the query so the FTS fallback keeps it.
+		filter := query.MessageFilter{}
+		selection.applyToFilter(&filter)
 		if err := selection.applyToQuery(q); err != nil {
 			return toolErrorResult(err.Error()), nil
 		}
+		// The filter carries structured scopes, including the unattributed bucket.
+		// Deep search and exact resolution cannot transport these on the query.
+		q.AccountScopes = nil
 
-		var results []query.MessageSummary
+		mode := query.DeletionSearchFast
 		if q.HasOR() && q.HasTextTerms() {
-			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+			mode = query.DeletionSearchDeep
 			searchNote = "Full-text OR search includes body matches. "
-		} else {
-			filter := query.MessageFilter{SourceID: sourceID}
-			results, err = h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
-			if err == nil && len(results) == 0 && q.HasTextTerms() {
-				results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
-			}
+		}
+		targets, err = h.resolveDeletionSearch(ctx, q, filter, mode)
+		if err == nil && len(targets) == 0 && mode == query.DeletionSearchFast && q.HasTextTerms() {
+			targets, err = h.resolveDeletionSearch(ctx, q, filter, query.DeletionSearchDeep)
+			searchNote = "Full-text search includes body matches. "
 		}
 		if err != nil {
-			return nil, newInternalError("search messages for deletion", err)
+			return dependencyError("resolve messages for deletion", err)
 		}
-
-		for _, msg := range results {
-			if msg.SourceID <= 0 {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+		for _, target := range targets {
+			if target.SourceID <= 0 {
+				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", target.MessageID)), nil
 			}
-			info, ok := accountsByID[msg.SourceID]
-			if !ok {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+			if strings.TrimSpace(target.SourceType) == "" || strings.TrimSpace(target.SourceIdentifier) == "" {
+				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", target.MessageID)), nil
 			}
-			if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
-				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
-			}
-			targets = append(targets, query.DeletionTarget{
-				MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
-				SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
-			})
 		}
 		description = "query: " + queryStr
 		if len(description) > 50 {
@@ -2453,7 +2438,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			After:               afterDate,
 			Before:              beforeDate,
 			Pagination: query.Pagination{
-				Limit: maxStageDeletionResults,
+				Limit: maxStageDeletionResults + 1,
 			},
 		}
 		selection.applyToFilter(&filter)
@@ -2488,6 +2473,13 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if len(description) > 50 {
 			description = description[:50]
 		}
+	}
+
+	if len(targets) > maxStageDeletionResults {
+		if hasQuery {
+			return toolErrorResult(fmt.Sprintf("this selection matches %d messages; %s", len(targets), stageDeletionLimitHint)), nil
+		}
+		return toolErrorResult("more than 100000 messages match; " + stageDeletionLimitHint), nil
 	}
 
 	if len(targets) == 0 {
@@ -2538,6 +2530,37 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	}
 
 	return jsonResult(resp)
+}
+
+const stageDeletionLimitHint = "stage_deletion stages at most 100000 per call. Narrow it with before:/after: and stage each part"
+
+// resolveDeletionSearch sizes each search before requesting its complete targets.
+// Counts are admission estimates; the caller must also check the resolved length.
+func (h *handlers) resolveDeletionSearch(ctx context.Context, q *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+	resolver, ok := h.engine.(query.DeletionTargetSearchResolver)
+	if !ok {
+		return nil, &expectedHandlerError{message: "this query engine cannot resolve every match safely"}
+	}
+	var count int64
+	var err error
+	if mode == query.DeletionSearchDeep {
+		var stats *query.SearchFastResult
+		stats, err = h.engine.SearchDeepWithStats(ctx, q, filter, 1, 0)
+		count = -1
+		if stats != nil {
+			count = stats.TotalCount
+		}
+	} else {
+		count, err = h.engine.SearchFastCount(ctx, q, filter)
+	}
+	if err != nil || count < 0 {
+		slog.WarnContext(ctx, "MCP deletion selection sizing failed", "mode", mode, "count", count, "error", err)
+		return nil, &expectedHandlerError{message: "stage_deletion could not size this selection; narrow it with before:/after: or account and retry"}
+	}
+	if count > maxStageDeletionResults {
+		return nil, &expectedHandlerError{message: fmt.Sprintf("this selection matches %d messages; %s", count, stageDeletionLimitHint)}
+	}
+	return resolver.GetDeletionTargetsBySearch(ctx, q, filter, mode)
 }
 
 func (h *handlers) saveDeletionManifest(ctx context.Context, manifest *deletion.Manifest) error {
