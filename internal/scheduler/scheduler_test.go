@@ -2103,6 +2103,27 @@ func TestScheduler_RunAfterSync_Fires(t *testing.T) {
 	assert.Equal(vector.GenerationID(42), gen, "RunOnce gen")
 }
 
+func TestScheduler_RunAfterSync_CleanDeferral(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		events, hooks := 0, 0
+		outcome := ErrDeferUntilNextTrigger
+		s := New(func(context.Context, string) error { return outcome }).WithCompletion(func() { events++ })
+		defer func() { <-s.Stop().Done() }()
+		s.SetVisualPostSyncJob(func(context.Context) error { hooks++; return nil })
+		require.NoError(s.AddAccount("account@example.com", "0 0 1 1 *"))
+		require.NoError(s.TriggerSync("account@example.com", true))
+		synctest.Wait()
+		assert.Zero(events)
+		assert.Equal(1, hooks)
+		outcome = nil
+		require.NoError(s.TriggerSync("account@example.com", true))
+		synctest.Wait()
+		assert.Equal(1, events)
+		assert.Equal(2, hooks)
+	})
+}
+
 func TestScheduler_RunAfterSync_DisabledDoesNotFire(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		require := require.New(t)
@@ -3497,7 +3518,7 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 	})
 }
 func TestManualCompletionAcrossOutcomes(t *testing.T) {
-	t.Run("queued and repeated clicks", func(t *testing.T) {
+	t.Run("queued run and coalesced follow-up", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			assert, require, gate := assert.New(t), require.New(t), newSerialWorkTracker()
 			release, ok := gate.BeginWork()
@@ -3554,25 +3575,7 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 			assert.False(s.JobStatus()[0].Running)
 		})
 	})
-	t.Run("account deferral keeps post-sync hooks", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			events, hooks := 0, 0
-			outcome := ErrDeferUntilNextTrigger
-			s := New(func(context.Context, string) error { return outcome }).WithCompletion(func() { events++ })
-			defer func() { <-s.Stop().Done() }()
-			s.SetVisualPostSyncJob(func(context.Context) error { hooks++; return nil })
-			require.NoError(t, s.AddAccount("account@example.com", "0 0 1 1 *"))
-			require.NoError(t, s.TriggerSync("account@example.com", true))
-			synctest.Wait()
-			assert.Zero(t, events)
-			assert.Equal(t, 1, hooks)
-			outcome = nil
-			require.NoError(t, s.TriggerSync("account@example.com", true))
-			synctest.Wait()
-			assert.Equal(t, 1, events)
-			assert.Equal(t, 2, hooks)
-		})
-	})
+
 	for _, test := range []struct {
 		name     string
 		outcome  error

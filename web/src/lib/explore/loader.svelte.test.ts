@@ -74,7 +74,7 @@ function setup(
 }
 
 describe('ExploreLoader', () => {
-  it('reports current successful results across restoration and retries', async ({ onTestFinished }) => {
+  it('reports current successful results across retries', async ({ onTestFinished }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'needle' }))}`);
     const onSearchAccepted = vi.fn(), state = new ExploreState(window);
     let resolveStale!: (response: Response) => void;

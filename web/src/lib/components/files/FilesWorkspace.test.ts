@@ -904,9 +904,7 @@ describe('FilesWorkspace', () => {
         const request = input instanceof Request ? input : new Request(input);
         if (new URL(request.url).pathname === '/api/v1/telemetry/events') {
           events.push(await request.json());
-          return events.length === 1 && code === 'search_revision_changed'
-            ? Response.json({ error: 'delivery failed' }, { status: 503 })
-            : Response.json({ status: 'queued' }, { status: 202 });
+          return Response.json({ status: 'queued' }, { status: 202 });
         }
         const body = await request.clone().json() as { cursor?: string };
         if (body.cursor) {

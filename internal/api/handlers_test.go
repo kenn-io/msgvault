@@ -4134,9 +4134,7 @@ func TestHandleTriggerSyncGenericDisposition(t *testing.T) {
 			sched := newMockScheduler()
 			sched.scheduledJobs = map[string]bool{"granola:acct-1": true}
 			sched.startJobFn = func(_ string, manual bool) (scheduler.JobDisposition, error) {
-				if disp == scheduler.JobStarted {
-					assert.True(manual, "browser intent remains with the scheduler after the page leaves")
-				}
+				assert.True(manual, "browser intent remains with the scheduler after the page leaves")
 				return disp, nil
 			}
 			srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, nil, sched, testLogger())

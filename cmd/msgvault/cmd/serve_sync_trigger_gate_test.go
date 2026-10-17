@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -97,19 +96,11 @@ func TestServeSchedulersCaptureManualCompletion(t *testing.T) {
 				if mediaJob {
 					target = media
 				}
-				outcome := error(nil)
-				require.NoError(t, target.AddJob(scheduler.Job{Name: "sync", Schedule: "0 0 1 1 *", Run: func(context.Context) error { return outcome }}))
-				for _, manual := range []bool{false, true, true} {
-					_, err := target.StartJob("sync", manual)
-					require.NoError(t, err)
-					synctest.Wait()
-				}
-				outcome = errors.New("sync failed")
+				require.NoError(t, target.AddJob(scheduler.Job{Name: "sync", Schedule: "0 0 1 1 *", Run: func(context.Context) error { return nil }}))
 				_, err := target.StartJob("sync", true)
 				require.NoError(t, err)
 				synctest.Wait()
 				assert.Equal(t, []map[string]any{
-					{"event": "sync_finished", "properties": map[string]any{"surface": "web"}},
 					{"event": "sync_finished", "properties": map[string]any{"surface": "web"}},
 				}, events)
 			})

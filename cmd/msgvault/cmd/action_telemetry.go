@@ -18,12 +18,14 @@ func reportsCLIAction(cmd *cobra.Command, terminal bool) bool {
 var cliActionTerminal = func(fd uintptr) bool { return isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd) }
 
 func humanCLIAction(cmd *cobra.Command) bool {
+	terminal := false
 	for _, stream := range []any{cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()} {
 		if file, ok := stream.(*os.File); ok && cliActionTerminal(file.Fd()) {
-			return reportsCLIAction(cmd, true)
+			terminal = true
+			break
 		}
 	}
-	return false
+	return reportsCLIAction(cmd, terminal)
 }
 
 func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, property, value string) {

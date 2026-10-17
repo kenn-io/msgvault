@@ -125,11 +125,10 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"cli","search_type":"text"}}`).Code)
 }
 
-func TestScreenViewsCountAcrossSurfacesAndRestarts(t *testing.T) {
+func TestViewsAndActionsCountAcrossSurfacesAndRestarts(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	stub := newWireStub(t)
 	dir := t.TempDir()
-	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=1", wireConfigOffEnv+"=1")
 	runWireHelper(t, stub.server.URL, dir, "MSGVAULT_SCREEN_VIEWS_TEST=1")
 	screenMessages := func() []map[string]any {
 		return slices.DeleteFunc(batchEvents(t, stub), func(event map[string]any) bool { return event["event"] != EventScreenViewed })

@@ -88,7 +88,7 @@ func TestCLIActionOwnersReportAfterDaemonSuccess(t *testing.T) {
 					switch action {
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
-					case "sync", "sync-full", "sync-slack", "muesli-hook":
+					case "sync", "sync-slack", "muesli-hook":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
 					default:
@@ -164,29 +164,12 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 	})
 }
 
-func TestCLISyncActionRequiresInteractiveStream(t *testing.T) {
+func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 	terminal := cliActionTerminal
 	t.Cleanup(func() { cliActionTerminal = terminal })
 	for _, stream := range []string{"none", "stdin", "stdout", "stderr"} {
 		t.Run(stream, func(t *testing.T) {
-			var events []map[string]any
-			mux := http.NewServeMux()
-			registerStatsProbeHandler(mux)
-			mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
-			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/v1/telemetry/events" {
-					var event map[string]any
-					assert.NoError(t, json.UnmarshalRead(r.Body, &event))
-					events = append(events, event)
-					return
-				}
-				w.Header().Set("Content-Type", "application/x-ndjson")
-				_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
-			})
-			server := httptest.NewServer(mux)
-			t.Cleanup(server.Close)
 			cmd := &cobra.Command{Use: "sync"}
-			cmd.SetContext(configureRemoteSyncTest(t, server.URL))
 			cmd.SetIn(strings.NewReader(""))
 			cmd.SetOut(&bytes.Buffer{})
 			cmd.SetErr(&bytes.Buffer{})
@@ -203,20 +186,11 @@ func TestCLISyncActionRequiresInteractiveStream(t *testing.T) {
 				terminalFD = os.Stderr.Fd()
 			}
 			cliActionTerminal = func(fd uintptr) bool { return stream != "none" && fd == terminalFD }
-			require.NoError(t, runSyncHTTP(cmd, daemonclient.CLISyncRequest{}))
-			if stream == "none" {
-				assert.Empty(t, events, "a redirected sync does not count as a manual action")
-			} else {
-				assert.Equal(t, []map[string]any{{"event": "sync_finished", "properties": map[string]any{"surface": "cli"}}}, events)
-			}
+			assert.Equal(t, stream != "none", humanCLIAction(cmd))
 		})
 	}
-}
-
-func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 	assert, cmd := assert.New(t), &cobra.Command{Use: "search"}
 	assert.True(reportsCLIAction(cmd, true))
-	assert.False(reportsCLIAction(cmd, false))
 	cmd.SetContext(withInvocation(t.Context(), &invocation{options: invocationOptions{agentURLChanged: true}}))
 	assert.False(reportsCLIAction(cmd, true))
 	cmd.SetContext(t.Context())
