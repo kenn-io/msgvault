@@ -470,6 +470,9 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 		if err := retireDeletedPersonUIDTx(ctx, tx, deletedUID); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, personTierFailureKey(id)); err != nil {
+			return fmt.Errorf("clear deleted person tier failures: %w", err)
+		}
 		_, err = s.bumpIdentityRevisionContext(ctx, tx)
 		return err
 	})
