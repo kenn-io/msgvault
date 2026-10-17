@@ -2029,6 +2029,17 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
+| `--attachments-root` | `~/Library/Messages/Attachments` | Allowed attachment tree; an explicit root rebases canonical Mac attachment paths into a copied tree |
+| `--media-scope` | `all` | Capture media from `all`, `direct` (including group chats), or `none` |
+| `--media-max-participants` | `50` | Maximum source chat participants, including you; `0` disables this limit |
+| `--max-media-mb` | `250` | Per-file cap in MiB, enforced on declared and actual size; `0` uses the default |
+
+Available files are copied into the archive's attachment store. Missing,
+purged, offloaded, inaccessible or unsafe files remain explicit unavailable
+occurrences. The importer does not download iCloud media. Rerun to retry gaps
+or changed policy; already captured files survive source purging. Source audio
+flags, UTI, MIME and any duration fields are retained as metadata. Unverified
+duration units are kept as raw source facts.
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 

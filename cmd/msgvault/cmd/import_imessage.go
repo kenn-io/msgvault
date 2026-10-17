@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,18 +14,23 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/imessage"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
 var (
-	importImessageDBPath   string
-	importImessageBefore   string
-	importImessageAfter    string
-	importImessageLimit    int
-	importImessageMe       string
-	importImessageContacts string
+	importImessageDBPath               string
+	importImessageBefore               string
+	importImessageAfter                string
+	importImessageLimit                int
+	importImessageMe                   string
+	importImessageContacts             string
+	importImessageAttachmentsRoot      string
+	importImessageMediaScope           string
+	importImessageMediaMaxParticipants int
+	importImessageMaxMediaMB           int64
 )
 
 var importImessageCmd = &cobra.Command{
@@ -35,6 +41,10 @@ var importImessageCmd = &cobra.Command{
 Reads messages from ~/Library/Messages/chat.db and stores them in the
 msgvault archive. This is a read-only operation that does not modify
 the iMessage database.
+
+Available local attachments are copied with their messages. Missing or
+offloaded files remain unavailable; this command does not fetch iCloud media.
+Use --attachments-root to select a copied Messages/Attachments tree.
 
 Requires Full Disk Access permission in System Settings > Privacy & Security.
 
@@ -76,7 +86,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	clientOpts, err := buildImessageOpts(state.logger)
+	clientOpts, err := buildImessageOpts(state.logger, state.cfg.AttachmentsDir())
 	if err != nil {
 		return err
 	}
@@ -285,9 +295,24 @@ func resolveChatDBPath() (string, error) {
 	return path, nil
 }
 
-func buildImessageOpts(logger *slog.Logger) ([]imessage.ClientOption, error) {
+func buildImessageOpts(logger *slog.Logger, attachmentsDir string) ([]imessage.ClientOption, error) {
+	if importImessageMaxMediaMB < 0 || importImessageMaxMediaMB > math.MaxInt64>>20 {
+		return nil, errors.New("--max-media-mb must be non-negative and fit in bytes")
+	}
+	policy := attachmentpolicy.Policy{
+		Scope:           attachmentpolicy.Scope(importImessageMediaScope),
+		MaxParticipants: importImessageMediaMaxParticipants,
+		MaxBytes:        importImessageMaxMediaMB << 20,
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
 	var opts []imessage.ClientOption
-	opts = append(opts, imessage.WithImessageLogger(logger))
+	opts = append(
+		opts,
+		imessage.WithAttachments(attachmentsDir, importImessageAttachmentsRoot, policy),
+		imessage.WithImessageLogger(logger),
+	)
 
 	if importImessageAfter != "" {
 		t, err := time.ParseInLocation(
@@ -383,6 +408,10 @@ func resolveImessageSource(s *store.Store) (*store.Source, error) {
 }
 
 func init() {
+	importImessageCmd.Flags().StringVar(&importImessageAttachmentsRoot, "attachments-root", "", "allowed attachment tree (default ~/Library/Messages/Attachments); rebase copied Mac paths here")
+	importImessageCmd.Flags().StringVar(&importImessageMediaScope, "media-scope", "all", "capture media from all, direct (including group chats), or none")
+	importImessageCmd.Flags().IntVar(&importImessageMediaMaxParticipants, "media-max-participants", 50, "maximum chat participants including you (0 = unlimited)")
+	importImessageCmd.Flags().Int64Var(&importImessageMaxMediaMB, "max-media-mb", 250, "maximum attachment size in MiB (0 = default 250)")
 	importImessageCmd.Flags().StringVar(
 		&importImessageDBPath, "db-path", "",
 		"path to chat.db (default: ~/Library/Messages/chat.db)",

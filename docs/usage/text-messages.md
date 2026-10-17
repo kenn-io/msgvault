@@ -137,6 +137,26 @@ By default, the command reads from `~/Library/Messages/chat.db`. No positional a
 
 This is a read-only operation. msgvault does not modify your iMessage database.
 
+Available local attachments are copied with their owning messages, including
+voice notes. Reads stay inside `~/Library/Messages/Attachments`. Missing or
+iCloud-offloaded files stay visible as unavailable; msgvault does not fetch
+them. Rerunning the import retries gaps without duplicating occurrences and
+retains files already captured before source purging. Stored audio uses the
+existing [Docbank routing](../configuration.md#send-stored-audio-to-docbank) when enabled.
+
+To import a copied Messages tree, select its attachment directory explicitly:
+
+```bash
+msgvault import-imessage --db-path /Volumes/Backup/Messages/chat.db \
+  --attachments-root /Volumes/Backup/Messages/Attachments
+```
+
+The source database can retain its original Mac attachment paths. Only their
+canonical Messages attachment suffix is rebased into the selected tree.
+See the [CLI reference](../cli-reference.md#import-imessage) for media scope,
+participant and size controls. These apply to new reads; archived bytes remain
+available on a restrictive-policy rerun.
+
 Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
 missing dates. msgvault retains those messages and their raw timestamp
 evidence, including empty sync placeholders. Undated messages are excluded from
