@@ -97,7 +97,7 @@ func (r *Reconciler) Run(ctx context.Context, generationID GenerationID, limit i
 		result.WorkerRan = true
 		result.Worker, err = r.deps.Worker.Run(ctx, generationID, limit)
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return result, ctxErr
+			return result, errors.Join(err, ctxErr)
 		}
 		reconcileErr = errors.Join(reconcileErr, err)
 	}

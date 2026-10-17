@@ -294,7 +294,7 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 
 	vectors, providerErr := w.deps.Provider.EmbedDocuments(heartbeat.context(), inputs)
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return result, ctxErr
+		return result, errors.Join(runErr, providerErr, ctxErr)
 	}
 	if heartbeatErr := heartbeat.err(); heartbeatErr != nil {
 		return result, heartbeatErr
@@ -316,7 +316,7 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	if len(embeddings) > 0 {
 		if err := w.deps.Backend.PutUnpublished(heartbeat.context(), generationID, w.deps.Dimension, embeddings); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return result, ctxErr
+				return result, errors.Join(runErr, responseErr, fmt.Errorf("put unpublished document vectors: %w", err), ctxErr)
 			}
 			if heartbeatErr := heartbeat.err(); heartbeatErr != nil {
 				return result, heartbeatErr

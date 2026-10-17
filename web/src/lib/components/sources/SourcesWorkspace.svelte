@@ -171,7 +171,7 @@
       }
       const hasActiveSync = next.some((source) => source.active_sync);
       const hasLockHold = next.some(schedulerHoldsSyncLock);
-      if (hasActiveSync) {
+      if (hasActiveSync || next.some((source) => source.scheduler_queued)) {
         lockHoldPolls = 0;
         lockStatusStale = false;
         pollDelay = advanced ? MIN_POLL_MS : Math.min(MAX_POLL_MS, pollDelay * 2);
@@ -202,7 +202,7 @@
       }
       if (!hasLoadedStatus) return;
       if (lockHoldPolls >= maxLockHoldPolls && sources.some(schedulerHoldsSyncLock) &&
-        !sources.some((source) => source.active_sync) && awaitingSourceID === undefined) {
+        !sources.some((source) => source.active_sync || source.scheduler_queued) && awaitingSourceID === undefined) {
         lockStatusStale = true;
         return;
       }
@@ -221,7 +221,7 @@
         const nextDelay = pollDelay;
         pollDelay = Math.min(MAX_POLL_MS, pollDelay * 2);
         schedulePoll(nextDelay, true, sources.some(schedulerHoldsSyncLock) &&
-          !sources.some((source) => source.active_sync));
+          !sources.some((source) => source.active_sync || source.scheduler_queued));
       }
     } finally {
       if (requestGeneration === generation) {
@@ -388,6 +388,9 @@
           <td>
             <div class="cell-stack">
               <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
+              {#if source.scheduler_queued && source.scheduler_queued_at && !source.active_sync}
+                <span>Queued since <time datetime={source.scheduler_queued_at} title={formatDateTime(source.scheduler_queued_at, 'long')}>{formatDateTime(source.scheduler_queued_at)}</time></span>
+              {/if}
               {#if source.active_sync}
                 <strong>{source.active_sync.messages_processed.toLocaleString()} processed</strong>
                 <span

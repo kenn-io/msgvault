@@ -647,6 +647,54 @@ func TestWorkerRunContextInterruptionLeavesClaimsLeasedForTakeover(t *testing.T)
 	assertions.Equal([]string{"token-a"}, ledger.committed)
 }
 
+func TestWorkerRunShutdownKeepsIndependentFailures(t *testing.T) {
+	providerErr := errors.New("provider unavailable")
+	backendErr := errors.New("backend unavailable")
+	for _, test := range []struct {
+		name     string
+		provider func(context.CancelFunc) *fakeDocumentVectorProvider
+		backend  func(context.CancelFunc) *fakeDocumentVectorBackend
+		want     error
+	}{
+		{
+			name: "provider",
+			provider: func(cancel context.CancelFunc) *fakeDocumentVectorProvider {
+				return &fakeDocumentVectorProvider{call: func(context.Context, []embed.DocumentInput) ([][][]float32, error) {
+					cancel()
+					return nil, providerErr
+				}}
+			},
+			backend: func(context.CancelFunc) *fakeDocumentVectorBackend { return &fakeDocumentVectorBackend{} },
+			want:    providerErr,
+		},
+		{
+			name: "backend",
+			provider: func(context.CancelFunc) *fakeDocumentVectorProvider {
+				return &fakeDocumentVectorProvider{vectors: [][][]float32{{{1, 2, 3}}}}
+			},
+			backend: func(cancel context.CancelFunc) *fakeDocumentVectorBackend {
+				return &fakeDocumentVectorBackend{put: func(context.Context, []Embedding) error {
+					cancel()
+					return backendErr
+				}}
+			},
+			want: backendErr,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			ledger := newFakeDocumentVectorLedger(workerClaim("extract-a", 1, "first", "token-a"))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			worker := newFakeWorker(ledger, test.provider(cancel), test.backend(cancel))
+			_, err := worker.Run(ctx, 1, 1)
+			requirements.ErrorIs(err, test.want, "shutdown must not hide the independent failure")
+			requirements.ErrorIs(err, context.Canceled)
+			requirements.Empty(ledger.committed)
+		})
+	}
+}
+
 func TestWorkerRunReplayDoesNotRepublishReadyWork(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

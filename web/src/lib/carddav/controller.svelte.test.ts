@@ -303,6 +303,81 @@ describe('CardDAVController', () => {
     controller.destroy();
   });
 
+  it.each([false, true])('resumes work and refreshes completion after hiding, entirely hidden=%s', async (entirelyHidden) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let stage = 'idle';
+    let statusReads = 0;
+    let bookReads = 0;
+    let runReads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/carddav/books') {
+        bookReads += 1;
+        return Response.json({ books: [book(1, { name: stage === 'completed' ? 'Updated book' : 'Original book' })] });
+      }
+      if (path === '/api/v1/carddav/runs') {
+        runReads += 1;
+        return Response.json({ runs: stage === 'completed' ? [{ ...run(1, 'succeeded'), trigger: 'scheduled' }] : [] });
+      }
+      statusReads += 1;
+      return Response.json({ ...idleStatus, scheduled: true,
+        ...(entirelyHidden && stage !== 'completed' ? { next_scheduled_at: '2026-10-01T15:01:00Z' } : {}),
+        ...(stage === 'queued' ? { queued_at: '2026-10-01T15:01:00Z' } : {}),
+        ...(stage === 'admitted' ? { scheduler_running: true } : {}),
+        ...(stage === 'active' ? { active: { ...run(1), trigger: 'scheduled' } } : {}),
+        ...(stage === 'completed' ? { latest: { ...run(1, 'succeeded'), trigger: 'scheduled' } } : {}) });
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    expect(controller.books[0]?.name).toBe('Original book');
+    expect(controller.runs).toEqual([]);
+    if (!entirelyHidden) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(statusReads).toBe(1);
+      Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      stage = 'queued';
+      Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+      stage = 'admitted';
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.status?.scheduler_running).toBe(true);
+      expect(controller.canSync).toBe(false);
+      stage = 'active';
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.status?.active?.id).toBe(1);
+      stage = 'queued';
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.status?.active).toBeUndefined();
+      expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+      stage = 'active';
+      await vi.advanceTimersByTimeAsync(500);
+      expect(controller.status?.active?.id).toBe(1);
+    }
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const hiddenReads = statusReads;
+    await vi.advanceTimersByTimeAsync(30_000);
+    stage = 'completed';
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(statusReads).toBe(hiddenReads);
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(statusReads).toBe(hiddenReads + 1);
+    expect(controller.books[0]?.name).toBe('Updated book');
+    expect(controller.runs[0]?.id).toBe(1);
+    expect(controller.runs[0]?.trigger).toBe('scheduled');
+    expect([bookReads, runReads]).toEqual([2, 2]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusReads).toBe(hiddenReads + 1);
+    expect([bookReads, runReads]).toEqual([2, 2]);
+    controller.destroy();
+  });
+
   it('does not let an older idle poll overwrite a newer active status read', async () => {
     vi.useFakeTimers();
     const olderPoll = deferredResponse();

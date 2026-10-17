@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -778,6 +779,44 @@ func TestPersonWorkerReconcilesDeletedPeople(t *testing.T) {
 	check.Len(client.calls, 1, "deletion reconciliation must not call the provider")
 }
 
+// TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion catches a stop
+// that interrupts a person batch, or that reconciles deletions before every
+// changed person is published.
+func TestPersonWorkerStopRequestFinishesBatchAndDefersDeletion(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	source := newPersonWorkerSource(personDocument(99, "rev-99", "Synthetic Ninety-Nine"))
+	backend := newPersonWorkerBackend()
+	client := &personWorkerClient{}
+	worker := newTestPersonWorker(source, backend, client, 2)
+	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	must.NoError(err)
+
+	source.delete(99)
+	source.put(personDocument(10, "rev-10", "Synthetic Ten"))
+	source.put(personDocument(20, "rev-20", "Synthetic Twenty"))
+	source.put(personDocument(30, "rev-30", "Synthetic Thirty"))
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	client.onEmbed = requestStop
+	result, err := worker.RunOnce(ctx, 9, testEmbeddingPassScope())
+	must.NoError(err)
+	check.Equal(2, result.Succeeded)
+	check.True(jobctx.HasProgress(ctx))
+	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
+	must.NoError(err)
+	check.Equal(map[int64]string{10: "rev-10", 20: "rev-20", 99: "rev-99"}, revisions,
+		"deletion waits until the changed people are published")
+
+	client.onEmbed = nil
+	_, err = worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
+	must.NoError(err)
+	revisions, err = backend.ListPersonRevisions(t.Context(), 9)
+	must.NoError(err)
+	check.Equal(map[int64]string{10: "rev-10", 20: "rev-20", 30: "rev-30"}, revisions)
+	must.Len(client.calls, 3)
+	check.Equal([][]string{{"Synthetic Thirty"}}, client.calls[2], "the next pass embeds only the remaining person")
+}
+
 // TestPersonWorkerDiscardsPostEmbedMutation catches publication of a provider
 // response generated from a revision that changed during the request.
 func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
@@ -1033,6 +1072,33 @@ func TestGenerationWorkerScansPeopleOnlyAtContextualBuildBoundaries(t *testing.T
 	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
 	must.NoError(err)
 	must.Len(client.calls, 2, "final contextual pass must recheck the person corpus")
+}
+
+// TestGenerationWorkerRescansPeopleAfterStoppedScan catches an intermediate
+// contextual pass skipping people whose first scan stopped early.
+func TestGenerationWorkerRescansPeopleAfterStoppedScan(t *testing.T) {
+	must := require.New(t)
+	source := newPersonWorkerSource(
+		personDocument(10, "rev-10", "Synthetic Ten"),
+		personDocument(20, "rev-20", "Synthetic Twenty"),
+	)
+	backend := newPersonWorkerBackend()
+	backend.building = &vector.Generation{ID: 44}
+	ctx, requestStop := jobctx.WithPreemption(t.Context())
+	client := &personWorkerClient{onEmbed: requestStop}
+	messages := &personWorkerMessageRunner{runOnceResult: &RunResult{
+		Contextual: &ContextConvergence{Converged: false},
+	}}
+	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 1))
+
+	_, err := worker.RunOnce(ctx, 44, testEmbeddingPassScope())
+	must.NoError(err)
+	must.Len(client.calls, 1)
+	client.onEmbed = nil
+	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
+	must.NoError(err)
+	must.Len(client.calls, 2, "the next intermediate pass finishes the stopped person scan")
+	must.Equal([][]string{{"Synthetic Twenty"}}, client.calls[1])
 }
 
 // TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans catches the

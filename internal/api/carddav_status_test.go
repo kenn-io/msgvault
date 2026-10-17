@@ -428,25 +428,39 @@ func TestCardDAVStatusReportsSelectedAndAggregateSchedules(t *testing.T) {
 	controller := &CardDAVController{cfg: cfg, store: testutil.NewTestStore(t)}
 	next := time.Date(2026, 10, 1, 1, 0, 0, 0, time.UTC)
 	sched := newMockScheduler()
-	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next}, {Name: "carddav:personal", NextRun: next.Add(time.Hour)}, {Name: "unrelated", NextRun: next.Add(-time.Hour)}}
+	sched.jobStatuses = []JobStatus{{Name: "carddav:work", NextRun: next}, {Name: "carddav:personal", NextRun: next.Add(time.Hour), Queued: true, QueuedAt: next}, {Name: "unrelated", NextRun: next.Add(-time.Hour)}}
 	server := cardDAVReadServer(t, cfg, controller, sched)
 	for _, tc := range []struct {
-		query     string
-		scheduled bool
-		next      time.Time
+		query            string
+		scheduled        bool
+		next             time.Time
+		queued           time.Time
+		schedulerRunning bool
 	}{
-		{"", true, next}, {"?connection=work", true, next}, {"?connection=personal", true, next.Add(time.Hour)}, {"?connection=default", false, time.Time{}},
+		{"", true, next, next.Add(-time.Minute), false}, {"?connection=work", true, next, next.Add(-time.Minute), false}, {"?connection=personal", true, next.Add(time.Hour), next, false}, {"?connection=default", false, time.Time{}, time.Time{}, false},
+		{"", true, next, next, true}, {"?connection=work", true, next, time.Time{}, true},
 	} {
+		sched.jobStatuses[0] = JobStatus{Name: "carddav:work", NextRun: next, Running: tc.schedulerRunning, Queued: !tc.schedulerRunning}
+		if !tc.schedulerRunning {
+			sched.jobStatuses[0].QueuedAt = next.Add(-time.Minute)
+		}
 		response := getCardDAVRead(t, server, "/api/v1/carddav/status"+tc.query)
 		require.Equal(http.StatusOK, response.Code, response.Body.String())
 		var status CardDAVStatusResponse
 		require.NoError(json.NewDecoder(response.Body).Decode(&status))
 		assertions.Equal(tc.scheduled, status.Scheduled)
+		assertions.Equal(tc.schedulerRunning, status.SchedulerRunning)
 		if tc.scheduled {
 			require.NotNil(status.NextScheduledAt)
 			assertions.Equal(tc.next, *status.NextScheduledAt)
 		} else {
 			assertions.Nil(status.NextScheduledAt)
+		}
+		if !tc.queued.IsZero() {
+			require.NotNil(status.QueuedAt)
+			assertions.Equal(tc.queued, *status.QueuedAt)
+		} else {
+			assertions.Nil(status.QueuedAt)
 		}
 	}
 }

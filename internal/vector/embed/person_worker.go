@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sort"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -130,6 +131,12 @@ func (w *PersonWorker) runOnce(
 	}
 	var runErr error
 	for start := 0; start < len(changed); start += w.deps.BatchSize {
+		// A stop request lands between published batches. The scan returns
+		// before deleted-person reconciliation; the next pass recomputes the
+		// changed set from vector revisions and resumes with the rest.
+		if start > 0 && jobctx.PreemptionRequested(ctx) {
+			return result, runErr
+		}
 		end := min(start+w.deps.BatchSize, len(changed))
 		batch := changed[start:end]
 		result.Claimed += len(batch)
@@ -169,6 +176,7 @@ func (w *PersonWorker) runOnce(
 				))
 			}
 		}
+		jobctx.RecordProgress(ctx)
 		pass.checkpoint(ctx, checkpointRunCounters(result))
 	}
 
@@ -423,7 +431,9 @@ func (w *GenerationWorker) RunOnce(
 		} else {
 			personResult, personErr = w.persons.RunOnce(ctx, gen, personScope)
 		}
-		w.personScanned[gen] = true
+		// A stopped person scan may have left changed people; scan again on
+		// the next pass.
+		w.personScanned[gen] = !jobctx.PreemptionRequested(ctx)
 	}
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }

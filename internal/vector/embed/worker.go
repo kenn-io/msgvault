@@ -363,6 +363,13 @@ func (w *Worker) run(
 			}
 			return res, fmt.Errorf("RunOnce: %w", err)
 		}
+		// Every batch ends after its stamps and watermark are recorded, so a
+		// stop request resumes from durable progress. The first batch always
+		// runs so repeated stops cannot starve the pass.
+		if res.Claimed > 0 && jobctx.PreemptionRequested(ctx) {
+			w.deps.Log.Info("embed run stopping after its last committed batch", "gen", gen)
+			return res, nil
+		}
 		// Close the previous batch so this scan is not charged to it.
 		diagnosticRun(ctx).completeBatch()
 		batchStart := time.Now()

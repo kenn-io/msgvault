@@ -1934,6 +1934,11 @@ when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
+Automatic message and document embedding works in passes of about one minute.
+A waiting sync gets the daemon's work slot after the current publication, and
+the next pass resumes from committed progress. See
+[scheduler status](api-server.md#get-apiv1schedulerstatus) for yield and queue details.
+
 #### `[vector.people]`
 
 Semantic people search: one curated document per durable person, built from
