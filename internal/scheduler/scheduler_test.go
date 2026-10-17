@@ -3518,7 +3518,7 @@ func TestGenericJobYieldWithProgressClearsEarlierFailure(t *testing.T) {
 	})
 }
 func TestManualCompletionAcrossOutcomes(t *testing.T) {
-	t.Run("queued run and coalesced follow-up", func(t *testing.T) {
+	t.Run("queued and coalesced manual runs complete without overlap", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			assert, require, gate := assert.New(t), require.New(t), newSerialWorkTracker()
 			release, ok := gate.BeginWork()
@@ -3577,14 +3577,28 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 	})
 
 	for _, test := range []struct {
-		name     string
-		outcome  error
-		expected int
+		name            string
+		outcome         error
+		followupOutcome error
+		scheduled       bool
+		remove          bool
+		stop            bool
+		yield           bool
+		cronFollowup    bool
+		manualFollowup  bool
+		expected        int
+		expectedRuns    int
 	}{
-		{"success", nil, 1}, {"continuation", ErrReschedule, 1}, {"deferred", ErrDeferUntilNextTrigger, 0},
-		{"scheduled success pending failure", nil, 0},
-		{"failed", errors.New("sync failed"), 0}, {"failed pass", &RescheduleError{Err: errors.New("pass failed")}, 0},
-		{"removed", nil, 0}, {"stopped", nil, 0}, {"yielded", nil, 1}, {"cron followup", nil, 1},
+		{name: "success", expected: 1},
+		{name: "continuation", outcome: ErrReschedule, expected: 1},
+		{name: "deferred", outcome: ErrDeferUntilNextTrigger},
+		{name: "scheduled success pending failure", scheduled: true, manualFollowup: true, followupOutcome: errors.New("manual follow-up failed"), expectedRuns: 2},
+		{name: "failed", outcome: errors.New("sync failed")},
+		{name: "failed pass", outcome: &RescheduleError{Err: errors.New("pass failed")}},
+		{name: "removed", remove: true},
+		{name: "stopped", stop: true},
+		{name: "yielded", yield: true, expected: 1, expectedRuns: 2},
+		{name: "cron followup", cronFollowup: true, expected: 1, expectedRuns: 2},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -3592,11 +3606,8 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 				events, runs, release := 0, 0, make(chan struct{})
 				run := func(ctx context.Context) error {
 					runs++
-					if runs == 2 && test.name == "scheduled success pending failure" {
-						return errors.New("manual follow-up failed")
-					}
 					if runs == 1 {
-						if test.name == "yielded" {
+						if test.yield {
 							tracker.yield.Store(true)
 							<-ctx.Done()
 							tracker.yield.Store(false)
@@ -3605,38 +3616,38 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 						<-release
 						return test.outcome
 					}
-					return nil
+					return test.followupOutcome
 				}
 				s := New(nil).WithWorkTracker(tracker)
 				s.WithCompletion(func() { events++; _ = s.JobStatus() })
 				defer func() { <-s.Stop().Done() }()
 				require.NoError(s.AddJob(Job{Name: "sync", Schedule: "0 0 1 1 *", Run: run}))
-				disposition, err := s.StartJob("sync", test.name != "scheduled success pending failure")
+				disposition, err := s.StartJob("sync", !test.scheduled)
 				require.NoError(err)
 				assert.Equal(JobStarted, disposition)
 				synctest.Wait()
-				if test.name == "removed" {
+				if test.remove {
 					s.RemoveJob("sync")
 				}
-				if test.name == "stopped" {
+				if test.stop {
 					s.Stop()
 				}
-				if test.name == "cron followup" {
+				if test.cronFollowup {
 					s.onJobTick("sync")
 				}
-				if test.name == "scheduled success pending failure" {
+				if test.manualFollowup {
 					disp, err := s.StartJob("sync", true)
 					require.NoError(err)
 					assert.Equal(JobPending, disp)
 				}
 				close(release)
-				if test.name == "yielded" {
+				if test.yield {
 					synctest.Sleep(yieldPollInterval)
 				}
 				synctest.Wait()
 				assert.Equal(test.expected, events)
-				if test.name == "yielded" || test.name == "cron followup" || test.name == "scheduled success pending failure" {
-					assert.Equal(2, runs)
+				if test.expectedRuns != 0 {
+					assert.Equal(test.expectedRuns, runs)
 				}
 			})
 		})

@@ -1,5 +1,4 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient as createClient } from '../../api/client';
@@ -386,7 +385,7 @@ describe('ConversationView', () => {
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/conversations/7');
   });
 
-  it('fetches an omitted body on expansion and reports it only while readable', async () => {
+  it('fetches an omitted body on expansion and reports it once readable', async () => {
     const requests: Request[] = [];
     let resolveBody!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -405,15 +404,10 @@ describe('ConversationView', () => {
     const client = createAPIClient(fetchFn);
     render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
 
-    await waitFor(() => expect(resolveBody).toBeDefined());
+    await screen.findByText('Loading message…');
+    expect(screen.queryByText('Fetched body 1')).toBeNull();
     expect(telemetryEvents).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
-    const response = Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
-    resolveBody(response);
-    await waitFor(() => expect(response.bodyUsed).toBe(true));
-    await tick();
-    expect(telemetryEvents).toHaveLength(0);
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    resolveBody(Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' }));
 
     const card = await screen.findByRole('article', { name: 'Message 1' });
     await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));

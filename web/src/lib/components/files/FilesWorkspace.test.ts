@@ -890,7 +890,7 @@ describe('FilesWorkspace', () => {
   });
 
   it.each(['archive_revision_changed', 'search_revision_changed'])(
-    'clears the cursor and offers reload when a cursor page returns 409 %s',
+    'clears a rejected 409 %s cursor and reports the accepted search again after reload',
     async (code) => {
       const first = response();
       Object.assign(first, { total_count: 2, next_cursor: 'page-2' });

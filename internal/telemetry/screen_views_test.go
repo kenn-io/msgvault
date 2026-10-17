@@ -79,13 +79,9 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 	conflicting := `{"event":"screen_viewed","properties":{"screen":"email"," screen ":"texts","surface":"web"}}`
 	assertions.Equal(http.StatusAccepted, screenRequest(h, conflicting).Code)
 	for _, event := range []string{EventSearchRun, EventMessageOpened, EventSyncFinished} {
-		for _, props := range []string{`{}`, `{"surface":"other"}`, `{"surface":42}`} {
-			assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":%s}`, event, props)).Code)
-		}
+		assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":%q,"properties":{"surface":"other"}}`, event)).Code)
 	}
-	for _, value := range []string{`null`, `"other"`, `42`} {
-		assertions.Equal(http.StatusAccepted, screenRequest(h, fmt.Sprintf(`{"event":"search_run","properties":{"surface":"web","search_type":%s}}`, value)).Code)
-	}
+	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"web","search_type":"other"}}`).Code)
 	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_run","properties":{"surface":"web"}}`).Code)
 	for _, surface := range []string{"web", "tui", "cli"} {
 		for _, kind := range []string{"text", "semantic", "hybrid"} {

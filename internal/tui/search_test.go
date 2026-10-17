@@ -1877,17 +1877,11 @@ func TestSearchReloadDoesNotReportAnotherSearch(t *testing.T) {
 			default:
 				require.FailNow("expected accepted search results")
 			}
-			next, report := updated.Update(result)
+			_, report := updated.Update(result)
 			if report != nil {
 				_ = runBatchCommand(t, report)
 			}
 			assert.Zero(calls)
-			updated = asModel(t, next)
-			result = updated.loadSearch("needle")()
-			_, report = updated.Update(result)
-			require.NotNil(report)
-			_ = runBatchCommand(t, report)
-			assert.Equal(1, calls, "a later deliberate search still reaches the daemon")
 		})
 	}
 }

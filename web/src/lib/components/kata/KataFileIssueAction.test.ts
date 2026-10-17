@@ -30,7 +30,7 @@ describe('KataFileIssueAction', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
     await screen.findByText('No indexed passage in this file matches.');
     await waitFor(() => expect(requests.filter((request) => new URL(request.url).pathname.endsWith('/telemetry/events'))).toHaveLength(1));
-    expect((await requests.find((request) => new URL(request.url).pathname.endsWith('/telemetry/events'))!.json()).event).toBe('search_run');
+    expect(await requests.find((request) => new URL(request.url).pathname.endsWith('/telemetry/events'))!.json()).toEqual({ event: 'search_run', properties: { surface: 'web', search_type: 'text' } });
   });
 
   it('opens the citation window at a search excerpt late in a transcript', async () => {
