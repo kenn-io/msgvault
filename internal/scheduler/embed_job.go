@@ -510,10 +510,11 @@ func (j *EmbedJob) maybeRunBackstop(
 		// Do not advance lastBackstop on failure so the next tick retries.
 		return true
 	}
-	if passStopped(ctx) {
+	// A stop requested after contextual reconciliation completes still counts.
+	if passStopped(ctx) && (res.Contextual == nil || !res.Contextual.ReconcileComplete) {
 		// RunOnce resumes contextual reconciliation on the continuation.
 		// Count its completed cursor before considering another backstop.
-		if res.Contextual != nil && !res.Contextual.ReconcileComplete {
+		if res.Contextual != nil {
 			if j.interruptedBackstop == nil {
 				j.interruptedBackstop = make(map[vector.GenerationID]bool)
 			}

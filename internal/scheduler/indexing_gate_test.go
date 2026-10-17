@@ -218,3 +218,29 @@ func TestInterruptedContextualBackstopCompletionCountsForInterval(t *testing.T) 
 	n, _ = runner.backstops()
 	assert.Equal(t, 2, n, "the next interval still starts a fresh backstop")
 }
+
+func TestCompletedContextualBackstopCountsDespiteStopRequest(t *testing.T) {
+	ctx, requestStop := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+	runner := &fakeRunner{
+		backstopResult: embed.RunResult{Contextual: &embed.ContextConvergence{ReconcileComplete: true}},
+		onBackstop:     requestStop,
+	}
+	now := time.Now()
+	job := &EmbedJob{
+		Worker: runner, Backend: &fakeBackend{active: vector.Generation{ID: 1}},
+		BackstopInterval: time.Hour, Now: func() time.Time { return now },
+		interruptedBackstop: map[vector.GenerationID]bool{1: true},
+	}
+
+	job.Run(ctx)
+	n, _ := runner.backstops()
+	require.Equal(t, 1, n)
+	assert.WithinDuration(t, now, job.lastBackstop[1], 0)
+	assert.Empty(t, job.interruptedBackstop, "a completed backstop clears an earlier interruption")
+
+	runner.onBackstop = nil
+	now = now.Add(time.Minute)
+	job.Run(t.Context())
+	n, _ = runner.backstops()
+	assert.Equal(t, 1, n, "the continuation must preserve the completed cursor until the next interval")
+}
