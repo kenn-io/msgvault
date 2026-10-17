@@ -69,9 +69,6 @@
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
 
-  const actionLifetime = new AbortController();
-  onDestroy(() => actionLifetime.abort());
-
   type IdentityFileScope =
     | {
         kind: 'person';
@@ -530,8 +527,8 @@
       return false;
     }
     if (!cursor) {
-      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), actionLifetime.signal);
-      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), actionLifetime.signal);
+      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), signal);
+      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), signal);
     }
     if (cursor) seenCursors.add(cursor);
     error = '';

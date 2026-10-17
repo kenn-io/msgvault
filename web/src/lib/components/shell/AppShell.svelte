@@ -85,9 +85,6 @@
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
-  const actionLifetime = new AbortController();
-  onDestroy(() => actionLifetime.abort());
-
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -529,7 +526,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
-      onSearchAccepted: (query, mode) => { reportWhenVisible(() => reportSearch(client, query, mode), actionLifetime.signal); },
+      onSearchAccepted: (query, mode, signal) => { reportWhenVisible(() => reportSearch(client, query, mode), signal); },
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the

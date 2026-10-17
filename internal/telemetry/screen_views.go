@@ -68,6 +68,10 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
+	if _, action := actionProperties[req.Event]; !action && req.Event != EventScreenViewed {
+		h.capture.ServeHTTP(w, r)
+		return
+	}
 	req.Properties, _ = h.reporter.SanitizeProperties(req.Event, req.Properties)
 	if required, action := actionProperties[req.Event]; action {
 		for key := range required {

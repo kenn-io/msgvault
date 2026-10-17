@@ -10,9 +10,6 @@
   import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
-  const actionLifetime = new AbortController();
-  onDestroy(() => actionLifetime.abort());
-
   let { client, attachmentID, messageID, filename }: {
     client: APIClient; attachmentID: number; messageID: number; filename: string;
   } = $props();
@@ -25,17 +22,21 @@
   let searched = $state(false);
   let error = $state('');
   let generation = 0;
+  let controller: AbortController | undefined;
   onDestroy(close);
 
   async function search(): Promise<void> {
     if (!query.trim() || busy) return;
     const request = ++generation, submitted = query.trim();
+    controller?.abort();
+    const requestController = new AbortController();
+    controller = requestController;
     busy = true; error = ''; hits = []; searched = true;
     try {
-      const { data, error: failure } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, client);
+      const { data, error: failure } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, { ...client, signal: requestController.signal });
       if (request !== generation) return;
       if (!data) throw new Error(errorMessage(failure, 'This file has no searchable text yet.'));
-      reportWhenVisible(() => reportSearch(client, submitted, 'full_text'), actionLifetime.signal);
+      reportWhenVisible(() => reportSearch(client, submitted, 'full_text'), requestController.signal);
       // A filename match names the file, not a passage in it.
       hits = data.results.filter((hit) => hit.attachment_id === attachmentID && hit.message_id === messageID && hit.extraction_id && hit.chunk_key && hit.matched_signals.includes('content'));
     } catch (cause) {
@@ -51,7 +52,7 @@
     selected = { kind: 'document_chunk', attachment_id: attachmentID, message_id: messageID, extraction_id: hit.extraction_id, chunk_key: hit.chunk_key, start_rune: hit.excerpt_start_rune, max_chars: EVIDENCE_WINDOW };
   }
 
-  function close(): void { generation++; busy = false; open = false; selected = undefined; }
+  function close(): void { generation++; controller?.abort(); busy = false; open = false; selected = undefined; }
 
   // Every kit-ui Modal hears Escape on the window, and the file viewer's was
   // registered first; claiming it during capture closes only this picker.
