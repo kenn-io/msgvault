@@ -87,15 +87,17 @@ func TestIdleTrackerInternalWorkBlocksIdle(t *testing.T) {
 
 func TestIdleTrackerRejectsRequestsAfterDrainStarts(t *testing.T) {
 	t.Parallel()
-	f := newIdleTrackerFixture(t, 1*time.Millisecond)
-	f.run(t)
+	synctest.Test(t, func(t *testing.T) {
+		f := newIdleTrackerFixture(t, 1*time.Millisecond)
+		f.run(t)
 
-	f.requireFiredWithin(t, time.Second, "idle did not fire")
+		f.requireFiredWithin(t, time.Second, "idle did not fire")
 
-	rec := serveTrackedNoContent(t, f.tracker)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		rec := serveTrackedNoContent(t, f.tracker)
+		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
-	done, ok := f.tracker.BeginWork()
-	assert.False(t, ok, "BeginWork after draining")
-	done()
+		done, ok := f.tracker.BeginWork()
+		assert.False(t, ok, "BeginWork after draining")
+		done()
+	})
 }
