@@ -14,7 +14,10 @@
 // relevance can be layered on later without changing the command surface.
 package eval
 
-import "math"
+import (
+	"math"
+	"slices"
+)
 
 // Cutoffs are the rank depths one run scores at. They travel with the run
 // rather than being baked into the metric names because a cutoff deeper than
@@ -253,4 +256,38 @@ func (a *Aggregate) Mean() Scores {
 		MAP:    a.sumMAP / n,
 		MRR:    a.sumMRR / n,
 	}
+}
+
+// GradedNDCGAt uses exponential gains (2^grade - 1), discounted by rank.
+// Repeated documents earn credit once; missing and nonpositive grades earn none.
+func GradedNDCGAt(ranked []string, gains map[string]int, k int) float64 {
+	if k <= 0 {
+		return 0
+	}
+	ideal := make([]int, 0, len(gains))
+	for _, grade := range gains {
+		if grade > 0 {
+			ideal = append(ideal, grade)
+		}
+	}
+	slices.SortFunc(ideal, func(a, b int) int { return b - a })
+	dcg, idcg := 0.0, 0.0
+	seen := map[string]bool{}
+	for i := range k {
+		discount := math.Log2(float64(i) + 2)
+		if i < len(ideal) {
+			idcg += (math.Exp2(float64(ideal[i])) - 1) / discount
+		}
+		if i < len(ranked) {
+			id := ranked[i]
+			if grade := gains[id]; grade > 0 && !seen[id] {
+				dcg += (math.Exp2(float64(grade)) - 1) / discount
+			}
+			seen[id] = true
+		}
+	}
+	if idcg == 0 {
+		return 0
+	}
+	return dcg / idcg
 }
