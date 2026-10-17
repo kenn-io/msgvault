@@ -2092,7 +2092,8 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `sync_finished` after each successful manual archive sync, including no-change runs
   and remote Muesli scans. Browser completion reports after you leave Sources. The CLI
   reports its own completions with a best-effort 250 ms bound. Delivery failures leave
-  successful commands successful. Only searches and reads require a terminal. Agents,
+  successful commands successful. CLI actions require a terminal on stdin, stdout,
+  or stderr, so a person can pipe output while unattended runs stay excluded. Agents,
   subprocesses, probes, hooks, and watch loops don't report CLI actions. CardDAV contact
   sync is separate.
 - `session_ended` when a browser tab closes, reloads, stays hidden for 30 minutes, or the
