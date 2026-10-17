@@ -198,8 +198,8 @@ func senderKeysForSource(
 // ownerAccessAuthorized accepts the daemon owner API key or the library
 // caller's admission of this operation.
 func (s *Server) ownerAccessAuthorized(r *http.Request) bool {
-	mode := s.requestAuthentication(r).Mode
-	return mode == AuthModeAPIKey || mode == AuthModeCaller
+	auth := s.requestAuthentication(r)
+	return (auth.Mode == AuthModeAPIKey || auth.Mode == AuthModeCaller) && s.apiRequestAuthorized(r)
 }
 
 // handleIssueAgentToken issues a new restricted agent grant.

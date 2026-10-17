@@ -364,6 +364,29 @@ upgrade procedure.
 - **Cancellation**: Context-based cancellation for long operations
 - **Encoding**: Charset detection via `gogs/chardet`, conversion via `golang.org/x/text/encoding`
 
+### API operation authorization
+
+Add every new `/api/v1/` operation to
+`internal/api/operation_policy.go`. Choose its required permission explicitly.
+Unknown operations require `archive.admin` and admit neither agent grants nor
+remote clients. `TestEveryAPIV1OperationIsClassified` walks the registered
+client OpenAPI document, including hidden CLI routes, and rejects missing or
+stale entries.
+
+The table keeps role permissions separate from legacy credential admission.
+`AgentReadPermission` selects an existing grant-aware read path. `Delegated`
+admits other grant-aware handlers, which still check their selected resources.
+The remote-client fields preserve the remote CLI contract. A role permission
+alone does not admit either credential class.
+
+Source support records proven native enforcement for role principals. Keep
+`ScopeNone` until a regression demonstrates that hidden sources cannot affect
+the response. Grant-specific filtering does not prove native support. Use
+`ScopeIndependent` only when the operation discloses no source-dependent data;
+authenticated health includes account labels and does not qualify. Mixed-action
+operations also need action, target and sender checks before broader role
+admission. Until those exist, keep them administrative.
+
 ## SQL Guidelines
 
 - **Never use `SELECT DISTINCT` with JOINs**: use `EXISTS` subqueries instead (semi-joins)

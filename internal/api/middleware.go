@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/authz"
 	"go.kenn.io/msgvault/internal/config"
 	"golang.org/x/time/rate"
 )
@@ -229,6 +230,7 @@ func isLoopbackRequest(r *http.Request) bool {
 
 type requestAuthentication struct {
 	Mode                  AuthMode
+	Principal             authz.Principal
 	SessionID             string
 	Session               browserSession
 	trustedForCLIDuration bool
@@ -251,7 +253,22 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 			return requestAuthentication{Mode: AuthModeRequired}
 		}
 		if grant, ok := s.agentGrants.Lookup(agentVal); ok {
-			return requestAuthentication{Mode: AuthModeDelegated, Grant: &grant}
+			permissions := make(authz.PermissionSet, len(grant.Permissions))
+			for _, permission := range grant.Permissions {
+				permissions[permission] = struct{}{}
+			}
+			return requestAuthentication{
+				Mode: AuthModeDelegated, Grant: &grant,
+				Principal: authz.Principal{
+					ID: "grant:" + grant.ID, Kind: authz.KindGrant, DisplayName: grant.Label,
+					Permissions: permissions, ExpiresAt: grant.ExpiresAt,
+					// Pending durable source references remain on Grant. IDs are
+					// resolved only within beginAgentRead's bounded snapshot.
+					Sources: &authz.SourceScope{},
+					Persons: &authz.PersonScope{Persons: slices.Clone(grant.Persons)},
+					Books:   &authz.AddressBookScope{Books: slices.Clone(grant.AddressBooks)},
+				},
+			}
 		}
 		return requestAuthentication{Mode: AuthModeRequired}
 	}
@@ -262,6 +279,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if s.cfg.Server.AuthenticationKey() == "" {
 		return requestAuthentication{
 			Mode:                  AuthModeLoopback,
+			Principal:             authz.Principal{ID: "loopback", Kind: authz.KindLoopback, Role: authz.RoleAdmin},
 			trustedForCLIDuration: isLoopbackRequest(r),
 		}
 	}
@@ -276,13 +294,19 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 	if constantTimeAPIKeyEqual(authHeader, s.cfg.Server.AuthenticationKey()) {
 		return requestAuthentication{
 			Mode:                  AuthModeAPIKey,
+			Principal:             authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin},
 			trustedForCLIDuration: true,
 		}
 	}
 	for i := range s.cfg.Server.RemoteClients {
 		if client := &s.cfg.Server.RemoteClients[i]; client.APIKey != "" && constantTimeAPIKeyEqual(authHeader, client.APIKey) {
+			permissions := authz.PermissionSet{authz.PermissionCLIRead: {}}
+			if client.CollectionsWrite {
+				permissions[authz.PermissionCollectionsWrite] = struct{}{}
+			}
 			return requestAuthentication{
 				Mode:                  AuthModeRemoteClient,
+				Principal:             authz.Principal{ID: "remote:" + client.ClientID, Kind: authz.KindRemoteClient, DisplayName: client.ClientID, Permissions: permissions},
 				RemoteClient:          client,
 				trustedForCLIDuration: true,
 			}
@@ -293,6 +317,7 @@ func (s *Server) classifyAPIRequestDirect(r *http.Request) requestAuthentication
 		if session, ok := s.sessions.lookup(cookie.Value); ok {
 			return requestAuthentication{
 				Mode:      AuthModeSession,
+				Principal: authz.Principal{ID: "owner", Kind: authz.KindOwner, Role: authz.RoleAdmin, ExpiresAt: session.ExpiresAt},
 				SessionID: cookie.Value,
 				Session:   session,
 			}
@@ -335,12 +360,7 @@ func ownerCredentialPresented(r *http.Request) bool {
 }
 
 func (s *Server) apiRequestAuthorized(r *http.Request) bool {
-	switch s.requestAuthentication(r).Mode {
-	case AuthModeLoopback, AuthModeAPIKey, AuthModeSession, AuthModeCaller:
-		return true
-	default:
-		return false
-	}
+	return s.requestAuthentication(r).Principal.Has(authz.PermissionArchiveAdmin)
 }
 
 // requestGateEligible reports whether the request should participate in the
