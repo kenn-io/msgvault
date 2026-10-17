@@ -65,9 +65,13 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
-  import { reportAction, reportSearch } from '../../telemetry/actions';
+  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
+
+  const actionLifetime = new AbortController();
+  onDestroy(() => actionLifetime.abort());
+
   type IdentityFileScope =
     | {
         kind: 'person';
@@ -526,8 +530,8 @@
       return false;
     }
     if (!cursor) {
-      reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text');
-      if (body.visual_query || body.visual_image_base64) reportAction(client, 'search_run', 'search_type', 'semantic');
+      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), actionLifetime.signal);
+      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), actionLifetime.signal);
     }
     if (cursor) seenCursors.add(cursor);
     error = '';

@@ -368,8 +368,9 @@ type Model struct {
 	reportedDay    string
 	contentScreen  string
 
-	reportAction    func(context.Context, string, string, string) error
-	visibleDetailID int64
+	reportAction       func(context.Context, string, string, string) error
+	visibleDetailID    int64
+	messageReportedDay string
 
 	// Top-level mode: Email or Texts
 	mode tuiMode
@@ -1392,7 +1393,8 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 		if detail := updated.displayedDetail(); detail != nil && updated.transitionBuffer == "" && !updated.settings.active {
 			detailID = detail.ID
 		}
-		if detailID != 0 && (detailID != updated.visibleDetailID || updated.mode != m.mode) {
+		if detailID != 0 && (detailID != updated.visibleDetailID || updated.mode != m.mode || interaction && day != updated.messageReportedDay) {
+			updated.messageReportedDay = day
 			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
 		}
 		updated.visibleDetailID = detailID

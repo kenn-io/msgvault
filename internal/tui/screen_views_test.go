@@ -100,6 +100,13 @@ func TestMessageOpenedFollowsReadableTransitions(t *testing.T) {
 			m.messageDetail.ID, m.meetingState.detail.ID = 2, 2
 			update(tea.WindowSizeMsg{Width: 100, Height: 24})
 			assert.Equal(3, calls)
+			m.messageReportedDay = "2020-01-01"
+			update(spinnerTickMsg{})
+			assert.Equal(3, calls)
+			update(key('x'))
+			assert.Equal(4, calls, "first key press on a new UTC day reports the same readable detail")
+			update(key('x'))
+			assert.Equal(4, calls)
 		})
 	}
 }

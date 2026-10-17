@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -96,91 +97,90 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 	}
 
 	if showMessageJSON {
-		return outputMessageJSON(msg)
+		return outputMessageJSON(cmd.OutOrStdout(), msg)
 	}
-	return outputMessageText(msg)
+	return outputMessageText(cmd.OutOrStdout(), msg)
 }
 
-// nil error return mirrors outputMessageJSON so callers can return either
-// uniformly; text printing never fails.
-func outputMessageText(msg *query.MessageDetail) error {
+func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
+	output := bufio.NewWriter(w)
 	body := messageTextBody(msg, showMessageStripQuoted)
 	if showMessageBodyOnly {
-		fmt.Println(textutil.SanitizeTerminalMultiline(body))
-		return nil
+		fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
+		return output.Flush()
 	}
 	// Header section
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
-	fmt.Printf("Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
+	fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
+	fmt.Fprintf(output, "Message ID: %d (Gmail: %s)\n", msg.ID, msg.SourceMessageID)
 	if msg.RelatedMessageID != nil {
-		fmt.Printf("Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
+		fmt.Fprintf(output, "Related message: %d (show-message %d)\n", *msg.RelatedMessageID, *msg.RelatedMessageID)
 	}
-	fmt.Println("───────────────────────────────────────────────────────────────────────────────")
+	fmt.Fprintln(output, "───────────────────────────────────────────────────────────────────────────────")
 
 	// From
 	if len(msg.From) > 0 {
-		fmt.Printf("From:    %s\n", formatAddresses(msg.From))
+		fmt.Fprintf(output, "From:    %s\n", formatAddresses(msg.From))
 	}
 
 	// To
 	if len(msg.To) > 0 {
-		fmt.Printf("To:      %s\n", formatAddresses(msg.To))
+		fmt.Fprintf(output, "To:      %s\n", formatAddresses(msg.To))
 	}
 
 	// CC
 	if len(msg.Cc) > 0 {
-		fmt.Printf("Cc:      %s\n", formatAddresses(msg.Cc))
+		fmt.Fprintf(output, "Cc:      %s\n", formatAddresses(msg.Cc))
 	}
 
 	// BCC
 	if len(msg.Bcc) > 0 {
-		fmt.Printf("Bcc:     %s\n", formatAddresses(msg.Bcc))
+		fmt.Fprintf(output, "Bcc:     %s\n", formatAddresses(msg.Bcc))
 	}
 
 	// Subject
-	fmt.Printf("Subject: %s\n", msg.Subject)
+	fmt.Fprintf(output, "Subject: %s\n", msg.Subject)
 
 	// Date
-	fmt.Printf("Date:    %s\n", msg.SentAt.Format(time.RFC1123))
+	fmt.Fprintf(output, "Date:    %s\n", msg.SentAt.Format(time.RFC1123))
 
 	// Size
-	fmt.Printf("Size:    %s\n", formatSize(msg.SizeEstimate))
+	fmt.Fprintf(output, "Size:    %s\n", formatSize(msg.SizeEstimate))
 
 	// Labels
 	if len(msg.Labels) > 0 {
-		fmt.Printf("Labels:  %s\n", textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
+		fmt.Fprintf(output, "Labels:  %s\n", textutil.SanitizeTerminal(strings.Join(msg.Labels, ", ")))
 	}
 	if msg.DeletedAt != nil {
-		fmt.Printf("Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(output, "Deleted from source: %s\n", msg.DeletedAt.UTC().Format(time.RFC3339))
 	}
 
 	// Attachments
 	if len(msg.Attachments) > 0 {
-		fmt.Println("\nAttachments:")
+		fmt.Fprintln(output, "\nAttachments:")
 		for _, att := range msg.Attachments {
 			if att.URL != "" {
-				fmt.Printf("  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
+				fmt.Fprintf(output, "  • %s (%s, link) %s\n", att.Filename, att.MimeType, att.URL)
 			} else {
-				fmt.Printf("  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
+				fmt.Fprintf(output, "  • %s (%s, %s)\n", att.Filename, att.MimeType, formatSize(att.Size))
 			}
 			for _, ref := range att.Docbank {
-				fmt.Printf("    Docbank node %d (%s)\n", ref.NodeID, textutil.SanitizeTerminal(ref.Endpoint+ref.Folder))
+				fmt.Fprintf(output, "    Docbank node %d (%s)\n", ref.NodeID, textutil.SanitizeTerminal(ref.Endpoint+ref.Folder))
 			}
 		}
 	}
 
 	// Body
-	fmt.Println("\n═══════════════════════════════════════════════════════════════════════════════")
+	fmt.Fprintln(output, "\n═══════════════════════════════════════════════════════════════════════════════")
 	if msg.BodyText != "" {
-		fmt.Println(textutil.SanitizeTerminalMultiline(body))
+		fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 	} else if msg.Snippet != "" {
-		fmt.Printf("[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
+		fmt.Fprintf(output, "[No body text available. Snippet: %s]\n", textutil.SanitizeTerminal(body))
 	} else {
-		fmt.Println("[No body content available]")
+		fmt.Fprintln(output, "[No body content available]")
 	}
-	fmt.Println("═══════════════════════════════════════════════════════════════════════════════")
+	fmt.Fprintln(output, "═══════════════════════════════════════════════════════════════════════════════")
 
-	return nil
+	return output.Flush()
 }
 
 func messageJSONValue(msg *query.MessageDetail) map[string]any {
@@ -257,11 +257,11 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 	return output
 }
 
-func outputMessageJSON(msg *query.MessageDetail) error {
+func outputMessageJSON(w io.Writer, msg *query.MessageDetail) error {
 	if showMessageStripQuoted {
 		msg = readableMessageDetail(msg)
 	}
-	enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
 	return json.MarshalEncode(enc, messageJSONValue(msg), json.Deterministic(true))
 }
 

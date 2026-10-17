@@ -29,6 +29,9 @@ func run() int {
 	defer cancel()
 
 	if err := cmd.ExecuteContext(ctx); err != nil {
+		if errors.Is(err, cmd.ErrSyncPaused) {
+			return cmd.ExitCodeSyncPaused
+		}
 		if isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
 		}

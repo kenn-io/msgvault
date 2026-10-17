@@ -85,10 +85,13 @@ func runDaemonCLICommandHTTPWithEnv(
 	}
 
 	draftFailureReported := false
+	paused := false
 	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{
 		Args: args, Env: env, Cwd: cwd, GrantDecided: grantDecided,
 	}, func(stream, data string) error {
 		switch stream {
+		case "outcome":
+			paused = paused || data == "paused"
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
 				return fmt.Errorf("write CLI stdout: %w", err)
@@ -112,7 +115,7 @@ func runDaemonCLICommandHTTPWithEnv(
 		cmd.SilenceErrors = true
 		return errCLISubprocessProxied
 	}
-	if runErr == nil && manualSyncCLICommand(args) && cmd.Name() != "muesli-hook" {
+	if runErr == nil && !paused && manualSyncCLICommand(args) && cmd.Name() != "muesli-hook" {
 		reportCLIAction(cmd, st, "sync_finished", "", "")
 	}
 	return runErr

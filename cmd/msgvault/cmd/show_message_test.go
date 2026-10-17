@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,7 +22,7 @@ import (
 func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
 	assert := assert.New(t)
 	done := captureStdout(t)
-	err := outputMessageText(&query.MessageDetail{
+	err := outputMessageText(os.Stdout, &query.MessageDetail{
 		ID:              42,
 		SourceMessageID: "remote-42",
 		SentAt:          time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC),
@@ -40,7 +41,7 @@ func TestOutputMessageTextSanitizesMultilineBody(t *testing.T) {
 func TestOutputMessageTextShowsDeletedFromSource(t *testing.T) {
 	deletedAt := time.Date(2026, time.August, 17, 20, 19, 46, 0, time.FixedZone("UTC+2", 2*60*60))
 	done := captureStdout(t)
-	err := outputMessageText(&query.MessageDetail{
+	err := outputMessageText(os.Stdout, &query.MessageDetail{
 		ID:              42,
 		SourceMessageID: "remote-42",
 		SentAt:          time.Date(2026, time.August, 17, 18, 11, 25, 0, time.UTC),
@@ -57,13 +58,13 @@ func TestOutputMessageJSONShowsDeletedFromSourceOnlyWhenPresent(t *testing.T) {
 	require := require.New(t)
 	deletedAt := time.Date(2026, time.August, 17, 20, 19, 46, 0, time.FixedZone("UTC+2", 2*60*60))
 	done := captureStdout(t)
-	require.NoError(outputMessageJSON(&query.MessageDetail{DeletedAt: &deletedAt}))
+	require.NoError(outputMessageJSON(os.Stdout, &query.MessageDetail{DeletedAt: &deletedAt}))
 	var got map[string]any
 	require.NoError(json.Unmarshal([]byte(done()), &got))
 	assert.Equal("2026-08-17T18:19:46Z", got["deleted_from_source_at"])
 
 	done = captureStdout(t)
-	require.NoError(outputMessageJSON(&query.MessageDetail{}))
+	require.NoError(outputMessageJSON(os.Stdout, &query.MessageDetail{}))
 	got = nil
 	require.NoError(json.Unmarshal([]byte(done()), &got))
 	assert.NotContains(got, "deleted_from_source_at")
@@ -256,7 +257,7 @@ func TestOutputMessageSanitizesTextLabelsAndPreservesRelatedID(t *testing.T) {
 	label := "Résolu\x1b[2J\x1b]52;c;eA==\x07\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\"
 	msg := &query.MessageDetail{RelatedMessageID: new(int64(43)), Labels: []string{label, "ordinary"}}
 	done := captureStdout(t)
-	err := outputMessageText(msg)
+	err := outputMessageText(os.Stdout, msg)
 	out := done()
 	require.NoError(err)
 	assert.Contains(out, "Labels:  Résolulink, ordinary\n")
@@ -264,7 +265,7 @@ func TestOutputMessageSanitizesTextLabelsAndPreservesRelatedID(t *testing.T) {
 	assert.Contains(out, "show-message 43")
 
 	done = captureStdout(t)
-	err = outputMessageJSON(msg)
+	err = outputMessageJSON(os.Stdout, msg)
 	out = done()
 	require.NoError(err)
 	var got struct {
@@ -306,7 +307,7 @@ func TestOutputMessageJSONIncludesAbsentRFCMessageID(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	done := captureStdout(t)
-	err := outputMessageJSON(&query.MessageDetail{})
+	err := outputMessageJSON(os.Stdout, &query.MessageDetail{})
 	output := done()
 	requirements.NoError(err)
 	var decoded map[string]any
@@ -318,7 +319,7 @@ func TestOutputMessageJSONIncludesAbsentRFCMessageID(t *testing.T) {
 
 func TestOutputMessageJSONIncludesBrowserURL(t *testing.T) {
 	done := captureStdout(t)
-	require.NoError(t, outputMessageJSON(&query.MessageDetail{ID: 42, WebURL: "https://archive.example/messages/42"}))
+	require.NoError(t, outputMessageJSON(os.Stdout, &query.MessageDetail{ID: 42, WebURL: "https://archive.example/messages/42"}))
 	var result map[string]any
 	require.NoError(t, json.Unmarshal([]byte(done()), &result))
 	assert.Equal(t, "https://archive.example/messages/42", result["web_url"])
@@ -332,7 +333,7 @@ func TestMessageAttachmentDocbankTextView(t *testing.T) {
 		{ID: 1, Filename: "report.pdf", Docbank: []store.DocbankAttachmentRef{{Endpoint: "https://docbank.example.com", Folder: "/msgvault\x1b[31m", NodeID: 8, BlobHash: "hash"}}},
 		{ID: 2, Filename: "photo.png", Docbank: []store.DocbankAttachmentRef{{Endpoint: "https://docbank.example.com", Folder: "/msgvault", NodeID: 9, BlobHash: "other"}}},
 	}}
-	require.NoError(outputMessageText(msg))
+	require.NoError(outputMessageText(os.Stdout, msg))
 	output := done()
 	first := strings.Index(output, "• report.pdf")
 	firstNode := strings.Index(output, "Docbank node 8 (https://docbank.example.com/msgvault)")

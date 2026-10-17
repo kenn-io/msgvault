@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json/v2"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -51,15 +52,32 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			invocationFromCommand(cmd).cfg.Muesli = []config.MuesliSource{{Identifier: "archive", AccountEmail: "user@example.com", DBPath: path, Contacts: &disabled}}
 			return runMuesliClientSync(cmd, nil, 0)
 		},
+		"sync-omi": func(cmd *cobra.Command) error {
+			return runDaemonCLICommandHTTPWithEnv(cmd, []string{"sync-omi"}, nil, false, false)
+		},
 		"sync-slack": func(cmd *cobra.Command) error {
 			return runDaemonCLICommandHTTPWithEnv(cmd, []string{"sync-slack"}, nil, false, false)
 		},
 	} {
-		for _, fails := range []bool{false, true} {
+		for _, outcome := range []struct {
+			name                                   string
+			fails, paused, outputFails, json, body bool
+		}{
+			{name: "success"},
+			{name: "failure", fails: true},
+			{name: "paused", paused: true},
+			{name: "output failure", outputFails: true},
+			{name: "JSON output failure", outputFails: true, json: true},
+			{name: "body output failure", outputFails: true, body: true},
+		} {
+			fails, outputFails := outcome.fails, outcome.outputFails
+			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
+				continue
+			}
 			if (action == "muesli-hook" || action == "sync-muesli") && fails {
 				continue
 			}
-			t.Run(fmt.Sprintf("%s/failure=%v", action, fails), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				var events []map[string]any
 				mux := http.NewServeMux()
@@ -87,6 +105,17 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
 					case "documents":
 						_, _ = w.Write([]byte(`{"results":[],"effective_mode":"hybrid"}`))
+					case "sync-omi":
+						w.Header().Set("Content-Type", "application/x-ndjson")
+						_, _ = fmt.Fprintln(w, `{"type":"stdout","data":"Omi sync output"}`)
+						var waitErr error
+						if outcome.paused {
+							waitErr = helperProcessCommand(r.Context(), "paused").Run()
+						}
+						assert.NoError(classifyDaemonCLIWaitErr(waitErr, []string{"sync-omi"}, func(stream, data string) error {
+							return json.MarshalWrite(w, map[string]string{"type": stream, "data": data})
+						}))
+						_, _ = fmt.Fprintln(w, "\n"+`{"type":"complete"}`)
 					case "sync", "sync-slack", "muesli-hook":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
@@ -114,14 +143,26 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					writeStatsHTTPDaemonRuntime(t, state.cfg.Data.DataDir, server)
 					cmd.SetIn(strings.NewReader(`{"schemaVersion":1,"event":"meeting.completed","kind":"meeting","id":42,"completedAt":"2026-09-01T16:00:00Z"}`))
 				}
+				if outputFails {
+					cmd.SetOut(failingSearchWriter{})
+					oldJSON, oldBody := showMessageJSON, showMessageBodyOnly
+					showMessageJSON, showMessageBodyOnly = outcome.json, outcome.body
+					t.Cleanup(func() { showMessageJSON, showMessageBodyOnly = oldJSON, oldBody })
+				}
 				err := run(cmd)
-				if fails {
+				if fails || outputFails {
 					require.Error(err)
+					if outputFails {
+						require.ErrorIs(err, io.ErrClosedPipe)
+					}
 				} else {
 					require.NoError(err, "telemetry failures leave the action successful")
 				}
 				kind := map[string]string{"search": "text", "show-message": "", "documents": "hybrid", "visual": "semantic", "vector": "semantic", "hybrid": "hybrid"}[action]
-				if action == "muesli-hook" || fails {
+				if action == "sync-omi" && !fails {
+					assert.Equal("Omi sync output", cmd.OutOrStdout().(*bytes.Buffer).String())
+				}
+				if action == "muesli-hook" || fails || outputFails || outcome.paused {
 					assert.Empty(events)
 					return
 				}

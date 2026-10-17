@@ -385,7 +385,8 @@ describe('ConversationView', () => {
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/conversations/7');
   });
 
-  it('fetches an omitted body on expansion and reports it once readable', async () => {
+  it.each(['visible', 'visibilitychange', 'focus', 'destroy'])('fetches an omitted body and reports once readable after %s', async (trigger) => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
     const requests: Request[] = [];
     let resolveBody!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -402,7 +403,7 @@ describe('ConversationView', () => {
     });
 
     const client = createAPIClient(fetchFn);
-    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+    const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
 
     await screen.findByText('Loading message…');
     expect(screen.queryByText('Fetched body 1')).toBeNull();
@@ -413,7 +414,24 @@ describe('ConversationView', () => {
     await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
     expect(requests).toHaveLength(2);
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
-    await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
+    if (trigger !== 'visible') {
+      expect(telemetryEvents).toHaveLength(0);
+      if (trigger === 'destroy') view.unmount();
+      visibility.mockReturnValue('visible');
+      if (trigger === 'visibilitychange') await fireEvent(document, new Event('visibilitychange'));
+      else await fireEvent(window, new Event('focus'));
+    }
+    if (trigger === 'destroy') {
+      expect(telemetryEvents).toHaveLength(0);
+    } else {
+      await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
+      await fireEvent(window, new Event('focus'));
+      await waitFor(() => expect(telemetryEvents).toHaveLength(2));
+      view.unmount();
+      await fireEvent(window, new Event('focus'));
+      expect(telemetryEvents).toHaveLength(2);
+    }
+    visibility.mockRestore();
   });
 
   it('surfaces a failed body fetch inside the card and retries on re-expand', async () => {

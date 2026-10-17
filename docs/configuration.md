@@ -2090,7 +2090,8 @@ features once published. No startup hook or entrypoint wrapper is required.
   `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install
   and UTC day. Event and item readers don't count.
 - `sync_finished` after each successful manual archive sync, including no-change runs
-  and remote Muesli scans. The daemon reports browser-started sync completions even
+  and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count
+  on any surface. The daemon reports browser-started sync completions even
   after you leave Sources. The CLI reports its own completions with a best-effort
   250 ms bound. Delivery failures leave
   successful commands successful. CLI actions require a terminal on stdin, stdout,

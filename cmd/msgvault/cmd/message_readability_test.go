@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -48,7 +49,7 @@ func TestMessageBodyOnlyOutput(t *testing.T) {
 	t.Cleanup(func() { showMessageBodyOnly = savedBodyOnly; showMessageStripQuoted = savedStrip })
 	showMessageBodyOnly, showMessageStripQuoted = true, true
 	done := captureStdout(t)
-	err := outputMessageText(&query.MessageDetail{Subject: "hidden header", BodyText: "Current reply\n> old text"})
+	err := outputMessageText(os.Stdout, &query.MessageDetail{Subject: "hidden header", BodyText: "Current reply\n> old text"})
 	got := done()
 	require.NoError(err)
 	assert.Equal("Current reply\n", got)
@@ -67,7 +68,7 @@ func TestMessageJSONStripQuotedPreview(t *testing.T) {
 			showMessageStripQuoted = true
 			message := &query.MessageDetail{BodyText: tc.body, Snippet: tc.snippet}
 			done := captureStdout(t)
-			err := outputMessageJSON(message)
+			err := outputMessageJSON(os.Stdout, message)
 			output := done()
 			require.NoError(err)
 			var fields map[string]any
@@ -86,7 +87,7 @@ func TestMessageTextStripQuotedDoesNotRestorePreview(t *testing.T) {
 			t.Cleanup(func() { showMessageBodyOnly = savedBodyOnly; showMessageStripQuoted = savedStrip })
 			showMessageBodyOnly, showMessageStripQuoted = bodyOnly, true
 			done := captureStdout(t)
-			err := outputMessageText(&query.MessageDetail{BodyText: "> old text", Snippet: "stale preview"})
+			err := outputMessageText(os.Stdout, &query.MessageDetail{BodyText: "> old text", Snippet: "stale preview"})
 			output := done()
 			require.NoError(t, err)
 			assert.NotContains(t, output, "old text")
