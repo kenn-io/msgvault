@@ -47,6 +47,34 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it.each(['http', 'network'])('reports an image-only search failure from %s', async (failure) => {
+    sessionStorage.clear();
+    const events: unknown[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+        events.push(await request.json());
+        return Response.json({ status: 'queued' });
+      }
+      const body = await request.json();
+      if (body.visual_image_base64) {
+        if (failure === 'network') throw new TypeError('Image search unavailable');
+        return Response.json({ message: 'Image search unavailable' }, { status: 503 });
+      }
+      return Response.json(response());
+    });
+    render(FilesWorkspace, {
+      client, predicate: { query: '', search_mode: 'full_text', filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' },
+    });
+    await screen.findByText('fixture.pdf');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
+    await screen.findByText('Image search unavailable');
+    await waitFor(() => expect(events).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: failure === 'network' ? 'network' : 'provider' } }));
+  });
+
   it.each(['text', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
     const events: Array<{ properties: { search_type: string } }> = [];
     let textSearchRequests = 0, resolveStale!: (response: Response) => void;
