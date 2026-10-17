@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -18,7 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -27,6 +27,50 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## loops
+
+Find unanswered conversation turns and manage the owner's derived list through
+the selected daemon. See [Open loops](usage/open-loops.md) for the detector's
+exclusions and freshness policy.
+
+```bash
+msgvault loops waiting --top 10
+msgvault loops waiting --allow-stale --as-of 2026-10-17T12:00:00Z --json
+msgvault loops list --kind awaiting_reply --status open --person 7 --limit 50
+msgvault loops show 12 --json
+msgvault loops done 12 --note "Handled elsewhere"
+msgvault loops snooze 12 --until 48h
+msgvault loops unsnooze 12
+msgvault loops mute person 7 --note "No follow-up needed" --dry-run
+msgvault loops mute participant 42
+msgvault loops mute conversation 77
+msgvault loops unmute person 7
+msgvault loops mutes --json
+msgvault loops status --json
+msgvault loops run
+msgvault loops rebuild
+```
+
+| Command | Flags and behavior |
+|---|---|
+| `waiting` | `--top` 1..50, default 10; `--json`, `--allow-stale`, `--as-of` RFC3339 |
+| `list` | `--kind`, `--status` open/held/closed/all (default open), `--person`, `--source-id`, `--include-snoozed`, `--limit` 1..200 (default 50), `--cursor`, `--json` |
+| `show` | One loop ID; `--json` includes evidence references and freshness |
+| `done` | One loop ID; optional `--note`; completing a closed loop fails |
+| `snooze` | One loop ID; required future `--until` as YYYY-MM-DD (local midnight), RFC3339 or duration |
+| `unsnooze` | One loop ID; remove its snooze |
+| `mute` | Exactly one person, participant or conversation ID; `--note`, `--dry-run` |
+| `unmute` | Exactly one target kind and ID; enqueue its current conversations for reconciliation |
+| `mutes` | List suppression records; `--json` |
+| `status` | Projection, queue and backfill progress plus freshness; `--json` |
+| `run`, `rebuild` | Return started, pending or coalesced promptly; rebuild retains owner decisions |
+
+`waiting` groups open obligations owed by you, excludes snoozed loops, and
+orders people by their oldest unanswered turn. A stale archive returns exit
+status 2 and the typed `loops_stale` JSON envelope. `--allow-stale` keeps the
+warning and returns the ranking. List, show and status remain readable with
+warnings on stderr. Refresh commands in the freshness report name each source.
 
 ## meetings
 

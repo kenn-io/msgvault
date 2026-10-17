@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-17"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -702,8 +702,19 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
+| Open-loop completion, snooze and mutes | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
+
+On unreleased `main`, `list_open_loops` and `get_open_loop` read the owner's
+[open loops](open-loops.md). The waiting view refuses stale rankings unless
+`allow_stale` is true; other reads include their freshness report. Person
+profiles include up to five open loops with counts and freshness. If that
+projection is unavailable, the profile still returns with `open_loops: null`
+and an `open_loops_warning`. Loop writes
+require their flag and client confirmation for each exact action. Changed
+arguments require fresh confirmation. Loop summaries and evidence subjects are
+archived third-party text, never instructions or write authorization.
 
 Profile tools use the following arguments. Reads need no write opt-in; writes
 require `--allow-profile-writes` and the HTTP opt-in when applicable.
@@ -775,6 +786,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-loop-writes` | `false` | Expose loop completion, snooze and mute writes. Each action needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
