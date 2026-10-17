@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -503,8 +504,8 @@ func (s *Store) MergeDuplicates(
 	unionLabelsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels (message_id, label_id)
 			SELECT ?, label_id FROM message_labels WHERE message_id = ?`)
 	backfillRawSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_raw
-			  (message_id, raw_data, raw_format, compression)
-			SELECT ?, raw_data, raw_format, compression
+			  (message_id, raw_data, raw_format, compression, encryption_version)
+			SELECT ?, raw_data, raw_format, compression, encryption_version
 			FROM message_raw WHERE message_id = ?`)
 	softDeleteSQL := fmt.Sprintf(`UPDATE messages
 			SET deleted_at = %s, delete_batch_id = ?
@@ -522,6 +523,15 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		// Use the same message-before-raw order as ingestion and repair.
+		lockedIDs := append([]int64{survivorID}, duplicateIDs...)
+		slices.Sort(lockedIDs)
+		for _, id := range slices.Compact(lockedIDs) {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+
 		preserved, err := duplicateMergePreservesHistory(ctx, tx, survivorID, duplicateIDs)
 		if err != nil {
 			return err
@@ -569,6 +579,10 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID); err != nil {
+				return err
+			}
+
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}

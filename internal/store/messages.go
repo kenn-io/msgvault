@@ -2415,6 +2415,10 @@ func (s *Store) persistMessageWith(
 		}
 	}
 
+	if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID); err != nil {
+		return 0, fmt.Errorf("refresh email linkage: %w", err)
+	}
+
 	for _, rs := range data.Recipients {
 		if err := replaceMessageRecipientsTx(q, messageID, rs); err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
@@ -6145,6 +6149,10 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
+		if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID); err != nil {
+			return err
+		}
+
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}

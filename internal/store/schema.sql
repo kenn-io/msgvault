@@ -1795,6 +1795,30 @@ CREATE TABLE IF NOT EXISTS message_raw (
     encryption_version INTEGER DEFAULT 0
 );
 
+-- Explicit MIME identifiers, indexed across archived email copies.
+CREATE TABLE IF NOT EXISTS email_link_key_state (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    extraction_version INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    raw_sha256 TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS email_link_keys (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('self', 'reply', 'reference', 'attached')),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0 AND ordinal < 128),
+    value TEXT NOT NULL CHECK (length(value) <= 1024),
+    PRIMARY KEY (message_id, kind, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_email_link_keys_value ON email_link_keys(value, message_id);
+
+-- Durable source cursor keeps repeated linkage repair bounded to newly inserted rows.
+CREATE TABLE IF NOT EXISTS email_link_key_repair_progress (
+    source_id INTEGER PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    extraction_version INTEGER NOT NULL,
+    last_message_id INTEGER NOT NULL DEFAULT 0
+);
+
 -- Resumable cursor for the bounded, raw-MIME-only attachment role repair.
 CREATE TABLE IF NOT EXISTS attachment_role_repair_progress (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
