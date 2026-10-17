@@ -123,3 +123,32 @@ func TestConfirmationChallengeCannotCrossAuthenticatedSessionsOrActions(t *testi
 		map[string]any{"candidate_id": float64(8)}, "Accept candidate 7?"))
 	asserts.False(confirmations.consume(token, nil, "session-a", ToolAcceptIdentityMatch, arguments, "Accept candidate 7?"))
 }
+
+func TestConfirmationReferenceTimeIsBoundAndDoesNotConsumeApproval(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	manager := newConfirmationChallenges()
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	reference := now.Add(-time.Second)
+	manager.now = func() time.Time { return now }
+	args := map[string]any{"id": float64(9), "until": "1h"}
+	state, err := manager.issue(nil, "client-a", "snooze_open_loop", args, "Snooze 9", reference)
+	requirements.NoError(err)
+	restored, ok := manager.referenceTime(state, nil, "client-a")
+	requirements.True(ok)
+	assertions.Equal(reference, restored)
+	_, ok = manager.referenceTime(state, nil, "client-b")
+	assertions.False(ok)
+	assertions.True(manager.consume(state, nil, "client-a", "snooze_open_loop", args, "Snooze 9"), "reading reference time must not consume approval")
+	_, ok = manager.referenceTime(state, nil, "client-a")
+	assertions.False(ok)
+	state, err = manager.issue(nil, "client-a", "snooze_open_loop", args, "Snooze 9", reference)
+	requirements.NoError(err)
+	now = now.Add(confirmationChallengeTTL)
+	_, ok = manager.referenceTime(state, nil, "client-a")
+	assertions.False(ok)
+	now = now.Add(-confirmationChallengeTTL)
+	manager.close()
+	_, ok = manager.referenceTime(state, nil, "client-a")
+	assertions.False(ok)
+}
