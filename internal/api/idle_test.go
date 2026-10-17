@@ -65,8 +65,8 @@ func TestIdleTrackerExternalRequestResetsIdle(t *testing.T) {
 		synctest.Sleep(50 * time.Millisecond)
 		rec := serveTrackedNoContent(t, f.tracker)
 		require.Equal(t, http.StatusNoContent, rec.Code)
-		f.requireNotFiredWithin(t, 100*time.Millisecond, "idle fired before reset timeout elapsed")
-		f.requireFiredWithin(t, 300*time.Millisecond, "idle did not fire after external activity")
+		f.requireNotFiredWithin(t, 175*time.Millisecond, "idle fired before reset timeout elapsed")
+		f.requireFiredWithin(t, 50*time.Millisecond, "idle did not fire after external activity")
 	})
 }
 
