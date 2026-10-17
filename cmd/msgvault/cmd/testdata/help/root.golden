@@ -51,6 +51,7 @@ People, organizations, and identity:
   collection           Manage named groups of accounts
   employment           Manage employment records linking people and organizations
   identity             Manage the confirmed "me" identifiers for each account
+  loops                Find unanswered turns and manage follow-ups
   organization         Manage curated organizations and their employment records
   person               Find contacts and manage durable person profiles
   relationship-type    Manage person relationship types
