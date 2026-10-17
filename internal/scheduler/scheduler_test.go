@@ -3703,3 +3703,38 @@ func TestManualCompletionAcrossOutcomes(t *testing.T) {
 		})
 	}
 }
+
+func TestTerminalOutcomeSkipsDeferredAndCanceledJobs(t *testing.T) {
+	for _, outcome := range []error{nil, errors.New("provider failed"), ErrDeferUntilNextTrigger, context.Canceled, ErrReschedule} {
+		t.Run(fmt.Sprint(outcome), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var results []error
+				s := New(nil)
+				s.WithResult(func(name string, generic bool, err error) {
+					assert.Equal(t, "test", name)
+					assert.True(t, generic)
+					_ = s.JobStatus() // callbacks must run outside the scheduler lock.
+					results = append(results, err)
+				})
+				defer func() { <-s.Stop().Done() }()
+				runs := 0
+				require.NoError(t, s.AddJob(Job{Name: "test", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
+					runs++
+					if runs > 1 {
+						return ErrDeferUntilNextTrigger
+					}
+					return outcome
+				}}))
+				_, err := s.StartJob("test", true)
+				require.NoError(t, err)
+				synctest.Wait()
+				if outcome == nil || outcome.Error() == "provider failed" {
+					require.Len(t, results, 1)
+					assert.Equal(t, outcome, results[0])
+				} else {
+					assert.Empty(t, results)
+				}
+			})
+		})
+	}
+}

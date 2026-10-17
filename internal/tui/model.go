@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/update"
 )
 
@@ -369,6 +371,7 @@ type Model struct {
 	contentScreen  string
 
 	reportAction       func(context.Context, string, string, string) error
+	outcomeClaims      map[[32]byte]bool
 	visibleDetailID    int64
 	messageReportedDay string
 
@@ -570,6 +573,7 @@ func New(engine query.Engine, opts Options) Model {
 	return Model{
 		reportScreen:          opts.ReportScreen,
 		reportAction:          opts.ReportAction,
+		outcomeClaims:         make(map[[32]byte]bool),
 		contentScreen:         "email",
 		engine:                engine,
 		textEngine:            textEngine,
@@ -900,6 +904,7 @@ type messagesLoadedMsg struct {
 
 // messageDetailLoadedMsg is sent when message detail is loaded.
 type messageDetailLoadedMsg struct {
+	messageID              int64
 	detail                 *query.MessageDetail
 	err                    error
 	requestID              uint64 // To detect stale responses
@@ -1336,13 +1341,13 @@ func (m Model) loadMessageDetail(id int64) tea.Cmd {
 	return safeCmdWithPanic(
 		func() tea.Msg {
 			detail, err := m.engine.GetMessage(context.Background(), id)
-			return messageDetailLoadedMsg{
+			return messageDetailLoadedMsg{messageID: id,
 				detail: detail, err: err, requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
 		},
 		func(r any) tea.Msg {
-			return messageDetailLoadedMsg{
+			return messageDetailLoadedMsg{messageID: id,
 				err: fmt.Errorf("message detail panic: %v", r), requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
@@ -1593,7 +1598,7 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 		m.err = msg.err
 		m.modal = modalError
 		m.modalResult = msg.err.Error()
-		return m, nil
+		return m, m.failedSearchAction(msg.query, searchModeFast, msg.err)
 	}
 	m.textState.messages = msg.messages
 	m.textState.globalSearchTimeline = false
@@ -1602,7 +1607,7 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 	}
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, m.acceptedSearchAction(msg.query, searchModeFast)
+	return m, m.acceptedSearchAction(msg.query, searchModeFast, len(msg.messages) == 0)
 }
 
 // handleTextSearchResult processes text search results.
@@ -1618,7 +1623,7 @@ func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.C
 		m.err = msg.err
 		m.modal = modalError
 		m.modalResult = msg.err.Error()
-		return m, nil
+		return m, m.failedSearchAction(msg.query, searchModeFast, msg.err)
 	}
 	// Show search results as a timeline
 	m.textState.messages = msg.messages
@@ -1627,7 +1632,7 @@ func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.C
 	m.textState.unfilteredMessages = nil
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, m.acceptedSearchAction(msg.query, searchModeFast)
+	return m, m.acceptedSearchAction(msg.query, searchModeFast, len(msg.messages) == 0)
 }
 
 // handleTextStatsLoaded processes text stats load completion.
@@ -1687,6 +1692,8 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
+			m.restorePosition = false
+			return m, m.failedSearchAction(msg.searchQuery, searchModeFast, msg.err)
 		}
 		m.restorePosition = false // Clear flag on error to prevent stale state
 		return m, nil
@@ -1719,7 +1726,7 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 		m.contextStats = nil
 	}
 	if active {
-		return m, m.acceptedSearchAction(msg.searchQuery, searchModeFast)
+		return m, m.acceptedSearchAction(msg.searchQuery, searchModeFast, len(msg.rows) == 0)
 	}
 	return m, nil
 }
@@ -1912,6 +1919,7 @@ func (m Model) handleMessageDetailLoaded(msg messageDetailLoadedMsg) (tea.Model,
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
+			return m, m.failedAction(fmt.Sprintf("message:%d", msg.messageID), msg.err)
 		}
 	} else {
 		if active {
@@ -1948,6 +1956,7 @@ func (m Model) handleThreadMessagesLoaded(msg threadMessagesLoadedMsg) (tea.Mode
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
+			return m, m.failedAction(fmt.Sprintf("conversation:%d", msg.conversationID), msg.err)
 		}
 	} else {
 		if active {
@@ -1979,6 +1988,7 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError
 			m.modalResult = m.err.Error()
+			return m, m.failedSearchAction(msg.query, msg.searchMode, msg.err)
 		}
 		return m, nil
 	}
@@ -1995,7 +2005,7 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 		m.replaceSearchResults(msg)
 	}
 	if active && !msg.append {
-		return m, m.acceptedSearchAction(msg.query, msg.searchMode)
+		return m, m.acceptedSearchAction(msg.query, msg.searchMode, len(msg.messages) == 0)
 	}
 	return m, nil
 }
@@ -2588,7 +2598,7 @@ func reportTelemetryCmd(report func(context.Context) error) tea.Cmd {
 	}
 }
 
-func (m Model) acceptedSearchAction(query string, mode searchModeKind) tea.Cmd {
+func (m Model) acceptedSearchAction(query string, mode searchModeKind, empty bool) tea.Cmd {
 	if strings.TrimSpace(query) == "" {
 		return nil
 	}
@@ -2596,5 +2606,42 @@ func (m Model) acceptedSearchAction(query string, mode searchModeKind) tea.Cmd {
 	if mode == searchModeSemantic {
 		kind = "hybrid"
 	}
-	return m.reportActionCmd("search_run", "search_type", kind)
+	success := m.reportActionCmd("search_run", "search_type", kind)
+	if empty && m.claimOutcome("search_empty:"+kind+":"+strings.Join(strings.Fields(query), " ")) {
+		return reportTelemetryCmd(func(ctx context.Context) error {
+			_ = m.reportAction(ctx, "search_run", "search_type", kind)
+			return m.reportAction(ctx, "search_empty", "search_type", kind)
+		})
+	}
+	return success
+}
+
+func (m Model) claimOutcome(identity string) bool {
+	if m.outcomeClaims == nil || m.reportAction == nil {
+		return false
+	}
+	key := sha256.Sum256([]byte(identity))
+	if m.outcomeClaims[key] {
+		return false
+	}
+	m.outcomeClaims[key] = true
+	return true
+}
+
+func (m Model) failedAction(identity string, err error) tea.Cmd {
+	if errors.Is(err, context.Canceled) || !m.claimOutcome("error_shown:"+identity) {
+		return nil
+	}
+	return m.reportActionCmd("error_shown", "kind", telemetry.FailureKind(err))
+}
+
+func (m Model) failedSearchAction(query string, mode searchModeKind, err error) tea.Cmd {
+	if strings.TrimSpace(query) == "" {
+		return nil
+	}
+	kind := "text"
+	if mode == searchModeSemantic {
+		kind = "hybrid"
+	}
+	return m.failedAction("search:"+kind+":"+strings.Join(strings.Fields(query), " "), err)
 }

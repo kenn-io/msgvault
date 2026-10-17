@@ -155,7 +155,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
     },
     async groups(predicate, dimension, signal) {
       const body = {
@@ -175,7 +175,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
     },
     async fileGroups(predicate, filenameQuery, mimeFamilies, dimension, signal) {
       const { cursor, ...context } = predicate;
@@ -197,7 +197,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
     },
     async files(predicate, signal) {
       const { cursor, ...context } = predicate;
@@ -212,7 +212,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
     },
     async coverage(filters, signal) {
       const { data, error, response } = await generatedGetSearchCoverage(
@@ -236,7 +236,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
           actions: [],
         };
       }
-      throw new Error(messageFor(error, response.status));
+      throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
     },
     async matchCounts(predicate, rowKeys, signal) {
       const { data, error, response } = await generatedCountExploreMatches(
@@ -246,7 +246,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
           signal,
         },
       );
-      if (!data) throw new Error(messageFor(error, response.status));
+      if (!data) throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
       return {
         counts: Object.fromEntries(data.counts.map((entry) => [entry.row_key, entry.count])),
         cacheRevision: data.cache_revision,
@@ -263,7 +263,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
           signal,
         },
       );
-      if (!response.ok) throw new Error(messageFor(error, response.status));
+      if (!response.ok) throw Object.assign(new Error(messageFor(error, response.status)), { status: response.status });
       requireCompletedCLIRun(data ?? '');
     },
   };

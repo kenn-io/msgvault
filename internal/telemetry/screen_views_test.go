@@ -92,6 +92,28 @@ func exerciseScreenViews(t *testing.T, reporter *posthog.Reporter, opts Options)
 			}
 		}
 	}
+	var outcomes []map[string]any
+	originalCapture := h.captureEvent
+	h.captureEvent = func(event string, properties map[string]any) error {
+		filtered := map[string]any{"surface": properties["surface"]}
+		if event == EventErrorShown {
+			filtered["kind"] = properties["kind"]
+		} else {
+			filtered["search_type"] = properties["search_type"]
+		}
+		assertions.NotContains(properties, "error")
+		assertions.NotContains(properties, "query")
+		outcomes = append(outcomes, filtered)
+		return nil
+	}
+	for range 2 {
+		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"error_shown","properties":{"surface":"web","kind":"unlisted","error":"private"}}`).Code)
+		assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"search_empty","properties":{"surface":"cli","search_type":"text","query":"private"}}`).Code)
+	}
+	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"error_shown","properties":{"kind":"auth"}}`).Code)
+	assertions.Equal(http.StatusAccepted, screenRequest(h, `{"event":"sync_failed","properties":{"reason":"network"}}`).Code)
+	assertions.Equal([]map[string]any{{"surface": "web", "kind": "other"}, {"surface": "cli", "search_type": "text"}, {"surface": "web", "kind": "other"}, {"surface": "cli", "search_type": "text"}}, outcomes)
+	h.captureEvent = originalCapture
 	capture := h.captureEvent
 	h.captureEvent = func(string, map[string]any) error { return errors.New("queue full") }
 	path := filepath.Join(opts.DataDir, screenViewsFile)

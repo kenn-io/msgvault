@@ -27,6 +27,12 @@ const (
 	EventMessageOpened = "message_opened"
 	// EventSyncFinished counts a normally completed manual sync.
 	EventSyncFinished = "sync_finished"
+	// EventSearchEmpty counts a settled search without results.
+	EventSearchEmpty = "search_empty"
+	// EventErrorShown counts a displayed core-action failure.
+	EventErrorShown = "error_shown"
+	// EventSyncFailed counts the first failure of an archive source outage.
+	EventSyncFailed = "sync_failed"
 	// propertySurface names the interface that reported an event.
 	propertySurface = "surface"
 	application     = "msgvault"
@@ -37,6 +43,8 @@ const (
 
 // Core actions require every listed property, using the same values as the allowlist.
 var actionProperties = map[string]map[string][]string{
+	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
+	EventErrorShown:    {propertySurface: {"web", "tui", "cli"}, "kind": failureKinds},
 	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
 	EventSyncFinished:  {propertySurface: {"web", "cli"}},
@@ -90,6 +98,7 @@ func Enabled(configEnabled bool) bool {
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),
+		posthog.WithAllowedEvent(EventSyncFailed, posthog.AllowProperty("reason", posthog.AllowStringValues(failureKinds...))),
 		posthog.WithAllowedEvent(EventAppOpened, posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web"))),
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),

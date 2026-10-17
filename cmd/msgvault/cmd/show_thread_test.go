@@ -132,7 +132,9 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 			done := captureStdout(t)
 			err := root.Execute()
 			out := done()
-			if tc.wantError != "" || tc.offset > 0 {
+			if tc.wantError != "" {
+				assert.Equal([]map[string]any{{"event": "error_shown", "properties": map[string]any{"surface": "cli", "kind": "other"}}}, events)
+			} else if tc.offset > 0 {
 				assert.Empty(events)
 			} else {
 				assert.Equal([]map[string]any{{"event": "message_opened", "properties": map[string]any{"surface": "cli"}}}, events)

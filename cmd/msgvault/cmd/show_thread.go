@@ -55,6 +55,12 @@ Examples:
 				return fmt.Errorf("open store: %w", err)
 			}
 			defer func() { _ = client.Close() }()
+			readable := false
+			defer func() {
+				if result != nil || readable {
+					reportCLIActionResult(cmd, client, "message_opened", "", "", &result)
+				}
+			}()
 			engine := daemonclient.NewEngineAdapter(client)
 			request := query.ThreadQuery{Limit: limit, Offset: offset}
 			numeric, parseErr := strconv.ParseInt(id, 10, 64)
@@ -79,9 +85,7 @@ Examples:
 			if err != nil {
 				return err
 			}
-			if len(messages) > 0 {
-				defer reportSuccessfulCLIAction(cmd, client, "message_opened", "", "", &result)
-			}
+			readable = len(messages) > 0
 			if page.HasMore {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "More messages: use --offset %d\n", page.Offset+len(page.Messages))
 			}

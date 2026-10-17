@@ -825,6 +825,56 @@ describe('AppShell', () => {
       visibility.mockRestore();
     });
 
+    it('claims empty searches through refresh, identical submission, and remount', async () => {
+      sessionStorage.clear();
+      const events: string[] = [];
+      const state = shellState('everything');
+      const client = createAPIClient(async (input) => {
+        const request = input as Request;
+        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+          const body = await request.json();
+          if (body.event === 'search_empty') events.push(body.properties.search_type);
+          return Response.json({ status: 'queued' });
+        }
+        return Response.json(exploreResponse({ rows: [] }));
+      });
+      let view = render(AppShell, { client, state });
+      state.commitSearch('missing item', 'full_text');
+      await waitFor(() => expect(events).toEqual(['text']));
+      state.commitSearch(' missing   item ', 'full_text');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      view.unmount();
+      view = render(AppShell, { client, state });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(events).toEqual(['text']);
+      state.commitSearch('another item', 'full_text');
+      await waitFor(() => expect(events).toEqual(['text', 'text']));
+      view.unmount();
+    });
+
+    it('reports the displayed search failure once across retries and remounts', async () => {
+      sessionStorage.clear();
+      const events: unknown[] = [];
+      const state = shellState('everything');
+      const client = createAPIClient(async (input) => {
+        const request = input as Request;
+        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+          const body = await request.json();
+          if (body.event === 'error_shown') events.push(body.properties);
+          return Response.json({ status: 'queued' });
+        }
+        return Response.json({ message: 'Too many requests' }, { status: 429 });
+      });
+      let view = render(AppShell, { client, state });
+      state.commitSearch('failed search', 'full_text');
+      await waitFor(() => expect(events).toEqual([{ surface: 'web', kind: 'rate_limited' }]));
+      view.unmount();
+      view = render(AppShell, { client, state });
+      await screen.findByText('Too many requests');
+      expect(events).toHaveLength(1);
+      view.unmount();
+    });
+
     it('remembers the collapsed sidebar across reloads', async () => {
       const state = shellState('everything');
       const first = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });

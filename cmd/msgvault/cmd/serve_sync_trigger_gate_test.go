@@ -28,7 +28,7 @@ func TestSyncTriggerAnsweredWhileScheduledRunHoldsGate(t *testing.T) {
 	assert := assert.New(t)
 	const job = "granola:acct-1"
 	gate := api.NewSerialOperationGate()
-	sched, _ := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, gate, nil)
+	sched, _ := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, gate, nil, nil)
 	defer func() { <-sched.Stop().Done() }()
 
 	started := make(chan struct{}, 2)
@@ -90,7 +90,7 @@ func TestServeSchedulersCaptureManualCompletion(t *testing.T) {
 				sched, media := newServeSchedulers(nil, slog.New(slog.DiscardHandler), nil, nil, func(event string, properties map[string]any) error {
 					events = append(events, map[string]any{"event": event, "properties": properties})
 					return nil
-				})
+				}, nil)
 				defer func() { <-sched.Stop().Done(); <-media.Stop().Done() }()
 				target := sched
 				if mediaJob {

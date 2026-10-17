@@ -395,6 +395,27 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
+  it('reports a displayed manual sync refusal once through retry', async () => {
+    sessionStorage.clear();
+    const events: unknown[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+        events.push(await request.json());
+        return Response.json({ status: 'queued' });
+      }
+      if (request.method === 'POST') return Response.json({ message: 'Authorization required' }, { status: 403 });
+      return Response.json({ sources: [source()] });
+    });
+    const view = render(SourcesWorkspace, { client });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'auth' } }]));
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Authorization required');
+    expect(events).toHaveLength(1);
+    view.unmount();
+  });
+
   it('names conflicting runs', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);

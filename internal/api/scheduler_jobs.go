@@ -191,3 +191,9 @@ func ChatwootJobNameForAccount(baseURL string, accountID int64) (string, bool) {
 	}
 	return fmt.Sprintf("chatwoot:%s/accounts/%d", canonical, accountID), true
 }
+
+// IsArchiveSyncJobName excludes contact and maintenance jobs from archive sync outcomes.
+func IsArchiveSyncJobName(name string) bool {
+	kind, _, _ := strings.Cut(name, ":")
+	return kind == chatwoot.SourceType || kind != CardDAVJobName && isSourceSyncJobName(name)
+}

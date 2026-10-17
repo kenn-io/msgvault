@@ -107,7 +107,7 @@ var multimodalSearchCmd = &cobra.Command{
 		}
 		defer func() { _ = client.Close() }()
 		if multimodalSearchCursor == "" {
-			defer reportSuccessfulCLIAction(cmd, client, "search_run", "search_type", "semantic", &result)
+			defer reportCLIActionResult(cmd, client, "search_run", "search_type", "semantic", &result)
 		}
 		var after, before *time.Time
 		if multimodalSearchAfter != "" {
@@ -136,6 +136,9 @@ var multimodalSearchCmd = &cobra.Command{
 		})
 		if err != nil {
 			return err
+		}
+		if multimodalSearchCursor == "" {
+			defer reportCLIEmptySearch(cmd, client, "semantic", len(response.Results) == 0, &result)
 		}
 		if multimodalSearchJSON {
 			return printJSON(response)

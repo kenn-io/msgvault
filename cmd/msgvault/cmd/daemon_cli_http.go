@@ -108,6 +108,9 @@ func runDaemonCLICommandHTTPWithEnv(
 		// Draft stderr already contains the failure result or fixed code.
 		cmd.SilenceErrors = true
 	}
+	if runErr != nil && manualSyncCLICommand(args) {
+		reportCLIAction(cmd, st, "error_shown", "kind", "other")
+	}
 	if runErr != nil && strings.Contains(runErr.Error(), cliSubprocessExitSentinel) {
 		// The daemon subprocess already streamed its real error to our
 		// stderr and exited non-zero. Propagate a non-zero exit without
