@@ -15,8 +15,9 @@ import (
 
 // RuntimeOverrides contains explicitly supplied CLI values. Nil means absent.
 type RuntimeOverrides struct {
-	BindAddr *string
-	APIPort  *int
+	BindAddr            *string
+	APIPort             *int
+	RemoteAllowInsecure *bool
 }
 
 // Load reads optional TOML and applies process environment controls.
@@ -26,7 +27,7 @@ func Load(path, home string) (*Config, error) {
 
 // LoadWithOverrides applies flags before validating lower-priority env values.
 func LoadWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
-	return loadWithOverrides(path, home, overrides)
+	return LoadForSections(path, home, overrides, SectionAll)
 }
 
 type secretSources struct {
@@ -143,7 +144,7 @@ func (s *secretSources) resolve() (string, error) {
 	return providercredentials.ResolveSecret("", "", s.environment)
 }
 
-func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
+func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) {
 	bindSupplied := o.BindAddr != nil
 	if o.BindAddr != nil {
 		c.runtimeConfigState.flags.BindAddr = new(*o.BindAddr)
@@ -157,7 +158,7 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		c.bindSource = "MSGVAULT_BIND_ADDR"
 	}
 	if bindSupplied && strings.TrimSpace(c.Server.BindAddr) == "" {
-		return errors.New("server bind address is empty")
+		c.addSectionError("server", errors.New("server bind address is empty"))
 	}
 	if o.APIPort != nil {
 		c.runtimeConfigState.flags.APIPort = new(*o.APIPort)
@@ -166,10 +167,11 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 	} else if v, ok := os.LookupEnv("MSGVAULT_API_PORT"); ok {
 		port, err := strconv.Atoi(v)
 		if err != nil {
-			return errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535")
+			c.addSectionError("server", errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535"))
+		} else {
+			c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
+			c.Server.APIPort = port
 		}
-		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
-		c.Server.APIPort = port
 	}
 	if v, ok := os.LookupEnv("MSGVAULT_BACKUP_REPO"); ok {
 		value := expandPath(v)
@@ -191,10 +193,20 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		{"MSGVAULT_CORS_CREDENTIALS", &c.Server.CORSCredentials, &c.runtimeConfigState.corsCredentials},
 		{"MSGVAULT_REMOTE_ALLOW_INSECURE", &c.Remote.AllowInsecure, &c.runtimeConfigState.remoteAllowInsecure},
 	} {
+		if entry.name == "MSGVAULT_REMOTE_ALLOW_INSECURE" && o.RemoteAllowInsecure != nil {
+			entry.record.capture(*entry.destination, *o.RemoteAllowInsecure)
+			*entry.destination = *o.RemoteAllowInsecure
+			continue
+		}
 		if v, ok := os.LookupEnv(entry.name); ok {
 			value, err := strconv.ParseBool(v)
 			if err != nil {
-				return fmt.Errorf("%s must be a boolean", entry.name)
+				section := Section("server")
+				if entry.name == "MSGVAULT_REMOTE_ALLOW_INSECURE" {
+					section = "remote"
+				}
+				c.addSectionError(section, fmt.Errorf("%s must be a boolean", entry.name))
+				continue
 			}
 			entry.record.capture(*entry.destination, value)
 			*entry.destination = value
@@ -226,7 +238,6 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 			credential.sources.file = c.credentialPath(credential.sources.file)
 		}
 	}
-	return nil
 }
 
 func (c *Config) credentialPath(path string) string {

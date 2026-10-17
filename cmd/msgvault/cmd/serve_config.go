@@ -38,6 +38,9 @@ func prepareServeConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
+	if err := cfg.ValidateFor(config.SectionAll); err != nil {
+		return err
+	}
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
 	}

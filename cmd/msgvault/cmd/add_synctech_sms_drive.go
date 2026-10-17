@@ -365,6 +365,9 @@ func newSynctechSMSDriveClient(ctx context.Context, src config.SynctechSMSSource
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if err := cfg.ValidateFor("oauth"); err != nil {
+		return nil, err
+	}
 	clientSecrets, err := cfg.OAuth.CredentialsFor(src.OAuthApp)
 	if err != nil {
 		return nil, err

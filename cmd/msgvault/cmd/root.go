@@ -111,9 +111,16 @@ Output and exit status:
 
 			// Load config first; logging options live under [log].
 			var err error
-			inv.cfg, err = config.LoadWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
+			inv.cfg, err = config.LoadForSections(inv.options.cfgFile, inv.options.homeDir, commandRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
+			}
+			sections := configSections(cmd, inv.cfg)
+			if err := inv.cfg.ValidateFor(sections...); err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			for _, warning := range inv.cfg.UnusedSectionErrors(sections...) {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: unused config section %v\n", warning)
 			}
 			if err := inv.cfg.EnsureHomeDir(); err != nil {
 				return fmt.Errorf(
@@ -791,6 +798,9 @@ func loadOAuthManager(ctx context.Context, state *invocation, appName string) (*
 		return nil, errors.New("configuration is unavailable")
 	}
 	cfg := state.cfg
+	if err := cfg.ValidateFor("oauth"); err != nil {
+		return nil, errors.Join(oauth.ErrClientConfig, err)
+	}
 	credentials, err := cfg.OAuth.CredentialsFor(appName)
 	if err != nil {
 		return nil, errors.Join(oauth.ErrClientConfig, err)

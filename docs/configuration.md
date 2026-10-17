@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,19 @@ For a first archive, add only the sections required by your source. Optional
 provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
+
+On `main` after v0.21.0, commands validate the configuration sections they use.
+An invalid unused section produces a warning on stderr. The command continues
+using the sections it needs. For example, an invalid `[integrations.kata]`
+endpoint does not prevent an export through a running daemon. TOML syntax errors
+and the existing unknown-key checks still fail configuration loading for every
+command that loads it. Commands such as `version` continue to skip configuration loading.
+
+`msgvault serve`, `msgvault serve start`, and `msgvault daemon start` validate
+all sections before starting the server. Restart and server reloads do the same.
+`setup providers` and `person provider` also require a valid complete file before
+saving configuration changes. A command that needs to start a daemon therefore
+still requires valid server configuration.
 
 
 ## Remote Deletion Consent

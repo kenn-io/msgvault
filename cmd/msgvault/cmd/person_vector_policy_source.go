@@ -25,7 +25,7 @@ func currentSemanticPersonVectorConfigSource(state *invocation) vector.SemanticP
 		if !snapshot.Exists {
 			return vector.Config{}, nil
 		}
-		loaded, err := config.LoadConfigFile(snapshot, cfg.HomeDir)
+		loaded, err := config.LoadConfigFileForSections(snapshot, cfg.HomeDir, "vector")
 		if err != nil {
 			return vector.Config{}, err
 		}

@@ -592,6 +592,8 @@ type Config struct {
 	bindSource         string
 	configPath         string // resolved path to the loaded config file
 	runtimeConfigState runtimeConfigState
+	configContent      []byte
+	sectionErrors      map[Section]error
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -927,12 +929,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 		// Default config file is optional; runtime controls still apply.
 		cfg.configPath = path
 		cfg.resolveCredentialPaths()
-		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
-			return nil, err
-		}
-		if err := cfg.Server.Validate(); err != nil {
-			return nil, err
-		}
+		cfg.applyRuntimeOverrides(overrides)
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
@@ -966,6 +963,17 @@ func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
 }
 
 func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
+	cfg, err := decodeConfigFile(snapshot, homeDir, overrides)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.ValidateFor(SectionAll); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func decodeConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -984,12 +992,7 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 		cfg.configPath = decodePath
 		cfg.resolveCredentialPaths()
 		if overrides != nil {
-			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
-				return nil, err
-			}
-			if err := cfg.Server.Validate(); err != nil {
-				return nil, err
-			}
+			cfg.applyRuntimeOverrides(*overrides)
 		}
 		return cfg, nil
 	}
@@ -1028,14 +1031,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if metadata.IsDefined("server", "bind_addr") {
 		cfg.bindSource = path
 	}
-	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
-		cfg.People.IdentityScoring.MinimumProbability == 0 {
-		return nil, errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00")
-	}
-	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
-		cfg.People.IdentityScoring.BatchSize == 0 {
-		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
-	}
+	cfg.configContent = content
+	zeroProbability := metadata.IsDefined("people", "identity_scoring", "minimum_probability") && cfg.People.IdentityScoring.MinimumProbability == 0
+	zeroBatchSize := metadata.IsDefined("people", "identity_scoring", "batch_size") && cfg.People.IdentityScoring.BatchSize == 0
+
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "chatwoot" {
@@ -1059,12 +1058,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if strings.HasPrefix(key.String(), "beeper.drafts.") {
 			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
 		}
-	}
-	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateDraftSources(content); err != nil {
-		return nil, err
 	}
 
 	// Expand ~ in paths
@@ -1117,90 +1110,30 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return metadata.IsDefined("attachments", "documents", field)
 	})
 	cfg.Attachments.Documents.ApplyDefaults()
-	if err := cfg.Attachments.Documents.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
-		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
-	}
-	if cfg.Vector.AnyLaneEnabled() {
-		if err := cfg.Vector.Validate(); err != nil {
-			return nil, fmt.Errorf("vector config: %w", err)
-		}
-	}
 	cfg.resolveCredentialPaths()
 	if overrides != nil {
-		if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
-			return nil, err
-		}
+		cfg.applyRuntimeOverrides(*overrides)
 	}
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
-	if err := cfg.OAuth.Validate(); err != nil {
-		return nil, fmt.Errorf("oauth: %w", err)
-	}
-
-	if err := cfg.Server.Validate(); err != nil {
-		return nil, err
-	}
 	cfg.Analytics.ApplyDefaults()
-	if err := cfg.Analytics.Validate(); err != nil {
-		return nil, err
-	}
 	cfg.Web.ApplyDefaults()
-	if err := cfg.Web.Validate(); err != nil {
-		return nil, err
-	}
-	if !ValidCardDAVProvider(cfg.CardDAV.Provider) {
-		return nil, errors.New("carddav.provider must be empty, \"google\" or \"microsoft\"")
-	}
-	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateCardDAVConnections(); err != nil {
-		return nil, err
-	}
 	cfg.Integrations.Tasks.ApplyDefaults()
-	if err := cfg.Integrations.Tasks.Validate("tasks"); err != nil {
-		return nil, err
-	}
 	cfg.Integrations.Kata.ApplyDefaults()
-	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
-		return nil, err
-	}
-	if err := cfg.Integrations.Docbank.validate(); err != nil {
-		return nil, err
-	}
 	cfg.Activity.ApplyDefaults()
-	if err := cfg.Activity.Validate(); err != nil {
-		return nil, err
-	}
-	if err := cfg.People.Sweep.Validate(); err != nil {
-		return nil, err
-	}
 	cfg.People.Enrichment.ApplyDefaults()
-	if err := cfg.People.Enrichment.Validate(); err != nil {
-		return nil, err
-	}
 	cfg.People.IdentityScoring.ApplyDefaults()
-	if err := cfg.People.IdentityScoring.Validate(); err != nil {
-		return nil, err
+	// Explicit zero values are invalid, rather than requests for defaults.
+	// Preserve them for section validation and unrelated configuration saves.
+	if zeroProbability {
+		cfg.People.IdentityScoring.MinimumProbability = 0
 	}
-	if err := cfg.Backup.Validate(); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateMediaPolicies(); err != nil {
-		return nil, err
+	if zeroBatchSize {
+		cfg.People.IdentityScoring.BatchSize = 0
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
-	if err := cfg.validateChatwootSources(); err != nil {
-		return nil, err
-	}
 	cfg.applyMeetingSourceDefaults()
-	if err := cfg.validateMeetingSources(); err != nil {
-		return nil, err
-	}
 
 	return cfg, nil
 }
@@ -1790,7 +1723,7 @@ func resolveMediaPolicy(
 	}
 }
 
-func (c *Config) validateMediaPolicies() error {
+func (c *Config) validateMediaPolicies(sections ...string) error {
 	providers := []struct {
 		name            string
 		policy          attachmentpolicy.Policy
@@ -1807,6 +1740,9 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
 	}
 	for _, provider := range providers {
+		if len(sections) > 0 && !slices.Contains(sections, provider.name) {
+			continue
+		}
 		if provider.providerMaxMB < 0 {
 			return fmt.Errorf("invalid [%s] max_media_mb %d: must be zero or positive", provider.name, provider.providerMaxMB)
 		}
