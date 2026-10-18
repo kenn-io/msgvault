@@ -212,6 +212,7 @@ func (s *Syncer) incremental(
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("check existing messages: %w", err)
 			}
+			labelMetadata := s.readHistoryLabelMetadata(ctx, historyResp.History, existingMap)
 
 			// Collect new message IDs to batch-fetch and deleted IDs to batch-mark
 			newMsgThreads := make(map[string]string) // deduplicates by ID
@@ -232,7 +233,7 @@ func (s *Syncer) incremental(
 				}
 			}
 			for _, record := range historyResp.History {
-				if err := s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary); err != nil {
+				if err := s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, labelMetadata, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary); err != nil {
 					err = fmt.Errorf("process incremental Gmail labels: %w; history cursor retained; repair Gmail metadata access and retry sync", err)
 					if failErr := s.store.FailSyncWithCheckpoint(syncID, err.Error(), checkpoint); failErr != nil {
 						return nil, errors.Join(err, fmt.Errorf("fail incremental sync: %w", failErr))
@@ -466,14 +467,68 @@ func (s *Syncer) replayFetchFailures(
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) error {
+func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.HistoryRecord, existingMap map[string]int64) map[string]gmail.MessageLabelsBatchResult {
+	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
+		return nil
+	}
+	reader, ok := s.client.(messageLabelBatchReader)
+	if !ok {
+		return nil
+	}
+
+	messageIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(messageID string) {
+		if _, exists := existingMap[messageID]; !exists {
+			return
+		}
+		if _, exists := seen[messageID]; exists {
+			return
+		}
+		seen[messageID] = struct{}{}
+		messageIDs = append(messageIDs, messageID)
+	}
+	for _, record := range records {
+		for _, item := range record.LabelsAdded {
+			add(item.Message.ID)
+		}
+		for _, item := range record.LabelsRemoved {
+			add(item.Message.ID)
+		}
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+
+	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)
+	metadataByID := make(map[string]gmail.MessageLabelsBatchResult, len(messageIDs))
+	if err != nil {
+		for _, id := range messageIDs {
+			metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: err}
+		}
+		return metadataByID
+	}
+	if len(results) != len(messageIDs) {
+		resultErr := fmt.Errorf("gmail label metadata result count mismatch: got %d, want %d", len(results), len(messageIDs))
+		for _, id := range messageIDs {
+			metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: resultErr}
+		}
+		return metadataByID
+	}
+	for i, id := range messageIDs {
+		metadataByID[id] = results[i]
+	}
+	return metadataByID
+}
+
+func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, labelMetadata map[string]gmail.MessageLabelsBatchResult, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) error {
 	for _, item := range record.LabelsAdded {
 		if _, exists := existingMap[item.Message.ID]; !exists {
 			if _, pending := newMsgThreads[item.Message.ID]; pending {
 				continue
 			}
 		}
-		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, labelMetadata, checkpoint, summary)
 		if err != nil {
 			if errors.Is(err, errGmailMetadataRefresh) && !isGmailNotFound(err) {
 				s.recordSyncItem(syncID, item.Message.ID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
@@ -491,7 +546,7 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 		}
 	}
 	for _, item := range record.LabelsRemoved {
-		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, labelMetadata, checkpoint, summary)
 		if err != nil {
 			if errors.Is(err, errGmailMetadataRefresh) && !isGmailNotFound(err) {
 				s.recordSyncItem(syncID, item.Message.ID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
@@ -515,7 +570,7 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 // For existing Gmail messages with metadata support, refreshes authoritative labels.
 // Other clients apply the supplied label diff.
 // For unknown messages with labels being added, fetches and ingests the message.
-func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, bool, error) {
+func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, labelMetadata map[string]gmail.MessageLabelsBatchResult, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, bool, error) {
 	internalID, exists := existingMap[messageID]
 
 	if !exists {
@@ -556,22 +611,18 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 	// A current metadata read subsumes the history delta and also refreshes
 	// provider inbox/read markers without downloading the message body.
 	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
-		if reader, ok := s.client.(messageLabelBatchReader); ok {
+		if _, ok := s.client.(messageLabelBatchReader); ok {
 			observedAt := time.Now().UTC()
-			results, err := reader.GetMessageLabelsBatch(ctx, []string{messageID})
-			if err != nil {
-				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, err)
-			}
-			if len(results) != 1 || results[0].ID != messageID {
+			metadata, ok := labelMetadata[messageID]
+			if !ok || metadata.ID != messageID {
 				return false, false, fmt.Errorf("%w: gmail label metadata identity is unavailable", errGmailMetadataRefresh)
 			}
-			if results[0].Err != nil {
-				if isGmailNotFound(results[0].Err) {
-					return false, false, results[0].Err
+			if metadata.Err != nil {
+				if isGmailNotFound(metadata.Err) {
+					return false, false, metadata.Err
 				}
-				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, results[0].Err)
+				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, metadata.Err)
 			}
-			metadata := results[0]
 			changed, err := s.store.RefreshGmailInboxLabelsContext(ctx, sourceID, internalID, messageID, labelIDsFor(metadata.LabelIDs, labelMap), store.GmailInboxObservation{Tags: metadata.LabelIDs, HistoryID: metadata.HistoryID, ObservedAt: observedAt})
 			if err != nil {
 				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, err)
