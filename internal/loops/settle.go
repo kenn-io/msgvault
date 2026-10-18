@@ -94,6 +94,10 @@ func isListOrBulkMail(m LoopMessage) bool {
 	return m.ListID != "" || isBulkMail(m)
 }
 
+func isListMail(m LoopMessage) bool {
+	return m.ListID != "" || (m.Signals != nil && m.Signals.ListUnsubscribe)
+}
+
 func isBulkMail(m LoopMessage) bool {
 	if hasBulkCategory(m) {
 		return true

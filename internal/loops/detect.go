@@ -120,7 +120,6 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		return strings.Compare(a.Kind, b.Kind)
 	})
-	settledLoop := false
 	for _, l := range settlementLive {
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
@@ -131,7 +130,6 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			return v
 		}
 		if closed != nil {
-			settledLoop = true
 			v.Close = append(v.Close, *closed)
 		}
 		if gap {
@@ -142,9 +140,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		// AnchorExists is authoritative even if a stale row remains in the
 		// extended window. Rebuild settlement turns without absent anchors.
 		turns = t.trailing(settlementView)
-	} else if extended && (len(turns) > 0 || settledLoop) {
+	} else if extended {
 		// Extended evidence preserves a live anchor and reveals a new trailing
-		// turn after settlement closes or withdraws an older obligation.
+		// turn after settlement closes or withdraws an older obligation. It can
+		// also reveal turn-wide disqualifiers when the recent window is neutral.
 		turns = t.trailing(settlementView)
 	}
 	if promoted, ok := t.pendingOutboundQuestionAfterBulk(settlementView, turns); ok {
@@ -195,6 +194,9 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if retained && !turnWideListMail && !hasEligibleTrailingAnchor(view, recentTurns, &t, cfg) {
 			// A statement nudge or CC-only message in the recent window cannot
 			// create a second Open for a retained live anchor found by extension.
+			if len(recentTurns) == 0 {
+				keepUncertain(trailingKind)
+			}
 			return v
 		}
 	}

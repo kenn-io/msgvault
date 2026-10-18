@@ -19,6 +19,9 @@ const (
 	RulesetVersion           = 1
 )
 
+// MaxConversationMessageLimit caps the metadata window loaded for one loop pass.
+const MaxConversationMessageLimit = 10_000
+
 type Thresholds struct {
 	ReplyOwedAfter, AwaitingReplyAfter, Lookback time.Duration
 	MaxGroupCounterparts, RunMessageLimit        int

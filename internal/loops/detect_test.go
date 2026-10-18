@@ -153,6 +153,41 @@ func TestDetectRetainsDirectRequestAfterListQuestionAcknowledgement(t *testing.T
 	assertions.Equal(view.Participants[1].ID, got.Open.Counterparty.ID)
 }
 
+func TestDetectBulkQuestionAcknowledgementKeepsReplyOwed(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	ownerMessage := view.Messages[0]
+	ownerMessage.ID, ownerMessage.Direction, ownerMessage.Sender = 9, Outbound, view.Participants[0]
+	ownerMessage.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	ownerMessage.OccurredAt = now.Add(-72 * time.Hour)
+	question := view.Messages[0]
+	question.ID, question.OccurredAt = 10, now.Add(-48*time.Hour)
+	question.Signals = &mime.AutomationSignals{PrecedenceBulk: true}
+	acknowledgement := ownerMessage
+	acknowledgement.ID, acknowledgement.OccurredAt = 11, now.Add(-24*time.Hour)
+	view.Messages = []LoopMessage{ownerMessage, question, acknowledgement}
+	view.LastMessageAt = acknowledgement.OccurredAt
+	view.BodyText = func(id int64) (string, error) {
+		switch id {
+		case ownerMessage.ID:
+			return "I will take a look.", nil
+		case question.ID:
+			return "Could you check this?", nil
+		default:
+			return "Thanks!", nil
+		}
+	}
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: question.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	assertions.Empty(got.Close)
+	assertions.Empty(got.CoverageGaps)
+	requirements.NotNil(got.Open)
+	assertions.Equal(ReplyOwed, got.Open.Kind)
+	assertions.Equal(question.ID, got.Open.Anchor.ID)
+}
+
 func TestDetectGoogleVoiceDirectTextConversation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -1182,6 +1217,34 @@ func TestDetectWithdrawsExtendedLiveAnchorForTurnWideCCListMail(t *testing.T) {
 			assertions.Nil(got.Open)
 		})
 	}
+}
+
+func TestDetectExtendedListMailWithdrawsWithNeutralRecentWindow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	anchor := view.Messages[0]
+	anchor.OccurredAt = now.Add(-96 * time.Hour)
+	newsletter := anchor
+	newsletter.ID = 11
+	newsletter.ListID = "list.example.test"
+	newsletter.OccurredAt = now.Add(-24 * time.Hour)
+	neutral := anchor
+	neutral.ID = 12
+	neutral.Direction = Observed
+	neutral.OccurredAt = now.Add(-time.Hour)
+	view.Messages = []LoopMessage{neutral}
+	view.LastMessageAt = neutral.OccurredAt
+	extended := view
+	extended.Messages = []LoopMessage{anchor, newsletter, neutral}
+	view.Extend = func() (ConversationView, error) { return extended, nil }
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	assertions.Empty(got.CoverageGaps)
+	assertions.Nil(got.Open)
 }
 
 func TestDetectReconsidersExtendedWindowAfterEditedAwaitingAnchorWithdrawn(t *testing.T) {

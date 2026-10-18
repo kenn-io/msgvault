@@ -96,7 +96,7 @@ func (t *traversal) substantive(v ConversationView, i int) bool {
 		if _, missing := t.missingAnchors[previous.ID]; missing {
 			continue
 		}
-		if previous.Direction == Inbound && isListOrBulkMail(previous) {
+		if previous.Direction == Inbound && isListMail(previous) {
 			continue
 		}
 		if !metadataSubstantive(previous) {

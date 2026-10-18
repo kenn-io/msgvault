@@ -177,10 +177,60 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		`UPDATE activity_events SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET owner_source_id = ? WHERE owner_source_id = ?`,
 		`UPDATE person_contact_state SET last_contact_source_id = ? WHERE last_contact_source_id = ?`,
+		`UPDATE open_loops SET source_id = ? WHERE source_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {
 			return err
 		}
+	}
+	messageSurvivors := make(map[int64]int64)
+	survivorSourceConversations := make(map[int64]bool)
+	survivorIDs := make([]int64, 0)
+	sourceMessageBySurvivor := make(map[int64]int64)
+	for _, message := range plan.messages {
+		if message.survivor != 0 {
+			messageSurvivors[message.id] = message.survivor
+			survivorSourceConversations[message.conversationID] = true
+			survivorIDs = append(survivorIDs, message.survivor)
+			sourceMessageBySurvivor[message.survivor] = message.id
+		}
+	}
+	messageSurvivorConversations := make(map[int64]int64, len(survivorIDs))
+	for start := 0; start < len(survivorIDs); start += 100 {
+		batch := survivorIDs[start:min(start+100, len(survivorIDs))]
+		ids := make([]any, len(batch))
+		for i, id := range batch {
+			ids[i] = id
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		rows, err := tx.QueryContext(
+			ctx, `SELECT id,conversation_id FROM messages WHERE id IN (`+placeholders+")", ids...,
+		)
+		if err != nil {
+			return fmt.Errorf("load merged message survivor conversations: %w", err)
+		}
+		for rows.Next() {
+			var survivorID, conversationID int64
+			if err := rows.Scan(&survivorID, &conversationID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			messageSurvivorConversations[sourceMessageBySurvivor[survivorID]] = conversationID
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+	}
+	if len(messageSurvivorConversations) != len(survivorIDs) {
+		return fmt.Errorf(
+			"load merged message survivor conversations: found %d of %d",
+			len(messageSurvivorConversations), len(survivorIDs),
+		)
+	}
+	if err := s.transferMergedLoopState(
+		ctx, tx, plan.conversations, messageSurvivors, messageSurvivorConversations, survivorSourceConversations,
+	); err != nil {
+		return err
 	}
 	// Observation rows and accepted-match endpoints retain their immutable IDs.
 	// A duplicate current observation becomes historical rather than being deleted.
