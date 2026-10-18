@@ -314,7 +314,7 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 		if readErr == nil {
 			var snapshot meetingarchive.Snapshot
 			snapshot, readErr = buildSnapshot(scoped, src.ID, account, rec)
-			if readErr == nil {
+			if readErr == nil && (opts.StartedAfter.IsZero() || (!snapshot.StartedAt.IsZero() && !snapshot.StartedAt.Before(opts.StartedAfter))) {
 				result, readErr = archiver.Upsert(ctx, snapshot, meetingarchive.UpsertOptions{Force: opts.Full || !opts.StartedAfter.IsZero()})
 			}
 		}

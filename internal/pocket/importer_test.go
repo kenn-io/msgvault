@@ -290,6 +290,33 @@ func TestPocketImportPreservesRecordingDateWhenLaterResponseHasOnlyCreationDate(
 	assertions.True(wantStartedAt.Equal(current.SentAt))
 }
 
+func TestPocketImportAfterFilterUsesReconciledStartedAt(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	imp, st, src := testArchive(t, testRecording(t, recordingFixture))
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	src.read = nil
+
+	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Updated list title","created_at":"2026-09-10T10:00:00Z","transcript":[]}`)
+	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":[],"summarizations":{"sum-b":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Out-of-window update"}}}}}`)}
+	opts := archiveOptions()
+	opts.StartedAfter = time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC)
+	updated, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), updated.MeetingsProcessed)
+	assertions.Zero(updated.MeetingsUpdated)
+	assertions.Equal([]string{"rec-a"}, src.read)
+
+	message, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal("Planning", message.Subject)
+	assertions.True(time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC).Equal(message.SentAt))
+	_, content := archivedContent(t, st, first.SourceID, "rec-a")
+	assertions.Equal("Roadmap decision", content.Summary.Text)
+}
+
 func TestPocketImportRejectsOtherAccountBeforeWrites(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
