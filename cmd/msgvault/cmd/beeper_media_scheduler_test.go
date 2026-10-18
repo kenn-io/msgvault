@@ -74,6 +74,7 @@ type retentionServer struct {
 	mu         sync.Mutex
 	requests   int
 	operations []string
+	uploaded   []byte
 	hang       atomic.Bool
 	failStatus atomic.Int32
 	arrived    chan struct{}
@@ -108,6 +109,17 @@ func newRetentionServer(t *testing.T) (*retentionServer, *httptest.Server) {
 			OperationID string `json:"operation_id"`
 		}
 		assert.NoError(t, json.UnmarshalRead(part, &metadata))
+		part, err = reader.NextPart()
+		if !assert.NoError(t, err) {
+			return
+		}
+		uploaded, err := io.ReadAll(part)
+		if !assert.NoError(t, err) {
+			return
+		}
+		server.mu.Lock()
+		server.uploaded = uploaded
+		server.mu.Unlock()
 		server.arrived <- struct{}{}
 		_, _ = io.Copy(io.Discard, r.Body)
 		if server.hang.Load() {

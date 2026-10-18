@@ -1730,7 +1730,7 @@ schedule = "15 */6 * * *"
 | `enabled` | `false` | Allow daemon scheduling |
 | `schedule` | — | Five-field cron expression |
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
-| `max_media_mb` | `4096` (4 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
+| `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry. Recordings above Docbank's 1 GiB audio limit stay local |
 
 ### Muesli Sources
 
