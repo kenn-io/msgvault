@@ -268,6 +268,15 @@ func (s *Syncer) incremental(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
+						refreshedLabelMap, refreshErr := s.refreshLiveGmailMessageLabels(
+							ctx, source.ID, raw, labelMap,
+						)
+						if refreshErr != nil {
+							err := fmt.Errorf("refresh labels for added message %s: %w", raw.ID, refreshErr)
+							s.failStoppedSync(syncID, err)
+							return nil, err
+						}
+						labelMap = refreshedLabelMap
 						if _, err := s.ingestLiveMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
@@ -360,6 +369,44 @@ func (s *Syncer) incremental(
 	s.progress.OnProgress(checkpoint.MessagesProcessed, checkpoint.MessagesAdded, summary.MessagesSkipped)
 	s.progress.OnComplete(summary)
 	return summary, nil
+}
+
+// refreshLiveGmailMessageLabels refreshes native label scope pins before a
+// live message with an unknown label is persisted. Non-native archive readers
+// retain their existing label handling because they cannot establish native
+// scope identity.
+func (s *Syncer) refreshLiveGmailMessageLabels(
+	ctx context.Context, sourceID int64, raw *gmail.RawMessage, labelMap map[string]int64,
+) (map[string]int64, error) {
+	if len(unmappedGmailLabelIDs(raw.LabelIDs, labelMap)) == 0 {
+		return labelMap, nil
+	}
+	if s.nativeGmailSourceReference == "" {
+		if s.nativeGmailPermissionReduced {
+			return nil, errors.New("native Gmail label unavailable")
+		}
+		return labelMap, nil
+	}
+
+	refreshedLabelMap, err := s.syncLabelsForPinnedGmailLifetime(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("refresh native Gmail label inventory: %w", err)
+	}
+	if missing := unmappedGmailLabelIDs(raw.LabelIDs, refreshedLabelMap); len(missing) > 0 {
+		return nil, fmt.Errorf("native Gmail label unavailable: %q", missing)
+	}
+	return refreshedLabelMap, nil
+}
+
+func unmappedGmailLabelIDs(labelIDs []string, labelMap map[string]int64) []string {
+	var missing []string
+	for _, labelID := range labelIDs {
+		if _, ok := labelMap[labelID]; !ok {
+			missing = append(missing, labelID)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 // replayFetchFailures re-fetches the IDs a prior completed incremental run

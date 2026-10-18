@@ -1587,6 +1587,29 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (labelMap map[s
 	if err != nil {
 		return nil, err
 	}
+	return s.syncLabelsWithInventory(ctx, sourceID, inventory)
+}
+
+// syncLabelsForPinnedGmailLifetime refreshes the label inventory under the
+// source lifetime already admitted for this sync. A retry must not adopt a
+// replacement resource if the selected source changed during provider IO.
+func (s *Syncer) syncLabelsForPinnedGmailLifetime(ctx context.Context, sourceID int64) (map[string]int64, error) {
+	if s.nativeGmailSourceReference == "" || s.nativeGmailNativeIdentity == "" {
+		return nil, errors.New("native Gmail source lifetime unavailable")
+	}
+	return s.syncLabelsWithInventory(ctx, sourceID, &store.NativeMessageScopeInventory{
+		SourceID:        sourceID,
+		SourceReference: s.nativeGmailSourceReference,
+		SourceType:      sourceTypeGmail,
+		NativeIdentity:  s.nativeGmailNativeIdentity,
+		Kind:            "gmail_label",
+		Complete:        true,
+	})
+}
+
+func (s *Syncer) syncLabelsWithInventory(
+	ctx context.Context, sourceID int64, inventory *store.NativeMessageScopeInventory,
+) (labelMap map[string]int64, err error) {
 	labels, err := s.client.ListLabels(ctx)
 	if err != nil {
 		return nil, s.nativeMailPermissionFailure(ctx, err)
