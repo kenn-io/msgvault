@@ -2,10 +2,9 @@ package daemonclient
 
 import (
 	"context"
-	"encoding/json/v2"
+	"encoding/json"
 	"fmt"
 	"go.kenn.io/msgvault/internal/store"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,12 +34,11 @@ func (c *Client) EmailFamilyContext(ctx context.Context, id int64, options store
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("get email family (HTTP %d)", response.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
-	if err != nil {
-		return nil, err
-	}
 	var family store.EmailFamily
-	if err := json.Unmarshal(body, &family); err != nil {
+	// Families are bounded by member and key counts, but message fields have no
+	// response-byte cap. Decode the successful response directly so valid
+	// families are not truncated at an unrelated client-side limit.
+	if err := json.NewDecoder(response.Body).Decode(&family); err != nil {
 		return nil, fmt.Errorf("decode email family: %w", err)
 	}
 	return &family, nil

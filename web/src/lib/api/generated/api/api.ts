@@ -476,6 +476,7 @@ import type {
 import { orvalFetch } from "../../runtime";
 import { orvalText } from "../../runtime";
 import { orvalStream } from "../../runtime";
+import { orvalEmailFamily } from "../../runtime";
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
@@ -2278,9 +2279,9 @@ export const getMessage = (
 export const getEmailFamily = (
   { id }: GetEmailFamilyPathParameters,
   params?: GetEmailFamilyParams,
-  options?: SecondParameter<typeof orvalFetch<EmailFamily>>,
+  options?: SecondParameter<typeof orvalEmailFamily<EmailFamily>>,
 ) => {
-  return orvalFetch<EmailFamily>(
+  return orvalEmailFamily<EmailFamily>(
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
       method: "GET",
