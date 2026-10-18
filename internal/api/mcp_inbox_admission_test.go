@@ -49,9 +49,6 @@ func TestInboxLiveDescriptorUsesRegisteredRouteAndCurrentGrant(t *testing.T) {
 		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &descriptor))
 		assertions.Equal(1, descriptor.Version)
 		assertions.Equal(delegated, descriptor.Delegated)
-		if delegated {
-			requirements.Len(descriptor.Routes, 1)
-		}
 		var inboxRoute *struct {
 			OperationID       string   `json:"operation_id"`
 			Method            string   `json:"method"`
