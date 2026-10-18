@@ -120,10 +120,13 @@ func (r *pausedRecordingReader) Read(p []byte) (int, error) {
 		<-r.resume
 	})
 	n, err := r.reader.Read(p)
-	if err != nil && err != io.EOF {
+	if err == io.EOF {
+		return n, io.EOF
+	}
+	if err != nil {
 		return n, fmt.Errorf("read paused recording body: %w", err)
 	}
-	return n, err
+	return n, nil
 }
 
 func TestMuesliRecordingReceivesBodyBeforeTakingOperationGate(t *testing.T) {

@@ -62,7 +62,7 @@ func loadRemoteUploads(path string) (*remoteUploads, error) {
 	}
 	if stored.Version != remoteUploadsVersion {
 		uploads.dirty = true
-		return uploads, nil //nolint:nilerr // An unknown cache version only loses acknowledgements.
+		return uploads, nil
 	}
 	uploads.Meetings = stored.Meetings
 	if stored.Recordings != nil {

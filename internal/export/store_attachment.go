@@ -336,7 +336,7 @@ func hashSourceFileContext(ctx context.Context, f *os.File, srcPath string, maxS
 	h := sha256.New()
 	size, err := io.Copy(h, src)
 	if err != nil {
-		return "", 0, fmt.Errorf("hash attachment source: %w", err)
+		return "", 0, fmt.Errorf("hash attachment source %q: %w", srcPath, err)
 	}
 	if maxSize > 0 && size > maxSize {
 		return "", 0, ErrAttachmentSourceChanged

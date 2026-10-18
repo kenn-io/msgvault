@@ -110,6 +110,6 @@ func TestStoreAttachmentFromPathVerified(t *testing.T) {
 
 	wrongHash := strings.Repeat("0", len(wantHash))
 	rel, _, _, err = StoreAttachmentFromPathVerified(t.Context(), t.TempDir(), src, wrongHash, int64(len(content)), int64(len(content)))
-	assert.ErrorIs(err, ErrAttachmentSourceChanged)
+	require.ErrorIs(err, ErrAttachmentSourceChanged)
 	assert.Empty(rel, "a mismatched snapshot is rejected before staging")
 }
