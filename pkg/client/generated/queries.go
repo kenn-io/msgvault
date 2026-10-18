@@ -750,6 +750,11 @@ type GetGmailIDsByFilterQuery struct {
 	AggregateKey *string `json:"aggregate_key,omitempty"`
 }
 
+type GetEmailFamilyQuery struct {
+	// SourceID Source IDs to include; repeat or comma-separate. Empty excludes all.
+	SourceID []int64 `json:"source_id,omitempty"`
+}
+
 type GetMessageInlinePartQuery struct {
 	// Cid Inline MIME Content-ID
 	Cid string `json:"cid" validate:"required"`

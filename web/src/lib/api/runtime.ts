@@ -76,6 +76,14 @@ export function orvalFetch<T>(config: GeneratedRequest, options: GeneratedReques
   return request<T>(config, options, config.responseType);
 }
 
+export function orvalEmailFamily<T>(config: GeneratedRequest, options: GeneratedRequestOptions = {}) {
+  const params = config.params as Record<string, unknown> | undefined;
+  if (Array.isArray(params?.source_id) && params.source_id.length === 0) {
+    return orvalFetch<T>({ ...config, params: { ...params, source_id: '' } }, options);
+  }
+  return orvalFetch<T>(config, options);
+}
+
 // Preview limits apply to the unread byte stream before buffering. Orval infers
 // this return type instead of declaring a Blob for streaming operations.
 export function orvalStream<_T>(config: GeneratedRequest, options: GeneratedRequestOptions = {}) {

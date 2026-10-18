@@ -121,6 +121,7 @@ import type {
   DocumentSearchResponse,
   DocumentVectorOperationsResponse,
   DomainSummary,
+  EmailFamily,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -158,6 +159,8 @@ import type {
   GetDocumentIndexStatusParams,
   GetDocumentVectorStatusParams,
   GetDomainPathParameters,
+  GetEmailFamilyParams,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -473,6 +476,7 @@ import type {
 import { orvalFetch } from "../../runtime";
 import { orvalText } from "../../runtime";
 import { orvalStream } from "../../runtime";
+import { orvalEmailFamily } from "../../runtime";
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
@@ -2265,6 +2269,23 @@ export const getMessage = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read related archived email copies and explicit handling evidence
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  params?: GetEmailFamilyParams,
+  options?: SecondParameter<typeof orvalEmailFamily<EmailFamily>>,
+) => {
+  return orvalEmailFamily<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
+      method: "GET",
+      params,
     },
     options,
   );

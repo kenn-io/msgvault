@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -176,6 +176,8 @@ report anonymous usage events through the daemon. See
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
+
+Schema 3.24.0 adds owner-only [email family lookup](#email-families).
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
@@ -2730,6 +2732,24 @@ readiness response when the cache is unavailable. Semantic and hybrid views
 never fall back to full-text search.
 
 ---
+
+### Email families {#email-families}
+
+`GET /api/v1/messages/{id}/family` returns the live archived email copies
+connected by explicit MIME identifiers or source-local Gmail threads. Optional
+`source_id` values narrow the source set; repeat the parameter or comma-separate
+IDs. An explicitly empty value selects no sources. Missing, hidden, non-email
+and inaccessible seeds return `404 not_found`.
+
+The response preserves every copy with source, account, conversation, envelope,
+linkage, labels and dates. `handling` reports outstanding received events,
+positive outbound evidence and reasons for uncertainty. `revision` identifies
+those facts in one consistent archive snapshot. Reads never call a provider or
+scan raw mail. The population is capped at 500 members and 5,000 identifier
+lookups. Reaching a bound sets `truncated: true` and handling to `unknown`.
+
+See [`family`](cli-reference.md#family) for evidence and handling rules.
+This route requires the owner credential and is unavailable to delegated grants.
 
 ### Stage messages for deletion {#post-apiv1deletions}
 

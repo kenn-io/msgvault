@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   getAttachmentContent,
+  getEmailFamily,
   getDocumentIndexStatus,
   getFileContent,
   runCLI,
@@ -10,6 +11,34 @@ import { deleteCLICollection } from './generated/cli/cli';
 import { searchVisualAttachments } from './generated/exploration/exploration';
 
 describe('generated request serialization', () => {
+  it('preserves empty and undefined email-family source selections', async () => {
+    let emptyQuery!: URLSearchParams;
+    let undefinedQuery!: URLSearchParams;
+    await getEmailFamily(
+      { id: 1 },
+      { source_id: [] },
+      {
+        fetch: async (url) => {
+          emptyQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    await getEmailFamily(
+      { id: 1 },
+      { source_id: undefined },
+      {
+        fetch: async (url) => {
+          undefinedQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    expect(emptyQuery.has('source_id')).toBe(true);
+    expect(emptyQuery.get('source_id')).toBe('');
+    expect(undefinedQuery.has('source_id')).toBe(false);
+  });
+
   it('sends each document media type as a separate query value', async () => {
     let query!: URLSearchParams;
     await getDocumentIndexStatus(

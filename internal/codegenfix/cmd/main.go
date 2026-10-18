@@ -9,8 +9,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 3 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: codegenfix <generated-types.go> <generated-client.go>")
+	if len(os.Args) != 4 {
+		_, _ = fmt.Fprintln(os.Stderr, "usage: codegenfix <generated-types.go> <generated-client.go> <generated-client-options.go>")
 		os.Exit(2)
 	}
 	if err := rewrite(os.Args[1], codegenfix.RewriteGeneratedValidators); err != nil {
@@ -18,6 +18,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err := rewrite(os.Args[2], codegenfix.RewriteRunQueryClient); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := rewrite(os.Args[3], codegenfix.RewriteEmailFamilyQueryOptions); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

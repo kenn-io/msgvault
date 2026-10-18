@@ -64,6 +64,93 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 }
 
+func TestRewriteGeneratedValidatorsAllowsEmptyEmailFamilyMemberScalars(t *testing.T) {
+	assertions := assert.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	for _, field := range []string{
+		"AccountAddress", "AccountPath", "OccurredAt", "ProviderThreadID", "RawSha256",
+		"Snippet", "SourceIdentifier", "SourceMessageID", "SourceType", "Subject",
+	} {
+		assertions.NotContains(string(got), `typesValidator.Var(e.`+field+`, "required")`)
+	}
+	assertions.Contains(string(got), `typesValidator.Var(e.EvidenceKinds, "required")`)
+	assertions.Contains(string(got), `typesValidator.Var(e.Labels, "required")`)
+	assertions.Contains(string(got), `typesValidator.Var(e.UnavailableReasons, "required")`)
+}
+
+func TestRewriteGeneratedValidatorsAllowsEmptyEmailFamilyEnvelopeAddress(t *testing.T) {
+	assertions := assert.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	assertions.NotContains(string(got), "Address string `json:\"address\" validate:\"required\"`")
+	assertions.Contains(string(got), "Address string `json:\"address\"`")
+	assertions.Contains(string(got), "Kind string `json:\"kind\" validate:\"required\"`")
+}
+
+func emailFamilyMemberValidatorFixture() string {
+	return `
+type EmailFamilyMember struct {
+	AccountAddress string
+	AccountPath string
+	OccurredAt time.Time
+	ProviderThreadID string
+	RawSha256 string
+	Snippet string
+	SourceIdentifier string
+	SourceMessageID string
+	SourceType string
+	Subject string
+	EvidenceKinds []string
+	Labels []string
+	UnavailableReasons []string
+}
+func (e EmailFamilyMember) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.AccountAddress, "required"); err != nil {
+		errors = errors.Append("AccountAddress", err)
+	}
+	if err := typesValidator.Var(e.AccountPath, "required"); err != nil {
+		errors = errors.Append("AccountPath", err)
+	}
+	if err := typesValidator.Var(e.EvidenceKinds, "required"); err != nil {
+		errors = errors.Append("EvidenceKinds", err)
+	}
+	if err := typesValidator.Var(e.Labels, "required"); err != nil {
+		errors = errors.Append("Labels", err)
+	}
+	if err := typesValidator.Var(e.OccurredAt, "required"); err != nil {
+		errors = errors.Append("OccurredAt", err)
+	}
+	if err := typesValidator.Var(e.ProviderThreadID, "required"); err != nil {
+		errors = errors.Append("ProviderThreadID", err)
+	}
+	if err := typesValidator.Var(e.RawSha256, "required"); err != nil {
+		errors = errors.Append("RawSha256", err)
+	}
+	if err := typesValidator.Var(e.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(e.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(e.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	if err := typesValidator.Var(e.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if err := typesValidator.Var(e.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(e.UnavailableReasons, "required"); err != nil {
+		errors = errors.Append("UnavailableReasons", err)
+	}
+	return errors
+}
+`
+}
+
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
 	assert := assert.New(t)
 	methods := `type RunQueryClientInterface interface {
@@ -87,6 +174,29 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	again, err := RewriteRunQueryClient(got)
 	require.NoError(t, err)
 	assert.Equal(got, again)
+}
+
+func TestRewriteEmailFamilyQueryOptionsPreservesEmptySourceSelection(t *testing.T) {
+	assertions := assert.New(t)
+	source := `func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+`
+
+	got, err := RewriteEmailFamilyQueryOptions([]byte(source))
+	require.NoError(t, err)
+	assertions.Contains(string(got), "o.Query.SourceID != nil && len(o.Query.SourceID) == 0")
+	assertions.Contains(string(got), `query["source_id"] = ""`)
+
+	again, err := RewriteEmailFamilyQueryOptions(got)
+	require.NoError(t, err)
+	assertions.Equal(got, again, "rewrite should be idempotent")
+}
+
+func TestRewriteEmailFamilyQueryOptionsRejectsChangedShape(t *testing.T) {
+	_, err := RewriteEmailFamilyQueryOptions([]byte("package generated\n"))
+
+	require.ErrorContains(t, err, "generated GetEmailFamilyRequestOptions.GetQuery shape changed")
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
@@ -185,7 +295,17 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+	` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + emailFamilyMemberValidatorFixture() + emailFamilyEnvelopeValidatorFixture()
+}
+
+func emailFamilyEnvelopeValidatorFixture() string {
+	return "type EmailFamilyEnvelope struct {\n" +
+		"\tAddress string `json:\"address\" validate:\"required\"`\n" +
+		"\tKind string `json:\"kind\" validate:\"required\"`\n" +
+		"}\n" +
+		"func (e EmailFamilyEnvelope) Validate() error {\n" +
+		"\treturn runtime.ConvertValidatorError(typesValidator.Struct(e))\n" +
+		"}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

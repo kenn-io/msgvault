@@ -74,6 +74,12 @@ try {
             name: 'orvalFetch'
           },
           operations: {
+            getEmailFamily: {
+              mutator: {
+                path: join(webDirectory, 'src/lib/api/runtime.ts'),
+                name: 'orvalEmailFamily'
+              }
+            },
             searchVisualAttachments: {
               mutator: {
                 path: join(webDirectory, 'src/lib/api/visual-search.ts'),

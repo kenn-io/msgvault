@@ -54,6 +54,43 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 	return source, nil
 }
 
+// RewriteEmailFamilyQueryOptions preserves the distinction between an omitted
+// source selection and an explicitly empty one in the generated client. The
+// generated JSON round trip drops empty slices because their fields use
+// omitempty; the runtime represents the explicit empty selection as
+// source_id=.
+func RewriteEmailFamilyQueryOptions(source []byte) ([]byte, error) {
+	signature := []byte("func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {")
+	if bytes.Count(source, signature) != 1 {
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery shape changed")
+	}
+	start := bytes.Index(source, signature)
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery boundary changed")
+	}
+	end := start + endOffset
+	method := source[start:end]
+	const rewritten = "\tquery, err := runtime.AsMap[any](o.Query)\n" +
+		"\tif err != nil {\n\t\treturn nil, err\n\t}\n" +
+		"\tif o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {\n" +
+		"\t\tif query == nil {\n\t\t\tquery = make(map[string]any, 1)\n\t\t}\n" +
+		"\t\tquery[\"source_id\"] = \"\"\n\t}\n" +
+		"\treturn query, nil"
+	if bytes.Count(method, []byte(rewritten)) == 1 {
+		return source, nil
+	}
+	original := []byte("\treturn runtime.AsMap[any](o.Query)")
+	if bytes.Count(method, original) != 1 {
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery body changed")
+	}
+	method = bytes.Replace(method, original, []byte(rewritten), 1)
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	result = append(result, source[end:]...)
+	return result, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
@@ -136,6 +173,15 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"MessagingRoute", "NetworkLabel", "m"},
 		{"MessagingRoute", "ProviderChatID", "m"},
 		{"PersonMessagingRoutesPage", "AliasReason", "p"},
+		{"EmailFamilyMember", "AccountAddress", "e"},
+		{"EmailFamilyMember", "AccountPath", "e"},
+		{"EmailFamilyMember", "ProviderThreadID", "e"},
+		{"EmailFamilyMember", "RawSha256", "e"},
+		{"EmailFamilyMember", "Snippet", "e"},
+		{"EmailFamilyMember", "SourceIdentifier", "e"},
+		{"EmailFamilyMember", "SourceMessageID", "e"},
+		{"EmailFamilyMember", "SourceType", "e"},
+		{"EmailFamilyMember", "Subject", "e"},
 	} {
 		typeName, field, receiver := target[0], target[1], target[2]
 		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
@@ -161,6 +207,66 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		default:
 			return nil, shapeErr
 		}
+	}
+	// Recipient rows can retain no envelope address for legacy and non-email
+	// imports. Address remains a required JSON property, but an empty string is
+	// a valid value for those archived rows.
+	const familyEnvelope = "EmailFamilyEnvelope"
+	familyEnvelopeStart := bytes.Index(result, []byte("type "+familyEnvelope+" struct {"))
+	if familyEnvelopeStart < 0 {
+		return nil, errors.New("generated EmailFamilyEnvelope.Address shape changed")
+	}
+	familyEnvelopeEndOffset := bytes.Index(result[familyEnvelopeStart:], []byte("\n}"))
+	if familyEnvelopeEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyEnvelope.Address shape changed")
+	}
+	familyEnvelopeEnd := familyEnvelopeStart + familyEnvelopeEndOffset
+	familyEnvelopeFields := result[familyEnvelopeStart:familyEnvelopeEnd]
+	addressRequiredTag := []byte("`json:\"address\" validate:\"required\"`")
+	addressPresentTag := []byte("`json:\"address\"`")
+	addressFieldStart := bytes.Index(familyEnvelopeFields, []byte("Address string"))
+	if addressFieldStart < 0 {
+		return nil, errors.New("generated EmailFamilyEnvelope.Address shape changed")
+	}
+	addressFieldEndOffset := bytes.Index(familyEnvelopeFields[addressFieldStart:], []byte("\n"))
+	if addressFieldEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyEnvelope.Address shape changed")
+	}
+	addressFieldEnd := addressFieldStart + addressFieldEndOffset
+	addressField := familyEnvelopeFields[addressFieldStart:addressFieldEnd]
+	switch {
+	case bytes.Count(addressField, addressRequiredTag) == 1:
+		fixedField := bytes.Replace(addressField, addressRequiredTag, addressPresentTag, 1)
+		familyEnvelopeFields = append(append(append([]byte(nil), familyEnvelopeFields[:addressFieldStart]...), fixedField...), familyEnvelopeFields[addressFieldEnd:]...)
+		result = append(append(append([]byte(nil), result[:familyEnvelopeStart]...), familyEnvelopeFields...), result[familyEnvelopeEnd:]...)
+	case bytes.Count(addressField, addressRequiredTag) == 0 && bytes.Count(addressField, addressPresentTag) == 1:
+	default:
+		return nil, errors.New("generated EmailFamilyEnvelope.Address shape changed")
+	}
+	// A required date-time may legitimately encode the zero time when chronology
+	// is unavailable. The Go value cannot distinguish that from a missing field.
+	const familyMemberOccurredAt = "EmailFamilyMember"
+	familyMemberStart := bytes.Index(result, []byte("func (e "+familyMemberOccurredAt+") Validate() error {"))
+	if familyMemberStart < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+	}
+	familyMemberEndOffset := bytes.Index(result[familyMemberStart:], []byte("\n}\n"))
+	if familyMemberEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+	}
+	familyMemberEnd := familyMemberStart + familyMemberEndOffset
+	familyMemberValidator := result[familyMemberStart:familyMemberEnd]
+	occurredAtRequired := []byte("\tif err := typesValidator.Var(e.OccurredAt, \"required\"); err != nil {\n\t\terrors = errors.Append(\"OccurredAt\", err)\n\t}\n")
+	switch bytes.Count(familyMemberValidator, occurredAtRequired) {
+	case 1:
+		rewritten := bytes.Replace(familyMemberValidator, occurredAtRequired, nil, 1)
+		result = append(append(append([]byte(nil), result[:familyMemberStart]...), rewritten...), result[familyMemberEnd:]...)
+	case 0:
+		if !regexp.MustCompile(`\bOccurredAt\s+time\.Time\b`).Match(result) {
+			return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+		}
+	default:
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
 	}
 	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
 	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")
