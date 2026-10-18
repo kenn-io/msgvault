@@ -442,14 +442,26 @@ func TestPersonCardFactTiePrefersCurrentUserEdit(t *testing.T) {
 	value := "email"
 	_, err := st.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: id, DefinitionSlug: store.AttributeSlugPrimaryChannel, Value: store.AttributeValue{Type: store.AttributeValueText, Text: &value}, Source: store.ProvenanceUser})
 	requirements.NoError(err)
-	now := time.Now().UTC().Add(time.Minute)
-	tie := now.Add(-time.Hour)
+	tie := personFactAPINow
+	now := tie.Add(time.Hour)
 	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_attribute_values SET created_at = ? WHERE person_id = ? AND source = 'user'`), tie, id)
 	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_decisions SET created_at = ? WHERE person_id = ?`), tie, id)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_fact_resolutions SET resolved_at = ? WHERE person_id = ?`), tie, id)
 	requirements.NoError(err)
 	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true}}
 	srv.personCardFacts(t.Context(), id, &in, personcard.Options{AsOf: now})
+	requirements.Len(in.Facts, 2)
+	var factTime, userTime time.Time
+	for _, fact := range in.Facts {
+		if fact.User {
+			userTime = fact.ChangedAt
+		} else {
+			factTime = fact.ChangedAt
+		}
+	}
+	assertions.Equal(tie, factTime)
+	assertions.Equal(tie, userTime)
+	assertions.Equal(factTime, userTime)
 	card := personcard.Assemble(in, personcard.Options{AsOf: now})
 	requirements.Len(card.Items, 1)
 	assertions.Equal("user", card.Items[0].ContentTrust)
@@ -783,7 +795,6 @@ func FuzzPersonCardMeetingParticipantStatusDefaultsUnspecifiedProvenance(f *test
 }
 
 func TestPersonCardMeetingReportsTruncatedParticipantEvidence(t *testing.T) {
-	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	participantID, err := st.EnsureParticipant("alex@example.com", "Alex Example", "example.com")
@@ -793,28 +804,55 @@ func TestPersonCardMeetingReportsTruncatedParticipantEvidence(t *testing.T) {
 	now := time.Now().UTC()
 	at := now.Add(-time.Hour)
 	items := make([]store.MeetingItem, 10)
-	inputs := &populatedCardInputs{
-		Store: st,
-		meetings: []store.MeetingRecordSummary{{
-			Ref: "evt:2", Start: at, ItemCount: 11,
-			Occurrence: &store.CalendarOccurrence{Attendees: []calevent.Attendee{{Email: "alex@example.com"}}},
-		}},
-		meetingRecord: store.MeetingRecord{
-			Items: items,
-			Participants: []store.MeetingParticipant{{
-				ParticipantID: participantID, Email: "alex@example.com", Provenance: "invited",
-			}},
-		},
+	for i := range items {
+		messageID := int64(100 + i)
+		result, err := meetingcontent.Render("archive", []meetingcontent.Entry{{
+			Meeting: meetingcontent.MeetingRef{MessageID: messageID, SourceType: "granola"},
+			Content: meetingcontent.Content{
+				Summary:    meetingcontent.Section{State: meetingcontent.StateEmpty},
+				Notes:      meetingcontent.Section{State: meetingcontent.StateEmpty},
+				Transcript: meetingcontent.Transcript{State: meetingcontent.StateEmpty},
+				Actions:    []meetingcontent.Action{},
+			},
+		}}, meetingcontent.PacketOptions{Format: meetingcontent.FormatJSON, IncludeTranscript: true, MaxBytes: 4096})
+		requirements.NoError(err)
+		packet, err := meetingcontent.PacketFromResult(result)
+		requirements.NoError(err)
+		items[i] = store.MeetingItem{MessageID: messageID, Content: packet}
 	}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: inputs, Logger: testLogger()})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
-	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: person.ID, Tracked: true, Emails: []string{"alex@example.com"}}}
-	srv.personCardMeetings(t.Context(), person, &in, personcard.Options{AsOf: now})
 
-	requirements.Len(in.Meetings, 1)
-	assertions.Equal("invited", in.Meetings[0].Basis)
-	assertions.False(in.Meetings[0].Participated)
-	assertions.True(in.Coverage.MeetingsTruncated)
+	for _, tc := range []struct {
+		name      string
+		itemCount int
+		truncated bool
+	}{{"complete", 10, false}, {"missing_item", 11, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			inputs := &populatedCardInputs{
+				Store: st,
+				meetings: []store.MeetingRecordSummary{{
+					Ref: "evt:2", Start: at, ItemCount: tc.itemCount,
+					Occurrence: &store.CalendarOccurrence{Attendees: []calevent.Attendee{{Email: "alex@example.com"}}},
+				}},
+				meetingRecord: store.MeetingRecord{
+					Items: items,
+					Participants: []store.MeetingParticipant{{
+						ParticipantID: participantID, Email: "alex@example.com", Provenance: "invited",
+					}},
+				},
+			}
+			srv := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: inputs, Logger: testLogger()})
+			t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+			in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: person.ID, Tracked: true, Emails: []string{"alex@example.com"}}}
+			srv.personCardMeetings(t.Context(), person, &in, personcard.Options{AsOf: now})
+
+			requirements.Len(in.Meetings, 1)
+			assertions.Equal("invited", in.Meetings[0].Basis)
+			assertions.False(in.Meetings[0].Participated)
+			assertions.Equal(tc.truncated, in.Coverage.MeetingsTruncated)
+		})
+	}
 }
 
 func TestPersonCardMeetingReportsOmittedPacketParticipantEvidence(t *testing.T) {
