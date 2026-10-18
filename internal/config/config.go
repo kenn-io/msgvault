@@ -20,8 +20,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
-	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -679,9 +679,7 @@ func (a *ActivityConfig) Validate() error {
 	if a.Schedule == "" {
 		return nil
 	}
-	parser := cron.NewParser(
-		cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	if _, err := parser.Parse(a.Schedule); err != nil {
+	if _, err := cronexpr.Parser.Parse(a.Schedule); err != nil {
 		return fmt.Errorf("invalid [activity] schedule %q: %w", a.Schedule, err)
 	}
 	return nil

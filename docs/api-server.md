@@ -314,13 +314,10 @@ value under twelve characters, for the CardDAV password, and when nothing
 is set; the value itself is never returned. `validation` gains two optional
 fields:
 
-- `format: "cron"` marks a five-field cron schedule (minute, hour, day of
-  month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,
-  numbers, ranges, comma lists, `/step`, and three-letter month and weekday
-  names. A `CRON_TZ=<zone>` or `TZ=<zone>` prefix with an IANA zone name runs
-  the schedule in that zone instead of the daemon's local time. Descriptors
-  such as `@hourly`, the `L`, `W`, and `#` extensions, and a field made only
-  of commas are rejected. The daemon trims surrounding whitespace and treats
+- `format: "cron"` marks a five-field cron schedule, optionally preceded by a
+  `CRON_TZ=<zone>` or `TZ=<zone>` prefix. The daemon accepts exactly the
+  [cron schedules](configuration.md#cron-schedules) its configuration file
+  accepts. The daemon trims surrounding whitespace and treats
   a zone prefix with no fields after it as the empty value, then validates
   the expression on PATCH; an empty value is rejected when the setting is
   `required`.

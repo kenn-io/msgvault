@@ -1,7 +1,8 @@
 // Package cronexpr holds the cron grammar msgvault accepts for every
 // schedule: five fields (minute, hour, day of month, month, day of week),
 // optionally preceded by a CRON_TZ=<zone> or TZ=<zone> prefix. Descriptors
-// such as @hourly and extended syntax are not part of it.
+// such as @hourly and extended syntax are not part of it. msgvault takes
+// go-cron's rules and run times as they are and adds none of its own.
 package cronexpr
 
 import "github.com/netresearch/go-cron"

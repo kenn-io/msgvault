@@ -112,6 +112,16 @@ before publication. This exception does not permit reuse in ordinary tests.
 
 ## Code and SQL conventions
 
+- Parse every cron schedule with `cronexpr.Parser`, which is go-cron with five
+  fields and `DowOrDom`. Use go-cron's grammar and run times as they are. Do
+  not add parser rules, pre-checks, or daylight-saving workarounds. The only
+  exception is the comma-only field check in `ValidateCronExpr`; delete it if
+  go-cron starts rejecting those fields.
+- `web/src/lib/settings/cron.ts` mirrors go-cron and nothing else, and
+  `web/src/lib/settings/cron-corpus.json` holds both parsers to the same
+  answers. When go-cron changes, record its behaviour in the corpus first, then
+  update the browser parser to match. Never change the corpus to fit the
+  browser parser.
 - Increment `store.SchemaVersion` for any main archive schema change, including
   indexes, or required data migration. Embedded readers open without DDL and
   require completed setup at their exact expected version. See

@@ -11,8 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	"github.com/netresearch/go-cron"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/syncerr"
 )
@@ -199,9 +200,7 @@ func (s *Scheduler) WithCompletion(completion func()) *Scheduler {
 func New(syncFunc SyncFunc) *Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Scheduler{
-		cron: cron.New(cron.WithParser(cron.NewParser(
-			cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
-		))),
+		cron:               cron.New(cron.WithParser(cronexpr.Parser)),
 		syncFunc:           syncFunc,
 		logger:             slog.Default(),
 		jobs:               make(map[string]cron.EntryID),
@@ -364,7 +363,11 @@ func (s *Scheduler) AddJob(job Job) error {
 		if job.Interval < time.Second || job.Interval%time.Second != 0 {
 			return fmt.Errorf("invalid job interval %s: use positive whole seconds", job.Interval)
 		}
-		entryID = s.cron.Schedule(cron.Every(job.Interval), cron.FuncJob(callback))
+		var err error
+		entryID, err = s.cron.ScheduleJob(cron.Every(job.Interval), cron.FuncJob(callback))
+		if err != nil {
+			return fmt.Errorf("schedule job every %s: %w", job.Interval, err)
+		}
 		schedule = "@every " + job.Interval.String()
 	} else {
 		if err := ValidateCronExpr(job.Schedule); err != nil {
@@ -1119,7 +1122,7 @@ func (s *Scheduler) hasQueuedRuns() bool {
 	return s.queuedRuns > 0
 }
 
-// nextRun reports when a cron entry fires next. robfig/cron fills Entry.Next
+// nextRun reports when a cron entry fires next. go-cron fills Entry.Next
 // only once its run loop has started, so before Start the value is computed
 // from the schedule instead of reporting the zero time.
 func (s *Scheduler) nextRun(entryID cron.EntryID) time.Time {
@@ -1202,22 +1205,12 @@ func NormalizeCronExpr(expr string) string {
 // preceded by a "CRON_TZ=<zone>" or "TZ=<zone>" prefix. It also rejects a
 // field made only of commas, which the parser stores but never matches.
 func ValidateCronExpr(expr string) error {
-	fields := expr
-	if strings.HasPrefix(fields, "TZ=") || strings.HasPrefix(fields, "CRON_TZ=") {
-		// The parser slices at the first space without checking for one.
-		space := strings.Index(fields, " ")
-		if space < 0 {
-			return errors.New("invalid cron expression: the time zone must be followed by the five schedule fields")
-		}
-		fields = fields[space:]
-	}
-	for field := range strings.FieldsSeq(fields) {
+	for field := range strings.FieldsSeq(expr) {
 		if strings.Trim(field, ",") == "" {
 			return fmt.Errorf("invalid cron expression: field %q lists no values", field)
 		}
 	}
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	if _, err := parser.Parse(expr); err != nil {
+	if _, err := cronexpr.Parser.Parse(expr); err != nil {
 		return fmt.Errorf("invalid cron expression: %w", err)
 	}
 	return nil

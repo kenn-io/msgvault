@@ -1,9 +1,10 @@
 /**
  * Five-field cron expressions as the daemon accepts them: minute, hour, day
  * of month, month, and day of week, with `*`, ranges, lists, steps, and
- * month or weekday names. The daemon's parser stays authoritative; this
- * module mirrors its rules closely enough to flag mistakes while typing and
- * to say in plain English when a schedule runs.
+ * month or weekday names. The daemon parses schedules with go-cron, which
+ * stays authoritative; this module mirrors its rules closely enough to flag
+ * mistakes while typing and to say in plain English when a schedule runs. It
+ * adds no rules of its own: cron-corpus.json pins the two parsers together.
  */
 
 export type CronFieldName = 'minute' | 'hour' | 'day' | 'month' | 'weekday';
@@ -29,7 +30,8 @@ export const CRON_FIELDS: readonly CronFieldSpec[] = [
   { name: 'hour', label: 'hour', min: 0, max: 23 },
   { name: 'day', label: 'day', min: 1, max: 31 },
   { name: 'month', label: 'month', min: 1, max: 12, names: nameTable(MONTH_NAMES, 1) },
-  { name: 'weekday', label: 'weekday', min: 0, max: 6, names: nameTable(WEEKDAY_NAMES, 0) },
+  // The daemon reads both 0 and 7 as Sunday.
+  { name: 'weekday', label: 'weekday', min: 0, max: 7, names: nameTable(WEEKDAY_NAMES, 0) },
 ];
 
 /** One whitespace-delimited piece of the expression with its position. */
@@ -76,7 +78,11 @@ export interface CronParts {
   expression: string;
 }
 
-const ZONE_PREFIX = /^\s*(?:CRON_TZ|TZ)=(\S*)\s*/;
+// The daemon takes the zone name up to the first space and checks its
+// characters and length before looking it up.
+const ZONE_PREFIX = /^\s*(?:CRON_TZ|TZ)=([^ ]*) */;
+const ZONE_NAME = /^[A-Za-z0-9/_+:-]{1,64}$/;
+const MAX_SCHEDULE_BYTES = 1024;
 
 export interface CronPreset {
   label: string;
@@ -98,14 +104,19 @@ function nameTable(names: readonly string[], offset: number): Record<string, num
 
 /**
  * Separates a `CRON_TZ=<zone>` or `TZ=<zone>` prefix from the five fields.
- * The daemon reads both spellings; `joinCron` always writes `CRON_TZ=`. A
- * prefix with no name after the equals sign runs in UTC on the daemon, so it
- * reads as UTC here too.
+ * The daemon reads both spellings and drops matching quotes around the name;
+ * `joinCron` always writes `CRON_TZ=` without quotes.
  */
 export function splitCron(schedule: string): CronParts {
   const match = ZONE_PREFIX.exec(schedule);
   if (!match) return { zone: '', expression: schedule };
-  return { zone: match[1] || 'UTC', expression: schedule.slice(match[0].length) };
+  return { zone: unquote(match[1]), expression: schedule.slice(match[0].length) };
+}
+
+function unquote(name: string): string {
+  const quote = name[0];
+  if (name.length >= 2 && (quote === '"' || quote === "'") && name.at(-1) === quote) return name.slice(1, -1);
+  return name;
 }
 
 /**
@@ -135,8 +146,15 @@ export function timeZoneLabel(zone: string): string {
  * names are valid, so a zone it stored is never shown as a mistake here.
  */
 export function parseCron(schedule: string): CronParse {
+  if (new TextEncoder().encode(schedule).length > MAX_SCHEDULE_BYTES) {
+    return { tokens: [], error: `A schedule can be at most ${MAX_SCHEDULE_BYTES} bytes long.` };
+  }
   const { zone, expression } = splitCron(schedule);
   const tokens = tokenize(expression, schedule.length - expression.length);
+  if (ZONE_PREFIX.test(schedule)) {
+    if (zone === '') return { tokens, error: 'Enter a time zone name after the equals sign.' };
+    if (!ZONE_NAME.test(zone)) return { tokens, zone, error: `"${zone}" is not a time zone name.` };
+  }
   if (tokens.length === 0) {
     return { tokens, zone: zone || undefined, error: 'Enter five fields: minute, hour, day, month, and weekday.' };
   }
@@ -218,7 +236,10 @@ function parseTerm(text: string, spec: CronFieldSpec): CronTerm {
 
   if (start < spec.min) throw new Error(`${start} is below the minimum of ${spec.min}.`);
   if (end > spec.max) throw new Error(`${end} is above the maximum of ${spec.max}.`);
-  if (start > end) throw new Error(`${start} comes after ${end}.`);
+  // A range whose start comes after its end wraps past the end of the field,
+  // so 22-2 in the hour field is 22:00 through 02:00.
+  const size = start > end ? spec.max - start + 1 + (end - spec.min + 1) : end - start + 1;
+  if (step > 1 && step >= size) throw new Error(`step in ${text} must be less than ${size}.`);
   return { start, end, step, all };
 }
 
@@ -272,7 +293,9 @@ export function describeFields(fields: CronField[], zone?: string): string {
 // in the minute field fires at :00 and :40, with gaps of 40 and 20 minutes,
 // so it is described by its positions instead.
 function evenStep(field: CronField): number | undefined {
-  if (field.terms.length !== 1) return undefined;
+  // Weekday steps run over 0-7, where Sunday appears twice, so they never
+  // mean "every Nth day"; they are described by the days they pick.
+  if (field.name === 'weekday' || field.terms.length !== 1) return undefined;
   const term = field.terms[0];
   if (!term.all || term.step <= 1) return undefined;
   const span = CRON_FIELDS.find((spec) => spec.name === field.name);
@@ -321,8 +344,11 @@ function describeHourWindow(hour: CronField): string {
 }
 
 function describeDays(day: CronField, month: CronField, weekday: CronField): string {
-  const dayPart = day.any ? '' : describeDayOfMonth(day);
-  const weekdayPart = weekday.any ? '' : describeWeekday(weekday);
+  // A weekday field naming all seven days matches every day whatever the
+  // day of the month says, because the daemon matches either day field.
+  const everyWeekday = !weekday.any && values(weekday).length === WEEKDAYS.length;
+  const dayPart = day.any || everyWeekday ? '' : describeDayOfMonth(day);
+  const weekdayPart = weekday.any || everyWeekday ? '' : describeWeekday(weekday);
   const monthPart = month.any ? '' : describeMonth(month);
 
   let result = 'every day';
@@ -348,7 +374,9 @@ function describeWeekday(weekday: CronField): string {
   if (weekday.terms.length === 1) {
     const term = weekday.terms[0];
     if (term.step === 1 && term.start === 1 && term.end === 5) return 'on weekdays';
-    if (term.step === 1 && term.start !== term.end) return `${WEEKDAYS[term.start]} to ${WEEKDAYS[term.end]}`;
+    if (term.step === 1 && term.start !== term.end) {
+      return `${WEEKDAYS[term.start % 7]} to ${WEEKDAYS[term.end % 7]}`;
+    }
   }
   const list = values(weekday);
   if (list.length === 1) return `on ${WEEKDAYS[list[0]]}s`;
@@ -379,9 +407,16 @@ function describeGeneric(field: CronField): string {
 }
 
 function values(field: CronField): number[] {
+  const spec = CRON_FIELDS.find((candidate) => candidate.name === field.name);
+  if (!spec) return [];
+  const span = spec.max - spec.min + 1;
   const set = new Set<number>();
   for (const term of field.terms) {
-    for (let value = term.start; value <= term.end; value += term.step) set.add(value);
+    const last = term.start > term.end ? term.end + span : term.end;
+    for (let value = term.start; value <= last; value += term.step) {
+      const wrapped = value > spec.max ? value - span : value;
+      set.add(field.name === 'weekday' ? wrapped % 7 : wrapped);
+    }
   }
   return [...set].sort((a, b) => a - b);
 }

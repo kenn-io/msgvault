@@ -878,7 +878,7 @@ describe('SettingsWorkspace', () => {
     const status = () => document.getElementById(schedule.getAttribute('aria-describedby') ?? '')?.textContent?.trim();
     expect(status()).toBe('Every 15 minutes');
     await fireEvent.input(schedule, { target: { value: '0 3 * * 9' } });
-    expect(status()).toBe('Weekday: 9 is above the maximum of 6.');
+    expect(status()).toBe('Weekday: 9 is above the maximum of 7.');
     await fireEvent.input(schedule, { target: { value: '0 2 * * 0' } });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
