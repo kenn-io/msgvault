@@ -513,6 +513,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				}
 			} else {
 				roster = teamRoster()
+				if nativeTeamsAuthenticationFailure(roster.err) {
+					return roster.err
+				}
 			}
 			key := team.ID + "/" + ch.ID
 			title := team.DisplayName + " / " + ch.DisplayName
@@ -565,6 +568,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				// First run: backfill root messages + replies, then prime delta cursor.
 				roots, rootsTruncated, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID, remainingLimit())
 				if lerr != nil {
+					if nativeTeamsAuthenticationFailure(lerr) {
+						return lerr
+					}
 					sum.Errors++
 					continue
 				}
@@ -580,6 +586,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					}
 					replies, repliesTruncated, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID, replyLimit)
 					if rerr != nil {
+						if nativeTeamsAuthenticationFailure(rerr) {
+							return rerr
+						}
 						sum.Errors++
 						channelComplete = false
 						continue
@@ -595,6 +604,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					// Prime the delta cursor only after a complete roots+replies backfill.
 					deltaMessages, dl, deltaTruncated, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "", remainingLimit())
 					if derr != nil {
+						if nativeTeamsAuthenticationFailure(derr) {
+							return derr
+						}
 						sum.Errors++
 					} else {
 						if deltaTruncated {
@@ -612,9 +624,15 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				// Subsequent run: use stored delta link.
 				deltaMessages, dl, deltaTruncated, derr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, prevDelta, remainingLimit())
 				if derr != nil {
+					if nativeTeamsAuthenticationFailure(derr) {
+						return derr
+					}
 					// On 400/410, fall back to full re-page + re-prime.
 					roots, rootsTruncated, lerr := imp.client.ListChannelMessages(ctx, team.ID, ch.ID, remainingLimit())
 					if lerr != nil {
+						if nativeTeamsAuthenticationFailure(lerr) {
+							return lerr
+						}
 						sum.Errors++
 						continue
 					}
@@ -630,6 +648,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 						}
 						replies, repliesTruncated, rerr := imp.client.ListReplies(ctx, team.ID, ch.ID, roots[i].ID, replyLimit)
 						if rerr != nil {
+							if nativeTeamsAuthenticationFailure(rerr) {
+								return rerr
+							}
 							sum.Errors++
 							channelComplete = false
 							continue
@@ -644,6 +665,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 					if channelComplete && !channelTruncated {
 						primeMessages, pdl, primeTruncated, perr := imp.client.ChannelMessagesDelta(ctx, team.ID, ch.ID, "", remainingLimit())
 						if perr != nil {
+							if nativeTeamsAuthenticationFailure(perr) {
+								return perr
+							}
 							sum.Errors++
 						} else {
 							if primeTruncated {
