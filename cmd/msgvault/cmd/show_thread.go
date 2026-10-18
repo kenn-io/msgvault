@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -93,10 +92,10 @@ Examples:
 					}
 					values[i] = messageJSONValue(msg)
 				}
-				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 				return json.MarshalEncode(enc, map[string]any{"conversation_id": page.ConversationID, "total": page.Total, "offset": page.Offset, "has_more": page.HasMore, "messages": values}, json.Deterministic(true))
 			}
-			if _, err := fmt.Printf("Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset); err != nil {
 				return fmt.Errorf("write thread: %w", err)
 			}
 			for _, msg := range messages {
@@ -104,7 +103,7 @@ Examples:
 				if !msg.SentAt.IsZero() {
 					date = msg.SentAt.Format("2006-01-02 15:04:05Z07:00")
 				}
-				if _, err := fmt.Printf("\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted))); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted))); err != nil {
 					return fmt.Errorf("write thread: %w", err)
 				}
 			}

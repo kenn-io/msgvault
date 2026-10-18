@@ -1372,7 +1372,7 @@ func (m *Model) startSpinner() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 	defer func() {
 		updated, ok := result.(Model)
-		if !ok || updated.width == 0 || updated.quitting {
+		if !ok || updated.reportScreen == nil && updated.reportAction == nil || updated.width == 0 || updated.quitting {
 			return
 		}
 		if updated.transitionBuffer == "" {

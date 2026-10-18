@@ -68,17 +68,16 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
-	if _, action := actionProperties[req.Event]; !action && req.Event != EventScreenViewed {
+	required, action := actionProperties[req.Event]
+	if !action && req.Event != EventScreenViewed {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
 	req.Properties, _ = h.reporter.SanitizeProperties(req.Event, req.Properties)
-	if required, action := actionProperties[req.Event]; action {
-		for key := range required {
-			if req.Properties[key] == nil {
-				acceptedScreen(w)
-				return
-			}
+	for key := range required {
+		if req.Properties[key] == nil {
+			acceptedScreen(w)
+			return
 		}
 	}
 	surface, _ := req.Properties[propertySurface].(string)
@@ -90,7 +89,6 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		acceptedScreen(w)
 		return
 	}
-	searchType, _ := req.Properties["search_type"].(string)
 	var claim string
 	switch req.Event {
 	case EventScreenViewed:
@@ -100,12 +98,10 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		claim, _ = req.Properties["screen"].(string)
 	case EventSearchRun:
+		searchType, _ := req.Properties["search_type"].(string)
 		claim = req.Event + ":" + surface + ":" + searchType
-	case EventMessageOpened:
+	default: // EventMessageOpened
 		claim = req.Event + ":" + surface
-	default:
-		h.capture.ServeHTTP(w, r)
-		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()

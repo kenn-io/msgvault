@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient as createClient } from '../../api/client';
 import ConversationView from './ConversationView.svelte';
 
 const telemetryEvents: unknown[] = [];
 beforeEach(() => { telemetryEvents.length = 0; });
+afterEach(() => { vi.useRealTimers(); });
 function createAPIClient(fetchFn: typeof fetch) {
   return createClient(async (input, init) => {
     if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
@@ -425,9 +426,15 @@ describe('ConversationView', () => {
       expect(telemetryEvents).toHaveLength(0);
     } else {
       await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
+      const today = Date.now();
+      vi.useFakeTimers({ toFake: ['Date'], now: today });
       await fireEvent(window, new Event('focus'));
+      vi.setSystemTime(today + 86_400_000);
+      await fireEvent(window, new Event('focus'));
+      // A same-day focus would have made this three.
       await waitFor(() => expect(telemetryEvents).toHaveLength(2));
       view.unmount();
+      vi.setSystemTime(today + 2 * 86_400_000);
       await fireEvent(window, new Event('focus'));
       expect(telemetryEvents).toHaveLength(2);
     }

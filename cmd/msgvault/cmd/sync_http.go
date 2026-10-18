@@ -91,7 +91,7 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		return nil
 	})
 	if err == nil {
-		reportCLIAction(cmd, st, "sync_finished", "", "")
+		reportCLISyncFinished(cmd, st)
 	}
 	return err
 }

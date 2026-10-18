@@ -2,6 +2,10 @@ import { captureTelemetryEvent } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
 import type { ExploreSearchMode } from '../explore/models';
 
+export function utcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export function reportWhenVisible(send: () => unknown, signal?: AbortSignal): () => void {
   const cancel = (): void => {
     document.removeEventListener('visibilitychange', report);

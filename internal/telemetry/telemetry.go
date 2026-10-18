@@ -78,13 +78,7 @@ func CaptureHandler(reporter *posthog.Reporter, dataDir string) http.Handler {
 
 // Enabled applies the environment overrides to the configured telemetry choice.
 func Enabled(configEnabled bool) bool {
-	for _, env := range []string{EnabledEnv, posthog.GenericEnabledEnv} {
-		switch strings.ToLower(strings.TrimSpace(os.Getenv(env))) {
-		case "0", "false", "no", "off":
-			return false
-		}
-	}
-	return strings.TrimSpace(os.Getenv(EnabledEnv)) != "" || configEnabled
+	return posthog.EnabledFromEnv(envPrefix) && (strings.TrimSpace(os.Getenv(EnabledEnv)) != "" || configEnabled)
 }
 
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {

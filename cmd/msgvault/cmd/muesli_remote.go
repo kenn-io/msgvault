@@ -140,8 +140,8 @@ func runMuesliClientSync(cmd *cobra.Command, args []string, meetingID int64) err
 			failures = append(failures, err)
 		}
 	}
-	if len(failures) == 0 && cmd.Name() == "sync-muesli" {
-		reportCLIAction(cmd, run.client, "sync_finished", "", "")
+	if len(failures) == 0 {
+		reportCLISyncFinished(cmd, run.client)
 	}
 	return errors.Join(failures...)
 }

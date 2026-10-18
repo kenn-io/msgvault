@@ -41,6 +41,14 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	_ = sendActionTelemetry(ctx, client, "cli", event, property, value)
 }
 
+// reportCLISyncFinished counts a completed manual sync. The Muesli completion
+// hook syncs automatically, so it never counts.
+func reportCLISyncFinished(cmd *cobra.Command, client *daemonclient.Client) {
+	if cmd.Name() != "muesli-hook" {
+		reportCLIAction(cmd, client, "sync_finished", "", "")
+	}
+}
+
 func reportSuccessfulCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, property, value string, result *error) {
 	if *result == nil {
 		reportCLIAction(cmd, client, event, property, value)
