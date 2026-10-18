@@ -26,7 +26,32 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 		return cols
 	}
 	before := columns()
-	// Reset the prior completion marker and remove only the new objects.
+	// Reset the prior completion marker and remove the new objects and the
+	// triggers that can keep enqueueing work through this legacy upgrade.
+	if s.IsPostgreSQL() {
+		for _, trigger := range []struct{ name, table string }{
+			{"trg_loop_queue_labels_insert", "message_labels"},
+			{"trg_loop_queue_labels_update", "message_labels"},
+			{"trg_loop_queue_labels_delete", "message_labels"},
+			{"trg_loop_queue_recipients_insert", "message_recipients"},
+			{"trg_loop_queue_recipients_update", "message_recipients"},
+			{"trg_loop_queue_recipients_delete", "message_recipients"},
+			{"trg_loop_queue_messages_move", "messages"},
+			{"trg_loop_queue_conversation_type_update", "conversations"},
+			{"trg_loop_queue_conversation_participants", "conversation_participants"},
+		} {
+			loopExec(t, s, "DROP TRIGGER IF EXISTS "+trigger.name+" ON "+trigger.table)
+		}
+	} else {
+		for _, trigger := range []string{
+			"trg_loop_queue_labels_insert", "trg_loop_queue_labels_update", "trg_loop_queue_labels_delete",
+			"trg_loop_queue_recipients_insert", "trg_loop_queue_recipients_update", "trg_loop_queue_recipients_delete",
+			"trg_loop_queue_messages_move", "trg_loop_queue_conversation_type_update",
+			"trg_loop_queue_conversation_participants_insert", "trg_loop_queue_conversation_participants_update", "trg_loop_queue_conversation_participants_delete",
+		} {
+			loopExec(t, s, "DROP TRIGGER IF EXISTS "+trigger)
+		}
+	}
 	for _, table := range []string{"open_loops", "loop_suppressions", "loop_conversation_queue", "message_automation_signals", "loop_derivation_state"} {
 		loopExec(t, s, "DROP TABLE "+table)
 	}

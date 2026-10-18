@@ -272,6 +272,26 @@ func TestImportOnlyChatSourcesAreStatic(t *testing.T) {
 	}
 }
 
+func TestWhatsAppDatabaseImportIsStaticAndDoesNotBlockFreshness(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("whatsapp", "phone-backup")
+	requirements.NoError(err)
+
+	items, err := Build(t.Context(), config.NewDefaultConfig(), st)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal("static", items[0].Scheduling)
+	assertions.Empty(items[0].SyncCommand)
+
+	report, err := freshness.Build(t.Context(), freshness.Inputs{
+		Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
+	})
+	requirements.NoError(err)
+	assertions.False(report.Stale, "a static WhatsApp backup must not make waiting views stale")
+}
+
 func TestArchiveAndConfigurationUnion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

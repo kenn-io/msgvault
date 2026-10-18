@@ -143,6 +143,7 @@ func TestDetectOutboundQuestion(t *testing.T) {
 			requirements.NotNil(got.Open)
 			assertions.Equal(AwaitingReply, got.Open.Kind)
 			assertions.Equal("open", got.Open.Status)
+			assertions.Equal(int64(10), got.Open.Anchor.ID)
 			assertions.Equal(int64(2), got.Open.Counterparty.ID)
 		})
 	}
@@ -1060,9 +1061,9 @@ func TestDetectLiveSuppressionUsesCurrentPersonMembership(t *testing.T) {
 	requirements := require.New(t)
 	view, now := detectorFixture()
 	view.Messages = nil // The live anchor falls outside this bounded window.
-	view.Participants[1].PersonID = 42
+	view.Participants = []LoopParticipant{view.Participants[0], LoopParticipant{ID: 3}}
 	view.AnchorExists = func(int64) (bool, error) { return true, nil }
-	live := []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10, CounterpartyParticipantID: 2, CounterpartyPersonID: 7}}
+	live := []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10, CounterpartyParticipantID: 2, CounterpartyPersonID: 42}}
 	got := Detect(view, live, now, DefaultThresholds(), Suppressions{Persons: []int64{42}})
 	requirements.NoError(got.Err)
 	requirements.Len(got.Close, 1)
@@ -1189,6 +1190,31 @@ func TestDetectRetainsEstablishedBulkLoopWhenPriorParticipationIsOutsideWindow(t
 	assertions.Empty(got.Close)
 	requirements.NotNil(got.Open)
 	assertions.Equal(anchor.ID, got.Open.Anchor.ID)
+}
+
+func TestDetectRetainsSingleBulkReplyAfterOwnerParticipation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	ownerMessage := view.Messages[0]
+	ownerMessage.ID = 9
+	ownerMessage.Direction = Outbound
+	ownerMessage.Sender = view.Participants[0]
+	ownerMessage.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	ownerMessage.OccurredAt = now.Add(-72 * time.Hour)
+	bulkReply := view.Messages[0]
+	bulkReply.ID = 10
+	bulkReply.OccurredAt = now.Add(-48 * time.Hour)
+	bulkReply.Signals = &mime.AutomationSignals{PrecedenceBulk: true}
+	view.Messages = []LoopMessage{ownerMessage, bulkReply}
+	view.LastMessageAt = bulkReply.OccurredAt
+	view.AnchorExists = func(int64) (bool, error) { return true, nil }
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: bulkReply.ID, CounterpartyParticipantID: bulkReply.Sender.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	assertions.Empty(got.Close)
+	requirements.NotNil(got.Open)
+	assertions.Equal(bulkReply.ID, got.Open.Anchor.ID)
 }
 
 func TestDetectSettlesAwaitingLoopAfterBodyBudgetIsSpent(t *testing.T) {

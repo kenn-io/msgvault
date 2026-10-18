@@ -309,10 +309,12 @@ func TestMergeSourcesTransfersLoopStateWithConsolidatedConversations(t *testing.
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), MAX(note) FROM loop_suppressions WHERE conversation_id = ?`), intoMutedConversation).Scan(&suppressionCount, &suppressionNote))
 	assert.Equal(1, suppressionCount, "conversation mutes merge onto one canonical suppression")
 	assert.Equal("live mute\nhistory mute", suppressionNote)
+	var survivingSuppressionID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM loop_suppressions WHERE conversation_id = ?`), intoMutedConversation).Scan(&survivingSuppressionID))
+	assert.Equal(intoMute.Suppression.ID, survivingSuppressionID, "the destination suppression ID survives the merge")
 	var absorbedSuppressionCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE id = ?`), fromMute.Suppression.ID).Scan(&absorbedSuppressionCount))
 	assert.Zero(absorbedSuppressionCount, "the absorbed suppression id is retired after deduplication")
-	assert.NotZero(intoMute.Suppression.ID)
 
 	var mutedLoopStatus string
 	var mutedLoopConversation int64

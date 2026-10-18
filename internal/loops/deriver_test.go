@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -212,6 +213,71 @@ func TestDeriverRebuildPreservesDoneAndSnooze(t *testing.T) {
 	live, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	assertions.Empty(live)
+}
+
+func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+
+	ownerMessage := &store.Message{
+		SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "owner-participation",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: owner, Valid: true},
+		SentAt: sql.NullTime{Time: now.Add(-72 * time.Hour), Valid: true}, IsFromMe: true,
+		Subject: sql.NullString{String: "Here is the update", Valid: true},
+	}
+	ownerMessageID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: ownerMessage, BodyText: sql.NullString{String: "Here is the update.", Valid: true},
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", ownerMessageID, peer)
+
+	bulkSignals := store.AutomationSignalsFromMIME(mime.AutomationSignals{PrecedenceBulk: true})
+	bulkMessage := &store.Message{
+		SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "bulk-reply",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: peer, Valid: true},
+		SentAt:  sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true},
+		Subject: sql.NullString{String: "Automatic update", Valid: true},
+	}
+	bulkMessageID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: bulkMessage, BodyText: sql.NullString{String: "A bulk-marked reply.", Valid: true},
+		AutomationSignals: &bulkSignals,
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", bulkMessageID, owner)
+	deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, peer)
+	deriveExec(t, f, "UPDATE conversations SET last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-48*time.Hour)), f.ConvID)
+
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	requirements.NotNil(live[0].AnchorMessageID)
+	assertions.Equal(bulkMessageID, *live[0].AnchorMessageID)
+	until := now.Add(24 * time.Hour)
+	_, err = f.Store.SnoozeLoopContext(t.Context(), live[0].ID, until, now)
+	requirements.NoError(err)
+
+	now = now.Add(time.Minute)
+	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "bulk-reply-refresh", now))
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	preserved, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", preserved.Status)
+	requirements.NotNil(preserved.SnoozedUntil)
+	assertions.True(until.Equal(*preserved.SnoozedUntil))
+	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(afterRefresh, 1)
+	assertions.Equal(live[0].ID, afterRefresh[0].ID)
 }
 
 func TestDeriverWithdrawsMovedOrReclassifiedAnchor(t *testing.T) {

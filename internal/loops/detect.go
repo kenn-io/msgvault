@@ -50,20 +50,14 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	// neutral. Close a live row from its saved counterpart identity even when
 	// there is no new Open decision for the store to recheck.
 	for _, loop := range live {
-		counterparty := LoopParticipant{ID: loop.CounterpartyParticipantID}
-		if counterparty.ID == 0 {
-			counterparty.PersonID = loop.CounterpartyPersonID
-		} else {
-			found := false
-			for _, participant := range view.Participants {
-				if participant.ID == counterparty.ID {
-					counterparty = participant
-					found = true
-					break
+		counterparty := LoopParticipant{ID: loop.CounterpartyParticipantID, PersonID: loop.CounterpartyPersonID}
+		for _, participant := range view.Participants {
+			if participant.ID == counterparty.ID {
+				counterparty = participant
+				if counterparty.PersonID == 0 {
+					counterparty.PersonID = loop.CounterpartyPersonID
 				}
-			}
-			if !found {
-				counterparty.PersonID = loop.CounterpartyPersonID
+				break
 			}
 		}
 		if (counterparty.ID != 0 || counterparty.PersonID != 0) && suppressed(counterparty, supp) {

@@ -43,7 +43,20 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	if !metadataSubstantive(anchorMessage) || anchorMessage.Direction != side {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
-	ineligibleReplyAnchor := live.Kind == ReplyOwed && (anchorMessage.ListID != "" || isBulkMessage(anchorMessage))
+	if live.Kind == ReplyOwed && anchorMessage.ListID != "" {
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+	}
+	bulkReplyAnchor := live.Kind == ReplyOwed && isBulkMessage(anchorMessage)
+	priorOwnerParticipation := false
+	if bulkReplyAnchor {
+		for i := anchor - 1; i >= 0; i-- {
+			if !t.substantive(v, i) {
+				continue
+			}
+			priorOwnerParticipation = v.Messages[i].Direction == Outbound
+			break
+		}
+	}
 	if _, ok := obligationCounterparty(v, live.Kind, anchorMessage); !ok {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
@@ -69,7 +82,7 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	for i := anchor + 1; i < len(v.Messages); i++ {
 		m := v.Messages[i]
 		if m.Direction == side {
-			if ineligibleReplyAnchor && !laterSameSideActivity {
+			if bulkReplyAnchor && !laterSameSideActivity {
 				laterSameSideActivity = t.substantive(v, i)
 			}
 			continue
@@ -79,7 +92,7 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		}
 		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, nil
 	}
-	if ineligibleReplyAnchor && !laterSameSideActivity {
+	if bulkReplyAnchor && !priorOwnerParticipation && !laterSameSideActivity {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
 	if anchorUnreadable {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-const openLoopColumns = `l.id,l.turn_key,l.cycle,l.conversation_id,l.source_id,l.kind,l.detector,l.status,l.channel,l.owner_address,l.counterparty_participant_id,l.counterparty_person_id,l.anchor_message_id,l.owed_since_at,l.last_activity_message_id,l.last_activity_at,l.opens_at,l.due_at,l.snoozed_until,l.summary,l.evidence_json,l.ruleset_version,l.fact_claim_id,l.agenda_state,l.fulfilment_suggested_at,l.closed_at,l.closed_reason,l.closed_by,l.closed_message_id,l.created_at,l.updated_at,COALESCE((SELECT p.display_name FROM persons p WHERE p.id=l.counterparty_person_id),(SELECT p.display_name FROM participants p WHERE p.id=l.counterparty_participant_id),'')`
+const openLoopColumns = `l.id,l.turn_key,l.cycle,l.conversation_id,l.source_id,l.kind,l.detector,l.status,l.channel,l.owner_address,l.counterparty_participant_id,COALESCE((SELECT pp.person_id FROM person_participants pp WHERE pp.participant_id=l.counterparty_participant_id),l.counterparty_person_id),l.anchor_message_id,l.owed_since_at,l.last_activity_message_id,l.last_activity_at,l.opens_at,l.due_at,l.snoozed_until,l.summary,l.evidence_json,l.ruleset_version,l.fact_claim_id,l.agenda_state,l.fulfilment_suggested_at,l.closed_at,l.closed_reason,l.closed_by,l.closed_message_id,l.created_at,l.updated_at,COALESCE((SELECT p.display_name FROM persons p WHERE p.id=COALESCE((SELECT pp.person_id FROM person_participants pp WHERE pp.participant_id=l.counterparty_participant_id),l.counterparty_person_id)),(SELECT p.display_name FROM participants p WHERE p.id=l.counterparty_participant_id),'')`
 
 func scanOpenLoop(row scanner) (OpenLoop, error) {
 	var l OpenLoop

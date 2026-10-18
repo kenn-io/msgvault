@@ -526,12 +526,12 @@ func (s *Store) transferSourceMergeLiveLoopOwnerState(ctx context.Context, tx *l
 		fulfilmentSuggestedAt = s.dialect.TimestampParam(retired.fulfilmentSuggestedAt.Time)
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE open_loops SET
-		snoozed_until = CASE WHEN ? IS NOT NULL AND ? > `+s.dialect.Now()+`
+		snoozed_until = CASE WHEN ? AND ? > `+s.dialect.Now()+`
 			AND (snoozed_until IS NULL OR snoozed_until <= `+s.dialect.Now()+` OR ? > snoozed_until)
 			THEN ? ELSE snoozed_until END,
 		agenda_state = CASE WHEN agenda_state = 'none' AND ? <> 'none' THEN ? ELSE agenda_state END,
 		fulfilment_suggested_at = COALESCE(fulfilment_suggested_at, ?), evidence_json = ?
-		WHERE id = ?`, snoozedUntil, snoozedUntil, snoozedUntil, snoozedUntil,
+		WHERE id = ?`, retired.snoozedUntil.Valid, snoozedUntil, snoozedUntil, snoozedUntil,
 		retired.agendaState, retired.agendaState, fulfilmentSuggestedAt, string(evidence), winner.id)
 	return err
 }

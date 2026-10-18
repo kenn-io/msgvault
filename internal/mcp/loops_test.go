@@ -146,13 +146,16 @@ func TestOpenLoopsReadViewsPreserveFreshnessAndFilters(t *testing.T) {
 			assertions.Equal(true, currency["stale"])
 			requirements.Len(b.listed, 1)
 			assertions.Equal(loops.ListOptions{Status: view, Kind: "reply_owed", PersonID: 7, Limit: 13}, b.listed[0])
-			detail := rawCallTool(t, loopMCPOptions(b), "get_open_loop", map[string]any{"id": float64(9)})
-			detailLoop, ok := toolStructuredContent(t, detail)["loop"].(map[string]any)
-			requirements.True(ok)
-			assertions.Equal("Synthetic archived subject", detailLoop["summary"])
-			assertions.Equal(int64(9), b.gotID)
 		})
 	}
+	b := &loopMCPBackend{report: freshness.Report{Stale: true, StaleReasons: []string{"open_loops_missing"}}}
+	detail := rawCallTool(t, loopMCPOptions(b), "get_open_loop", map[string]any{"id": float64(9)})
+	detailLoop, ok := toolStructuredContent(t, detail)["loop"].(map[string]any)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	requirements.True(ok)
+	assertions.Equal("Synthetic archived subject", detailLoop["summary"])
+	assertions.Equal(int64(9), b.gotID)
 }
 func TestOpenLoopsWaitingStaleIsStructuralAndOverrideExplicit(t *testing.T) {
 	assertions := assert.New(t)
