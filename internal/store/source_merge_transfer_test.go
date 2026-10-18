@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -66,6 +68,32 @@ func emailMergeFixtureMessage(
 		require.NoError(t, err)
 	}
 	return messageID
+}
+
+func beeperLoopFixtureMessage(t *testing.T, st *store.Store, sourceID int64, chatID, providerID, senderAddress, body string, sentAt time.Time) (int64, int64) {
+	t.Helper()
+	owner, err := st.EnsureParticipant("owner@example.test", "Example Owner", "example.test")
+	require.NoError(t, err)
+	peer, err := st.EnsureParticipant("peer@example.test", "Example Peer", "example.test")
+	require.NoError(t, err)
+	sender := owner
+	if senderAddress == "peer@example.test" {
+		sender = peer
+	} else {
+		require.Equal(t, "owner@example.test", senderAddress)
+	}
+	conversation, err := st.EnsureConversationWithType(sourceID, chatID, "direct_chat", "Synthetic direct chat")
+	require.NoError(t, err)
+	require.NoError(t, st.EnsureConversationParticipant(conversation, owner, "member"))
+	require.NoError(t, st.EnsureConversationParticipant(conversation, peer, "member"))
+	message, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversation, SourceMessageID: providerID,
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		SentAt: sql.NullTime{Time: sentAt, Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageBody(message, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	return message, conversation
 }
 
 func TestMergeSourcesEmailFingerprintRequiresMatchingCompleteRecipients(t *testing.T) {
@@ -348,6 +376,400 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	require.NoError(err)
 	assert.True(again.AlreadyMerged)
 	assert.Equal(result.MessagesMoved, again.MessagesMoved)
+}
+
+func TestMergeSourcesRebindsOpenLoopHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-loop-source")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-loop-source")
+	require.NoError(err)
+	first, conversationID := mergeFixtureMessage(t, st, from.ID, "history-only", "100", "first turn", 1)
+	second, secondConversationID := mergeFixtureMessage(t, st, from.ID, "history-only", "101", "second turn", 2)
+	require.Equal(conversationID, secondConversationID)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	firstOpen := store.LoopOpenDecision{
+		TurnKey: "source-merge-first", Kind: "reply_owed", Channel: "chat",
+		ConversationID: conversationID, SourceID: from.ID,
+		AnchorMessageID: first, LastActivityMessageID: first,
+		OwedSinceAt: now.Add(-48 * time.Hour), LastActivityAt: now,
+		OpensAt: now.Add(-24 * time.Hour), EvidenceJSON: []byte(`[{}]`),
+		RulesetVersion: 1, TurnMessageIDs: []int64{first},
+	}
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: conversationID, Now: now,
+		Verdict: store.LoopVerdict{Open: &firstOpen},
+	}))
+	live, err := st.ListLiveConversationLoopsContext(t.Context(), conversationID)
+	require.NoError(err)
+	require.Len(live, 1)
+	_, err = st.CloseLoopContext(t.Context(), live[0].ID, "handled", now)
+	require.NoError(err)
+
+	secondOpen := firstOpen
+	secondOpen.TurnKey = "source-merge-second"
+	secondOpen.AnchorMessageID = second
+	secondOpen.LastActivityMessageID = second
+	secondOpen.TurnMessageIDs = []int64{second}
+	secondOpen.PreviousTurnKnown = true
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: conversationID, Now: now,
+		Verdict: store.LoopVerdict{Open: &secondOpen},
+	}))
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT status, source_id
+		FROM open_loops WHERE conversation_id = ? ORDER BY id`), conversationID)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(rows.Close()) })
+	var history []struct {
+		status   string
+		sourceID int64
+	}
+	for rows.Next() {
+		var row struct {
+			status   string
+			sourceID int64
+		}
+		require.NoError(rows.Scan(&row.status, &row.sourceID))
+		history = append(history, row)
+	}
+	require.NoError(rows.Err())
+	require.Len(history, 2)
+	for _, row := range history {
+		assert.Equal(into.ID, row.sourceID)
+	}
+}
+
+func TestMergeSourcesKeepsDerivedLoopIdentityWhenAnchorIsDuplicate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-loop@example.test")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-loop@example.test")
+	requirements.NoError(err)
+
+	messageAt := time.Now().UTC().Add(-96 * time.Hour).Truncate(time.Second)
+	survivor, destinationConversationID := beeperLoopFixtureMessage(t, st, into.ID, "!merge-loop:example.test", "live", "owner@example.test", "Can you review this?", messageAt)
+	historical, sourceConversationID := beeperLoopFixtureMessage(t, st, from.ID, "!merge-loop:example.test", "historical", "owner@example.test", "Can you review this?", messageAt)
+	requirements.NotEqual(destinationConversationID, sourceConversationID)
+	requirements.NoError(st.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
+
+	deriver, err := loops.NewDeriver(st, nil)
+	requirements.NoError(err)
+	_, err = deriver.RunOnce(ctx)
+	requirements.NoError(err)
+
+	live, err := st.ListLiveConversationLoopsContext(ctx, sourceConversationID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	requirements.NotNil(live[0].AnchorMessageID)
+	assertions.Equal(historical, *live[0].AnchorMessageID)
+	loopID := live[0].ID
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err = st.SnoozeLoopContext(ctx, loopID, now.Add(48*time.Hour), now)
+	requirements.NoError(err)
+	_, inserted, err := st.InsertLoopKataLinkContext(ctx, store.LoopKataLink{
+		LoopID: loopID, IssueUID: "synthetic-merge-issue", IssueRef: "example#gh12", LinkedVia: "existing", LinkedAt: now,
+	}, "")
+	requirements.NoError(err)
+	assertions.True(inserted)
+
+	result, err := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.DuplicatesHidden)
+	beforeDerive, err := st.GetOpenLoopContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal(destinationConversationID, beforeDerive.ConversationID)
+	run, err := deriver.RunOnce(ctx)
+	requirements.NoError(err)
+	assertions.GreaterOrEqual(run.ProcessedConversations, 1)
+
+	got, err := st.GetOpenLoopContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	assertions.Equal(into.ID, got.SourceID)
+	assertions.NotNil(got.AnchorMessageID)
+	assertions.Equal(survivor, *got.AnchorMessageID)
+	assertions.NotNil(got.SnoozedUntil)
+	assertions.True(now.Add(48 * time.Hour).Equal(*got.SnoozedUntil))
+	link, err := st.GetLoopKataLinkContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal("synthetic-merge-issue", link.IssueUID)
+
+	var liveCount int
+	requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM open_loops
+		WHERE conversation_id = ? AND status <> 'closed' AND detector = 'turn_state'`), got.ConversationID).Scan(&liveCount))
+	assertions.Equal(1, liveCount)
+}
+
+func TestMergeSourcesPreservesClosedLoopIdentityWhenAnchorIsDuplicate(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "closed-loop-history@example.test")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "closed-loop-live@example.test")
+	requirements.NoError(err)
+
+	messageAt := time.Now().UTC().Add(-96 * time.Hour).Truncate(time.Second)
+	_, destinationConversationID := beeperLoopFixtureMessage(t, st, into.ID, "!merge-closed-loop:example.test", "prior", "peer@example.test", "Could you send an update?", messageAt.Add(-time.Hour))
+	survivor, conversationID := beeperLoopFixtureMessage(t, st, into.ID, "!merge-closed-loop:example.test", "live", "owner@example.test", "Can you review this?", messageAt)
+	requirements.Equal(destinationConversationID, conversationID)
+	historical, sourceConversationID := beeperLoopFixtureMessage(t, st, from.ID, "!merge-closed-loop:example.test", "historical", "owner@example.test", "Can you review this?", messageAt)
+	requirements.NoError(st.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
+
+	decisionAt := time.Now().UTC().Truncate(time.Second)
+	open := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:%s:%d", sourceConversationID, loops.AwaitingReply, historical),
+		Kind:    loops.AwaitingReply, Status: "open", Channel: "chat", ConversationID: sourceConversationID, SourceID: from.ID,
+		AnchorMessageID: historical, LastActivityMessageID: historical, OwedSinceAt: messageAt,
+		LastActivityAt: messageAt, OpensAt: messageAt.Add(72 * time.Hour), Summary: "Synthetic request",
+		EvidenceJSON:   []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d}]`, historical, sourceConversationID)),
+		RulesetVersion: loops.RulesetVersion, TurnMessageIDs: []int64{historical},
+	}
+	requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: sourceConversationID, Now: decisionAt, Verdict: store.LoopVerdict{Open: &open},
+	}))
+	live, err := st.ListLiveConversationLoopsContext(ctx, sourceConversationID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	loopID := live[0].ID
+	_, err = st.CloseLoopContext(ctx, loopID, "completed before merge", decisionAt)
+	requirements.NoError(err)
+
+	result, err := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.DuplicatesHidden)
+	closed, err := st.GetOpenLoopContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal("closed", closed.Status)
+	assertions.NotNil(closed.ClosedReason)
+	assertions.Equal("done", *closed.ClosedReason)
+	assertions.NotNil(closed.AnchorMessageID)
+	assertions.Equal(survivor, *closed.AnchorMessageID)
+	assertions.Equal(fmt.Sprintf("turn:%d:%s:%d", destinationConversationID, loops.AwaitingReply, survivor), closed.TurnKey)
+	var evidence []struct {
+		MessageID      int64 `json:"message_id"`
+		ConversationID int64 `json:"conversation_id"`
+	}
+	requirements.NoError(json.Unmarshal(closed.EvidenceJSON, &evidence))
+	requirements.Len(evidence, 1)
+	assertions.Equal(survivor, evidence[0].MessageID)
+	assertions.Equal(destinationConversationID, evidence[0].ConversationID)
+
+	deriver, err := loops.NewDeriver(st, nil)
+	requirements.NoError(err)
+	_, err = deriver.RunOnce(ctx)
+	requirements.NoError(err)
+	live, err = st.ListLiveConversationLoopsContext(ctx, destinationConversationID)
+	requirements.NoError(err)
+	requirements.Empty(live, "a completed turn must stay attached to its surviving anchor after re-derivation")
+}
+
+func TestMergeSourcesRebindsLoopStateWhenConversationsCollide(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	from, err := st.GetOrCreateSource("beeper", "collision-loop-history")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "collision-loop-live")
+	requirements.NoError(err)
+	anchor, oldConversation := mergeFixtureMessage(t, st, from.ID, "shared-loop", "100", "question", 1)
+	destinationAnchor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-loop", "200", "destination message", 2)
+	requirements.NotEqual(oldConversation, destinationConversation)
+
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	decision := store.LoopOpenDecision{
+		TurnKey: "source-merge-collision-loop", Kind: "reply_owed", Status: "open", Channel: "chat",
+		ConversationID: oldConversation, SourceID: from.ID, AnchorMessageID: anchor,
+		LastActivityMessageID: anchor, OwedSinceAt: now.Add(-48 * time.Hour),
+		LastActivityAt: now.Add(-24 * time.Hour), OpensAt: now.Add(-24 * time.Hour),
+		EvidenceJSON: []byte(`[{}]`), RulesetVersion: 1, TurnMessageIDs: []int64{anchor},
+	}
+	destinationDecision := decision
+	destinationDecision.TurnKey = "destination-source-merge-collision-loop"
+	destinationDecision.ConversationID = destinationConversation
+	destinationDecision.SourceID = into.ID
+	destinationDecision.AnchorMessageID = destinationAnchor
+	destinationDecision.LastActivityMessageID = destinationAnchor
+	destinationDecision.OwedSinceAt = now.Add(-72 * time.Hour)
+	destinationDecision.LastActivityAt = now.Add(-72 * time.Hour)
+	destinationDecision.TurnMessageIDs = []int64{destinationAnchor}
+	requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: destinationConversation, Now: now, Verdict: store.LoopVerdict{Open: &destinationDecision},
+	}))
+	requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: oldConversation, Now: now, Verdict: store.LoopVerdict{Open: &decision},
+	}))
+	live, err := st.ListLiveConversationLoopsContext(ctx, oldConversation)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	loopID := live[0].ID
+	_, err = st.SnoozeLoopContext(ctx, loopID, now.Add(time.Hour), now)
+	requirements.NoError(err)
+	destinationLive, err := st.ListLiveConversationLoopsContext(ctx, destinationConversation)
+	requirements.NoError(err)
+	requirements.Len(destinationLive, 1)
+	destinationLoopID := destinationLive[0].ID
+	_, inserted, err := st.InsertLoopKataLinkContext(ctx, store.LoopKataLink{
+		LoopID: loopID, IssueUID: "synthetic-issue", IssueRef: "example#ab12", LinkedVia: "existing", LinkedAt: now,
+	}, "")
+	requirements.NoError(err)
+	assertions.True(inserted)
+	_, inserted, err = st.InsertLoopKataLinkContext(ctx, store.LoopKataLink{
+		LoopID: destinationLoopID, IssueUID: "destination-issue", IssueRef: "example#cd34", LinkedVia: "existing", LinkedAt: now,
+	}, "")
+	requirements.NoError(err)
+	assertions.True(inserted)
+
+	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	got, err := st.GetOpenLoopContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal(destinationConversation, got.ConversationID)
+	assertions.Equal(into.ID, got.SourceID)
+	assertions.Equal("open", got.Status)
+	requirements.NotNil(got.SnoozedUntil)
+	assertions.True(now.Add(time.Hour).Equal(*got.SnoozedUntil))
+	destinationLoop, err := st.GetOpenLoopContext(ctx, destinationLoopID)
+	requirements.NoError(err)
+	assertions.Equal("closed", destinationLoop.Status)
+	requirements.NotNil(destinationLoop.ClosedReason)
+	assertions.Equal("withdrawn", *destinationLoop.ClosedReason)
+	link, err := st.GetLoopKataLinkContext(ctx, loopID)
+	requirements.NoError(err)
+	assertions.Equal("synthetic-issue", link.IssueUID)
+	destinationLink, err := st.GetLoopKataLinkContext(ctx, destinationLoopID)
+	requirements.NoError(err)
+	assertions.Equal("destination-issue", destinationLink.IssueUID)
+}
+
+func TestMergeSourcesTransfersSnoozeFromOlderSameTurn(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "older-snoozed-turn")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "newer-live-turn")
+	requirements.NoError(err)
+
+	anchorAt := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	sourceAnchor, sourceConversationID := beeperLoopFixtureMessage(t, st, from.ID, "!snoozed-turn:example.test", "source-anchor", "peer@example.test", "Can you review this?", anchorAt)
+	destinationAnchor, destinationConversationID := beeperLoopFixtureMessage(t, st, into.ID, "!snoozed-turn:example.test", "destination-anchor", "peer@example.test", "Can you review this?", anchorAt)
+	requirements.NotEqual(sourceConversationID, destinationConversationID)
+	destinationNudge, nudgeConversationID := beeperLoopFixtureMessage(t, st, into.ID, "!snoozed-turn:example.test", "destination-nudge", "peer@example.test", "Following up with the updated draft.", anchorAt.Add(time.Hour))
+	requirements.Equal(destinationConversationID, nudgeConversationID)
+	requirements.NoError(st.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
+
+	now := anchorAt.Add(48 * time.Hour)
+	sourceLoop := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:%s:%d", sourceConversationID, loops.ReplyOwed, sourceAnchor),
+		Kind:    loops.ReplyOwed, Status: "open", Channel: "chat", ConversationID: sourceConversationID, SourceID: from.ID,
+		AnchorMessageID: sourceAnchor, LastActivityMessageID: sourceAnchor,
+		OwedSinceAt: anchorAt, LastActivityAt: anchorAt, OpensAt: anchorAt.Add(24 * time.Hour),
+		EvidenceJSON: []byte("[]"), RulesetVersion: loops.RulesetVersion, TurnMessageIDs: []int64{sourceAnchor},
+	}
+	destinationLoop := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:%s:%d", destinationConversationID, loops.ReplyOwed, destinationAnchor),
+		Kind:    loops.ReplyOwed, Status: "open", Channel: "chat", ConversationID: destinationConversationID, SourceID: into.ID,
+		AnchorMessageID: destinationAnchor, LastActivityMessageID: destinationNudge,
+		OwedSinceAt: anchorAt, LastActivityAt: anchorAt.Add(time.Hour), OpensAt: anchorAt.Add(24 * time.Hour),
+		EvidenceJSON: []byte("[]"), RulesetVersion: loops.RulesetVersion, TurnMessageIDs: []int64{destinationAnchor, destinationNudge},
+	}
+	requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: destinationConversationID, Now: now, Verdict: store.LoopVerdict{Open: &destinationLoop},
+	}))
+	requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: sourceConversationID, Now: now, Verdict: store.LoopVerdict{Open: &sourceLoop},
+	}))
+	sourceLive, err := st.ListLiveConversationLoopsContext(ctx, sourceConversationID)
+	requirements.NoError(err)
+	requirements.Len(sourceLive, 1)
+	destinationLive, err := st.ListLiveConversationLoopsContext(ctx, destinationConversationID)
+	requirements.NoError(err)
+	requirements.Len(destinationLive, 1)
+
+	snoozedUntil := now.Add(48 * time.Hour)
+	_, err = st.SnoozeLoopContext(ctx, sourceLive[0].ID, snoozedUntil, now)
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+
+	got, err := st.GetOpenLoopContext(ctx, destinationLive[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	requirements.NotNil(got.SnoozedUntil)
+	assertions.True(snoozedUntil.Equal(*got.SnoozedUntil))
+	retired, err := st.GetOpenLoopContext(ctx, sourceLive[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("closed", retired.Status)
+	requirements.NotNil(retired.ClosedReason)
+	assertions.Equal("withdrawn", *retired.ClosedReason)
+}
+
+func TestMergeSourcesRebindsConversationMuteWhenConversationsCollide(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "collision-muted-history")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "collision-muted-live")
+	requirements.NoError(err)
+	_, oldConversation := mergeFixtureMessage(t, st, from.ID, "shared-muted", "100", "history message", 1)
+	destinationMessage, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-muted", "200", "live message", 2)
+	requirements.NotEqual(oldConversation, destinationConversation)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	destinationLoop := store.LoopOpenDecision{
+		TurnKey: "destination-source-merge-muted-loop", Kind: "reply_owed", Status: "open", Channel: "chat",
+		ConversationID: destinationConversation, SourceID: into.ID, AnchorMessageID: destinationMessage,
+		LastActivityMessageID: destinationMessage, OwedSinceAt: now.Add(-48 * time.Hour),
+		LastActivityAt: now.Add(-24 * time.Hour), OpensAt: now.Add(-24 * time.Hour),
+		EvidenceJSON: []byte(`[{}]`), RulesetVersion: 1, TurnMessageIDs: []int64{destinationMessage},
+	}
+	requirements.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: destinationConversation, Now: now, Verdict: store.LoopVerdict{Open: &destinationLoop},
+	}))
+	destinationLive, err := st.ListLiveConversationLoopsContext(t.Context(), destinationConversation)
+	requirements.NoError(err)
+	requirements.Len(destinationLive, 1)
+	loopID := destinationLive[0].ID
+	_, inserted, err := st.InsertLoopKataLinkContext(t.Context(), store.LoopKataLink{
+		LoopID: loopID, IssueUID: "muted-destination-issue", IssueRef: "example#ef56", LinkedVia: "existing", LinkedAt: now,
+	}, "")
+	requirements.NoError(err)
+	assertions.True(inserted)
+	_, err = st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "conversation", ConversationID: &oldConversation, Note: "keep this mute",
+	}, now)
+	requirements.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	suppressions, err := st.LoadLoopSuppressionsContext(t.Context())
+	requirements.NoError(err)
+	requirements.Len(suppressions, 1)
+	assertions.Equal("keep this mute", suppressions[0].Note)
+	requirements.NotNil(suppressions[0].ConversationID)
+	assertions.Equal(destinationConversation, *suppressions[0].ConversationID)
+	muted, err := st.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal("closed", muted.Status)
+	requirements.NotNil(muted.ClosedReason)
+	assertions.Equal("muted", *muted.ClosedReason)
+	link, err := st.GetLoopKataLinkContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal("muted-destination-issue", link.IssueUID)
 }
 
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,15 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.25.0 adds owner-only Open Loop reads at `GET /api/v1/loops`,
+`GET /api/v1/loops/waiting`, `GET /api/v1/loops/{id}`, `GET /api/v1/loops/status`,
+and `GET /api/v1/people/{id}/loops`. Owners can mark a loop done, snooze or
+unsnooze it, and list, create, or remove suppressions. A stale waiting ranking
+returns HTTP 409 with typed freshness details; set `allow_stale=true` to inspect
+it. `POST /api/v1/loops/run` and `/api/v1/loops/rebuild` queue bounded background
+work. `GET /api/v1/mcp/capabilities` advertises loop operations only while the
+feature is enabled.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -631,6 +640,68 @@ importer. Leave `noresume` false when you want to reuse available progress.
 There is no dedicated cancellation endpoint for these jobs.
 
 ## API Endpoints
+
+### Open loops {#open-loops}
+
+On unreleased `main`, owner-only loop endpoints share the daemon's
+[unanswered-turn state](usage/open-loops.md). List and detail responses include
+archive and projection freshness; evidence contains archived references and
+optional quote spans, never whole message bodies.
+
+| Method | Route | Result or input |
+|---|---|---|
+| GET | `/api/v1/loops` | `{items, next_cursor, freshness}`; `kind`, `status`, `person_id`, `source_id`, `include_snoozed`, `limit`, `cursor` |
+| GET | `/api/v1/loops/waiting` | `{groups, count, freshness}`; `top`, `allow_stale`, `as_of` |
+| GET | `/api/v1/loops/{id}` | `{loop, freshness}` with evidence |
+| POST | `/api/v1/loops/{id}/kata` | `{issue_ref?, title?, list?}`; 201 new link, 200 replay; `{loop, freshness, issue, replayed, note?}` |
+| DELETE | `/api/v1/loops/{id}/kata` | Remove the local link; bodyless 204; preserve the Kata issue |
+| POST | `/api/v1/loops/{id}/done` | Optional `{note}`; complete this turn |
+| POST | `/api/v1/loops/{id}/snooze` | `{until}` as a future RFC3339 instant |
+| DELETE | `/api/v1/loops/{id}/snooze` | Remove the snooze |
+| GET, POST | `/api/v1/loops/suppressions` | List mutes, or create `{target_kind, participant_id|person_id|conversation_id, note?, dry_run?}` |
+| DELETE | `/api/v1/loops/suppressions/{id}` | Remove this mute and enqueue affected conversations |
+| GET | `/api/v1/loops/status` | Derivation state, queue/backfill progress and freshness |
+| POST | `/api/v1/loops/run`, `/api/v1/loops/rebuild` | `{disposition}`: started, pending or coalesced |
+| GET | `/api/v1/people/{id}/loops` | Open person loops with freshness; optional `limit` |
+
+API schema 3.26.0 adds `closed_by` and nullable `kata` to every loop view.
+The Kata block carries `issue_uid`, `qualified_ref`, `title`, `status`
+(`open`, `closed`, `missing`), optional `web_url`, `linked_via`, `linked_at`,
+`checked_at`, `live`, `attempts`, `next_attempt_at`, optional `last_error`,
+`closed_notified_at` and `closed_loop_at`. Lists use the cache; detail refreshes
+live and keeps cached data on failure. The archive freshness block is separate.
+Status state includes `kata_last_run_at`, `kata_last_success_at` and
+`kata_last_error`.
+
+Tracking requires the Kata integration. `issue_ref` cannot combine with `title`
+or `list` (422). A closed loop returns 409 `loop_already_closed`; a loop tracked
+to a different issue returns 409 `loop_already_tracked` with its `kata` block.
+Missing loops or absent links on untrack return 404 `loop_not_found`.
+Kata failures retain their evidence error codes; unavailable Kata returns 503
+`kata_unavailable`. The issue receipt has `uid`, `ref`, `qualified_ref`,
+`project`, `title`, `status`, `revision` (empty for cached replay) and optional
+`web_url`. See [loop tracking](usage/open-loops.md#track-a-loop-in-kata) for the
+bridge's behavior and never-close rule.
+
+Lists default to open, unsnoozed loops, oldest `owed_since_at` then ID, with
+50 items and a maximum of 200. Pass the opaque `next_cursor` unchanged.
+Waiting defaults to 10 counterparty groups, maximum 50, ordered by their oldest
+obligation owed by you. `as_of` changes age and freshness evaluation of the
+current projection; it does not reconstruct past state or bypass current
+snoozes.
+
+Waiting returns HTTP 409 with the typed
+`{error:"loops_stale", message, freshness}` envelope when a source or certified
+projection is stale. `allow_stale=true` returns the ranking with its stale
+report. Other reads return their data and freshness even when stale. A repeated
+done returns 409 `loop_already_closed`; invalid filters or a past snooze return
+400. Disabled loop services return 503. Delegated agent tokens receive 403 for
+all loop operations; owner writes use the daemon operation gate.
+
+Run and rebuild return before background work acquires the gate. A rebuild
+reconciles live rows and retains owner completion, snoozes and suppressions.
+See [`[loops]`](configuration.md#loops) for the 15-minute schedule, 24h/72h
+grace periods, 365-day lookback and bounded work limits.
 
 ### Query the analytics cache {#post-apiv1query}
 

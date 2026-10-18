@@ -138,6 +138,10 @@ The Web UI can't cite transcripts yet.
 
 ## Find issues that already cite a source
 
+For an unanswered turn, [track its open loop](open-loops.md#track-a-loop-in-kata)
+to reuse one issue across retries and keep its status on the loop. `loops track
+<id> --issue <ref>` adds evidence to an existing issue without changing its agenda.
+
 Before filing, check whether an earlier issue already cites the same message
 or file, closed issues included:
 

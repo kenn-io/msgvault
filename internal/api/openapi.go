@@ -374,7 +374,10 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.25.0 adds owner-only Open Loops reads, manual runs, rebuilds and actions,
+// with typed stale responses and runtime capability discovery.
+// 3.26.0 adds tracked Kata receipts and owner-only loop tracking actions.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -382,6 +385,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, false)
+	hardenLoopSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	return doc
@@ -391,6 +395,7 @@ func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
+	hardenLoopSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
@@ -741,6 +746,117 @@ func hardenEmbeddingStatusSchemas(doc *huma.OpenAPI, client bool) {
 			property.Nullable = true
 			schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
 			nullableSchemaProperty(schema, name)
+		}
+	}
+}
+
+// hardenLoopSchemas preserves explicit nulls for dry-run suppressions and
+// unwired projection surfaces. Huma does not infer nullable object references.
+func hardenLoopSchemas(doc *huma.OpenAPI, client bool) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	for schemaName, names := range map[string][]string{
+		"Loop":                {"anchor_message_id", "last_activity_message_id", "due_at", "snoozed_until", "closed_at", "closed_reason", "closed_by", "closed_message_id"},
+		"LoopCounterparty":    {"person_id"},
+		"LoopKata":            {"checked_at", "next_attempt_at", "closed_notified_at", "closed_loop_at"},
+		"LoopSuppression":     {"participant_id", "person_id", "conversation_id"},
+		"LoopDerivationState": {"feed_cursor_at", "feed_frontier", "applied_through", "rescan_started_at", "last_reconcile_at", "last_run_at", "last_success_at", "kata_last_run_at", "kata_last_success_at"},
+		"SourceFreshness":     {"source_id", "last_successful_sync_at", "age_seconds"},
+		"ProjectionFreshness": {"computed_at", "age_seconds"},
+	} {
+		schema := schemas[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, name := range names {
+			if property := schema.Properties[name]; property != nil {
+				property.Nullable = true
+				if client {
+					schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
+					nullableSchemaProperty(schema, name)
+				}
+			}
+		}
+	}
+	if projection := schemas["ProjectionFreshness"]; projection != nil {
+		if extra := projection.Properties["extra"]; extra != nil {
+			// Progress diagnostics include numbers, booleans and strings.
+			values := &huma.Schema{}
+			extra.AdditionalProperties = values
+			if client {
+				setCodegenGoType(values, "any")
+			}
+		}
+	}
+	if client {
+		// Required JSON strings may be empty; required presence is not a
+		// non-empty string constraint. Keep these response values on encoding.
+		for schemaName, names := range map[string][]string{
+			"Loop": {"summary"}, "LoopCounterparty": {"display_name"},
+			"LoopEvidence": {"subject"}, "LoopSuppression": {"note"},
+			"LoopDerivationState": {"config_fingerprint", "rescan_reason", "rescan_epoch", "last_error", "kata_last_error"},
+			"LoopKataIssue":       {"revision"},
+			"LoopKata":            {"title", "status"},
+			"SourceFreshness":     {"sync_command"},
+		} {
+			schema := schemas[schemaName]
+			if schema == nil {
+				continue
+			}
+			for _, name := range names {
+				// Nested models use generated per-field validation, which
+				// ignores the extra omitempty tag when a field is required.
+				schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
+				nullableSchemaProperty(schema, name)
+			}
+		}
+	}
+	var properties []*huma.Schema
+	if loop := schemas["Loop"]; loop != nil {
+		if property := loop.Properties["kata"]; property != nil {
+			properties = append(properties, property)
+			if client {
+				loop.Required = slices.DeleteFunc(loop.Required, func(name string) bool { return name == "kata" })
+				nullableSchemaProperty(loop, "kata")
+			}
+		}
+	}
+	if result := schemas["LoopSuppressionResult"]; result != nil {
+		if property := result.Properties["suppression"]; property != nil {
+			properties = append(properties, property)
+			if client {
+				result.Required = slices.DeleteFunc(result.Required, func(name string) bool { return name == "suppression" })
+				nullableSchemaProperty(result, "suppression")
+			}
+		}
+	}
+	if report := schemas["FreshnessReport"]; report != nil {
+		if projections := report.Properties["projections"]; projections != nil {
+			if client {
+				// The generator drops outer nullability while merging allOf.
+				setCodegenGoType(projections, "map[string]*ProjectionFreshness")
+			}
+			if value, ok := projections.AdditionalProperties.(*huma.Schema); ok {
+				properties = append(properties, value)
+			}
+		}
+	}
+	for _, property := range properties {
+		if property.Ref == "" {
+			continue
+		}
+		ref := property.Ref
+		property.Ref = ""
+		if client {
+			property.AllOf = []*huma.Schema{{Ref: ref}}
+			property.Type = "object"
+			property.Nullable = true
+		} else {
+			property.Type = ""
+			property.Nullable = false
+			property.OneOf = []*huma.Schema{{Ref: ref}, {Type: "null"}}
 		}
 	}
 }

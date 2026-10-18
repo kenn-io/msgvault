@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -11,6 +13,16 @@ import (
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
 	conversations := map[int64]int64{}
+	messageSurvivors := make(map[int64]map[int64]int64)
+	for _, message := range plan.messages {
+		if message.survivor == 0 {
+			continue
+		}
+		if messageSurvivors[message.conversationID] == nil {
+			messageSurvivors[message.conversationID] = make(map[int64]int64)
+		}
+		messageSurvivors[message.conversationID][message.id] = message.survivor
+	}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
 			return err
@@ -20,11 +32,17 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			if _, err := tx.ExecContext(ctx, `UPDATE conversations SET source_id = ?, source_conversation_id = ? WHERE id = ?`, into, c.archivalID, c.id); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET source_id = ? WHERE conversation_id = ?`, into, c.id); err != nil {
+				return fmt.Errorf("rebind open loops after source merge: %w", err)
+			}
 		} else {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id, participant_id, role, joined_at, left_at)
  SELECT ?, participant_id, role, joined_at, left_at FROM conversation_participants WHERE conversation_id = ?
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
 				return err
+			}
+			if err := s.rebindLoopConversationTx(ctx, tx, c.id, c.destination, into, messageSurvivors[c.id]); err != nil {
+				return fmt.Errorf("rebind open loop state after source merge: %w", err)
 			}
 		}
 	}
@@ -347,4 +365,243 @@ func (s *Store) mergeSourceIdentityEvidence(ctx context.Context, tx *loggedTx, f
 		}
 	}
 	return nil
+}
+
+type sourceMergeLoopConflict struct {
+	sourceID, destinationID                     int64
+	sourceCycle, destinationCycle               int64
+	sourceAnchor, destinationAnchor             sql.NullInt64
+	sourceSnoozedUntil, destinationSnoozedUntil nullableTimestamp
+	sourceActivity, sourceUpdated               time.Time
+	destinationActivity, destinationUpdated     time.Time
+}
+
+type sourceMergeLoopIdentity struct {
+	id, cycle                                               int64
+	kind, detector, turnKey                                 string
+	anchorMessageID, lastActivityMessageID, closedMessageID sql.NullInt64
+	evidenceJSON                                            []byte
+}
+
+func (s *Store) rebindLoopConversationTx(ctx context.Context, tx *loggedTx, fromConversationID, destinationConversationID, destinationSourceID int64, messageSurvivors map[int64]int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,cycle,kind,detector,turn_key,anchor_message_id,last_activity_message_id,closed_message_id,evidence_json
+		FROM open_loops WHERE conversation_id=? ORDER BY id`, fromConversationID)
+	if err != nil {
+		return err
+	}
+	var sourceLoops []sourceMergeLoopIdentity
+	for rows.Next() {
+		var loop sourceMergeLoopIdentity
+		if err := rows.Scan(&loop.id, &loop.cycle, &loop.kind, &loop.detector, &loop.turnKey,
+			&loop.anchorMessageID, &loop.lastActivityMessageID, &loop.closedMessageID, &loop.evidenceJSON); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		sourceLoops = append(sourceLoops, loop)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT source.id,source.cycle,source.anchor_message_id,source.snoozed_until,source.last_activity_at,source.updated_at,
+		destination.id,destination.cycle,destination.anchor_message_id,destination.snoozed_until,destination.last_activity_at,destination.updated_at
+		FROM open_loops source JOIN open_loops destination
+		ON destination.conversation_id=? AND destination.kind=source.kind
+		AND destination.detector='turn_state' AND destination.status<>'closed'
+		WHERE source.conversation_id=? AND source.detector='turn_state' AND source.status<>'closed'
+		ORDER BY source.id`, destinationConversationID, fromConversationID)
+	if err != nil {
+		return err
+	}
+	var conflicts []sourceMergeLoopConflict
+	for rows.Next() {
+		var conflict sourceMergeLoopConflict
+		if err := rows.Scan(&conflict.sourceID, &conflict.sourceCycle, &conflict.sourceAnchor, &conflict.sourceSnoozedUntil, &conflict.sourceActivity, &conflict.sourceUpdated,
+			&conflict.destinationID, &conflict.destinationCycle, &conflict.destinationAnchor, &conflict.destinationSnoozedUntil, &conflict.destinationActivity, &conflict.destinationUpdated); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		conflicts = append(conflicts, conflict)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, conflict := range conflicts {
+		winnerID, loserID := conflict.destinationID, conflict.sourceID
+		if conflict.sourceActivity.After(conflict.destinationActivity) ||
+			(conflict.sourceActivity.Equal(conflict.destinationActivity) && conflict.sourceUpdated.After(conflict.destinationUpdated)) {
+			winnerID, loserID = conflict.sourceID, conflict.destinationID
+		}
+		mappedSourceAnchor := conflict.sourceAnchor
+		if mappedSourceAnchor.Valid {
+			if survivor, ok := messageSurvivors[mappedSourceAnchor.Int64]; ok {
+				mappedSourceAnchor.Int64 = survivor
+			}
+		}
+		sameMappedTurn := conflict.sourceCycle == conflict.destinationCycle && mappedSourceAnchor.Valid && conflict.destinationAnchor.Valid && mappedSourceAnchor.Int64 == conflict.destinationAnchor.Int64
+		if sameMappedTurn {
+			var snoozedUntil time.Time
+			for _, candidate := range []nullableTimestamp{conflict.sourceSnoozedUntil, conflict.destinationSnoozedUntil} {
+				if candidate.Valid && candidate.Time.After(now) && candidate.Time.After(snoozedUntil) {
+					snoozedUntil = candidate.Time
+				}
+			}
+			if !snoozedUntil.IsZero() {
+				if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET snoozed_until=? WHERE id=? AND status<>'closed'`, s.dialect.TimestampParam(snoozedUntil), winnerID); err != nil {
+					return fmt.Errorf("preserve duplicate loop snooze after source merge: %w", err)
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status='closed',closed_at=?,closed_reason='withdrawn',closed_by='system',updated_at=?
+			WHERE id=? AND status<>'closed'`, s.dialect.TimestampParam(now), s.dialect.TimestampParam(now), loserID); err != nil {
+			return fmt.Errorf("retire duplicate live loop after source merge: %w", err)
+		}
+	}
+	for _, loop := range sourceLoops {
+		anchor := loop.anchorMessageID
+		lastActivity := loop.lastActivityMessageID
+		closedMessage := loop.closedMessageID
+		if anchor.Valid {
+			if survivor, ok := messageSurvivors[anchor.Int64]; ok {
+				anchor.Int64 = survivor
+			}
+		}
+		if lastActivity.Valid {
+			if survivor, ok := messageSurvivors[lastActivity.Int64]; ok {
+				lastActivity.Int64 = survivor
+			}
+		}
+		if closedMessage.Valid {
+			if survivor, ok := messageSurvivors[closedMessage.Int64]; ok {
+				closedMessage.Int64 = survivor
+			}
+		}
+		turnKey, cycle := loop.turnKey, loop.cycle
+		if loop.detector == "turn_state" && anchor.Valid {
+			turnKey = fmt.Sprintf("turn:%d:%s:%d", destinationConversationID, loop.kind, anchor.Int64)
+			if turnKey != loop.turnKey {
+				var collision bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM open_loops WHERE turn_key=? AND cycle=? AND id<>?)`, turnKey, cycle, loop.id).Scan(&collision); err != nil {
+					return err
+				}
+				if collision {
+					if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(cycle),0)+1 FROM open_loops WHERE turn_key=?`, turnKey).Scan(&cycle); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		evidence, err := remapSourceMergeLoopEvidence(loop.evidenceJSON, fromConversationID, destinationConversationID, messageSurvivors)
+		if err != nil {
+			return fmt.Errorf("remap loop %d evidence after source merge: %w", loop.id, err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id=?,source_id=?,turn_key=?,cycle=?,anchor_message_id=?,last_activity_message_id=?,closed_message_id=?,evidence_json=? WHERE id=?`,
+			destinationConversationID, destinationSourceID, turnKey, cycle,
+			optionalSourceMergeID(anchor), optionalSourceMergeID(lastActivity), optionalSourceMergeID(closedMessage), string(evidence), loop.id); err != nil {
+			return fmt.Errorf("remap loop %d identity after source merge: %w", loop.id, err)
+		}
+	}
+	muted, err := s.rebindConversationLoopSuppressionTx(ctx, tx, fromConversationID, destinationConversationID)
+	if err != nil {
+		return err
+	}
+	if muted {
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status='closed',closed_at=?,closed_reason='muted',closed_by='user',updated_at=?
+			WHERE conversation_id=? AND status<>'closed'`, s.dialect.TimestampParam(now), s.dialect.TimestampParam(now), destinationConversationID); err != nil {
+			return fmt.Errorf("apply merged conversation mute to live loops: %w", err)
+		}
+	}
+	return s.enqueueLoopTx(ctx, tx, []int64{destinationConversationID}, "moved", "", now)
+}
+
+func optionalSourceMergeID(id sql.NullInt64) any {
+	if !id.Valid {
+		return nil
+	}
+	return id.Int64
+}
+
+func remapSourceMergeLoopEvidence(raw []byte, fromConversationID, destinationConversationID int64, messageSurvivors map[int64]int64) ([]byte, error) {
+	var evidence []map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		// Older projection rows may contain valid JSON outside the evidence array
+		// shape. Preserve it rather than making an otherwise safe merge fail.
+		return raw, nil
+	}
+	changed := false
+	for _, item := range evidence {
+		if item == nil {
+			continue
+		}
+		if rawID, ok := item["message_id"]; ok {
+			var id int64
+			if json.Unmarshal(rawID, &id) == nil {
+				if survivor, ok := messageSurvivors[id]; ok {
+					encoded, err := json.Marshal(survivor)
+					if err != nil {
+						return nil, err
+					}
+					item["message_id"] = jsontext.Value(encoded)
+					changed = true
+				}
+			}
+		}
+		if rawID, ok := item["conversation_id"]; ok {
+			var id int64
+			if json.Unmarshal(rawID, &id) == nil && id == fromConversationID {
+				encoded, err := json.Marshal(destinationConversationID)
+				if err != nil {
+					return nil, err
+				}
+				item["conversation_id"] = jsontext.Value(encoded)
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return raw, nil
+	}
+	updated, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+func (s *Store) rebindConversationLoopSuppressionTx(ctx context.Context, tx *loggedTx, fromConversationID, destinationConversationID int64) (bool, error) {
+	var sourceSuppressionID int64
+	var sourceNote string
+	err := tx.QueryRowContext(ctx, `SELECT id,note FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`, fromConversationID).Scan(&sourceSuppressionID, &sourceNote)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect merged conversation mute: %w", err)
+	}
+	var destinationSuppressionID int64
+	var destinationNote string
+	err = tx.QueryRowContext(ctx, `SELECT id,note FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`, destinationConversationID).Scan(&destinationSuppressionID, &destinationNote)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id=? WHERE id=?`, destinationConversationID, sourceSuppressionID); err != nil {
+			return false, fmt.Errorf("move merged conversation mute: %w", err)
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect destination conversation mute: %w", err)
+	}
+	switch {
+	case sourceNote == "" || sourceNote == destinationNote:
+	case destinationNote == "":
+		destinationNote = sourceNote
+	default:
+		destinationNote += "\n" + sourceNote
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note=? WHERE id=?`, destinationNote, destinationSuppressionID); err != nil {
+		return false, fmt.Errorf("preserve merged conversation mute notes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id=?`, sourceSuppressionID); err != nil {
+		return false, fmt.Errorf("deduplicate merged conversation mute: %w", err)
+	}
+	return true, nil
 }

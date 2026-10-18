@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -223,4 +224,12 @@ func TestKataIssueBackendWarnsWithoutMediaRevisions(t *testing.T) {
 	assert.Contains(t, logs.String(), "Kata transcript citations disabled: the archive store cannot read media revisions")
 	_, err := backend.Prepare(t.Context(), []kataevidence.Selector{{Kind: "docbank_rendition", MessageID: 1, AttachmentID: 1, MaxChars: new(10)}})
 	require.ErrorIs(t, err, kataevidence.ErrUnsupported)
+}
+
+func (f *fakeKataIssueOperations) Connect(context.Context) (loops.KataIssues, error) { return f, f.err }
+func (f *fakeKataIssueOperations) Get(context.Context, string) (taskclient.KataTask, error) {
+	return taskclient.KataTask{}, f.err
+}
+func (f *fakeKataIssueOperations) Comment(context.Context, string, string, string) error {
+	return f.err
 }

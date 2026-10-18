@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
@@ -29,6 +32,7 @@ var mcpHTTPAddr string
 var mcpHTTPAllowInsecure bool
 var mcpHTTPAllowWrites bool
 var mcpAllowProfileWrites bool
+var mcpAllowLoopWrites bool
 var mcpAllowIdentityDecisions bool
 var mcpAllowIdentityScoring bool
 var mcpAllowPersonMerges bool
@@ -46,7 +50,7 @@ var mcpCmd = &cobra.Command{
 
 This allows Claude Desktop (or any MCP client) to query your archive
 using tools like search_metadata, search_message_bodies, search_document_attachments, semantic_search_messages, get_message, list_messages, list_thread, export_eml, get_stats,
-aggregate, get_person_agenda, list_saved_views, run_saved_view, stage_deletion,
+aggregate, get_person_agenda, list_open_loops, get_open_loop, list_saved_views, run_saved_view, stage_deletion,
 draft_reply, draft_compose, draft_forward, draft_get, draft_edit, draft_delete,
 draft_recover, and draft_send_as.
 Draft tools create, read, edit, delete, and recover managed drafts through the
@@ -109,6 +113,7 @@ Add to Claude Desktop config:
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
+		opts.AllowLoopWrites = mcpAllowLoopWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
 		opts.AllowPersonMerges = mcpAllowPersonMerges
@@ -277,6 +282,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		backend := newDaemonMCPOperations(st, capabilities)
 		opts.Operations = backend
 		opts.OperationCapabilities = backend.capabilities()
+		if daemonLoopsAdvertised(capabilities) {
+			opts.Loops = st
+		}
 	}
 	health, capabilityErr := st.Health(ctx)
 	var schemaVersion string
@@ -336,6 +344,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		if daemonclient.APISchemaVersionAtLeast(schemaVersion, kataDocbankMinAPISchemaVersion) {
 			opts.KataDocbank = probeKataDocbank(ctx, st, log)
 		}
+	}
+	if opts.Loops != nil && opts.Kata != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, loopsKataMinAPISchemaVersion) {
+		opts.KataProject = st.OpenLoopKataProject
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
@@ -539,8 +550,10 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpHTTPAllowWrites, "http-allow-writes", false,
 		"Expose write-class MCP tools over HTTP. This permits attachment exports, "+
 			"deletion manifests, Saved View management, managed draft writes, and profile writes separately enabled with "+
-			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, source writes, and Kata issue writes enabled "+
+			"--allow-profile-writes, identity decisions, identity scoring, person merges, CardDAV writes, calendar writes, loop writes, source writes, and Kata issue writes enabled "+
 			"with their separate opt-ins; enable it only for trusted, authenticated clients.")
+	mcpCmd.Flags().BoolVar(&mcpAllowLoopWrites, "allow-loop-writes", false,
+		"Expose loop close, snooze, mute and unmute tools. Each call requires MCP client confirmation; HTTP also requires --http-allow-writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowProfileWrites, "allow-profile-writes", false,
 		"Expose person promotion, display-name editing, and private Notes writes. Model tool calls "+
 			"can persist profile data, so enable this only for sessions where the user "+
@@ -552,7 +565,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
-		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
+		"Expose Kata issue creation, evidence linking, and open-loop tracking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,
@@ -629,4 +642,52 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+// The daemon advertises enabled loop routes atomically. Require the complete
+// backend contract, including exact methods and paths, before offering tools.
+// Local configuration and API schema versions cannot establish remote enablement.
+func daemonLoopsAdvertised(capabilities *apiprotocol.MCPCapabilities) bool {
+	if capabilities == nil {
+		return false
+	}
+	required := []apiprotocol.MCPRouteDescriptor{
+		{OperationID: "listOpenLoops", Method: http.MethodGet, Path: "/api/v1/loops"},
+		{OperationID: "getWaitingLoops", Method: http.MethodGet, Path: "/api/v1/loops/waiting"},
+		{OperationID: "getOpenLoop", Method: http.MethodGet, Path: "/api/v1/loops/{id}"},
+		{OperationID: "closeOpenLoop", Method: http.MethodPost, Path: "/api/v1/loops/{id}/done"},
+		{OperationID: "snoozeOpenLoop", Method: http.MethodPost, Path: "/api/v1/loops/{id}/snooze"},
+		{OperationID: "listLoopSuppressions", Method: http.MethodGet, Path: "/api/v1/loops/suppressions"},
+		{OperationID: "createLoopSuppression", Method: http.MethodPost, Path: "/api/v1/loops/suppressions"},
+		{OperationID: "deleteLoopSuppression", Method: http.MethodDelete, Path: "/api/v1/loops/suppressions/{id}"},
+	}
+	for _, expected := range required {
+		if !slices.ContainsFunc(capabilities.Routes, func(actual apiprotocol.MCPRouteDescriptor) bool {
+			return actual.OperationID == expected.OperationID && actual.Method == expected.Method && actual.Path == expected.Path
+		}) {
+			return false
+		}
+	}
+	return true
+}
+
+// A write opt-in belongs to one invocation, including unsuccessful executions.
+func resetMCPLoopWriteFlag(root *cobra.Command) {
+	command := root
+	if command.Name() != "mcp" {
+		command = nil
+		for _, child := range root.Commands() {
+			if child.Name() == "mcp" {
+				command = child
+				break
+			}
+		}
+	}
+	if command == nil {
+		return
+	}
+	if flag := command.Flags().Lookup("allow-loop-writes"); flag != nil {
+		_ = flag.Value.Set(flag.DefValue)
+		flag.Changed = false
+	}
 }

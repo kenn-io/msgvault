@@ -542,6 +542,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
 	}
+	kataIssueOperations := api.NewKataIssueOperations(cfg, s, logger)
+	loopRuntime, err := newLoopRuntime(ctx, sched, operationGate, s, cfg, kataIssueOperations)
+	if err != nil {
+		return fmt.Errorf("configure open loops: %w", err)
+	}
 	if cfg.People.Sweep.Enabled {
 		if err := cfg.People.Sweep.Validate(); err != nil {
 			return fmt.Errorf("validate people sweep: %w", err)
@@ -888,10 +893,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		Config:              cfg,
+		Store:               storeAdapter,
+		SavedViewStore:      s,
+		KataIssueOperations: kataIssueOperations,
+		Engine:              engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")
@@ -917,6 +923,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		TelemetryCapture:              telemetry.CaptureHandler(telemetryReporter, cfg.Data.DataDir),
 		MessageRecordings:             messageRecordings,
 		DocbankAttachments:            docbankAttachments,
+	}
+	if loopRuntime != nil {
+		apiOpts.LoopService = loopRuntime.service
+		apiOpts.LoopRunner = loopRuntime.runner
+		apiOpts.LoopState = loopRuntime.deriver.State
 	}
 	apiOpts.GmailProfileAddress = func(ctx context.Context, source *store.Source) (string, error) {
 		client, serviceAccount, err := newDaemonGmailClient(

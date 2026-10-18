@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -18,7 +18,7 @@ appear in full under Inherited Flags.
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
-| Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
+| Maintain people and contacts | [loops](#loops), [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -27,6 +27,62 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## loops
+
+Find unanswered conversation turns and manage the owner's derived list through
+the selected daemon. See [Open loops](usage/open-loops.md) for the detector's
+exclusions and freshness policy.
+
+```bash
+msgvault loops waiting --top 10
+msgvault loops waiting --allow-stale --as-of 2026-10-17T12:00:00Z --json
+msgvault loops list --kind awaiting_reply --status open --person 7 --limit 50
+msgvault loops show 12 --json
+msgvault loops track 12 --title "Send the revised proposal"
+msgvault loops track 13 --issue msgvault#ab12
+msgvault loops untrack 13
+msgvault loops done 12 --note "Handled elsewhere"
+msgvault loops snooze 12 --until 48h
+msgvault loops unsnooze 12
+msgvault loops mute person 7 --note "No follow-up needed" --dry-run
+msgvault loops mute participant 42
+msgvault loops mute conversation 77
+msgvault loops unmute person 7
+msgvault loops mutes --json
+msgvault loops status --json
+msgvault loops run
+msgvault loops rebuild
+```
+
+| Command | Flags and behavior |
+|---|---|
+| `waiting` | `--top` 1..50, default 10; `--json`, `--allow-stale`, `--as-of` RFC3339 |
+| `list` | `--kind`, `--status` open/held/closed/all (default open), `--person`, `--source-id`, `--include-snoozed`, `--limit` 1..200 (default 50), `--cursor`, `--json` |
+| `show` | One loop ID; `--json` includes evidence references and freshness |
+| `track` | One open loop ID; `--issue` existing ref, or optional `--title` (at most 512 characters), `--list`; `--json`; requires API schema 3.26.0 |
+| `untrack` | Remove the local issue link; preserve the issue and its evidence in Kata |
+| `done` | One loop ID; optional `--note`; completing a closed loop fails |
+| `snooze` | One loop ID; required future `--until` as YYYY-MM-DD (local midnight), RFC3339 or duration |
+| `unsnooze` | One loop ID; remove its snooze |
+| `mute` | Exactly one person, participant or conversation ID; `--note`, `--dry-run` |
+| `unmute` | Exactly one target kind and ID; enqueue its current conversations for reconciliation |
+| `mutes` | List suppression records; `--json` |
+| `status` | Projection, queue and backfill progress plus freshness; `--json` |
+| `run`, `rebuild` | Return started, pending or coalesced promptly; rebuild retains owner decisions |
+
+`waiting` groups open obligations owed by you, excludes snoozed loops, and
+orders people by their oldest unanswered turn. A stale archive returns exit
+status 2 and the typed `loops_stale` JSON envelope. `--allow-stale` keeps the
+warning and returns the ranking. List, show and status remain readable with
+warnings on stderr. Refresh commands in the freshness report name each source.
+
+Lists and waiting include a `KATA` column with the cached ref and status. Show
+includes `closed_by`, issue status and last check; JSON carries the complete
+`kata` cache and retry diagnostics. Track prints the issue, a replay marker when
+already tracked, and loop detail; notes go to stderr. Status includes the Kata
+bridge last run, last success and last error. See [tracking a loop](usage/open-loops.md#track-a-loop-in-kata)
+for default titles, evidence and bridge behavior.
 
 ## meetings
 
@@ -4116,10 +4172,11 @@ msgvault mcp [flags]
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
-| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
+| `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, Kata, and open-loop writes also need separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
+| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop completion, snooze, mute, and unmute tools. Each call requires client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
 
 See [MCP Server](/docs/usage/chat/) for configuration and tool reference.

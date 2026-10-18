@@ -1446,6 +1446,26 @@ func TestStageDeletionAcceptsDryRunOK(t *testing.T) {
 	assert.Len(got.SampleGmailIds, 3, "sample ids")
 }
 
+func TestTrackOpenLoopAcceptsReplayOK(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodPost, r.Method)
+		assertions.Equal("/api/v1/loops/12/kata", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"freshness":{},"issue":{},"loop":{},"replayed":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	requirements.NoError(err)
+	tracked, err := c.TrackOpenLoop(context.Background(), &generated.TrackOpenLoopRequestOptions{
+		PathParams: &generated.TrackOpenLoopPath{ID: 12},
+	})
+	requirements.NoError(err)
+	assertions.True(tracked.Replayed)
+}
+
 func TestCaptureTelemetryEventSendsPropertyValues(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

@@ -1471,6 +1471,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
+	if err := s.ensureLoopKataStateColumns(ctx); err != nil {
+		return fmt.Errorf("ensure loop Kata state columns: %w", err)
+	}
 	if !s.IsPostgreSQL() {
 		if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: s.db}); err != nil {
 			return err
@@ -1866,6 +1869,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		},
 	); err != nil {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
+	}
+
+	if err := s.runOnceMigration(
+		ctx, migrationLoopProjectionTriggers, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureLoopProjectionTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure loop projection triggers: %w", err)
 	}
 
 	// Gmail exposes archived chat transcripts as MIME messages carrying its

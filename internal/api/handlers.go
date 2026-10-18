@@ -1982,7 +1982,6 @@ func (s *Server) handleAddAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "save_error", "Failed to save configuration")
 		return
 	}
-
 	s.cfgMu.Unlock()
 
 	// Register with live scheduler (best-effort — config is already saved)

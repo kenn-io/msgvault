@@ -335,6 +335,33 @@ func (c *Client) StageDeletion(
 	return nil, fmt.Errorf("stage deletion: %w", err)
 }
 
+// CreateLoopSuppression accepts both persisted suppressions and dry-run
+// previews. The generated convenience method accepts only 201, while the
+// daemon returns 200 for a successful dry run.
+func (c *Client) CreateLoopSuppression(
+	ctx context.Context,
+	options *generated.CreateLoopSuppressionRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.CreateLoopSuppressionResponseJSON, error) {
+	resp, err := c.CreateLoopSuppressionWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("create loop suppression: missing response")
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("create loop suppression: %w", err)
+}
+
 // CreatePerson accepts both documented success statuses. The generated
 // convenience method treats only 201 as success even though the daemon
 // returns 200 for an idempotent re-promotion of an already-promoted cluster.
@@ -357,6 +384,29 @@ func (c *Client) CreatePerson(
 		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
 		runtime.WithStatusCode(resp.StatusCode))
 	return nil, fmt.Errorf("create person: %w", err)
+}
+
+// TrackOpenLoop accepts both documented success statuses. Tracking a new
+// issue returns 201 and replaying an existing link returns 200.
+func (c *Client) TrackOpenLoop(
+	ctx context.Context,
+	options *generated.TrackOpenLoopRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.TrackOpenLoopResponseJSON, error) {
+	resp, err := c.TrackOpenLoopWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("track open loop: %w", err)
 }
 
 type httpClientDoer struct {

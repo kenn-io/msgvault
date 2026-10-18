@@ -131,6 +131,7 @@ func listLimitArg(args map[string]any) int {
 }
 
 type handlers struct {
+	loops                LoopBackend
 	embeddingStatus      EmbeddingStatusReader
 	delegatedOnly        bool
 	downloads            *downloadCache
@@ -152,6 +153,7 @@ type handlers struct {
 	calendar             CalendarBackend
 	personAgendaBackend  PersonAgendaBackend
 	kata                 KataBackend
+	kataProject          func(context.Context) (string, error)
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
 	messageTags          MessageTagBackend
@@ -557,6 +559,12 @@ func translateDaemonRequestError(err error) *toolResult {
 		message = "body_search_index_unavailable: message body search index is unavailable; ask the archive owner to search or run rebuild-fts, then retry"
 	case "invalid_message_id":
 		message = "invalid_message_id: seed message ID is invalid"
+	case "loop_not_found":
+		message = "loop_not_found: open loop was not found"
+	case "loop_already_closed":
+		message = "loop_already_closed: open loop is already closed"
+	case "loops_disabled":
+		message = "loops_disabled: open loops are unavailable"
 	default:
 		return nil
 	}

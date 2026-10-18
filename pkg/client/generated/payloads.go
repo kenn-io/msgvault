@@ -132,6 +132,14 @@ type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
 
+type CreateLoopSuppressionBody = LoopSuppressionRequest
+
+type CloseOpenLoopBody = CloseOpenLoopRequest
+
+type TrackOpenLoopBody = LoopTrackRequest
+
+type SnoozeOpenLoopBody = SnoozeOpenLoopRequest
+
 type ListMeetingActionItemsBody = MeetingActionsRequest
 
 type GetMeetingContextBody = MeetingContextRequest

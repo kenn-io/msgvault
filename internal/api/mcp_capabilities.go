@@ -17,7 +17,7 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 		"Describe supported MCP daemon operations", func(w http.ResponseWriter, _ *http.Request) {
 			response := MCPCapabilitiesResponse{
 				Version: 1,
-				Routes:  mcpRouteDescriptors(root.OpenAPI()),
+				Routes:  filterLoopDescriptors(mcpRouteDescriptors(root.OpenAPI()), s.loopCapabilitiesEnabled()),
 			}
 			writeJSON(w, http.StatusOK, response)
 		})
@@ -62,6 +62,9 @@ func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
 // Advertise only routes consumed by the source and profile MCP tools, and only
 // when their real routes are registered.
 func mcpOperationDescribed(operationID string) bool {
+	if loopOperation(operationID) {
+		return true
+	}
 	switch operationID {
 	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
 		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",

@@ -81,6 +81,28 @@ const MaxIssuePassages = 64
 // extra IDs re-synced sources give passages it already quotes.
 const MaxIssueEntries = 4 * MaxIssuePassages
 
+// Get reads an issue only in the configured write project.
+func (s *Service) Get(ctx context.Context, issueRef string) (taskclient.KataTask, error) {
+	project, ref, err := s.splitRef(issueRef)
+	if err != nil {
+		return taskclient.KataTask{}, err
+	}
+	if project != s.Project {
+		return taskclient.KataTask{}, ErrOutsideProject
+	}
+	return s.Kata.GetTask(ctx, project, ref)
+}
+
+// Comment posts a lifecycle event. A mismatched replay key means Kata
+// already accepted the event, including when display text changed afterward.
+func (s *Service) Comment(ctx context.Context, issueUID, idempotencyKey, body string) error {
+	err := s.Kata.AddComment(ctx, s.Project, issueUID, idempotencyKey, body)
+	if taskclient.ErrorCode(err) == "idempotency_mismatch" {
+		return nil
+	}
+	return err
+}
+
 // Create files one issue per Idempotency-Key. The issue carries a marker
 // derived from the key, so a retry finds it in Kata (open or closed) before
 // sending anything, even after Kata's own replay window has passed.

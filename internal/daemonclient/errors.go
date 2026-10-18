@@ -12,6 +12,7 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/vector"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 )
@@ -109,6 +110,12 @@ func handleRawErrorResponse(
 func handleErrorBody(status int, body []byte) error {
 	if err := operationInProgressFromBody(body); err != nil {
 		return err
+	}
+	if status == http.StatusConflict {
+		var response loops.LoopsStaleResponse
+		if json.Unmarshal(body, &response) == nil && response.Error == "loops_stale" {
+			return &LoopsStaleError{Response: response}
+		}
 	}
 	message, code, _ := apiErrorMessage(body)
 	return &APIError{Status: status, Code: code, Message: message}

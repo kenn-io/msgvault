@@ -1689,6 +1689,314 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListOpenLoopsResponse = LoopListResponse
+
+type ListOpenLoopsErrorResponse = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON403 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON404 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON409 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON413 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON415 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON422 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON500 = ErrorResponse
+
+type ListOpenLoopsErrorResponseJSON503 = ErrorResponse
+
+type RebuildLoopsResponse = LoopRunResponse
+
+type RebuildLoopsErrorResponse = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON403 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON404 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON409 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON413 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON415 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON422 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON500 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON503 = ErrorResponse
+
+type RunLoopsResponse = LoopRunResponse
+
+type RunLoopsErrorResponse = ErrorResponse
+
+type RunLoopsErrorResponseJSON = ErrorResponse
+
+type RunLoopsErrorResponseJSON403 = ErrorResponse
+
+type RunLoopsErrorResponseJSON404 = ErrorResponse
+
+type RunLoopsErrorResponseJSON409 = ErrorResponse
+
+type RunLoopsErrorResponseJSON413 = ErrorResponse
+
+type RunLoopsErrorResponseJSON415 = ErrorResponse
+
+type RunLoopsErrorResponseJSON422 = ErrorResponse
+
+type RunLoopsErrorResponseJSON500 = ErrorResponse
+
+type RunLoopsErrorResponseJSON503 = ErrorResponse
+
+type GetLoopsStatusResponse = LoopStatusResponse
+
+type GetLoopsStatusErrorResponse = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON403 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON404 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON409 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON413 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON415 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON422 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON500 = ErrorResponse
+
+type GetLoopsStatusErrorResponseJSON503 = ErrorResponse
+
+type ListLoopSuppressionsResponse = LoopSuppressionListResponse
+
+type ListLoopSuppressionsErrorResponse = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON403 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON404 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON409 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON413 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON415 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON422 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON500 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON503 = ErrorResponse
+
+type CreateLoopSuppressionResponse = LoopSuppressionResult
+
+type CreateLoopSuppressionResponseJSON = LoopSuppressionResult
+
+type CreateLoopSuppressionErrorResponse = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON403 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON404 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON409 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON413 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON415 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON422 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON500 = ErrorResponse
+
+type CreateLoopSuppressionErrorResponseJSON503 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponse = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON403 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON404 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON409 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON413 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON415 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON422 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON500 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON503 = ErrorResponse
+
+type GetWaitingLoopsResponse = LoopWaitingResponse
+
+type GetWaitingLoopsErrorResponse = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON403 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON404 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON409 = LoopsStaleResponse
+
+type GetWaitingLoopsErrorResponseJSON413 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON415 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON422 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON500 = ErrorResponse
+
+type GetWaitingLoopsErrorResponseJSON503 = ErrorResponse
+
+type GetOpenLoopResponse = LoopDetailResponse
+
+type GetOpenLoopErrorResponse = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type CloseOpenLoopResponse = LoopDetailResponse
+
+type CloseOpenLoopErrorResponse = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type CloseOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type UntrackOpenLoopErrorResponse = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type TrackOpenLoopResponse = LoopTrackResponse
+
+type TrackOpenLoopResponseJSON = LoopTrackResponse
+
+type TrackOpenLoopErrorResponse = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON409 = LoopAlreadyTrackedResponse
+
+type TrackOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type UnsnoozeOpenLoopResponse = LoopDetailResponse
+
+type UnsnoozeOpenLoopErrorResponse = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type SnoozeOpenLoopResponse = LoopDetailResponse
+
+type SnoozeOpenLoopErrorResponse = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON503 = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -2702,6 +3010,28 @@ type ListPersonIdentitiesErrorResponse = ErrorResponse
 type ListPersonIdentitiesErrorResponseJSON = ErrorResponse
 
 type ListPersonIdentitiesErrorResponseJSON503 = ErrorResponse
+
+type ListPersonLoopsResponse = LoopListResponse
+
+type ListPersonLoopsErrorResponse = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON403 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON404 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON409 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON413 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON415 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON422 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON500 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON503 = ErrorResponse
 
 type MergePersonsResponse = PersonMergeResult
 
@@ -5131,6 +5461,244 @@ type TestTaskIntegrationResp struct {
 	JSON200      *TestTaskIntegrationResponse
 }
 
+type ListOpenLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListOpenLoopsResponse
+	JSON400      *ListOpenLoopsErrorResponse
+	JSON401      *ListOpenLoopsErrorResponseJSON
+	JSON403      *ListOpenLoopsErrorResponseJSON403
+	JSON404      *ListOpenLoopsErrorResponseJSON404
+	JSON409      *ListOpenLoopsErrorResponseJSON409
+	JSON413      *ListOpenLoopsErrorResponseJSON413
+	JSON415      *ListOpenLoopsErrorResponseJSON415
+	JSON422      *ListOpenLoopsErrorResponseJSON422
+	JSON500      *ListOpenLoopsErrorResponseJSON500
+	JSON503      *ListOpenLoopsErrorResponseJSON503
+}
+
+type RebuildLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RebuildLoopsResponse
+	JSON400      *RebuildLoopsErrorResponse
+	JSON401      *RebuildLoopsErrorResponseJSON
+	JSON403      *RebuildLoopsErrorResponseJSON403
+	JSON404      *RebuildLoopsErrorResponseJSON404
+	JSON409      *RebuildLoopsErrorResponseJSON409
+	JSON413      *RebuildLoopsErrorResponseJSON413
+	JSON415      *RebuildLoopsErrorResponseJSON415
+	JSON422      *RebuildLoopsErrorResponseJSON422
+	JSON500      *RebuildLoopsErrorResponseJSON500
+	JSON503      *RebuildLoopsErrorResponseJSON503
+}
+
+type RunLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RunLoopsResponse
+	JSON400      *RunLoopsErrorResponse
+	JSON401      *RunLoopsErrorResponseJSON
+	JSON403      *RunLoopsErrorResponseJSON403
+	JSON404      *RunLoopsErrorResponseJSON404
+	JSON409      *RunLoopsErrorResponseJSON409
+	JSON413      *RunLoopsErrorResponseJSON413
+	JSON415      *RunLoopsErrorResponseJSON415
+	JSON422      *RunLoopsErrorResponseJSON422
+	JSON500      *RunLoopsErrorResponseJSON500
+	JSON503      *RunLoopsErrorResponseJSON503
+}
+
+type GetLoopsStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetLoopsStatusResponse
+	JSON400      *GetLoopsStatusErrorResponse
+	JSON401      *GetLoopsStatusErrorResponseJSON
+	JSON403      *GetLoopsStatusErrorResponseJSON403
+	JSON404      *GetLoopsStatusErrorResponseJSON404
+	JSON409      *GetLoopsStatusErrorResponseJSON409
+	JSON413      *GetLoopsStatusErrorResponseJSON413
+	JSON415      *GetLoopsStatusErrorResponseJSON415
+	JSON422      *GetLoopsStatusErrorResponseJSON422
+	JSON500      *GetLoopsStatusErrorResponseJSON500
+	JSON503      *GetLoopsStatusErrorResponseJSON503
+}
+
+type ListLoopSuppressionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListLoopSuppressionsResponse
+	JSON400      *ListLoopSuppressionsErrorResponse
+	JSON401      *ListLoopSuppressionsErrorResponseJSON
+	JSON403      *ListLoopSuppressionsErrorResponseJSON403
+	JSON404      *ListLoopSuppressionsErrorResponseJSON404
+	JSON409      *ListLoopSuppressionsErrorResponseJSON409
+	JSON413      *ListLoopSuppressionsErrorResponseJSON413
+	JSON415      *ListLoopSuppressionsErrorResponseJSON415
+	JSON422      *ListLoopSuppressionsErrorResponseJSON422
+	JSON500      *ListLoopSuppressionsErrorResponseJSON500
+	JSON503      *ListLoopSuppressionsErrorResponseJSON503
+}
+
+type CreateLoopSuppressionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CreateLoopSuppressionResponse
+	JSON201      *CreateLoopSuppressionResponseJSON
+	JSON400      *CreateLoopSuppressionErrorResponse
+	JSON401      *CreateLoopSuppressionErrorResponseJSON
+	JSON403      *CreateLoopSuppressionErrorResponseJSON403
+	JSON404      *CreateLoopSuppressionErrorResponseJSON404
+	JSON409      *CreateLoopSuppressionErrorResponseJSON409
+	JSON413      *CreateLoopSuppressionErrorResponseJSON413
+	JSON415      *CreateLoopSuppressionErrorResponseJSON415
+	JSON422      *CreateLoopSuppressionErrorResponseJSON422
+	JSON500      *CreateLoopSuppressionErrorResponseJSON500
+	JSON503      *CreateLoopSuppressionErrorResponseJSON503
+}
+
+type DeleteLoopSuppressionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *DeleteLoopSuppressionErrorResponse
+	JSON401      *DeleteLoopSuppressionErrorResponseJSON
+	JSON403      *DeleteLoopSuppressionErrorResponseJSON403
+	JSON404      *DeleteLoopSuppressionErrorResponseJSON404
+	JSON409      *DeleteLoopSuppressionErrorResponseJSON409
+	JSON413      *DeleteLoopSuppressionErrorResponseJSON413
+	JSON415      *DeleteLoopSuppressionErrorResponseJSON415
+	JSON422      *DeleteLoopSuppressionErrorResponseJSON422
+	JSON500      *DeleteLoopSuppressionErrorResponseJSON500
+	JSON503      *DeleteLoopSuppressionErrorResponseJSON503
+}
+
+type GetWaitingLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetWaitingLoopsResponse
+	JSON400      *GetWaitingLoopsErrorResponse
+	JSON401      *GetWaitingLoopsErrorResponseJSON
+	JSON403      *GetWaitingLoopsErrorResponseJSON403
+	JSON404      *GetWaitingLoopsErrorResponseJSON404
+	JSON409      *GetWaitingLoopsErrorResponseJSON409
+	JSON413      *GetWaitingLoopsErrorResponseJSON413
+	JSON415      *GetWaitingLoopsErrorResponseJSON415
+	JSON422      *GetWaitingLoopsErrorResponseJSON422
+	JSON500      *GetWaitingLoopsErrorResponseJSON500
+	JSON503      *GetWaitingLoopsErrorResponseJSON503
+}
+
+type GetOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetOpenLoopResponse
+	JSON400      *GetOpenLoopErrorResponse
+	JSON401      *GetOpenLoopErrorResponseJSON
+	JSON403      *GetOpenLoopErrorResponseJSON403
+	JSON404      *GetOpenLoopErrorResponseJSON404
+	JSON409      *GetOpenLoopErrorResponseJSON409
+	JSON413      *GetOpenLoopErrorResponseJSON413
+	JSON415      *GetOpenLoopErrorResponseJSON415
+	JSON422      *GetOpenLoopErrorResponseJSON422
+	JSON500      *GetOpenLoopErrorResponseJSON500
+	JSON503      *GetOpenLoopErrorResponseJSON503
+}
+
+type CloseOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *CloseOpenLoopResponse
+	JSON400      *CloseOpenLoopErrorResponse
+	JSON401      *CloseOpenLoopErrorResponseJSON
+	JSON403      *CloseOpenLoopErrorResponseJSON403
+	JSON404      *CloseOpenLoopErrorResponseJSON404
+	JSON409      *CloseOpenLoopErrorResponseJSON409
+	JSON413      *CloseOpenLoopErrorResponseJSON413
+	JSON415      *CloseOpenLoopErrorResponseJSON415
+	JSON422      *CloseOpenLoopErrorResponseJSON422
+	JSON500      *CloseOpenLoopErrorResponseJSON500
+	JSON503      *CloseOpenLoopErrorResponseJSON503
+}
+
+type UntrackOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *UntrackOpenLoopErrorResponse
+	JSON401      *UntrackOpenLoopErrorResponseJSON
+	JSON403      *UntrackOpenLoopErrorResponseJSON403
+	JSON404      *UntrackOpenLoopErrorResponseJSON404
+	JSON409      *UntrackOpenLoopErrorResponseJSON409
+	JSON413      *UntrackOpenLoopErrorResponseJSON413
+	JSON415      *UntrackOpenLoopErrorResponseJSON415
+	JSON422      *UntrackOpenLoopErrorResponseJSON422
+	JSON500      *UntrackOpenLoopErrorResponseJSON500
+	JSON503      *UntrackOpenLoopErrorResponseJSON503
+}
+
+type TrackOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *TrackOpenLoopResponse
+	JSON201      *TrackOpenLoopResponseJSON
+	JSON400      *TrackOpenLoopErrorResponse
+	JSON401      *TrackOpenLoopErrorResponseJSON
+	JSON403      *TrackOpenLoopErrorResponseJSON403
+	JSON404      *TrackOpenLoopErrorResponseJSON404
+	JSON409      *TrackOpenLoopErrorResponseJSON409
+	JSON413      *TrackOpenLoopErrorResponseJSON413
+	JSON415      *TrackOpenLoopErrorResponseJSON415
+	JSON422      *TrackOpenLoopErrorResponseJSON422
+	JSON500      *TrackOpenLoopErrorResponseJSON500
+	JSON503      *TrackOpenLoopErrorResponseJSON503
+}
+
+type UnsnoozeOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnsnoozeOpenLoopResponse
+	JSON400      *UnsnoozeOpenLoopErrorResponse
+	JSON401      *UnsnoozeOpenLoopErrorResponseJSON
+	JSON403      *UnsnoozeOpenLoopErrorResponseJSON403
+	JSON404      *UnsnoozeOpenLoopErrorResponseJSON404
+	JSON409      *UnsnoozeOpenLoopErrorResponseJSON409
+	JSON413      *UnsnoozeOpenLoopErrorResponseJSON413
+	JSON415      *UnsnoozeOpenLoopErrorResponseJSON415
+	JSON422      *UnsnoozeOpenLoopErrorResponseJSON422
+	JSON500      *UnsnoozeOpenLoopErrorResponseJSON500
+	JSON503      *UnsnoozeOpenLoopErrorResponseJSON503
+}
+
+type SnoozeOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SnoozeOpenLoopResponse
+	JSON400      *SnoozeOpenLoopErrorResponse
+	JSON401      *SnoozeOpenLoopErrorResponseJSON
+	JSON403      *SnoozeOpenLoopErrorResponseJSON403
+	JSON404      *SnoozeOpenLoopErrorResponseJSON404
+	JSON409      *SnoozeOpenLoopErrorResponseJSON409
+	JSON413      *SnoozeOpenLoopErrorResponseJSON413
+	JSON415      *SnoozeOpenLoopErrorResponseJSON415
+	JSON422      *SnoozeOpenLoopErrorResponseJSON422
+	JSON500      *SnoozeOpenLoopErrorResponseJSON500
+	JSON503      *SnoozeOpenLoopErrorResponseJSON503
+}
+
 type GetMCPCapabilitiesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6038,6 +6606,23 @@ type ListPersonIdentitiesResp struct {
 	JSON400      *ListPersonIdentitiesErrorResponse
 	JSON404      *ListPersonIdentitiesErrorResponseJSON
 	JSON503      *ListPersonIdentitiesErrorResponseJSON503
+}
+
+type ListPersonLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonLoopsResponse
+	JSON400      *ListPersonLoopsErrorResponse
+	JSON401      *ListPersonLoopsErrorResponseJSON
+	JSON403      *ListPersonLoopsErrorResponseJSON403
+	JSON404      *ListPersonLoopsErrorResponseJSON404
+	JSON409      *ListPersonLoopsErrorResponseJSON409
+	JSON413      *ListPersonLoopsErrorResponseJSON413
+	JSON415      *ListPersonLoopsErrorResponseJSON415
+	JSON422      *ListPersonLoopsErrorResponseJSON422
+	JSON500      *ListPersonLoopsErrorResponseJSON500
+	JSON503      *ListPersonLoopsErrorResponseJSON503
 }
 
 type MergePersonsResp200Headers struct {

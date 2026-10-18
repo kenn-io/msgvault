@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -958,7 +958,7 @@ and ready states.
 ### `[integrations.kata]`
 
 Optional live person agendas backed by Kata, and the connection that files
-[Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
+[Kata issues from archive evidence](usage/kata-issues.md). The same connection supports [loop tracking](#loopskata). Tasks stay in Kata;
 msgvault shows their current state when you open a person's agenda. This integration is built
 against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 
@@ -2002,6 +2002,62 @@ limited to ten batches or two minutes.
 | `max_direct_counterparts` | `25` | Largest conversation still projected as direct activity between its participants. |
 | `batch_size` | `500` | Messages per projection batch. |
 
+### `[loops]` {#loops}
+
+The daemon derives [open loops](usage/open-loops.md) from archived email and
+chat. Defaults are applied before reading TOML, so an explicit empty schedule,
+`enabled = false`, or zero lookback keeps its meaning.
+
+| Key | Default | Description |
+|---|---|---|
+| `enabled` | `true` | Enable loop jobs and owner surfaces |
+| `schedule` | `*/15 * * * *` | Five-field cron; empty disables scheduled runs while keeping manual run/rebuild |
+| `reply_owed_after` | `24h` | Grace period before an unanswered inbound turn becomes open |
+| `awaiting_reply_after` | `72h` | Grace period for an unanswered outbound question |
+| `stale_after` | `24h` | Maximum age of successful source sync and certified projection progress |
+| `max_group_counterparts` | `3` | Above this non-owner count, inbound loops require an owner mention and outbound loops are excluded |
+| `lookback` | `8760h` | Conversation activity window; `0s` means unlimited |
+| `reconcile_interval` | `24h` | Periodic full reconciliation to catch eligibility changes |
+| `feed_pages` | `5` | Maximum archive-change pages per pass |
+| `batch_messages` | `2000` | Maximum rows in each change page |
+| `batch_conversations` | `200` | Maximum pending conversations applied per pass |
+| `rescan_batch` | `500` | Maximum conversations enqueued per rescan slice |
+| `signals_backfill_batch` | `2000` | Maximum historical raw MIME candidates per slice |
+| `conversation_message_limit` | `200` | Normal trailing metadata window |
+| `conversation_message_limit_extended` | `2000` | Single extension when a live anchor falls outside the normal window |
+| `run_message_limit` | `12` | Shared body-read budget for turn detection and settlement |
+
+Durations must be positive except `lookback`, which accepts zero. Counts must
+be at least one. `run_message_limit` cannot exceed the normal message window;
+the extended window cannot be smaller than it. Jobs commit bounded batches
+and yield to other daemon work. Summaries and evidence are archive data;
+configuration does not authorize an agent to act on their contents.
+
+#### `[loops.kata]` {#loopskata}
+
+Track [open loops in Kata](usage/open-loops.md#track-a-loop-in-kata) through the
+same `[integrations.kata]` connection. Its `enabled = true` setting is required
+for tracking and bridge work. With Kata disabled, reads retain cached links,
+tracking returns HTTP 503 `kata_unavailable`, and no bridge job runs.
+
+| Key | Default | Description |
+|---|---|---|
+| `comment_on_close` | `true` | Comment on a tracked issue when a substantive reply settles the turn; never close the Kata issue |
+| `close_on_issue_closed` | `true` | Mark the loop done when its issue closes; follow reopening only for bridge-closed loops within the window |
+| `reopen_window` | `168h` | Positive duration for following an issue reopened after the bridge closed its loop |
+| `batch` | `25` | Positive maximum issues refreshed or commented on in each bridge pass |
+
+The separate `open-loops-kata` job uses `[loops].schedule` and a one-minute
+runtime budget. It connects once per pass, allows ten seconds per issue and
+stops starting work with fifteen seconds left. Failed rows back off from one
+minute to six hours so healthy rows can proceed. Manual `loops run` derives
+loops and then runs the bridge. These settings do not alter the derivation
+fingerprint or trigger a rescan.
+
+Enabling the integration authorizes the daemon to access its configured Kata
+project. Tracking a loop authorizes the bridge's issue comments and local loop
+closures. Owner completion and withdrawal do not post closure comments.
+
 ## Overriding the Home Directory
 
 By default, msgvault stores everything under `~/.msgvault` (macOS/Linux) or `C:\Users\<you>\.msgvault` (Windows). To use a different location, you have two options:
@@ -2171,6 +2227,25 @@ database_url = "/path/to/msgvault.db"
 
 # Keep attachment content as individual files instead of creating packs.
 # loose_attachments = true
+
+[loops]
+# Deterministic unanswered email/chat turns; no model calls.
+enabled = true
+schedule = "*/15 * * * *" # Empty keeps only manual run/rebuild.
+reply_owed_after = "24h"
+awaiting_reply_after = "72h"
+stale_after = "24h"
+max_group_counterparts = 3
+lookback = "8760h" # "0s" means unlimited.
+reconcile_interval = "24h"
+feed_pages = 5
+batch_messages = 2000
+batch_conversations = 200
+rescan_batch = 500
+signals_backfill_batch = 2000
+conversation_message_limit = 200
+conversation_message_limit_extended = 2000
+run_message_limit = 12
 
 [oauth]
 # Path to Google OAuth client secrets JSON for browser OAuth

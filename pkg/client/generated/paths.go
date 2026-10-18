@@ -325,6 +325,69 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type DeleteLoopSuppressionPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (d DeleteLoopSuppressionPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type GetOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (g GetOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type CloseOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (c CloseOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type UntrackOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (u UntrackOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type TrackOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (t TrackOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
+type UnsnoozeOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (u UnsnoozeOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type SnoozeOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (s SnoozeOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
@@ -684,6 +747,15 @@ type SuggestPersonFilesPath struct {
 type ListPersonIdentitiesPath struct {
 	// ID Durable person ID
 	ID int64 `json:"id"`
+}
+
+type ListPersonLoopsPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (l ListPersonLoopsPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type MergePersonsPath struct {
