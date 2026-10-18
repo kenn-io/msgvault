@@ -11,7 +11,16 @@ import (
 // a later item fails. Empty entries have not been dispatched. The complete signed
 // envelope is authenticated before looking up receipts; replay requires current
 // authority but does not require a fresh preview or live provider access.
-func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, principal Principal, gate func(context.Context) (func(), error)) ([]Result, error) {
+func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, principal Principal, gate func(context.Context) (func(), error)) (results []Result, returnErr error) {
+	defer func() {
+		if len(results) == 0 {
+			return
+		}
+		if err := s.reauthorizeTriageResults(ctx, proposal, principal, results); err != nil {
+			results = nil
+			returnErr = err
+		}
+	}()
 	// IssuedAt is itself authenticated. Verifying at that instant checks signature,
 	// caller, complete envelope and bounded TTL without expiring durable replay.
 	if err := VerifyTriageProposal(s.Key, proposal, principal, proposal.IssuedAt); err != nil {
@@ -20,7 +29,7 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 	if s.Ledger == nil {
 		return nil, ErrUnavailable
 	}
-	results := make([]Result, len(proposal.Items))
+	results = make([]Result, len(proposal.Items))
 	targets := make([]Target, len(proposal.Items))
 	pending := false
 	var replayError error
@@ -220,6 +229,22 @@ func triageResultsOnError(results []Result, err error) ([]Result, error) {
 		return nil, err
 	}
 	return results, err
+}
+
+func (s *Service) reauthorizeTriageResults(ctx context.Context, proposal TriageProposal, principal Principal, results []Result) error {
+	for i, item := range proposal.Items {
+		if i < len(results) && results[i].Receipt != nil {
+			receipt := results[i].Receipt
+			if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := s.authorize(ctx, principal, item.Request); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func triageItemIntentHash(item TriageProposalItem) (string, error) {

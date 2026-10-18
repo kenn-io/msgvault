@@ -22,10 +22,10 @@ func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 			defer func() { require.NoError(st.Close()) }()
 			source, err := st.GetSourceByID(1)
 			require.NoError(err)
-			require.NoError(st.RemoveSource(source.ID))
 			if replaced {
-				_, err = st.DB().Exec(`INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','replacement@example.test')`)
-				require.NoError(err)
+				require.NoError(st.UpdateSourceIdentifier(source.ID, "replacement@example.test"))
+			} else {
+				require.NoError(st.RemoveSource(source.ID))
 			}
 			var messages, participants int
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))

@@ -66,16 +66,17 @@ func (s *triageHTTPStore) ApplyInboxTriage(ctx context.Context, proposal inboxco
 }
 
 type triageHTTPFixture struct {
-	archive *storetest.Fixture
-	srv     *Server
-	input   inboxcontrol.TriageInput
-	source  inboxcontrol.SourceIdentity
-	writes  atomic.Int64
-	mu      sync.Mutex
-	labels  map[string][]string
-	onRead  func()
-	onWrite func()
-	lost    bool
+	archive   *storetest.Fixture
+	srv       *Server
+	input     inboxcontrol.TriageInput
+	source    inboxcontrol.SourceIdentity
+	writes    atomic.Int64
+	mu        sync.Mutex
+	labels    map[string][]string
+	onCatalog func() bool
+	onRead    func()
+	onWrite   func()
+	lost      bool
 }
 
 func newTriageHTTPFixture(t *testing.T, count int) *triageHTTPFixture {
@@ -102,6 +103,10 @@ func newTriageHTTPFixture(t *testing.T, count int) *triageHTTPFixture {
 		case r.Method == http.MethodGet && r.URL.Path == "/gmail/v1/users/me/profile":
 			assert.NoError(t, json.MarshalWrite(w, map[string]string{"emailAddress": f.source.AccountID}))
 		case r.Method == http.MethodGet && r.URL.Path == "/gmail/v1/users/me/labels":
+			if f.onCatalog != nil && f.onCatalog() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			_, err := fmt.Fprint(w, `{"labels":[{"id":"TodoLabel","name":"Todo","type":"user"}]}`)
 			assert.NoError(t, err)
 		case strings.HasPrefix(r.URL.Path, "/gmail/v1/users/me/messages/"):
@@ -242,6 +247,45 @@ func TestInboxTriageHTTPRevocationDuringBatchSuppressesResults(t *testing.T) {
 	assertions.Equal("inbox_denied", failure.Error)
 	assertions.Empty(failure.Results, "revoked authority suppresses receipts accumulated earlier in the batch")
 	assertions.Equal(int64(1), f.writes.Load())
+}
+
+func TestInboxTriageHTTPRevocationBeforeCatalogFailureSuppressesEarlierReceipts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newTriageHTTPFixture(t, 2)
+	id, secret := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: f.source.SourceID, Type: "gmail", Identifier: f.source.SourceIdentifier}})
+	response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "", secret)
+	requirements.Equal(http.StatusOK, response.Code)
+	var proposal inboxcontrol.TriageProposal
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &proposal))
+	catalogCallsAfterWrite := 0
+	f.onCatalog = func() bool {
+		if f.writes.Load() != 1 {
+			return false
+		}
+		catalogCallsAfterWrite++
+		if catalogCallsAfterWrite == 1 {
+			return false
+		}
+		f.srv.agentGrants.Revoke(id)
+		return true
+	}
+
+	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", secret)
+	requirements.Equal(http.StatusForbidden, response.Code)
+	var failure InboxTriageError
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+	assertions.Equal("inbox_denied", failure.Error)
+	assertions.Empty(failure.Results, "revoked authority suppresses prior receipts after later provider errors")
+	assertions.Equal(int64(1), f.writes.Load())
+	stored, err := f.archive.Store.LookupInboxReceipt(t.Context(), id, f.source.SourceID, f.input.Items[0].IdempotencyKey)
+	requirements.NoError(err)
+	requirements.NotNil(stored)
+	assertions.Equal(inboxcontrol.StatusVerified, stored.Status, "authorization failure does not undo the completed receipt")
+	second, err := f.archive.Store.LookupInboxReceipt(t.Context(), id, f.source.SourceID, f.input.Items[1].IdempotencyKey)
+	requirements.NoError(err)
+	assertions.Nil(second, "the later item is not dispatched after the provider error")
 }
 
 func TestInboxTriageHTTPPreviewRejectsOversizedProposal(t *testing.T) {
