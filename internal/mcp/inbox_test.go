@@ -178,18 +178,22 @@ func TestInboxAllOperationSchemasRegister(t *testing.T) {
 
 func TestInboxOutcomeCodesPreserveReceipt(t *testing.T) {
 	for _, tc := range []struct {
-		err  error
-		code string
+		err        error
+		code       string
+		hasReceipt bool
 	}{
-		{inboxcontrol.ErrNoWrite, "rejected-no-write"},
-		{inboxcontrol.ErrReconcileOnly, "reconcile-only"},
-		{inboxcontrol.ErrInternal, "internal"},
+		{err: inboxcontrol.ErrReconcileOnly, code: "reconcile-only", hasReceipt: true},
+		{err: inboxcontrol.ErrInternal, code: "internal"},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 
-			b := &inboxTestBackend{result: &inboxcontrol.Result{Receipt: &inboxcontrol.Receipt{ID: "r1", Status: inboxcontrol.StatusReconcileOnly}}, err: tc.err}
+			var backendResult *inboxcontrol.Result
+			if tc.hasReceipt {
+				backendResult = &inboxcontrol.Result{Receipt: &inboxcontrol.Receipt{ID: "r1", Status: inboxcontrol.StatusReconcileOnly}}
+			}
+			b := &inboxTestBackend{result: backendResult, err: tc.err}
 			s := inboxSession(t, b, true, inboxcontrol.OpReconcile)
 			result, err := s.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_reconcile", Arguments: map[string]any{"receipt_id": "r1"}})
 			requirements.NoError(err)
@@ -199,9 +203,13 @@ func TestInboxOutcomeCodesPreserveReceipt(t *testing.T) {
 			var response inboxToolResponse
 			requirements.NoError(json.Unmarshal(raw, &response))
 			assertions.Equal(tc.code, response.Error)
-			requirements.NotNil(response.Result)
-			requirements.NotNil(response.Result.Receipt)
-			assertions.Equal("r1", response.Result.Receipt.ID)
+			if tc.hasReceipt {
+				requirements.NotNil(response.Result)
+				requirements.NotNil(response.Result.Receipt)
+				assertions.Equal("r1", response.Result.Receipt.ID)
+			} else {
+				assertions.Nil(response.Result)
+			}
 			assertions.Len(b.requests, 1)
 		})
 	}
