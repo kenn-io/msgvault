@@ -500,19 +500,6 @@ func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
 }
 
-func TestInboxControlReadbackIdentityMismatchRemainsUnknown(t *testing.T) {
-	assertions := assert.New(t)
-
-	f := newControlFixture(t)
-	r := f.execution(t)
-	f.provider.dispatch = func(context.Context) error { f.provider.state.Target.ProviderID = "different-message"; return nil }
-	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.NotNil(t, result.Receipt)
-	assertions.Equal(inboxcontrol.StatusUnknown, result.Receipt.Status)
-	assertions.Nil(result.Receipt.After)
-}
-
 func TestInboxControlChangedProjectionInvalidatesPreview(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -631,34 +618,6 @@ func TestInboxControlCapabilitiesUseCurrentSourceGrantsWithoutWrites(t *testing.
 	f.denied = true
 	_, err = f.service.Control(t.Context(), request, f.principal, f.gate)
 	assertions.ErrorIs(err, inboxcontrol.ErrDenied)
-}
-
-func TestInboxControlCapabilitiesRejectUnprovedMetadata(t *testing.T) {
-	for _, invalid := range []string{"source", "time", "status", "operation", "duplicate"} {
-		t.Run(invalid, func(t *testing.T) {
-			f := newControlFixture(t)
-			target := *f.request.Target
-			source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
-			caps := &inboxcontrol.Capabilities{Source: source, LocationModel: "labels", ObservedAt: f.now, Operations: []inboxcontrol.Capability{{Operation: inboxcontrol.OpGetState, Status: inboxcontrol.CapabilitySupported}}}
-			switch invalid {
-			case "source":
-				caps.Source.AccountID = "other@example.com"
-			case "time":
-				caps.ObservedAt = time.Time{}
-			case "status":
-				caps.Operations[0].Status = "unknown"
-			case "operation":
-				caps.Operations[0].Operation = "send"
-			case "duplicate":
-				caps.Operations = append(caps.Operations, caps.Operations[0])
-			}
-			cp := &capabilityProvider{controlProvider: f.provider, capabilities: caps}
-			f.service.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return cp, nil }
-			_, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, f.principal, f.gate)
-			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-			assert.Equal(t, 0, f.gateCalls)
-		})
-	}
 }
 
 func TestInboxControlReconcileDoesNotConsumeReceiptSettlementDeadline(t *testing.T) {

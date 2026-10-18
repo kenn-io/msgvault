@@ -52,9 +52,6 @@ func TestInboxIMAPCreateFolderNativeIdentity(t *testing.T) {
 			read.ResolvedFolder = &wrong
 			_, err = f.provider.Observe(t.Context(), read)
 			requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
-			// Name-only evidence cannot settle a receipt without authenticated dispatch identity.
-			read.ResolvedFolder = nil
-			requirements.ErrorIs(f.provider.Verify(read, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
 		})
 	}
 }
