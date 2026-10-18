@@ -197,14 +197,16 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		buildRecipientSet("bcc", parsed.Bcc, participantMap),
 	}
 
+	automationSignals := store.AutomationSignalsFromMIME(parsed.AutomationSignals())
 	// Persist atomically
 	messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message:    rec,
-		BodyText:   sql.NullString{String: bodyText, Valid: bodyText != ""},
-		BodyHTML:   sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
-		RawMIME:    raw,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		AutomationSignals: &automationSignals,
+		Message:           rec,
+		BodyText:          sql.NullString{String: bodyText, Valid: bodyText != ""},
+		BodyHTML:          sql.NullString{String: bodyHTML, Valid: bodyHTML != ""},
+		RawMIME:           raw,
+		Recipients:        recipientSets,
+		LabelIDs:          labelIDs,
 	})
 	if err != nil {
 		return err
