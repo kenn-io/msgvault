@@ -1,0 +1,223 @@
+[
+  {
+    "name": "inbound 2 days",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 48
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1
+  },
+  {
+    "name": "inbound 3 hours",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 3
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1,
+    "want_status": "held"
+  },
+  {
+    "name": "owner question",
+    "messages": [
+      {
+        "side": "outbound",
+        "age_hours": 96,
+        "body": "Can you review?"
+      }
+    ],
+    "want_kind": "awaiting_reply",
+    "want_anchor": 1
+  },
+  {
+    "name": "cc only settles awaiting",
+    "live_kind": "awaiting_reply",
+    "messages": [
+      {
+        "side": "outbound",
+        "age_hours": 96,
+        "body": "Can you review?"
+      },
+      {
+        "side": "inbound",
+        "age_hours": 80,
+        "cc_only": true
+      }
+    ],
+    "want_close_message": 2
+  },
+  {
+    "name": "automated never opens",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 48,
+        "automated": true
+      }
+    ]
+  },
+  {
+    "name": "calendar never opens",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 48,
+        "calendar": true
+      }
+    ]
+  },
+  {
+    "name": "updates invoice",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 48,
+        "labels": [
+          "CATEGORY_UPDATES"
+        ]
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1
+  },
+  {
+    "name": "promotions with participation",
+    "messages": [
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "body": "Here is the update."
+      },
+      {
+        "side": "inbound",
+        "age_hours": 48,
+        "labels": [
+          "CATEGORY_PROMOTIONS"
+        ]
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 2
+  },
+  {
+    "name": "owner replies then new inbound",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96
+      },
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "body": "Here it is."
+      },
+      {
+        "side": "inbound",
+        "age_hours": 48
+      }
+    ],
+    "want_close_message": 2,
+    "want_kind": "reply_owed",
+    "want_anchor": 3
+  },
+  {
+    "name": "automated intervening reply",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96
+      },
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "automated": true
+      },
+      {
+        "side": "inbound",
+        "age_hours": 48
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1
+  },
+  {
+    "name": "calendar intervening reply",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96
+      },
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "calendar": true
+      },
+      {
+        "side": "inbound",
+        "age_hours": 48
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1
+  },
+  {
+    "name": "acknowledgment chain",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96,
+        "body": "Can you check?"
+      },
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "body": "Thanks!"
+      },
+      {
+        "side": "outbound",
+        "age_hours": 60,
+        "body": "Got it!"
+      }
+    ],
+    "want_kind": "reply_owed",
+    "want_anchor": 1
+  },
+  {
+    "name": "ack is answer to FYI",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96,
+        "body": "For your information."
+      },
+      {
+        "side": "outbound",
+        "age_hours": 80,
+        "body": "Thanks!"
+      }
+    ],
+    "want_close_message": 2
+  },
+  {
+    "name": "deleted anchor",
+    "live_kind": "reply_owed",
+    "messages": [
+      {
+        "side": "inbound",
+        "age_hours": 96,
+        "deleted": true
+      }
+    ],
+    "want_close_reason": "withdrawn"
+  }
+]
