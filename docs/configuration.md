@@ -882,8 +882,20 @@ sources = ["gmail", "imap", "gcal"]
 | `trusted_callbacks` | `[]` | Explicit private receiver exceptions: objects with an HTTPS `origin` and fixed private IP `addresses`. |
 
 Accepted `sources` values are `gmail`, `imap`, `gcal`, `beeper`, `slack`,
-`slackdump`, `teams`, and `discord`. When Events is enabled, the daemon refuses
+`slackdump`, `teams`, `discord`, `msmail`, and `matrix`. When Events is enabled, the daemon refuses
 to start if `sources` lists any other source type.
+
+Additional native sources are opt-in. Add the source types you need to `sources`;
+the default list stays unchanged.
+
+| Source | Message capture and limits |
+|---|---|
+| `beeper` | [Exact conversation arrivals](usage/beeper.md#live-message-notifications), with managed draft events. Reaction events are unavailable. |
+| `slack` | [Native Slack arrivals](usage/slack.md#mcp-events). Slackdump imports remain silent. |
+| `teams` | [Teams chat arrivals](usage/teams.md#mcp-events). Channel message events are unavailable. |
+| `discord` | [Native channel and thread conversation arrivals](usage/discord.md#mcp-events), subject to verified sync coverage. |
+| `msmail` | [Native Microsoft mail arrivals](guides/oauth-setup.md#microsoft-mail-events). Initial history and historical recovery stay silent. |
+| `matrix` | [Readable Matrix room arrivals](usage/matrix.md#message-notifications), subject to coverage and encryption limits. |
 
 Callbacks normally require public HTTPS on port 443 or 8443. The daemon rejects
 redirects, reserved destinations, and DNS answers containing an unsafe address.

@@ -3,6 +3,7 @@ package discord
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/jsontext"
@@ -42,8 +43,10 @@ type ImportOptions struct {
 	// historical membership/visibility evidence to fetch them. A selected
 	// parent the guild no longer lists is reported as a non-fatal
 	// unknown_channel catalog issue.
-	PublicChannels   []string
-	GuildID          string
+	PublicChannels []string
+	GuildID        string
+	// BotUserID is verified against the resolved credential before import.
+	BotUserID        string
 	GuildConfig      config.DiscordGuildConfig
 	AttachmentsDir   string
 	MaxMediaBytes    int64
@@ -131,6 +134,12 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		return nil, fmt.Errorf("invalid Discord importer page size %d", imp.pageSize)
 	}
 
+	if opts.BotUserID != "" {
+		botID, err := ParseSnowflake(opts.BotUserID)
+		if err != nil || botID == 0 {
+			return nil, errors.New("invalid verified Discord bot identity")
+		}
+	}
 	var source *store.Source
 	var err error
 	if opts.SourceID == 0 {
@@ -143,6 +152,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get Discord source: %w", err)
+	}
+	if opts.BotUserID != "" {
+		if err := imp.store.AddAccountIdentityContext(ctx, source.ID, opts.BotUserID, "discord_credential"); err != nil {
+			return nil, fmt.Errorf("confirm Discord credential identity: %w", err)
+		}
 	}
 	summary = &ImportSummary{
 		SourceID:            source.ID,
@@ -206,7 +220,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		return summary, fmt.Errorf("start Discord sync: %w", err)
 	}
 	scoped := *imp
-	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
+	scoped.store = imp.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	imp = &scoped
 	summary.SyncRunID = syncID
 	completed := false
@@ -462,6 +476,9 @@ func (imp *Importer) initialState(ctx context.Context, sourceID int64, full bool
 				if err != nil {
 					return nil, hadBaseline, fmt.Errorf("load last successful Discord sync state: %w", err)
 				}
+				if state.LowerBound != lowerBound {
+					state.resetEventsCoverage()
+				}
 				state.Full = full
 				state.LowerBound = lowerBound
 			}
@@ -488,6 +505,8 @@ func (imp *Importer) initialState(ctx context.Context, sourceID int64, full bool
 				} else if mergeErr := state.Merge(newer); mergeErr != nil {
 					return nil, hadBaseline, fmt.Errorf("merge latest Discord checkpoint: %w", mergeErr)
 				}
+			} else {
+				state.resetEventsCoverage()
 			}
 		}
 	case errors.Is(err, store.ErrSyncRunNotFound):
@@ -671,6 +690,12 @@ func (imp *Importer) importContainer(
 	}
 
 	containerState := state.Containers[container.Channel.ID]
+	if !containerState.RetryRequired || containerState.EventsForwardMode == "" {
+		containerState.EventsForwardMode = "history"
+		if containerState.EventsCovered && containerState.BackfillComplete && !state.Full {
+			containerState.EventsForwardMode = "live"
+		}
+	}
 	// Publish the retry bit before the first remote probe. It survives process
 	// interruption and unclassified transient errors, then clears only after
 	// forward and repair both complete.
@@ -711,9 +736,15 @@ func (imp *Importer) importContainer(
 			syncID, conversationID, container.Channel.ID, err, state, summary,
 		)
 	}
+	repairUpper := ""
+	if containerState.EventsForwardMode == "live" {
+		// Keep later arrivals eligible for the next forward fetch. A silent
+		// repair must not insert beyond the range that forward completed.
+		repairUpper = containerState.HighWater
+	}
 	if err := imp.reconcile(
 		ctx, sourceID, conversationID, container.Channel.ID,
-		containerState.RepairLower, summary, media,
+		containerState.RepairLower, repairUpper, summary, media,
 	); err != nil {
 		return imp.handleContainerError(ctx,
 			syncID, conversationID, container.Channel.ID, err, state, summary,
@@ -723,6 +754,8 @@ func (imp *Importer) importContainer(
 		return err
 	}
 	containerState.RetryRequired = false
+	containerState.EventsCovered = true
+	containerState.EventsForwardMode = ""
 	containerState.RepairLower = ""
 	state.Containers[container.Channel.ID] = containerState
 	return nil
@@ -864,7 +897,9 @@ func (imp *Importer) forward(
 				return err
 			}
 		}
-		if err := imp.persistPage(ctx, sourceID, conversationID, page, summary, media); err != nil {
+		forwardImporter := *imp
+		forwardImporter.store = imp.store.WithIngestContext(containerState.forwardIngestContext())
+		if err := forwardImporter.persistPage(ctx, sourceID, conversationID, page, summary, media); err != nil {
 			return err
 		}
 		if pageMax != "" {
@@ -916,7 +951,7 @@ func (imp *Importer) repairLowerBound(
 func (imp *Importer) reconcile(
 	ctx context.Context,
 	sourceID, conversationID int64,
-	containerID, lower string,
+	containerID, lower, upperBound string,
 	summary *ImportSummary,
 	media *MediaArchiver,
 ) error {
@@ -951,6 +986,12 @@ func (imp *Importer) reconcile(
 	}
 	if upper == "" {
 		return nil
+	}
+	if upperBound != "" {
+		upper, err = minimumSnowflake(upper, upperBound)
+		if err != nil {
+			return err
+		}
 	}
 	afterLower, err := snowflakeAfter(upper, lower)
 	if err != nil {
@@ -1493,6 +1534,12 @@ func (imp *Importer) persistPage(
 		return fmt.Errorf("load existing Discord messages: %w", err)
 	}
 
+	page = slices.Clone(page)
+	slices.SortStableFunc(page, func(a, b Message) int {
+		left, _ := ParseSnowflake(a.ID)
+		right, _ := ParseSnowflake(b.ID)
+		return cmp.Compare(left, right)
+	})
 	for i := range page {
 		message := &page[i]
 		_, alreadyProcessed := summary.processedMessageIDs[message.ID]
@@ -1508,7 +1555,26 @@ func (imp *Importer) persistPage(
 			mapped.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: true}
 		}
 		metadata := sql.NullString{String: string(mapped.Metadata), Valid: len(mapped.Metadata) != 0}
+		previousAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, existing[message.ID])
+		if err != nil {
+			return fmt.Errorf("read previous Discord attachment snapshot: %w", err)
+		}
+		members := make([]store.ConversationParticipantRef, 0, len(participantIDs))
+		for _, participantID := range participantIDs {
+			members = append(members, store.ConversationParticipantRef{ParticipantID: participantID, Role: "member"})
+		}
+		snapshot := &store.DiscordMessageSnapshot{Attachments: mapped.Attachments, Edited: mapped.Edited}
+		if ref := message.MessageReference; ref != nil {
+			snapshot.ReplySourceMessageID = ref.MessageID
+			snapshot.ReplySourceConversationID = ref.ChannelID
+			snapshot.ReplySourceGuildID = ref.GuildID
+		}
 		messageID, err := imp.store.PersistMessageContext(ctx, &store.MessagePersistData{
+			DiscordSnapshot: snapshot,
+			Conversation: &store.ConversationPersistData{
+				SourceConversationID: message.ChannelID, ConversationType: discordConversationType,
+				PreserveExistingType: true, PreserveExistingParticipants: true, Participants: members,
+			},
 			Message:        &mapped.Message,
 			Metadata:       &metadata,
 			BodyText:       sql.NullString{String: mapped.BodyText, Valid: mapped.BodyText != ""},
@@ -1523,19 +1589,6 @@ func (imp *Importer) persistPage(
 		if err != nil {
 			return fmt.Errorf("persist Discord message %s: %w", message.ID, err)
 		}
-		if err := imp.store.ClearMessageDeletedFromSourceContext(ctx, sourceID, message.ID); err != nil {
-			return fmt.Errorf("clear Discord message %s tombstone: %w", message.ID, err)
-		}
-		if mapped.Edited {
-			if err := imp.store.SetMessageEditedContext(ctx, messageID); err != nil {
-				return fmt.Errorf("mark Discord message %s edited: %w", message.ID, err)
-			}
-		}
-		for _, participantID := range participantIDs {
-			if err := imp.store.EnsureConversationParticipantContext(ctx, conversationID, participantID, "member"); err != nil {
-				return fmt.Errorf("persist Discord conversation participant: %w", err)
-			}
-		}
 		if media != nil {
 			conversation, err := imp.store.AttachmentConversationContext(ctx, messageID)
 			if err != nil {
@@ -1545,8 +1598,8 @@ func (imp *Importer) persistPage(
 				conversation.ParticipantCount = media.conversation.ParticipantCount
 			}
 			media.SetPolicy(media.policy, conversation)
-			result, err := media.persistAttachments(
-				ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags,
+			result, err := media.persistAttachmentsWithPrevious(
+				ctx, messageID, message.Attachments, !alreadyProcessed, message.Flags, previousAttachments,
 			)
 			if err != nil {
 				return fmt.Errorf("persist Discord message %s media metadata: %w", message.ID, err)
@@ -1562,42 +1615,19 @@ func (imp *Importer) persistPage(
 				}
 			}
 		} else {
-			// Without an attachments directory nothing downloads, but an earlier
-			// run may already have archived these files. Keep their stored state.
-			existingAttachments, err := imp.store.MessageDiscordAttachmentsContext(ctx, messageID)
-			if err != nil {
-				return fmt.Errorf("load Discord message %s attachment metadata: %w", message.ID, err)
-			}
+			// The atomic snapshot already preserved downloaded files and prior
+			// attachment states. Count only media still waiting for download.
 			pendingCount := 0
-			for i := range mapped.Attachments {
-				ref := &mapped.Attachments[i]
-				previous, seen := existingAttachments[ref.SourceAttachmentID]
-				stored := false
-				if seen {
-					stored = keepArchivedAttachment(ref, previous)
-					if !stored {
-						ref.State = previous.State
-						ref.SkipReason = previous.SkipReason
-					}
-				}
+			for _, ref := range mapped.Attachments {
+				previous, seen := previousAttachments[ref.SourceAttachmentID]
+				stored := seen && keepArchivedAttachment(&ref, previous)
 				if !stored && (!alreadyProcessed || !seen) {
 					pendingCount++
 				}
 			}
-			if err := imp.store.ReplaceMessageDiscordAttachmentsContext(ctx, messageID, mapped.Attachments); err != nil {
-				return fmt.Errorf("persist Discord message %s attachment metadata: %w", message.ID, err)
-			}
-			if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
-				return fmt.Errorf("recompute Discord message %s attachment metadata: %w", message.ID, err)
-			}
 			summary.MediaPending += int64(pendingCount)
 		}
 
-		if reference := message.MessageReference; reference != nil && reference.MessageID != "" {
-			if err := imp.store.SetReplyToContext(ctx, sourceID, message.ID, reference.MessageID); err != nil {
-				return fmt.Errorf("link Discord reply %s: %w", message.ID, err)
-			}
-		}
 		if _, counted := summary.processedMessageIDs[message.ID]; !counted {
 			summary.processedMessageIDs[message.ID] = struct{}{}
 			summary.MessagesProcessed++
@@ -1607,6 +1637,7 @@ func (imp *Importer) persistPage(
 				summary.MessagesAdded++
 			}
 		}
+		existing[message.ID] = messageID
 	}
 	return nil
 }
@@ -1671,12 +1702,14 @@ func (imp *Importer) resolveDeferredReplies(ctx context.Context, sourceID int64)
 		for _, reply := range unresolved {
 			var metadata struct {
 				ReferencedMessageID string `json:"referenced_message_id"`
+				ReferencedChannelID string `json:"referenced_channel_id"`
+				ReferencedGuildID   string `json:"referenced_guild_id"`
 			}
 			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
 				return fmt.Errorf("decode Discord reply metadata for %s: %w", reply.SourceMessageID, err)
 			}
 			if metadata.ReferencedMessageID != "" {
-				if err := imp.store.SetReplyToContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+				if err := imp.store.SetDiscordReplyContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID, metadata.ReferencedChannelID, metadata.ReferencedGuildID); err != nil {
 					return fmt.Errorf("resolve deferred Discord reply %s: %w", reply.SourceMessageID, err)
 				}
 			}

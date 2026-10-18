@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/importer"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
@@ -96,7 +95,7 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	if err != nil {
 		return nil, err
 	}
-	st = st.ScopedToSync(src.ID, syncID)
+	st = st.ScopedToSync(src.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	checkpoint := func() *store.Checkpoint {
 		blob, _ := json.Marshal(cursors, json.Deterministic(true))
 		return &store.Checkpoint{
@@ -167,6 +166,12 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 				// in the vault are not downloaded again.
 				log.Info("delta token expired, walking folder again", "folder", f.Path)
 				link, seen, restarted = DeltaStartURL(f.ID), map[string]bool{}, true
+				// Persist recovery provenance before even its first request.
+				// A failed fresh request must not resume the expired live link.
+				cursors[f.ID] = walkPrefix + link
+				if err = st.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
+					return sum, err
+				}
 				continue
 			}
 			if perr != nil {
@@ -247,7 +252,8 @@ func mergeCursors(dst map[string]string, blob string) {
 type syncer struct {
 	// cursors is the saved state: folder ID -> delta link, and
 	// retryPrefix + message ID -> folder ID for messages to download again.
-	cursors map[string]string
+	cursors    map[string]string
+	ingestMode store.IngestMode
 
 	st       *store.Store
 	c        *Client
@@ -361,7 +367,13 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			todo = append(todo, m)
 		}
 	}
-	if err := s.download(ctx, folderID, todo); err != nil {
+	pageSync := *s
+	pageSync.ingestMode = store.IngestBackfill
+	if seen == nil {
+		pageSync.ingestMode = store.IngestLive
+	}
+	pageSync.st = s.st.WithIngestContext(store.IngestContext{Mode: pageSync.ingestMode, ObservedAt: time.Now().UTC()})
+	if err := pageSync.download(ctx, folderID, todo); err != nil {
 		return err
 	}
 
@@ -374,65 +386,50 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	return s.relocate(ctx, removed)
 }
 
-// afterStore makes sure that every attachment of a stored MIME has a row. For
-// a refreshed message, it then drops the rows of parts that the new MIME no
-// longer has. If a row is missing, the old rows stay and it returns an error.
-func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
-	msgID := m.archiveID
+// afterStore applies categories after a new message is archived. Snapshot
+// ingestion writes attachment rows atomically with the message itself.
+func (s *syncer) afterStore(ctx context.Context, m DeltaMessage) error {
+	if m.archiveID != 0 || m.Categories == nil {
+		return nil
+	}
+	ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
+	if err != nil {
+		return err
+	}
+	msgID := ids[m.ID]
 	if msgID == 0 {
-		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
-		if err != nil {
-			return err
-		}
-		msgID = ids[m.ID]
+		return fmt.Errorf("message %s disappeared after storage", m.ID)
 	}
-	// Known messages already saved their categories before the MIME download.
-	if m.archiveID == 0 && m.Categories != nil {
-		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
-			return fmt.Errorf("save Microsoft categories: %w", err)
-		}
+	if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
+		return fmt.Errorf("save Microsoft categories: %w", err)
 	}
-	if s.opts.AttachmentsDir == "" {
-		return nil // no attachment rows are written
-	}
-	parsed, err := mime.ParseWithRecovery(raw, "")
-	if err != nil {
-		// The MIME did not parse, so its attachments are unknown. Keep the
-		// rows that are there.
-		s.log.Warn("MIME did not parse, keeping attachment rows", "id", m.ID, "error", err)
-		return nil
-	}
-	complete, err := s.attachmentsStored(ctx, msgID, parsed.Attachments)
-	if err != nil {
-		return err
-	}
-	if !complete {
-		return errors.New("an attachment was not stored")
-	}
-	if m.archiveID == 0 {
-		return nil
-	}
-	keep := make([]string, 0, len(parsed.Attachments))
-	for _, a := range parsed.Attachments {
-		if len(a.Content) > 0 { // storage writes no row for an empty file
-			keep = append(keep, a.PartKey)
-		}
-	}
-	if err := s.st.DeleteMIMEAttachmentsExceptContext(ctx, msgID, keep); err != nil {
-		return err
-	}
-	return s.st.RecomputeMessageAttachmentStats(msgID)
+	return nil
 }
 
-// attachmentsStored checks only nonempty parts, since storage skips empty files.
-func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
-	parts := make([]store.AttachmentRef, 0, len(atts))
-	for _, a := range atts {
-		if len(a.Content) > 0 {
-			parts = append(parts, store.AttachmentRef{SourcePartKey: a.PartKey, ContentHash: a.ContentHash})
-		}
+// Versioned live retry evidence is distinct from legacy folder-only markers.
+// Unknown or malformed evidence stays historical rather than gaining delivery.
+type retryProvenance struct {
+	Version  int              `json:"version"`
+	FolderID string           `json:"folder_id"`
+	Mode     store.IngestMode `json:"mode"`
+}
+
+func (s *syncer) retryIsLive(id string) bool {
+	var saved retryProvenance
+	return json.Unmarshal([]byte(s.cursors[retryPrefix+id]), &saved) == nil && saved.Version == 1 && saved.FolderID != "" && saved.Mode == store.IngestLive
+}
+
+func (s *syncer) saveRetry(id, folderID string) {
+	if folderID == "" {
+		return
+	} // an incomplete lookup cannot erase prior evidence
+	_, pending := s.cursors[retryPrefix+id]
+	if s.retryIsLive(id) || (!pending && s.ingestMode == store.IngestLive) {
+		saved, _ := json.Marshal(retryProvenance{Version: 1, FolderID: folderID, Mode: store.IngestLive})
+		s.cursors[retryPrefix+id] = string(saved)
+		return
 	}
-	return s.st.AttachmentPartsStoredContext(ctx, messageID, parts)
+	s.cursors[retryPrefix+id] = folderID
 }
 
 // retryMessages retries failed message downloads and incomplete attachments. A message that is gone is marked deleted.
@@ -472,7 +469,7 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			continue
 		}
 		if _, ok := s.labels[parent]; !ok {
-			s.cursors[key] = parent // a folder this run did not list
+			s.saveRetry(id, parent) // a folder this run did not list
 			continue
 		}
 		if messageID := known[id]; messageID != 0 {
@@ -480,9 +477,16 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 				return err
 			}
 		}
-		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
-			s.cursors[key] = parent
+		// Pin the original mode even if download removes its marker before a
+		// later relocation error. That error must restore the same evidence.
+		retrySync := *s
+		retrySync.ingestMode = store.IngestBackfill
+		if s.retryIsLive(id) {
+			retrySync.ingestMode = store.IngestLive
+		}
+		retrySync.st = s.st.WithIngestContext(store.IngestContext{Mode: retrySync.ingestMode, ObservedAt: time.Now().UTC()})
+		if err := retrySync.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
+			retrySync.saveRetry(id, parent)
 			return err
 		}
 	}
@@ -629,7 +633,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 		if r.err != nil {
 			s.log.Warn("message download failed, retrying on the next sync", "id", r.msg.ID, "error", r.err)
 			s.sum.Errors++
-			s.cursors[retryPrefix+r.msg.ID] = folderID
+			s.saveRetry(r.msg.ID, folderID)
 			continue
 		}
 		sum := sha256.Sum256(r.raw)
@@ -643,19 +647,32 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 				continue
 			}
 		}
-		if err := importer.IngestRawMessage(ctx, s.st, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
+		messageStore := s.st
+		if _, pending := s.cursors[retryPrefix+r.msg.ID]; pending {
+			mode := store.IngestBackfill
+			if s.retryIsLive(r.msg.ID) {
+				mode = store.IngestLive
+			}
+			messageStore = s.st.WithIngestContext(store.IngestContext{Mode: mode, ObservedAt: time.Now().UTC()})
+		}
+		if err := importer.IngestRawMessageSnapshot(ctx, messageStore, s.sourceID, s.opts.Email, s.opts.AttachmentsDir,
 			labelIDs, r.msg.ID, hex.EncodeToString(sum[:]), r.raw, r.msg.ReceivedDateTime, s.log); err != nil {
-			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
+			s.saveRetry(r.msg.ID, folderID)
 			s.sum.Errors++
+			if errors.Is(err, importer.ErrMIMEAttachmentPreparation) {
+				s.log.Warn("attachment preparation failed, retrying on the next sync", "id", r.msg.ID, "error", err)
+				continue
+			}
+			storeErr = fmt.Errorf("store message %s: %w", r.msg.ID, err)
 			cancel()
 			continue
 		}
 		delete(s.cursors, retryPrefix+r.msg.ID)
-		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
+		if err := s.afterStore(ctx, r.msg); err != nil {
 			// A later walk skips stored messages, so incomplete processing needs a retry.
-			s.log.Warn("processing after message storage failed, retrying on the next sync", "id", r.msg.ID, "error", err)
+			s.log.Warn("saving categories after message storage failed, retrying on the next sync", "id", r.msg.ID, "error", err)
 			s.sum.Errors++
-			s.cursors[retryPrefix+r.msg.ID] = folderID
+			s.saveRetry(r.msg.ID, folderID)
 		}
 		if r.msg.archiveID == 0 {
 			s.sum.Added++

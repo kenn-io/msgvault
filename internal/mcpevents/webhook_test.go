@@ -81,44 +81,56 @@ func TestWebhookChallengeOverTLSWithStandardSignature(t *testing.T) {
 	Require.NoError(t, w.verify(t.Context(), "https://receiver.example.net/events", "sub_synthetic", secret, nil))
 }
 
-func TestWebhookChallengeRejectsRedirectMismatchAndOversize(t *testing.T) {
+func TestWebhookChallengeValidatesResponseStatusAndSize(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		status int
-		body   string
-		reason string
+		name          string
+		status        int
+		body          string
+		reason        string
+		echoChallenge bool
+		responseSize  int
+		wantError     bool
 	}{
-		{"redirect", 302, ``, "challenge_failed"},
-		{"mismatch", 200, `{"challenge":"wrong"}`, "challenge_failed"},
-		// A correct echo padded past 4096 bytes, so only the size limit rejects it.
-		{"oversize", 200, "echo-padded", "challenge_failed"},
-		{"client", 403, ``, "http_4xx"},
-		{"server", 503, ``, "http_5xx"},
+		{name: "redirect", status: 302, reason: "challenge_failed", wantError: true},
+		{name: "mismatch", status: 200, body: `{"challenge":"wrong"}`, reason: "challenge_failed", wantError: true},
+		{name: "matching challenge at limit", status: 200, echoChallenge: true, responseSize: 4096},
+		{name: "matching challenge over limit", status: 200, echoChallenge: true, responseSize: 4097, reason: "challenge_failed", wantError: true},
+		{name: "client", status: 403, reason: "http_4xx", wantError: true},
+		{name: "server", status: 503, reason: "http_5xx", wantError: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
 			w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
 				rw.Header().Set("Location", "https://other.example.net/secret-marker")
-				body := tc.body
-				if body == "echo-padded" {
-					var challenge map[string]any
-					if !assert.NoError(json.NewDecoder(r.Body).Decode(&challenge)) {
+				body := []byte(tc.body)
+				if tc.echoChallenge {
+					var verification struct {
+						Challenge string `json:"challenge"`
+					}
+					if !assert.NoError(json.NewDecoder(r.Body).Decode(&verification)) {
 						return
 					}
-					padded, err := json.Marshal(map[string]any{"challenge": challenge["challenge"], "padding": strings.Repeat("x", 4096)})
+					var err error
+					body, err = json.Marshal(map[string]string{"challenge": verification.Challenge})
 					if !assert.NoError(err) {
 						return
 					}
-					body = string(padded)
+					if tc.responseSize > len(body) {
+						body = append(body, strings.Repeat(" ", tc.responseSize-len(body))...)
+					}
 				}
 				rw.WriteHeader(tc.status)
-				_, err := io.WriteString(rw, body)
+				_, err := rw.Write(body)
 				if !assert.NoError(err) {
 					return
 				}
 			})
 			err := w.verify(t.Context(), "https://receiver.example.net/callback-marker", "sub_synthetic", make([]byte, 32), nil)
+			if !tc.wantError {
+				require.NoError(err)
+				return
+			}
 			require.Error(err)
 			var eventErr *Error
 			require.ErrorAs(err, &eventErr)
