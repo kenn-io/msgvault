@@ -556,6 +556,76 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type ListOpenLoopsQuery struct {
+	// Kind Loop kind
+	Kind *ListOpenLoopsQueryKind `json:"kind,omitempty"`
+
+	// Status Loop status
+	Status *ListOpenLoopsQueryStatus `json:"status,omitempty"`
+
+	// PersonID Filter by person
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// SourceID Filter by archive source
+	SourceID *int64 `json:"source_id,omitempty"`
+
+	// IncludeSnoozed Include currently snoozed loops
+	IncludeSnoozed *bool `json:"include_snoozed,omitempty"`
+
+	// Limit Maximum rows
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
+
+	// Cursor Opaque next cursor
+	Cursor *string `json:"cursor,omitempty" validate:"omitempty,max=512"`
+}
+
+func (l ListOpenLoopsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if l.Kind != nil {
+		if v, ok := any(l.Kind).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Kind", err)
+			}
+		}
+	}
+	if l.Status != nil {
+		if v, ok := any(l.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=200"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if l.Cursor != nil {
+		if err := typesValidator.Var(l.Cursor, "omitempty,max=512"); err != nil {
+			errors = errors.Append("Cursor", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type GetWaitingLoopsQuery struct {
+	// Top Maximum counterpart groups
+	Top *int64 `json:"top,omitempty" validate:"omitempty,gte=1,lte=50"`
+
+	// AllowStale Return a stale ranking with warnings
+	AllowStale *bool `json:"allow_stale,omitempty"`
+
+	// AsOf RFC3339 evaluation time; snooze eligibility remains current
+	AsOf *time.Time `json:"as_of,omitempty"`
+}
+
+func (g GetWaitingLoopsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type SearchMediaQuery struct {
 	// Q Spoken words to find in transcripts
 	Q string `json:"q" validate:"required"`
@@ -1074,6 +1144,15 @@ type ListPersonFactEvidenceStatusEventsQuery struct {
 
 	// Offset Zero-based event offset
 	Offset *int64 `json:"offset,omitempty"`
+}
+
+type ListPersonLoopsQuery struct {
+	// Limit Maximum open loops
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
+}
+
+func (l ListPersonLoopsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
 type ListPersonMergesQuery struct {

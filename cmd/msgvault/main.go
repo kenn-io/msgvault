@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"go.kenn.io/msgvault/cmd/msgvault/cmd"
+	"go.kenn.io/msgvault/internal/loops"
 )
 
 const (
@@ -31,6 +32,9 @@ func run() int {
 	if err := cmd.ExecuteContext(ctx); err != nil {
 		if isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
+		}
+		if errors.Is(err, loops.ErrLoopsStale) {
+			return 2
 		}
 		return exitCodeError
 	}

@@ -294,6 +294,9 @@ type Dialect interface {
 	// triggers independently of the message watermark trigger migration.
 	EnsureActivityProjectionTriggers(q querier) error
 
+	// EnsureLoopProjectionTriggers installs invalidation after legacy columns exist.
+	EnsureLoopProjectionTriggers(q querier) error
+
 	// LegacyColumnMigrations returns ALTER TABLE ADD COLUMN statements to
 	// bring older databases up to date with schema columns added over time.
 	// Both dialects return the same logical list, translated to the
