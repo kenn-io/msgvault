@@ -144,12 +144,18 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		}
 	}
 	recordingAcknowledged := false
-	recordingIdentity := ""
-	if p.opts.Recordings {
-		recordingIdentity, err = meeting.SourceMessageID()
-		if err != nil {
+	recordingIdentity, identityErr := meeting.SourceMessageID()
+	if identityErr != nil {
+		if p.opts.Recordings {
 			return remoteInvalid("meeting", "cannot identify recording acknowledgement")
 		}
+		recordingIdentity = ""
+	}
+	if p.opts.Full && recordingIdentity != "" {
+		// A full resync may be rebuilding an archive that no longer contains
+		// previously acknowledged audio. Invalidate the receipt even when the
+		// local recording is currently unavailable.
+		p.uploads.forgetRecording(recordingIdentity)
 	}
 	if recording != nil {
 		recordingAcknowledged = !p.opts.Full && p.uploads.recordingAcknowledged(recordingIdentity, recording.Hash)
@@ -170,11 +176,16 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	} else if result.Changed {
 		p.sum.MeetingsUpdated++
 	}
-	if result.Status == "created" && p.opts.Recordings {
+	if result.Status == "created" && recordingIdentity != "" {
 		p.uploads.forgetRecording(recordingIdentity)
 		recordingAcknowledged = false
 	}
 	if err != nil {
+		// A lost response can hide a successful create. Do not let an old
+		// recording receipt suppress recovery on the next successful scan.
+		if recordingIdentity != "" {
+			p.uploads.forgetRecording(recordingIdentity)
+		}
 		return err
 	}
 	if recording != nil && !recordingAcknowledged {

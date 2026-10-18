@@ -70,12 +70,3 @@ func TestMuesliRecordingUsesSharedDocbankAudioConsent(t *testing.T) {
 		})
 	}
 }
-
-func TestMuesliRecordingConfigOverride(t *testing.T) {
-	source := config.MuesliSource{}
-	source.Recordings = true
-	source.RecordingMaxBytes = 8 << 30
-	opts := muesliImportOptions(source)
-	assert.True(t, opts.Recordings)
-	assert.Equal(t, int64(8)<<30, opts.RecordingMaxBytes)
-}

@@ -264,24 +264,92 @@ func TestScanRemoteRecordingAcknowledgementUsesMeetingIdentity(t *testing.T) {
 	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{
 		"id": meetingID, "created_at": "2026-09-02 14:00:03", "saved_recording_path": path,
 	}))
+	seeded := seedRemoteMeetingWithoutRecording(t, f.imp, f.path, meetingID)
+	assert.Equal("created", seeded.Status)
 	_, err = ScanRemote(t.Context(), opts, send)
 	require.NoError(err)
 
-	assert.Equal(2, requests, "a reset database creates a new meeting identity even when the row ID is reused")
-	assert.Equal(2, uploads, "identical audio for a reused row ID still reaches the new archive message")
+	assert.Equal(2, requests, "the replacement transcript is reoffered")
+	assert.Equal(2, uploads, "a replacement meeting identity needs audio despite the old receipt")
+}
+
+func seedRemoteMeetingWithoutRecording(t *testing.T, imp *Importer, dbPath string, meetingID int64) RemoteResult {
+	t.Helper()
+	require := require.New(t)
+	reader, err := Open(t.Context(), dbPath)
+	require.NoError(err)
+	meetings, err := reader.listMeetings(t.Context(), meetingID)
+	require.NoError(err)
+	require.NoError(reader.Close())
+	require.Len(meetings, 1)
+
+	request := RemoteRequest{Action: "upsert", Source: remoteTestRequest().Source, Meeting: NewRemoteMeeting(meetings[0])}
+	request, err = request.Normalize()
+	require.NoError(err)
+	result, err := imp.ImportRemote(t.Context(), request)
+	require.NoError(err)
+	return result
+}
+
+func TestScanRemoteRetriesRecordingAfterLostCreatedResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
+	activeImporter := f.imp
+	uploads := 0
+	dir := t.TempDir()
+	opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
+		uploads++
+		_, err := activeImporter.ImportRecording(ctx, upload, dir, io.NewSectionReader(recording.File, 0, recording.Size), 0)
+		return err
+	}
+	_, err := ScanRemote(t.Context(), opts, f.imp.ImportRemote)
+	require.NoError(err)
+	require.Equal(1, uploads)
+
+	restored := newImporterFixture(t)
+	registerRemoteFixture(t, restored)
+	activeImporter = restored.imp
+	_, err = f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+	require.NoError(err)
+	lostResponse := errors.New("synthetic lost creation response")
+	_, err = ScanRemote(t.Context(), opts, func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
+		result, err := restored.imp.ImportRemote(ctx, request)
+		require.NoError(err)
+		require.Equal("created", result.Status)
+		return RemoteResult{}, lostResponse
+	})
+	require.ErrorIs(err, lostResponse)
+	require.Equal(1, uploads, "the recording is not sent before the meeting response is acknowledged")
+
+	_, err = ScanRemote(t.Context(), opts, restored.imp.ImportRemote)
+	require.NoError(err)
+	assert.Equal(2, uploads, "an indeterminate create must not leave a receipt that suppresses recovery audio")
+	candidates, err := restored.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	assert.Len(candidates, 1)
 }
 
 func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 	for _, tt := range []struct {
-		name           string
-		full           bool
-		editTranscript bool
-		seedExisting   bool
-		deferRecording bool
+		name               string
+		full               bool
+		editTranscript     bool
+		seedExisting       bool
+		deferRecording     bool
+		recordingsDisabled bool
 	}{
 		{name: "full scan with existing restored message", full: true, seedExisting: true},
+		{name: "full scan with existing message and deferred recording", full: true, seedExisting: true, deferRecording: true},
 		{name: "newly created after transcript edit", editTranscript: true},
 		{name: "created while recording is deferred", full: true, deferRecording: true},
+		{name: "created while recordings are disabled", recordingsDisabled: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -311,18 +379,8 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 			registerRemoteFixture(t, restored)
 			activeImporter = restored.imp
 			if tt.seedExisting {
-				reader, err := Open(t.Context(), f.path)
-				require.NoError(err)
-				meetings, err := reader.listMeetings(t.Context(), meetingID)
-				require.NoError(err)
-				require.Len(meetings, 1)
-				require.NoError(reader.Close())
-
-				request := RemoteRequest{Action: "upsert", Source: remoteTestRequest().Source, Meeting: NewRemoteMeeting(meetings[0])}
-				request, err = request.Normalize()
-				require.NoError(err)
-				_, err = restored.imp.ImportRemote(t.Context(), request)
-				require.NoError(err)
+				seeded := seedRemoteMeetingWithoutRecording(t, restored.imp, f.path, meetingID)
+				require.Equal("created", seeded.Status)
 			}
 			if tt.editTranscript {
 				_, err := f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
@@ -333,12 +391,20 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 			}
 			recoveryOpts := opts
 			recoveryOpts.Full = tt.full
+			if tt.recordingsDisabled {
+				recoveryOpts.Recordings = false
+			}
 			_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
 			require.NoError(err)
 			if tt.deferRecording {
 				assert.Equal(1, uploads, "a deferred recording is not uploaded")
 				writeRecording(t, f.path, "meeting.wav", recordingWAV())
 				recoveryOpts.Full = false
+				_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
+				require.NoError(err)
+			}
+			if tt.recordingsDisabled {
+				recoveryOpts.Recordings = true
 				_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
 				require.NoError(err)
 			}
