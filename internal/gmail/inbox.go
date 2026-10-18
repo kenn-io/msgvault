@@ -1,6 +1,7 @@
 package gmail
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -10,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/googleaccount"
@@ -77,21 +80,16 @@ func (p *InboxProvider) Observe(ctx context.Context, request inboxcontrol.Reques
 		return inboxcontrol.State{}, err
 	}
 
-	var assigned []inboxcontrol.Folder
+	var folders []inboxcontrol.Folder
 	if request.Operation.IsMutation() {
-		catalog, err := p.folderCatalog(ctx)
+		folders, err = p.folderCatalog(ctx)
 		if err != nil {
 			return inboxcontrol.State{}, err
-		}
-		for _, folder := range catalog {
-			if slices.Contains(labels, folder.ID) {
-				assigned = append(assigned, folder)
-			}
 		}
 	}
 	inbox := slices.Contains(labels, "INBOX")
 	read := !slices.Contains(labels, "UNREAD")
-	return inboxcontrol.State{Target: target, Tags: labels, Folders: assigned, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}, nil
+	return inboxcontrol.State{Target: target, Tags: labels, Folders: folders, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}, nil
 }
 
 func (p *InboxProvider) change(ctx context.Context, request inboxcontrol.Request, before inboxcontrol.State) (emailtags.MessageTagChange, error) {
@@ -234,33 +232,76 @@ func (c *Client) inboxMetadata(ctx context.Context, id string) ([]string, uint64
 		return nil, 0, fmt.Errorf("read inbox metadata: %w", err)
 	}
 	var message struct {
-		ID        string    `json:"id"`
-		Labels    *[]string `json:"labelIds"`
-		HistoryID string    `json:"historyId"`
+		ID        string       `json:"id"`
+		Labels    inboxRawJSON `json:"labelIds"`
+		HistoryID string       `json:"historyId"`
 	}
-	if json.Unmarshal(data, &message) != nil || message.ID != id || message.Labels == nil {
+	if json.Unmarshal(data, &message) != nil || message.ID != id {
 		return nil, 0, inboxcontrol.ErrUnavailable
 	}
 	history, err := strconv.ParseUint(message.HistoryID, 10, 64)
 	if err != nil || history == 0 {
 		return nil, 0, inboxcontrol.ErrUnavailable
 	}
-	return slices.Clone(*message.Labels), history, nil
+	labels := []string{}
+	if len(message.Labels) > 0 {
+		if bytes.Equal(bytes.TrimSpace(message.Labels), []byte("null")) || json.Unmarshal(message.Labels, &labels) != nil || labels == nil {
+			return nil, 0, inboxcontrol.ErrUnavailable
+		}
+	}
+	return slices.Clone(labels), history, nil
+}
+
+// inboxRawJSON defers parsing an optional labelIds field until message identity
+// and historyId have been validated.
+type inboxRawJSON []byte
+
+func (value *inboxRawJSON) UnmarshalJSON(data []byte) error {
+	*value = bytes.Clone(data)
+	return nil
 }
 
 // GetMessageLabelsBatch supplies the optional metadata-only sync path. Each
 // result preserves its own read failure; no message bodies are downloaded.
 func (c *Client) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]MessageLabelsBatchResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	results := make([]MessageLabelsBatchResult, len(ids))
 	for i, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		labels, history, err := c.inboxMetadata(ctx, id)
-		if _, gone := errors.AsType[*NotFoundError](err); gone {
-			err = errors.Join(ErrMessageGone, err)
-		}
-		results[i] = MessageLabelsBatchResult{ID: id, LabelIDs: labels, HistoryID: history, Err: err}
+		results[i].ID = id
+	}
+	concurrency := c.concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	group, batchCtx := errgroup.WithContext(ctx)
+	for i, id := range ids {
+		i, id := i, id
+		group.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-batchCtx.Done():
+				return batchCtx.Err()
+			}
+			labels, history, err := c.inboxMetadata(batchCtx, id)
+			if _, gone := errors.AsType[*NotFoundError](err); gone {
+				err = errors.Join(ErrMessageGone, err)
+			}
+			results[i] = MessageLabelsBatchResult{ID: id, LabelIDs: labels, HistoryID: history, Err: err}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, fmt.Errorf("fetch message labels concurrently: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return results, nil
 }

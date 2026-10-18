@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -567,4 +568,116 @@ func TestInboxReceiptReconcileHasSeparateSettlementDeadline(t *testing.T) {
 	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
 	assertions.Equal("local-reconcile-failed", result.Receipt.FailureCode)
 	assertions.Equal(1, f.provider.dispatches)
+}
+
+func TestInboxReceiptReconcileReturnsCurrentReceiptAfterWaitingForOwnership(t *testing.T) {
+	f := newControlFixture(t)
+	r := f.execution(t)
+	f.provider.dispatch = func(context.Context) error {
+		f.provider.state.Inbox = new(false)
+		return errors.New("synthetic lost dispatch response")
+	}
+	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.NotNil(t, unknown.Receipt)
+	require.Equal(t, inboxcontrol.StatusUnknown, unknown.Receipt.Status)
+	f.provider.dispatch = nil
+
+	var reconciliationCalls int
+	f.service.ReconcileState = func(ctx context.Context, before, after inboxcontrol.State) error {
+		reconciliationCalls++
+		return f.archive.Store.ReconcileInboxProviderState(ctx, before.Target, before, after)
+	}
+
+	enteredGate := make(chan struct{})
+	releaseGate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseGate) }) }
+	defer release()
+	waitingGate := func(context.Context) (func(), error) {
+		close(enteredGate)
+		<-releaseGate
+		return func() {}, nil
+	}
+	waitingResult := make(chan struct {
+		result *inboxcontrol.Result
+		err    error
+	}, 1)
+	request := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: unknown.Receipt.ID}
+	go func() {
+		result, err := f.service.Control(t.Context(), request, f.principal, waitingGate)
+		waitingResult <- struct {
+			result *inboxcontrol.Result
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-enteredGate:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "reconciler did not wait for mutation ownership")
+	}
+
+	completed, err := f.service.Control(t.Context(), request, f.principal, f.gate)
+	require.NoError(t, err)
+	require.NotNil(t, completed.Receipt)
+	require.Equal(t, inboxcontrol.StatusVerified, completed.Receipt.Status)
+	readsAfterCompletion := f.provider.reads
+	release()
+	waiting := <-waitingResult
+	require.NoError(t, waiting.err)
+	require.NotNil(t, waiting.result)
+	require.NotNil(t, waiting.result.Receipt)
+	assert.Equal(t, completed.Receipt.ID, waiting.result.Receipt.ID)
+	assert.Equal(t, inboxcontrol.StatusVerified, waiting.result.Receipt.Status)
+	assert.Equal(t, 1, reconciliationCalls, "the waiter must not reconcile or finalize stale receipt data")
+	assert.Equal(t, readsAfterCompletion, f.provider.reads, "the waiter must return the current receipt without provider readback")
+}
+
+func TestInboxReceiptReconcileReturnsCurrentFailureAfterWaitingForOwnership(t *testing.T) {
+	assertions := assert.New(t)
+	f := newControlFixture(t)
+	r := f.execution(t)
+	f.provider.dispatch = func(context.Context) error { return errors.New("synthetic lost dispatch response") }
+	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.NotNil(t, unknown.Receipt)
+	require.Equal(t, inboxcontrol.StatusUnknown, unknown.Receipt.Status)
+
+	enteredGate := make(chan struct{})
+	releaseGate := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseGate) }) }
+	defer release()
+	waitingGate := func(context.Context) (func(), error) {
+		close(enteredGate)
+		<-releaseGate
+		return func() {}, nil
+	}
+	waitingResult := make(chan struct {
+		result *inboxcontrol.Result
+		err    error
+	}, 1)
+	request := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: unknown.Receipt.ID}
+	go func() {
+		result, err := f.service.Control(t.Context(), request, f.principal, waitingGate)
+		waitingResult <- struct {
+			result *inboxcontrol.Result
+			err    error
+		}{result: result, err: err}
+	}()
+	select {
+	case <-enteredGate:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "reconciler did not wait for mutation ownership")
+	}
+	require.NoError(t, f.archive.Store.FinishInboxReceipt(t.Context(), unknown.Receipt.ID, inboxcontrol.StatusFailed, nil, "provider-rejected"))
+	readsBeforeReturn := f.provider.reads
+	release()
+	waiting := <-waitingResult
+	require.NoError(t, waiting.err)
+	require.NotNil(t, waiting.result)
+	require.NotNil(t, waiting.result.Receipt)
+	assertions.Equal(inboxcontrol.StatusFailed, waiting.result.Receipt.Status)
+	assertions.Equal("provider-rejected", waiting.result.Receipt.FailureCode)
+	assertions.Equal(readsBeforeReturn, f.provider.reads, "a completed failure must not trigger stale provider readback")
 }

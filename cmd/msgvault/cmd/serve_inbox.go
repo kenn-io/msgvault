@@ -62,7 +62,40 @@ func (a *storeAPIAdapter) ControlInbox(ctx context.Context, request inboxcontrol
 		_, _, err := a.inboxBinding(ctx, intent)
 		return err
 	}
-	return a.inboxControlService(checkedAuthorize).Control(a.invocationContext(ctx), request, principal, acquireWrite)
+	controlCtx := a.invocationContext(ctx)
+	service := a.inboxControlService(checkedAuthorize)
+	var reconciledSourceID int64
+	var reconciledSourceIdentifier string
+	reconcileState := service.ReconcileState
+	service.ReconcileState = func(ctx context.Context, before, after inboxcontrol.State) error {
+		if err := reconcileState(ctx, before, after); err != nil {
+			return err
+		}
+		if before.Target != (inboxcontrol.Target{}) {
+			reconciledSourceID = before.Target.SourceID
+			reconciledSourceIdentifier = before.Target.SourceIdentifier
+		} else {
+			reconciledSourceID = before.Source.SourceID
+			reconciledSourceIdentifier = before.Source.SourceIdentifier
+		}
+		return nil
+	}
+	result, err := service.Control(controlCtx, request, principal, acquireWrite)
+	if reconciledSourceIdentifier != "" {
+		a.refreshInboxAnalyticsCache(controlCtx, reconciledSourceID, reconciledSourceIdentifier)
+	}
+	return result, err
+}
+
+func (a *storeAPIAdapter) refreshInboxAnalyticsCache(ctx context.Context, sourceID int64, identifier string) {
+	if a.draftCacheRefresh == nil {
+		return
+	}
+	refreshCtx, cancel := localDraftEvidenceContext(ctx)
+	defer cancel()
+	if err := a.draftCacheRefresh(refreshCtx, identifier); err != nil && a.logger != nil {
+		a.logger.Error("Inbox analytics cache refresh failed", "source_id", sourceID, "error", err)
+	}
 }
 
 func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) *inboxcontrol.Service {
