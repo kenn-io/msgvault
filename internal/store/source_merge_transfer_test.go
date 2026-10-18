@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -320,6 +322,65 @@ func TestMergeSourcesMovesDuplicateEmailLoopToSurvivingAnchorConversation(t *tes
 			}
 		})
 	}
+}
+
+func TestMergeSourcesTransfersEmailConversationMuteBeforeDerivation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "history-email-source")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live-email-source")
+	requirements.NoError(err)
+	now := time.Now().UTC()
+	hiddenMessage, hiddenConversation := emailMergeFixtureMessageInThread(t, st, from.ID, "history-thread", "history-1")
+	survivorMessage, survivorConversation := emailMergeFixtureMessageInThread(t, st, into.ID, "live-thread", "live-1")
+	requirements.NotEqual(hiddenConversation, survivorConversation)
+	for _, messageID := range []int64{hiddenMessage, survivorMessage} {
+		_, err := st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), now.Add(-48*time.Hour), messageID)
+		requirements.NoError(err)
+	}
+	requirements.NoError(st.AddAccountIdentity(from.ID, "recipient@example.test", "manual"))
+	requirements.NoError(st.AddAccountIdentity(into.ID, "recipient@example.test", "manual"))
+
+	open := sourceMergeLoopOpen(hiddenConversation, from.ID, hiddenMessage, "reply_owed", now)
+	open.Channel = "email"
+	requirements.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: hiddenConversation, Now: now, Verdict: store.LoopVerdict{Open: &open},
+	}))
+	var sourceLoopID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND anchor_message_id=?`), hiddenConversation, hiddenMessage).Scan(&sourceLoopID))
+	muted, err := st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "conversation", ConversationID: &hiddenConversation, Note: "owner muted this thread",
+	}, now)
+	requirements.NoError(err)
+	requirements.NotNil(muted.Suppression)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	var suppressionCount int
+	var suppressionNote string
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), MAX(note) FROM loop_suppressions
+		WHERE target_kind='conversation' AND conversation_id=?`), survivorConversation).Scan(&suppressionCount, &suppressionNote))
+	assertions.Equal(1, suppressionCount)
+	assertions.Equal("owner muted this thread", suppressionNote)
+	moved, err := st.GetOpenLoopContext(t.Context(), sourceLoopID)
+	requirements.NoError(err)
+	requirements.NotNil(moved.AnchorMessageID)
+	assertions.Equal(survivorMessage, *moved.AnchorMessageID)
+
+	cfg := config.DefaultLoopsConfig()
+	cfg.Lookback = 0
+	deriver, err := loops.NewDeriver(st, &cfg)
+	requirements.NoError(err)
+	_, err = deriver.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := st.ListLiveConversationLoopsContext(t.Context(), survivorConversation)
+	requirements.NoError(err)
+	assertions.Empty(live, "derivation must not reopen a muted email obligation after its anchor moves")
+	var revision, processedRevision int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT revision, processed_revision FROM loop_conversation_queue WHERE conversation_id=?`), survivorConversation).Scan(&revision, &processedRevision))
+	assertions.Equal(revision, processedRevision, "derivation must process the surviving thread")
 }
 
 func TestMergeSourcesRetainsTerminalHistoryForDuplicateLoopAnchor(t *testing.T) {

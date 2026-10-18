@@ -95,10 +95,15 @@ func TestLoopApplyTerminalBoundaryAllowsNonpositiveMessageIDs(t *testing.T) {
 	if f.Store.IsPostgreSQL() {
 		override = " OVERRIDING SYSTEM VALUE"
 	}
-	for _, id := range []int64{-1, 0} {
-		loopExec(t, f.Store, "INSERT INTO messages(id,conversation_id,source_id,source_message_id,message_type,sent_at)"+override+" VALUES(?,?,?,?,?,?)", id, f.ConvID, f.Source.ID, fmt.Sprintf("terminal-boundary-%d", id), "email", loopTestStamp(f.Store, now))
+	terminalAt := now.Add(-2 * time.Hour)
+	opposingAt := now.Add(-time.Hour)
+	for _, message := range []struct {
+		id int64
+		at time.Time
+	}{{-1, terminalAt}, {0, opposingAt}, {1, now}} {
+		loopExec(t, f.Store, "INSERT INTO messages(id,conversation_id,source_id,source_message_id,message_type,sent_at)"+override+" VALUES(?,?,?,?,?,?)", message.id, f.ConvID, f.Source.ID, fmt.Sprintf("terminal-boundary-%d", message.id), "email", loopTestStamp(f.Store, message.at))
 	}
-	terminal := loopOpenChronology(t, f, -1, -1, now, now)
+	terminal := loopOpenChronology(t, f, -1, -1, terminalAt, terminalAt)
 	applyLoop(t, f, terminal, now)
 	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
@@ -108,16 +113,16 @@ func TestLoopApplyTerminalBoundaryAllowsNonpositiveMessageIDs(t *testing.T) {
 	requirements.NotNil(closed.ClosedReason)
 	assertions.Equal("done", *closed.ClosedReason)
 
-	newTurn := loopOpenChronology(t, f, 0, 0, now, now)
+	newTurn := loopOpenChronology(t, f, 1, 1, now, now)
 	newTurn.PreviousTurnKnown = true
-	newTurn.PreviousTurnAt = now
+	newTurn.PreviousTurnAt = opposingAt
 	newTurn.PreviousTurnMessageID = 0
 	applyLoop(t, f, newTurn, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	requirements.NotNil(rows[0].AnchorMessageID)
-	assertions.Equal(int64(0), *rows[0].AnchorMessageID)
+	assertions.Equal(int64(1), *rows[0].AnchorMessageID)
 }
 
 func TestLoopApplyRewriteCyclePreservesOwnerStateAndCAS(t *testing.T) {

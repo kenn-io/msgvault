@@ -49,9 +49,20 @@ func TestLoopApplyPreservesLiveAnchorWhenOppositeBoundaryIsUnknown(t *testing.T)
 	requirements := require.New(t)
 	f := storetest.New(t)
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	ids := f.CreateMessages(4)
+	timeline := []time.Time{
+		now.Add(-72 * time.Hour),
+		now.Add(-71 * time.Hour),
+		now.Add(-70 * time.Hour),
+		now.Add(-69 * time.Hour),
+	}
+	ids := []int64{
+		loopMessageAt(t, f, timeline[0], false), // completed inbound turn
+		loopMessageAt(t, f, timeline[1], true),  // opposing owner turn
+		loopMessageAt(t, f, timeline[2], false), // new inbound anchor
+		loopMessageAt(t, f, timeline[3], false), // same-side nudge
+	}
 
-	completed := loopOpen(t, f, ids[0], ids[0], now)
+	completed := loopOpenChronology(t, f, ids[0], ids[0], timeline[0], timeline[0])
 	applyLoop(t, f, completed, now)
 	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
@@ -59,13 +70,20 @@ func TestLoopApplyPreservesLiveAnchorWhenOppositeBoundaryIsUnknown(t *testing.T)
 	_, err = f.Store.CloseLoopContext(t.Context(), rows[0].ID, "handled", now)
 	requirements.NoError(err)
 
-	live := loopOpen(t, f, ids[1], ids[2], now)
-	live.TurnMessageIDs = ids[1:3]
+	live := loopOpenChronology(t, f, ids[2], ids[2], timeline[2], timeline[2])
+	live.TurnMessageIDs = ids[2:3]
 	live.PreviousTurnKnown = true
+	live.PreviousTurnAt = timeline[1]
+	live.PreviousTurnMessageID = ids[1]
 	applyLoop(t, f, live, now)
+	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1, "the new inbound turn must be live before its unknown-boundary nudge")
+	requirements.NotNil(rows[0].AnchorMessageID)
+	assertions.Equal(ids[2], *rows[0].AnchorMessageID)
 
-	nudged := loopOpen(t, f, ids[1], ids[3], now.Add(time.Minute))
-	nudged.TurnMessageIDs = ids[1:]
+	nudged := loopOpenChronology(t, f, ids[2], ids[3], timeline[2], timeline[3])
+	nudged.TurnMessageIDs = ids[2:]
 	nudged.PreviousTurnKnown = false
 	applyLoop(t, f, nudged, now.Add(time.Minute))
 
@@ -74,7 +92,7 @@ func TestLoopApplyPreservesLiveAnchorWhenOppositeBoundaryIsUnknown(t *testing.T)
 	requirements.Len(rows, 1)
 	assertions.Equal("open", rows[0].Status)
 	requirements.NotNil(rows[0].AnchorMessageID)
-	assertions.Equal(ids[1], *rows[0].AnchorMessageID)
+	assertions.Equal(ids[2], *rows[0].AnchorMessageID)
 }
 
 func TestLoopApplyRetainsEvidenceForThePreservedAnchor(t *testing.T) {

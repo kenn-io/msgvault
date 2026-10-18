@@ -107,6 +107,37 @@ func TestDeriverUndatedLiveAnchorRetainsCoverageGap(t *testing.T) {
 	assertions.True(evidence[0].CoverageGap)
 }
 
+func TestDeriverRefreshesRetainedReplyOwedCounterpartyAfterSenderCorrection(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	anchorID := deriveInbound(t, f, now)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	loopID := rows[0].ID
+	var originalSender int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT sender_id FROM messages WHERE id=?"), anchorID).Scan(&originalSender))
+
+	correctedSender := f.EnsureParticipant("corrected@example.test", "Corrected Sender", "example.test")
+	deriveExec(t, f, "UPDATE messages SET sender_id=? WHERE id=?", correctedSender, anchorID)
+	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "sender-corrected", now.Add(time.Minute)))
+	d.now = func() time.Time { return now.Add(time.Minute) }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	retained, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	requirements.NotNil(retained.CounterpartyParticipantID)
+	assertions.NotEqual(originalSender, *retained.CounterpartyParticipantID)
+	assertions.Equal(correctedSender, *retained.CounterpartyParticipantID)
+}
+
 func TestStoredVerdictPreservesEvidenceJSONContract(t *testing.T) {
 	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	for _, tt := range []struct {

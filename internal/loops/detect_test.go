@@ -218,6 +218,55 @@ func TestDetectSkipsMutedCounterpartyWhenSelectingInboundAnchor(t *testing.T) {
 	assertions.Equal(view.Participants[1].ID, got.Open.Counterparty.ID)
 }
 
+func TestDetectSelectsUnmutedSenderAfterClosingMutedLiveAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	mutedSender := view.Participants[1]
+	unmutedSender := LoopParticipant{ID: 3, PersonID: 8, Email: "blair@example.test", DisplayName: "Blair Example"}
+	view.Participants = append(view.Participants, unmutedSender)
+	mutedAnchor := view.Messages[0]
+	mutedAnchor.ID = 10
+	mutedAnchor.OccurredAt = now.Add(-48 * time.Hour)
+	eligibleAnchor := mutedAnchor
+	eligibleAnchor.ID, eligibleAnchor.Sender = 11, unmutedSender
+	eligibleAnchor.OccurredAt = now.Add(-24 * time.Hour)
+	view.Messages = []LoopMessage{mutedAnchor, eligibleAnchor}
+	view.LastMessageAt = eligibleAnchor.OccurredAt
+	live := []LiveLoop{{
+		ID: 1, Kind: ReplyOwed, AnchorMessageID: mutedAnchor.ID,
+		CounterpartyParticipantID: mutedSender.ID, CounterpartyPersonID: mutedSender.PersonID,
+	}}
+
+	got := Detect(view, live, now, DefaultThresholds(), Suppressions{Persons: []int64{mutedSender.PersonID}})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("muted", got.Close[0].Reason)
+	requirements.NotNil(got.Open)
+	assertions.Equal(eligibleAnchor.ID, got.Open.Anchor.ID)
+	assertions.Equal(unmutedSender.ID, got.Open.Counterparty.ID)
+}
+
+func TestDetectDoesNotReuseStaleCounterpartyAfterSenderCorrection(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	oldSender := view.Participants[1]
+	correctedSender := LoopParticipant{ID: 3, PersonID: 8, Email: "blair@example.test", DisplayName: "Blair Example"}
+	view.Participants = append(view.Participants, correctedSender)
+	view.Messages[0].Sender = correctedSender
+	live := []LiveLoop{{
+		ID: 1, Kind: ReplyOwed, AnchorMessageID: view.Messages[0].ID,
+		CounterpartyParticipantID: oldSender.ID, CounterpartyPersonID: oldSender.PersonID,
+	}}
+
+	got := Detect(view, live, now, DefaultThresholds(), Suppressions{Participants: []int64{correctedSender.ID}})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("muted", got.Close[0].Reason)
+	assertions.Nil(got.Open, "a stale saved counterparty must not reopen a muted corrected sender")
+}
+
 func TestDetectSkipsMutedCounterpartyWhenSelectingOutboundAnchor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
