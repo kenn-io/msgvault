@@ -2160,7 +2160,7 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
 		{"sources", "SELECT id, identifier, source_type FROM sources",
 			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}", identityColumns("identifier")},
-		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email_thread') AS conversation_type FROM conversations",
+		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(CAST(conversation_type AS TEXT), 'email_thread') AS conversation_type FROM conversations",
 			"types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
 			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
