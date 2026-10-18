@@ -76,23 +76,26 @@ func TestCardDAVAccountUpgradePreservesUnrelatedReferences(t *testing.T) {
 }
 
 func TestCardDAVAccountUpgradeRejectsDanglingAccounts(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
+
 	st := legacyCardDAVValidationStore(t)
 	var before string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&before))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&before))
 	seedLegacyCardDAVViolation(t, st, `INSERT INTO carddav_retry_gate(account_id, retry_after_at) VALUES (2, CURRENT_TIMESTAMP)`)
 
 	err := st.InitSchemaContext(t.Context())
-	assert.ErrorContains(t, err, "dangling references")
+	require.ErrorContains(err, "dangling references")
 	var after string
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&after))
-	assert.Equal(t, before, after, "failure must roll back the account rebuild")
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&after))
+	assertions.Equal(before, after, "failure must roll back the account rebuild")
 	var count int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM applied_migrations WHERE name = 'carddav_multiple_accounts_v1'`).Scan(&count))
-	assert.Zero(t, count)
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM applied_migrations WHERE name = 'carddav_multiple_accounts_v1'`).Scan(&count))
+	assertions.Zero(count)
 	assertCardDAVForeignKeysEnforced(t, st)
 
 	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM carddav_retry_gate WHERE account_id = 2`)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchemaContext(t.Context()), "repair must allow retry")
+	require.NoError(err)
+	require.NoError(st.InitSchemaContext(t.Context()), "repair must allow retry")
 	assertCardDAVForeignKeysEnforced(t, st)
 }
