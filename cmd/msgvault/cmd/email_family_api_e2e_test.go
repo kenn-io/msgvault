@@ -62,7 +62,7 @@ func TestEmailFamilyEndpointServesThroughProductionAdapter(t *testing.T) {
 		require.NoError(err)
 		resp, err := http.Post(httpSrv.URL+path, "application/json", strings.NewReader(string(encoded)))
 		require.NoError(err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		responseBody, err := io.ReadAll(resp.Body)
 		require.NoError(err)
 		return resp.StatusCode, responseBody

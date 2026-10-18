@@ -99,6 +99,9 @@ func TestEmailFamilyRevisionUsesAPIInvalidUTF8Replacement(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newAttrFixture(t, "imap", "invalid-utf8@example.test")
+	if f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL text cannot store invalid UTF-8; this corruption regression is SQLite-specific")
+	}
 	id := f.persist(attrMail{raw: "Message-ID: <invalid-utf8@example.test>\r\n\r\n"})
 	invalidSnippet := "damaged \xff snippet"
 	replacementSnippet := "damaged \uFFFD snippet"
