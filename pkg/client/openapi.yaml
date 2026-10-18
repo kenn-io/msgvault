@@ -16577,6 +16577,9 @@ components:
         coverage_sampled_at:
           format: date-time
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         current:
           format: int64
           type: integer
@@ -16825,6 +16828,9 @@ components:
       properties:
         accelerator:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         candidates_after_filters:
           format: int64
           type: integer

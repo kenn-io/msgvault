@@ -38,7 +38,7 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 		Coverage: generated.WhoKnowsCoverage{
 			ContactState: generated.WhoKnowsContactCoverage{},
 			Generation:   generation,
-			Messages:     generated.WhoKnowsMessageCoverage{CoverageSampledAt: now},
+			Messages:     generated.WhoKnowsMessageCoverage{}, // Coverage can be unknown when its generation does not match.
 			Scope: generated.WhoKnowsScope{
 				Accounts:     []int64{1},
 				MessageTypes: []string{"email"},
@@ -64,7 +64,7 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 			Tiebreak: generated.WhoKnowsTieValue{},
 		}},
 		Retrieval: generated.WhoKnowsRetrieval{
-			Accelerator: "none",
+			Accelerator: "", // PostgreSQL retrieval does not report a SQLite accelerator.
 			Generation:  generation,
 			Mode:        "lexical",
 		},
@@ -95,6 +95,8 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 	params, ok := encoded["params"].(map[string]any)
 	require.True(ok)
 	coverage, ok := encoded["coverage"].(map[string]any)
+	require.True(ok)
+	messages, ok := coverage["messages"].(map[string]any)
 	require.True(ok)
 	contactState, ok := coverage["contact_state"].(map[string]any)
 	require.True(ok)
@@ -132,6 +134,10 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 	require.True(ok)
 	retrieval, ok := encoded["retrieval"].(map[string]any)
 	require.True(ok)
+	assert.Contains(messages, "coverage_sampled_at")
+	assert.Equal(time.Time{}.Format(time.RFC3339Nano), messages["coverage_sampled_at"])
+	assert.Contains(retrieval, "accelerator")
+	assert.Empty(retrieval["accelerator"])
 	assert.Contains(params, "after")
 	assert.Nil(params["after"])
 	assert.Contains(params, "before")

@@ -139,6 +139,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"WhoKnowsEvidence", "Snippet", "w"},
 		{"WhoKnowsEvidence", "Subject", "w"},
 		{"WhoKnowsRanked", "DisplayName", "w"},
+		{"WhoKnowsRetrieval", "Accelerator", "w"},
 		{"WhoKnowsUnsavedCandidate", "DisplayName", "w"},
 		{"WhoKnowsUnsavedCandidate", "EmailAddress", "w"},
 	} {

@@ -72,6 +72,7 @@ func TestRewriteGeneratedValidatorsAllowsEmptyWhoKnowsMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assertions.NotContains(string(got), `typesValidator.Var(w.DisplayName, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(w.EmailAddress, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.Accelerator, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -219,7 +220,10 @@ func whoKnowsEmptyStringValidatorFixture() string {
 		"type WhoKnowsUnsavedCandidate struct {\n\tDisplayName string\n\tEmailAddress string\n}\n" +
 		"func (w WhoKnowsUnsavedCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(w.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
-		"\tif err := typesValidator.Var(w.EmailAddress, \"required\"); err != nil {\n\t\terrors = errors.Append(\"EmailAddress\", err)\n\t}\n\treturn errors\n}\n"
+		"\tif err := typesValidator.Var(w.EmailAddress, \"required\"); err != nil {\n\t\terrors = errors.Append(\"EmailAddress\", err)\n\t}\n\treturn errors\n}\n" +
+		"type WhoKnowsRetrieval struct {\n\tAccelerator string\n}\n" +
+		"func (w WhoKnowsRetrieval) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(w.Accelerator, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Accelerator\", err)\n\t}\n\treturn errors\n}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

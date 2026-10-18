@@ -1723,9 +1723,11 @@ func TestOpenAPIWhoKnowsClientHandlesNullableAndEmptyValues(t *testing.T) {
 
 	for schemaName, properties := range map[string][]string{
 		"WhoKnowsEvidence":         {"snippet", "subject"},
+		"WhoKnowsMessageCoverage":  {"coverage_sampled_at"},
 		"WhoKnowsExcerpt":          {"snippet"},
 		"WhoKnowsOrganization":     {"title"},
 		"WhoKnowsRanked":           {"display_name"},
+		"WhoKnowsRetrieval":        {"accelerator"},
 		"WhoKnowsUnsavedCandidate": {"display_name", "email_address"},
 	} {
 		schema := schemas[schemaName]

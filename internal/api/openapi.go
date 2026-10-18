@@ -1624,8 +1624,8 @@ func setClientValidationTag(property *huma.Schema, tag string) {
 	property.Extensions["x-oapi-codegen-extra-tags"] = extraTags
 }
 
-// hardenWhoKnowsClientSchemas preserves nullable values and valid empty
-// citation text in generated Go clients.
+// hardenWhoKnowsClientSchemas preserves nullable values and valid zero values
+// in generated Go clients.
 func hardenWhoKnowsClientSchemas(doc *huma.OpenAPI) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
@@ -1662,8 +1662,10 @@ func hardenWhoKnowsClientSchemas(doc *huma.OpenAPI) {
 	for schemaName, names := range map[string][]string{
 		"WhoKnowsEvidence":         {"snippet", "subject"},
 		"WhoKnowsExcerpt":          {"snippet"},
+		"WhoKnowsMessageCoverage":  {"coverage_sampled_at"},
 		"WhoKnowsOrganization":     {"title"},
 		"WhoKnowsRanked":           {"display_name"},
+		"WhoKnowsRetrieval":        {"accelerator"},
 		"WhoKnowsUnsavedCandidate": {"display_name", "email_address"},
 	} {
 		schema := doc.Components.Schemas.Map()[schemaName]

@@ -15676,7 +15676,7 @@ func (w WhoKnowsGeneration) Validate() error {
 }
 
 type WhoKnowsMessageCoverage struct {
-	CoverageSampledAt time.Time `json:"coverage_sampled_at" validate:"required"`
+	CoverageSampledAt time.Time `json:"coverage_sampled_at" validate:"omitempty"`
 	Current           int64     `json:"current"`
 	Eligible          int64     `json:"eligible"`
 	Pending           int64     `json:"pending"`
@@ -15872,7 +15872,7 @@ func (w WhoKnowsResponse) Validate() error {
 }
 
 type WhoKnowsRetrieval struct {
-	Accelerator            string             `json:"accelerator" validate:"required"`
+	Accelerator            string             `json:"accelerator" validate:"omitempty"`
 	CandidatesAfterFilters int64              `json:"candidates_after_filters"`
 	CandidatesEffective    int64              `json:"candidates_effective"`
 	CandidatesRequested    int64              `json:"candidates_requested"`
@@ -15887,9 +15887,6 @@ type WhoKnowsRetrieval struct {
 
 func (w WhoKnowsRetrieval) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(w.Accelerator, "required"); err != nil {
-		errors = errors.Append("Accelerator", err)
-	}
 	if v, ok := any(w.Generation).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Generation", err)
