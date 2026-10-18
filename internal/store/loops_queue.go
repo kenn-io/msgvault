@@ -13,10 +13,42 @@ type LoopQueuedConversation struct {
 }
 
 func (s *Store) PendingLoopConversationsContext(ctx context.Context, limit int) ([]LoopQueuedConversation, error) {
+	return s.pendingLoopConversationsContext(ctx, limit, false)
+}
+
+// PendingLoopConversationsReadyForDerivationContext excludes conversations
+// with Synctech SMS send-state rows beyond the durable native-state cursor.
+// Those rows can still look like sent owner messages, so their conversations
+// must stay queued until a later backfill batch verifies them.
+func (s *Store) PendingLoopConversationsReadyForDerivationContext(ctx context.Context, limit int) ([]LoopQueuedConversation, error) {
+	return s.pendingLoopConversationsContext(ctx, limit, true)
+}
+
+func (s *Store) pendingLoopConversationsContext(ctx context.Context, limit int, requireVerifiedSynctech bool) ([]LoopQueuedConversation, error) {
 	if limit < 1 {
 		return nil, fmt.Errorf("%w: queue limit must be positive", ErrInvalidLoop)
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT conversation_id,revision,epoch,reason,feed_bound FROM loop_conversation_queue WHERE revision>processed_revision ORDER BY queued_at,conversation_id LIMIT ?`, limit)
+	query := `SELECT q.conversation_id,q.revision,q.epoch,q.reason,q.feed_bound FROM loop_conversation_queue q WHERE q.revision>q.processed_revision`
+	args := []any{}
+	if requireVerifiedSynctech {
+		afterMessageID, complete, err := s.SynctechSMSNativeStateBackfillProgressContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !complete {
+			query += ` AND NOT EXISTS (
+				SELECT 1 FROM messages m JOIN sources src ON src.id=m.source_id
+				JOIN message_raw raw ON raw.message_id=m.id
+				WHERE m.conversation_id=q.conversation_id AND src.source_type='synctech_sms'
+				AND m.message_type IN ('sms','mms') AND m.source_is_from_me=TRUE
+				AND COALESCE(m.is_sent,TRUE)=TRUE AND raw.raw_format='synctech_sms_xml_json'
+				AND m.id>?)`
+			args = append(args, afterMessageID)
+		}
+	}
+	query += ` ORDER BY q.queued_at,q.conversation_id LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -1508,8 +1508,8 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.IsSent,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
 		msg.HasAttachments, msg.AttachmentCount,
-		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
 		msg.IsSent.Valid,
+		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
 	}
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.

@@ -108,6 +108,40 @@ func TestMergeSourcesRemapsLoopReferencesForHiddenMessages(t *testing.T) {
 	assert.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"closed history"}]`, survivor, destinationConversation), string(gotClosed.EvidenceJSON))
 }
 
+func TestMergeSourcesRemapsOwnerParticipationEvidence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-owner-participation-example")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-owner-participation-example")
+	requirements.NoError(err)
+
+	destinationAnchor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-owner-participation", "live-anchor", "same question", 1)
+	duplicateAnchor, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-owner-participation", "history-anchor", "same question", 1)
+	destinationParticipation, participationConversation := mergeFixtureMessage(t, st, into.ID, "shared-owner-participation", "live-participation", "owner replied", 2)
+	duplicateParticipation, sourceParticipationConversation := mergeFixtureMessage(t, st, from.ID, "shared-owner-participation", "history-participation", "owner replied", 2)
+	requirements.Equal(destinationConversation, participationConversation)
+	requirements.Equal(sourceConversation, sourceParticipationConversation)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	open := sourceMergeLoopOpen(sourceConversation, from.ID, duplicateAnchor, "awaiting_reply", now)
+	open.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_participation_message_id":%d}]`, duplicateAnchor, sourceConversation, duplicateParticipation))
+	requirements.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: sourceConversation,
+		Now:            now,
+		Verdict:        store.LoopVerdict{Open: &open},
+	}))
+	rows, err := st.ListLiveConversationLoopsContext(t.Context(), sourceConversation)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	merged, err := st.GetOpenLoopContext(t.Context(), rows[0].ID)
+	requirements.NoError(err)
+	assertions.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_participation_message_id":%d}]`, destinationAnchor, destinationConversation, destinationParticipation), string(merged.EvidenceJSON))
+}
+
 func TestMergeSourcesTransfersRetiredLoopOwnerStateToWinner(t *testing.T) {
 	for _, test := range []struct {
 		name          string

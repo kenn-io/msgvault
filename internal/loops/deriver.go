@@ -103,7 +103,7 @@ func (d *Deriver) RunOnce(ctx context.Context) (result RunResult, err error) {
 	return result, err
 }
 func (d *Deriver) drain(ctx context.Context, now time.Time, result *RunResult) error {
-	queued, err := d.st.PendingLoopConversationsContext(ctx, d.cfg.BatchConversations)
+	queued, err := d.st.PendingLoopConversationsReadyForDerivationContext(ctx, d.cfg.BatchConversations)
 	if err != nil {
 		return err
 	}

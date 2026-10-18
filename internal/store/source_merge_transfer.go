@@ -486,6 +486,10 @@ func remapSourceMergeLoopEvidence(raw []byte, sourceConversationID, destinationC
 				survivor, ok := survivors[id]
 				return survivor, ok
 			},
+			"owner_participation_message_id": func(id int64) (int64, bool) {
+				survivor, ok := survivors[id]
+				return survivor, ok
+			},
 			"conversation_id": func(id int64) (int64, bool) {
 				if id == sourceConversationID {
 					return destinationConversationID, true

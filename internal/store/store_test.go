@@ -2125,6 +2125,32 @@ func TestStore_PersistMessage_Upsert(t *testing.T) {
 	assert.Equal("updated body", bodyText.String, "body_text")
 }
 
+func TestStore_UpsertMessageAppliesSendStateAndAttachmentStatsIndependently(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	message := storetest.NewMessage(f.Source.ID, f.ConvID).
+		WithSourceMessageID("upsert-send-and-attachment-state").
+		Build()
+	message.IsSent = sql.NullBool{Bool: true, Valid: true}
+	id, err := f.Store.UpsertMessage(message)
+	requirements.NoError(err)
+
+	updated := *message
+	updated.IsSent = sql.NullBool{Bool: false, Valid: true}
+	updated.HasAttachments = true
+	updated.AttachmentCount = 2
+	_, err = f.Store.UpsertMessage(&updated)
+	requirements.NoError(err)
+
+	var isSent, hasAttachments bool
+	var attachmentCount int
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT is_sent,has_attachments,attachment_count FROM messages WHERE id=?`), id).Scan(&isSent, &hasAttachments, &attachmentCount))
+	assertions.False(isSent, "a valid source send state updates independently of attachment preservation")
+	assertions.True(hasAttachments, "attachment state updates when it is not preserved")
+	assertions.Equal(2, attachmentCount)
+}
+
 func TestStore_PersistMessageSerializesSQLiteWritersBeforePriorStateRead(t *testing.T) {
 	testutil.SkipIfPostgres(t, "exercises SQLite WAL snapshot upgrades")
 	require := require.New(t)

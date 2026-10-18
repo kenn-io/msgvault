@@ -421,6 +421,60 @@ func TestDeriverBackfillsOldSynctechUnsentStateBeforeDetection(t *testing.T) {
 	assertions.False(sent, "the native unsent state is persisted before loop derivation")
 }
 
+func TestDeriverKeepsUnverifiedSynctechConversationPendingWhileProcessingOtherWork(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	emailAnchor := deriveInbound(t, f, now)
+
+	const unsentCount = 101
+	var xml strings.Builder
+	fmt.Fprintf(&xml, `<smses count="%d">`, unsentCount+1)
+	fmt.Fprintf(&xml, `<sms address="+15550000002" date="%d" type="1" body="Can you send the file?" read="1" status="-1" />`, now.Add(-48*time.Hour).UnixMilli())
+	for i := range unsentCount {
+		fmt.Fprintf(&xml, `<sms address="+15550000002" date="%d" type="4" body="Unsent reply %03d" read="1" status="0" />`, now.Add(-47*time.Hour+time.Duration(i)*time.Second).UnixMilli(), i)
+	}
+	xml.WriteString(`</smses>`)
+	summary := importSynctechMessages(t, f, "+15550000001", xml.String())
+	requirements.Len(summary.MessageIDs, unsentCount+1)
+	var synctechConversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT conversation_id FROM messages WHERE id=?"), summary.MessageIDs[0]).Scan(&synctechConversationID))
+	deriveExec(t, f, "UPDATE messages SET is_sent=TRUE WHERE id IN (SELECT message_id FROM message_raw WHERE raw_format='synctech_sms_xml_json') AND source_id=(SELECT id FROM sources WHERE source_type='synctech_sms') AND source_is_from_me=TRUE")
+
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(1, result.ProcessedConversations, "the conversation beyond the verified backfill cursor must wait")
+	emailLoops, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(emailLoops, 1, "other queued conversations continue to derive")
+	requirements.NotNil(emailLoops[0].AnchorMessageID)
+	assertions.Equal(emailAnchor, *emailLoops[0].AnchorMessageID)
+	synctechLoops, err := f.Store.ListLiveConversationLoopsContext(t.Context(), synctechConversationID)
+	requirements.NoError(err)
+	assertions.Empty(synctechLoops, "unverified native send state must not affect turn detection")
+	pending, err := f.Store.PendingLoopConversationsContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(pending, 1, "the affected conversation remains queued for the next backfill batch")
+	assertions.Equal(synctechConversationID, pending[0].ConversationID)
+
+	result, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(1, result.ProcessedConversations, "the conversation becomes eligible after the remaining send state is verified")
+	pending, err = f.Store.PendingLoopConversationsContext(t.Context(), 10)
+	requirements.NoError(err)
+	assertions.Empty(pending)
+	synctechLoops, err = f.Store.ListLiveConversationLoopsContext(t.Context(), synctechConversationID)
+	requirements.NoError(err)
+	requirements.Len(synctechLoops, 1)
+	assertions.Equal(ReplyOwed, synctechLoops[0].Kind)
+	requirements.NotNil(synctechLoops[0].AnchorMessageID)
+	assertions.Equal(summary.MessageIDs[0], *synctechLoops[0].AnchorMessageID)
+}
+
 func TestDeriverExcludesImportedSynctechCallLogs(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
