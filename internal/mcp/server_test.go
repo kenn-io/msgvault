@@ -4065,7 +4065,7 @@ func TestSearchByDomains(t *testing.T) {
 			})
 		assert.Len(response.Data, 1, "msgs")
 		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
-		assert.Equal(50, capturedLimit, "limit")
+		assert.Equal(51, capturedLimit, "limit includes probe row")
 		assert.Equal(10, capturedOffset, "offset")
 	})
 
@@ -4082,7 +4082,7 @@ func TestSearchByDomains(t *testing.T) {
 
 		runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
-		assert.Equal(t, 100, capturedLimit, "default limit")
+		assert.Equal(t, 101, capturedLimit, "default limit includes probe row")
 		assert.Equal(t, 0, capturedOffset, "default offset")
 	})
 }

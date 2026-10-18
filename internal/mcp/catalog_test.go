@@ -744,7 +744,8 @@ func testNumericCompatibility(t *testing.T) {
 	}{
 		{name: "omitted", arguments: map[string]any{}, wantLimit: 20},
 		{name: "zero", arguments: map[string]any{"limit": 0}, wantLimit: 20},
-		{name: "clamped", arguments: map[string]any{"limit": 5000, "offset": 5000}, wantLimit: 50, wantOffset: 1000},
+		{name: "clamped", arguments: map[string]any{"limit": 5000, "offset": 5000}, wantLimit: 50, wantOffset: 5000},
+		{name: "past 1000", arguments: map[string]any{"offset": 1500}, wantLimit: 20, wantOffset: 1500},
 	}
 	for _, toolName := range searchTools {
 		for _, variant := range variants {
@@ -803,7 +804,8 @@ func testNumericCompatibility(t *testing.T) {
 		{name: "omitted", arguments: map[string]any{}, wantReturn: 10},
 		{name: "zero", arguments: map[string]any{"limit": 0}, wantReturn: 0},
 		{name: "clamped", arguments: map[string]any{"limit": 5000}, wantReturn: 1000},
-		{name: "offset clamped", arguments: map[string]any{"offset": 5000}, wantReturn: 10, wantOffset: 1000},
+		{name: "past 1000", arguments: map[string]any{"offset": 1100}, wantReturn: 10, wantOffset: 1100},
+		{name: "past matches", arguments: map[string]any{"offset": 5000}, wantReturn: 0, wantOffset: 5000},
 	} {
 		t.Run(ToolSearchInMessage+"/"+test.name, func(t *testing.T) {
 			args := map[string]any{"id": 1, "query": "match"}
@@ -825,9 +827,9 @@ func testNumericCompatibility(t *testing.T) {
 		{name: "aggregate omitted", tool: ToolAggregate, args: map[string]any{"group_by": "sender"}, want: 50},
 		{name: "aggregate zero", tool: ToolAggregate, args: map[string]any{"group_by": "sender", "limit": 0}, want: 0},
 		{name: "aggregate clamped", tool: ToolAggregate, args: map[string]any{"group_by": "sender", "limit": 5000}, want: 1000},
-		{name: "domains omitted", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}, want: 100},
-		{name: "domains zero", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 0}, want: 0},
-		{name: "domains clamped", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 5000}, want: 1000},
+		{name: "domains omitted", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}, want: 101},
+		{name: "domains zero", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 0}, want: 101},
+		{name: "domains clamped", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 5000}, want: 500},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			engine.limit = -1
@@ -1029,15 +1031,18 @@ func TestArrayToolEmptyResultsUseEmptyDataArray(t *testing.T) {
 		name string
 		tool string
 		args map[string]any
+		want map[string]any
 	}{
-		{name: "aggregate", tool: ToolAggregate, args: map[string]any{"group_by": "domain"}},
-		{name: "search by domains", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}},
+		{name: "aggregate", tool: ToolAggregate, args: map[string]any{"group_by": "domain"}, want: map[string]any{"data": []any{}}},
+		{name: "search by domains", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}, want: map[string]any{
+			"data": []any{}, "returned": float64(0), "offset": float64(0), "has_more": false,
+		}},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			result := rawCallTool(t, opts, test.tool, test.args)
-			assert.Equal(t, map[string]any{"data": []any{}}, result["structuredContent"])
+			assert.Equal(t, test.want, result["structuredContent"])
 		})
 	}
 }
