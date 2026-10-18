@@ -90,7 +90,12 @@ func (s *State) SetFolderCatalog(folders []Folder) {
 
 // FolderCatalog returns the complete provider folder catalog observed with
 // this state, when the provider supplies one.
-func (s State) FolderCatalog() []Folder { return slices.Clone(s.folderCatalog) }
+func (s *State) FolderCatalog() []Folder {
+	if s == nil {
+		return nil
+	}
+	return slices.Clone(s.folderCatalog)
+}
 
 // Request carries one exact action. Preview (DryRun) reads live state without
 // requiring an existing plan. Execution requires expected state, a signed

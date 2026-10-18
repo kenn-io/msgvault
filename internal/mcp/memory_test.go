@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/savedview"
@@ -98,6 +99,8 @@ func daemonProxyMemoryOptions() ServeOptions {
 		IdentityReview:       struct{ IdentityReviewBackend }{},
 		PersonCardDAV:        struct{ PersonCardDAVBackend }{},
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
+		Inbox:                struct{ InboxBackend }{},
+		InboxOperations:      []inboxcontrol.Operation{inboxcontrol.OpTags},
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),
 	}

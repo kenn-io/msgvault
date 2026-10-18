@@ -18,6 +18,12 @@ import (
 // it was read. Tags and flags are sets; order alone does not invalidate a plan.
 // Nil state markers remain distinct from observed false markers.
 func SemanticFingerprint(state State) (string, error) {
+	return semanticFingerprint(state, false)
+}
+
+// semanticFingerprint can include the provider's private catalog for signed
+// plans. Public expected states omit it because State JSON omits that catalog.
+func semanticFingerprint(state State, includeFolderCatalog bool) (string, error) {
 	if state.Target != (Target{}) {
 		if state.Source != (SourceIdentity{}) {
 			return "", fmt.Errorf("%w: state has conflicting source bindings", ErrInvalid)
@@ -32,7 +38,6 @@ func SemanticFingerprint(state State) (string, error) {
 	state.Tags = canonicalSet(state.Tags, false)
 	state.Flags = canonicalSet(state.Flags, false)
 	state.Folders = slices.Clone(state.Folders)
-	state.folderCatalog = slices.Clone(state.folderCatalog)
 	sortFolders := func(folders []Folder) {
 		slices.SortFunc(folders, func(a, b Folder) int {
 			if n := strings.Compare(a.ID, b.ID); n != 0 {
@@ -48,12 +53,16 @@ func SemanticFingerprint(state State) (string, error) {
 		})
 	}
 	sortFolders(state.Folders)
-	sortFolders(state.folderCatalog)
-	if state.folderCatalog != nil {
-		return fingerprint(struct {
-			State         `json:",inline"`
-			FolderCatalog []Folder `json:"folder_catalog"`
-		}{State: state, FolderCatalog: state.folderCatalog})
+	if includeFolderCatalog {
+		state.folderCatalog = slices.Clone(state.folderCatalog)
+		sortFolders(state.folderCatalog)
+		if state.folderCatalog != nil {
+			return fingerprint(struct {
+				State `json:",inline"`
+
+				FolderCatalog []Folder `json:"folder_catalog"`
+			}{State: state, FolderCatalog: state.folderCatalog})
+		}
 	}
 	return fingerprint(state)
 }

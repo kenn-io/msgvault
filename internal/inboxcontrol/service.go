@@ -499,14 +499,15 @@ func safePreflightError(err error) error {
 	return ErrUnavailable
 }
 
-// Destination resolution and projected state are authenticated along with
-// the observation. A configured Archive change cannot reuse an old preview.
+// Destination resolution, projected state, and the private folder catalog are
+// authenticated along with the public observation. A configured Archive
+// change cannot reuse an old preview.
 func planFingerprint(before, projected State) (string, error) {
-	beforeHash, err := SemanticFingerprint(before)
+	beforeHash, err := semanticFingerprint(before, true)
 	if err != nil {
 		return "", err
 	}
-	projectedHash, err := SemanticFingerprint(projected)
+	projectedHash, err := semanticFingerprint(projected, true)
 	if err != nil {
 		return "", err
 	}

@@ -6,14 +6,29 @@ import (
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
-// ValidateInboxTargetContext checks archive source/item/membership metadata
-// only. The daemon additionally binds AccountID to the source configuration and
-// authenticates that account against the provider before dispatch.
+// ValidateInboxTargetContext checks the live archive item and its exact
+// membership. The daemon additionally binds AccountID to the source
+// configuration and authenticates that account against the provider.
 func (s *Store) ValidateInboxTargetContext(ctx context.Context, target inboxcontrol.Target) error {
 	if err := target.Validate(); err != nil {
 		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return validateInboxArchiveTarget(ctx, tx, target) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := validateInboxArchiveTarget(ctx, tx, target); err != nil {
+			return err
+		}
+		if target.Scope == inboxcontrol.ScopeMessage {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages
+				WHERE id=? AND source_id=? AND source_message_id=? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, target.ItemID, target.SourceID, target.ProviderID).Scan(&count); err != nil {
+				return err
+			}
+			if count != 1 {
+				return inboxcontrol.ErrInvalid
+			}
+		}
+		return nil
+	})
 }
 
 // ValidateInboxItemIdentityContext checks the live original item without a

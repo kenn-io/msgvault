@@ -26,7 +26,6 @@ func TestTargetRequiresExactSourceAndItem(t *testing.T) {
 		{"missing item", func(v *Target) { v.ItemID = 0 }},
 		{"negative item", func(v *Target) { v.ItemID = -2 }},
 		{"missing provider identity", func(v *Target) { v.ProviderID = "" }},
-		{"query in place of identity", func(v *Target) { v.ProviderID = ""; v.ItemID = 0 }},
 		{"mail chat scope", func(v *Target) { v.Scope = ScopeChat }},
 		{"mail with mailbox", func(v *Target) { v.Mailbox = "INBOX" }},
 		{"mail with UID", func(v *Target) { v.UID = 3 }},

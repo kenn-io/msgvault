@@ -185,6 +185,38 @@ func TestInboxControlPreviewDoesNotWrite(t *testing.T) {
 	assertions.Equal(0, observations)
 }
 
+func TestInboxControlPreviewTokenBindsPrivateCatalogAcrossJSONExpectedState(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newControlFixture(t)
+	initialCatalog := []inboxcontrol.Folder{{ID: "LabelA", Name: "A"}, {ID: "LabelB", Name: "B"}}
+	changedCatalog := []inboxcontrol.Folder{{ID: "LabelA", Name: "A"}, {ID: "LabelB", Name: "Renamed"}}
+	f.provider.state.SetFolderCatalog(initialCatalog)
+	preview, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
+	requirements.NoError(err)
+
+	encoded, err := json.Marshal(preview.Before)
+	requirements.NoError(err)
+	var expected inboxcontrol.State
+	requirements.NoError(json.Unmarshal(encoded, &expected))
+	request := f.request
+	request.DryRun, request.Expected, request.PreviewToken, request.IdempotencyKey = false, &expected, preview.PreviewToken, "catalog-bound-operation"
+
+	// The public state survives the JSON boundary, while the signed preview
+	// must still reject a provider catalog change hidden from that state.
+	f.provider.state.SetFolderCatalog(changedCatalog)
+	_, err = f.service.Control(t.Context(), request, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
+	assertions.Zero(f.provider.dispatches)
+
+	f.provider.state.SetFolderCatalog(initialCatalog)
+	result, err := f.service.Control(t.Context(), request, f.principal, f.gate)
+	requirements.NoError(err)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+}
+
 func TestInboxControlVerifiedReplayBeforeExpiryAndChangedState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -344,6 +376,7 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 }
 
 func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
+	requirements := require.New(t)
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.provider.dispatch = func(context.Context) error {
@@ -351,10 +384,12 @@ func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
 		return errors.New("synthetic lost dispatch response")
 	}
 	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.NotNil(t, unknown.Receipt)
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.NotNil(unknown.Receipt)
 
 	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		observeEntered := make(chan struct{}, 1)
 		allowObserve := make(chan struct{})
 		f.provider.onObserve = func(_ context.Context, read int, _ inboxcontrol.Request) error {
@@ -386,7 +421,7 @@ func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
 			firstDone <- controlOutcome{result: result, err: err}
 		}()
 		synctest.Wait()
-		require.Len(t, observeEntered, 1, "the first reconciliation reaches provider readback while holding the gate")
+		require.Len(observeEntered, 1, "the first reconciliation reaches provider readback while holding the gate")
 
 		secondDone := make(chan controlOutcome, 1)
 		go func() {
@@ -394,20 +429,20 @@ func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
 			secondDone <- controlOutcome{result: result, err: err}
 		}()
 		synctest.Wait()
-		require.Len(t, gateArrivals, 2, "the second reconciliation has read the pending receipt and is waiting for ownership")
+		require.Len(gateArrivals, 2, "the second reconciliation has read the pending receipt and is waiting for ownership")
 
 		close(allowObserve)
 		synctest.Wait()
 		first := <-firstDone
 		second := <-secondDone
-		require.NoError(t, first.err)
-		require.NotNil(t, first.result)
-		assert.Equal(t, inboxcontrol.StatusVerified, first.result.Receipt.Status)
-		require.NoError(t, second.err)
-		require.NotNil(t, second.result)
-		assert.Equal(t, inboxcontrol.StatusVerified, second.result.Receipt.Status)
-		assert.Equal(t, 3, f.provider.reads, "the waiter returns the verified receipt without another provider read")
-		assert.Equal(t, 1, f.provider.dispatches, "reconciliation never repeats the provider mutation")
+		require.NoError(first.err)
+		require.NotNil(first.result)
+		assert.Equal(inboxcontrol.StatusVerified, first.result.Receipt.Status)
+		require.NoError(second.err)
+		require.NotNil(second.result)
+		assert.Equal(inboxcontrol.StatusVerified, second.result.Receipt.Status)
+		assert.Equal(3, f.provider.reads, "the waiter returns the verified receipt without another provider read")
+		assert.Equal(1, f.provider.dispatches, "reconciliation never repeats the provider mutation")
 	})
 }
 

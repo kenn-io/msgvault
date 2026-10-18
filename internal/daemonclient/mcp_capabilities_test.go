@@ -48,8 +48,15 @@ func TestMCPCapabilitiesRetainsRouteParameters(t *testing.T) {
 	assertions := assert.New(t)
 	seen := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen <- r.Header.Get("X-Api-Key")
-		_, _ = io.WriteString(w, `{"version":1,"routes":[{"operation_id":"listSourceStatus","method":"GET","path":"/api/v1/sources/status","query_parameters":["source_type"]}]}`)
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_, _ = io.WriteString(w, `{"api_schema_version":"3.15.0"}`)
+		case "/api/v1/mcp/capabilities":
+			seen <- r.Header.Get("X-Api-Key")
+			_, _ = io.WriteString(w, `{"version":1,"routes":[{"operation_id":"listSourceStatus","method":"GET","path":"/api/v1/sources/status","query_parameters":["source_type"]}]}`)
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})

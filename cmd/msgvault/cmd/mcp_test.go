@@ -278,6 +278,7 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		wantText            bool
 		wantVisual          bool
 		wantEmbeddingStatus bool
+		wantDiscovery       bool
 	}{
 		{name: "both disabled", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"disabled","text_enabled":false,"visual_enabled":false}}`},
 		{name: "text only", health: `{"status":"ok","api_schema_version":"2.28.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":false}}`, wantText: true},
@@ -291,9 +292,9 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 		{name: "lane facts predecessor", health: `{"status":"ok","api_schema_version":"2.27.0","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
 		{name: "missing schema", health: `{"status":"ok","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
 		{name: "malformed schema", health: `{"status":"ok","api_schema_version":"unknown","vector":{"status":"ready","text_enabled":true,"visual_enabled":true}}`},
-		{name: "embedding status predecessor", health: `{"status":"ok","api_schema_version":"3.20.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true},
-		{name: "embedding status ready", health: `{"status":"ok","api_schema_version":"3.21.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true, wantEmbeddingStatus: true},
-		{name: "embedding status without vector", health: `{"status":"ok","api_schema_version":"3.21.0"}`},
+		{name: "embedding status predecessor", health: `{"status":"ok","api_schema_version":"3.20.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true, wantDiscovery: true},
+		{name: "embedding status ready", health: `{"status":"ok","api_schema_version":"3.21.0","vector":{"status":"ready","text_enabled":true}}`, wantText: true, wantEmbeddingStatus: true, wantDiscovery: true},
+		{name: "embedding status without vector", health: `{"status":"ok","api_schema_version":"3.21.0"}`, wantDiscovery: true},
 		{name: "health unavailable"},
 	}
 	for _, tt := range tests {
@@ -327,7 +328,11 @@ func TestDaemonMCPServeOptionsUsesHealthForVectorTools(t *testing.T) {
 			assert.Equal(tt.wantVisual, opts.VisualSearcher != nil, "visual search")
 			assert.Equal(tt.wantEmbeddingStatus, opts.EmbeddingStatus != nil, "embedding status")
 			assert.Equal(int32(1), healthRequests.Load(), "reuse the schema probe")
-			assert.Equal(int32(1), discoveryRequests.Load(), "probe optional operations once")
+			wantDiscoveryRequests := int32(0)
+			if tt.wantDiscovery {
+				wantDiscoveryRequests = 1
+			}
+			assert.Equal(wantDiscoveryRequests, discoveryRequests.Load(), "probe optional operations only when the schema supports discovery")
 		})
 	}
 }

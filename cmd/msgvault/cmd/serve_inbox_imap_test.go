@@ -137,6 +137,31 @@ func TestDaemonInboxIMAPRejectsAccountAndConfigMismatchBeforeFactory(t *testing.
 	}
 }
 
+func TestDaemonInboxIMAPValidatesTheRequestedCurrentUID(t *testing.T) {
+	requirements := require.New(t)
+	a, target := inboxIMAPDaemonFixture(t)
+
+	requestedUID := target.UID + 1
+	_, err := a.store.DB().Exec(a.store.Rebind(`INSERT INTO imap_message_memberships (source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES (?,?,?,?,?,?)`),
+		target.SourceID, target.Mailbox, target.UIDValidity, requestedUID, target.ItemID, `[]`)
+	requirements.NoError(err)
+
+	requested := target
+	requested.UID = requestedUID
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &requested})
+	requirements.NoError(err, "a valid membership must be checked by its requested UID, not replaced with the canonical copy")
+
+	stale := requested
+	stale.UID++
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &stale})
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+
+	_, err = a.store.DB().Exec(a.store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), target.ItemID)
+	requirements.NoError(err)
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &requested})
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied, "an explicit membership does not make a source-deleted item live")
+}
+
 func TestDaemonInboxIMAPSDKPreservesEmptyExpectedState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

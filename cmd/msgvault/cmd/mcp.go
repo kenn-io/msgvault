@@ -273,18 +273,18 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.AttachmentsDir = cfg.AttachmentsDir()
 		opts.DataDir = cfg.Data.DataDir
 	}
-	capabilities, discoveryErr := st.MCPCapabilities(ctx)
+	health, capabilityErr := st.Health(ctx)
+	var schemaVersion string
+	if health != nil && health.APISchemaVersion != nil {
+		schemaVersion = *health.APISchemaVersion
+	}
+	capabilities, discoveryErr := st.MCPCapabilitiesForSchemaVersion(ctx, schemaVersion)
 	if discoveryErr != nil {
 		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
 	} else {
 		backend := newDaemonMCPOperations(st, capabilities)
 		opts.Operations = backend
 		opts.OperationCapabilities = backend.capabilities()
-	}
-	health, capabilityErr := st.Health(ctx)
-	var schemaVersion string
-	if health != nil && health.APISchemaVersion != nil {
-		schemaVersion = *health.APISchemaVersion
 	}
 	if capabilityErr == nil && health != nil && health.Vector != nil &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
