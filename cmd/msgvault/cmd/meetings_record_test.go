@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -127,4 +128,70 @@ func TestMeetingRecordsHiddenForT4OnlyDaemon(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMeetingRecordPlainTextOutputSanitizesArchivedFields(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	unsafe := "Planning\r\nforged \x1b]52;c;clipboard\a"
+	occurrence := store.CalendarOccurrence{
+		Ref: "evt:10", Start: time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC),
+		Status: "confirmed", Subject: unsafe,
+	}
+	record := store.MeetingRecord{
+		Ref: "msg:10", Occurrence: &occurrence, OwnerRSVP: "accepted\x1b[31m",
+		Items: []store.MeetingItem{{
+			MessageID: 11, SentAt: occurrence.Start, Title: unsafe, FollowUp: "message:11\rforged",
+			Content: &meetingcontent.Packet{Meetings: []meetingcontent.Entry{{
+				Content: meetingcontent.Content{Summary: meetingcontent.Section{Text: "First line\nSecond line\x1b[31m"}},
+			}}},
+		}},
+	}
+	var output bytes.Buffer
+	command := &cobra.Command{}
+	command.SetOut(&output)
+	requirements.NoError(writeMeetingRecord(command, record))
+	assertions.NotContains(output.String(), "\x1b")
+	assertions.NotContains(output.String(), "\a")
+	assertions.NotContains(output.String(), "\r")
+	assertions.Contains(output.String(), "Planning  forged ")
+	assertions.Contains(output.String(), "First line\nSecond line")
+}
+
+type personMeetingsTextTestClient struct {
+	meetingRecordsCommandClient
+
+	page daemonclient.PersonMeetingsResponse
+}
+
+func (c *personMeetingsTextTestClient) APISchemaVersion(context.Context) (string, error) {
+	return meetingRecordsMinAPISchemaVersion, nil
+}
+
+func (c *personMeetingsTextTestClient) ListPersonMeetings(context.Context, string, store.PersonMeetingsQuery) (daemonclient.PersonMeetingsResponse, error) {
+	return c.page, nil
+}
+
+func TestPersonMeetingsPlainTextOutputSanitizesArchivedTitle(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	client := &personMeetingsTextTestClient{page: daemonclient.PersonMeetingsResponse{
+		Items: []store.MeetingRecordSummary{{
+			Ref: "msg:7", Start: time.Date(2027, 3, 1, 10, 0, 0, 0, time.UTC),
+			Title: "Planning\r\nforged \x1b[31m",
+		}},
+	}}
+	command := newPersonMeetingsCommand(meetingRecordsCommandDeps{
+		open: func(context.Context) (meetingRecordsCommandClient, func(), error) {
+			return client, func() {}, nil
+		},
+	})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"person:7"})
+	requirements.NoError(command.ExecuteContext(t.Context()))
+	assertions.NotContains(output.String(), "\x1b")
+	assertions.NotContains(output.String(), "\r")
+	assertions.NotContains(output.String(), "\nforged")
+	assertions.Contains(output.String(), "Planning  forged")
 }

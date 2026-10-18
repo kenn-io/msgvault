@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const meetingRecordsMinAPISchemaVersion = "3.25.0"
@@ -103,7 +104,7 @@ func newMeetingSuggestCommand(deps meetingRecordsCommandDeps) *cobra.Command {
 			return writeMeetingJSON(cmd, items)
 		}
 		for _, item := range items {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tmessage %d\t%d minutes overlap\t%d shared attendees\n", item.Ref, item.MemberMessageID, item.OverlapMinutes, item.SharedAttendees); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\tmessage %d\t%d minutes overlap\t%d shared attendees\n", textutil.SanitizeTerminal(item.Ref), item.MemberMessageID, item.OverlapMinutes, item.SharedAttendees); err != nil {
 				return fmt.Errorf("write meeting suggestion: %w", err)
 			}
 		}
@@ -151,7 +152,7 @@ func newMeetingLinkCommand(deps meetingRecordsCommandDeps, unlink bool) *cobra.C
 	return command
 }
 func writeMeetingRecord(cmd *cobra.Command, record store.MeetingRecord) error {
-	if _, err := fmt.Fprintln(cmd.OutOrStdout(), record.Ref); err != nil {
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), textutil.SanitizeTerminal(record.Ref)); err != nil {
 		return fmt.Errorf("write meeting record: %w", err)
 	}
 	if record.Occurrence != nil {
@@ -160,18 +161,18 @@ func writeMeetingRecord(cmd *cobra.Command, record store.MeetingRecord) error {
 		}
 	}
 	if record.OwnerRSVP != "" {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Owner RSVP: %s\n", record.OwnerRSVP); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Owner RSVP: %s\n", textutil.SanitizeTerminal(record.OwnerRSVP)); err != nil {
 			return fmt.Errorf("write meeting RSVP: %w", err)
 		}
 	}
 	for _, item := range record.Items {
-		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\t%s\n", item.MessageID, item.SentAt.Format(time.RFC3339), item.Title, item.FollowUp); err != nil {
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\t%s\n", item.MessageID, item.SentAt.Format(time.RFC3339), textutil.SanitizeTerminal(item.Title), textutil.SanitizeTerminal(item.FollowUp)); err != nil {
 			return fmt.Errorf("write meeting item: %w", err)
 		}
 		if item.Content != nil {
 			for _, entry := range item.Content.Meetings {
 				if entry.Content.Summary.Text != "" {
-					if _, err := fmt.Fprintln(cmd.OutOrStdout(), entry.Content.Summary.Text); err != nil {
+					if _, err := fmt.Fprintln(cmd.OutOrStdout(), textutil.SanitizeTerminalMultiline(entry.Content.Summary.Text)); err != nil {
 						return fmt.Errorf("write meeting summary: %w", err)
 					}
 				}

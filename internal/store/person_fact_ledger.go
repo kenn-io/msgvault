@@ -931,7 +931,8 @@ func scanPersonFactStatusEvent(row scanner) (personfacts.EvidenceStatusEvent, er
 
 const personFactDecisionColumns = `d.id, d.person_id, d.resolution_id, d.decision_key,
 	COALESCE(c.claim_key, ''), d.action, d.reason, CAST(d.score_json AS TEXT),
-	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at`
+	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at,
+	r.resolved_at`
 
 func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var decision personfacts.Decision
@@ -939,10 +940,11 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var projectionKind sql.NullString
 	var projectionRowID sql.NullInt64
 	var createdAt personFactTimestamp
+	var resolvedAt personFactTimestamp
 	err := row.Scan(
 		&decision.ID, &decision.PersonID, &decision.ResolutionID, &decision.DecisionKey,
 		&decision.ClaimKey, &decision.Action, &decision.Reason, &scoreJSON,
-		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt,
+		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt, &resolvedAt,
 	)
 	if err != nil {
 		return personfacts.Decision{}, err
@@ -954,6 +956,7 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 		decision.Projection = &personfacts.ProjectionRef{Kind: projectionKind.String, RowID: projectionRowID.Int64}
 	}
 	decision.CreatedAt = createdAt.Time
+	decision.ResolvedAt = resolvedAt.Time
 	return decision, nil
 }
 
@@ -1128,6 +1131,7 @@ func (s *Store) hydratePersonFactResolutionTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.resolution_id = ?
@@ -1170,6 +1174,7 @@ func loadPersonFactDecisionByKeyTx(
 	decision, err := scanPersonFactDecision(tx.QueryRowContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.person_id = ? AND d.decision_key = ?`, personID, decisionKey))

@@ -458,6 +458,9 @@ type Decision struct {
 	CompetingClaimKey string         `json:"competing_claim_key,omitempty"`
 	Projection        *ProjectionRef `json:"projection,omitzero" nullable:"false"`
 	CreatedAt         time.Time      `json:"created_at"`
+	// ResolvedAt is the resolution's world-time, used internally to date actual
+	// projection transitions instead of ledger insertion time.
+	ResolvedAt time.Time `json:"-"`
 }
 
 type Resolution struct {

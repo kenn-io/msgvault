@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 func newPersonMeetingsCommand(deps meetingRecordsCommandDeps) *cobra.Command {
@@ -49,7 +50,7 @@ func newPersonMeetingsCommand(deps meetingRecordsCommandDeps) *cobra.Command {
 			return writeMeetingJSON(cmd, page)
 		}
 		for _, item := range page.Items {
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%d notes\t%s\n", item.Ref, item.Start.Format(time.RFC3339), item.ItemCount, item.Title); err != nil {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%d notes\t%s\n", textutil.SanitizeTerminal(item.Ref), item.Start.Format(time.RFC3339), item.ItemCount, textutil.SanitizeTerminal(item.Title)); err != nil {
 				return fmt.Errorf("write person meeting: %w", err)
 			}
 		}

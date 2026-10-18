@@ -63,7 +63,7 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 	}
 	relevant := map[string]personfacts.Decision{}
 	for _, d := range decisions {
-		if d.Action == personfacts.DecisionApplied && !d.CreatedAt.Before(opts.AsOf.AddDate(0, 0, -90)) && !d.CreatedAt.After(opts.AsOf) {
+		if d.Action == personfacts.DecisionApplied && d.Projection != nil {
 			if _, ok := relevant[d.ClaimKey]; !ok {
 				relevant[d.ClaimKey] = d
 			}
@@ -137,6 +137,14 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 			byID[e.ID] = e
 		}
 		for _, claim := range selected {
+			decision := relevant[claim.ClaimKey]
+			changedAt := decision.ResolvedAt
+			if claim.ValidFrom != nil {
+				changedAt = *claim.ValidFrom
+			}
+			if changedAt.Before(opts.AsOf.AddDate(0, 0, -90)) || changedAt.After(opts.AsOf) {
+				continue
+			}
 			supported := []personfacts.Evidence{}
 			for _, eid := range claim.EvidenceIDs {
 				e, ok := byID[eid]
@@ -181,7 +189,7 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 			if definition, err := attrs.GetAttributeDefinitionBySlugContext(ctx, store.AttributeObjectPerson, target.Slug); err == nil {
 				label = definition.Label
 			}
-			fact := personcard.FactChange{ID: relevant[claim.ClaimKey].ID, Supported: true, ChangedAt: relevant[claim.ClaimKey].CreatedAt, Label: label, Text: text, EvidenceRef: ""}
+			fact := personcard.FactChange{ID: decision.ID, Supported: true, Relation: string(claim.Relation), ChangedAt: changedAt, Label: label, Text: text, EvidenceRef: ""}
 			for _, evidence := range supported {
 				if personcard.ValidCitationRef(evidence.Input.SourceRef) && (strings.HasPrefix(evidence.Input.SourceRef, "message:") || strings.HasPrefix(evidence.Input.SourceRef, "msg:") || strings.HasPrefix(evidence.Input.SourceRef, "evt:")) {
 					fact.EvidenceRef = evidence.Input.SourceRef

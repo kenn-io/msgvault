@@ -270,6 +270,90 @@ func TestPersonCardFactJoinUsesSupportedHistoryAndCurrentSensitivity(t *testing.
 	assertions.Empty(read().Items)
 }
 
+func TestPersonCardFactUsesProjectionTransitionTimeAndSkipsUnchangedSupport(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, id, target, "fact-transition-first", `"chat"`)
+	firstDecisions, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{Limit: 10})
+	requirements.NoError(err)
+	requirements.Len(firstDecisions, 1)
+	requirements.NotNil(firstDecisions[0].Projection)
+
+	applyPersonFactAPIGenerationWithRelation(t, st, id, target, "fact-transition-repeat", `"chat"`,
+		personfacts.RelationSupport, 900, personFactAPINow.Add(24*time.Hour))
+	decisions, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{Limit: 10})
+	requirements.NoError(err)
+	requirements.NotEmpty(decisions)
+	unchangedApplied := false
+	for _, decision := range decisions {
+		unchangedApplied = unchangedApplied || decision.Action == personfacts.DecisionApplied && decision.Projection == nil
+	}
+	requirements.True(unchangedApplied)
+
+	now := time.Now().UTC().Add(time.Minute)
+	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true}}
+	srv.personCardFacts(t.Context(), id, &in, personcard.Options{AsOf: now})
+	requirements.Len(in.Facts, 1)
+	assertions.Equal(firstDecisions[0].ID, in.Facts[0].ID)
+	assertions.Equal(personFactAPINow, in.Facts[0].ChangedAt)
+}
+
+func TestPersonCardFactRendersRetiredRelation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGenerationWithRelation(t, st, id, target, "fact-retirement-first", `"chat"`,
+		personfacts.RelationSupport, 0, personFactAPINow)
+	applyPersonFactAPIGenerationWithRelation(t, st, id, target, "fact-retirement-supersede", `"chat"`,
+		personfacts.RelationSupersede, 1000, personFactAPINow.Add(time.Hour))
+	decisions, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{Limit: 10})
+	requirements.NoError(err)
+	requirements.NotEmpty(decisions)
+	claims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{
+		Target:      &personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision},
+		AnyRevision: true, Limit: 10,
+	})
+	requirements.NoError(err)
+	var supersedeKey string
+	for _, claim := range claims {
+		if claim.Relation == personfacts.RelationSupersede {
+			supersedeKey = claim.ClaimKey
+			break
+		}
+	}
+	requirements.NotEmpty(supersedeKey)
+	foundAppliedRetirement := false
+	for _, decision := range decisions {
+		if decision.ClaimKey == supersedeKey && decision.Action == personfacts.DecisionApplied && decision.Projection != nil {
+			foundAppliedRetirement = true
+		}
+	}
+	requirements.True(foundAppliedRetirement)
+
+	now := time.Now().UTC().Add(time.Minute)
+	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true}}
+	opts := personcard.Options{AsOf: now}
+	srv.personCardFacts(t.Context(), id, &in, opts)
+	var retiredFact *personcard.FactChange
+	for i := range in.Facts {
+		if in.Facts[i].Relation == string(personfacts.RelationSupersede) {
+			retiredFact = &in.Facts[i]
+			break
+		}
+	}
+	requirements.NotNil(retiredFact)
+	card := personcard.Assemble(personcard.Inputs{
+		CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true},
+		Facts: []personcard.FactChange{*retiredFact},
+	}, opts)
+	requirements.Len(card.Items, 1)
+	assertions.Equal(string(personfacts.RelationSupersede), card.Items[0].Relation)
+	assertions.Contains(personcard.RenderMarkdown(card, "external"), "retired (superseded)")
+}
+
 func TestPersonCardFactJoinBatchesEvidenceSummaries(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

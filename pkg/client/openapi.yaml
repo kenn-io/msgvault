@@ -11595,6 +11595,12 @@ components:
         rank:
           format: int64
           type: integer
+        relation:
+          enum:
+            - support
+            - contradict
+            - supersede
+          type: string
         stale:
           type: boolean
         subkind:

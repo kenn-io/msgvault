@@ -739,6 +739,7 @@ export * from "./personCardCoverage";
 export * from "./personCardFreshnessBlock";
 export * from "./personCardFreshnessBlockProjections";
 export * from "./personCardItem";
+export * from "./personCardItemRelation";
 export * from "./personCardItemText";
 export * from "./personCardLastInteraction";
 export * from "./personCardMeetings";

@@ -2146,6 +2146,24 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+type PersonCardItemRelation string
+
+const (
+	Contradict PersonCardItemRelation = "contradict"
+	Supersede  PersonCardItemRelation = "supersede"
+	Support    PersonCardItemRelation = "support"
+)
+
+// Validate checks if the PersonCardItemRelation value is valid
+func (p PersonCardItemRelation) Validate() error {
+	switch p {
+	case Contradict, Supersede, Support:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCardItemRelation value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (

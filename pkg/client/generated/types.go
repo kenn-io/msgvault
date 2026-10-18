@@ -10932,18 +10932,19 @@ func (p PersonCardFreshnessBlock) Validate() error {
 }
 
 type PersonCardItem struct {
-	AssigneeClass *string            `json:"assignee_class,omitzero"`
-	Cite          PersonCardCite     `json:"cite"`
-	ContentTrust  string             `json:"content_trust" validate:"required"`
-	Date          string             `json:"date" validate:"required"`
-	DateRole      string             `json:"date_role" validate:"required"`
-	ID            string             `json:"id" validate:"required"`
-	Kind          string             `json:"kind" validate:"required"`
-	Overdue       bool               `json:"overdue"`
-	Rank          int64              `json:"rank"`
-	Stale         bool               `json:"stale"`
-	Subkind       *string            `json:"subkind,omitzero"`
-	UntrustedText PersonCardItemText `json:"untrusted_text"`
+	AssigneeClass *string                 `json:"assignee_class,omitzero"`
+	Cite          PersonCardCite          `json:"cite"`
+	ContentTrust  string                  `json:"content_trust" validate:"required"`
+	Date          string                  `json:"date" validate:"required"`
+	DateRole      string                  `json:"date_role" validate:"required"`
+	ID            string                  `json:"id" validate:"required"`
+	Kind          string                  `json:"kind" validate:"required"`
+	Overdue       bool                    `json:"overdue"`
+	Rank          int64                   `json:"rank"`
+	Relation      *PersonCardItemRelation `json:"relation,omitempty"`
+	Stale         bool                    `json:"stale"`
+	Subkind       *string                 `json:"subkind,omitzero"`
+	UntrustedText PersonCardItemText      `json:"untrusted_text"`
 }
 
 func (p PersonCardItem) Validate() error {
@@ -10967,6 +10968,13 @@ func (p PersonCardItem) Validate() error {
 	}
 	if err := typesValidator.Var(p.Kind, "required"); err != nil {
 		errors = errors.Append("Kind", err)
+	}
+	if p.Relation != nil {
+		if v, ok := any(p.Relation).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Relation", err)
+			}
+		}
 	}
 	if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {

@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const archiveCalendarEventsMinAPISchemaVersion = "3.24.0"
@@ -148,7 +149,9 @@ func newCalendarEventCommand(deps calendarEventsCommandDeps) *cobra.Command {
 }
 
 func writeCalendarOccurrence(cmd *cobra.Command, o store.CalendarOccurrence) error {
-	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n", o.Ref, o.Start.Format(time.RFC3339), o.Status, o.Subject)
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\t%s\n",
+		textutil.SanitizeTerminal(o.Ref), o.Start.Format(time.RFC3339),
+		textutil.SanitizeTerminal(o.Status), textutil.SanitizeTerminal(o.Subject))
 	if err != nil {
 		return fmt.Errorf("write calendar occurrence: %w", err)
 	}

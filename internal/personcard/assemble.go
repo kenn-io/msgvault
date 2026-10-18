@@ -236,7 +236,7 @@ func Assemble(in Inputs, opts Options) Card {
 			trust = "user"
 			kind = "attribute_value"
 		}
-		item := Item{ID: id, Kind: "fact_change", Date: date(f.ChangedAt), DateRole: "changed", ContentTrust: trust, Cite: cite(kind, ref, f.ChangedAt, opts.WebBaseURL), when: f.ChangedAt}
+		item := Item{ID: id, Kind: "fact_change", Relation: enum(f.Relation, "support", "contradict", "supersede"), Date: date(f.ChangedAt), DateRole: "changed", ContentTrust: trust, Cite: cite(kind, ref, f.ChangedAt, opts.WebBaseURL), when: f.ChangedAt}
 		if !f.User {
 			item.Cite.EvidenceRef = f.EvidenceRef
 			item.Cite.WebURL = webURL(f.EvidenceRef, opts.WebBaseURL)

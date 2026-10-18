@@ -94,6 +94,7 @@ type FactChange struct {
 	User        bool
 	Sensitive   bool
 	Supported   bool
+	Relation    string
 	ChangedAt   time.Time
 	Label       string
 	Text        string
@@ -178,6 +179,7 @@ type Item struct {
 	ID            string   `json:"id"`
 	Kind          string   `json:"kind"`
 	Subkind       string   `json:"subkind,omitempty"`
+	Relation      string   `json:"relation,omitempty" enum:"support,contradict,supersede"`
 	Rank          int      `json:"rank"`
 	Date          string   `json:"date"`
 	DateRole      string   `json:"date_role"`

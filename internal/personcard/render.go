@@ -93,7 +93,14 @@ func RenderMarkdown(card Card, affiliation string) string {
 		case "meeting_action":
 			fmt.Fprintf(&b, "meeting action (pending, %s): %s", enum(i.AssigneeClass, "owner", "person", "other", "none"), EscapeMarkdown(i.UntrustedText.Text))
 		case "fact_change":
-			fmt.Fprintf(&b, "changed %s: %s", EscapeMarkdown(i.UntrustedText.Label), EscapeMarkdown(i.UntrustedText.Text))
+			action := "changed"
+			switch i.Relation {
+			case "contradict":
+				action = "retired (contradicted)"
+			case "supersede":
+				action = "retired (superseded)"
+			}
+			fmt.Fprintf(&b, "%s %s: %s", action, EscapeMarkdown(i.UntrustedText.Label), EscapeMarkdown(i.UntrustedText.Text))
 		case "agenda":
 			fmt.Fprintf(&b, "agenda: %s", EscapeMarkdown(i.UntrustedText.Text))
 		}
