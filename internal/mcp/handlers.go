@@ -152,6 +152,7 @@ type handlers struct {
 	archiveCalendarEvents CalendarEventsBackend
 	calendar              CalendarBackend
 	personAgendaBackend   PersonAgendaBackend
+	personCards           PersonCardsBackend
 	kata                  KataBackend
 	identityReview        IdentityReviewBackend
 	personCardDAV         PersonCardDAVBackend

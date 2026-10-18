@@ -3243,6 +3243,30 @@ shipped definitions and complete workflow.
 
 ---
 
+## person card
+
+Prepare a read-only card before a meeting or reply. Requires owner access and
+daemon API schema 3.26.0 or later.
+
+```bash
+msgvault person card email:alex@example.com
+msgvault person card 7 --json
+msgvault person card person:7 --as-of 2026-10-17T14:00:00Z --max-items 3 --max-bytes 16384
+```
+
+The ref accepts a numeric person ID, `person:<id>`, `participant:<id>`, or
+`email:<address>`. Markdown is the default. `--format json` and `--json` print
+the result envelope; `--json` takes precedence over `--format`. Optional
+`--affiliation internal|external` adds a caller-supplied header label.
+
+`--max-items` defaults to 3 (1–10); `--max-bytes` defaults to 16384
+(2048–65536). The budget counts card JSON or Markdown content, excluding the
+envelope. A card that still cannot fit returns `budget_too_small`.
+`--as-of` evaluates due dates and windows over current snapshots, within ten
+years before to one year after collection time. Source ages use collection
+time. See [person cards](usage/people.md#prepare-for-a-meeting-or-a-reply) for
+statuses, gaps and freshness.
+
 ## person agenda
 
 Read and organize a person's live Kata tasks. Configure
@@ -4183,8 +4207,8 @@ msgvault skills uninstall
 ```
 
 Install detects Claude Code and Codex from `~/.claude` and `~/.codex`, then
-writes the `msgvault-search`, `msgvault-attachments`, and
-`msgvault-analytics` skills to their user-level skill directories. Existing
+writes the `msgvault-search`, `msgvault-attachments`,
+`msgvault-analytics`, and `msgvault-meeting-prep` skills to their user-level skill directories. Existing
 generated copies are updated in place; files without msgvault's generation
 marker are preserved unless `--force` is supplied.
 

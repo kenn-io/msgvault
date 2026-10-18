@@ -15,9 +15,10 @@ session.
 |---|---|
 | `msgvault-search` | Query syntax, search modes (fts/vector/hybrid), reading messages, exporting raw email |
 | `msgvault-attachments` | Finding attachments, filtering by type/size, exporting by content hash or message |
+| `msgvault-meeting-prep` | Read-only meeting and reply preparation with dated person cards, citations, honest gaps, and freshness warnings |
 | `msgvault-analytics` | Built-in aggregates, raw SQL over the analytics views, time-series queries |
 
-All three cover read-only workflows only. They explicitly tell agents
+Every skill covers read-only workflows and explicitly tells agents
 not to run archive-mutating commands (sync, import, dedup, deletion)
 without your direction.
 

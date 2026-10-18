@@ -175,6 +175,8 @@ type ServeOptions struct {
 	ArchiveCalendarEvents CalendarEventsBackend
 	MeetingRecords        MeetingRecordsBackend
 	Calendar              CalendarBackend
+	// PersonCards exposes owner-only projections when the daemon supports them.
+	PersonCards PersonCardsBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
@@ -392,6 +394,7 @@ func newMCPServerWithPolicy(
 		archiveCalendarEvents: opts.ArchiveCalendarEvents,
 		calendar:              opts.Calendar,
 		personAgendaBackend:   opts.PersonAgendaBackend,
+		personCards:           opts.PersonCards,
 		kata:                  opts.Kata,
 		identityReview:        opts.IdentityReview,
 		personCardDAV:         opts.PersonCardDAV,

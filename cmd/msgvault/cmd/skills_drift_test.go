@@ -71,6 +71,11 @@ func validateSkillInvocation(root *cobra.Command, inv skillInvocation) error {
 	if depth == 0 {
 		return fmt.Errorf("unknown command %q in %q", inv.Tokens[0], inv.Raw)
 	}
+	if depth < len(inv.Tokens) && cmd.HasSubCommands() && !cmd.Runnable() &&
+		!strings.HasPrefix(inv.Tokens[depth], "-") {
+		return fmt.Errorf("unknown command %q for %q (in %q)",
+			inv.Tokens[depth], cmd.CommandPath(), inv.Raw)
+	}
 	for _, token := range inv.Tokens[depth:] {
 		if err := validateFlagToken(cmd, token, inv.Raw); err != nil {
 			return err
@@ -126,24 +131,45 @@ func TestExtractSkillInvocations(t *testing.T) {
 	assert.Equal("show-message", got[2].Tokens[0])
 }
 
+func TestExtractSkillInvocations_IgnoresMultilineInlineSpan(t *testing.T) {
+	content := "Ignore `msgvault person\nno-such --json` across lines.\n" +
+		"Use `msgvault stats --json` instead."
+	got := extractSkillInvocations(content)
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"stats", "--json"}, got[0].Tokens)
+}
+
 func TestValidateSkillInvocation_CatchesDrift(t *testing.T) {
+	requirements := require.New(t)
+
 	bad := skillInvocation{
 		Raw:    "msgvault no-such-command --json",
 		Tokens: []string{"no-such-command", "--json"},
 	}
-	require.Error(t, validateSkillInvocation(rootCmd, bad))
+	requirements.Error(validateSkillInvocation(rootCmd, bad))
+
+	for _, tokens := range [][]string{
+		{"person", "no-such"},
+		{"person", "no-such", "--json"},
+	} {
+		badNested := skillInvocation{
+			Raw:    "msgvault " + strings.Join(tokens, " "),
+			Tokens: tokens,
+		}
+		requirements.ErrorContains(validateSkillInvocation(rootCmd, badNested), "unknown command")
+	}
 
 	badFlag := skillInvocation{
 		Raw:    "msgvault stats --no-such-flag",
 		Tokens: []string{"stats", "--no-such-flag"},
 	}
-	require.Error(t, validateSkillInvocation(rootCmd, badFlag))
+	requirements.Error(validateSkillInvocation(rootCmd, badFlag))
 
 	good := skillInvocation{
 		Raw:    "msgvault search from:alice@example.com --json -n 20",
 		Tokens: []string{"search", "from:alice@example.com", "--json", "-n", "20"},
 	}
-	require.NoError(t, validateSkillInvocation(rootCmd, good))
+	requirements.NoError(validateSkillInvocation(rootCmd, good))
 }
 
 // TestSkillsMatchCLI is the drift guard: every msgvault invocation in
