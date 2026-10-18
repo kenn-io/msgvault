@@ -4,8 +4,8 @@
 
 export interface EmailFamilyDecisionInput {
   actor_kind: string;
-  actor_ref: string;
-  expected_family_revision: string;
+  actor_ref?: string;
+  expected_family_revision?: string;
   kind: string;
   message_ids: number[];
   request_key: string;

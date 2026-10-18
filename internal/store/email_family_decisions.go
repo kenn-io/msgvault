@@ -28,9 +28,9 @@ type EmailFamilyDecisionInput struct {
 	RequestKey             string  `json:"request_key"`
 	Kind                   string  `json:"kind"`
 	MessageIDs             []int64 `json:"message_ids"`
-	ExpectedFamilyRevision string  `json:"expected_family_revision"`
+	ExpectedFamilyRevision string  `json:"expected_family_revision,omitzero"`
 	ActorKind              string  `json:"actor_kind"`
-	ActorRef               string  `json:"actor_ref"`
+	ActorRef               string  `json:"actor_ref,omitzero"`
 	SourceIDs              []int64 `json:"source_ids,omitzero"`
 }
 

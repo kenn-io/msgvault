@@ -4152,8 +4152,8 @@ func (e EmailFamilyDecision) Validate() error {
 
 type EmailFamilyDecisionInput struct {
 	ActorKind              string  `json:"actor_kind" validate:"required"`
-	ActorRef               string  `json:"actor_ref" validate:"required"`
-	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
+	ActorRef               *string `json:"actor_ref,omitzero"`
+	ExpectedFamilyRevision *string `json:"expected_family_revision,omitzero"`
 	Kind                   string  `json:"kind" validate:"required"`
 	MessageIds             []int64 `json:"message_ids" validate:"required"`
 	RequestKey             string  `json:"request_key" validate:"required"`

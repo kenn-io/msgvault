@@ -4621,9 +4621,7 @@ components:
         - request_key
         - kind
         - message_ids
-        - expected_family_revision
         - actor_kind
-        - actor_ref
       type: object
     EmailFamilyDecisionPreview:
       additionalProperties: true
