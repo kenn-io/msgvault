@@ -77,7 +77,7 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	staged, err := muesli.StageRecordingUpload(r.Context(), upload, r.Body, capBytes)
 	if err != nil {
-		s.writeMuesliRecordingImportError(w, r, err)
+		s.writeMuesliRecordingImportError(w, err)
 		return
 	}
 	defer func() { _ = staged.Close() }()
@@ -92,7 +92,7 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 	defer done()
 	changed, err := importer.ImportMuesliRecording(r.Context(), upload, io.NewSectionReader(staged.File, 0, staged.Size), capBytes)
 	if err != nil {
-		s.writeMuesliRecordingImportError(w, r, err)
+		s.writeMuesliRecordingImportError(w, err)
 		return
 	}
 	status := "unchanged"
@@ -102,7 +102,7 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, muesli.RemoteResult{Status: status, MessageID: messageID, Changed: changed})
 }
 
-func (s *Server) writeMuesliRecordingImportError(w http.ResponseWriter, r *http.Request, err error) {
+func (s *Server) writeMuesliRecordingImportError(w http.ResponseWriter, err error) {
 	if s.writeIfContextError(w, err) {
 		return
 	}

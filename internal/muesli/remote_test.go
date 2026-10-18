@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,6 +277,28 @@ func TestRemoteScanUploadsOnlyNewOrEditedMeetings(t *testing.T) {
 	require.NoError(ForgetRemoteUploads(t.Context(), opts))
 	assert.Equal(1, scan(opts), "registration clears the record")
 	assert.Equal(0, scan(opts))
+}
+
+func TestLoadRemoteUploadsInvalidatesIDOnlyRecordingAcknowledgements(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "uploads.json")
+	legacy := `{"version":1,"meetings":{"1":"meeting-digest:recording-hash"},"recordings":{"1":"recording-hash"}}`
+	require.NoError(os.WriteFile(path, []byte(legacy), 0600))
+
+	uploads, err := loadRemoteUploads(path)
+	require.NoError(err)
+	assert.True(uploads.dirty)
+	assert.Equal("meeting-digest:recording-hash", uploads.Meetings[1], "meeting acknowledgements remain usable")
+	assert.False(uploads.recordingAcknowledged("meeting:1:20260901T140003Z", "recording-hash"), "row-ID-only recording acknowledgements are ambiguous")
+	require.NoError(uploads.save())
+
+	data, err := os.ReadFile(path)
+	require.NoError(err)
+	var migrated remoteUploads
+	require.NoError(json.Unmarshal(data, &migrated))
+	assert.Equal(remoteUploadsVersion, migrated.Version)
+	assert.Empty(migrated.Recordings)
 }
 
 func TestRemoteScanRetriesUnacknowledgedUpload(t *testing.T) {

@@ -107,15 +107,17 @@ func TestPrepareRecordingDefersUnsafeAndUnfinishedFiles(t *testing.T) {
 	recording, err = PrepareRecording(t.Context(), dbPath, path, 12)
 	require.ErrorIs(err, ErrRecordingTooLarge)
 	assert.Nil(recording)
-	outside := filepath.Join(t.TempDir(), "meeting.wav")
+	outside := filepath.Join(filepath.Dir(dbPath), "outside.wav")
 	require.NoError(os.WriteFile(outside, recordingWAV(), 0600))
-	for _, target := range []string{outside, "../meeting.wav", filepath.Dir(path)} {
+	old = time.Now().Add(-time.Minute)
+	require.NoError(os.Chtimes(outside, old, old))
+	for _, target := range []string{outside, "../outside.wav", filepath.Dir(path)} {
 		recording, err = PrepareRecording(t.Context(), dbPath, target, 0)
 		require.NoError(err)
 		assert.Nil(recording)
 	}
 	link := filepath.Join(filepath.Dir(path), "link.wav")
-	require.NoError(os.Symlink(outside, link))
+	require.NoError(os.Symlink(path, link))
 	recording, err = PrepareRecording(t.Context(), dbPath, link, 0)
 	require.NoError(err)
 	assert.Nil(recording)
@@ -230,6 +232,43 @@ func TestScanRemoteRecordingNotResentAfterTranscriptEdit(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, requests, "the changed transcript is reoffered")
 	assert.Equal(1, uploads, "unchanged acknowledged audio is not retransmitted")
+}
+
+func TestScanRemoteRecordingAcknowledgementUsesMeetingIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
+	uploads := 0
+	dir := t.TempDir()
+	opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
+		uploads++
+		_, err := f.imp.ImportRecording(ctx, upload, dir, io.NewSectionReader(recording.File, 0, recording.Size), 0)
+		return err
+	}
+	requests := 0
+	send := func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
+		requests++
+		return f.imp.ImportRemote(ctx, request)
+	}
+	_, err := ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+
+	_, err = f.muesli.Exec(`DELETE FROM meetings WHERE id = ?`, meetingID)
+	require.NoError(err)
+	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{
+		"id": meetingID, "created_at": "2026-09-02 14:00:03", "saved_recording_path": path,
+	}))
+	_, err = ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+
+	assert.Equal(2, requests, "a reset database creates a new meeting identity even when the row ID is reused")
+	assert.Equal(2, uploads, "identical audio for a reused row ID still reaches the new archive message")
 }
 
 func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {

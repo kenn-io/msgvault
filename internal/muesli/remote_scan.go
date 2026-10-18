@@ -144,15 +144,19 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		}
 	}
 	recordingAcknowledged := false
+	recordingIdentity := ""
 	if recording != nil {
-		recordingAcknowledged = p.uploads.recordingAcknowledged(meeting.ID, recording.Hash)
+		recordingIdentity, err = meeting.SourceMessageID()
+		if err != nil {
+			return remoteInvalid("meeting", "cannot identify recording acknowledgement")
+		}
+		recordingAcknowledged = p.uploads.recordingAcknowledged(recordingIdentity, recording.Hash)
 		if recordingAcknowledged {
-			// Older upload records included this hash in the meeting digest.
-			// Persist it in the dedicated recording map as the cache is read.
-			p.uploads.recordRecording(meeting.ID, recording.Hash)
+			p.uploads.recordRecording(recordingIdentity, recording.Hash)
 		}
 	}
-	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) {
+	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) &&
+		(recording == nil || recordingAcknowledged) {
 		return recordingErr
 	}
 	result, err := p.send(ctx, r)
@@ -175,7 +179,7 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		if err := p.opts.SendRecording(ctx, upload, recording); err != nil {
 			return err
 		}
-		p.uploads.recordRecording(meeting.ID, recording.Hash)
+		p.uploads.recordRecording(recordingIdentity, recording.Hash)
 		p.sum.RecordingsStored++
 	}
 	p.uploads.record(meeting.ID, digest)

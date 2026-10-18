@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"go.kenn.io/kit/atomicfile"
 )
@@ -19,13 +18,13 @@ import (
 // costs a full re-upload, never archive data.
 type remoteUploads struct {
 	path       string
-	Version    int              `json:"version"`
-	Meetings   map[int64]string `json:"meetings"`
-	Recordings map[int64]string `json:"recordings"`
+	Version    int               `json:"version"`
+	Meetings   map[int64]string  `json:"meetings"`
+	Recordings map[string]string `json:"recordings"`
 	dirty      bool
 }
 
-const remoteUploadsVersion = 1
+const remoteUploadsVersion = 2
 
 // remoteUploadsPath scopes the record to one database, source, and daemon so
 // pointing the recorder at another archive uploads everything again.
@@ -37,7 +36,7 @@ func remoteUploadsPath(lockDir, canonicalDB, identifier, target string) string {
 func loadRemoteUploads(path string) (*remoteUploads, error) {
 	uploads := &remoteUploads{
 		path: path, Version: remoteUploadsVersion,
-		Meetings: map[int64]string{}, Recordings: map[int64]string{},
+		Meetings: map[int64]string{}, Recordings: map[string]string{},
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -47,11 +46,23 @@ func loadRemoteUploads(path string) (*remoteUploads, error) {
 		return nil, fmt.Errorf("read Muesli upload record: %w", err)
 	}
 	var stored remoteUploads
-	if json.Unmarshal(data, &stored) != nil || stored.Version != remoteUploadsVersion || stored.Meetings == nil {
+	if json.Unmarshal(data, &stored) != nil || stored.Meetings == nil {
 		// An unreadable cache only means every meeting is offered again; the
 		// next save replaces it.
 		uploads.dirty = true
 		return uploads, nil //nolint:nilerr // A corrupt cache must not block sync.
+	}
+	if stored.Version == 1 {
+		// Version 1 keyed recording acknowledgements only by Muesli row ID.
+		// A database reset can reuse that ID, so preserve meeting offers but
+		// invalidate every ambiguous recording receipt.
+		uploads.Meetings = stored.Meetings
+		uploads.dirty = true
+		return uploads, nil
+	}
+	if stored.Version != remoteUploadsVersion {
+		uploads.dirty = true
+		return uploads, nil //nolint:nilerr // An unknown cache version only loses acknowledgements.
 	}
 	uploads.Meetings = stored.Meetings
 	if stored.Recordings != nil {
@@ -80,13 +91,13 @@ func (u *remoteUploads) record(id int64, digest string) {
 	}
 }
 
-func (u *remoteUploads) recordingAcknowledged(id int64, hash string) bool {
-	return u.Recordings[id] == hash || strings.HasSuffix(u.Meetings[id], ":"+hash)
+func (u *remoteUploads) recordingAcknowledged(identity, hash string) bool {
+	return u.Recordings[identity] == hash
 }
 
-func (u *remoteUploads) recordRecording(id int64, hash string) {
-	if u.Recordings[id] != hash {
-		u.Recordings[id] = hash
+func (u *remoteUploads) recordRecording(identity, hash string) {
+	if u.Recordings[identity] != hash {
+		u.Recordings[identity] = hash
 		u.dirty = true
 	}
 }

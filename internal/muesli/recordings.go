@@ -344,7 +344,21 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 }
 
 func (imp *Importer) storeRecording(ctx context.Context, messageID int64, dir string, r *Recording) (bool, error) {
-	return imp.storeRecordingStream(ctx, messageID, dir, r.Hash, r.Size, r.MIMEType, io.NewSectionReader(r.File, 0, r.Size))
+	mediaType, err := recordingMediaType(r.File, r.Size)
+	if err != nil {
+		return false, err
+	}
+	if mediaType != r.MIMEType {
+		return false, ErrRecordingChanged
+	}
+	path, gotHash, gotSize, err := export.StoreAttachmentFromPathVerified(ctx, dir, r.File.Name(), r.Hash, r.Size, r.Size)
+	if errors.Is(err, export.ErrAttachmentSourceChanged) {
+		return false, ErrRecordingChanged
+	}
+	if err != nil {
+		return false, err
+	}
+	return imp.recordStoredRecording(ctx, messageID, path, gotHash, gotSize, mediaType)
 }
 
 func (imp *Importer) storeRecordingStream(ctx context.Context, messageID int64, dir, hashValue string, size int64, mediaType string, input io.Reader) (bool, error) {
@@ -366,6 +380,10 @@ func (imp *Importer) storeRecordingStream(ctx context.Context, messageID int64, 
 	if err != nil {
 		return false, err
 	}
+	return imp.recordStoredRecording(ctx, messageID, path, gotHash, gotSize, mediaType)
+}
+
+func (imp *Importer) recordStoredRecording(ctx context.Context, messageID int64, path, gotHash string, gotSize int64, mediaType string) (bool, error) {
 	message, err := imp.store.GetMessageContext(ctx, messageID)
 	if err != nil {
 		return false, err
