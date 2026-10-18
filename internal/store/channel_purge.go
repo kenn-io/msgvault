@@ -12,11 +12,7 @@ import (
 )
 
 // purgeQuerier is the exclusive connection a channel purge runs on.
-type purgeQuerier interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+type purgeQuerier = ConversationPolicyTx
 
 // channelPurge selects one Slack channel or one Discord parent and its threads.
 type channelPurge struct {

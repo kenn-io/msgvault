@@ -123,9 +123,13 @@ func buildViewSQL(def viewDef, probedCols map[string]bool) string {
 		selectClause += ", " + strings.Join(extra, ", ")
 	}
 
+	filter := ""
+	if def.name == datasetMessages && probedCols["conversation_tier"] {
+		filter = " WHERE conversation_tier='full'"
+	}
 	return fmt.Sprintf(
-		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)",
-		def.name, selectClause, escaped, hiveOpt,
+		"CREATE OR REPLACE VIEW %s AS %s FROM read_parquet('%s'%s)%s",
+		def.name, selectClause, escaped, hiveOpt, filter,
 	)
 }
 

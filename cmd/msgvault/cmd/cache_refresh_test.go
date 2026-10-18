@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/identityindex"
@@ -386,6 +387,8 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 		source.ID, "!cache-repair:example.org", "direct_chat", "Cache repair",
 	)
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "!cache-repair:example.org", conversationpolicy.Full))
 	sentAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	messageID, err := st.UpsertMessage(&store.Message{
 		ConversationID:  conversationID,
@@ -425,6 +428,8 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 		SourceAttachmentID: "beeper:mxc://example.org/share",
 		MediaType:          "image",
 	}}))
+	initialArchiveRevision, err := st.DerivedDataRevisionContext(testCtx)
+	require.NoError(err)
 	require.NoError(st.Close())
 
 	_, err = buildCache(dbPath, analyticsDir, true)
@@ -432,7 +437,7 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	initialState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
 	assert.Equal(query.CacheSchemaVersion, initialState.SchemaVersion)
-	assert.Equal(int64(1), initialState.DerivedDataRevision)
+	assert.Equal(initialArchiveRevision, initialState.DerivedDataRevision)
 
 	readCached := func() (string, any) {
 		t.Helper()
@@ -469,13 +474,19 @@ func TestRebuildCacheAfterDerivedRepairRefreshesCurrentCache(t *testing.T) {
 	assert.True(staleness.FullRebuild,
 		"an incremental append cannot replace already-cached repaired rows")
 
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	repairedArchiveRevision, err := st.DerivedDataRevisionContext(testCtx)
+	require.NoError(err)
+	require.NoError(st.Close())
 	require.NoError(rebuildCacheAfterWrite(dbPath, invocationFromContext(testCtx)))
 	assert.Contains(logs.String(), "cache rebuilt")
 	assert.Contains(logs.String(), "exported=")
 	repairedState, err := query.ReadCacheSyncState(analyticsDir)
 	require.NoError(err)
-	assert.Equal(int64(3), repairedState.DerivedDataRevision,
-		"initial attachment, classification commit, and completed rederive ledger each advance the existing revision")
+	assert.Greater(repairedState.DerivedDataRevision, initialState.DerivedDataRevision,
+		"completed rederive advances the existing revision")
+	assert.Equal(repairedArchiveRevision, repairedState.DerivedDataRevision)
 	afterSnippet, afterMetadata := readCached()
 	assert.Equal("https://example.com/post", afterSnippet)
 	require.NotNil(afterMetadata)
@@ -504,6 +515,8 @@ func TestRebuildCacheAfterMixedBeeperMetadataRefreshRebuildsExistingRows(t *test
 	require.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, "!mixed:example.org", "direct_chat", "Mixed")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "!mixed:example.org", conversationpolicy.Full))
 	insertMessage := func(id string, sentAt time.Time) int64 {
 		messageID, insertErr := st.UpsertMessage(&store.Message{
 			ConversationID: conversationID, SourceID: source.ID, SourceMessageID: id,

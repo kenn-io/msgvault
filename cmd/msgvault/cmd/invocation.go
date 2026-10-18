@@ -2,13 +2,16 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // invocationOptions is the set of root-owned options that belong to one
@@ -236,4 +239,36 @@ func clearInvocationFlags(root *cobra.Command) {
 			flag.Changed = false
 		}
 	}
+}
+
+// activateConversationPolicyWriter is only for authorized mutations. Read-only
+// and preview callers use openInitializedStoreForInvocation instead. The final
+// pass runs before closing the Store so standalone imports also attempt durable
+// cleanup without depending on a running daemon.
+func activateConversationPolicyWriter(ctx context.Context, state *invocation, st *store.Store, closeStore func()) (*store.Store, func(), error) {
+	ctx = withInvocation(ctx, state)
+	if state == nil || state.cfg == nil {
+		closeStore()
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	if err := initializeConversationPolicy(ctx, st, state.cfg, time.Now()); err != nil {
+		closeStore()
+		return nil, nil, err
+	}
+	return st, func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		if err := cleanupConversationPolicyRuntime(cleanupCtx, st); err != nil {
+			loggerFromContext(ctx).Warn("conversation policy derived cleanup pending", "error", err)
+		}
+		closeStore()
+	}, nil
+}
+
+func openConversationPolicyWriterForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	st, closeStore, err := openWritableStoreAndInitForInvocation(state)
+	if err != nil {
+		return nil, nil, err
+	}
+	return activateConversationPolicyWriter(ctx, state, st, closeStore)
 }

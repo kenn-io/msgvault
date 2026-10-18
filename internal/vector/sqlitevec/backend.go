@@ -12,6 +12,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,14 +31,17 @@ var _ vector.ChunkScoringBackend = (*Backend)(nil)
 var _ vector.FilteredCoverageBackend = (*Backend)(nil)
 var _ vector.ConvergedGenerationActivator = (*Backend)(nil)
 var _ vector.OrphanEmbeddingPruner = (*Backend)(nil)
+var _ vector.IneligibleEmbeddingPruner = (*Backend)(nil)
 
 // Options configures how Open establishes a Backend.
 type Options struct {
-	Path       string
-	MainPath   string            // filesystem path to msgvault.db; required for FusedSearch
-	Dimension  int               // default dimension for EnsureVectorTable at open
-	MainDB     *sql.DB           // handle to the main msgvault.db
-	BuildScope vector.BuildScope // empty means full corpus
+	// PolicyStore is the authoritative archive; nil is only for archive-free fixtures.
+	PolicyStore *store.Store
+	Path        string
+	MainPath    string            // filesystem path to msgvault.db; required for FusedSearch
+	Dimension   int               // default dimension for EnsureVectorTable at open
+	MainDB      *sql.DB           // handle to the main msgvault.db
+	BuildScope  vector.BuildScope // empty means full corpus
 	// ReadOnly indicates the main DB handle (MainDB) was opened read-only
 	// — e.g. the MCP server's store.OpenReadOnly (_query_only=true). When
 	// set, Open SKIPS BackfillEmbedGenForUpgrade, which would otherwise
@@ -48,6 +52,8 @@ type Options struct {
 	ReadOnly bool
 	// MetadataReadOnly opens existing vectors.db with query-only SQL and skips all writes.
 	MetadataReadOnly bool
+	// ExistingOnly opens writable storage with mode=rw, forbidding file creation.
+	ExistingOnly bool
 	// ANNWorkCeiling bounds rows considered by one accelerated search. Zero
 	// selects the production default. Requests above the ceiling use exact
 	// search so it does not cap the number of requested results.
@@ -60,12 +66,13 @@ type Options struct {
 // Backend implements vector.Backend and vector.FusingBackend against a
 // SQLite database with the sqlite-vec extension.
 type Backend struct {
-	db       *sql.DB // handle to vectors.db
-	mainDB   *sql.DB // handle to msgvault.db
-	path     string  // filesystem path to vectors.db
-	mainPath string  // filesystem path to msgvault.db (for ATTACH)
-	dim      int
-	scope    vector.BuildScope
+	policyStore *store.Store
+	db          *sql.DB // handle to vectors.db
+	mainDB      *sql.DB // handle to msgvault.db
+	path        string  // filesystem path to vectors.db
+	mainPath    string  // filesystem path to msgvault.db (for ATTACH)
+	dim         int
+	scope       vector.BuildScope
 	// readOnly is true when mainDB was opened read-only (MCP). The
 	// one-time upgrade backfill self-guards on it so it never writes
 	// through the read-only main handle. See Options.ReadOnly.
@@ -104,6 +111,13 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 		}
 		opts.ReadOnly = true
 	}
+	if opts.ExistingOnly {
+		var err error
+		dsn, _, err = sqliteutil.ExistingReadWriteDSN(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("resolve existing vectors.db: %w", err)
+		}
+	}
 	db, err := sql.Open(DriverName(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open vectors.db: %w", err)
@@ -125,6 +139,7 @@ func Open(ctx context.Context, opts Options) (*Backend, error) {
 	b := &Backend{
 		db:              db,
 		mainDB:          opts.MainDB,
+		policyStore:     opts.PolicyStore,
 		path:            opts.Path,
 		mainPath:        opts.MainPath,
 		dim:             opts.Dimension,
@@ -370,7 +385,7 @@ func (b *Backend) missingCoverageWhere(gen int64) (string, []any) {
 // coverage gate (missingCoverageWhere) and the empty-scope activation
 // guard so both always agree on what "in scope" means.
 func (b *Backend) liveScopeWhere() (string, []any) {
-	where := store.LiveMessagesWhere("", true)
+	where := b.liveMessageWhere("")
 	args := make([]any, 0, len(b.scope.MessageTypes)+len(b.scope.SourceIDs))
 	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
@@ -767,6 +782,12 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		return nil
 	}
 
+	release, err := b.acquirePolicyPublication(ctx, distinctMessageIDs(chunks))
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin upsert tx: %w", err)
@@ -1048,6 +1069,16 @@ func blobToFloat32(b []byte, dim int) ([]float32, error) {
 // generation exists, or a descriptive error if the message is not
 // embedded in the active generation.
 func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, error) {
+	if b.policyStore != nil {
+		release, err := b.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		if err := b.policyStore.CheckSQLiteConversationPolicyPublication(ctx, []int64{messageID}); err != nil {
+			return nil, err
+		}
+	}
 	active, err := b.ActiveGeneration(ctx)
 	if err != nil {
 		return nil, err
@@ -1134,7 +1165,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 	vecTable := VectorTableName(dim)
 
 	// Fast path: when no structured filter is set, run the ANN query
-	// unconstrained and post-filter deletions against the small hit
+	// unconstrained and post-filter policy/deletions against the small hit
 	// set. This avoids fetching every live message ID from main.db
 	// just to satisfy the deletion predicate, which is an O(total live
 	// messages) cost on every pure-vector search or find_similar call.
@@ -1393,7 +1424,7 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 	}
 	q := `SELECT id FROM messages
 	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND ` + store.LiveMessagesWhere("", true)
+	         AND ` + b.liveMessageWhere("")
 	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
 	if err != nil {
 		return nil, fmt.Errorf("live-hit filter: %w", err)
@@ -1438,7 +1469,7 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 			return nil, errors.New(listIDSchemaRequiredErrorText)
 		}
 	}
-	clauses := []string{store.LiveMessagesWhere("m", true)}
+	clauses := []string{b.liveMessageWhere("m")}
 	accountClauses, args := search.AccountScopeConditions(f.AccountScopes, "m")
 	clauses = append(clauses, accountClauses...)
 	if len(f.MessageIDs) > 0 {
@@ -1750,24 +1781,91 @@ func (b *Backend) Delete(ctx context.Context, gen vector.GenerationID, messageID
 // and attaches vectors.db on one pinned connection. Soft-deleted messages
 // remain present in main.messages and are intentionally preserved.
 func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
+	n, _, err := b.pruneEmbeddingBatch(ctx, false, false)
+	return n, err
+}
+
+// PruneIneligibleEmbeddings reconciles current full eligibility in every generation.
+func (b *Backend) PruneIneligibleEmbeddings(ctx context.Context) (int64, error) {
+	if b.policyStore == nil {
+		return 0, errors.New("policy cleanup requires PolicyStore")
+	}
+	var total int64
+	first := true
+	for {
+		n, ledger, err := b.pruneEmbeddingBatch(ctx, true, first)
+		first = false
+		total += n
+		if err != nil || (n == 0 && ledger == 0) {
+			return total, err
+		}
+	}
+}
+
+func (b *Backend) pruneEmbeddingBatch(ctx context.Context, policy, resetProgress bool) (int64, int64, error) {
+	var ledger int64
+	if policy {
+		release, err := b.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyExclusive)
+		if err != nil {
+			return 0, 0, err
+		}
+		defer release()
+	}
+
 	if b.mainPath == "" {
-		return 0, errors.New("prune orphan embeddings requires MainPath in Options")
+		return 0, 0, errors.New("prune orphan embeddings requires MainPath in Options")
 	}
 	conn, err := b.openFusedConn(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("open coordinated orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("open coordinated orphan prune: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("begin orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("begin orphan prune: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	const orphanWhere = `NOT EXISTS (
+	orphanWhere := `NOT EXISTS (
 		SELECT 1 FROM messages m WHERE m.id = e.message_id
 	)`
+	if policy {
+		orphanWhere = `e.message_id IN (SELECT candidate.message_id FROM vec.embeddings candidate WHERE NOT EXISTS (SELECT 1 FROM messages m WHERE m.id=candidate.message_id AND ` + store.FullMessageWhere("m") + `) GROUP BY candidate.message_id ORDER BY candidate.message_id LIMIT 500)`
+	}
+
+	if policy {
+		ledger, err = b.prunePolicyLedgerBatch(ctx, tx)
+		if err != nil {
+			return 0, 0, err
+		}
+		if resetProgress {
+			if _, err := tx.ExecContext(ctx, `UPDATE vec.embed_watermark SET watermark_id=0 WHERE watermark_id<>0`); err != nil {
+				return 0, 0, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE vec.embedding_document_progress SET reconcile_cursor='', journal_cursor='' WHERE reconcile_cursor<>'' OR journal_cursor<>''`); err != nil {
+				return 0, 0, err
+			}
+		}
+	}
+
+	affectedRows, err := tx.QueryContext(ctx, `SELECT e.generation_id FROM vec.embeddings e WHERE `+orphanWhere+` GROUP BY e.generation_id ORDER BY e.generation_id`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func() { _ = affectedRows.Close() }()
+	var affected []string
+	for affectedRows.Next() {
+		var id int64
+		if err := affectedRows.Scan(&id); err != nil {
+			return 0, 0, err
+		}
+		affected = append(affected, strconv.FormatInt(id, 10))
+	}
+	if err := affectedRows.Err(); err != nil {
+		return 0, 0, err
+	}
+
 	var pruned int64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM (
@@ -1776,18 +1874,18 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 			 WHERE `+orphanWhere+`
 			 GROUP BY e.generation_id, e.message_id
 		)`).Scan(&pruned); err != nil {
-		return 0, fmt.Errorf("count orphan embeddings: %w", err)
+		return 0, 0, fmt.Errorf("count orphan embeddings: %w", err)
 	}
 	if pruned == 0 {
 		if err := tx.Commit(); err != nil {
-			return 0, fmt.Errorf("commit empty orphan prune: %w", err)
+			return 0, 0, fmt.Errorf("commit empty orphan prune: %w", err)
 		}
-		return 0, nil
+		return 0, ledger, nil
 	}
 
 	accelerators, err := b.readyAcceleratorsForOrphanPrune(ctx, tx, orphanWhere)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	for i := range accelerators {
 		accelerator := &accelerators[i]
@@ -1795,7 +1893,7 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 			SELECT e.embedding_id FROM vec.embeddings e
 			WHERE e.generation_id = ? AND `+orphanWhere+`
 		)`, int64(accelerator.GenerationID)); err != nil {
-			return 0, fmt.Errorf("delete orphan accelerator vectors for generation %d: %w",
+			return 0, 0, fmt.Errorf("delete orphan accelerator vectors for generation %d: %w",
 				accelerator.GenerationID, err)
 		}
 	}
@@ -1808,7 +1906,7 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 		 GROUP BY g.dimension
 		 ORDER BY g.dimension`)
 	if err != nil {
-		return 0, fmt.Errorf("list orphan embedding dimensions: %w", err)
+		return 0, 0, fmt.Errorf("list orphan embedding dimensions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var dimensions []int
@@ -1816,19 +1914,19 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 		var dimension int
 		if err := rows.Scan(&dimension); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("scan orphan embedding dimension: %w", err)
+			return 0, 0, fmt.Errorf("scan orphan embedding dimension: %w", err)
 		}
 		if dimension <= 0 {
 			_ = rows.Close()
-			return 0, fmt.Errorf("invalid orphan embedding dimension %d", dimension)
+			return 0, 0, fmt.Errorf("invalid orphan embedding dimension %d", dimension)
 		}
 		dimensions = append(dimensions, dimension)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close orphan embedding dimensions: %w", err)
+		return 0, 0, fmt.Errorf("close orphan embedding dimensions: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate orphan embedding dimensions: %w", err)
+		return 0, 0, fmt.Errorf("iterate orphan embedding dimensions: %w", err)
 	}
 
 	for _, dimension := range dimensions {
@@ -1841,13 +1939,13 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 				  JOIN vec.index_generations g ON g.id = e.generation_id
 				 WHERE g.dimension = ? AND %s
 			 )`, vecTable, orphanWhere), dimension); err != nil {
-			return 0, fmt.Errorf("delete orphan vectors for dimension %d: %w", dimension, err)
+			return 0, 0, fmt.Errorf("delete orphan vectors for dimension %d: %w", dimension, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM vec.embeddings AS e
 		 WHERE `+orphanWhere); err != nil {
-		return 0, fmt.Errorf("delete orphan embedding metadata: %w", err)
+		return 0, 0, fmt.Errorf("delete orphan embedding metadata: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE vec.index_generations AS g
@@ -1855,18 +1953,18 @@ func (b *Backend) PruneOrphanEmbeddings(ctx context.Context) (int64, error) {
 			SELECT COUNT(DISTINCT e.message_id)
 			  FROM vec.embeddings e
 			 WHERE e.generation_id = g.id
-		   )`); err != nil {
-		return 0, fmt.Errorf("repair generation message counts: %w", err)
+		   ) WHERE g.id IN (`+strings.Join(affected, ",")+`)`); err != nil {
+		return 0, 0, fmt.Errorf("repair generation message counts: %w", err)
 	}
 	for i := range accelerators {
 		if err := syncReadyAcceleratorSchema(ctx, tx, &accelerators[i], "vec."); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit orphan prune: %w", err)
+		return 0, 0, fmt.Errorf("commit orphan prune: %w", err)
 	}
-	return pruned, nil
+	return pruned, ledger, nil
 }
 
 func (b *Backend) readyAcceleratorsForOrphanPrune(
@@ -2041,7 +2139,7 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 	}
 	where := `id IN (SELECT value FROM json_each(?))
 		    AND embed_gen = ?
-		    AND ` + store.LiveMessagesWhere("", true)
+		    AND ` + b.liveMessageWhere("")
 	args := []any{string(blob), int64(gen)}
 	if len(b.scope.MessageTypes) > 0 {
 		placeholders := make([]string, len(b.scope.MessageTypes))
@@ -2089,7 +2187,7 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		FROM messages
 		WHERE id IN (SELECT value FROM json_each(?))
 		  AND embed_gen = ?
-		  AND `+store.LiveMessagesWhere("", true), string(encoded), int64(gen))
+		  AND `+b.liveMessageWhere(""), string(encoded), int64(gen))
 	if err != nil {
 		return 0, fmt.Errorf("list live stamped coverage messages: %w", err)
 	}
@@ -2155,6 +2253,17 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 // ScoreMessageChunks scores every embedded chunk of messageID in gen
 // against queryVec. Results are sorted by score descending (best first).
 func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error) {
+	if b.policyStore != nil {
+		release, err := b.acquirePolicyPublication(ctx, []int64{messageID})
+		if errors.Is(err, store.ErrConversationPolicyStale) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+	}
+
 	if len(queryVec) == 0 {
 		return nil, errors.New("score message chunks: empty query vector")
 	}

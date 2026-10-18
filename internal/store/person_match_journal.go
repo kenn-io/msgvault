@@ -220,7 +220,7 @@ func loadScoringSourceSupportTx(
 	return nil
 }
 
-func populateIdentityMatchScoringSnapshot(
+func (s *Store) populateIdentityMatchScoringSnapshot(
 	ctx context.Context, tx *loggedTx, candidate *IdentityMatchCandidate,
 ) (PersonMatchPairSummaries, error) {
 	if candidate.LeftKind == IdentityMatchParticipant && candidate.RightKind == IdentityMatchParticipant {
@@ -242,7 +242,7 @@ func populateIdentityMatchScoringSnapshot(
 	} else {
 		candidate.Blocker = "endpoint_unsupported"
 	}
-	summaries, err := personMatchPairSummariesContext(ctx, tx, candidate.LeftID, candidate.RightID)
+	summaries, err := s.personMatchPairSummariesContext(ctx, tx, candidate.LeftID, candidate.RightID)
 	if err != nil {
 		return PersonMatchPairSummaries{}, err
 	}
@@ -394,7 +394,7 @@ func (s *Store) ClaimNextIdentityMatchJudgmentContext(
 							return err
 						}
 					}
-					summaries, err := populateIdentityMatchScoringSnapshot(ctx, tx, candidate)
+					summaries, err := s.populateIdentityMatchScoringSnapshot(ctx, tx, candidate)
 					if err != nil {
 						return err
 					}
@@ -489,6 +489,44 @@ func identityMatchScoringFingerprint(reviewToken, version string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// CheckIdentityMatchJudgmentAdmission validates the original bounded scoring
+// snapshot and durable claim immediately before each external HTTP attempt.
+// Its transaction and policy fence are released before the caller sends data.
+func (s *Store) CheckIdentityMatchJudgmentAdmission(ctx context.Context, lease IdentityMatchJudgmentLease) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		var current bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+            SELECT 1 FROM person_match_judgment_work WHERE candidate_id = ?
+            AND fingerprint = ? AND lease_owner = ? AND lease_token = ? AND lease_until > ?)`,
+			lease.CandidateID, lease.Fingerprint, lease.Owner, lease.Token, time.Now().UTC()).Scan(&current); err != nil {
+			return fmt.Errorf("check identity scoring admission lease: %w", err)
+		}
+		if !current || lease.Token == "" {
+			return ErrIdentityMatchJudgmentLeaseStale
+		}
+		candidate, err := getIdentityMatchScoringCandidateTx(ctx, tx, lease.CandidateID)
+		if err != nil {
+			return err
+		}
+		if !candidate.ScoringEvidenceIncomplete {
+			if err := loadScoringEvidenceSnapshotTx(ctx, tx, candidate); err != nil {
+				return err
+			}
+		}
+		if _, err := s.populateIdentityMatchScoringSnapshot(ctx, tx, candidate); err != nil {
+			return err
+		}
+		if candidate.State != IdentityMatchStateCandidate ||
+			identityMatchScoringFingerprint(candidate.scoringSnapshotFingerprint, lease.ScoringVersion) != lease.Fingerprint {
+			return ErrIdentityMatchJudgmentFingerprintStale
+		}
+		return nil
+	})
+}
+
 // RecordIdentityMatchJudgmentContext appends only redacted metadata. The
 // journal insert and lease release share one transaction. Scanning owns the
 // cursor so out-of-order completions cannot rewind its progress.
@@ -500,7 +538,7 @@ func (s *Store) RecordIdentityMatchJudgmentContext(
 	}
 	var result *IdentityMatchJudgment
 	var staleFingerprint bool
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -532,7 +570,7 @@ func (s *Store) RecordIdentityMatchJudgmentContext(
 				return err
 			}
 		}
-		if _, err := populateIdentityMatchScoringSnapshot(ctx, tx, candidate); err != nil {
+		if _, err := s.populateIdentityMatchScoringSnapshot(ctx, tx, candidate); err != nil {
 			return err
 		}
 		status := input.Status

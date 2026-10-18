@@ -49,7 +49,7 @@ func (s *Store) FindObservationsByProviderUserIDContext(
 	}
 	query := participantObservationSelect + `
 		WHERE o.provider_user_id = ?
-		  AND o.active_until IS NULL AND o.superseded_at IS NULL
+		  AND o.active_until IS NULL AND o.superseded_at IS NULL AND ` + FullObservationWhere("o") + `
 		ORDER BY o.participant_id, o.id
 		LIMIT ?
 	`
@@ -87,7 +87,7 @@ func (s *Store) FindObservationsByServiceValueContext(
 	}
 	query := participantObservationSelect + `
 		WHERE o.address_kind = ? AND cs.slug = ? AND o.normalized_value = ?
-		  AND o.active_until IS NULL AND o.superseded_at IS NULL
+		  AND o.active_until IS NULL AND o.superseded_at IS NULL AND ` + FullObservationWhere("o") + `
 		ORDER BY o.participant_id, o.id
 		LIMIT ?
 	`
@@ -143,9 +143,9 @@ func (s *Store) ClassifyParticipantIdentifierServiceContext(
 }
 
 // ParticipantDisplayNamesContext returns the non-empty display names of the
-// given participants. Display-name equality is evidence for an identity match
-// and never a basis for one, so this read is deliberately plain: no folding,
-// no fuzzy comparison, no normalization the caller cannot see.
+// given participants whose exact raw names have eligible authority. Display-name
+// equality is evidence for an identity match and never a basis for one. Return
+// the captured value without folding or fuzzy comparison.
 func (s *Store) ParticipantDisplayNamesContext(
 	ctx context.Context, participantIDs []int64,
 ) (map[int64]string, error) {
@@ -161,6 +161,7 @@ func (s *Store) ParticipantDisplayNamesContext(
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, display_name FROM participants
 		WHERE id IN (%s) AND display_name IS NOT NULL AND display_name != ''
+        AND `+fullParticipantNameWhere("participants.id", "participants.display_name")+`
 	`, placeholders), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read participant display names: %w", err)
@@ -201,7 +202,7 @@ func (s *Store) SharedConversationsContext(
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT c.id, c.source_id, COALESCE(c.source_conversation_id, '')
 		FROM conversations c
-		WHERE EXISTS (
+		WHERE `+FullConversationWhere("c")+` AND EXISTS (
 			SELECT 1 FROM conversation_participants cp
 			WHERE cp.conversation_id = c.id AND cp.participant_id = ?
 		) AND EXISTS (

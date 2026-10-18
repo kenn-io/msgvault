@@ -12,6 +12,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -84,6 +85,7 @@ func TestBuildCache_FromRecipientChangeRefreshesOwner(t *testing.T) {
 	require.NoError(err)
 	conv, err := st.EnsureConversationWithType(src.ID, "thread", "direct_chat", "Synthetic")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), src.ID, "thread", conversationpolicy.Full))
 	first, err := st.EnsureParticipant("first@example.test", "First", "example.test")
 	require.NoError(err)
 	second, err := st.EnsureParticipant("second@example.test", "Second", "example.test")

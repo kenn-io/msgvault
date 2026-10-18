@@ -93,10 +93,11 @@ const (
 	migrationPersonSweepBatchPurposeV2 = "person_sweep_batch_purpose_v2"
 	// The fact ledger records a claim the person brief proposed with its own
 	// origin, and an attempt records why a brief call produced no version.
-	migrationPersonFactClaimOriginBrief     = "person_fact_claim_origin_brief_v1"
-	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
-	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
-	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
+	migrationPersonFactConversationPolicyStatus = "person_fact_conversation_policy_status_v1"
+	migrationPersonFactClaimOriginBrief         = "person_fact_claim_origin_brief_v1"
+	migrationPersonSweepAttemptBriefFailure     = "person_sweep_attempt_brief_failure_v1"
+	migrationCardDAVMultipleAccounts            = "carddav_multiple_accounts_v1"
+	migrationCardDAVInferenceExportState        = "carddav_inference_export_state_v1"
 )
 
 func (s *Store) backfillSyncRunResumeMetadata(

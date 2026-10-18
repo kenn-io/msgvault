@@ -223,7 +223,7 @@ func defaultDocumentsCommandDeps() documentsCommandDeps {
 		validateProbeFixtures: mistral.ValidateProbeFixtures,
 		runCapabilityProbe:    mistral.RunCapabilityProbe,
 		openStore: func(ctx context.Context) (*store.Store, func(), error) {
-			return openWritableStoreAndInitForInvocation(invocationFromContext(ctx))
+			return openConversationPolicyWriterForInvocation(ctx, invocationFromContext(ctx))
 		},
 		runDocumentVector: runConfiguredDocumentVectorGeneration,
 		openInitializedStore: func(ctx context.Context) (*store.Store, func(), error) {
@@ -1233,7 +1233,14 @@ func openDocumentReadClient(
 	if deps.openReadClient != nil {
 		return deps.openReadClient(ctx)
 	}
-	st, cleanup, err := deps.openStore(ctx)
+	open := deps.openInitializedStore
+	if open == nil {
+		open = deps.openStore
+	}
+	if open == nil {
+		return nil, func() {}, errors.New("document archive reader is unavailable")
+	}
+	st, cleanup, err := open(ctx)
 	if err != nil {
 		return nil, func() {}, err
 	}

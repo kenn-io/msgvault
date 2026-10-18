@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
@@ -162,6 +163,8 @@ func newOpenAISweepFixture(
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, "openai-compatible-chat", "direct_chat", "Synthetic chat")
 	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "openai-compatible-chat", conversationpolicy.Full))
 	participantID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	person, _, err := st.CreatePersonFromParticipant(participantID)

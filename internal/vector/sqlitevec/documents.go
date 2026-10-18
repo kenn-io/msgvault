@@ -39,6 +39,12 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 		return err
 	}
 
+	release, err := b.acquirePolicyPublication(ctx, vector.ScopePublicationMessageIDs(scopes))
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	tx, err := b.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin document publication: %w", err)
@@ -409,39 +415,45 @@ func (b *Backend) GetDocumentProgress(ctx context.Context, gen vector.Generation
 }
 
 func (b *Backend) AdvanceDocumentChangeWatermark(ctx context.Context, gen vector.GenerationID, sequence int64) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, change_sequence)
 		VALUES (?, ?)
 		ON CONFLICT(generation_id) DO UPDATE SET
 			change_sequence = MAX(change_sequence, excluded.change_sequence)`, int64(gen), sequence)
-	if err != nil {
-		return fmt.Errorf("advance document change watermark: %w", err)
-	}
-	return nil
+		if err != nil {
+			return fmt.Errorf("advance document change watermark: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, reconcile_cursor)
 		VALUES (?, ?)
 		ON CONFLICT(generation_id) DO UPDATE SET reconcile_cursor = excluded.reconcile_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document reconcile cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document reconcile cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentJournalCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, journal_cursor)
 		VALUES (?, ?)
 		ON CONFLICT(generation_id) DO UPDATE SET journal_cursor = excluded.journal_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document journal cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document journal cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) ResetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID) error {
@@ -470,27 +482,42 @@ func (b *Backend) CleanupDocumentJournalIfUnused(ctx context.Context) error {
 		return fmt.Errorf("open coordinated contextual journal cleanup: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	tx, err := conn.BeginTx(ctx, nil)
+	dbConn, err := conn.Conn(ctx)
 	if err != nil {
+		return fmt.Errorf("acquire contextual journal cleanup connection: %w", err)
+	}
+	defer func() { _ = dbConn.Close() }()
+	// Reserve the SQLite writer slot before any reads so a concurrent journal
+	// append cannot make this cleanup transaction fail while upgrading snapshots.
+	if _, err := dbConn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("begin contextual journal cleanup: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_, _ = dbConn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		}
+	}()
 
 	var schemaReady int
-	if err := tx.QueryRowContext(ctx, `
+	if err := dbConn.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_change_clock')
 		   AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_changes')`).Scan(&schemaReady); err != nil {
 		return fmt.Errorf("inspect contextual journal schema: %w", err)
 	}
 	if schemaReady == 0 {
-		return tx.Commit()
+		if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
+			return fmt.Errorf("commit contextual journal cleanup: %w", err)
+		}
+		committed = true
+		return nil
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := dbConn.ExecContext(ctx,
 		`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
 		return fmt.Errorf("lock contextual journal for cleanup: %w", err)
 	}
 	var tracked int
-	if err := tx.QueryRowContext(ctx, `
+	if err := dbConn.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			  FROM vec.embedding_document_progress p
@@ -500,17 +527,22 @@ func (b *Backend) CleanupDocumentJournalIfUnused(ctx context.Context) error {
 		return fmt.Errorf("recheck live contextual generations: %w", err)
 	}
 	if tracked != 0 {
-		return tx.Commit()
+		if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
+			return fmt.Errorf("commit contextual journal cleanup: %w", err)
+		}
+		committed = true
+		return nil
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := dbConn.ExecContext(ctx,
 		`UPDATE embedding_change_clock SET enabled = FALSE WHERE singleton = 1`); err != nil {
 		return fmt.Errorf("disable unused contextual journal: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_changes`); err != nil {
+	if _, err := dbConn.ExecContext(ctx, `DELETE FROM embedding_changes`); err != nil {
 		return fmt.Errorf("prune unused contextual journal: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
+	if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("commit contextual journal cleanup: %w", err)
 	}
+	committed = true
 	return nil
 }

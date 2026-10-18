@@ -2,6 +2,7 @@ package personmatchworker
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/personmatchpolicy"
 	"go.kenn.io/msgvault/internal/store"
@@ -45,6 +47,8 @@ func TestRunStopsRetryWhenConsentRevokedDuringProviderBackoff(t *testing.T) {
 			require.NoError(err)
 			right, err := st.EnsureParticipantByIdentifier("apple_id", "retry-right", "Retry Right")
 			require.NoError(err)
+			supportScoringParticipantName(t, st, left)
+			supportScoringParticipantName(t, st, right)
 			candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 				LeftKind: store.IdentityMatchParticipant, LeftID: left,
 				RightKind: store.IdentityMatchParticipant, RightID: right,
@@ -67,7 +71,7 @@ func TestRunStopsRetryWhenConsentRevokedDuringProviderBackoff(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if requests.Add(1) == 1 {
 					if changeSnapshot {
-						assert.NoError(st.SetParticipantIdentifier(left, "email", "updated@example.test"))
+						assert.NoError(setSupportedScoringEmail(t.Context(), st, left, "updated@example.test"))
 					}
 					close(firstRequest)
 					http.Error(w, "retry", http.StatusTooManyRequests)
@@ -123,6 +127,8 @@ func TestRunScoresSnapshotsAndNeverAppliesMatch(t *testing.T) {
 	require.NoError(err)
 	right, err := st.EnsureParticipantByIdentifier("apple_id", "dry-right", "Dry Right")
 	require.NoError(err)
+	leftNameMessageID := supportScoringParticipantName(t, st, left)
+	supportScoringParticipantName(t, st, right)
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 		LeftKind: store.IdentityMatchParticipant, LeftID: left,
 		RightKind: store.IdentityMatchParticipant, RightID: right,
@@ -161,14 +167,14 @@ func TestRunScoresSnapshotsAndNeverAppliesMatch(t *testing.T) {
 		assert.Equal("Dry Right", body.State.Right["display_name"])
 		assert.NotContains(body.State.Left, "id")
 		if failDuringRequest {
-			assert.NoError(st.SetParticipantIdentifier(left, "email", "updated@example.test"))
+			assert.NoError(setSupportedScoringEmail(t.Context(), st, left, "updated@example.test"))
 			failDuringRequest = false
 			http.Error(w, "fixture provider failure", http.StatusBadGateway)
 			return
 		}
 		if changeDuringRequest {
-			_, err := st.DB().ExecContext(r.Context(), st.Rebind(`UPDATE participants SET display_name = 'Latest Example' WHERE id = ?`), left)
-			assert.NoError(err)
+			assert.NoError(setSupportedScoringParticipantName(
+				r.Context(), st, leftNameMessageID, left, "Latest Example"))
 		}
 		_, _ = w.Write([]byte(`{"model":"jev-1.13.0","answers":{"same_person":{"type":"noul","noul":0.81}}}`))
 	}))
@@ -198,8 +204,8 @@ func TestRunScoresSnapshotsAndNeverAppliesMatch(t *testing.T) {
 	assert.Empty(again)
 	assert.Equal(1, requests)
 
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET display_name = 'Updated Example' WHERE id = ?`), left)
-	require.NoError(err)
+	require.NoError(setSupportedScoringParticipantName(
+		t.Context(), st, leftNameMessageID, left, "Updated Example"))
 	wantLeftName, changeDuringRequest = "Updated Example", true
 	stale, err := worker.Run(t.Context(), 1)
 	require.NoError(err)
@@ -216,7 +222,7 @@ func TestRunScoresSnapshotsAndNeverAppliesMatch(t *testing.T) {
 
 	// A failed request against an out-of-date contact is still a stale result.
 	// The remaining batch slot can then score the updated snapshot.
-	require.NoError(st.SetParticipantIdentifier(left, "email", "before-request@example.test"))
+	require.NoError(setSupportedScoringEmail(t.Context(), st, left, "before-request@example.test"))
 	failDuringRequest = true
 	continued, err := worker.Run(t.Context(), 2)
 	require.NoError(err)
@@ -298,6 +304,8 @@ func TestRunKeepsUncurableLocalBlockersOutOfProvider(t *testing.T) {
 			require.NoError(err)
 			right, err := st.EnsureParticipantByIdentifier("apple_id", "guard-right", name)
 			require.NoError(err)
+			supportScoringParticipantName(t, st, left)
+			supportScoringParticipantName(t, st, right)
 			candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 				LeftKind: store.IdentityMatchParticipant, LeftID: left, RightKind: store.IdentityMatchParticipant, RightID: right,
 				Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
@@ -321,7 +329,10 @@ func TestRunKeepsUncurableLocalBlockersOutOfProvider(t *testing.T) {
 					EvidenceKind: "phone", Source: store.ProvenanceArchiveObservation, SourceID: &fixture.Source.ID,
 				})
 			case "stable ID conflict":
-				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participant_identifiers SET identifier_type = 'beeper' WHERE participant_id = ?`), right)
+				err = setSupportedScoringStableID(t.Context(), st, left, "guard-left")
+				require.NoError(err)
+				err = setSupportedScoringStableID(t.Context(), st, right, "guard-right")
+
 			case "manual merge":
 				_, _, err = st.CreatePersonFromParticipantContext(t.Context(), left)
 				require.NoError(err)
@@ -331,10 +342,9 @@ func TestRunKeepsUncurableLocalBlockersOutOfProvider(t *testing.T) {
 				require.NoError(createErr)
 				_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO carddav_publications (person_id, desired) VALUES (?, TRUE)`), person.ID)
 			case "identifier overflow":
-				for i := range 8 {
-					_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers
-						(participant_id, identifier_type, identifier_value, display_value, is_primary)
-						VALUES (?, 'email', ?, ?, FALSE)`), left, fmt.Sprintf("guard-%d@example.test", i), "fixture")
+				// Nine eligible identifiers exceed the packet cap of eight.
+				for i := range 9 {
+					err = setSupportedScoringEmail(t.Context(), st, left, fmt.Sprintf("guard-%d@example.test", i))
 					require.NoError(err)
 				}
 			}
@@ -423,6 +433,8 @@ func TestRunConsentWithdrawalsDoNotExhaustProviderAttempts(t *testing.T) {
 	require.NoError(err)
 	right, err := st.EnsureParticipantByIdentifier("apple_id", "withdraw-right", "Review Example")
 	require.NoError(err)
+	supportScoringParticipantName(t, st, left)
+	supportScoringParticipantName(t, st, right)
 	candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 		LeftKind: store.IdentityMatchParticipant, LeftID: left, RightKind: store.IdentityMatchParticipant, RightID: right,
 		Basis: store.IdentityMatchEmail, State: store.IdentityMatchStateCandidate, Source: store.ProvenanceArchiveObservation,
@@ -493,11 +505,14 @@ func TestRunReportsIncompleteSweepAndRetainsWrappedResult(t *testing.T) {
 	require.NoError(err)
 	worker := Worker{Store: st, Config: cfg}
 	ids := make([]int64, 132)
+	nameMessageIDs := make([]int64, len(ids))
 	for i := range ids {
 		left, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("sweep-left-%d", i), "Example Left")
 		require.NoError(err)
 		right, err := st.EnsureParticipantByIdentifier("beeper", fmt.Sprintf("sweep-right-%d", i), "Example Right")
 		require.NoError(err)
+		nameMessageIDs[i] = supportScoringParticipantName(t, st, left)
+		supportScoringParticipantName(t, st, right)
 		candidate, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), store.IdentityMatchCandidateInput{
 			LeftKind: store.IdentityMatchParticipant, LeftID: left,
 			RightKind: store.IdentityMatchParticipant, RightID: right,
@@ -516,8 +531,8 @@ func TestRunReportsIncompleteSweepAndRetainsWrappedResult(t *testing.T) {
 	for _, index := range []int{1, 0} {
 		candidate, err := st.GetIdentityMatchCandidateContext(t.Context(), ids[index])
 		require.NoError(err)
-		_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET display_name = ? WHERE id = ?`), "Changed Example", candidate.LeftID)
-		require.NoError(err)
+		require.NoError(setSupportedScoringParticipantName(
+			t.Context(), st, nameMessageIDs[index], candidate.LeftID, "Changed Example"))
 		if index == 1 {
 			results, err := worker.Run(t.Context(), 1)
 			require.NoError(err)
@@ -540,4 +555,57 @@ func TestRunReportsIncompleteSweepAndRetainsWrappedResult(t *testing.T) {
 	results, err = worker.Run(t.Context(), 2)
 	require.NoError(err)
 	assert.Empty(results)
+}
+
+// The worker fixtures exercise admitted identity inputs. Give raw chat names
+// real Full message support instead of relying on unproven participant fields.
+func supportScoringParticipantName(t *testing.T, st *store.Store, participant int64) int64 {
+	t.Helper()
+	source, err := st.GetOrCreateSource("beeper", "scoring-name-support")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(source.ID, "scoring-name-support", "Synthetic scoring support")
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "scoring-name-support", conversationpolicy.Full))
+	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: fmt.Sprintf("name-%d", participant), MessageType: "chat", SentAt: sql.NullTime{Time: time.Now().UTC(), Valid: true}, SenderID: sql.NullInt64{Int64: participant, Valid: true}})
+	require.NoError(t, err)
+	var displayName string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT display_name FROM participants WHERE id = ?`), participant).Scan(&displayName))
+	require.NoError(t, st.ReplaceMessageRecipientsContext(t.Context(), messageID, "to", []int64{participant}, []string{displayName}))
+	return messageID
+}
+
+func setSupportedScoringParticipantName(
+	ctx context.Context, st *store.Store, messageID, participant int64, name string,
+) error {
+	if _, err := st.DB().ExecContext(ctx, st.Rebind(
+		`UPDATE participants SET display_name = ? WHERE id = ?`), name, participant); err != nil {
+		return err
+	}
+	return st.ReplaceMessageRecipientsContext(ctx, messageID, "to", []int64{participant}, []string{name})
+}
+
+func setSupportedScoringEmail(ctx context.Context, st *store.Store, participant int64, value string) error {
+	if err := st.SetParticipantIdentifier(participant, "email", value); err != nil {
+		return err
+	}
+	source, err := st.GetOrCreateSource("email", "scoring-email-support")
+	if err != nil {
+		return err
+	}
+	_, err = st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{SourceID: &source.ID, AddressKind: store.ContactAddressEmail, OriginalValue: value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+	return err
+}
+
+func setSupportedScoringStableID(ctx context.Context, st *store.Store, participant int64, value string) error {
+	if err := st.SetParticipantIdentifier(participant, "imessage", value); err != nil {
+		return err
+	}
+	source, err := st.GetOrCreateSource("imessage", "scoring-provider-support")
+	if err != nil {
+		return err
+	}
+	_, err = st.RecordContactObservationContext(ctx, participant, store.ParticipantContactObservationInput{SourceID: &source.ID, AddressKind: store.ContactAddressEmail, OriginalValue: fmt.Sprintf("person-%d@example.test", participant), ServiceSlug: new("imessage"), ProviderUserID: &value, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}})
+	return err
 }

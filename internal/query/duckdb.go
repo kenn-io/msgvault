@@ -62,6 +62,10 @@ type DuckDBEngine struct {
 	ownTempDirectory bool
 	tempTableSeq     atomic.Uint64 // Unique suffix for temp tables to avoid concurrent collisions
 
+	policyStore                *store.Store
+	conversationPolicyRevision func(context.Context) (int64, error)
+	cacheReadLock              func(context.Context, string) (func(), error) // test seam for lock-order coverage
+
 	// querySem bounds concurrent heavy query execution (see
 	// duckDBQueryConcurrency). Acquired at the top of each expensive public
 	// method via acquireQuerySlot; cheap PK/detail lookups are not gated so
@@ -116,6 +120,10 @@ type DuckDBEngine struct {
 
 // DuckDBOptions configures optional DuckDB engine behavior.
 type DuckDBOptions struct {
+	// PolicyStore supplies the shared SQLite policy fence for live archive reads.
+	PolicyStore *store.Store
+	// ConversationPolicyRevision reads live authority on every analytical query.
+	ConversationPolicyRevision func(context.Context) (int64, error)
 	// DisableSQLiteScanner prevents loading the sqlite_scanner extension even
 	// on platforms where it would normally be available. This forces all SQLite
 	// queries to route through sqliteEngine, matching the Windows code path.
@@ -192,6 +200,17 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
+	if opt.PolicyStore != nil {
+		if opt.PolicyStore.IsPostgreSQL() {
+			return nil, errors.New("DuckDB policy authority requires a SQLite archive")
+		}
+		if opt.ConversationPolicyRevision == nil {
+			opt.ConversationPolicyRevision = opt.PolicyStore.ConversationPolicyRevision
+		}
+	}
+	if opt.ConversationPolicyRevision != nil && opt.PolicyStore == nil {
+		return nil, errors.New("live DuckDB policy authority requires a policy fence")
+	}
 	tempDirectory := opt.TempDirectory
 	ownTempDirectory := opt.OwnTempDirectory
 	if tempDirectory == "" {
@@ -247,6 +266,8 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 	}
 
 	engine := &DuckDBEngine{
+		policyStore:                  opt.PolicyStore,
+		conversationPolicyRevision:   opt.ConversationPolicyRevision,
 		db:                           db,
 		analyticsDir:                 analyticsDir,
 		sqlitePath:                   sqlitePath,
@@ -260,7 +281,7 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 	}
 	var releaseInitialCacheRead func()
 	if analyticsDir != "" {
-		releaseInitialCacheRead, err = AcquireCacheReadLock(ctx, analyticsDir)
+		releaseInitialCacheRead, err = engine.acquirePolicyCacheRead(ctx)
 		if err != nil {
 			_ = engine.Close()
 			return nil, err
@@ -273,6 +294,10 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 			_ = engine.Close()
 			return nil, err
 		}
+	}
+
+	if err := engine.validateLiveConversationPolicy(ctx); err != nil {
+		return nil, errors.Join(err, engine.Close())
 	}
 
 	// Probe Parquet schemas for optional columns added in PR #160 (WhatsApp import).
@@ -427,7 +452,7 @@ func (e *DuckDBEngine) acquireQuerySlot(ctx context.Context) (func(), error) {
 	}, nil
 }
 
-// acquireCacheRead holds the shared cache lock for the duration of one query
+// acquireCacheRead holds the policy fence and shared cache lock for one query
 // so a concurrent cache publication (which holds it exclusively) cannot
 // delete or replace Parquet files mid-read. Shared holders never conflict
 // with each other; a reader blocks only during the brief rename+marker
@@ -448,7 +473,7 @@ func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 	if e.analyticsDir == "" {
 		return func() {}, nil
 	}
-	release, err := AcquireCacheReadLock(ctx, e.analyticsDir)
+	release, err := e.acquirePolicyCacheRead(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -457,11 +482,58 @@ func (e *DuckDBEngine) acquireCacheRead(ctx context.Context) (func(), error) {
 		release()
 		return nil, err
 	}
+	if err := e.validateLiveConversationPolicy(ctx); err != nil {
+		release()
+		return nil, err
+	}
 	if err := e.ensureFreshOptionalCols(ctx, statSig); err != nil {
 		release()
 		return nil, err
 	}
 	return release, nil
+}
+
+// acquirePolicyCacheRead keeps policy authority stable before taking the cache
+// lock. Transitions never acquire cache locks, and release runs in reverse order.
+func (e *DuckDBEngine) acquirePolicyCacheRead(ctx context.Context) (func(), error) {
+	releasePolicy := func() {}
+	if e.policyStore != nil {
+		var err error
+		releasePolicy, err = e.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cacheReadLock := e.cacheReadLock
+	if cacheReadLock == nil {
+		cacheReadLock = AcquireCacheReadLock
+	}
+	releaseCache, err := cacheReadLock(ctx, e.analyticsDir)
+	if err != nil {
+		releasePolicy()
+		return nil, err
+	}
+	return func() { releaseCache(); releasePolicy() }, nil
+}
+
+// A marker/stat memo hit cannot establish live policy freshness. The caller
+// holds both fences while reading authority and while using the cache.
+func (e *DuckDBEngine) validateLiveConversationPolicy(ctx context.Context) error {
+	if e.conversationPolicyRevision == nil || e.analyticsDir == "" {
+		return nil
+	}
+	live, err := e.conversationPolicyRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("read live conversation policy: %w", err)
+	}
+	state, err := ReadCacheSyncState(e.analyticsDir)
+	if err != nil {
+		return err
+	}
+	if state.ConversationPolicyRevision != live {
+		return &CacheUnavailableError{Readiness: CacheDrifted}
+	}
+	return nil
 }
 
 // validateCommittedCache confirms the analytics cache is a fully committed
@@ -697,6 +769,23 @@ func (e *DuckDBEngine) currentCacheFingerprint() string {
 // acquireCacheRead), whose acquisition already re-probed the schema, so the
 // REPLACE list below never references a column the current Parquet lacks.
 func (e *DuckDBEngine) parquetCTEs() string {
+	return e.parquetCTEsWithCold(false)
+}
+
+// Lexical discovery admits only Full, or persisted Full and Cold when requested.
+func (e *DuckDBEngine) parquetCTEsWithCold(includeCold bool) string {
+	if includeCold {
+		return e.parquetCTEsWithTierFilter("conversation_tier IN ('full','cold')")
+	}
+	return e.parquetCTEsWithTierFilter("conversation_tier='full'")
+}
+
+// Explicit archival details/IDs retain every physical row, including excluded tiers.
+func (e *DuckDBEngine) archivalParquetCTEs() string {
+	return e.parquetCTEsWithTierFilter("")
+}
+
+func (e *DuckDBEngine) parquetCTEsWithTierFilter(tierFilter string) string {
 	// --- messages CTE ---
 	msgReplace := []string{
 		"CAST(id AS BIGINT) AS id",
@@ -757,6 +846,9 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		msgCTE += ", " + strings.Join(msgExtra, ", ")
 	}
 	msgCTE += fmt.Sprintf(" FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)", e.parquetGlob())
+	if tierFilter != "" && e.hasCol(datasetMessages, "conversation_tier") {
+		msgCTE += " WHERE " + tierFilter
+	}
 
 	// --- participants CTE ---
 	pReplace := []string{
@@ -2279,7 +2371,14 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	var args []any
 	var joins []string
 
-	conditions = append(conditions, searchMessageVisibilityWhere("m", q))
+	// Qualify the canonical predicate directly: sqlite_scanner cannot reliably
+	// inline repeated policy CTEs when a source table is empty.
+	policyWhere := strings.NewReplacer(
+		"FROM conversations ", "FROM sqlite_db.conversations ",
+		"FROM conversation_policy ", "FROM sqlite_db.conversation_policy ",
+		"FROM sources ", "FROM sqlite_db.sources ",
+	).Replace(store.LexicalMessageWhere("m", q.IncludeCold))
+	conditions = append(conditions, searchMessageVisibilityWhere("m", q), policyWhere)
 
 	// From filter
 	if len(q.FromAddrs) > 0 {
@@ -2638,7 +2737,7 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		FROM msg
 		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+deletableSourceTypesSQL+`
 		       WHERE %s AND %s AND NOT msg.archive_only AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
-	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
+	`, e.archivalParquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get deletion targets by message ids: %w", err)
@@ -2675,6 +2774,11 @@ var RequiredParquetDirs = []string{
 // This is much faster than FTS search for large archives.
 // Searches subject, snippet, and sender/recipient metadata (case-insensitive).
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
+	// Explicit cold lexical access uses authoritative transactional rows, before cache admission.
+	if q.IncludeCold && e.sqliteEngine != nil {
+		return e.sqliteEngine.SearchFast(ctx, q, filter, limit, offset)
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err
@@ -2744,7 +2848,7 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 		WHERE %s
 		ORDER BY msg.sent_at DESC, msg.id DESC
 		LIMIT ? OFFSET ?
-	`, e.parquetCTEs(), strings.Join(conditions, " AND "))
+	`, e.parquetCTEsWithCold(q.IncludeCold), strings.Join(conditions, " AND "))
 
 	args = append(args, limit, offset)
 
@@ -2803,6 +2907,11 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 // SearchFastCount returns the total count of messages matching a search query.
 // This is used for pagination UI to show "N of M results".
 func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
+	// Explicit cold lexical access uses authoritative transactional rows, before cache admission.
+	if q.IncludeCold && e.sqliteEngine != nil {
+		return e.sqliteEngine.SearchFastCount(ctx, q, filter)
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return 0, err
@@ -2839,7 +2948,7 @@ func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, fil
 		LEFT JOIN msg_sender ms ON ms.message_id = msg.id
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		WHERE %s
-	`, e.parquetCTEs(), strings.Join(conditions, " AND "))
+	`, e.parquetCTEsWithCold(q.IncludeCold), strings.Join(conditions, " AND "))
 
 	var count int64
 	if err := e.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
@@ -3062,6 +3171,11 @@ func (e *DuckDBEngine) computeSearchStats(ctx context.Context) *TotalStats {
 // old cache.
 func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query, queryStr string,
 	filter MessageFilter, statsGroupBy ViewType, limit, offset int) (*SearchFastResult, error) {
+	// Explicit cold lexical access uses authoritative transactional rows, before cache admission.
+	if q.IncludeCold && e.sqliteEngine != nil {
+		return e.sqliteEngine.SearchFastWithStats(ctx, q, queryStr, filter, statsGroupBy, limit, offset)
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err
@@ -3083,7 +3197,14 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	// slot acquired the cache read lock, and the lock is held until release,
 	// so it decides whether the already materialized temp table still
 	// represents the current Parquet data.
-	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint())
+	state, err := ReadCacheSyncState(e.analyticsDir)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, errInvalidCacheState) {
+		return nil, &CacheUnavailableError{Readiness: CacheInterrupted}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read search cache revision: %w", err)
+	}
+	cacheKey := searchCacheKeyFor(conditions, args, e.currentCacheFingerprint()+"|"+state.Revision())
 	if cacheKey == e.searchCacheKey && e.searchCacheTable != "" {
 		// Retry stats if a previous attempt failed (transient error).
 		if includeStats && e.searchCacheStats == nil {
@@ -3151,7 +3272,7 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 		LEFT JOIN msg_sender ms ON ms.message_id = msg.id
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		WHERE %s
-	`, tempTable, e.parquetCTEs(), strings.Join(conditions, " AND "))
+	`, tempTable, e.parquetCTEsWithCold(q.IncludeCold), strings.Join(conditions, " AND "))
 
 	if _, err := e.db.ExecContext(ctx, materializeQuery, args...); err != nil {
 		return nil, fmt.Errorf("materialize search matches: %w", err)
@@ -3197,6 +3318,13 @@ func (e *DuckDBEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 func (e *DuckDBEngine) buildSearchConditions(q *search.Query, filter MessageFilter) ([]string, []any) {
 	filterWhere, filterArgs := e.buildFilterConditions(filter)
 	conditions, args := e.buildSearchCriteria(q)
+	if e.hasCol(datasetMessages, "conversation_tier") {
+		if q.IncludeCold {
+			conditions = append(conditions, "msg.conversation_tier IN ('full','cold')")
+		} else {
+			conditions = append(conditions, "msg.conversation_tier='full'")
+		}
+	}
 	return append([]string{filterWhere}, conditions...), append(filterArgs, args...)
 }
 

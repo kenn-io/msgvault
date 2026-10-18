@@ -100,7 +100,7 @@ func (s *Store) CompleteAttachmentChangeReconciliation(
 		}
 		return errors.New("attachment reconciliation baseline cannot be negative")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		result, err := q.Exec(`
 			UPDATE attachment_change_consumers
@@ -224,7 +224,7 @@ func (s *Store) AdvanceAttachmentChangeConsumer(
 	if sequence < 0 {
 		return errors.New("attachment change sequence cannot be negative")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if !s.IsPostgreSQL() {
 			// Reserve SQLite's writer slot before reading the cursor and event.

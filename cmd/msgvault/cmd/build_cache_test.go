@@ -65,8 +65,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
 	result, err := buildCacheLocked(
-		dbURI, filepath.Join(tmpDir, "analytics"), true, false, acquirePublishLock,
-	)
+		dbURI, filepath.Join(tmpDir, "analytics"), true, false)
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
 	assert.NotNil(t, result)
@@ -179,6 +178,7 @@ func setupTestSQLite(t *testing.T) string {
 			PRIMARY KEY (conversation_id, participant_id)
 		);
 
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
 		CREATE TABLE archive_metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -1209,6 +1209,9 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	require.NoError(err, "open sqlite")
 
 	_, err = db.Exec(`
+		INSERT INTO conversations (id, source_id, source_conversation_id, title)
+		VALUES (105, 1, 'thread105', 'New Message Thread');
+
 		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
 			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
@@ -1226,8 +1229,15 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES
 			(7, 'notes.txt', 'text/plain', 500);
 	`)
-	_ = db.Close()
+	require.NoError(db.Close())
 	require.NoError(err, "insert new messages")
+	db, err = sql.Open("sqlite3", dbPath)
+	require.NoError(err, "reopen sqlite for policy fixture")
+	_, err = db.Exec(`INSERT INTO conversation_policy (conversation_id, effective_tier, override_tier)
+		VALUES (105, 'full', 'full')
+		ON CONFLICT(conversation_id) DO UPDATE SET effective_tier = 'full', override_tier = 'full'`)
+	require.NoError(err, "mark synthetic room Full")
+	require.NoError(db.Close())
 
 	// Second export (incremental)
 	result2, err := buildCache(dbPath, analyticsDir, false)
@@ -2980,8 +2990,9 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
-		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
+		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_id INTEGER, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
 		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
 		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
 		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
@@ -3320,6 +3331,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			PRIMARY KEY (conversation_id, participant_id)
 		);
 
+		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
 		CREATE TABLE archive_metadata (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL
@@ -4745,7 +4757,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, acquirePublishLock, false)
+						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

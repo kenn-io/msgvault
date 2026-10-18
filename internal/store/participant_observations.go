@@ -26,6 +26,7 @@ type ParticipantContactObservation struct {
 }
 
 type ParticipantContactObservationInput struct {
+	ConversationID *int64
 	SourceID       *int64
 	AddressKind    ContactAddressKind
 	ServiceSlug    *string
@@ -90,6 +91,15 @@ func (s *Store) rewriteObservationsForMergeTx(
 		AND (survivor.scope_value = absorbed.scope_value OR
 			(survivor.scope_value IS NULL AND absorbed.scope_value IS NULL))
 		AND survivor.normalized_value = absorbed.normalized_value`
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+        SELECT survivor.id, support.conversation_id FROM participant_contact_observations absorbed
+        JOIN participant_contact_observations survivor ON `+matchingIdentity+`
+        JOIN participant_contact_observation_conversations support ON support.observation_id=absorbed.id
+        WHERE absorbed.participant_id=? AND survivor.participant_id=? AND `+absorbedCurrent+` AND `+survivorCurrent+`
+        ON CONFLICT(observation_id,conversation_id) DO NOTHING`, absorbedID, survivorID); err != nil {
+		return fmt.Errorf("merge observation room support: %w", err)
+	}
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE participant_contact_observations AS survivor
@@ -192,7 +202,13 @@ func (s *Store) RecordContactObservationContext(
 		}
 	}
 	result := &RecordContactObservationResult{}
-	err = s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+	recordTx := func(ctx context.Context, fn func(*loggedTx) error) error {
+		if input.ConversationID != nil {
+			return s.withPolicyAttributionTxContext(ctx, fn)
+		}
+		return s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, fn)
+	}
+	err = recordTx(ctx, func(tx *loggedTx) error {
 		// Normal source removal takes this source-scoped lock before it
 		// recomputes generated conflicts and deletes the source. An importer for
 		// that source must finish its observation/candidate transaction before
@@ -243,9 +259,13 @@ func (s *Store) RecordContactObservationContext(
 				*observation.ProviderUserID == *input.ProviderUserID
 			if input.ProviderUserID == nil || sameProvider {
 				result.Observation = observation
-				return nil
-			}
-			if observation.ProviderUserID == nil {
+				added, err := s.recordObservationConversationTx(ctx, tx, observation, input.ConversationID)
+				if err != nil || !added {
+					return err
+				}
+				// A new room support edge must reach matching even for a deduplicated value.
+				observationEnriched = true
+			} else if observation.ProviderUserID == nil {
 				if _, err := tx.ExecContext(ctx,
 					`UPDATE participant_contact_observations
 					 SET provider_user_id = ?, updated_at = `+s.dialect.Now()+`
@@ -328,47 +348,148 @@ func (s *Store) RecordContactObservationContext(
 			}
 		}
 
-		otherParticipantIDs, err := findConflictingObservationParticipantIDsTx(
-			ctx, tx, participantID, input.AddressKind, serviceID,
-			input.ScopeKind, input.ScopeValue, normalized, input.ProviderUserID,
-		)
+		if _, err := s.recordObservationConversationTx(ctx, tx, result.Observation, input.ConversationID); err != nil {
+			return err
+		}
+		eligible, err := fullObservationTx(ctx, tx, result.Observation.Envelope.ID)
+		if err != nil || !eligible {
+			return err
+		}
+
+		result.CandidateIDs, err = s.recordObservationConflictsTx(ctx, tx, result.Observation, serviceID)
 		if err != nil {
 			return err
 		}
-		if len(otherParticipantIDs) == 0 {
-			return nil
+		if len(result.CandidateIDs) > 0 {
+			result.CandidateID = &result.CandidateIDs[0]
+			result.Conflicting = true
 		}
-		basis := identityMatchBasisForAddressKind(input.AddressKind)
-		for _, otherParticipantID := range otherParticipantIDs {
-			leftKind, leftID, rightKind, rightID, err := canonicalMatchEndpoints(
-				IdentityMatchParticipant, participantID,
-				IdentityMatchParticipant, otherParticipantID,
-			)
-			if err != nil {
-				return err
-			}
-			candidateInput := IdentityMatchCandidateInput{
-				LeftKind: leftKind, LeftID: leftID, RightKind: rightKind, RightID: rightID,
-				Basis: basis, ServiceSlug: input.ServiceSlug, ScopeKind: input.ScopeKind,
-				ScopeValue: input.ScopeValue, NormalizedValue: &normalized,
-				State: IdentityMatchStateConflict, Source: ProvenanceArchiveObservation,
-				SourceRef: input.Envelope.SourceRef, SourceID: input.SourceID,
-			}
-			candidate, _, err := s.upsertIdentityMatchCandidateTx(
-				ctx, tx, candidateInput, leftKind, leftID, rightKind, rightID, serviceID, true,
-			)
-			if err != nil {
-				return err
-			}
-			result.CandidateIDs = append(result.CandidateIDs, candidate.ID)
-			if result.CandidateID == nil {
-				result.CandidateID = &candidate.ID
-			}
-		}
-		result.Conflicting = true
 		return nil
 	})
 	return result, err
+}
+
+// recordProviderEmailObservationTx preserves provider email support in the
+// exact conversation that admitted the metadata. The caller holds the
+// conversation-policy and attribution locks and has already checked that the
+// room is Full.
+func (s *Store) recordProviderEmailObservationTx(
+	ctx context.Context, tx *loggedTx, participantID, sourceID, roomID int64, email string,
+) error {
+	normalized, err := NormalizeServiceValue(nil, ContactAddressEmail, email)
+	if err != nil {
+		return err
+	}
+	if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "source-contact-observation", sourceID); err != nil {
+		return err
+	}
+	if err := s.lockParticipantObservationOwnerTxContext(ctx, tx, participantID); err != nil {
+		return err
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM participants WHERE id = ?`, participantID).Scan(&exists); err != nil {
+		return fmt.Errorf("check participant: %w", err)
+	}
+	if exists == 0 {
+		return ErrParticipantNotFound
+	}
+	if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "participant-contact-observation",
+		participantID, sourceID, ContactAddressEmail, nil, nil, nil, normalized); err != nil {
+		return err
+	}
+	observation, err := findParticipantObservationTx(
+		ctx, tx, participantID, &sourceID, ContactAddressEmail, nil, nil, nil, normalized,
+	)
+	if errors.Is(err, ErrProfileValueNotFound) {
+		envelope, envelopeErr := resolveProfileEnvelopeForOwnerTx(
+			ctx, tx, "participant_contact_observations", "participant_id", "address_kind",
+			participantID, ContactAddressEmail,
+			ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+		)
+		if envelopeErr != nil {
+			return envelopeErr
+		}
+		args := []any{
+			participantID, sourceID, ContactAddressEmail, nil, nil, nil, nil,
+			email, normalized, fallbackContactNormalization(ContactAddressEmail), 1,
+			timeValue(nil),
+		}
+		args = append(args, profileEnvelopeArgs(envelope)...)
+		var id int64
+		if err := tx.QueryRowContext(ctx, `INSERT INTO participant_contact_observations (
+			participant_id, source_id, address_kind, service_id, scope_kind,
+			scope_value, provider_user_id, original_value, normalized_value,
+			normalization, normalization_version, observed_at, `+
+			profileEnvelopeWriteColumns+`, created_at, updated_at
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			`+s.dialect.Now()+`, `+s.dialect.Now()+`
+		) RETURNING id`, args...).Scan(&id); err != nil {
+			return fmt.Errorf("record provider email observation: %w", err)
+		}
+		observation, err = getParticipantObservationTx(ctx, tx, participantID, id)
+		if err != nil {
+			return err
+		}
+		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	room := roomID
+	if _, err := s.recordObservationConversationTx(ctx, tx, observation, &room); err != nil {
+		return err
+	}
+	eligible, err := fullObservationTx(ctx, tx, observation.Envelope.ID)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrConversationPolicyStale
+	}
+	_, err = s.recordObservationConflictsTx(ctx, tx, observation, nil)
+	return err
+}
+
+func (s *Store) recordObservationConflictsTx(ctx context.Context, tx *loggedTx, observation *ParticipantContactObservation, serviceID any) ([]int64, error) {
+	var ids []int64
+	otherParticipantIDs, err := findConflictingObservationParticipantIDsTx(
+		ctx, tx, observation.ParticipantID, observation.AddressKind, serviceID,
+		observation.ScopeKind, observation.ScopeValue, observation.NormalizedValue, observation.ProviderUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(otherParticipantIDs) == 0 {
+		return nil, nil
+	}
+	basis := identityMatchBasisForAddressKind(observation.AddressKind)
+	for _, otherParticipantID := range otherParticipantIDs {
+		leftKind, leftID, rightKind, rightID, err := canonicalMatchEndpoints(
+			IdentityMatchParticipant, observation.ParticipantID,
+			IdentityMatchParticipant, otherParticipantID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		candidateInput := IdentityMatchCandidateInput{
+			LeftKind: leftKind, LeftID: leftID, RightKind: rightKind, RightID: rightID,
+			Basis: basis, ServiceSlug: observation.ServiceSlug, ScopeKind: observation.ScopeKind,
+			ScopeValue: observation.ScopeValue, NormalizedValue: &observation.NormalizedValue,
+			State: IdentityMatchStateConflict, Source: ProvenanceArchiveObservation,
+			SourceRef: observation.Envelope.SourceRef, SourceID: observation.SourceID,
+		}
+		candidate, _, err := s.upsertIdentityMatchCandidateTx(
+			ctx, tx, candidateInput, leftKind, leftID, rightKind, rightID, serviceID, true,
+		)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, candidate.ID)
+	}
+	return ids, nil
 }
 
 // supersedeObservationRowTx closes one current observation row in place,
@@ -503,9 +624,11 @@ func (s *Store) reconcileCurrentObservationIdentityMatchesTxContext(
 
 // deleteUnsupportedObservationIdentityConflictsContext removes generated
 // conflicts and returns promoted candidates to their pre-conflict state after
-// the observations that support them change. A conflict remains reviewable
-// while a matching current observation pair exists whose stable provider IDs
-// are absent or different.
+// the observations that support them change. A generated conflict with an
+// independent Contacts claim becomes an ordinary candidate instead of deleting
+// that claim or retaining its generated assessment. A conflict remains
+// reviewable while a matching current observation pair exists whose stable
+// provider IDs are absent or different.
 func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 	ctx context.Context, execer contextQuerier,
 ) error {
@@ -516,7 +639,10 @@ func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 			WHERE c.left_kind = 'participant'
 			  AND c.right_kind = 'participant'
 			  AND c.state = 'conflict'
-			  AND c.observation_conflict_origin = 'promoted'
+			  AND (c.observation_conflict_origin = 'promoted'
+			       OR (c.observation_conflict_origin = 'generated'
+			           AND c.decided_by IS NULL
+			           AND `+independentContactMatchSupportSQL("")+`))
 			  AND c.normalized_value IS NOT NULL
 			  AND c.basis IN ('email', 'phone', 'service_scope_username')
 			  AND NOT EXISTS (
@@ -534,7 +660,10 @@ func (s *Store) deleteUnsupportedObservationIdentityConflictsContext(
 			  )
 		)
 		UPDATE identity_match_candidates
-		SET state = COALESCE(pre_conflict_state, 'candidate'),
+		SET state = CASE WHEN observation_conflict_origin = 'generated' THEN 'candidate'
+		                 ELSE COALESCE(pre_conflict_state, 'candidate') END,
+		    confidence = CASE WHEN observation_conflict_origin = 'generated' THEN NULL ELSE confidence END,
+		    notes = CASE WHEN observation_conflict_origin = 'generated' THEN NULL ELSE notes END,
 		    observation_conflict_origin = NULL, pre_conflict_state = NULL,
 		    updated_at = `+s.dialect.Now()+`
 		WHERE id IN (SELECT id FROM stale_conflicts)`)); err != nil {
@@ -654,8 +783,8 @@ func findConflictingObservationParticipantIDsTx(
 	providerUserID *string,
 ) ([]int64, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT participant_id, provider_user_id
-		FROM participant_contact_observations
-		WHERE participant_id != ? AND address_kind = ?
+		FROM participant_contact_observations o
+		WHERE `+FullObservationWhere("o")+` AND participant_id != ? AND address_kind = ?
 		  AND (service_id = ? OR (service_id IS NULL AND CAST(? AS BIGINT) IS NULL))
 		  AND (scope_kind = ? OR (scope_kind IS NULL AND CAST(? AS TEXT) IS NULL))
 		  AND (scope_value = ? OR (scope_value IS NULL AND CAST(? AS TEXT) IS NULL))

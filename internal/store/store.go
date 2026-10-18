@@ -74,7 +74,9 @@ type Store struct {
 
 	// The daemon owns one Store. Consent changes wait for in-flight provider
 	// requests, without holding an archive transaction during network I/O.
-	personMatchConsentMu sync.RWMutex
+	personMatchConsentMu       sync.RWMutex
+	conversationPolicyMu       sync.RWMutex
+	conversationPolicyLockPath string
 
 	sqliteOptimizeMu sync.Mutex
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
@@ -260,6 +262,11 @@ func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, erro
 		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// Probe like the read-only opens do: a Store must know whether full-text
 	// search is available in the database it just opened. InitSchema re-probes
 	// after creating the FTS objects, so a caller that initializes a fresh
@@ -428,6 +435,10 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		dialect:              dialect,
 		readOnly:             true,
 		syncExecutionLocks:   newSyncExecutionLockState(),
+	}
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	available, err := dialect.FTSAvailable(ctx, db)
@@ -1519,6 +1530,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		s.migratePersonSweepAttemptBriefFailure,
 	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactConversationPolicyStatus, 1, false, s.migratePersonFactConversationPolicyStatus); err != nil {
+		return fmt.Errorf("migrate fact policy statuses: %w", err)
 	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err

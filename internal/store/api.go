@@ -121,6 +121,7 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 		scope = " AND " + predicate
 	}
 	authorizedScope, authorizedArgs := sourceScopeClause(ctx, "m.source_id")
+	scope += " AND " + FullMessageWhere("m")
 	scope += authorizedScope
 	args = append(args, authorizedArgs...)
 	// Get total count. Use the canonical live-messages predicate so
@@ -426,7 +427,7 @@ func (s *Store) GetMessagesSummariesByIDsContext(ctx context.Context, ids []int6
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		WHERE m.id IN (%s) AND %s
-	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, strings.Join(placeholders, ","), LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("get message summaries: %w", err)
@@ -549,7 +550,7 @@ func (s *Store) buildMessageSearchSQL(ctx context.Context, q *search.Query, ftsA
 
 func (s *Store) buildMessageSearchSQLWithVisibility(q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
 	plan := s.buildMessageSearchCriteria(q, ftsAvailable, false)
-	plan.conditions = append([]string{visibility}, plan.conditions...)
+	plan.conditions = append([]string{visibility, LexicalMessageWhere("m", q.IncludeCold)}, plan.conditions...)
 	plan.where = strings.Join(plan.conditions, " AND ")
 	return plan
 }
@@ -971,7 +972,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		SELECT COUNT(*) FROM messages
 		WHERE %s
 		AND (LOWER(subject) LIKE ? ESCAPE '\' OR LOWER(snippet) LIKE ? ESCAPE '\')
-	`, LiveMessagesWhere("", true))
+	`, LiveMessagesWhere("", true)+" AND "+FullMessageWhere("messages"))
 	var total int64
 	if err := s.db.QueryRow(countQuery, likePattern, likePattern).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count search results: %w", err)
@@ -1003,7 +1004,7 @@ func (s *Store) searchMessagesLike(query string, offset, limit int) ([]APIMessag
 		AND (LOWER(m.subject) LIKE ? ESCAPE '\' OR LOWER(m.snippet) LIKE ? ESCAPE '\')
 		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC
 		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, LiveMessagesWhere("m", true))
+	`, participantSummarySenderSQL, LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))
 
 	rows, err := s.db.Query(searchQuery, likePattern, likePattern, limit, offset)
 	if err != nil {

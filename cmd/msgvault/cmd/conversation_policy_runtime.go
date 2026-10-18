@@ -1,0 +1,112 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+// Reload only sanitized policy data, preserving the invocation's CLI overrides.
+func currentConversationPolicySettingsSource(state *invocation) func() (conversationpolicy.Settings, error) {
+	return func() (conversationpolicy.Settings, error) {
+		if state == nil || state.cfg == nil {
+			return conversationpolicy.Settings{}, errors.New("conversation policy configuration is unavailable")
+		}
+		snapshot, err := config.ReadConfigFile(state.cfg.ConfigFilePath())
+		if err != nil {
+			return conversationpolicy.Settings{}, err
+		}
+		if !snapshot.Exists {
+			return conversationpolicy.Settings{}, errors.New("conversation policy configuration file is missing")
+		}
+		loaded, err := state.cfg.ReloadConfigFile(snapshot)
+		if err != nil {
+			return conversationpolicy.Settings{}, err
+		}
+		return loaded.ConversationPolicySettings(), nil
+	}
+}
+
+// Configuration/expiry failures block consumers. A cleanup failure can be
+// retried because the committed policy already fences reads and publications.
+func initializeConversationPolicy(ctx context.Context, st *store.Store, cfg *config.Config, now time.Time) error {
+	if cfg == nil {
+		return errors.New("conversation policy configuration is unavailable")
+	}
+	return initializeConversationPolicySettings(ctx, st, cfg.ConversationPolicySettings(), now)
+}
+
+func initializeConversationPolicySettings(ctx context.Context, st *store.Store, settings conversationpolicy.Settings, now time.Time) error {
+	if _, err := st.ConfigureConversationPolicy(ctx, settings, now); err != nil {
+		return fmt.Errorf("configure conversation policy: %w", err)
+	}
+	if _, err := st.ExpireConversationPolicy(ctx, now); err != nil {
+		return fmt.Errorf("expire conversation policy: %w", err)
+	}
+	if err := cleanupConversationPolicyRuntime(ctx, st); err != nil {
+		loggerFromContext(ctx).Warn("conversation policy derived cleanup pending", "error", err)
+	}
+	return nil
+}
+
+func refreshConversationPolicyRuntime(ctx context.Context, st *store.Store, settings conversationpolicy.Settings, now time.Time) error {
+	_, configureErr := st.ConfigureConversationPolicy(ctx, settings, now)
+	_, expireErr := st.ExpireConversationPolicy(ctx, now)
+	return errors.Join(configureErr, expireErr, cleanupConversationPolicyRuntime(ctx, st))
+}
+
+func cleanupConversationPolicyRuntime(ctx context.Context, st *store.Store) error {
+	_, pending, err := st.ConversationPolicyCleanupPending(ctx)
+	if err != nil || !pending {
+		return err
+	}
+	lanes, closeLanes, err := openConversationPolicyCleanupLanes(ctx, st)
+	if err != nil {
+		return err
+	}
+	return errors.Join(reconcileConversationPolicyCleanup(ctx, st, lanes), closeLanes())
+}
+
+func refreshConversationPolicyFromSource(ctx context.Context, st *store.Store, source func() (conversationpolicy.Settings, error), now time.Time) error {
+	settings, err := source()
+	if err != nil {
+		// Expiry reads the last validated persisted settings. A broken reload must
+		// neither replace them with defaults nor keep inactive rooms full forever.
+		_, expiryErr := st.ExpireConversationPolicy(ctx, now)
+		return errors.Join(fmt.Errorf("reload conversation policy: %w", err), expiryErr, cleanupConversationPolicyRuntime(ctx, st))
+	}
+	return refreshConversationPolicyRuntime(ctx, st, settings, now)
+}
+
+// A bad reload does not stop a scheduled importer: enforce the persisted,
+// validated settings before allowing it to ingest new messages.
+func refreshConversationPolicyForSync(ctx context.Context, st *store.Store, source func() (conversationpolicy.Settings, error), now time.Time) error {
+	settings, err := source()
+	if err != nil {
+		loggerFromContext(ctx).Warn("conversation policy reload failed; retaining validated settings", "error", err)
+		settings, err = st.ConversationPolicySettingsContext(ctx)
+		if err != nil {
+			return fmt.Errorf("read retained conversation policy: %w", err)
+		}
+	}
+	return initializeConversationPolicySettings(ctx, st, settings, now)
+}
+
+func runConversationPolicyRuntime(ctx context.Context, st *store.Store, source func() (conversationpolicy.Settings, error), ticks <-chan time.Time, afterRefresh func(error)) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now, ok := <-ticks:
+			if !ok {
+				return
+			}
+			afterRefresh(refreshConversationPolicyFromSource(ctx, st, source, now))
+		}
+	}
+}

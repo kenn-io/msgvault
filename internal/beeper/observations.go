@@ -28,10 +28,11 @@ var errObservationSkipped = errors.New("beeper observation skipped")
 
 // captureContext is the per-chat context one capture runs in.
 type captureContext struct {
-	SourceID     int64
-	AccountID    string
-	Network      string
-	BridgePrefix string
+	ConversationID int64
+	SourceID       int64
+	AccountID      string
+	Network        string
+	BridgePrefix   string
 }
 
 // observedAddress is one address kind and raw value seen on a Beeper user.
@@ -42,15 +43,16 @@ type observedAddress struct {
 
 // observationKey dedupes writes inside one run.
 type observationKey struct {
-	participantID int64
-	sourceID      int64
-	userID        string
-	addressKind   store.ContactAddressKind
-	serviceSlug   string
-	scopeKind     string
-	scopeValue    string
-	providerID    string
-	value         string
+	conversationID int64
+	participantID  int64
+	sourceID       int64
+	userID         string
+	addressKind    store.ContactAddressKind
+	serviceSlug    string
+	scopeKind      string
+	scopeValue     string
+	providerID     string
+	value          string
 }
 
 type observationRecorder struct {
@@ -114,7 +116,7 @@ func (r *observationRecorder) capture(
 	var results []*store.RecordContactObservationResult
 	for _, address := range observedAddresses(u, anchor) {
 		key := observationKey{
-			participantID: participantID, sourceID: cc.SourceID,
+			participantID: participantID, sourceID: cc.SourceID, conversationID: cc.ConversationID,
 			userID: u.ID, addressKind: address.Kind, serviceSlug: slug,
 			scopeKind: derefString(scopeKind), scopeValue: derefString(scopeValue),
 			providerID: anchor, value: address.Value,
@@ -123,7 +125,7 @@ func (r *observationRecorder) capture(
 			continue
 		}
 		request := recordRequest{
-			SourceID: cc.SourceID, AddressKind: address.Kind,
+			SourceID: cc.SourceID, ConversationID: cc.ConversationID, AddressKind: address.Kind,
 			ScopeKind: scopeKind, ScopeValue: scopeValue,
 			ProviderUserID: anchor, OriginalValue: address.Value,
 			ObservedAt: observedAt, SourceRef: sourceRef, SourceUserID: u.ID,
@@ -231,6 +233,7 @@ func equalInt64Ptr(a, b *int64) bool {
 // service-rejected retry below is an obvious copy-with-one-change rather than
 // a second hand-built input.
 type recordRequest struct {
+	ConversationID int64
 	SourceID       int64
 	AddressKind    store.ContactAddressKind
 	ServiceSlug    *string
@@ -259,6 +262,9 @@ func (q recordRequest) input() store.ParticipantContactObservationInput {
 			Source:    store.ProvenanceArchiveObservation,
 			SourceRef: &sourceRef,
 		},
+	}
+	if q.ConversationID != 0 {
+		input.ConversationID = new(q.ConversationID)
 	}
 	if q.SourceID != 0 {
 		sourceID := q.SourceID

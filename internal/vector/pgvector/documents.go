@@ -37,6 +37,10 @@ func (b *Backend) PublishScopes(ctx context.Context, gen vector.GenerationID, sc
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := b.checkPolicyPublicationTx(ctx, tx, vector.ScopePublicationMessageIDs(scopes)); err != nil {
+		return err
+	}
+
 	var dim int
 	var state vector.GenerationState
 	err = tx.QueryRowContext(ctx,
@@ -397,40 +401,46 @@ func (b *Backend) GetDocumentProgress(ctx context.Context, gen vector.Generation
 }
 
 func (b *Backend) AdvanceDocumentChangeWatermark(ctx context.Context, gen vector.GenerationID, sequence int64) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, change_sequence)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET
 			change_sequence = GREATEST(embedding_document_progress.change_sequence, excluded.change_sequence)`,
-		int64(gen), sequence)
-	if err != nil {
-		return fmt.Errorf("advance document change watermark: %w", err)
-	}
-	return nil
+			int64(gen), sequence)
+		if err != nil {
+			return fmt.Errorf("advance document change watermark: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, reconcile_cursor)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET reconcile_cursor = excluded.reconcile_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document reconcile cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document reconcile cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) SetDocumentJournalCursor(ctx context.Context, gen vector.GenerationID, cursor string) error {
-	_, err := b.db.ExecContext(ctx, `
+	return b.policyStore.PublishConversationPolicyProgress(ctx, b.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO embedding_document_progress (generation_id, journal_cursor)
 		VALUES ($1, $2)
 		ON CONFLICT(generation_id) DO UPDATE SET journal_cursor = excluded.journal_cursor`,
-		int64(gen), cursor)
-	if err != nil {
-		return fmt.Errorf("set document journal cursor: %w", err)
-	}
-	return nil
+			int64(gen), cursor)
+		if err != nil {
+			return fmt.Errorf("set document journal cursor: %w", err)
+		}
+		return nil
+	})
 }
 
 func (b *Backend) ResetDocumentReconcileCursor(ctx context.Context, gen vector.GenerationID) error {

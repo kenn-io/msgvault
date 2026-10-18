@@ -139,6 +139,10 @@ type IdentityMatchSourceSupport struct {
 }
 
 type IdentityMatchCandidateInput struct {
+	// ObservationID asks automatic producers to revalidate their exact origin
+	// and peer support in the candidate write transaction. Zero preserves
+	// generic/manual candidate APIs.
+	ObservationID   int64
 	LeftKind        IdentityMatchEndpointKind
 	LeftID          int64
 	RightKind       IdentityMatchEndpointKind
@@ -164,7 +168,15 @@ type IdentityMatchCandidateInput struct {
 	Notes    *string
 }
 
+// IdentityMatchEvidenceAdmission binds automatic evidence to its original
+// policy snapshot and observation. Nil admission preserves manual/generic APIs.
+type IdentityMatchEvidenceAdmission struct {
+	PolicyRevision int64
+	ObservationID  int64
+}
+
 type IdentityMatchEvidenceInput struct {
+	Admission    *IdentityMatchEvidenceAdmission
 	EvidenceKind string
 	EvidenceRef  *string
 	Detail       *string
@@ -236,7 +248,11 @@ func (s *Store) UpsertIdentityMatchCandidateContext(
 	}
 	var candidate *IdentityMatchCandidate
 	created := false
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	writeTx := s.withTxContext
+	if input.ObservationID != 0 {
+		writeTx = s.withConversationPolicyIdentityTx
+	}
+	err = writeTx(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -295,6 +311,12 @@ func (s *Store) upsertIdentityMatchCandidateTx(
 	serviceID any,
 	observationConflict bool,
 ) (*IdentityMatchCandidate, bool, error) {
+	if input.ObservationID != 0 {
+		if err := s.checkObservationCandidateInputTx(ctx, tx, input, leftID, rightID, serviceID); err != nil {
+			return nil, false, err
+		}
+	}
+
 	if err := s.lockProfileIdentityKeyTxContext(
 		ctx, tx, "identity-match-candidate",
 		leftKind, leftID, rightKind, rightID, input.Basis, serviceID,
@@ -341,6 +363,13 @@ func (s *Store) upsertIdentityMatchCandidateTx(
 	}
 	if !errors.Is(err, ErrIdentityMatchNotFound) {
 		return nil, false, err
+	}
+	if input.ObservationID != 0 {
+		ref := observationPairRefPrefix
+		if input.SourceRef != nil {
+			ref += *input.SourceRef
+		}
+		input.SourceRef = &ref
 	}
 	var observationOrigin any
 	if observationConflict {
@@ -426,6 +455,9 @@ func (s *Store) AddIdentityMatchEvidenceContext(
 	ctx context.Context, candidateID int64, input IdentityMatchEvidenceInput,
 ) (*IdentityMatchEvidence, error) {
 	kind := strings.TrimSpace(input.EvidenceKind)
+	if input.Admission != nil && input.EvidenceRef == nil {
+		input.EvidenceRef = new(observationPairRefPrefix + kind)
+	}
 	if kind == "" || !input.Source.Valid() {
 		if !input.Source.Valid() {
 			return nil, ErrInvalidProvenance
@@ -433,9 +465,18 @@ func (s *Store) AddIdentityMatchEvidenceContext(
 		return nil, errors.New("identity match evidence kind is required")
 	}
 	var evidence *IdentityMatchEvidence
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	writeTx := s.withTxContext
+	if input.Admission != nil {
+		writeTx = s.withConversationPolicyIdentityTx
+	}
+	err := writeTx(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
+		}
+		if input.Admission != nil {
+			if err := s.checkIdentityMatchEvidenceAdmissionTx(ctx, tx, candidateID, input); err != nil {
+				return err
+			}
 		}
 		var exists int
 		if err := tx.QueryRowContext(ctx,
@@ -652,13 +693,22 @@ func (s *Store) decideIdentityMatchCandidateContext(
 	}
 	var candidate *IdentityMatchCandidate
 	var before *IdentityMatchCandidate
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	writeTx := s.withTxContext
+	if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) {
+		writeTx = s.withConversationPolicyIdentityTx
+	}
+	err := writeTx(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
 		current, err := getIdentityMatchCandidateTx(ctx, tx, candidateID)
 		if err != nil {
 			return err
+		}
+		if state == IdentityMatchStateAccepted && decidedBy != string(ProvenanceUser) {
+			if err := s.checkAutomaticObservationCandidateTx(ctx, tx, current); err != nil {
+				return err
+			}
 		}
 		before = current
 		if reviewToken != nil {

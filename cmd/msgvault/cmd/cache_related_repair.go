@@ -39,7 +39,7 @@ func refreshRelatedCacheStats(ctx context.Context, db sqlRunner, state *query.Ca
 			FROM sqlite_db.message_recipients mr
 			JOIN sqlite_db.messages m ON m.id = mr.message_id
 			JOIN sqlite_db.participants p ON p.id = mr.participant_id
-			WHERE mr.recipient_type = 'from' AND m.id <= ? AND ` + exportableMessageWhere("m")
+			WHERE mr.recipient_type = 'from' AND m.id <= ? AND ` + exportableMessageWhere("m") + " AND " + cacheFullMessageWhere("m")
 		if err := db.QueryRowContext(ctx, statement, state.LastMessageID).
 			Scan(&state.Stats.UniqueSenders, &state.Stats.UniqueDomains); err != nil {
 			return fmt.Errorf("refresh related sender statistics: %w", err)
@@ -48,7 +48,7 @@ func refreshRelatedCacheStats(ctx context.Context, db sqlRunner, state *query.Ca
 	if kinds.attachments {
 		statement := `SELECT coalesce(sum(try_cast(a.size AS BIGINT)), 0)
 			FROM sqlite_db.attachments a JOIN sqlite_db.messages m ON m.id = a.message_id
-			WHERE m.id <= ? AND ` + exportableMessageWhere("m")
+			WHERE m.id <= ? AND ` + exportableMessageWhere("m") + " AND " + cacheFullMessageWhere("m")
 		if err := db.QueryRowContext(ctx, statement, state.LastMessageID).
 			Scan(&state.Stats.AttachmentSizeBytes); err != nil {
 			return fmt.Errorf("refresh related attachment statistics: %w", err)

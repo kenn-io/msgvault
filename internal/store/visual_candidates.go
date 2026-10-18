@@ -96,7 +96,7 @@ func (s *Store) ListVisualCandidates(
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		WHERE a.message_id IN (`+strings.Join(placeholders, ",")+`)
-		  AND `+LiveMessagesWhere("m", true)+`
+		  AND `+(LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))+`
 		ORDER BY a.message_id, a.id`), args...)
 	if err != nil {
 		return VisualCandidatePage{}, fmt.Errorf("list visual candidate occurrences: %w", err)
@@ -176,7 +176,7 @@ func (s *Store) visualCandidateMessagePage(
 		return nil, false, errors.New("visual candidate message limit must be between 1 and 1000")
 	}
 	args := []any{filter.AfterMessageID}
-	where := `m.id > ? AND ` + LiveMessagesWhere("m", true) + `
+	where := `m.id > ? AND ` + (LiveMessagesWhere("m", true) + " AND " + FullMessageWhere("m")) + `
 		AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`
 	if len(messageTypes) > 0 {
 		where += " AND LOWER(TRIM(m.message_type)) IN (" + sqlPlaceholders(len(messageTypes)) + ")"
@@ -225,7 +225,7 @@ func (s *Store) selectVisualCandidateMessageIDs(
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	where := "m.id IN (" + sqlPlaceholders(len(ids)) + ") AND " + LiveMessagesWhere("m", true) +
+	where := "m.id IN (" + sqlPlaceholders(len(ids)) + ") AND " + (LiveMessagesWhere("m", true) + " AND " + FullMessageWhere("m")) +
 		" AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)"
 	if len(messageTypes) > 0 {
 		where += " AND LOWER(TRIM(m.message_type)) IN (" + sqlPlaceholders(len(messageTypes)) + ")"
@@ -269,7 +269,7 @@ func (s *Store) GetVisualMessageContext(ctx context.Context, messageID int64) (V
 	// including one racing this read — fail the commit-time CAS.
 	err := s.db.QueryRowContext(ctx, s.dialect.Rebind(`
 		SELECT COALESCE(subject, ''), COALESCE(message_type, ''), `+visualContentStampExpr+`
-		FROM messages WHERE id = ? AND `+LiveMessagesWhere("", true)), messageID).
+		FROM messages WHERE id = ? AND `+(LiveMessagesWhere("", true)+" AND "+FullMessageWhere("messages"))), messageID).
 		Scan(&result.Subject, &result.MessageType, &result.ContentStamp)
 	if err != nil {
 		return VisualMessageContext{}, fmt.Errorf("read visual message context: %w", err)

@@ -102,6 +102,9 @@ func (imp *Importer) repairQuietRosters(ctx context.Context, syncID, sourceID in
 			if err := imp.store.SetSourceConversationRosterRepairPendingContext(pendingCtx, sourceID, chatID, false); err != nil {
 				return false, fmt.Errorf("clear roster repair pending marker: %w", err)
 			}
+			if err := imp.refreshConversationPolicyAndRoster(pendingCtx, conversationID, sourceID, membership.roster, !membership.roster.Participants.HasMore, opts, &ImportSummary{}); err != nil {
+				return false, fmt.Errorf("refresh repaired roster policy: %w", err)
+			}
 		}
 		if fetchErr == nil && membership.known {
 			cs.RosterRetryAfter = ""

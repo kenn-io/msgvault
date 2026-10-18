@@ -103,6 +103,15 @@ func (w *PersonWorker) runOnce(
 		return result, fmt.Errorf("person worker gate: %w", err)
 	}
 
+	if source, ok := w.deps.Store.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = source.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	documents, err := w.deps.Store.ListPersonSemanticDocumentsContext(ctx)
 	if err != nil {
 		return result, fmt.Errorf("list person semantic documents: %w", err)
@@ -140,7 +149,7 @@ func (w *PersonWorker) runOnce(
 		}
 		var batchState personBatchState
 		if err := w.embedPersonBatch(ctx, gen, batch, &result, &batchState); err != nil {
-			if errors.Is(err, vector.ErrGenerationRetired) {
+			if errors.Is(err, vector.ErrGenerationRetired) || errors.Is(err, store.ErrConversationPolicyStale) {
 				return result, err
 			}
 			if vector.SemanticPersonEmbeddingInactive(err) {
@@ -198,6 +207,9 @@ func (w *PersonWorker) probePersonEndpoint(ctx context.Context) error {
 	if err := w.deps.Gate.Check(ctx); err != nil {
 		return err
 	}
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return err
+	}
 	vectors, err := w.deps.Client.EmbedDocuments(ctx, []DocumentInput{{Chunks: []string{
 		personEndpointProbeText,
 	}}})
@@ -220,6 +232,14 @@ func (w *PersonWorker) embedPersonBatch(
 	if err := w.deps.Gate.Check(ctx); err != nil {
 		return err
 	}
+	versions := make([]store.ConversationPolicyPersonVersion, len(batch))
+	for i, document := range batch {
+		versions[i] = store.ConversationPolicyPersonVersion{PersonID: document.PersonID, Revision: document.Revision}
+	}
+	ctx = store.WithConversationPolicyPeople(ctx, versions)
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return err
+	}
 	inputs := make([]DocumentInput, len(batch))
 	for i, document := range batch {
 		inputs[i] = DocumentInput{Chunks: []string{
@@ -227,6 +247,9 @@ func (w *PersonWorker) embedPersonBatch(
 		}}
 	}
 	vectors, embedErr := w.deps.Client.EmbedDocuments(ctx, inputs)
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return err
+	}
 	permanent := errors.Is(embedErr, ErrPermanent4xx) || errors.Is(embedErr, ErrDocumentTooLarge)
 	if permanent && len(batch) > 1 {
 		var batchErr error

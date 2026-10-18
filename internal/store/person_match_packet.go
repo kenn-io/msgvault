@@ -18,10 +18,10 @@ type PersonMatchPairSummaries struct {
 // PersonMatchPairSummariesContext reads only the two participant identity
 // summaries for a consented scoring packet. It never reads messages or notes.
 func (s *Store) PersonMatchPairSummariesContext(ctx context.Context, leftID, rightID int64) (PersonMatchPairSummaries, error) {
-	return personMatchPairSummariesContext(ctx, s.db, leftID, rightID)
+	return s.personMatchPairSummariesContext(ctx, s.db, leftID, rightID)
 }
 
-func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQuerier, leftID, rightID int64) (PersonMatchPairSummaries, error) {
+func (s *Store) personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQuerier, leftID, rightID int64) (PersonMatchPairSummaries, error) {
 	if leftID <= 0 || rightID <= 0 || leftID == rightID {
 		return PersonMatchPairSummaries{}, errors.New("invalid person match participant pair")
 	}
@@ -29,8 +29,10 @@ func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQ
 		Left:  personmatch.PairEndpoint{Kind: "participant", Identifiers: []personmatch.PairIdentifier{}},
 		Right: personmatch.PairEndpoint{Kind: "participant", Identifiers: []personmatch.PairIdentifier{}},
 	}
-	rows, err := q.QueryContext(ctx, `SELECT id, display_name, email_address, phone_number
-		FROM participants WHERE id IN (?, ?)`, leftID, rightID)
+	rows, err := q.QueryContext(ctx, `SELECT id, CASE WHEN `+fullParticipantNameWhere("participants.id", "participants.display_name")+` THEN display_name END,
+ CASE WHEN `+fullParticipantValueWhere("participants.id", "'email'", "participants.email_address")+` THEN email_address END,
+ CASE WHEN `+fullParticipantValueWhere("participants.id", "'phone'", "participants.phone_number")+` THEN phone_number END
+ FROM participants WHERE id IN (?, ?)`, leftID, rightID)
 	if err != nil {
 		return result, fmt.Errorf("read person match pair: %w", err)
 	}
@@ -65,7 +67,7 @@ func personMatchPairSummariesContext(ctx context.Context, q identityMatchReviewQ
 		rows, err = q.QueryContext(ctx, `SELECT pi.participant_id, pi.identifier_type, pi.identifier_value,
 		COALESCE(cs.slug, ''), COALESCE(pi.scope_kind, ''), COALESCE(pi.scope_value, '')
 		FROM participant_identifiers pi LEFT JOIN communication_services cs ON cs.id = pi.service_id
-		WHERE pi.participant_id = ? ORDER BY pi.id LIMIT 65`, participantID)
+		WHERE pi.participant_id = ? AND `+s.fullParticipantIdentifierWhere("pi")+` ORDER BY pi.id LIMIT 65`, participantID)
 		if err != nil {
 			return result, fmt.Errorf("read person match pair identifiers: %w", err)
 		}

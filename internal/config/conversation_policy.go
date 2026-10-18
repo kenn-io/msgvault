@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 )
 
-// ConversationPolicyConfig is separate from attachment limits. Overrides are
-// staged configuration until all downstream consumers support cold eligibility.
+// ConversationPolicyConfig is separate from attachment limits. Store settings
+// resolve its overrides together with persisted CLI overrides.
 type ConversationPolicyConfig struct {
 	ActivityWindowDays int                           `toml:"activity_window_days"`
 	Overrides          []conversationpolicy.Override `toml:"overrides"`
@@ -81,4 +81,13 @@ func (c *Config) validateConversationPolicy() error {
 		seen[key] = true
 	}
 	return nil
+}
+
+// ConversationPolicySettings returns only policy data, never account credentials.
+func (c *Config) ConversationPolicySettings() conversationpolicy.Settings {
+	settings := conversationpolicy.Settings{MaxParticipants: make(map[string]int, 5), ActivityWindowDays: int(c.ConversationPolicy.ActivityWindow() / (24 * time.Hour)), Overrides: append([]conversationpolicy.Override(nil), c.ConversationPolicy.Overrides...)}
+	for _, provider := range []string{"beeper", "slack", "slackdump", "discord", "teams"} {
+		settings.MaxParticipants[provider] = c.ConversationParticipantLimit(provider)
+	}
+	return settings
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -205,12 +206,12 @@ func TestProviderIdentityEvidencePreservesExactValueForPhoneService(t *testing.T
 	require.NoError(err, "ensure second participant")
 	cc := captureContext{SourceID: sourceID, AccountID: "whatsapp", Network: "WhatsApp"}
 
-	_, err = recorder.capture(ctx, firstID, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, firstID, &User{
 		ID:  "@whatsapp_case_one:beeper.local",
 		Raw: []byte(`{"id":"@whatsapp_case_one:beeper.local","providerID":"NativeCaseID"}`),
 	}, cc)
 	require.NoError(err, "capture first provider identity")
-	_, err = newObservationRecorder(st).capture(ctx, secondID, &User{
+	_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), secondID, &User{
 		ID:  "@whatsapp_case_two:beeper.local",
 		Raw: []byte(`{"id":"@whatsapp_case_two:beeper.local","providerID":"nativecaseid"}`),
 	}, cc)
@@ -254,14 +255,14 @@ func TestObservationDedupKeepsChangedProviderIdentity(t *testing.T) {
 		ID: "@provider-change:beeper.local", Username: "same-user",
 	}
 
-	first, err := recorder.capture(ctx, participantID, user, cc)
+	first, err := captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	require.NoError(err)
 	require.Len(first, 1)
 	require.NotNil(first[0].Observation.ProviderUserID)
 	fallbackID := *first[0].Observation.ProviderUserID
 
 	user.Raw = []byte(`{"id":"@provider-change:beeper.local","providerID":"native-user-id"}`)
-	second, err := recorder.capture(ctx, participantID, user, cc)
+	second, err := captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	require.NoError(err)
 	require.Len(second, 1,
 		"a changed provider identity must bypass run-local observation deduplication")
@@ -408,11 +409,11 @@ func TestAnchorClassificationRetriesAfterStoreFailureInTheSameRecorder(t *testin
 	user := &User{ID: userID, Username: "retry-user"}
 
 	releaseFailure := installAnchorClassificationFailure(t, st)
-	_, err = recorder.capture(ctx, participantID, user, cc)
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	require.ErrorContains(err, "forced anchor classification failure")
 	releaseFailure()
 
-	_, err = recorder.capture(ctx, participantID, user, cc)
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	require.NoError(err, "same-recorder retry")
 
 	service, err := st.ResolveCommunicationServiceContext(ctx, "slack")
@@ -750,12 +751,12 @@ func TestObservationDedupeKeyIncludesParticipantAndSource(t *testing.T) {
 			}
 			user := &User{ID: "@telegram_shared:beeper.local", Username: "@shared"}
 
-			first, err := recorder.capture(ctx, firstParticipant, user, captureContext{
+			first, err := captureFullTestObservations(ctx, t, recorder, firstParticipant, user, captureContext{
 				SourceID: firstSource, AccountID: "telegram-one", Network: "Telegram",
 			})
 			require.NoError(err, "first capture")
 			require.Len(first, 1)
-			second, err := recorder.capture(ctx, secondParticipant, user, captureContext{
+			second, err := captureFullTestObservations(ctx, t, recorder, secondParticipant, user, captureContext{
 				SourceID: secondSource, AccountID: "telegram-two", Network: "Telegram",
 			})
 			require.NoError(err, "second capture")
@@ -805,13 +806,13 @@ func TestSkippedInvalidObservationIsDeduplicatedWithinRecorderRun(t *testing.T) 
 	}
 	user := &User{ID: "@invalid_phone:beeper.local", PhoneNumber: "not-a-phone"}
 
-	first, err := recorder.capture(ctx, participantID, user, cc)
+	first, err := captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	requirements.NoError(err, "first capture")
 	assertions.Empty(first, "an invalid phone is skipped instead of persisted")
 	assertions.Len(recorder.seen, 1,
 		"the skipped address has no durable row or result, so the run-local key is the observable dedupe state")
 
-	second, err := recorder.capture(ctx, participantID, user, cc)
+	second, err := captureFullTestObservations(ctx, t, recorder, participantID, user, cc)
 	requirements.NoError(err, "second capture")
 	assertions.Empty(second, "the skipped address remains silent on a repeated capture")
 	assertions.Len(recorder.seen, 1, "the second capture must reuse the first skip decision")
@@ -834,7 +835,7 @@ func TestRenamedUsernameSupersedesTheOldValueOnTheSameAnchor(t *testing.T) {
 	require.NoError(err, "EnsureParticipantByIdentifier")
 	cc := captureContext{SourceID: sourceID, AccountID: "telegram", Network: "Telegram"}
 
-	_, err = recorder.capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, &User{
 		ID: "@telegram_alice:beeper.local", FullName: "Alice Example", Username: "@alice_old",
 	}, cc)
 	require.NoError(err, "first capture")
@@ -842,7 +843,7 @@ func TestRenamedUsernameSupersedesTheOldValueOnTheSameAnchor(t *testing.T) {
 	// A later run sees the renamed account. A fresh recorder mirrors a fresh
 	// process, so the run-local dedupe cache cannot mask the behaviour.
 	renamed := newObservationRecorder(st)
-	_, err = renamed.capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, renamed, participantID, &User{
 		ID: "@telegram_alice:beeper.local", FullName: "Alice Example", Username: "@alice_new",
 	}, cc)
 	require.NoError(err, "capture after rename")
@@ -875,15 +876,15 @@ func TestRenamedUsernameDoesNotSupersedeAnotherSource(t *testing.T) {
 	}
 	sharedProvider := []byte(`{"providerID":"tg-shared"}`)
 
-	_, err = newObservationRecorder(st).capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), participantID, &User{
 		ID: "@telegram_one:beeper.local", Username: "@alice_old", Raw: sharedProvider,
 	}, firstAccount)
 	require.NoError(err, "capture first account")
-	_, err = newObservationRecorder(st).capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), participantID, &User{
 		ID: "@telegram_two:beeper.local", Username: "@alice_other", Raw: sharedProvider,
 	}, secondAccount)
 	require.NoError(err, "capture second account")
-	_, err = newObservationRecorder(st).capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), participantID, &User{
 		ID: "@telegram_one:beeper.local", Username: "@alice_new", Raw: sharedProvider,
 	}, firstAccount)
 	require.NoError(err, "rename first account")
@@ -921,7 +922,7 @@ func TestRenamedUsernameSupersessionRetriesAfterPartialWrite(t *testing.T) {
 				SourceID: sourceID, AccountID: "telegram", Network: "Telegram",
 			}
 
-			_, err = recorder.capture(ctx, participantID, &User{
+			_, err = captureFullTestObservations(ctx, t, recorder, participantID, &User{
 				ID: "@telegram_alice:beeper.local", Username: "@alice_old",
 			}, cc)
 			require.NoError(err, "capture old username")
@@ -930,7 +931,7 @@ func TestRenamedUsernameSupersessionRetriesAfterPartialWrite(t *testing.T) {
 			renamed := &User{
 				ID: "@telegram_alice:beeper.local", Username: "@alice_new",
 			}
-			_, err = recorder.capture(ctx, participantID, renamed, cc)
+			_, err = captureFullTestObservations(ctx, t, recorder, participantID, renamed, cc)
 			require.ErrorContains(err, "forced rename supersede failure")
 
 			current, err := st.ListParticipantObservationsContext(ctx, participantID, true)
@@ -944,7 +945,7 @@ func TestRenamedUsernameSupersessionRetriesAfterPartialWrite(t *testing.T) {
 			if tc.freshRecorder {
 				recorder = newObservationRecorder(st)
 			}
-			retried, err := recorder.capture(ctx, participantID, renamed, cc)
+			retried, err := captureFullTestObservations(ctx, t, recorder, participantID, renamed, cc)
 			require.NoError(err, "retry renamed username")
 			require.Len(retried, 1, "the idempotent observation must still run rename repair")
 			assert.False(retried[0].Created)
@@ -1016,21 +1017,21 @@ func TestMultipleUsernamesAndPhonesCoexistOnOneParticipant(t *testing.T) {
 
 	// The same person seen on two bridged networks, and with a second phone
 	// number on one of them.
-	_, err = recorder.capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, &User{
 		ID: "@alice:beeper.local", Username: "@alice_tg", PhoneNumber: "+12025550123",
 	}, captureContext{
 		SourceID:  newBeeperTestSource(t, st, "telegram"),
 		AccountID: "telegram", Network: "Telegram",
 	})
 	require.NoError(err, "telegram capture")
-	_, err = recorder.capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, &User{
 		ID: "@alice:beeper.local", Username: "@alice_x",
 	}, captureContext{
 		SourceID:  newBeeperTestSource(t, st, "x"),
 		AccountID: "x", Network: "X",
 	})
 	require.NoError(err, "x capture")
-	_, err = recorder.capture(ctx, participantID, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, participantID, &User{
 		ID: "@alice:beeper.local", Username: "@alice_tg", PhoneNumber: "+12025550199",
 	}, captureContext{
 		SourceID:  newBeeperTestSource(t, st, "telegram"),
@@ -1076,17 +1077,17 @@ func TestRecycledUsernameDoesNotMergePeopleOrEraseHistory(t *testing.T) {
 
 	// Alice held the handle, then renamed away from it.
 	first := newObservationRecorder(st)
-	_, err = first.capture(ctx, alice, &User{
+	_, err = captureFullTestObservations(ctx, t, first, alice, &User{
 		ID: "@telegram_alice:beeper.local", Username: "@shared",
 	}, cc)
 	require.NoError(err, "alice claims the handle")
-	_, err = newObservationRecorder(st).capture(ctx, alice, &User{
+	_, err = captureFullTestObservations(ctx, t, newObservationRecorder(st), alice, &User{
 		ID: "@telegram_alice:beeper.local", Username: "@alice_now",
 	}, cc)
 	require.NoError(err, "alice renames away")
 
 	// Someone else picks the handle up.
-	results, err := newObservationRecorder(st).capture(ctx, bob, &User{
+	results, err := captureFullTestObservations(ctx, t, newObservationRecorder(st), bob, &User{
 		ID: "@telegram_bob:beeper.local", Username: "@shared",
 	}, cc)
 	require.NoError(err, "bob reuses the handle")
@@ -1122,12 +1123,12 @@ func TestSameUsernameUnderDifferentStableIDsStaysAConflict(t *testing.T) {
 	require.NoError(err, "ensure bob")
 
 	recorder := newObservationRecorder(st)
-	_, err = recorder.capture(ctx, alice, &User{
+	_, err = captureFullTestObservations(ctx, t, recorder, alice, &User{
 		ID: "@telegram_alice:beeper.local", Username: "@shared",
 	}, cc)
 	require.NoError(err, "alice records the handle")
 
-	results, err := recorder.capture(ctx, bob, &User{
+	results, err := captureFullTestObservations(ctx, t, recorder, bob, &User{
 		ID: "@telegram_bob:beeper.local", Username: "@shared",
 	}, cc)
 	require.NoError(err, "bob records the same live handle")
@@ -1143,4 +1144,25 @@ func TestSameUsernameUnderDifferentStableIDsStaysAConflict(t *testing.T) {
 	aliceCurrent, err := st.ListParticipantObservationsContext(ctx, alice, true)
 	require.NoError(err, "alice current")
 	assert.Len(aliceCurrent, 1, "neither observation is repointed or superseded by the collision")
+}
+
+// Older identity tests exercise full-room behavior; provide exact provenance
+// explicitly rather than treating their account-wide observations as eligible.
+func captureFullTestObservations(ctx context.Context, t *testing.T, recorder *observationRecorder, pid int64, user *User, cc captureContext) ([]*store.RecordContactObservationResult, error) {
+	t.Helper()
+	if cc.ConversationID == 0 && cc.SourceID != 0 {
+		room, err := recorder.store.EnsureConversation(cc.SourceID, "identity-test-room", "Identity fixture")
+		require.NoError(t, err)
+		require.NoError(t, recorder.store.SetConversationPolicyOverride(ctx, cc.SourceID, "identity-test-room", conversationpolicy.Full))
+		cc.ConversationID = room
+	}
+	return recorder.capture(ctx, pid, user, cc)
+}
+
+func fullBeeperObservationRoom(t *testing.T, st *store.Store, sourceID int64) int64 {
+	t.Helper()
+	room, err := st.EnsureConversation(sourceID, "identity-test-room", "Identity fixture")
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "identity-test-room", conversationpolicy.Full))
+	return room
 }

@@ -178,6 +178,7 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	var messageRequests atomic.Int32
 	var personRequests atomic.Int32
 	var configRemoved atomic.Bool
+	var postRemovalMessageSeen atomic.Bool
 	removeResult := make(chan error, 1)
 	dataDir := t.TempDir()
 
@@ -204,6 +205,9 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 		for _, input := range request.Input {
 			if strings.HasPrefix(input, "Subject:") {
 				messageRequests.Add(1)
+				if configRemoved.Load() && strings.Contains(input, "post-removal message") {
+					postRemovalMessageSeen.Store(true)
+				}
 				continue
 			}
 			personRequests.Add(1)
@@ -305,8 +309,8 @@ func TestRunEmbedLivePersonGateStopsLaterBatchesAfterConfigDeletion(t *testing.T
 	resume.SetErr(resumeErr)
 	require.NoError(runEmbeddingsBuildLocal(resume), resumeErr.String())
 
-	assert.Equal(int32(3), messageRequests.Load(),
-		"message batches must continue through the separate ungated client after config removal")
+	assert.True(postRemovalMessageSeen.Load(),
+		"new message work must continue through the separate ungated client after config removal")
 	assert.Equal(int32(1), personRequests.Load(),
 		"config deletion must fence every later curated-person batch")
 }

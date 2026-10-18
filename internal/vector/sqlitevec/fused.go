@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sqliteutil"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -28,6 +27,12 @@ var _ vector.FusingBackend = (*Backend)(nil)
 // FusedSearch uses the bounded accelerator path when a ready Vec1 index is
 // available, otherwise it retains the exact fused query.
 func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return nil, vector.SearchMetadata{}, err
+	}
+	defer release()
+
 	metadata := vector.SearchMetadata{}
 	if len(req.QueryVec) > 0 {
 		vectorHits, searchMeta, err := b.searchAccelerator(
@@ -388,7 +393,7 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
               WHERE m.subject IS NULL OR m.subject NOT LIKE sp.value ESCAPE '\'))
 	   %s
 	   %s`,
-		store.LiveMessagesWhere("m", true), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
+		b.liveMessageWhere("m"), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {

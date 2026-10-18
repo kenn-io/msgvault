@@ -126,6 +126,11 @@ func (w *ContextWorker) RunBackstop(
 func (w *ContextWorker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (result RunResult, retErr error) {
+	var captureErr error
+	ctx, captureErr = w.source.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return result, captureErr
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -1632,7 +1637,7 @@ func (s SourceSnapshot) latestChatBlockScopes(
 		  JOIN message_bodies mb ON mb.message_id = m.id
 		 WHERE m.conversation_id = ?
 		   AND m.message_type = 'beeper'
-		   AND m.deleted_at IS NULL
+		   AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		   AND m.deleted_from_source_at IS NULL
 		 ORDER BY m.id DESC
 		 LIMIT ?`), conversationID, blockLimit*chatScopeMaxMessages)
@@ -1766,7 +1771,7 @@ func (s SourceSnapshot) metadataScopesAfter(
 	}
 	where := []string{
 		`m.message_type = 'beeper'`,
-		`m.deleted_at IS NULL`,
+		`m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ``,
 		`m.deleted_from_source_at IS NULL`,
 	}
 	args := make([]any, 0)
@@ -1793,7 +1798,7 @@ func (s SourceSnapshot) metadataScopesAfter(
 		  JOIN message_bodies recent_mb ON recent_mb.message_id = recent.id
 		 WHERE recent.conversation_id = m.conversation_id
 		   AND recent.message_type = 'beeper'
-		   AND recent.deleted_at IS NULL
+		   AND recent.deleted_at IS NULL AND ` + store.FullMessageWhere("recent") + `
 		   AND recent.deleted_from_source_at IS NULL
 	) - 1) / ` + strconv.Itoa(chatScopeMaxMessages) + `) * ` +
 		strconv.Itoa(chatScopeMaxMessages) + ` + 1)`
@@ -1996,7 +2001,7 @@ func (s SourceSnapshot) query(ctx context.Context, query string, args ...any) (*
 func (s SourceSnapshot) sourceScopesAfter(
 	ctx context.Context, after int64, limit int, buildScope vector.BuildScope,
 ) ([]contextScope, int64, bool, int, error) {
-	query := `SELECT m.id,COALESCE(m.message_type,''),m.conversation_id,COALESCE(m.sent_at,m.received_at,m.internal_date) FROM messages m WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND m.id > ?`
+	query := `SELECT m.id,COALESCE(m.message_type,''),m.conversation_id,COALESCE(m.sent_at,m.received_at,m.internal_date) FROM messages m WHERE m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ` AND m.deleted_from_source_at IS NULL AND m.id > ?`
 	args := []any{after}
 	// Each scope dimension narrows independently: gating the type filter on
 	// IsEmpty would render `IN ()` for a source-only scope, and vice versa.

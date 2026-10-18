@@ -21,6 +21,14 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				return err
 			}
 		} else {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+                SELECT observation_id,? FROM participant_contact_observation_conversations WHERE conversation_id=?
+                ON CONFLICT(observation_id,conversation_id) DO NOTHING`, c.destination, c.id); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM participant_contact_observation_conversations WHERE conversation_id=?`, c.id); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id, participant_id, role, joined_at, left_at)
  SELECT ?, participant_id, role, joined_at, left_at FROM conversation_participants WHERE conversation_id = ?
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
@@ -181,6 +189,20 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+        SELECT kept.id, support.conversation_id FROM participant_contact_observations incoming
+        JOIN participant_contact_observations kept ON kept.source_id=? AND kept.participant_id=incoming.participant_id
+         AND kept.address_kind=incoming.address_kind
+         AND (kept.service_id=incoming.service_id OR (kept.service_id IS NULL AND incoming.service_id IS NULL))
+         AND (kept.scope_kind=incoming.scope_kind OR (kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
+         AND (kept.scope_value=incoming.scope_value OR (kept.scope_value IS NULL AND incoming.scope_value IS NULL))
+         AND kept.normalized_value=incoming.normalized_value
+        JOIN participant_contact_observation_conversations support ON support.observation_id=incoming.id
+        WHERE incoming.source_id=? AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+         AND kept.active_until IS NULL AND kept.superseded_at IS NULL
+        ON CONFLICT(observation_id,conversation_id) DO NOTHING`, into, from); err != nil {
+		return fmt.Errorf("merge source observation support: %w", err)
 	}
 	// Observation rows and accepted-match endpoints retain their immutable IDs.
 	// A duplicate current observation becomes historical rather than being deleted.

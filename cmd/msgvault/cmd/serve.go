@@ -131,6 +131,9 @@ var runDerivedCacheSubprocess = func(ctx context.Context, analyticsDir string) e
 }
 
 var (
+	prepareServeAnalyticsEngine         = prepareDaemonAnalyticsEngine
+	registerServePersonEnrichmentJob    = registerPersonEnrichmentJob
+	startServeVectorInit                = startVectorInit
 	importDiscordSourceForScheduledRun  = importDiscordSource
 	rebuildCacheAfterScheduledSourceRun = rebuildCacheAfterScheduledSync
 	startServeAPIServer                 = func(server *api.Server, listener net.Listener) error {
@@ -324,6 +327,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := recoverNativeOperationRunsAtStartup(cmd.Context(), s, logger); err != nil {
 		return err
 	}
+	if err := initializeConversationPolicy(cmd.Context(), s, cfg, time.Now()); err != nil {
+		return err
+	}
 	// Legacy [identity] migration is deferred to the first scheduled sync's
 	// runPostSourceCreateMigrations call, which fires AFTER that sync's
 	// confirmDefaultIdentity. Calling the migration here would race
@@ -373,6 +379,40 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		cacheRefresherShutdown = true
 	}()
+	lastPolicyRevision, err := s.ConversationPolicyRevision(ctx)
+	if err != nil {
+		return err
+	}
+	policyTicks := time.NewTicker(time.Minute)
+	policyDone := make(chan struct{})
+	go func() {
+		defer close(policyDone)
+		runConversationPolicyRuntime(ctx, s, currentConversationPolicySettingsSource(state), policyTicks.C, func(err error) {
+			if err != nil && ctx.Err() == nil {
+				logger.Warn("conversation policy refresh incomplete; cleanup will retry", "error", err)
+			}
+			// Existing cache admission rejects stale revisions while this rebuild runs.
+			if ctx.Err() == nil {
+				revision, readErr := s.ConversationPolicyRevision(ctx)
+				if readErr == nil && revision != lastPolicyRevision {
+					lastPolicyRevision = revision
+					if cfg.Analytics.AutoBuildCache && !s.IsPostgreSQL() {
+						cacheRefresher.Request("conversation-policy")
+					}
+				}
+			}
+		})
+	}()
+	defer func() {
+		policyTicks.Stop()
+		cancel()
+		select {
+		case <-policyDone:
+		case <-time.After(serveAPIShutdownTimeout):
+			resourceCleanupSafe = false
+			logger.Warn("conversation policy refresh did not stop; retaining archive resources")
+		}
+	}()
 	blobStore := attachmentMaint.blob
 
 	// Vector misconfiguration still fails startup fast; the expensive
@@ -392,7 +432,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	engine, analyticsMode, cacheOutcome, analyticsAsync, engineErr := prepareDaemonAnalyticsEngine(
+	engine, analyticsMode, cacheOutcome, analyticsAsync, engineErr := prepareServeAnalyticsEngine(
 		ctx, cfg, s, startupCacheIntent,
 	)
 	if startupCacheIntent != startupCacheBuildIntentNone && !analyticsAsync {
@@ -552,7 +592,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	); err != nil {
 		return fmt.Errorf("schedule people sweep: %w", err)
 	}
-	if err := registerPersonEnrichmentJob(
+	if err := registerServePersonEnrichmentJob(
 		ctx, sched, s, cfg.People.Enrichment, personEnrichmentRuntimeCredentials{
 			Suppression: personEnrichmentEnvironmentLookup(cfg),
 			Provider:    personEnrichmentProviderCredentialLookup(cfg),
@@ -995,7 +1035,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Info("background daemon idle shutdown enabled", "timeout", cfg.Server.DaemonIdleTimeout)
 		}
 
-		vectorInit = startVectorInit(
+		vectorInit = startServeVectorInit(
 			ctx, s, dbPath,
 			combineWorkTrackers(idleTracker, labelWorkTracker(operationGate, "background embedding work")),
 			apiServer, sched, blobStore,
@@ -1393,6 +1433,8 @@ func runDaemonSQLQueryWithJobs(
 		if err != nil {
 			return nil, nil, err
 		}
+		duckOptions.PolicyStore = s
+		duckOptions.ConversationPolicyRevision = s.ConversationPolicyRevision
 		duckEngine, err := query.NewArchiveDuckDBEngine(ctx, c.AnalyticsDir(), duckOptions)
 		if err != nil {
 			if errors.Is(err, query.ErrCacheUnavailable) {
@@ -1681,6 +1723,8 @@ func openDaemonDuckDBEngine(c *config.Config, s *store.Store) (*query.DuckDBEngi
 	if err != nil {
 		return nil, err
 	}
+	options.PolicyStore = s
+	options.ConversationPolicyRevision = s.ConversationPolicyRevision
 	return query.NewDuckDBEngine(c.AnalyticsDir(), c.DatabaseDSN(), s.DB(), options)
 }
 
@@ -1802,6 +1846,16 @@ func (a *storeAPIAdapter) PersonMatchConsentEgressContext(
 
 func (a *storeAPIAdapter) EnsurePersonMatchScoringCandidatesContext(ctx context.Context, limit int) (int, error) {
 	return a.store.EnsurePersonMatchScoringCandidatesContext(ctx, limit)
+}
+
+func (a *storeAPIAdapter) CaptureConversationPolicyWork(ctx context.Context) (context.Context, error) {
+	return a.store.CaptureConversationPolicyWork(ctx)
+}
+
+func (a *storeAPIAdapter) CheckIdentityMatchJudgmentAdmission(
+	ctx context.Context, lease store.IdentityMatchJudgmentLease,
+) error {
+	return a.store.CheckIdentityMatchJudgmentAdmission(ctx, lease)
 }
 
 func (a *storeAPIAdapter) ClaimNextIdentityMatchJudgmentContext(ctx context.Context, owner string, leaseDuration time.Duration, scoringVersion ...string) (*store.IdentityMatchJudgmentLease, error) {
@@ -2493,6 +2547,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 	emit func(api.CLIRunEvent) error,
 	run cliCommandSubprocessRunner,
 ) (runErr error) {
+	if len(req.Args) >= 2 && req.Args[0] == "policy" && (req.Args[1] == "set" || req.Args[1] == "reset") {
+		defer func() { runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(false, false)) }()
+	}
 	if manualSyncCLICommand(req.Args) {
 		defer func() {
 			force, skip := manualSyncCacheFlagValues(req.Args)
@@ -4530,6 +4587,9 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
+	if err := refreshConversationPolicyForSync(ctx, s, currentConversationPolicySettingsSource(state), time.Now()); err != nil {
+		return err
+	}
 	client, err := newTeamsClient(ctx, cfg, logger, email)
 	if err != nil {
 		return err

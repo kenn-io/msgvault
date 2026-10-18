@@ -244,8 +244,18 @@ func (s *Store) AcquireSourceRemovalLockContext(ctx context.Context, sourceID in
 // disables the pool-wide 30s statement_timeout for this tx (finding S1).
 // No-op timeout reset on SQLite.
 func (s *Store) RemoveSource(sourceID int64) error {
-	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
-		return s.removeSourceExec(ctx, tx, sourceID)
+	return s.runConversationPolicyMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		state, err := s.captureSourceConversationPolicyTx(ctx, tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if err = s.removeSourceExec(ctx, tx, sourceID); err != nil {
+			return err
+		}
+		return s.finishConversationPolicyLifecycleTx(ctx, tx, state)
 	})
 }
 
@@ -266,21 +276,41 @@ func (s *Store) RemoveSource(sourceID int64) error {
 func (s *Store) RemoveSourceSerialized(
 	ctx context.Context, sourceID int64,
 ) (hadActiveSync bool, packedMappingsRemoved int64, err error) {
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyExclusive)
+		if err != nil {
+			return false, 0, err
+		}
+		defer release()
+	}
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return false, 0, fmt.Errorf("acquire connection: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 
-	if err := s.dialect.BeginExclusive(ctx, conn); err != nil {
-		return false, 0, fmt.Errorf("begin exclusive: %w", err)
+	var beginErr error
+	if pg, ok := s.dialect.(*PostgreSQLDialect); ok {
+		beginErr = pg.beginExclusive(ctx, conn, func() error { return s.LockPostgresConversationPolicyTx(ctx, conn, ConversationPolicyExclusive) })
+	} else {
+		beginErr = s.dialect.BeginExclusive(ctx, conn)
 	}
+	if beginErr != nil {
+		return false, 0, fmt.Errorf("begin exclusive: %w", beginErr)
+	}
+
 	committed := false
 	defer func() {
 		if !committed {
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
+
+	tx := &loggedTx{manualConn: conn, rebind: s.Rebind, attribution: &attributionLockState{exclusive: true}}
+	policyState, err := s.captureSourceConversationPolicyTx(ctx, tx, sourceID)
+	if err != nil {
+		return false, 0, err
+	}
 
 	if err := s.requireSourceRemovalAllowed(ctx, conn, sourceID); err != nil {
 		return false, 0, err
@@ -384,6 +414,10 @@ func (s *Store) RemoveSourceSerialized(
 		packedMappingsRemoved += removed
 	}
 
+	if err := s.finishConversationPolicyLifecycleTx(ctx, tx, policyState); err != nil {
+		return hadActiveSync, 0, err
+	}
+
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 		return hadActiveSync, 0, fmt.Errorf("commit: %w", err)
 	}
@@ -478,7 +512,7 @@ type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error
 // pair from current observations instead of persisted source associations, so
 // legacy rows, alternate observations, and participant-merge rewrites all use
 // the same truth at cleanup time. The correlated candidate alias is `c`.
-const currentCandidateObservationPairSQL = `EXISTS (
+var currentCandidateObservationPairSQL = `EXISTS (
 	SELECT 1
 	FROM participant_contact_observations observation_left
 	JOIN participant_contact_observations observation_right ON TRUE
@@ -487,8 +521,12 @@ const currentCandidateObservationPairSQL = `EXISTS (
 	  AND observation_left.active_until IS NULL
 	  AND observation_left.superseded_at IS NULL
 	  AND observation_right.active_until IS NULL
-	  AND observation_right.superseded_at IS NULL
+	  AND observation_right.superseded_at IS NULL AND ` + FullObservationWhere("observation_left") + ` AND ` + FullObservationWhere("observation_right") + `
 	  AND (
+        (c.basis IN ('email','phone')
+         AND observation_left.address_kind=c.basis AND observation_right.address_kind=c.basis
+         AND observation_left.normalized_value=c.normalized_value AND observation_right.normalized_value=c.normalized_value)
+        OR
 		(c.basis = 'stable_provider_id'
 		 AND observation_left.provider_user_id = c.normalized_value
 		 AND observation_right.provider_user_id = c.normalized_value)
@@ -565,11 +603,17 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesConnContext(
 // before the candidate is removed; an explicit user decision remains durable
 // even when all of its archive support is gone. Generated Beeper matches
 // verify both current endpoint observations because a flat source union cannot
-// express that conjunction.
+// express that conjunction. Email/phone suggestions from independent producers
+// (such as historical Contacts review) need no observation pair; only chat-backed
+// email/phone suggestions enter pair cleanup. Source removal still withdraws
+// generated suggestions when their last source support disappears.
 func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	ctx context.Context, query sourceIdentityQuery, exec sourceIdentityExec,
 	removeRowsWithoutSourceSupport bool,
 ) error {
+	if err := pruneIndependentMatchCorroboration(ctx, exec); err != nil {
+		return err
+	}
 	var evidenceSourceUnsupportedSQL, candidateSourceUnsupportedSQL string
 	if removeRowsWithoutSourceSupport {
 		evidenceSourceUnsupportedSQL = `NOT EXISTS (
@@ -603,8 +647,13 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 				SELECT 1 FROM identity_match_candidates c
 				WHERE c.id = identity_match_evidence.candidate_id
 				  AND c.left_kind = 'participant' AND c.right_kind = 'participant'
-				  AND c.observation_conflict_origin IS NULL
 				  AND (
+                    (identity_match_evidence.evidence_kind = 'conversation_membership'
+                     AND EXISTS (SELECT 1 FROM identity_match_evidence_sources es JOIN sources src ON src.id=es.source_id WHERE es.evidence_id=identity_match_evidence.id AND src.source_type IN ('beeper','slack','slackdump','discord','teams'))
+                     AND NOT EXISTS (SELECT 1 FROM conversations evidence_room
+                      WHERE identity_match_evidence.evidence_ref='conversation:' || CAST(evidence_room.id AS TEXT)
+                      AND `+FullConversationWhere("evidence_room")+`))
+                    OR
 					(identity_match_evidence.evidence_kind = 'stable_provider_id'
 					 AND c.basis = 'stable_provider_id'
 					 AND NOT EXISTS (
@@ -616,7 +665,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 						  AND observation_left.active_until IS NULL
 						  AND observation_left.superseded_at IS NULL
 						  AND observation_right.active_until IS NULL
-						  AND observation_right.superseded_at IS NULL
+						  AND observation_right.superseded_at IS NULL AND `+FullObservationWhere("observation_left")+` AND `+FullObservationWhere("observation_right")+`
 						  AND observation_left.provider_user_id = c.normalized_value
 						  AND observation_right.provider_user_id = c.normalized_value
 						  AND identity_match_evidence.detail = c.normalized_value
@@ -634,7 +683,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 						  AND observation_left.active_until IS NULL
 						  AND observation_left.superseded_at IS NULL
 						  AND observation_right.active_until IS NULL
-						  AND observation_right.superseded_at IS NULL
+						  AND observation_right.superseded_at IS NULL AND `+FullObservationWhere("observation_left")+` AND `+FullObservationWhere("observation_right")+`
 						  AND observation_left.address_kind = 'username'
 						  AND observation_right.address_kind = 'username'
 						  AND observation_left.service_id = c.service_id
@@ -661,7 +710,8 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 					 ))
 					OR
 					(identity_match_evidence.evidence_kind IN ('phone', 'email')
-					 AND c.basis IN ('stable_provider_id', 'service_scope_username')
+                     AND NOT `+independentEmailEvidenceSupportSQL()+`
+					 AND (COALESCE(identity_match_evidence.evidence_ref,'') LIKE '`+observationPairRefPrefix+`%' OR c.basis IN ('stable_provider_id', 'service_scope_username') OR EXISTS (SELECT 1 FROM identity_match_evidence_sources es JOIN sources src ON src.id=es.source_id WHERE es.evidence_id=identity_match_evidence.id AND src.source_type IN ('beeper','slack','slackdump','discord','teams')))
 					 AND NOT EXISTS (
 						SELECT 1
 						FROM participant_contact_observations observation_left
@@ -671,7 +721,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 						  AND observation_left.active_until IS NULL
 						  AND observation_left.superseded_at IS NULL
 						  AND observation_right.active_until IS NULL
-						  AND observation_right.superseded_at IS NULL
+						  AND observation_right.superseded_at IS NULL AND `+FullObservationWhere("observation_left")+` AND `+FullObservationWhere("observation_right")+`
 						  AND observation_left.address_kind = identity_match_evidence.evidence_kind
 						  AND observation_right.address_kind = identity_match_evidence.evidence_kind
 						  AND observation_left.normalized_value = identity_match_evidence.detail
@@ -681,6 +731,9 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 			)
 		  )`); err != nil {
 		return fmt.Errorf("delete unsupported identity match evidence: %w", err)
+	}
+	if err := retractUnsupportedGeneratedNameEvidenceContext(ctx, query, exec); err != nil {
+		return err
 	}
 
 	rows, err := query(ctx, `SELECT c.id, c.left_kind, c.left_id,
@@ -692,7 +745,13 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 		  AND (
 			`+candidateSourceUnsupportedSQL+`(
 				c.left_kind = 'participant' AND c.right_kind = 'participant'
-				AND c.basis IN ('stable_provider_id', 'service_scope_username')
+				AND (c.basis IN ('stable_provider_id', 'service_scope_username')
+                     OR (c.basis IN ('email', 'phone') AND NOT `+independentContactMatchSupportSQL("")+` AND (COALESCE(c.source_ref,'') LIKE '`+observationPairRefPrefix+`%' OR EXISTS (
+                         SELECT 1 FROM identity_match_candidate_sources cs
+                         JOIN sources src ON src.id = cs.source_id
+                         WHERE cs.candidate_id = c.id
+                           AND src.source_type IN ('beeper','slack','slackdump','discord','teams')
+                     ))))
 				AND NOT `+currentCandidateObservationPairSQL+`
 			)
 		  )
@@ -839,6 +898,63 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	return nil
 }
 
+// Keep the exact raw-name authority and the matcher's Unicode EqualFold rule.
+// Source associations alone cannot attest to a name, and a later supported raw
+// name must not launder an older generated explanation. Both operations use the
+// caller's transaction or pinned connection, including one-connection pools.
+func retractUnsupportedGeneratedNameEvidenceContext(ctx context.Context, query sourceIdentityQuery, exec sourceIdentityExec) error {
+	rows, err := query(ctx, `SELECT e.id, COALESCE(e.detail,''),
+        COALESCE(name_left.display_name,''), COALESCE(name_right.display_name,''),
+        (`+fullParticipantNameWhere("c.left_id", "name_left.display_name")+` AND `+fullParticipantNameWhere("c.right_id", "name_right.display_name")+`)
+        FROM identity_match_evidence e
+        JOIN identity_match_candidates c ON c.id=e.candidate_id
+        LEFT JOIN participants name_left ON name_left.id=c.left_id
+        LEFT JOIN participants name_right ON name_right.id=c.right_id
+        WHERE e.source IN ('archive_observation','extraction','enrichment')
+        AND e.evidence_kind='display_name'
+        AND c.left_kind='participant' AND c.right_kind='participant'
+        AND EXISTS (SELECT 1 FROM identity_match_evidence_sources es
+          JOIN sources src ON src.id=es.source_id WHERE es.evidence_id=e.id
+          AND src.source_type IN ('beeper','slack','slackdump','discord','teams'))`)
+	if err != nil {
+		return fmt.Errorf("list generated name evidence: %w", err)
+	}
+	var unsupported []int64
+	for rows.Next() {
+		var id int64
+		var detail, leftName, rightName string
+		var eligible bool
+		if err := rows.Scan(&id, &detail, &leftName, &rightName, &eligible); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan generated name evidence: %w", err)
+		}
+		if !eligible || leftName == "" || !strings.EqualFold(leftName, rightName) || !strings.EqualFold(leftName, detail) {
+			unsupported = append(unsupported, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate generated name evidence: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close generated name evidence: %w", err)
+	}
+	// Below both SQLite's and PostgreSQL's parameter limits. Close the read
+	// before any delete so the caller can own a single database connection.
+	const deleteChunkSize = 500
+	for start := 0; start < len(unsupported); start += deleteChunkSize {
+		chunk := unsupported[start:min(start+deleteChunkSize, len(unsupported))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		if _, err := exec(ctx, `DELETE FROM identity_match_evidence WHERE id IN (`+sqlPlaceholders(len(args))+`)`, args...); err != nil {
+			return fmt.Errorf("delete unsupported generated name evidence: %w", err)
+		}
+	}
+	return nil
+}
+
 // reapplyAcceptedIdentityMatchesAfterSourceCleanupContext restores accepted
 // assertions that were previously redundant through an owned edge removed by
 // cleanup. Only pairs connected before cleanup are eligible, so this does not
@@ -979,5 +1095,5 @@ func identityCandidateObservationMatchSQL(observationAlias string) string {
 			(` + observationAlias + `.scope_value IS NULL AND c.scope_value IS NULL))
 		AND ` + observationAlias + `.normalized_value = c.normalized_value
 		AND ` + observationAlias + `.active_until IS NULL
-		AND ` + observationAlias + `.superseded_at IS NULL`
+		AND ` + observationAlias + `.superseded_at IS NULL AND ` + FullObservationWhere(observationAlias)
 }

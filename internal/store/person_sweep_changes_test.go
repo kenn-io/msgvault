@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -30,6 +31,7 @@ func newPersonSweepJournalFixture(t *testing.T, trackAlice, trackBob bool) perso
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, "person-sweep-chat", "direct_chat", "Synthetic chat")
 	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), source.ID, "person-sweep-chat", conversationpolicy.Full))
 	aliceID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	bobID, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")

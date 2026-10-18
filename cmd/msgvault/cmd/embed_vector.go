@@ -53,6 +53,9 @@ func runEmbed(cmd *cobra.Command) error {
 		return fmt.Errorf("init schema: %w", err)
 	}
 
+	if err := initializeConversationPolicy(ctx, s, cfg, time.Now()); err != nil {
+		return err
+	}
 	// Resolve the account dimension of the build scope before anything
 	// derives a fingerprint or coverage predicate from the config: the
 	// --account/--collection flags (or [vector.embed.scope] accounts)
@@ -79,6 +82,7 @@ func runEmbed(cmd *cobra.Command) error {
 		// dialect-aware via rebind, so the build pipeline runs directly
 		// against pgx.
 		pgb, err := pgvector.Open(ctx, pgvector.Options{
+			PolicyStore:   s,
 			DB:            s.DB(),
 			Dimension:     cfg.Vector.Embeddings.Dimension,
 			BuildScope:    cfg.Vector.Embed.Scope.BuildScope(),
@@ -101,6 +105,7 @@ func runEmbed(cmd *cobra.Command) error {
 			vecPath = filepath.Join(cfg.Data.DataDir, "vectors.db")
 		}
 		sb, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			PolicyStore:     s,
 			Path:            vecPath,
 			MainPath:        cfg.DatabaseDSN(),
 			Dimension:       cfg.Vector.Embeddings.Dimension,

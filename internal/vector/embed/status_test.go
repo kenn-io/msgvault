@@ -401,10 +401,17 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 			d.finish(err)
 			_, stamped, _, _, err := f.store.CoverageCounts(t.Context(), int64(f.gen))
 			require.NoError(err)
-			assert.Equal(int64(1), stamped)
+			wantStamped := int64(1)
+			wantCompleted := 1
+			if mode == "covered" {
+				// The publication fence commits the covered batch atomically;
+				// the failing second stamp rolls back the first.
+				wantStamped, wantCompleted = 0, 0
+			}
+			assert.Equal(wantStamped, stamped)
 			got := capture.read(t)
 			require.Len(got.RecentBatches, 1)
-			assert.Equal(1, got.RecentBatches[0].Completed)
+			assert.Equal(wantCompleted, got.RecentBatches[0].Completed)
 		})
 	}
 }

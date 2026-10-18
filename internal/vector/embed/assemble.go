@@ -185,7 +185,7 @@ func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMess
 		SELECT m.id, m.conversation_id, m.source_id, COALESCE(m.message_type, ''),
 		       m.sent_at, m.received_at, m.internal_date
 		FROM messages m
-		WHERE m.id = ? AND m.deleted_at IS NULL
+		WHERE m.id = ? AND m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + `
 		  AND m.deleted_from_source_at IS NULL`)
 	var row AssemblyMessage
 	var sentAt, receivedAt, internalDate sql.NullTime
@@ -298,7 +298,7 @@ func (s SourceSnapshot) latestChatMessageID(ctx context.Context, conversationID 
 		  JOIN message_bodies mb ON mb.message_id = m.id
 		 WHERE m.conversation_id = ?
 		   AND m.message_type = 'beeper'
-		   AND m.deleted_at IS NULL
+		   AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		   AND m.deleted_from_source_at IS NULL`), conversationID).Scan(&id)
 	if err != nil {
 		return 0, false, fmt.Errorf("read latest embedding chat message %d: %w", conversationID, err)
@@ -317,7 +317,7 @@ func (s SourceSnapshot) MessageVersions(ctx context.Context, scope AffectedScope
 	if s.state.closed {
 		return nil, ErrSourceSnapshotClosed
 	}
-	where := []string{`m.deleted_at IS NULL`, `m.deleted_from_source_at IS NULL`}
+	where := []string{`m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ``, `m.deleted_from_source_at IS NULL`}
 	args := make([]any, 0, 4)
 	if scope.MessageID != 0 {
 		where = append(where, `m.id = ?`)
@@ -492,7 +492,7 @@ func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN participants sender ON sender.id = m.sender_id
-		WHERE %s AND m.deleted_at IS NULL
+		WHERE %s AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		  AND m.deleted_from_source_at IS NULL`, s.lastModified, predicate)
 }
 
@@ -534,7 +534,7 @@ func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN participants sender ON sender.id = m.sender_id
-		WHERE %s AND m.deleted_at IS NULL
+		WHERE %s AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		  AND m.deleted_from_source_at IS NULL`, bodyText, bodyHTML, s.lastModified, bodyTruncated, predicate)
 }
 

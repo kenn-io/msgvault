@@ -268,7 +268,7 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 	isSQLite := !store.IsPostgresURL(cfg.DatabaseDSN())
 	var unlockCache func() error
 	if isSQLite {
-		unlockCache, err = lockCacheAndInvalidateSyncState(cfg.AnalyticsDir())
+		unlockCache, err = lockCacheAndInvalidateSyncState(s, cfg.AnalyticsDir())
 		if err != nil {
 			return fmt.Errorf("protect analytics cache for account removal: %w", err)
 		}
@@ -330,7 +330,6 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			cfg.AnalyticsDir(),
 			true,
 			false,
-			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		)
 		return errors.Join(

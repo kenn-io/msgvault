@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -101,7 +102,7 @@ func newTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store, func
 	return imp, st, srv.Close
 }
 
-func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
+func TestImporterColdPolicyQuietLegacyRosterRepair(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(strconv.FormatBool(unknown), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -127,14 +128,24 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 			} else {
 				requirements.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: "{}", Valid: true}))
 			}
+			richParticipant, err := st.EnsureParticipant("repaired@example.test", "Independent contact", "example.test")
+			requirements.NoError(err)
 			f.mu.Lock()
 			chat.Participants = append(chat.Participants, map[string]any{
-				"id": "@signal_bob:beeper.local", "fullName": "Bob",
+				"id": "@signal_bob:beeper.local", "fullName": "Bob", "email": "repaired@example.test",
 			})
 			f.mu.Unlock()
+			requirements.NoError(st.SetConversationRosterRepairPendingContext(t.Context(), conversationID, true))
+			_, err = st.RefreshConversationPolicy(t.Context(), []int64{conversationID}, time.Now())
+			requirements.NoError(err)
+			assertions.Equal(conversationpolicy.Cold, coldPolicyTier(t, st, chat.ID))
 			f.resetRequests()
 			_, err = imp.Import(t.Context(), opts)
 			requirements.NoError(err)
+			assertions.Equal(conversationpolicy.Full, coldPolicyTier(t, st, chat.ID))
+			replayedParticipant, _, err := st.ParticipantByIdentifier("beeper", providerFallbackUserID("signal", "@signal_bob:beeper.local"))
+			requirements.NoError(err)
+			assertions.Equal(richParticipant, replayedParticipant, "quiet repair promotion must replay fetched rich roster")
 			membership, err := st.AttachmentConversationMembershipContext(t.Context(), messageID)
 			requirements.NoError(err)
 			assertions.True(membership.RosterArchived)
@@ -150,6 +161,7 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 			assertions.True(after.Done)
 			isChatProbe := func(req string) bool { return strings.SplitN(req, "?", 2)[0] == "/v1/chats/"+chat.ID }
 			assertions.True(slices.ContainsFunc(f.requests(), isChatProbe))
+			assertions.False(slices.ContainsFunc(f.requests(), func(req string) bool { return strings.HasPrefix(req, "/v1/chats/"+chat.ID+"/messages?") }), "quiet repair and promotion must not fetch message history")
 			f.resetRequests()
 			_, err = imp.Import(t.Context(), opts)
 			requirements.NoError(err)
@@ -158,7 +170,7 @@ func TestIncrementalSyncRepairsQuietLegacyRoster(t *testing.T) {
 	}
 }
 
-func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) {
+func TestImporterColdPolicyActiveRosterRepairAfterFailure(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newFakeBeeper(t)
 	quiet := mediaChat()
@@ -205,6 +217,7 @@ func TestQuietRosterRepairRetriesAfterParticipantReplacementFails(t *testing.T) 
 	ids, err = st.ListUnresolvedConversationIDs(t.Context(), source.ID)
 	requirements.NoError(err)
 	assertions.Empty(ids, "the next run must finish the pending quiet-room repair")
+	assertions.Equal(conversationpolicy.Full, coldPolicyTier(t, st, quiet.ID))
 	assertions.Len(rosterMembers(t, st, source.ID, quiet.ID), 3)
 }
 

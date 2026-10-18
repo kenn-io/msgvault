@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -118,6 +119,12 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("backfill: begin tx: %w", err)
 	}
+	if b.policyStore != nil {
+		if err := b.policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyShared); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
 	committed := false
 	defer func() {
 		if !committed {
@@ -163,6 +170,9 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		        SELECT 1 FROM embeddings e
 		         WHERE e.message_id = messages.id
 		           AND e.generation_id = $1)`
+	if b.policyStore != nil {
+		stamp += " AND " + store.FullMessageWhere("messages")
+	}
 	if pendingExists {
 		stamp += `
 		    AND messages.id NOT IN (
@@ -186,17 +196,11 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	return nil
 }
 
-// rowQueryer is the subset of *sql.DB / *sql.Tx that pendingEmbeddingsExists
-// needs, so it can probe either on the pool or inside the backfill tx.
-type rowQueryer interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // pendingEmbeddingsExists reports whether the legacy pending_embeddings table
 // is present. Used by BackfillEmbedGenForUpgrade to decide whether to apply the
 // active-gen pending exclusion. to_regclass returns NULL for a
 // non-existent relation, so a NULL scan means "absent".
-func pendingEmbeddingsExists(ctx context.Context, q rowQueryer) (bool, error) {
+func pendingEmbeddingsExists(ctx context.Context, q queryRower) (bool, error) {
 	var reg *string
 	if err := q.QueryRowContext(ctx,
 		`SELECT to_regclass('pending_embeddings')::text`).Scan(&reg); err != nil {

@@ -296,6 +296,15 @@ func (w *Worker) RunBackstop(
 func (w *Worker) runOperationPass(
 	ctx context.Context, gen vector.GenerationID, scope operations.PassScope, backstop bool,
 ) (res RunResult, retErr error) {
+	if policy, ok := w.deps.Store.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return res, err
+		}
+	}
 	pass, terminal, err := beginOperationPass(
 		ctx, w.deps.Recorder, operations.KindMessageEmbedding, scope, w.deps.Log,
 	)
@@ -389,6 +398,9 @@ func (w *Worker) run(
 
 		eb, err := w.embedBatch(ctx, ids)
 		if err != nil {
+			if errors.Is(err, store.ErrConversationPolicyStale) {
+				return res, err
+			}
 			if w.stopIfYielded(ctx, gen) {
 				return res, nil
 			}
@@ -538,6 +550,9 @@ func (w *Worker) run(
 
 		// Step 1: upsert embeddings (VectorsDB side).
 		if err := w.upsertMeasured(ctx, gen, eb.chunks); err != nil {
+			if errors.Is(err, store.ErrConversationPolicyStale) {
+				return res, err
+			}
 			if errors.Is(err, vector.ErrGenerationRetired) {
 				// The generation was retired out from under this worker. Per
 				// the ErrGenerationRetired contract this is a benign "stop"
@@ -705,6 +720,18 @@ type embedBatchResult struct {
 // reported in the returned result's missing slice rather than causing
 // a failure — the caller skip-marks them.
 func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult, error) {
+	policyWhere := ""
+	if policy, ok := w.deps.Store.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return embedBatchResult{}, err
+		}
+		policyWhere = " AND " + store.FullMessageWhere("m")
+	}
+
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -715,7 +742,8 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
         SELECT m.id, COALESCE(m.subject, ''), COALESCE(mb.body_text, ''), COALESCE(mb.body_html, ''), %s
           FROM messages m
           LEFT JOIN message_bodies mb ON mb.message_id = m.id
-         WHERE m.id IN (%s)`, w.lastModifiedExpr, strings.Join(placeholders, ",")))
+         WHERE m.id IN (%s)%s
+         ORDER BY m.id`, w.lastModifiedExpr, strings.Join(placeholders, ","), policyWhere))
 
 	rows, err := w.deps.MainDB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -773,6 +801,9 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 	}
 	if err := rows.Err(); err != nil {
 		return embedBatchResult{}, fmt.Errorf("iterate message rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return embedBatchResult{}, fmt.Errorf("close message rows: %w", err)
 	}
 
 	// Identify scanned ids that had no row in messages; we'll report
@@ -845,8 +876,21 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 	vecs := make([][]float32, 0, len(inputs))
 	for i := 0; i < len(inputs); i += embedSubBatchSize {
 		end := min(i+embedSubBatchSize, len(inputs))
-		finishProvider := measureEmbeddingProvider(ctx, inputs[i:end])
-		got, err := w.deps.Client.Embed(ctx, inputs[i:end])
+		requestIDs := make([]int64, 0, end-i)
+		seenRequestIDs := make(map[int64]struct{}, end-i)
+		for _, piece := range pieces[i:end] {
+			if _, ok := seenRequestIDs[piece.ID]; ok {
+				continue
+			}
+			seenRequestIDs[piece.ID] = struct{}{}
+			requestIDs = append(requestIDs, piece.ID)
+		}
+		requestCtx := store.WithConversationPolicyMessageIDs(ctx, requestIDs)
+		finishProvider := measureEmbeddingProvider(requestCtx, inputs[i:end])
+		if err := store.CheckConversationPolicyAdmission(requestCtx); err != nil {
+			return embedBatchResult{}, err
+		}
+		got, err := w.deps.Client.Embed(requestCtx, inputs[i:end])
 		accepted := 0
 		if err == nil {
 			accepted = len(got)

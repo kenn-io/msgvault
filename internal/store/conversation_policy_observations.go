@@ -1,0 +1,352 @@
+package store
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// FullObservationWhere admits exact full-room support or independent evidence.
+// Legacy chat observations with no support edges cannot borrow another room.
+// The alias is a trusted SQL identifier, never caller-provided data.
+func FullObservationWhere(alias string) string {
+	return `(` + alias + `.source IN ('user','carddav_import','vcard_import') OR NOT EXISTS (SELECT 1 FROM sources observation_source WHERE observation_source.id=` + alias + `.source_id AND observation_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS (SELECT 1 FROM participant_contact_observation_conversations observation_room JOIN conversations observation_conversation ON observation_conversation.id=observation_room.conversation_id WHERE observation_room.observation_id=` + alias + `.id AND observation_conversation.source_id=` + alias + `.source_id AND ` + FullConversationWhere("observation_conversation") + `))`
+}
+
+func fullObservationTx(ctx context.Context, tx *loggedTx, id int64) (bool, error) {
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM participant_contact_observations o WHERE o.id=? AND o.active_until IS NULL AND o.superseded_at IS NULL AND `+FullObservationWhere("o")+`)`, id).Scan(&eligible)
+	return eligible, err
+}
+
+// ObservationFullEligibleContext is the producer-side admission check. Automatic
+// candidate lookups apply the same predicate to the peer observations.
+func (s *Store) ObservationFullEligibleContext(ctx context.Context, id int64) (bool, error) {
+	var eligible bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM participant_contact_observations o WHERE o.id=? AND o.active_until IS NULL AND o.superseded_at IS NULL AND `+FullObservationWhere("o")+`)`, id).Scan(&eligible)
+	return eligible, err
+}
+func (s *Store) ListFullParticipantObservationsContext(ctx context.Context, pid int64) ([]ParticipantContactObservation, error) {
+	return s.queryParticipantObservationsContext(ctx, participantObservationSelect+` WHERE o.participant_id=? AND o.active_until IS NULL AND o.superseded_at IS NULL AND `+FullObservationWhere("o")+` ORDER BY o.id`, pid)
+}
+func (s *Store) ConversationFullEligibleContext(ctx context.Context, id int64) (bool, error) {
+	var eligible bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND `+FullConversationWhere("c")+`)`, id).Scan(&eligible)
+	return eligible, err
+}
+
+func (s *Store) withPolicyAttributionTxContext(ctx context.Context, fn func(*loggedTx) error) error {
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyExclusive)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return s.withAttributionPreFenceTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			return s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyExclusive)
+		}
+		return nil
+	}, fn)
+}
+
+func (s *Store) recordObservationConversationTx(ctx context.Context, tx *loggedTx, observation *ParticipantContactObservation, room *int64) (bool, error) {
+	if room == nil {
+		return false, nil
+	}
+	var valid bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversations WHERE id=? AND source_id=?)`, *room, observation.SourceID).Scan(&valid); err != nil {
+		return false, err
+	}
+	if !valid {
+		return false, errors.New("observation conversation must belong to its source")
+	}
+	before, err := fullObservationTx(ctx, tx, observation.Envelope.ID)
+	if err != nil {
+		return false, err
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id) VALUES(?,?) ON CONFLICT(observation_id,conversation_id) DO NOTHING`, observation.Envelope.ID, *room)
+	if err != nil {
+		return false, err
+	}
+	count, err := result.RowsAffected()
+	if err != nil || count == 0 {
+		return false, err
+	}
+	after, err := fullObservationTx(ctx, tx, observation.Envelope.ID)
+	if err != nil {
+		return false, err
+	}
+	if before != after {
+		people, err := personIDsForParticipantsTx(ctx, tx, []int64{observation.ParticipantID})
+		if err != nil {
+			return false, err
+		}
+		if err = s.invalidateConversationPolicyPersonInputsTx(ctx, tx, people); err != nil {
+			return false, err
+		}
+		if err = s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+			return false, err
+		}
+		if err = s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
+			return false, err
+		}
+		if _, err = s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+			return false, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE person_contact_state SET dirty_at=`+s.dialect.Now()+` WHERE dirty_at IS NULL AND EXISTS(SELECT 1 FROM person_participants pp WHERE pp.person_id=person_contact_state.person_id AND pp.participant_id=?)`, observation.ParticipantID); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// Automatic identity publication uses a shared policy fence before its normal
+// identity/sync locks. Every check runs on this actual write transaction.
+func (s *Store) withConversationPolicyIdentityTx(ctx context.Context, fn func(*loggedTx) error) error {
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			if err := s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyShared); err != nil {
+				return err
+			}
+		}
+		return s.lockIdentityMutationTxContext(ctx, tx)
+	}, fn)
+}
+
+func (s *Store) checkObservationCandidateInputTx(ctx context.Context, tx *loggedTx, input IdentityMatchCandidateInput, left, right int64, serviceID any) error {
+	var eligible bool
+	predicate := `peer.provider_user_id=?`
+	peerScope := ""
+	if input.Basis == IdentityMatchServiceScopeUsername {
+		predicate = `peer.normalized_value=? AND peer.address_kind='username' AND peer.service_id=?`
+		peerScope = ` AND NOT (
+          ((origin.scope_kind IS NULL AND peer.scope_kind IS NULL) OR
+           (origin.scope_kind IS NOT NULL AND peer.scope_kind IS NOT NULL AND origin.scope_kind=peer.scope_kind))
+          AND ((origin.scope_value IS NULL AND peer.scope_value IS NULL) OR
+           (origin.scope_value IS NOT NULL AND peer.scope_value IS NOT NULL AND origin.scope_value=peer.scope_value)))`
+	}
+	args := []any{input.ObservationID, left, right, input.NormalizedValue}
+	if input.Basis == IdentityMatchServiceScopeUsername {
+		args = append(args, serviceID)
+	}
+	args = append(args, left, right, input.NormalizedValue)
+	if input.Basis == IdentityMatchServiceScopeUsername {
+		args = append(args, serviceID)
+	}
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM participant_contact_observations origin WHERE origin.id=? AND origin.participant_id IN (?,?)
+    AND origin.active_until IS NULL AND origin.superseded_at IS NULL AND `+FullObservationWhere("origin")+` AND `+strings.ReplaceAll(predicate, "peer.", "origin.")+`
+    AND EXISTS(SELECT 1 FROM participant_contact_observations peer WHERE peer.participant_id IN (?,?) AND peer.participant_id<>origin.participant_id
+    AND peer.active_until IS NULL AND peer.superseded_at IS NULL AND `+FullObservationWhere("peer")+` AND `+predicate+peerScope+`))`, args...).Scan(&eligible)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrConversationPolicyStale
+	}
+	return nil
+}
+
+// Existing candidate endpoints and value identify its observation pair; each
+// observation must independently have live exact-room support. The stored
+// source relation selects chat-generated candidates, never supplies support.
+func (s *Store) checkAutomaticObservationCandidateTx(ctx context.Context, tx *loggedTx, candidate *IdentityMatchCandidate) error {
+	if candidate.Source != ProvenanceArchiveObservation || candidate.LeftKind != IdentityMatchParticipant || candidate.RightKind != IdentityMatchParticipant {
+		return nil
+	}
+	var stale bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM identity_match_candidates c WHERE c.id=?
+    AND EXISTS(SELECT 1 FROM identity_match_candidate_sources cs JOIN sources src ON src.id=cs.source_id WHERE cs.candidate_id=c.id AND src.source_type IN ('beeper','slack','slackdump','discord','teams'))
+    AND NOT `+currentCandidateObservationPairSQL+`)`, candidate.ID).Scan(&stale)
+	if err != nil {
+		return err
+	}
+	if stale {
+		return ErrConversationPolicyStale
+	}
+	return nil
+}
+
+// Evidence retains the revision captured before gathering. Re-reading a newer
+// revision at publication would incorrectly bless work from the old policy.
+func (s *Store) checkIdentityMatchEvidenceAdmissionTx(ctx context.Context, tx *loggedTx, candidateID int64, input IdentityMatchEvidenceInput) error {
+	admission := input.Admission
+	var revision int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key=?),0)`, conversationPolicyRevisionKey).Scan(&revision); err != nil {
+		return err
+	}
+	if revision != admission.PolicyRevision {
+		return ErrConversationPolicyStale
+	}
+	candidate, err := getIdentityMatchCandidateWithoutEvidenceTx(ctx, tx, candidateID)
+	if err != nil {
+		return err
+	}
+	if candidate.LeftKind != IdentityMatchParticipant || candidate.RightKind != IdentityMatchParticipant {
+		return ErrConversationPolicyStale
+	}
+	var eligible bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM participant_contact_observations o WHERE o.id=? AND o.participant_id IN (?,?) AND o.active_until IS NULL AND o.superseded_at IS NULL AND `+FullObservationWhere("o")+`)`, admission.ObservationID, candidate.LeftID, candidate.RightID).Scan(&eligible); err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrConversationPolicyStale
+	}
+	detail := ""
+	if input.Detail != nil {
+		detail = *input.Detail
+	}
+	pair := `SELECT EXISTS(SELECT 1 FROM participant_contact_observations a JOIN participant_contact_observations b ON TRUE
+ WHERE a.participant_id=? AND b.participant_id=? AND a.active_until IS NULL AND a.superseded_at IS NULL
+ AND b.active_until IS NULL AND b.superseded_at IS NULL AND ` + FullObservationWhere("a") + ` AND ` + FullObservationWhere("b")
+	args := []any{candidate.LeftID, candidate.RightID}
+	switch input.EvidenceKind {
+	case "email", "phone":
+		pair += ` AND a.address_kind=? AND b.address_kind=? AND a.normalized_value=? AND b.normalized_value=?`
+		args = append(args, input.EvidenceKind, input.EvidenceKind, detail, detail)
+	case "stable_provider_id":
+		pair += ` AND a.provider_user_id=? AND b.provider_user_id=?`
+		args = append(args, detail, detail)
+	case "service_scope_username":
+		var serviceID int64
+		if candidate.ServiceSlug == nil {
+			return ErrConversationPolicyStale
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM communication_services WHERE slug=?`, *candidate.ServiceSlug).Scan(&serviceID); err != nil {
+			return err
+		}
+		return s.checkObservationCandidateInputTx(ctx, tx, IdentityMatchCandidateInput{ObservationID: admission.ObservationID, Basis: IdentityMatchServiceScopeUsername, NormalizedValue: candidate.NormalizedValue}, candidate.LeftID, candidate.RightID, serviceID)
+	case "display_name":
+		var leftName, rightName string
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(a.display_name,''),COALESCE(b.display_name,''), (`+fullParticipantNameWhere("a.id", "a.display_name")+` AND `+fullParticipantNameWhere("b.id", "b.display_name")+`) FROM participants a JOIN participants b ON TRUE WHERE a.id=? AND b.id=?`, candidate.LeftID, candidate.RightID).Scan(&leftName, &rightName, &eligible); err != nil {
+			return err
+		}
+		if !eligible || leftName == "" || !strings.EqualFold(leftName, rightName) || !strings.EqualFold(leftName, detail) {
+			return ErrConversationPolicyStale
+		}
+	case "conversation_membership":
+		ref := ""
+		if input.EvidenceRef != nil {
+			ref = *input.EvidenceRef
+		}
+		room, err := strconv.ParseInt(strings.TrimPrefix(ref, "conversation:"), 10, 64)
+		if err != nil || !strings.HasPrefix(ref, "conversation:") {
+			return ErrConversationPolicyStale
+		}
+		if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND `+FullConversationWhere("c")+` AND EXISTS(SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=c.id AND cp.participant_id=?) AND EXISTS(SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=c.id AND cp.participant_id=?))`, room, candidate.LeftID, candidate.RightID).Scan(&eligible); err != nil {
+			return err
+		}
+		if !eligible {
+			return ErrConversationPolicyStale
+		}
+		return nil
+	default:
+		return ErrConversationPolicyStale
+	}
+	err = tx.QueryRowContext(ctx, pair+`)`, args...).Scan(&eligible)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrConversationPolicyStale
+	}
+	return nil
+}
+
+// Reconcile only a room whose eligibility just became Full. Ordinary duplicate
+// captures retain their no-op path, including all repeated roster replays.
+func (s *Store) reconcilePromotedConversationConflictsTx(ctx context.Context, tx *loggedTx, roomID int64) error {
+	rows, err := tx.QueryContext(ctx, participantObservationSelect+` WHERE o.active_until IS NULL AND o.superseded_at IS NULL
+  AND EXISTS (SELECT 1 FROM participant_contact_observation_conversations support WHERE support.observation_id=o.id AND support.conversation_id=?)
+  AND `+FullObservationWhere("o"), roomID)
+	if err != nil {
+		return fmt.Errorf("load promoted room observations: %w", err)
+	}
+	observations, err := scanParticipantContactObservations(rows)
+	if err != nil {
+		return err
+	}
+	for i := range observations {
+		observation := &observations[i]
+		var serviceID any
+		if observation.ServiceSlug != nil {
+			var id int64
+			if err := tx.QueryRowContext(ctx, `SELECT id FROM communication_services WHERE slug=?`, *observation.ServiceSlug).Scan(&id); err != nil {
+				return err
+			}
+			serviceID = id
+		}
+		if _, err := s.recordObservationConflictsTx(ctx, tx, observation, serviceID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// A raw participant row can combine several providers after archival merges.
+// Eligibility therefore belongs to the observed value, not to that whole row.
+func participantChatProvenanceWhere(id string) string {
+	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id JOIN sources policy_source ON policy_source.id=policy_room.source_id WHERE policy_member.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation JOIN sources policy_source ON policy_source.id=policy_observation.source_id WHERE policy_observation.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM messages policy_message JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_source.source_type IN ('beeper','slack','slackdump','discord','teams') AND (policy_message.sender_id=` + id + ` OR EXISTS(SELECT 1 FROM message_recipients policy_recipient WHERE policy_recipient.message_id=policy_message.id AND policy_recipient.participant_id=` + id + `))))`
+}
+
+func fullParticipantValueWhere(id, kind, value string) string {
+	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(SELECT 1 FROM participant_contact_observations value_observation WHERE value_observation.participant_id=` + id + ` AND value_observation.address_kind=` + kind + ` AND value_observation.normalized_value=LOWER(` + value + `) AND value_observation.active_until IS NULL AND value_observation.superseded_at IS NULL AND ` + FullObservationWhere("value_observation") + `) OR EXISTS(SELECT 1 FROM person_participants value_person JOIN person_contact_points value_contact ON value_contact.person_id=value_person.person_id WHERE value_person.participant_id=` + id + ` AND value_contact.address_kind=` + kind + ` AND value_contact.normalized_value=LOWER(` + value + `) AND value_contact.source IN ('user','carddav_import','vcard_import') AND value_contact.active_until IS NULL AND value_contact.superseded_at IS NULL) OR (` + kind + `='email' AND EXISTS(SELECT 1 FROM message_recipients value_recipient JOIN messages value_message ON value_message.id=value_recipient.message_id WHERE value_recipient.participant_id=` + id + ` AND LOWER(value_recipient.email_address)=LOWER(` + value + `) AND ` + LiveMessagesWhere("value_message", true) + ` AND ` + FullMessageWhere("value_message") + `)))`
+}
+
+// Identifier classification is persisted by the existing provider normalizers.
+// Equal opaque provider IDs alone do not identify a namespace or an account.
+func (s *Store) fullParticipantIdentifierWhere(alias string) string {
+	const observation = "identifier_observation"
+	const source = "identifier_source"
+	classification := observation + `.service_id IS NOT DISTINCT FROM ` + alias + `.service_id
+ AND ` + observation + `.scope_kind IS NOT DISTINCT FROM ` + alias + `.scope_kind
+ AND ` + observation + `.scope_value IS NOT DISTINCT FROM ` + alias + `.scope_value`
+	// Beeper's identifier is its account/user fallback anchor; provider_user_id
+	// may instead be a native provider key. The recorder's source_ref binds the
+	// raw user to the source account. Rebuild the existing length-delimited anchor
+	// using byte lengths, while SUBSTR indexes the textual source-ref prefix.
+	prefix := `('beeper:' || ` + source + `.identifier || ':')`
+	user := `SUBSTR(` + observation + `.source_ref,LENGTH(` + prefix + `)+1)`
+	byteLength := func(value string) string {
+		if s.IsPostgreSQL() {
+			return `OCTET_LENGTH(` + value + `)`
+		}
+		return `LENGTH(CAST(` + value + ` AS BLOB))`
+	}
+	anchor := `('beeper:' || CAST(` + byteLength(source+`.identifier`) + ` AS TEXT) || ':' || ` + source + `.identifier || ':' || CAST(` + byteLength(user) + ` AS TEXT) || ':' || ` + user + `)`
+	beeper := alias + `.identifier_type='beeper' AND ` + source + `.source_type='beeper'
+ AND SUBSTR(` + observation + `.source_ref,1,LENGTH(` + prefix + `))=` + prefix + `
+ AND LENGTH(` + user + `)>0 AND ` + alias + `.identifier_value=` + anchor
+	provider := alias + `.identifier_type<>'beeper' AND ` + observation + `.provider_user_id=` + alias + `.identifier_value
+ AND (` + source + `.source_type=` + alias + `.identifier_type
+ OR (` + source + `.source_type='slackdump' AND ` + alias + `.identifier_type='slack')
+ OR EXISTS(SELECT 1 FROM communication_services identifier_service WHERE identifier_service.id=` + alias + `.service_id AND identifier_service.slug=` + source + `.source_type))`
+	address := observation + `.normalized_value=` + alias + `.identifier_value AND ` + observation + `.address_kind=` + alias + `.identifier_type`
+	return `(NOT ` + participantChatProvenanceWhere(alias+".participant_id") + ` OR EXISTS(
+ SELECT 1 FROM participant_contact_observations ` + observation + `
+ LEFT JOIN sources ` + source + ` ON ` + source + `.id=` + observation + `.source_id
+ WHERE ` + observation + `.participant_id=` + alias + `.participant_id
+ AND ` + observation + `.active_until IS NULL AND ` + observation + `.superseded_at IS NULL
+ AND ` + FullObservationWhere(observation) + `
+ AND ((` + classification + ` AND ((` + beeper + `) OR (` + provider + `))) OR (` + address + `))))`
+}
+
+// Shared raw names need exact-value evidence in a live Full envelope.
+// A sender/roster ID alone cannot attest to the name stored on its shared row.
+// Independent curated profile names are read separately from this fallback.
+func fullParticipantNameWhere(id, value string) string {
+	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
+ SELECT 1 FROM message_recipients name_recipient JOIN messages name_message ON name_message.id=name_recipient.message_id
+ WHERE name_recipient.participant_id=` + id + ` AND name_recipient.display_name=` + value + `
+ AND ` + FullMessageWhere("name_message") + ` AND ` + LiveMessagesWhere("name_message", true) + `))`
+}

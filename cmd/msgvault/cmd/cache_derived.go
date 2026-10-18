@@ -31,7 +31,6 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
@@ -65,10 +64,20 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = staging.cleanup() }()
+	staging.policyDBPath = dbPath
 
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for derived cache refresh: %w", err)
+	}
+	policyRevision, err := st.ConversationPolicyRevision(ctx)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if policyRevision != state.ConversationPolicyRevision {
+		_ = st.Close()
+		return nil, fmt.Errorf("%w: conversation policy changed", ErrDerivedRefreshRequiresFullBuild)
 	}
 	identityRevision, err := st.IdentityRevision()
 	if err != nil {
@@ -149,7 +158,17 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	var snapshotPolicyRevision int64
+	if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key='conversation_policy_revision'),0)`).Scan(&snapshotPolicyRevision); err != nil {
+		return nil, err
+	}
+	if snapshotPolicyRevision != state.ConversationPolicyRevision {
+		return nil, fmt.Errorf("%w: conversation policy changed during refresh", ErrDerivedRefreshRequiresFullBuild)
+	}
+	state.ConversationPolicyRevision = snapshotPolicyRevision
+
 	datasets := []string{
+		"conversation_policy", "sources",
 		tableMessages,
 		tableConversations,
 		tableConversationParticipants,
@@ -269,7 +288,7 @@ func refreshDerivedDatasetsOnly(
 			Append:  map[string]bool{},
 			Replace: relatedReplacements,
 		}
-		if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+		if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 			return nil, err
 		}
 		reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -389,7 +408,7 @@ func refreshDerivedDatasetsOnly(
 			plan.Replace[dataset] = true
 		}
 	}
-	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -554,7 +573,6 @@ func publishDerivedCache(
 	analyticsDir string,
 	plan cachePublishPlan,
 	state query.CacheSyncState,
-	locking cachePublishLocking,
 ) error {
 	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
@@ -566,7 +584,6 @@ func publishDerivedCache(
 		plan,
 		data,
 		derivedPublishBeforeMarkerHook,
-		locking,
 	)
 }
 
@@ -583,7 +600,7 @@ func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) 
 		Scan(&coveredCount); err != nil {
 		return fmt.Errorf("check related-refresh message population: %w", err)
 	}
-	if coveredCount != state.Stats.TotalMessages {
+	if coveredCount != state.ArchivedMessageCount {
 		return fmt.Errorf("%w: cached message population changed",
 			ErrDerivedRefreshRequiresFullBuild)
 	}

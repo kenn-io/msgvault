@@ -360,7 +360,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 	}
 	lo, hi := normalizeEdge(a, b)
 
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	writeTx := s.withTxContext
+	if ownerCandidateID != 0 {
+		writeTx = s.withConversationPolicyIdentityTx
+	}
+	err = writeTx(ctx, func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}

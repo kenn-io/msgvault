@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/docbank/document/media"
 	"go.kenn.io/docbank/document/voyage"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // VoyageConfig assembles the docbank Voyage transport for this archive.
@@ -51,8 +52,18 @@ func NewVoyageProvider(config VoyageConfig) (*VoyageProvider, error) {
 	if err != nil {
 		return nil, err
 	}
+	httpClient := &http.Client{Timeout: config.Timeout}
+	if config.HTTPClient != nil {
+		copied := *config.HTTPClient
+		httpClient = &copied
+	}
+	base := httpClient.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	httpClient.Transport = visualPolicyTransport{base: base}
 	client, err := voyage.NewClient(policy, voyage.ClientConfig{
-		APIKey: config.APIKey, Timeout: config.Timeout, HTTPClient: config.HTTPClient,
+		APIKey: config.APIKey, Timeout: config.Timeout, HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("voyage client: %w", err)
@@ -221,4 +232,14 @@ func mapVoyageError(ctx context.Context, err error) error {
 	default:
 		return providerRetryError(statusCode, 0, false, err)
 	}
+}
+
+// The transport boundary checks every concrete attempt, including docbank retries.
+type visualPolicyTransport struct{ base http.RoundTripper }
+
+func (t visualPolicyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if err := store.CheckConversationPolicyAdmission(request.Context()); err != nil {
+		return nil, err
+	}
+	return t.base.RoundTrip(request)
 }

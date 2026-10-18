@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -664,6 +665,10 @@ func TestImporterSkipsGuildMemberCountWithoutParticipantLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
+	settings := conversationpolicy.DefaultSettings()
+	settings.MaxParticipants["discord"] = 0
+	_, err := st.ConfigureConversationPolicy(t.Context(), settings, time.Now())
+	require.NoError(err)
 	api := newImporterFakeAPI(importerTestChannel("300", "general"))
 	api.guildCountErr = errors.New("guild membership must not be requested")
 	message := importerTestMessage("101", "300", "attachment")
@@ -1583,7 +1588,7 @@ func TestImporterKeepsPreviouslyStoredAbsentContainerAndItsMetadata(t *testing.T
 	assert.Equal(highWater, queries[0].After)
 	metadata, err := st.GetConversationMetadata(conversationID)
 	require.NoError(err)
-	assert.JSONEq(wantMetadata, metadata.String)
+	assert.JSONEq(`{"guild_id":"200","parent_channel_id":"250","discord_channel_type":11,"thread":{"archived":true},"member_count":1}`, metadata.String)
 }
 
 func TestImporterSkipsCompletedAbsentThreadOutsideRepairWindow(t *testing.T) {

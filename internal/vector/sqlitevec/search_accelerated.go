@@ -45,6 +45,11 @@ func (b *Backend) SearchWithMetadata(
 	k int,
 	filter vector.Filter,
 ) ([]vector.Hit, vector.SearchMetadata, error) {
+	release, err := b.acquirePolicyPublication(ctx, nil)
+	if err != nil {
+		return nil, vector.SearchMetadata{}, err
+	}
+	defer release()
 	hits, metadata, err := b.searchAccelerator(ctx, gen, queryVec, k, filter)
 	if err != nil || (metadata.Accelerator != "" && metadata.Accelerator != "exact-fallback") {
 		return hits, metadata, err
@@ -107,7 +112,7 @@ func (b *Backend) searchAccelerator(
 		_ = tx.Rollback()
 		return nil, vector.SearchMetadata{}, nil
 	}
-	if !filter.IsEmpty() {
+	if !filter.IsEmpty() || b.policyStore != nil {
 		threshold := b.exactFilterVectorThreshold
 		messageIDs, probeErr := b.filteredMessageIDsLimit(ctx, filter, threshold+1)
 		if probeErr != nil {

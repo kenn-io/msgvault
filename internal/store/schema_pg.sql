@@ -1044,7 +1044,7 @@ CREATE TABLE IF NOT EXISTS person_fact_evidence_status_events (
     supported      BOOLEAN NOT NULL,
     reason         TEXT NOT NULL CHECK (reason IN (
                        'source-deleted', 'source-edited', 'scope-unlinked',
-                       'identity-reassigned', 'source-reimported', 'scope-relinked')),
+                       'identity-reassigned', 'source-reimported', 'scope-relinked', 'conversation-cold', 'conversation-full')),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, generation_id, evidence_key, source_version)
 );
@@ -4227,10 +4227,18 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
 
--- Staged chat policy. Missing rows remain full for backwards compatibility.
+-- Live conversation policy. Supported chat rooms require initialized state.
 CREATE TABLE IF NOT EXISTS conversation_policy (
  conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
  effective_tier TEXT NOT NULL DEFAULT 'full' CHECK (effective_tier IN ('full','cold','stub','skip')),
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS participant_contact_observation_conversations (
+ observation_id BIGINT NOT NULL REFERENCES participant_contact_observations(id) ON DELETE CASCADE,
+ conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+ PRIMARY KEY (observation_id, conversation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_participant_observation_conversations_conversation
+ ON participant_contact_observation_conversations(conversation_id, observation_id);

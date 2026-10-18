@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -32,7 +33,8 @@ const (
 
 // PersonSemanticDocument is the canonical, privacy-bounded embedding source
 // for one durable person. Revision is the lowercase SHA-256 digest of the
-// renderer policy, a NUL separator, and Text's exact capped bytes.
+// renderer policy, durable person input revision, and Text's exact capped bytes,
+// separated by NULs. Eligibility changes invalidate identical rendered text.
 type PersonSemanticDocument struct {
 	PersonID       int64  `json:"person_id"`
 	RendererPolicy string `json:"renderer_policy"`
@@ -388,7 +390,7 @@ func renderPersonSemanticDocument(
 		}
 	}
 	text := capPersonSemanticUTF8(strings.Join(lines, "\n"))
-	digest := sha256.Sum256([]byte(PersonSemanticRendererPolicy + "\x00" + text))
+	digest := sha256.Sum256([]byte(PersonSemanticRendererPolicy + "\x00" + strconv.FormatInt(snapshot.person.Revision, 10) + "\x00" + text))
 	return &PersonSemanticDocument{
 		PersonID:       snapshot.person.ID,
 		RendererPolicy: PersonSemanticRendererPolicy,

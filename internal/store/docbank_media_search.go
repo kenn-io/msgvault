@@ -27,7 +27,7 @@ func (s *Store) MediaSearchLocalGaps(ctx context.Context, destination string, sc
 		JOIN messages m ON m.id = a.message_id
 		JOIN conversations cv ON cv.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
-		WHERE `+LiveMessagesWhere("m", true)+` AND `+messageRecordingAudio("")+`
+		WHERE `+(LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))+` AND `+messageRecordingAudio("")+`
 		  AND NOT EXISTS (SELECT 1 FROM beeper_media_occurrences o
 		    WHERE o.destination_key = ? AND o.retention_state <> 'revoked'
 		      AND o.source_type = src.source_type AND o.source_identifier = src.identifier

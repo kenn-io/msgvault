@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/archive"
 	"go.kenn.io/msgvault/pkg/client"
@@ -64,6 +65,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "CEXAMPLE", "Announcements")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "CEXAMPLE", conversationpolicy.Full))
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "1704110400.000001",
 		MessageType: "slack", SentAt: sql.NullTime{Time: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC), Valid: true},
@@ -148,6 +150,7 @@ func TestPostgreSQLRuntimeAndReader(t *testing.T) {
 	require.NoError(err)
 	require.Len(accounts.Accounts, 1)
 	assert.Equal(source.ID, accounts.Accounts[0].ID)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "CEXAMPLE", ""))
 	exerciseSlackReplacement(t, runtime)
 	exerciseDiscordCollection(t, runtime)
 	_, err = admin.Exec("UPDATE "+quote(schema)+".archive_metadata SET value = $1 WHERE key = 'schema_version'", strconv.Itoa(store.SchemaVersion-1))

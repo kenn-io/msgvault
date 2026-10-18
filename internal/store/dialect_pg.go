@@ -2371,7 +2371,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "conversation_participants",
+	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_policy", "participant_contact_observation_conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
@@ -2423,12 +2423,21 @@ var exclusiveLockTables = []string{
 // persons and waits on participants. Taking the row lock first serializes
 // the two paths instead.
 func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) error {
+	return d.beginExclusive(ctx, conn, nil)
+}
+
+func (d *PostgreSQLDialect) beginExclusive(ctx context.Context, conn *sql.Conn, preFence func() error) error {
 	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
 		return err
 	}
 	rollback := func(err error) error {
 		_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		return err
+	}
+	if preFence != nil {
+		if err := preFence(); err != nil {
+			return rollback(err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx, "SET LOCAL statement_timeout = 0"); err != nil {
 		return rollback(err)

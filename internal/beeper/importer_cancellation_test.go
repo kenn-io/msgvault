@@ -3,6 +3,7 @@ package beeper
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -23,6 +24,7 @@ type cancelOnLogHandler struct {
 	mu          sync.Mutex
 	cancel      context.CancelFunc
 	cancelWhen  func(slog.Record) bool
+	cancelIf    func() bool
 	cancelAt    int
 	events      int
 	canceled    bool
@@ -43,7 +45,7 @@ func (h *cancelOnLogHandler) Handle(_ context.Context, record slog.Record) error
 	}
 	if h.cancelWhen(record) {
 		h.events++
-		if h.events == h.cancelAt {
+		if (h.cancelIf != nil && h.cancelIf()) || (h.cancelIf == nil && h.events == h.cancelAt) {
 			h.cancel()
 			h.canceled = true
 		}
@@ -73,6 +75,15 @@ func installCancelOnLog(
 	previous := slog.Default()
 	slog.SetDefault(slog.New(handler))
 	t.Cleanup(func() { slog.SetDefault(previous) })
+	return handler
+}
+
+func installCancelWhenState(
+	t *testing.T, cancel context.CancelFunc, when func(slog.Record) bool, condition func() bool,
+) *cancelOnLogHandler {
+	t.Helper()
+	handler := installCancelOnLog(t, cancel, 0, when)
+	handler.cancelIf = condition
 	return handler
 }
 
@@ -154,18 +165,53 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			_, _, err = imp.obs.services.resolveBridge(ctx, "telegram", "Telegram", "telegram")
 			require.NoError(err)
 
-			// Each cached resolver still checks legacy identifier adoption in
-			// a transaction. Roster replacement follows those checks, then the
-			// first anchor classification begins with the import context.
-			when, at := logMessage("sql tx begin"), count+2
+			// Cancel when durable state reaches the target boundary instead of
+			// counting transactions; policy checks may add transactions without
+			// changing which roster operation the test exercises.
 			wantObserved := 0
 			if tc.afterCapture {
-				// Cancel after the first observation's transaction commits,
-				// before its result can start identity matching transactions.
-				when, at = logMessage("sql tx commit"), count+3
 				wantObserved = 1
 			}
-			handler := installCancelOnLog(t, cancel, at, when)
+			handler := installCancelWhenState(t, cancel, logMessage("sql tx commit"), func() bool {
+				var conversationID int64
+				if err := st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`),
+					sourceID, chat.ID).Scan(&conversationID); err != nil {
+					return false
+				}
+				var rosterCount, observedCount int
+				if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM conversation_participants
+					WHERE conversation_id=?`), conversationID).Scan(&rosterCount); err != nil {
+					return false
+				}
+				if err := st.DB().QueryRow(st.Rebind(`SELECT COUNT(DISTINCT cp.participant_id)
+					FROM conversation_participants cp
+					WHERE cp.conversation_id=?
+					AND EXISTS(SELECT 1 FROM participant_contact_observations o
+						WHERE o.participant_id=cp.participant_id AND o.active_until IS NULL AND o.superseded_at IS NULL)`),
+					conversationID).Scan(&observedCount); err != nil {
+					return false
+				}
+				if rosterCount != count {
+					return false
+				}
+				var metadata sql.NullString
+				if err := st.DB().QueryRowContext(context.Background(),
+					st.Rebind(`SELECT metadata FROM conversations WHERE id=?`), conversationID,
+				).Scan(&metadata); err != nil {
+					return false
+				}
+				var route struct {
+					Evidence store.MessagingRouteEvidence `json:"messaging_route"`
+				}
+				if !metadata.Valid || json.Unmarshal([]byte(metadata.String), &route) != nil ||
+					!route.Evidence.MembershipComplete || len(route.Evidence.ParticipantIDs) != count {
+					return false
+				}
+				if tc.afterCapture {
+					return observedCount >= 1
+				}
+				return observedCount == 0
+			})
 			sum := &ImportSummary{}
 			_, complete, _, err := imp.ensureConversation(
 				ctx, 0, sourceID, detail, ImportOptions{AccountID: "telegram"}, sum,

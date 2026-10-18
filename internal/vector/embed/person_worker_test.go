@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -273,8 +274,8 @@ func allowSemanticPersonGate() vector.SemanticPersonEmbeddingGate {
 // TestPersonWorkerGateBlocksDisabledUnconsentedAndRevokedProviderCalls catches
 // the reconciler treating vector enablement as authority for curated egress.
 func TestPersonWorkerGateBlocksDisabledUnconsentedAndRevokedProviderCalls(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(1, "rev-one", "Synthetic One"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -286,33 +287,33 @@ func TestPersonWorkerGateBlocksDisabledUnconsentedAndRevokedProviderCalls(t *tes
 	})
 
 	result, err := worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Empty(client.calls)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Empty(client.calls)
 
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
 	result, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Empty(client.calls)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Empty(client.calls)
 
 	gateErr = nil
 	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 1)
+	requirements.NoError(err)
+	requirements.Len(client.calls, 1)
 
 	source.put(personDocument(1, "rev-two", "Synthetic Two"))
 	gateErr = vector.ErrSemanticPersonEmbeddingConsentRequired
 	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Len(client.calls, 1, "revoked consent must make zero later provider calls")
+	requirements.NoError(err)
+	assertions.Len(client.calls, 1, "revoked consent must make zero later provider calls")
 }
 
 // TestPersonWorkerRechecksGateBeforeEveryProviderCall catches a mid-run
 // revocation being ignored for later batches or endpoint probes.
 func TestPersonWorkerRechecksGateBeforeEveryProviderCall(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -328,11 +329,11 @@ func TestPersonWorkerRechecksGateBeforeEveryProviderCall(t *testing.T) {
 	})
 
 	_, err := worker.RunOnce(t.Context(), 2, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Len(client.calls, 1)
+	requirements.NoError(err)
+	assertions.Len(client.calls, 1)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 2)
-	must.NoError(err)
-	check.Equal(map[int64]string{1: "rev-one"}, revisions)
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{1: "rev-one"}, revisions)
 }
 
 func TestPersonWorkerMissingGateFailsClosedBeforeProvider(t *testing.T) {
@@ -351,8 +352,8 @@ func TestPersonWorkerMissingGateFailsClosedBeforeProvider(t *testing.T) {
 // worker that ignores revisions, embeds in unstable order, or fails to replace
 // a changed person's vector.
 func TestPersonWorkerEmbedsInitialAndChangedDocumentsInStableBatches(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(30, "rev-30-a", "Synthetic Thirty"),
 		personDocument(10, "rev-10-a", "Synthetic Ten"),
@@ -363,74 +364,74 @@ func TestPersonWorkerEmbedsInitialAndChangedDocumentsInStableBatches(t *testing.
 	worker := newTestPersonWorker(source, backend, client, 2)
 
 	result, err := worker.RunOnce(t.Context(), 7, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(3, result.Claimed)
-	check.Equal(3, result.Succeeded)
+	requirements.NoError(err)
+	assertions.Equal(3, result.Claimed)
+	assertions.Equal(3, result.Succeeded)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 7)
-	must.NoError(err)
-	check.Equal(map[int64]string{10: "rev-10-a", 20: "rev-20-a", 30: "rev-30-a"}, revisions)
-	must.Len(client.calls, 2)
-	check.Equal([][]string{{"Synthetic Ten"}, {"Synthetic Twenty"}}, client.calls[0])
-	check.Equal([][]string{{"Synthetic Thirty"}}, client.calls[1])
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{10: "rev-10-a", 20: "rev-20-a", 30: "rev-30-a"}, revisions)
+	requirements.Len(client.calls, 2)
+	assertions.Equal([][]string{{"Synthetic Ten"}, {"Synthetic Twenty"}}, client.calls[0])
+	assertions.Equal([][]string{{"Synthetic Thirty"}}, client.calls[1])
 
 	source.put(personDocument(20, "rev-20-b", "Synthetic Twenty Updated"))
 	result, err = worker.RunOnce(t.Context(), 7, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(1, result.Claimed)
-	check.Equal(1, result.Succeeded)
+	requirements.NoError(err)
+	assertions.Equal(1, result.Claimed)
+	assertions.Equal(1, result.Succeeded)
 	revisions, err = backend.ListPersonRevisions(t.Context(), 7)
-	must.NoError(err)
-	check.Equal("rev-20-b", revisions[20])
-	must.Len(client.calls, 3)
-	check.Equal([][]string{{"Synthetic Twenty Updated"}}, client.calls[2])
+	requirements.NoError(err)
+	assertions.Equal("rev-20-b", revisions[20])
+	requirements.Len(client.calls, 3)
+	assertions.Equal([][]string{{"Synthetic Twenty Updated"}}, client.calls[2])
 }
 
 // TestPersonWorkerNoOpDoesNotCallProvider catches full rescans that re-embed
 // already-current person documents instead of comparing exact revisions.
 func TestPersonWorkerNoOpDoesNotCallProvider(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(1, "rev-1", "Synthetic One"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 	_, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 1)
+	requirements.NoError(err)
+	requirements.Len(client.calls, 1)
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Zero(result.Claimed)
-	check.Len(client.calls, 1, "unchanged person must not call the provider again")
+	requirements.NoError(err)
+	assertions.Zero(result.Claimed)
+	assertions.Len(client.calls, 1, "unchanged person must not call the provider again")
 }
 
 // TestPersonWorkerSkipsEmptyCanonicalDocument catches a valid person with no
 // discoverability text being sent to the provider or blocking convergence.
 func TestPersonWorkerSkipsEmptyCanonicalDocument(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(2, "rev-empty", ""))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Empty(client.calls, "empty semantic documents must not reach the provider")
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Empty(client.calls, "empty semantic documents must not reach the provider")
 	revisions, err := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(err)
-	check.Empty(revisions)
+	requirements.NoError(err)
+	assertions.Empty(revisions)
 
 	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Empty(client.calls, "unchanged empty document must remain provider-free")
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Empty(client.calls, "unchanged empty document must remain provider-free")
 }
 
 func TestPersonWorkerCapsProviderInput(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(2, "rev-capped", "Synthetic Profile"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -441,37 +442,37 @@ func TestPersonWorkerCapsProviderInput(t *testing.T) {
 	})
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{Claimed: 1, Succeeded: 1, Truncated: 1}, result)
-	must.Len(client.calls, 1)
-	check.Equal([][]string{{"Synthetic"}}, client.calls[0])
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 1, Succeeded: 1, Truncated: 1}, result)
+	requirements.Len(client.calls, 1)
+	assertions.Equal([][]string{{"Synthetic"}}, client.calls[0])
 }
 
 func TestPersonWorkerRemovesVectorWhenDocumentBecomesEmpty(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(2, "rev-full", "Synthetic Profile"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 
 	_, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 1)
+	requirements.NoError(err)
+	requirements.Len(client.calls, 1)
 	source.put(personDocument(2, "rev-empty", ""))
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Len(client.calls, 1, "empty transition must not call the provider")
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Len(client.calls, 1, "empty transition must not call the provider")
 	revisions, err := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(err)
-	check.Empty(revisions, "empty transition must remove the old searchable vector")
+	requirements.NoError(err)
+	assertions.Empty(revisions, "empty transition must remove the old searchable vector")
 }
 
 func TestPersonWorkerRecordsPoisonDocumentAndContinues(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-reject", "Synthetic Reject"),
@@ -486,25 +487,25 @@ func TestPersonWorkerRecordsPoisonDocumentAndContinues(t *testing.T) {
 	})
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{Claimed: 3, Succeeded: 2, Failed: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 3, Succeeded: 2, Failed: 1}, result)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(err)
-	check.Equal(map[int64]string{1: "rev-one", 2: "rev-reject", 3: "rev-three"}, revisions)
-	check.NotEmpty(backend.vectors[8][1])
-	check.Empty(backend.vectors[8][2], "rejected revision must not own a searchable vector")
-	check.NotEmpty(backend.vectors[8][3])
-	check.Equal(4, client.calls, "rejected batch must downshift to single documents")
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{1: "rev-one", 2: "rev-reject", 3: "rev-three"}, revisions)
+	assertions.NotEmpty(backend.vectors[8][1])
+	assertions.Empty(backend.vectors[8][2], "rejected revision must not own a searchable vector")
+	assertions.NotEmpty(backend.vectors[8][3])
+	assertions.Equal(4, client.calls, "rejected batch must downshift to single documents")
 
 	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Equal(4, client.calls, "durable terminal revision must not be retried")
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Equal(4, client.calls, "durable terminal revision must not be retried")
 }
 
 func TestPersonWorkerDoesNotHideEndpointWidePermanentFailure(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -519,42 +520,42 @@ func TestPersonWorkerDoesNotHideEndpointWidePermanentFailure(t *testing.T) {
 	})
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.ErrorIs(err, ErrPermanent4xx)
-	check.Equal(RunResult{Claimed: 3, Failed: 3}, result)
+	requirements.ErrorIs(err, ErrPermanent4xx)
+	assertions.Equal(RunResult{Claimed: 3, Failed: 3}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(listErr)
-	check.Empty(revisions, "an endpoint-wide failure must remain uncovered and retryable")
-	check.Equal(5, client.calls, "the failed batch and synthetic health probe must remain visible")
+	requirements.NoError(listErr)
+	assertions.Empty(revisions, "an endpoint-wide failure must remain uncovered and retryable")
+	assertions.Equal(5, client.calls, "the failed batch and synthetic health probe must remain visible")
 }
 
 func TestPersonWorkerTerminatesLonePoisonRevisionAfterHealthyProbe(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(1, "rev-reject", "Synthetic Reject"))
 	backend := newPersonWorkerBackend()
 	client := &poisonPersonWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 1)
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{Claimed: 1, Failed: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 1, Failed: 1}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{1: "rev-reject"}, revisions)
-	check.Empty(backend.vectors[8][1])
-	check.Equal(2, client.calls, "a synthetic probe must establish endpoint health")
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{1: "rev-reject"}, revisions)
+	assertions.Empty(backend.vectors[8][1])
+	assertions.Equal(2, client.calls, "a synthetic probe must establish endpoint health")
 
 	result, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{}, result)
-	check.Equal(2, client.calls, "the terminal revision must not be retried")
+	requirements.NoError(err)
+	assertions.Equal(RunResult{}, result)
+	assertions.Equal(2, client.calls, "the terminal revision must not be retried")
 }
 
 // TestPersonWorkerFailureOperationUsesFinalCounters catches a nil worker error
 // overriding a durable item rejection and falsely reporting success.
 func TestPersonWorkerFailureOperationUsesFinalCounters(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	recorder := testutil.NewTestStore(t)
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store:   newPersonWorkerSource(personDocument(1, "rev-reject", "Synthetic Reject")),
@@ -566,20 +567,20 @@ func TestPersonWorkerFailureOperationUsesFinalCounters(t *testing.T) {
 		Key: "manual:person:lone-rejection", Trigger: operations.TriggerManual,
 		StartedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 	})
-	require.NoError(err)
-	assert.Equal(RunResult{Claimed: 1, Failed: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 1, Failed: 1}, result)
 	runs := personOperationRuns(t, recorder)
-	require.Len(runs, 1)
-	assert.Equal(operations.StateFailed, runs[0].State)
-	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterAttempted))
-	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
+	requirements.Len(runs, 1)
+	assertions.Equal(operations.StateFailed, runs[0].State)
+	assertions.Equal(int64(1), personOperationCounter(runs[0], operations.CounterAttempted))
+	assertions.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
 }
 
 // TestPersonWorkerFailureOperationRecordsMixedOutcomeAsPartial catches useful
 // publications being hidden by a sibling's permanent rejection.
 func TestPersonWorkerFailureOperationRecordsMixedOutcomeAsPartial(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	recorder := testutil.NewTestStore(t)
 	worker := NewPersonWorker(PersonWorkerDeps{
 		Store: newPersonWorkerSource(
@@ -594,13 +595,13 @@ func TestPersonWorkerFailureOperationRecordsMixedOutcomeAsPartial(t *testing.T) 
 		Key: "manual:person:mixed", Trigger: operations.TriggerManual,
 		StartedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC),
 	})
-	require.NoError(err)
-	assert.Equal(RunResult{Claimed: 2, Succeeded: 1, Failed: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 2, Succeeded: 1, Failed: 1}, result)
 	runs := personOperationRuns(t, recorder)
-	require.Len(runs, 1)
-	assert.Equal(operations.StatePartial, runs[0].State)
-	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterSucceeded))
-	assert.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
+	requirements.Len(runs, 1)
+	assertions.Equal(operations.StatePartial, runs[0].State)
+	assertions.Equal(int64(1), personOperationCounter(runs[0], operations.CounterSucceeded))
+	assertions.Equal(int64(1), personOperationCounter(runs[0], operations.CounterFailed))
 }
 
 func personOperationRuns(t *testing.T, recorder *store.Store) []operations.Run {
@@ -622,8 +623,8 @@ func personOperationCounter(run operations.Run, name operations.CounterName) int
 }
 
 func TestPersonWorkerScopesEndpointHealthToFailingBatch(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -639,57 +640,57 @@ func TestPersonWorkerScopesEndpointHealthToFailingBatch(t *testing.T) {
 	})
 
 	result, err := worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.ErrorIs(err, ErrPermanent4xx)
-	check.Equal(RunResult{Claimed: 4, Succeeded: 2, Failed: 2}, result)
+	requirements.ErrorIs(err, ErrPermanent4xx)
+	assertions.Equal(RunResult{Claimed: 4, Succeeded: 2, Failed: 2}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{1: "rev-one", 2: "rev-two"}, revisions,
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{1: "rev-one", 2: "rev-two"}, revisions,
 		"success in an earlier batch must not hide a later endpoint-wide failure")
-	check.Equal(5, client.calls)
+	assertions.Equal(5, client.calls)
 }
 
 func TestPersonWorkerPreservesVectorWhenSourceProjectionCannotRender(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	var personID int64
 	err := f.Store.DB().QueryRow(f.Store.Rebind(`
 		INSERT INTO persons (vcard_uid, display_name) VALUES (?, ?)
 		RETURNING id`),
 		"urn:uuid:00000000-0000-4000-8000-000000000099", "Broken Projection").Scan(&personID)
-	must.NoError(err)
+	requirements.NoError(err)
 	value := "distributed systems"
 	_, err = f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
 		PersonID: personID, DefinitionSlug: store.AttributeSlugAskMeAbout,
 		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &value},
 		Source: store.ProvenanceUser,
 	})
-	must.NoError(err)
+	requirements.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`
 		UPDATE attribute_definitions
 		SET value_type = 'record_reference', field_type = 'person', record_target = 'person'
 		WHERE universal_id = ?
 	`), store.AttributeUniversalIDAskMeAbout)
-	must.NoError(err)
+	requirements.NoError(err)
 
 	backend := newPersonWorkerBackend()
-	must.NoError(backend.UpsertPersons(t.Context(), 8, []vector.PersonEmbedding{{
+	requirements.NoError(backend.UpsertPersons(t.Context(), 8, []vector.PersonEmbedding{{
 		PersonID: personID, Revision: "last-good", Vector: []float32{1, 0},
 	}}))
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(f.Store, backend, client, 8)
 
 	_, err = worker.RunOnce(t.Context(), 8, testEmbeddingPassScope())
-	must.ErrorContains(err, "render person")
+	requirements.ErrorContains(err, "render person")
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 8)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{personID: "last-good"}, revisions)
-	check.Empty(client.calls)
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{personID: "last-good"}, revisions)
+	assertions.Empty(client.calls)
 }
 
 func TestPersonWorkerStopsProviderCallsWhenGenerationRetiresMidRun(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -701,13 +702,13 @@ func TestPersonWorkerStopsProviderCallsWhenGenerationRetiresMidRun(t *testing.T)
 	worker := newTestPersonWorker(source, backend, client, 1)
 
 	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
-	must.ErrorIs(err, context.Canceled)
-	check.Len(client.calls, 1, "retirement must stop later paid provider batches")
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Len(client.calls, 1, "retirement must stop later paid provider batches")
 }
 
 func TestPersonWorkerStopsDownshiftWhenGenerationRetires(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-reject", "Synthetic Reject"),
@@ -722,8 +723,8 @@ func TestPersonWorkerStopsDownshiftWhenGenerationRetires(t *testing.T) {
 	})
 
 	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
-	must.ErrorIs(err, context.Canceled)
-	check.Equal(2, client.calls,
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Equal(2, client.calls,
 		"retirement on the first singleton upsert must stop the rest of the downshift")
 }
 
@@ -756,8 +757,8 @@ func TestPersonWorkerTreatsRetiredGenerationAsCancellation(t *testing.T) {
 // TestPersonWorkerReconcilesDeletedPeople catches orphaned person vectors
 // surviving after their durable source person has been deleted.
 func TestPersonWorkerReconcilesDeletedPeople(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-1", "Synthetic One"),
 		personDocument(2, "rev-2", "Synthetic Two"),
@@ -766,23 +767,23 @@ func TestPersonWorkerReconcilesDeletedPeople(t *testing.T) {
 	client := &personWorkerClient{}
 	worker := newTestPersonWorker(source, backend, client, 8)
 	_, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
-	must.NoError(err)
+	requirements.NoError(err)
 
 	source.delete(1)
 	result, err := worker.RunOnce(t.Context(), 9, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Zero(result.Claimed)
+	requirements.NoError(err)
+	assertions.Zero(result.Claimed)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 9)
-	must.NoError(err)
-	check.Equal(map[int64]string{2: "rev-2"}, revisions)
-	check.Len(client.calls, 1, "deletion reconciliation must not call the provider")
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{2: "rev-2"}, revisions)
+	assertions.Len(client.calls, 1, "deletion reconciliation must not call the provider")
 }
 
 // TestPersonWorkerDiscardsPostEmbedMutation catches publication of a provider
 // response generated from a revision that changed during the request.
 func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(1, "rev-old", "Synthetic Before"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -795,27 +796,27 @@ func TestPersonWorkerDiscardsPostEmbedMutation(t *testing.T) {
 	worker := newTestPersonWorker(source, backend, client, 8)
 
 	result, err := worker.RunOnce(t.Context(), 10, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(1, result.Claimed)
-	check.Zero(result.Succeeded)
+	requirements.NoError(err)
+	assertions.Equal(1, result.Claimed)
+	assertions.Zero(result.Succeeded)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 10)
-	must.NoError(err)
-	check.Empty(revisions, "stale provider response must not be published")
+	requirements.NoError(err)
+	assertions.Empty(revisions, "stale provider response must not be published")
 
 	result, err = worker.RunOnce(t.Context(), 10, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(1, result.Succeeded)
+	requirements.NoError(err)
+	assertions.Equal(1, result.Succeeded)
 	revisions, err = backend.ListPersonRevisions(t.Context(), 10)
-	must.NoError(err)
-	check.Equal(map[int64]string{1: "rev-new"}, revisions)
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{1: "rev-new"}, revisions)
 }
 
 // TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder catches a
 // worker that drops successful provider-prefix results or re-embeds them on
 // retry after a later document fails.
 func TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-1", "Synthetic One"),
 		personDocument(2, "rev-2", "Synthetic Two"),
@@ -826,29 +827,29 @@ func TestPersonWorkerPersistsPartialPrefixAndRetriesOnlyRemainder(t *testing.T) 
 	worker := newTestPersonWorker(source, backend, client, 3)
 
 	result, err := worker.RunOnce(t.Context(), 11, testEmbeddingPassScope())
-	must.ErrorContains(err, "synthetic provider interruption")
-	check.Equal(3, result.Claimed)
-	check.Equal(2, result.Succeeded)
+	requirements.ErrorContains(err, "synthetic provider interruption")
+	assertions.Equal(3, result.Claimed)
+	assertions.Equal(2, result.Succeeded)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 11)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{1: "rev-1", 2: "rev-2"}, revisions)
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{1: "rev-1", 2: "rev-2"}, revisions)
 
 	result, err = worker.RunOnce(t.Context(), 11, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(1, result.Claimed)
-	check.Equal(1, result.Succeeded)
-	must.Len(client.calls, 2)
-	check.Equal([][]string{{"Synthetic Three"}}, client.calls[1])
+	requirements.NoError(err)
+	assertions.Equal(1, result.Claimed)
+	assertions.Equal(1, result.Succeeded)
+	requirements.Len(client.calls, 2)
+	assertions.Equal([][]string{{"Synthetic Three"}}, client.calls[1])
 	revisions, listErr = backend.ListPersonRevisions(t.Context(), 11)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{1: "rev-1", 2: "rev-2", 3: "rev-3"}, revisions)
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{1: "rev-1", 2: "rev-2", 3: "rev-3"}, revisions)
 }
 
 // TestPersonWorkerPartialErrorCountsReturnedFencedDocuments catches result
 // accounting that drops provider responses rejected by the source fence.
 func TestPersonWorkerPartialErrorCountsReturnedFencedDocuments(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-old", "Synthetic Before"),
 		personDocument(2, "rev-2", "Synthetic Two"),
@@ -861,19 +862,19 @@ func TestPersonWorkerPartialErrorCountsReturnedFencedDocuments(t *testing.T) {
 	worker := newTestPersonWorker(source, backend, client, 2)
 
 	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
-	must.ErrorContains(err, "synthetic provider interruption")
-	check.Equal(2, result.Claimed)
-	check.Equal(1, result.Succeeded)
-	check.Equal(1, result.Failed)
-	check.Equal(result.Claimed, result.Succeeded+result.Failed)
+	requirements.ErrorContains(err, "synthetic provider interruption")
+	assertions.Equal(2, result.Claimed)
+	assertions.Equal(1, result.Succeeded)
+	assertions.Equal(1, result.Failed)
+	assertions.Equal(result.Claimed, result.Succeeded+result.Failed)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 12)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{2: "rev-2"}, revisions)
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{2: "rev-2"}, revisions)
 }
 
 func TestPersonWorkerAccountsMalformedProviderBatchAsFailed(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -882,13 +883,13 @@ func TestPersonWorkerAccountsMalformedProviderBatchAsFailed(t *testing.T) {
 	worker := newTestPersonWorker(source, backend, &personWorkerClient{malformed: true}, 2)
 
 	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
-	must.ErrorContains(err, "returned 0 results for 2 inputs")
-	check.Equal(RunResult{Claimed: 2, Failed: 2}, result)
+	requirements.ErrorContains(err, "returned 0 results for 2 inputs")
+	assertions.Equal(RunResult{Claimed: 2, Failed: 2}, result)
 }
 
 func TestPersonWorkerAccountsBackendWriteFailure(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-one", "Synthetic One"),
 		personDocument(2, "rev-two", "Synthetic Two"),
@@ -898,16 +899,16 @@ func TestPersonWorkerAccountsBackendWriteFailure(t *testing.T) {
 	worker := newTestPersonWorker(source, backend, &personWorkerClient{}, 2)
 
 	result, err := worker.RunOnce(t.Context(), 12, testEmbeddingPassScope())
-	must.ErrorContains(err, "synthetic backend failure")
-	check.Equal(RunResult{Claimed: 2, Failed: 2}, result)
+	requirements.ErrorContains(err, "synthetic backend failure")
+	assertions.Equal(RunResult{Claimed: 2, Failed: 2}, result)
 }
 
 // TestPersonWorkerEarlyBatchErrorContinuesLaterBatches catches one failed
 // document starving unrelated later batches. The retry processes only the
 // unpublished document.
 func TestPersonWorkerEarlyBatchErrorContinuesLaterBatches(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(
 		personDocument(1, "rev-1", "Synthetic One"),
 		personDocument(2, "rev-2", "Synthetic Two"),
@@ -919,26 +920,26 @@ func TestPersonWorkerEarlyBatchErrorContinuesLaterBatches(t *testing.T) {
 	worker := newTestPersonWorker(source, backend, client, 2)
 
 	result, err := worker.RunOnce(t.Context(), 13, testEmbeddingPassScope())
-	must.ErrorContains(err, "synthetic provider interruption")
-	check.Equal(RunResult{Claimed: 4, Succeeded: 3, Failed: 1}, result)
-	check.Equal(result.Claimed, result.Succeeded+result.Failed)
+	requirements.ErrorContains(err, "synthetic provider interruption")
+	assertions.Equal(RunResult{Claimed: 4, Succeeded: 3, Failed: 1}, result)
+	assertions.Equal(result.Claimed, result.Succeeded+result.Failed)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 13)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{1: "rev-1", 3: "rev-3", 4: "rev-4"}, revisions)
-	must.Len(client.calls, 2)
-	check.Equal([][]string{{"Synthetic One"}, {"Synthetic Two"}}, client.calls[0])
-	check.Equal([][]string{{"Synthetic Three"}, {"Synthetic Four"}}, client.calls[1])
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{1: "rev-1", 3: "rev-3", 4: "rev-4"}, revisions)
+	requirements.Len(client.calls, 2)
+	assertions.Equal([][]string{{"Synthetic One"}, {"Synthetic Two"}}, client.calls[0])
+	assertions.Equal([][]string{{"Synthetic Three"}, {"Synthetic Four"}}, client.calls[1])
 
 	result, err = worker.RunOnce(t.Context(), 13, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
 	revisions, listErr = backend.ListPersonRevisions(t.Context(), 13)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{
 		1: "rev-1", 2: "rev-2", 3: "rev-3", 4: "rev-4",
 	}, revisions)
-	must.Len(client.calls, 3)
-	check.Equal([][]string{{"Synthetic Two"}}, client.calls[2])
+	requirements.Len(client.calls, 3)
+	assertions.Equal([][]string{{"Synthetic Two"}}, client.calls[2])
 }
 
 type personWorkerMessageRunner struct {
@@ -972,8 +973,8 @@ func (r *personWorkerMessageRunner) ReclaimStale(context.Context) (int, error) {
 // composition that drains only message work when the scheduler targets an
 // already-active generation.
 func TestGenerationWorkerMaintainsPeopleForAnActiveGeneration(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(5, "rev-active", "Synthetic Active"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -981,20 +982,20 @@ func TestGenerationWorkerMaintainsPeopleForAnActiveGeneration(t *testing.T) {
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
 	result, err := worker.RunOnce(t.Context(), 42, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal([]vector.GenerationID{42}, messages.runOnce)
-	check.Equal(3, result.Claimed)
-	check.Equal(3, result.Succeeded)
+	requirements.NoError(err)
+	assertions.Equal([]vector.GenerationID{42}, messages.runOnce)
+	assertions.Equal(3, result.Claimed)
+	assertions.Equal(3, result.Succeeded)
 	revisions, err := backend.ListPersonRevisions(t.Context(), 42)
-	must.NoError(err)
-	check.Equal(map[int64]string{5: "rev-active"}, revisions)
+	requirements.NoError(err)
+	assertions.Equal(map[int64]string{5: "rev-active"}, revisions)
 }
 
 // TestGenerationWorkerMaintainsPeopleWhenMessageRunFails catches an active
 // generation's person upkeep being skipped after a message-side error.
 func TestGenerationWorkerMaintainsPeopleWhenMessageRunFails(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	messageErr := errors.New("synthetic message failure")
 	source := newPersonWorkerSource(personDocument(6, "rev-active", "Synthetic Active"))
 	backend := newPersonWorkerBackend()
@@ -1003,16 +1004,16 @@ func TestGenerationWorkerMaintainsPeopleWhenMessageRunFails(t *testing.T) {
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
 	result, err := worker.RunOnce(t.Context(), 43, testEmbeddingPassScope())
-	must.ErrorIs(err, messageErr)
-	check.Equal([]vector.GenerationID{43}, messages.runOnce)
-	check.Equal(RunResult{Claimed: 3, Succeeded: 3}, result)
+	requirements.ErrorIs(err, messageErr)
+	assertions.Equal([]vector.GenerationID{43}, messages.runOnce)
+	assertions.Equal(RunResult{Claimed: 3, Succeeded: 3}, result)
 	revisions, listErr := backend.ListPersonRevisions(t.Context(), 43)
-	must.NoError(listErr)
-	check.Equal(map[int64]string{6: "rev-active"}, revisions)
+	requirements.NoError(listErr)
+	assertions.Equal(map[int64]string{6: "rev-active"}, revisions)
 }
 
 func TestGenerationWorkerScansPeopleOnlyAtContextualBuildBoundaries(t *testing.T) {
-	must := require.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(7, "rev-one", "Synthetic One"))
 	backend := newPersonWorkerBackend()
 	backend.building = &vector.Generation{ID: 44}
@@ -1023,23 +1024,23 @@ func TestGenerationWorkerScansPeopleOnlyAtContextualBuildBoundaries(t *testing.T
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
 	_, err := worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
-	must.NoError(err)
+	requirements.NoError(err)
 	source.put(personDocument(7, "rev-two", "Synthetic Two"))
 	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 1, "intermediate contextual pass must skip an unchanged corpus scan")
+	requirements.NoError(err)
+	requirements.Len(client.calls, 1, "intermediate contextual pass must skip an unchanged corpus scan")
 
 	messages.runOnceResult.Contextual.Converged = true
 	_, err = worker.RunOnce(t.Context(), 44, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 2, "final contextual pass must recheck the person corpus")
+	requirements.NoError(err)
+	requirements.Len(client.calls, 2, "final contextual pass must recheck the person corpus")
 }
 
 // TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans catches the
 // coordinator opening person rows for skipped intermediate contextual passes.
 func TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	recorder := testutil.NewTestStore(t)
 	source := newPersonWorkerSource(personDocument(7, "rev-one", "Synthetic One"))
 	backend := newPersonWorkerBackend()
@@ -1057,26 +1058,26 @@ func TestGenerationWorkerPersonPassOwnershipRecordsOnlyExecutedScans(t *testing.
 	_, err := worker.RunOnce(t.Context(), 44, operations.PassScope{
 		Key: "manual:generation:first", Trigger: operations.TriggerManual, StartedAt: started,
 	})
-	require.NoError(err)
+	requirements.NoError(err)
 	_, err = worker.RunOnce(t.Context(), 44, operations.PassScope{
 		Key: "manual:generation:middle", Trigger: operations.TriggerManual, StartedAt: started.Add(time.Second),
 	})
-	require.NoError(err)
-	assert.Len(personOperationRuns(t, recorder), 1, "skipped person scan must create no row")
+	requirements.NoError(err)
+	assertions.Len(personOperationRuns(t, recorder), 1, "skipped person scan must create no row")
 
 	messages.runOnceResult.Contextual.Converged = true
 	_, err = worker.RunOnce(t.Context(), 44, operations.PassScope{
 		Key: "manual:generation:final", Trigger: operations.TriggerManual, StartedAt: started.Add(2 * time.Second),
 	})
-	require.NoError(err)
+	requirements.NoError(err)
 	runs := personOperationRuns(t, recorder)
-	require.Len(runs, 2, "first and final executed scans each own one row")
-	assert.Equal([]operations.State{operations.StateSucceeded, operations.StateSucceeded},
+	requirements.Len(runs, 2, "first and final executed scans each own one row")
+	assertions.Equal([]operations.State{operations.StateSucceeded, operations.StateSucceeded},
 		[]operations.State{runs[0].State, runs[1].State})
 }
 
 func TestGenerationWorkerMaintainsActivePeopleDuringContextualFailures(t *testing.T) {
-	must := require.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(7, "rev-one", "Synthetic One"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -1086,16 +1087,16 @@ func TestGenerationWorkerMaintainsActivePeopleDuringContextualFailures(t *testin
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
 	_, err := worker.RunOnce(t.Context(), 45, testEmbeddingPassScope())
-	must.NoError(err)
+	requirements.NoError(err)
 	source.put(personDocument(7, "rev-two", "Synthetic Two"))
 	_, err = worker.RunOnce(t.Context(), 45, testEmbeddingPassScope())
-	must.NoError(err)
-	must.Len(client.calls, 2, "active generations must reconcile people on every scheduler tick")
+	requirements.NoError(err)
+	requirements.Len(client.calls, 2, "active generations must reconcile people on every scheduler tick")
 }
 
 func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
-	check := assert.New(t)
-	must := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	source := newPersonWorkerSource(personDocument(8, "rev-backstop", "Synthetic Backstop"))
 	backend := newPersonWorkerBackend()
 	client := &personWorkerClient{}
@@ -1103,7 +1104,44 @@ func TestGenerationWorkerBackstopMaintainsPeople(t *testing.T) {
 	worker := NewGenerationWorker(messages, newTestPersonWorker(source, backend, client, 8))
 
 	result, err := worker.RunBackstop(t.Context(), 45, testEmbeddingPassScope())
-	must.NoError(err)
-	check.Equal([]vector.GenerationID{45}, messages.runBackstop)
-	check.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+	requirements.NoError(err)
+	assertions.Equal([]vector.GenerationID{45}, messages.runBackstop)
+	assertions.Equal(RunResult{Claimed: 1, Succeeded: 1}, result)
+}
+
+func TestPersonWorkerColdPolicyRetractsMixedDocument(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "person-worker-policy")
+	requirements.NoError(err)
+	_, err = st.EnsureConversation(src.ID, "room", "Synthetic room")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	for _, name := range []string{"First", "Second"} {
+		id, err := st.EnsureParticipant(name+"@example.invalid", name, "example.invalid")
+		requirements.NoError(err)
+		_, _, err = st.CreatePersonFromParticipantWithDisplayNameContext(t.Context(), id, &name)
+		requirements.NoError(err)
+	}
+	backend := newPersonWorkerBackend()
+	client := &personWorkerClient{}
+	client.onEmbed = func() {
+		require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Cold))
+		require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	}
+	worker := newTestPersonWorker(st, backend, client, 1)
+	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
+	requirements.ErrorIs(err, store.ErrConversationPolicyStale)
+	assertions.Len(client.calls, 1, "later batch must recheck the original work authority")
+	revisions, err := backend.ListPersonRevisions(t.Context(), 1)
+	requirements.NoError(err)
+	assertions.Empty(revisions, "unchanged independent person text cannot bless an old response")
+	client.onEmbed = nil
+	_, err = worker.RunOnce(t.Context(), 1, testEmbeddingPassScope())
+	requirements.NoError(err)
+	revisions, err = backend.ListPersonRevisions(t.Context(), 1)
+	requirements.NoError(err)
+	assertions.Len(revisions, 2, "ordinary next run rediscovers low IDs")
 }

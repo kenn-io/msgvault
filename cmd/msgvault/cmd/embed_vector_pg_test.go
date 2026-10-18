@@ -35,6 +35,7 @@ func TestRunEmbed_PG_OpenAndZeroPending(t *testing.T) {
 
 	t.Cleanup(func() { _ = st.Close() })
 	require.True(st.IsPostgreSQL(), "expected PG-backed store")
+	require.NoError(st.InitSchema(), "initialize the archive schema required by live-policy queries")
 
 	// Open the pgvector backend — this runs the schema migration so that
 	// index_generations and the embedding tables exist.
@@ -46,19 +47,6 @@ func TestRunEmbed_PG_OpenAndZeroPending(t *testing.T) {
 		err, "pgvector.Open must succeed and migrate the schema")
 
 	t.Cleanup(func() { _ = pgb.Close() })
-
-	// A fresh isolated schema has no messages table yet. Create a minimal
-	// one (with embed_gen) so the coverage gate query succeeds. Empty, so
-	// coverage reports 0 missing.
-	_, err = st.DB().ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS messages (
-			id BIGINT PRIMARY KEY,
-			deleted_at TIMESTAMPTZ,
-			deleted_from_source_at TIMESTAMPTZ,
-			embed_gen BIGINT
-		)`)
-	require.NoError(
-		err, "create messages scaffold")
 
 	// Exercise pickEmbedGeneration via its PG backend — same code path
 	// runEmbed takes. With no messages, full-rebuild seeds 0 rows.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -32,6 +33,7 @@ func newEmbedGenGroupFixture(t *testing.T, members int) *embedGenGroupFixture {
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, "synthetic-chat", "group_chat", "Synthetic chat")
 	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), source.ID, "synthetic-chat", conversationpolicy.Full))
 	aliceID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	bobID, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")

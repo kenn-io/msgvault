@@ -46,7 +46,7 @@ func defaultPurgeExcludedMediaDeps(contexts ...context.Context) purgeExcludedMed
 			if state := invocationFromContext(ctx); state != nil && state.cfg != nil {
 				deps.config = func() *config.Config { return state.cfg }
 				deps.openStore = func() (*store.Store, func(), error) {
-					return openWritableStoreAndInitForIngestInvocation(state)
+					return openInitializedStoreForInvocation(ctx, state)
 				}
 			}
 			return deps

@@ -70,8 +70,19 @@ func exerciseDiscordCollection(t *testing.T, runtime *archive.Archive) {
 	second, err := runtime.SyncDiscord(t.Context(), opts)
 	require.NoError(err)
 	assert.Zero(second.MessagesAdded)
-	searchIDs(t, runtime, "nebula", 2)
+	searchIDs(t, runtime, "nebula", 0)
+	var archived int64
+	st := runtime.Store()
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT COUNT(*) FROM messages
+		 WHERE conversation_id IN (
+			SELECT id FROM conversations
+			 WHERE source_id = ? AND source_conversation_id IN (?, ?)
+		 )`), source, "301", "401").Scan(&archived))
+	assert.Equal(int64(2), archived, "cold channel and thread messages remain archived")
+	searchIDs(t, runtime, "include:cold nebula", 2)
 	require.NoError(runtime.PurgeChannel(t.Context(), source, "301"))
 	searchIDs(t, runtime, "nebula", 0)
-	searchIDs(t, runtime, "observatory", 1)
+	searchIDs(t, runtime, "include:cold nebula", 0)
+	searchIDs(t, runtime, "observatory", 0)
 }

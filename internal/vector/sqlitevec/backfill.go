@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -178,6 +179,13 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	// clobbers any NULL resets repair-encoding made in the interim. With one
 	// tx, a partial-chunk failure rolls back EVERY chunk and the mark, so the
 	// migration stays unmarked and the next Open re-runs cleanly from scratch.
+	if b.policyStore != nil {
+		release, err := b.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	tx, err := b.mainDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("backfill: begin tx: %w", err)
@@ -206,6 +214,9 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		q := `UPDATE messages SET embed_gen = ?
 		       WHERE embed_gen IS NULL
 		         AND id IN (` + strings.Join(placeholders, ",") + `)`
+		if b.policyStore != nil {
+			q += " AND " + store.FullMessageWhere("messages")
+		}
 		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("backfill: stamp embed_gen: %w", err)
 		}
