@@ -190,6 +190,8 @@ func inboxControlErrorStatus(err error) (int, string, string) {
 		status, code, message = http.StatusForbidden, "inbox_denied", inboxcontrol.ErrDenied.Error()
 	case errors.Is(err, inboxcontrol.ErrInvalid):
 		status, code, message = http.StatusBadRequest, "invalid_inbox_request", inboxcontrol.ErrInvalid.Error()
+	case errors.Is(err, inboxcontrol.ErrTriageProposalTooLarge):
+		status, code, message = http.StatusRequestEntityTooLarge, "triage_proposal_too_large", inboxcontrol.ErrTriageProposalTooLarge.Error()
 	case errors.Is(err, inboxcontrol.ErrPlanChanged), errors.Is(err, inboxcontrol.ErrConflict):
 		status, code, message = http.StatusConflict, "inbox_conflict", "Inbox preview or operation conflicts with current evidence"
 	case errors.Is(err, inboxcontrol.ErrUnavailable):

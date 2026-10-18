@@ -50,28 +50,6 @@ func TestBeeperInboxBindingAcceptsExactNativeConversation(t *testing.T) {
 	assertions.Equal(target.AccountID, binding.AccountID)
 }
 
-func TestBeeperInboxBindingRejectsForeignConversation(t *testing.T) {
-	for _, field := range []string{"source", "identifier", "account", "conversation", "provider"} {
-		t.Run(field, func(t *testing.T) {
-			a, target := beeperInboxFixture(t)
-			switch field {
-			case "source":
-				target.SourceID++
-			case "identifier":
-				target.SourceIdentifier = "foreign-account"
-			case "account":
-				target.AccountID = "foreign-account"
-			case "conversation":
-				target.ItemID += 10000
-			case "provider":
-				target.ProviderID = "!foreign:example.invalid"
-			}
-			_, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}, inboxcontrol.Principal{ID: "owner", Owner: true}, func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error { return nil }, nil)
-			require.ErrorIs(t, err, inboxcontrol.ErrDenied)
-		})
-	}
-}
-
 const beeperControlInfo = `{"app":{"version":"4.2.808","name":"Beeper","bundle_id":"example.beeper"},"endpoints":{"spec":"https://example.invalid/spec"}}`
 const beeperControlChat = `{"id":"!chat:example.invalid","accountID":"synthetic-account","type":"single","isArchived":false,"unreadCount":0,"isMarkedUnread":false,"lastReadMessageSortKey":"opaque:9","capabilities":{"archive":true,"markAsUnread":true,"readReceipts":true}}`
 const beeperControlPage = `{"items":[],"hasMore":false,"oldestCursor":"old","newestCursor":"new"}`
@@ -200,7 +178,7 @@ func TestBeeperInboxControlPersistsMetadataUnderSourceFence(t *testing.T) {
 }
 
 func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
-	for _, scenario := range []string{"removed", "reused ID", "removed during factory", "foreign source", "foreign account", "foreign conversation", "foreign provider"} {
+	for _, scenario := range []string{"removed", "reused ID", "removed during factory", "foreign source", "foreign identifier", "foreign account", "foreign conversation", "foreign provider"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -227,6 +205,8 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 				}
 			case "foreign source":
 				target.SourceID++
+			case "foreign identifier":
+				target.SourceIdentifier = "replacement-account"
 			case "foreign account":
 				target.AccountID = "foreign-account"
 			case "foreign conversation":

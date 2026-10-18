@@ -4,12 +4,17 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/emailtags"
 )
+
+// MaxTriageProposalBytes is the largest supported triage apply envelope.
+const MaxTriageProposalBytes = 1 << 20
 
 // TriageInput contains explicit identities and untrusted classification evidence.
 // Idempotency keys are bound at preview so apply cannot change replay identity.
@@ -285,6 +290,16 @@ func (s *Service) PreviewTriage(ctx context.Context, input TriageInput, principa
 	if err != nil {
 		return nil, ErrInternal
 	}
+	// The CLI preserves a readable two-space JSON format when saving proposals.
+	// Check that representation, including its trailing newline, so the result
+	// remains within the same 1 MiB envelope accepted by every apply path.
+	encoded, err := json.Marshal(proposal, jsontext.WithIndent("  "))
+	if err != nil {
+		return nil, ErrInternal
+	}
+	if len(encoded)+1 > MaxTriageProposalBytes {
+		return nil, ErrTriageProposalTooLarge
+	}
 	return proposal, nil
 }
 
@@ -334,6 +349,7 @@ func triageArchiveFingerprint(state State) (string, error) {
 	// tag-only triage action. The live provider may know native labels that the
 	// archive snapshot does not retain as folders.
 	state.Folders = nil
+	state.FolderCatalog = nil
 	return SemanticFingerprint(state)
 }
 

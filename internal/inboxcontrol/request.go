@@ -63,6 +63,7 @@ type Folder struct {
 // not part of a semantic state digest.
 type State struct {
 	Folders           []Folder       `json:"folders,omitempty"`
+	FolderCatalog     []Folder       `json:"folder_catalog,omitempty"`
 	ProvisionedFolder *Folder        `json:"provisioned_folder,omitempty"`
 	Target            Target         `json:"target"`
 	Source            SourceIdentity `json:"source"`

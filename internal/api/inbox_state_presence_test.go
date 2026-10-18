@@ -4,6 +4,7 @@ import (
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -35,12 +36,16 @@ func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 	requirements := require.New(t)
 
 	target := inboxcontrol.Target{SourceID: 1, SourceType: "imap", SourceIdentifier: "imaps://reader@example.test:993", AccountID: "reader", Scope: inboxcontrol.ScopeMessage, ItemID: 2, ProviderID: "synthetic-message", Mailbox: "INBOX", UIDValidity: 17, UID: 1}
+	observedAt := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	var itemSDK generated.InboxState
 	for _, values := range [][]string{nil, {}, {"Todo", "Next"}} {
-		before := inboxcontrol.State{Target: target, Read: new(false), Tags: values, Flags: values}
+		before := inboxcontrol.State{Target: target, Read: new(false), Tags: values, Flags: values, ObservedAt: observedAt}
 		responseJSON, err := json.Marshal(before)
 		requirements.NoError(err)
 		var sdk generated.InboxState
 		requirements.NoError(jsonv1.Unmarshal(responseJSON, &sdk))
+		requirements.NoError(sdk.Validate(), "item responses validate the populated Target binding")
+		itemSDK = sdk
 		assertions.Equal(values, sdk.Tags)
 		assertions.Equal(values, sdk.Flags)
 		requestJSON, err := jsonv1.Marshal(generated.InboxRequest{Operation: "set-read", Expected: &sdk})
@@ -56,4 +61,20 @@ func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Equal(wantHash, gotHash, "SDK expected-state transport must retain the signed preflight evidence")
 	}
+
+	source := inboxcontrol.SourceIdentity{SourceID: 1, SourceType: "imap", SourceIdentifier: "imaps://reader@example.test:993", AccountID: "reader"}
+	folderState := inboxcontrol.State{Source: source, ObservedAt: observedAt}
+	responseJSON, err := json.Marshal(folderState)
+	requirements.NoError(err)
+	var folderSDK generated.InboxState
+	requirements.NoError(jsonv1.Unmarshal(responseJSON, &folderSDK))
+	requirements.NoError(folderSDK.Validate(), "folder responses validate the populated Source binding")
+	assertions.Equal(source.AccountID, folderSDK.Source.AccountID)
+	assertions.Empty(folderSDK.Target.Scope)
+
+	bothBindings := folderSDK
+	bothBindings.Target = itemSDK.Target
+	requirements.Error(bothBindings.Validate(), "item and folder bindings cannot be mixed")
+	emptyBinding := generated.InboxState{ObservedAt: observedAt}
+	requirements.Error(emptyBinding.Validate(), "a state must contain one binding")
 }

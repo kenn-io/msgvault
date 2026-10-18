@@ -7,11 +7,13 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -316,6 +318,51 @@ func TestInboxGmailMetadataBatchPreservesGoneCause(t *testing.T) {
 	assertions.ErrorAs(results[0].Err, &gone)
 }
 
+func TestInboxGmailMetadataBatchRunsConcurrentlyAndPreservesOrder(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	slowStarted := make(chan struct{})
+	fastStarted := make(chan struct{})
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me/messages/")
+		waitForOther := func(other <-chan struct{}) bool {
+			select {
+			case <-other:
+				return true
+			case <-r.Context().Done():
+				return false
+			}
+		}
+		switch id {
+		case "slow":
+			close(slowStarted)
+			if !waitForOther(fastStarted) {
+				return
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": id, "labelIds": []string{"INBOX"}, "historyId": "17"}))
+		case "fast":
+			if !waitForOther(slowStarted) {
+				return
+			}
+			close(fastStarted)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			assert.Fail(t, "unexpected Gmail metadata request", id)
+		}
+	}))
+	client.concurrency = 2
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	results, err := client.GetMessageLabelsBatch(ctx, []string{"slow", "fast"})
+	requirements.NoError(err)
+	requirements.Len(results, 2)
+	assertions.Equal("slow", results[0].ID)
+	assertions.Equal([]string{"INBOX"}, results[0].LabelIDs)
+	assertions.Equal(uint64(17), results[0].HistoryID)
+	assertions.Equal("fast", results[1].ID)
+	require.ErrorIs(t, results[1].Err, ErrMessageGone)
+}
+
 func TestInboxGmailFolderCreationThroughController(t *testing.T) {
 	for _, mode := range []string{"verified", "readback lost", "mapping lost"} {
 		t.Run(mode, func(t *testing.T) {
@@ -406,6 +453,103 @@ func TestInboxGmailFolderCreationThroughController(t *testing.T) {
 			assertions.Equal(1, posts)
 		})
 	}
+}
+
+func TestInboxGmailControlReconcilesCrossRenamedUnassignedLabels(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	archive := storetest.New(t)
+	source := inboxGmailSource()
+	source.SourceID, source.SourceIdentifier, source.AccountID = archive.Source.ID, archive.Source.Identifier, archive.Source.Identifier
+	first := archive.CreateMessage("message-1")
+	second := archive.CreateMessage("message-2")
+	labelIDs, err := archive.Store.EnsureLabelsBatch(source.SourceID, map[string]store.LabelInfo{
+		"INBOX":   {Name: "Inbox", Type: "system"},
+		"UNREAD":  {Name: "Unread", Type: "system"},
+		"Label_a": {Name: "Alpha", Type: "user"},
+		"Label_b": {Name: "Beta", Type: "user"},
+		"Label_c": {Name: "Gamma", Type: "user"},
+	})
+	requirements.NoError(err)
+	requirements.NoError(archive.Store.ReplaceMessageLabels(first, []int64{labelIDs["INBOX"], labelIDs["UNREAD"], labelIDs["Label_a"]}))
+	requirements.NoError(archive.Store.ReplaceMessageLabels(second, []int64{labelIDs["Label_b"], labelIDs["Label_c"]}))
+
+	labels := []string{"INBOX", "UNREAD", "Label_a"}
+	posts := 0
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/profile":
+			_ = json.NewEncoder(w).Encode(map[string]string{"emailAddress": source.AccountID})
+		case "/gmail/v1/users/me/labels":
+			_ = json.NewEncoder(w).Encode(map[string]any{"labels": []map[string]string{
+				{"id": "INBOX", "name": "Inbox", "type": "system"},
+				{"id": "Label_a", "name": "Beta", "type": "user"},
+				{"id": "Label_b", "name": "Gamma", "type": "user"},
+				{"id": "Label_c", "name": "Delta", "type": "user"},
+			}})
+		case "/gmail/v1/users/me/messages/message-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "message-1", "labelIds": labels, "historyId": "12"})
+		case "/gmail/v1/users/me/messages/message-1/modify":
+			posts++
+			var change struct {
+				Add    []string `json:"addLabelIds"`
+				Remove []string `json:"removeLabelIds"`
+			}
+			if !assertions.NoError(json.NewDecoder(r.Body).Decode(&change)) {
+				return
+			}
+			assertions.Equal([]string{"INBOX"}, change.Remove)
+			assertions.Empty(change.Add)
+			labels = emailtags.Project(labels, emailtags.MessageTagChange{Add: change.Add, Remove: change.Remove}, false)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "message-1"})
+		default:
+			assertions.Fail("unexpected Gmail request", r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	provider := NewInboxProvider(client, source)
+	service := inboxcontrol.Service{
+		Ledger: archive.Store, Key: []byte(strings.Repeat("k", 32)),
+		Authorize: func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error { return nil },
+		Resolve:   func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return provider, nil },
+		AcquireSource: func(ctx context.Context, id int64) (func(), error) {
+			lease, err := archive.Store.AcquireSyncExecutionContext(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			return func() { _ = lease.Release() }, nil
+		},
+		ReconcileState: func(ctx context.Context, before, after inboxcontrol.State) error {
+			return archive.Store.ReconcileInboxProviderState(ctx, before.Target, before, after)
+		},
+	}
+	gate := func(context.Context) (func(), error) { return func() {}, nil }
+	principal := inboxcontrol.Principal{ID: "folder-owner", Owner: true}
+	target := inboxGmailTarget()
+	target.SourceID, target.SourceIdentifier, target.AccountID = source.SourceID, source.SourceIdentifier, source.AccountID
+	target.ItemID, target.ProviderID = first, "message-1"
+	request := inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, DryRun: true}
+	preview, err := service.Control(t.Context(), request, principal, gate)
+	requirements.NoError(err)
+	requirements.ElementsMatch([]inboxcontrol.Folder{
+		{ID: "Label_a", Name: "Beta"},
+		{ID: "Label_b", Name: "Gamma"},
+		{ID: "Label_c", Name: "Delta"},
+	}, preview.Before.FolderCatalog)
+	requirements.Equal([]inboxcontrol.Folder{{ID: "Label_a", Name: "Beta"}}, preview.Before.Folders)
+	request.DryRun, request.Expected, request.PreviewToken, request.IdempotencyKey = false, preview.Before, preview.PreviewToken, "archive-cross-renamed-labels"
+	result, err := service.Control(t.Context(), request, principal, gate)
+	requirements.NoError(err)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+	assertions.Equal(1, posts)
+	firstLabels, err := archive.Store.MessageLabelIDsContext(t.Context(), first)
+	requirements.NoError(err)
+	secondLabels, err := archive.Store.MessageLabelIDsContext(t.Context(), second)
+	requirements.NoError(err)
+	assertions.ElementsMatch([]int64{labelIDs["UNREAD"], labelIDs["Label_a"]}, firstLabels)
+	assertions.ElementsMatch([]int64{labelIDs["Label_b"], labelIDs["Label_c"]}, secondLabels)
 }
 
 func TestInboxGmailFolderPreviewRejectsUnprovedCatalog(t *testing.T) {

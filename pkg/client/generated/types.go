@@ -6432,6 +6432,7 @@ func (i InboxSourceIdentity) Validate() error {
 
 type InboxState struct {
 	Flags             []string            `json:"flags,omitzero"`
+	FolderCatalog     []InboxFolder       `json:"folder_catalog,omitempty"`
 	Folders           []InboxFolder       `json:"folders,omitempty"`
 	Inbox             *bool               `json:"inbox,omitempty"`
 	LastMessageID     *string             `json:"last_message_id,omitzero"`
@@ -6448,6 +6449,13 @@ type InboxState struct {
 
 func (i InboxState) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range i.FolderCatalog {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("FolderCatalog[%d]", i), err)
+			}
+		}
+	}
 	for i, item := range i.Folders {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6465,15 +6473,16 @@ func (i InboxState) Validate() error {
 			}
 		}
 	}
-	if v, ok := any(i.Source).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
+	sourcePopulated := i.Source.AccountID != "" || i.Source.SourceID != 0 || i.Source.SourceIdentifier != "" || i.Source.SourceType != ""
+	targetPopulated := i.Target.AccountID != "" || i.Target.ItemID != 0 || i.Target.ProviderID != "" || i.Target.Scope != "" || i.Target.SourceID != 0 || i.Target.SourceIdentifier != "" || i.Target.SourceType != "" || i.Target.Mailbox != nil || i.Target.UID != nil || i.Target.Uidvalidity != nil
+	if sourcePopulated == targetPopulated {
+		errors = errors.Append("Binding", fmt.Errorf("exactly one of source or target must be populated"))
+	} else if sourcePopulated {
+		if err := i.Source.Validate(); err != nil {
 			errors = errors.Append("Source", err)
 		}
-	}
-	if v, ok := any(i.Target).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Target", err)
-		}
+	} else if err := i.Target.Validate(); err != nil {
+		errors = errors.Append("Target", err)
 	}
 	if len(errors) == 0 {
 		return nil

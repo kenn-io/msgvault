@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -82,6 +83,48 @@ func TestEmailTagsIMAPMembershipIdentityAndSave(t *testing.T) {
 	selected, err := st.EmailTagTargetContext(t.Context(), id, "Work")
 	require.NoError(err)
 	assert.Equal("Work", selected.Mailbox)
+}
+
+func TestDirectNativeEmailTagSaveInvalidatesInboxObservation(t *testing.T) {
+	for _, provider := range []string{"imap", "msmail"} {
+		t.Run(provider, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			var st *store.Store
+			var target inboxcontrol.Target
+			if provider == "imap" {
+				f, observedTarget := newInboxIMAPSyncFixture(t)
+				st, target = f.store, observedTarget
+				requirements.NoError(st.ApplyIMAPMailboxDeltas(f.source.ID, inboxIMAPSyncDelta([]string{`\Seen`, "Old"}, false)))
+			} else {
+				var before inboxcontrol.State
+				st, before, _ = microsoftObservationFixture(t)
+				target = before.Target
+			}
+			before, err := st.GetInboxProviderState(t.Context(), target)
+			requirements.NoError(err)
+			requirements.NotNil(before)
+			var beforeRevision int64
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT revision FROM inbox_source_revisions WHERE source_id=?`), target.SourceID).Scan(&beforeRevision))
+			native, err := st.EmailTagTargetContext(t.Context(), target.ItemID, target.Mailbox)
+			requirements.NoError(err)
+			result := &emailtags.MessageTagResult{Provider: provider, Verified: true}
+			if provider == "imap" {
+				result.Mailbox, result.UIDValidity, result.UID = native.Mailbox, native.UIDValidity, native.UID
+				result.Flags = []string{`\Seen`, "Next"}
+				result.Tags = []string{"Next"}
+			} else {
+				result.Tags = []string{"Inbox", "Category: Next"}
+			}
+			requirements.NoError(st.SaveEmailTagsContext(t.Context(), native, result))
+			after, err := st.GetInboxProviderState(t.Context(), target)
+			requirements.NoError(err)
+			assertions.Nil(after, "a direct native tag write must invalidate its cached Inbox observation")
+			var afterRevision int64
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT revision FROM inbox_source_revisions WHERE source_id=?`), target.SourceID).Scan(&afterRevision))
+			assertions.Equal(beforeRevision+1, afterRevision, "existing candidate cursors must become stale")
+		})
+	}
 }
 
 func TestEmailTagsIMAPMailboxSelection(t *testing.T) {

@@ -100,8 +100,28 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 		return errors.New("IMAP snapshot does not match the target membership")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
-		return s.saveEmailTagsTx(ctx, tx, target, result)
+		if err := s.saveEmailTagsTx(ctx, tx, target, result); err != nil {
+			return err
+		}
+		if target.Provider == sourceTypeIMAP || target.Provider == "msmail" {
+			return invalidateInboxEmailTagObservationTx(ctx, tx, target)
+		}
+		return nil
 	})
+}
+
+// Direct tag writes happen outside the Inbox controller's reconciliation
+// path. Retire their cached native observation and advance the source cursor
+// revision in the same transaction as the archive label update.
+func invalidateInboxEmailTagObservationTx(ctx context.Context, tx *loggedTx, target EmailTagTarget) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM inbox_provider_states
+		WHERE source_id=? AND scope='message' AND item_id=? AND provider_id=?
+		AND mailbox=? AND uidvalidity=? AND uid=?`,
+		target.SourceID, target.ID, target.SourceMessageID, target.Mailbox, target.UIDValidity, target.UID)
+	if err != nil {
+		return fmt.Errorf("invalidate Inbox observation after direct tag write: %w", err)
+	}
+	return bumpInboxSourceRevisionTx(ctx, tx, target.SourceID)
 }
 
 // saveEmailTagsTx persists a verified snapshot inside the caller's source-locked

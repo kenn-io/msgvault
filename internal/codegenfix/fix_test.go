@@ -33,6 +33,35 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))
 }
 
+func TestRewriteInboxStateValidatorChecksOnlyPopulatedBinding(t *testing.T) {
+	assertions := assert.New(t)
+	fixture := `func (i InboxState) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	return errors
+}`
+	got, err := rewriteInboxStateBindingValidator([]byte(fixture))
+	require.NoError(t, err)
+	assertions.Contains(string(got), "if sourcePopulated == targetPopulated")
+	assertions.Contains(string(got), "i.Source.Validate()")
+	assertions.Contains(string(got), "i.Target.Validate()")
+	assertions.NotContains(string(got), "any(i.Source).(runtime.Validator)")
+	again, err := rewriteInboxStateBindingValidator(got)
+	require.NoError(t, err)
+	assertions.Equal(got, again, "rewriting generated code is idempotent")
+	_, err = rewriteInboxStateBindingValidator([]byte("func (i InboxState) Validate() error { return nil }"))
+	assertions.ErrorContains(err, "InboxState binding validator shape changed")
+}
+
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
 	assert := assert.New(t)
 	methods := `type RunQueryClientInterface interface {
@@ -118,6 +147,9 @@ func generatedValidatorFixture() string {
 }
 type ExploreCacheUnavailableResponse struct {
 	RecoveryAction string ` + "`json:\"recovery_action\" validate:\"omitempty\"`" + `
+}
+type Evidence struct {
+	Excerpt      string ` + "`json:\"excerpt,omitempty\"`" + `
 }
 func (e ExploreCacheUnavailableResponse) Validate() error {
 	var errors runtime.ValidationErrors

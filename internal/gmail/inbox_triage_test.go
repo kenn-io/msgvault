@@ -135,6 +135,24 @@ func TestInboxGmailTriagePreviewRetainsInboxWithoutWrites(t *testing.T) {
 	}
 }
 
+func TestInboxGmailTriagePreviewRejectsOversizedSerializedProposal(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTriagePreviewFixture(t)
+	f.labels = append(f.labels, strings.Repeat("x", inboxcontrol.MaxTriageProposalBytes/2))
+	target := f.input.Items[0].Target
+	_, err := f.archive.Store.ObserveInboxState(t.Context(), inboxcontrol.State{
+		Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(f.labels),
+		Revision: "13", ObservedAt: f.now.Add(time.Second),
+	})
+	requirements.NoError(err)
+	proposal, err := f.service.PreviewTriage(t.Context(), f.input, f.principal)
+	assertions.Nil(proposal)
+	requirements.ErrorIs(err, inboxcontrol.ErrTriageProposalTooLarge)
+	assertions.Contains(err.Error(), "reduce the batch size")
+	assertions.Zero(f.writes.Load())
+}
+
 func TestInboxGmailTriagePreviewRejectsChangedArchiveAndAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name   string

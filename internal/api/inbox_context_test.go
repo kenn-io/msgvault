@@ -131,3 +131,34 @@ func TestInboxContextHTTPExactSourceContentAuthorization(t *testing.T) {
 	assertions.Equal(http.StatusUnauthorized, response.Code, response.Body.String())
 	assertions.NotContains(response.Body.String(), "Synthetic")
 }
+
+func TestInboxContextHTTPBypassesHeldOperationGate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	mid := f.CreateMessage("context-gate")
+	target := inboxcontrol.Target{SourceID: f.Source.ID, SourceType: "gmail", SourceIdentifier: f.Source.Identifier, AccountID: f.Source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: "context-gate"}
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO message_bodies(message_id,body_text) VALUES (?,?)`), mid, "Synthetic gate body")
+	requirements.NoError(err)
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginLabeledWorkContext(context.Background(), "synthetic archive mutation")
+	requirements.True(ok, "hold the mutation gate")
+	defer release()
+	srv := NewServerWithOptions(ServerOptions{
+		Config:         &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
+		Store:          &inboxCandidateHTTPStore{archive: f.Store},
+		Logger:         testLogger(),
+		OperationGate:  gate,
+		RequestTimeout: 500 * time.Millisecond,
+	})
+	encoded, err := json.Marshal(inboxcontrol.ContextRequest{Target: target, MaxBytes: 9})
+	requirements.NoError(err)
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/inbox/context", strings.NewReader(string(encoded)))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer synthetic-owner-key")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "Synthetic")
+	assertions.True(strings.Contains(response.Body.String(), `"truncated":true`))
+}

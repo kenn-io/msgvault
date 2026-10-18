@@ -6692,6 +6692,10 @@ components:
           type: array
           x-oapi-codegen-extra-tags:
             json: flags,omitzero
+        folder_catalog:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
         folders:
           items:
             $ref: "#/components/schemas/InboxFolder"

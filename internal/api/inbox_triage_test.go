@@ -223,6 +223,26 @@ func TestInboxTriageHTTPPreviewApplyAndReceiptReplay(t *testing.T) {
 	assertions.Equal(int64(2), f.writes.Load())
 }
 
+func TestInboxTriageHTTPPreviewRejectsOversizedProposal(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTriageHTTPFixture(t, 1)
+	target := f.input.Items[0].Target
+	f.labels[target.ProviderID] = append(f.labels[target.ProviderID], strings.Repeat("x", inboxcontrol.MaxTriageProposalBytes/2))
+	_, err := f.archive.Store.ObserveInboxState(t.Context(), inboxcontrol.State{
+		Target: target, Inbox: new(true), Read: new(false), Tags: slices.Clone(f.labels[target.ProviderID]),
+		Revision: "8", ObservedAt: time.Now().UTC().Add(time.Second),
+	})
+	requirements.NoError(err)
+	response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "synthetic-owner-key", "")
+	requirements.Equal(http.StatusRequestEntityTooLarge, response.Code, response.Body.String())
+	var failure InboxTriageError
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+	assertions.Equal("triage_proposal_too_large", failure.Error)
+	assertions.Contains(failure.Message, "reduce the batch size")
+	assertions.Zero(f.writes.Load())
+}
+
 func TestInboxTriageHTTPUsesExactCurrentSourceAndActionGrants(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

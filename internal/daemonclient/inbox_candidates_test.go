@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -71,7 +72,11 @@ func TestInboxCandidateClientContract(t *testing.T) {
 						return
 					}
 					if mode == "oversized" {
-						_, _ = w.Write(make([]byte, (8<<20)+1))
+						response := map[string]any{
+							"source": source, "scope": scope, "archive_revision": "committed-revision",
+							"candidates": []any{}, "unavailable": true, "padding": strings.Repeat("x", (8<<20)+1),
+						}
+						assert.NoError(t, json.MarshalWrite(w, response))
 						return
 					}
 					page := inboxcontrol.CandidatePage{Source: source, Scope: scope, ArchiveRevision: "committed-revision", Candidates: []inboxcontrol.Candidate{{State: inboxcontrol.State{Target: inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: scope, ItemID: 7, ProviderID: "synthetic-item"}, Inbox: new(true), Read: new(false)}, Available: true}}, Unavailable: true}

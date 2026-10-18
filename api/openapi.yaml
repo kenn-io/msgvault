@@ -6748,6 +6748,10 @@ components:
           items:
             type: string
           type: array
+        folder_catalog:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
         folders:
           items:
             $ref: "#/components/schemas/InboxFolder"

@@ -96,13 +96,18 @@ func TestInboxCLIArchiveDefaultsPreviewAndPreservesUnknownReceipt(t *testing.T) 
 	}
 }
 func TestInboxCLIRejectsInvalidInputBeforeHTTPControl(t *testing.T) {
+	target := `"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}`
+	valid := "{" + target + "}"
+	unknownMember := "{" + target + `,"surprise":true}`
+	operationOverride := `{"operation":"move",` + target + "}"
+	oversized := valid + string(bytes.Repeat([]byte(" "), (1<<20)+1-len(valid)))
 	for _, tc := range []struct {
 		name, input string
 		args        []string
 	}{
-		{"unknown member", `{"surprise":true}`, []string{"get-state", "--request", "-"}},
-		{"operation override", `{"operation":"move"}`, []string{"archive", "--request", "-"}},
-		{"oversize", string(bytes.Repeat([]byte(" "), (1<<20)+1)), []string{"get-state", "--request", "-"}},
+		{"unknown member", unknownMember, []string{"get-state", "--request", "-"}},
+		{"operation override", operationOverride, []string{"archive", "--request", "-"}},
+		{"oversize", oversized, []string{"get-state", "--request", "-"}},
 		{"unsigned apply", `{"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}}`, []string{"archive", "--request", "-", "--apply"}},
 		{"apply read", `{"receipt_id":"r1"}`, []string{"receipt-get", "--request", "-", "--apply"}},
 	} {

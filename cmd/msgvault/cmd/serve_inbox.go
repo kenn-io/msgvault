@@ -32,38 +32,82 @@ func prepareInboxRuntime(ctx context.Context, cfg *config.Config, st *store.Stor
 }
 
 func (a *storeAPIAdapter) ControlInbox(ctx context.Context, request inboxcontrol.Request, principal inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, acquireWrite func(context.Context) (func(), error)) (*inboxcontrol.Result, error) {
-	checkedAuthorize := func(ctx context.Context, caller inboxcontrol.Principal, intent inboxcontrol.Request) error {
+	result, err := a.inboxControlService(a.checkedInboxAuthorize(authorize)).Control(a.invocationContext(ctx), request, principal, acquireWrite)
+	if request.Operation == inboxcontrol.OpReconcile || (request.Operation.IsMutation() && !request.DryRun) {
+		if result != nil && result.Receipt != nil && result.Receipt.Status == inboxcontrol.StatusVerified && result.After != nil {
+			a.refreshInboxCache(ctx)
+		}
+	}
+	return result, err
+}
+
+// checkedInboxAuthorize binds fresh actions to active archive identities and
+// saved-result replay to the retained source, original identity and live
+// receipt authority. The latter tolerates sync tombstones while still refusing
+// deleted items and removed sources.
+func (a *storeAPIAdapter) checkedInboxAuthorize(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error {
+	return func(ctx context.Context, caller inboxcontrol.Principal, intent inboxcontrol.Request) error {
 		if authorize == nil {
 			return inboxcontrol.ErrDenied
 		}
 		if err := authorize(ctx, caller, intent); err != nil {
 			return err
 		}
-		if request.ReceiptID != "" {
-			if err := a.store.ValidateInboxReceiptAuthorityContext(ctx, request.ReceiptID); err != nil {
-				return err
-			}
-		} else if request.IdempotencyKey != "" {
-			sourceID := int64(0)
-			if request.Target != nil {
-				sourceID = request.Target.SourceID
-			} else if request.Source != nil {
-				sourceID = request.Source.SourceID
-			}
-			receipt, err := a.store.LookupInboxReceipt(ctx, caller.ID, sourceID, request.IdempotencyKey)
+		var receipt *inboxcontrol.Receipt
+		sourceID := int64(0)
+		if intent.Target != nil {
+			sourceID = intent.Target.SourceID
+		} else if intent.Source != nil {
+			sourceID = intent.Source.SourceID
+		}
+		if intent.ReceiptID != "" {
+			var err error
+			receipt, err = a.store.GetInboxReceipt(ctx, intent.ReceiptID)
 			if err != nil {
 				return inboxcontrol.ErrInternal
 			}
-			if receipt != nil {
-				if err := a.store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID); err != nil {
-					return err
-				}
+		} else if intent.IdempotencyKey != "" && sourceID > 0 {
+			var err error
+			receipt, err = a.store.LookupInboxReceipt(ctx, caller.ID, sourceID, intent.IdempotencyKey)
+			if err != nil {
+				return inboxcontrol.ErrInternal
 			}
 		}
-		_, _, err := a.inboxBinding(ctx, intent)
+		if receipt == nil {
+			_, _, err := a.inboxBinding(ctx, intent)
+			return err
+		}
+		if err := a.store.ValidateInboxReceiptAuthorityContext(ctx, receipt.ID); err != nil {
+			return err
+		}
+		var source inboxcontrol.SourceIdentity
+		if receipt.Intent.Target != nil {
+			target := receipt.Intent.Target
+			source = inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+			if target.Scope == inboxcontrol.ScopeChat {
+				if err := a.store.ValidateInboxTargetContext(ctx, *target); err != nil {
+					return inboxcontrol.ErrDenied
+				}
+			} else if err := a.store.ValidateInboxItemIdentityContext(ctx, *target); err != nil {
+				return inboxcontrol.ErrDenied
+			}
+		} else if receipt.Intent.Source != nil {
+			source = *receipt.Intent.Source
+		} else {
+			return inboxcontrol.ErrDenied
+		}
+		_, _, err := a.inboxBinding(ctx, inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source, DryRun: true})
 		return err
 	}
-	return a.inboxControlService(checkedAuthorize).Control(a.invocationContext(ctx), request, principal, acquireWrite)
+}
+
+func (a *storeAPIAdapter) refreshInboxCache(ctx context.Context) {
+	if a.inboxCacheRefresh == nil {
+		return
+	}
+	if err := a.inboxCacheRefresh(ctx, "inbox-control"); err != nil && a.logger != nil {
+		a.logger.Warn("queue analytics cache refresh after Inbox reconciliation", "error", err)
+	}
 }
 
 func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) *inboxcontrol.Service {
@@ -267,5 +311,12 @@ func (a *storeAPIAdapter) PreviewInboxTriage(ctx context.Context, input inboxcon
 	return a.inboxControlService(authorize).PreviewTriage(a.invocationContext(ctx), input, p)
 }
 func (a *storeAPIAdapter) ApplyInboxTriage(ctx context.Context, proposal inboxcontrol.TriageProposal, p inboxcontrol.Principal, authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error, gate func(context.Context) (func(), error)) ([]inboxcontrol.Result, error) {
-	return a.inboxControlService(authorize).ApplyTriage(a.invocationContext(ctx), proposal, p, gate)
+	results, err := a.inboxControlService(a.checkedInboxAuthorize(authorize)).ApplyTriage(a.invocationContext(ctx), proposal, p, gate)
+	for _, result := range results {
+		if result.Receipt != nil && result.Receipt.Status == inboxcontrol.StatusVerified && result.After != nil {
+			a.refreshInboxCache(ctx)
+			break
+		}
+	}
+	return results, err
 }

@@ -133,7 +133,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 			rewritten := bytes.Replace(validator, required, nil, 1)
 			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		case 0:
-			if !bytes.Contains(result, []byte(field+" string")) {
+			if !hasGeneratedStringField(result, typeName, field) {
 				return nil, shapeErr
 			}
 		default:
@@ -181,5 +181,63 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	result = bytes.Replace(result, attributeJSON,
 		[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
+	result, err := rewriteInboxStateBindingValidator(result)
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func hasGeneratedStringField(source []byte, typeName, field string) bool {
+	start := bytes.Index(source, []byte("type "+typeName+" struct {"))
+	if start < 0 {
+		return false
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}"))
+	if endOffset < 0 {
+		return false
+	}
+	fieldPattern := regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(field) + `[ \t]+string\b`)
+	return fieldPattern.Match(source[start : start+endOffset])
+}
+
+// InboxState is a union: item observations populate Target, while folder
+// observations populate Source. The generated validator must validate only
+// the populated binding, and reject ambiguous or empty bindings.
+func rewriteInboxStateBindingValidator(source []byte) ([]byte, error) {
+	const marker = "func (i InboxState) Validate() error {"
+	if !bytes.Contains(source, []byte(marker)) {
+		return source, nil
+	}
+	const generated = `	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}`
+	const conditional = `	sourcePopulated := i.Source.AccountID != "" || i.Source.SourceID != 0 || i.Source.SourceIdentifier != "" || i.Source.SourceType != ""
+	targetPopulated := i.Target.AccountID != "" || i.Target.ItemID != 0 || i.Target.ProviderID != "" || i.Target.Scope != "" || i.Target.SourceID != 0 || i.Target.SourceIdentifier != "" || i.Target.SourceType != "" || i.Target.Mailbox != nil || i.Target.UID != nil || i.Target.Uidvalidity != nil
+	if sourcePopulated == targetPopulated {
+		errors = errors.Append("Binding", fmt.Errorf("exactly one of source or target must be populated"))
+	} else if sourcePopulated {
+		if err := i.Source.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	} else if err := i.Target.Validate(); err != nil {
+		errors = errors.Append("Target", err)
+	}`
+	generatedCount := bytes.Count(source, []byte(generated))
+	conditionalCount := bytes.Count(source, []byte(conditional))
+	switch {
+	case generatedCount == 1 && conditionalCount == 0:
+		return bytes.Replace(source, []byte(generated), []byte(conditional), 1), nil
+	case generatedCount == 0 && conditionalCount == 1:
+		return source, nil
+	default:
+		return nil, errors.New("generated InboxState binding validator shape changed")
+	}
 }

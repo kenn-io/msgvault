@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -211,28 +212,38 @@ func TestInboxIMAPServiceRecoversMappedProviderTombstone(t *testing.T) {
 	f := newInboxNativeServiceFixture(t)
 	request := f.plannedMove(t)
 	reconcile := f.service.ReconcileState
-	f.service.ReconcileState = func(ctx context.Context, before, after inboxcontrol.State) error {
-		// Simulate a sync after remote MOVE but before interrupted local
-		// reconciliation: origin is gone, destination has not been imported.
-		err := f.store.ApplyIMAPMailboxDeltas(f.native.source.SourceID, []store.IMAPMailboxDelta{
-			{Mailbox: "INBOX", Reset: true, State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: f.native.target.UIDValidity, UIDNext: 2}},
-			{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: f.native.destination.UIDValidity, UIDNext: 3}},
-		})
-		if err != nil {
-			return err
-		}
-		return reconcile(ctx, before, after)
+	f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+		return errors.New("synthetic interrupted local reconciliation")
 	}
 	result, err := f.service.Control(t.Context(), request, f.principal, f.gate)
-	requirements.NoError(err)
-	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(result)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
 	assertions.Equal(int64(1), f.native.moves.Load())
+	// A completed sync removes the old membership and tombstones the item only
+	// after Control releases its exclusive source ownership. Recovery then uses
+	// the durable provider mapping to restore the exact destination membership.
+	execution, err := f.store.AcquireSyncExecutionContext(t.Context(), f.native.source.SourceID)
+	requirements.NoError(err)
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.native.source.SourceID, []store.IMAPMailboxDelta{
+		{Mailbox: "INBOX", Reset: true, State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: f.native.target.UIDValidity, UIDNext: 2}},
+		{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: f.native.destination.UIDValidity, UIDNext: 3}},
+	}))
+	requirements.NoError(execution.Release())
+	f.service.ReconcileState = reconcile
+	settled, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: result.Receipt.ID}, f.principal, f.gate)
+	requirements.NoError(err)
+	requirements.NotNil(settled)
+	requirements.NotNil(settled.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, settled.Receipt.Status)
+	assertions.Equal(int64(1), f.native.moves.Load(), "receipt recovery never redispatches MOVE")
 	var memberships int
 	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id=? AND mailbox='Archive' AND message_id=?`), f.native.source.SourceID, f.native.target.ItemID).Scan(&memberships))
 	assertions.Equal(1, memberships)
 	var tombstones int
 	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=? AND deleted_from_source_at IS NOT NULL`), f.native.target.ItemID).Scan(&tombstones))
-	assertions.Zero(tombstones)
+	assertions.Zero(tombstones, "reconciliation removes the sync tombstone after restoring the mapped membership")
 }
 
 func TestInboxIMAPServiceNeverRevivesLocallyDeletedItem(t *testing.T) {

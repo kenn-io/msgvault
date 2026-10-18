@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -81,7 +82,12 @@ func TestInboxContextClientContract(t *testing.T) {
 						_, _ = w.Write([]byte(`{"error":"untrusted-code","message":"untrusted detail"}`))
 						return
 					case "oversized":
-						_, _ = w.Write(make([]byte, (1<<20)+1))
+						response := map[string]any{
+							"target": target, "message_id": messageID, "text": "Synthetic",
+							"truncated": false, "unavailable": false,
+							"padding": strings.Repeat("x", (1<<20)+1),
+						}
+						assert.NoError(t, json.MarshalWrite(w, response))
 						return
 					case "invalid-json":
 						_, _ = w.Write([]byte(`{"text":`))

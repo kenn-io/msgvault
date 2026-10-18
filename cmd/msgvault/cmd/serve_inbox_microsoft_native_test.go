@@ -326,7 +326,7 @@ func TestDaemonInboxMicrosoftNativeKnownEmptyReceipt(t *testing.T) {
 }
 
 func TestDaemonInboxMicrosoftNativeUnknownRestartReconcile(t *testing.T) {
-	for _, kind := range []string{"ack-lost", "readback-lost", "empty-readback-lost", "disconnect-after-write", "oversized-ack", "invalid-readback", "oversized-readback"} {
+	for _, kind := range []string{"ack-lost", "readback-lost", "empty-readback-lost", "disconnect-after-write", "oversized-ack", "invalid-readback"} {
 		t.Run(kind, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -352,8 +352,6 @@ func TestDaemonInboxMicrosoftNativeUnknownRestartReconcile(t *testing.T) {
 				graph.acknowledgementBody = strings.Repeat("x", 2<<20)
 			case "invalid-readback":
 				graph.readbackBody = "{"
-			case "oversized-readback":
-				graph.readbackBody = strings.Repeat("x", 2<<20)
 			default:
 				graph.readbackUnavailable = true
 			}

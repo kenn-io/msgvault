@@ -8,11 +8,12 @@ import (
 )
 
 var (
-	ErrDenied         = errors.New("inbox operation denied")
-	ErrUnavailable    = errors.New("inbox operation unavailable")
-	ErrPlanChanged    = errors.New("inbox state changed since preview")
-	ErrOutcomeUnknown = errors.New("inbox provider outcome unknown; inspect the receipt")
-	ErrReconcileOnly  = errors.New("inbox provider state verified; local reconciliation required")
+	ErrDenied                 = errors.New("inbox operation denied")
+	ErrUnavailable            = errors.New("inbox operation unavailable")
+	ErrPlanChanged            = errors.New("inbox state changed since preview")
+	ErrOutcomeUnknown         = errors.New("inbox provider outcome unknown; inspect the receipt")
+	ErrReconcileOnly          = errors.New("inbox provider state verified; local reconciliation required")
+	ErrTriageProposalTooLarge = errors.New("inbox triage proposal exceeds the 1 MiB apply limit; reduce the batch size")
 	// ErrNoWrite may be reported only when the provider proves no write occurred.
 	ErrNoWrite = errors.New("inbox provider rejected the operation without a write")
 )
@@ -404,6 +405,20 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 		return nil, err
 	}
 	defer done()
+	// Another reconciler may have settled this receipt while we waited for the
+	// source lease. Use the current durable evidence and avoid reconciling a
+	// second time from a stale terminal-status snapshot.
+	receipt, err = s.Ledger.GetInboxReceipt(ctx, request.ReceiptID)
+	if err != nil {
+		return nil, ErrInternal
+	}
+	if receipt == nil {
+		return nil, ErrDenied
+	}
+	result, err = s.replay(ctx, receipt, receipt.IntentHash, principal)
+	if err != nil || receipt.Status == StatusVerified || receipt.Status == StatusFailed {
+		return result, err
+	}
 	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
 		return nil, err
 	}

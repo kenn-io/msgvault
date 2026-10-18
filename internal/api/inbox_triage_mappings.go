@@ -96,13 +96,8 @@ func (s *Server) handleInboxTriageMappings(w http.ResponseWriter, r *http.Reques
 		writeInboxMappingError(w, err)
 		return
 	}
-	auth := s.classifyAPIRequestDirect(r)
-	if auth.Mode == AuthModeRequired {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
-		return
-	}
-	if auth.Mode == AuthModeDelegated && (auth.Grant == nil || !auth.Grant.Allows(agentgrant.PermissionInboxRead, agentgrant.SourceRef{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier})) {
-		writeInboxMappingError(w, inboxcontrol.ErrDenied)
+	sourceRef := agentgrant.SourceRef{ID: source.SourceID, Type: source.SourceType, Identifier: source.SourceIdentifier}
+	if !s.authorizeInboxRead(w, r, sourceRef, agentgrant.PermissionInboxRead) {
 		return
 	}
 	reader, ok := s.store.(InboxTriageMappingReader)
@@ -113,6 +108,9 @@ func (s *Server) handleInboxTriageMappings(w http.ResponseWriter, r *http.Reques
 	entries, revision, err := reader.InboxTriageMappings(r.Context(), source)
 	if err != nil {
 		writeInboxMappingError(w, err)
+		return
+	}
+	if !s.authorizeInboxRead(w, r, sourceRef, agentgrant.PermissionInboxRead) {
 		return
 	}
 	writeJSON(w, http.StatusOK, inboxTriageMappingConfiguration{Source: source, Entries: entries, Revision: revision})
@@ -126,7 +124,10 @@ func (s *Server) handleUpdateInboxTriageMappings(w http.ResponseWriter, r *http.
 	}
 	principal := inboxcontrol.Principal{ID: "owner", Owner: true}
 	authorize := func(_ context.Context, p inboxcontrol.Principal, intent inboxcontrol.Request) error {
-		current := s.classifyAPIRequestDirect(r)
+		current := s.requestAuthentication(r)
+		if current.Mode != AuthModeCaller {
+			current = s.classifyAPIRequestDirect(r)
+		}
 		if !p.Owner || p.ID != "owner" || current.Mode == AuthModeRequired || current.Mode == AuthModeDelegated || intent.Source == nil || *intent.Source != request.Source {
 			return inboxcontrol.ErrDenied
 		}

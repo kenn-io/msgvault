@@ -853,6 +853,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
 		draftCacheRefresh:      refreshCacheAfterWrite,
+		inboxCacheRefresh:      refreshCacheAfterWrite,
 		attachmentMaintenance:  attachmentMaint,
 		meetingImporter:        meetingImporter,
 		analyticsDir:           cfg.AnalyticsDir(),
@@ -1742,6 +1743,7 @@ type storeAPIAdapter struct {
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
+	inboxCacheRefresh     func(context.Context, string) error
 	attachmentMaintenance *attachmentMaintenance
 	meetingImporter       *meetingimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used

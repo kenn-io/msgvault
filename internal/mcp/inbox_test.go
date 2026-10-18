@@ -37,7 +37,7 @@ func inboxSession(t *testing.T, b *inboxTestBackend, writes bool, ops ...inboxco
 func TestInboxCatalogFiltersCallerAndWrites(t *testing.T) {
 	for _, writes := range []bool{false, true} {
 		t.Run(map[bool]string{false: "read", true: "write"}[writes], func(t *testing.T) {
-			s := inboxSession(t, &inboxTestBackend{}, writes, inboxcontrol.OpGetState, inboxcontrol.OpArchive)
+			s := inboxSession(t, &inboxTestBackend{}, writes, inboxcontrol.OpGetState, inboxcontrol.OpArchive, inboxcontrol.OpReconcile)
 			tools, err := s.ListTools(t.Context(), nil)
 			require.NoError(t, err)
 			var names []string
@@ -46,7 +46,7 @@ func TestInboxCatalogFiltersCallerAndWrites(t *testing.T) {
 			}
 			want := []string{"inbox_get_state"}
 			if writes {
-				want = []string{"inbox_archive", "inbox_get_state"}
+				want = []string{"inbox_archive", "inbox_get_state", "inbox_reconcile"}
 			}
 			assert.Equal(t, want, names)
 		})
@@ -191,7 +191,14 @@ func TestInboxOutcomeCodesPreserveReceipt(t *testing.T) {
 
 			b := &inboxTestBackend{result: &inboxcontrol.Result{Receipt: &inboxcontrol.Receipt{ID: "r1", Status: inboxcontrol.StatusReconcileOnly}}, err: tc.err}
 			s := inboxSession(t, b, true, inboxcontrol.OpReconcile)
-			result, err := s.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_reconcile", Arguments: map[string]any{"receipt_id": "r1"}})
+			params := &sdkmcp.CallToolParams{Name: "inbox_reconcile", Arguments: map[string]any{"receipt_id": "r1"}}
+			pending, err := s.CallTool(t.Context(), params)
+			requirements.NoError(err)
+			requirements.True(pending.NeedsInput())
+			assertions.Empty(b.requests, "reconciliation must wait for write confirmation")
+			params.RequestState = pending.RequestState
+			params.InputResponses = sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
+			result, err := s.CallTool(t.Context(), params)
 			requirements.NoError(err)
 			requirements.True(result.IsError)
 			raw, err := json.Marshal(result.StructuredContent)

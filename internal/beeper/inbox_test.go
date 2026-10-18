@@ -158,7 +158,12 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	for _, body := range []string{`{"id":`, strings.Repeat(" ", (1<<20)+1)} {
+	validChat := map[string]any{}
+	requirements.NoError(json.Unmarshal([]byte(inboxTestChat), &validChat))
+	validChat["padding"] = strings.Repeat("x", (1<<20)+1)
+	oversizedChat, err := json.Marshal(validChat)
+	requirements.NoError(err)
+	for _, body := range []string{`{"id":`, string(oversizedChat)} {
 		peer := &inboxHTTPPeer{info: inboxTestInfo, chat: body, page: inboxTestPage}
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
 		target := inboxTestTarget()
@@ -172,7 +177,7 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	defer server.Close()
 	provider := NewInboxProvider(NewClient(server.URL, testToken, 10000), inboxTestSource())
 	target := inboxTestTarget()
-	_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
+	_, err = provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
 	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	assertions.EqualValues(0, redirected.Load())
 	ctx, cancel := context.WithCancel(t.Context())

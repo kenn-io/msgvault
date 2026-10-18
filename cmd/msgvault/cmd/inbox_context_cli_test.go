@@ -70,7 +70,12 @@ func TestInboxCLIContextRealDaemon(t *testing.T) {
 }
 
 func TestInboxCLIContextRejectsInvalidRequest(t *testing.T) {
-	for _, body := range []string{"null", "{}", `{"unexpected":true}`, strings.Repeat(" ", (1<<20)+1)} {
+	target := inboxcontrol.Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.test", AccountID: "reader@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 2, ProviderID: "synthetic-context"}
+	valid, err := json.Marshal(inboxcontrol.ContextRequest{Target: target, MaxBytes: 9})
+	require.NoError(t, err)
+	unknown := string(valid[:len(valid)-1]) + `,"unexpected":true}`
+	oversized := string(valid) + strings.Repeat(" ", (1<<20)+1-len(valid))
+	for _, body := range []string{"null", "{}", unknown, oversized} {
 		command := newInboxCmd()
 		command.SetArgs([]string{"context", "--request", "-"})
 		command.SetIn(strings.NewReader(body))
@@ -80,8 +85,8 @@ func TestInboxCLIContextRejectsInvalidRequest(t *testing.T) {
 	}
 	command := newInboxCmd()
 	command.SetArgs([]string{"context", "--request", "-", "--apply"})
-	command.SetIn(strings.NewReader("{}"))
+	command.SetIn(strings.NewReader(string(valid)))
 	command.SetOut(io.Discard)
 	command.SetErr(io.Discard)
-	assert.Error(t, command.Execute(), "read-only context has no apply mode")
+	assert.ErrorContains(t, command.Execute(), "unknown flag: --apply", "read-only context has no apply mode")
 }

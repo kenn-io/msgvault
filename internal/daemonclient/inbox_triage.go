@@ -174,6 +174,8 @@ func (c *Client) triageRequest(ctx context.Context, operation, path string, prop
 			cause = inboxcontrol.ErrDenied
 		case "invalid_inbox_request", "bad_request", "request_too_large", "unsupported_media_type":
 			cause = inboxcontrol.ErrInvalid
+		case "triage_proposal_too_large":
+			cause = inboxcontrol.ErrTriageProposalTooLarge
 		case "inbox_conflict":
 			cause = inboxcontrol.ErrConflict
 		case "inbox_unavailable", "operation_in_progress":
