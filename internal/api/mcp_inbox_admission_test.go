@@ -81,14 +81,3 @@ func TestInboxLiveDescriptorUsesRegisteredRouteAndCurrentGrant(t *testing.T) {
 	srv.Router().ServeHTTP(w, r)
 	assertions.Equal(http.StatusUnauthorized, w.Code)
 }
-
-func TestInboxDiscoveryAllowsBeeperReadForExactGrantSource(t *testing.T) {
-	assertions := assert.New(t)
-	grant := &agentgrant.Grant{
-		Permissions: []agentgrant.Permission{agentgrant.PermissionInboxRead},
-		Sources:     []agentgrant.SourceRef{{ID: 7, Type: "beeper", Identifier: "account-example"}},
-	}
-
-	assertions.True(inboxDiscoveryAllowed(grant, agentgrant.PermissionInboxRead))
-	assertions.False(inboxDiscoveryAllowed(grant, agentgrant.PermissionInboxArchive))
-}

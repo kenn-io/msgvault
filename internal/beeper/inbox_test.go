@@ -135,23 +135,54 @@ func TestInboxLocalEnumerationNeverAdmitsFrontier(t *testing.T) {
 
 func TestInboxLocalEnumerationLimits(t *testing.T) {
 	message := `{"id":"message-A","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"opaque","timestamp":"2026-01-01T00:00:00Z","isSender":false}`
-	for _, page := range []string{
-		`{}`, `{"items":null,"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[],"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[],"hasMore":null,"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[],"hasMore":"false","oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[],"hasMore":true,"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[` + message + `],"hasMore":true,"oldestCursor":"","newestCursor":"b"}`,
-		`{"items":[` + message + `,` + message + `],"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[` + strings.Replace(message, "account-example", "foreign-account", 1) + `],"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`,
-		`{"items":[` + message + `],"hasMore":true,"oldestCursor":"loop","newestCursor":"b"}`,
-	} {
-		peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: page}
-		provider := NewInboxProvider(peer.client(t), inboxTestSource())
-		window := provider.localInboxWindow(t.Context(), inboxTestTarget())
-		assert.False(t, window.LocalComplete, page)
-		assert.LessOrEqual(t, len(peer.calls()), 4)
+	tests := []struct {
+		name, page, wantStopped string
+		pages                   map[string]string
+		wantCalls               int
+	}{
+		{name: "invalid response", page: `{}`, wantStopped: "envelope", wantCalls: 1},
+		{name: "null items", page: `{"items":null,"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "envelope", wantCalls: 1},
+		{name: "missing hasMore", page: `{"items":[],"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "envelope", wantCalls: 1},
+		{name: "null hasMore", page: `{"items":[],"hasMore":null,"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "envelope", wantCalls: 1},
+		{name: "wrong hasMore type", page: `{"items":[],"hasMore":"false","oldestCursor":"a","newestCursor":"b"}`, wantStopped: "envelope", wantCalls: 1},
+		{name: "more with empty page", page: `{"items":[],"hasMore":true,"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "cursor-progress", wantCalls: 1},
+		{name: "more without oldest cursor", page: `{"items":[` + message + `],"hasMore":true,"oldestCursor":"","newestCursor":"b"}`, wantStopped: "cursor-progress", wantCalls: 1},
+		{name: "duplicate message IDs", page: `{"items":[` + message + `,` + message + `],"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "duplicate-or-invalid-id", wantCalls: 1},
+		{name: "foreign account", page: `{"items":[` + strings.Replace(message, "account-example", "foreign-account", 1) + `],"hasMore":false,"oldestCursor":"a","newestCursor":"b"}`, wantStopped: "message", wantCalls: 1},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: tt.page, pages: tt.pages}
+			provider := NewInboxProvider(peer.client(t), inboxTestSource())
+			window := provider.localInboxWindow(t.Context(), inboxTestTarget())
+			assert.False(t, window.LocalComplete, tt.page)
+			assert.Equal(t, tt.wantStopped, window.Stopped)
+			assert.Len(t, peer.calls(), tt.wantCalls)
+		})
+	}
+}
+
+func TestInboxRepeatedCursorStopsAfterDistinctPageIDs(t *testing.T) {
+	assertions := assert.New(t)
+
+	message := func(id string) string {
+		return `{"id":"` + id + `","chatID":"!chat:example.invalid","accountID":"account-example","sortKey":"opaque","timestamp":"2026-01-01T00:00:00Z","isSender":false}`
+	}
+	page := func(item, cursor string) string {
+		return `{"items":[` + item + `],"hasMore":true,"oldestCursor":"` + cursor + `","newestCursor":"new"}`
+	}
+	peer := &inboxHTTPPeer{
+		info: inboxTestInfo, chat: inboxTestChat,
+		page:  page(message("message-A"), "loop"),
+		pages: map[string]string{"loop": page(message("message-B"), "loop")},
+	}
+	provider := NewInboxProvider(peer.client(t), inboxTestSource())
+	window := provider.localInboxWindow(t.Context(), inboxTestTarget())
+
+	assertions.False(window.LocalComplete)
+	assertions.Equal("cursor-progress", window.Stopped)
+	assertions.Len(window.Candidates, 2)
+	assertions.Len(peer.calls(), 2)
 }
 
 func TestInboxObservationBoundsAndRedirect(t *testing.T) {
@@ -175,10 +206,13 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	_, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
 	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	assertions.EqualValues(0, redirected.Load())
+	peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: inboxTestPage}
+	provider = NewInboxProvider(peer.client(t), inboxTestSource())
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = provider.Observe(ctx, inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
 	assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+	assertions.Empty(peer.calls(), "caller cancellation must prevent provider requests")
 }
 
 func TestInboxOpaqueCursorsAndKeys(t *testing.T) {

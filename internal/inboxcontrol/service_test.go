@@ -346,6 +346,9 @@ func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
 }
 
 func TestInboxControlCancellationAfterReceiptPreparationSettlesWithoutDispatch(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
 	f := newControlFixture(t)
 	r := f.execution(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -354,18 +357,18 @@ func TestInboxControlCancellationAfterReceiptPreparationSettlesWithoutDispatch(t
 
 	result, err := f.service.Control(ctx, r, f.principal, f.gate)
 
-	require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
-	require.NotNil(t, result)
-	require.NotNil(t, result.Receipt)
-	assert.Zero(t, f.provider.dispatches)
-	assert.Equal(t, inboxcontrol.StatusFailed, result.Receipt.Status)
-	assert.Equal(t, "dispatch-not-started", result.Receipt.FailureCode)
-	assert.NotNil(t, result.Receipt.FinishedAt)
+	requirements.ErrorIs(err, inboxcontrol.ErrNoWrite)
+	requirements.NotNil(result)
+	requirements.NotNil(result.Receipt)
+	assertions.Zero(f.provider.dispatches)
+	assertions.Equal(inboxcontrol.StatusFailed, result.Receipt.Status)
+	assertions.Equal("dispatch-not-started", result.Receipt.FailureCode)
+	assertions.NotNil(result.Receipt.FinishedAt)
 	stored, err := f.archive.Store.GetInboxReceipt(t.Context(), result.Receipt.ID)
-	require.NoError(t, err)
-	require.NotNil(t, stored)
-	assert.Equal(t, inboxcontrol.StatusFailed, stored.Status)
-	assert.Equal(t, "dispatch-not-started", stored.FailureCode)
+	requirements.NoError(err)
+	requirements.NotNil(stored)
+	assertions.Equal(inboxcontrol.StatusFailed, stored.Status)
+	assertions.Equal("dispatch-not-started", stored.FailureCode)
 }
 
 func TestInboxControlReadbackDoesNotConsumeCompletionDeadline(t *testing.T) {
