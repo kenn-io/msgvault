@@ -177,10 +177,20 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		`UPDATE activity_events SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET owner_source_id = ? WHERE owner_source_id = ?`,
 		`UPDATE person_contact_state SET last_contact_source_id = ? WHERE last_contact_source_id = ?`,
+		`UPDATE open_loops SET source_id = ? WHERE source_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {
 			return err
 		}
+	}
+	messageSurvivors := make(map[int64]int64)
+	for _, message := range plan.messages {
+		if message.survivor != 0 {
+			messageSurvivors[message.id] = message.survivor
+		}
+	}
+	if err := s.transferMergedLoopState(ctx, tx, plan.conversations, messageSurvivors); err != nil {
+		return err
 	}
 	// Observation rows and accepted-match endpoints retain their immutable IDs.
 	// A duplicate current observation becomes historical rather than being deleted.
