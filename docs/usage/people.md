@@ -297,10 +297,15 @@ endpoint. Profile boosts send no additional profile data during this request.
 
 The default retrieval pool requests 200 messages, bounded by twice
 `[vector.search].k_per_signal`. A coverage warning explains embedding backlog or
-stale contact state; recent messages without vectors can rank lower. An underfill
-hint means filtering may have exhausted the pool: increase `--candidates`, and
-increase `k_per_signal` if necessary. Use `--min-score` to reject weak message
-matches; the default is model-independent and imposes no vector-score floor.
+stale contact state; recent messages without vectors can rank lower. During a
+generation rebuild, if coverage counts belong to a different generation than
+the one used for retrieval, the response reports zero message counts with a
+zero `coverage_sampled_at` and adds
+`embedding_coverage_generation_mismatch`; treat those counts as unavailable.
+An underfill hint means filtering may have exhausted the pool: increase
+`--candidates`, and increase `k_per_signal` if necessary. Use `--min-score` to
+reject weak message matches; the default is model-independent and imposes no
+vector-score floor.
 
 `--after` is inclusive and `--before` is exclusive for timestamps. Date-only
 `--before` includes the named day. Date windows use a slower exact retrieval path

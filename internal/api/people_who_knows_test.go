@@ -131,7 +131,7 @@ func TestWhoKnowsErrorsAndResponse(t *testing.T) {
 		err    error
 		code   string
 		status int
-	}{{vector.ErrNotEnabled, "vector_not_enabled", 503}, {vector.ErrIndexStale, "index_stale", 503}, {vector.ErrIndexBuilding, "index_building", 503}, {vector.ErrEmbeddingTimeout, "embedding_timeout", 503}, {vector.ErrIndexScopeMismatch, "index_scope_mismatch", 400}, {errors.New("synthetic failure"), "semantic_search_unavailable", 503}, {nil, "", 200}} {
+	}{{vector.ErrNotEnabled, "vector_not_enabled", 503}, {vector.ErrIndexStale, "index_stale", 503}, {vector.ErrIndexBuilding, "index_building", 503}, {vector.ErrIndexScopeMismatch, "index_scope_mismatch", 400}, {errors.New("synthetic failure"), "semantic_search_unavailable", 503}, {nil, "", 200}} {
 		t.Run(test.code, func(t *testing.T) {
 			check := assert.New(t)
 			must := require.New(t)

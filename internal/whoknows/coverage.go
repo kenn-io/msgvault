@@ -12,6 +12,7 @@ func (s *Service) populateCoverage(ctx context.Context, out *Response, meta hybr
 	c.Generation = generationView(meta.Generation)
 	c.Scope = Scope{MessageTypes: append([]string{}, s.BuildScope.MessageTypes...), Accounts: append([]int64{}, s.BuildScope.SourceIDs...)}
 	c.StaleReasons = []string{}
+	coverageGenerationMismatch := false
 	if s.CoverageReader != nil {
 		status, err := s.CoverageReader(ctx)
 		if err != nil {
@@ -20,9 +21,15 @@ func (s *Service) populateCoverage(ctx context.Context, out *Response, meta hybr
 			}
 			return fmt.Errorf("read embedding coverage: %w", err)
 		}
-		c.Messages = MessageCoverage{Eligible: status.Eligible, Current: status.Current, Pending: status.Pending, CoverageSampledAt: status.CoverageSampledAt}
+		if status.Generation.ID == meta.Generation.ID {
+			c.Messages = MessageCoverage{Eligible: status.Eligible, Current: status.Current, Pending: status.Pending, CoverageSampledAt: status.CoverageSampledAt}
+		} else {
+			coverageGenerationMismatch = true
+		}
 	}
-	if c.Messages.Pending > 0 {
+	if coverageGenerationMismatch {
+		c.StaleReasons = append(c.StaleReasons, "embedding_coverage_generation_mismatch")
+	} else if c.Messages.Pending > 0 {
 		c.StaleReasons = append(c.StaleReasons, fmt.Sprintf("embedding_backlog:%d", c.Messages.Pending))
 	}
 	if c.Generation.State != "active" {
