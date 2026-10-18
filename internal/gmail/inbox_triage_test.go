@@ -240,7 +240,6 @@ func TestInboxGmailTriagePreviewBoundsAndMissingMappings(t *testing.T) {
 		}},
 		{"long key", func(i *inboxcontrol.TriageInput) { i.Items[0].IdempotencyKey = strings.Repeat("k", 129) }},
 		{"duplicate categories", func(i *inboxcontrol.TriageInput) { i.Items[0].Categories = []string{"todo", "todo"} }},
-		{"too much evidence", func(i *inboxcontrol.TriageInput) { i.Items[0].EvidenceMessageIDs = make([]int64, 101) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			input := f.input

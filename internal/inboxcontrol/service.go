@@ -139,11 +139,17 @@ func (s *Service) Control(ctx context.Context, request Request, principal Princi
 			if err != nil {
 				return nil, safePreflightError(err)
 			}
+			if err := s.authorize(ctx, principal, request); err != nil {
+				return nil, err
+			}
 			return &Result{Folders: folders}, nil
 		}
 		before, err := provider.Observe(ctx, request)
 		if err != nil {
 			return nil, safePreflightError(err)
+		}
+		if err := s.authorize(ctx, principal, request); err != nil {
+			return nil, err
 		}
 		if !observationMatchesRequest(before, request) {
 			return nil, ErrUnavailable
@@ -155,6 +161,9 @@ func (s *Service) Control(ctx context.Context, request Request, principal Princi
 		projected, err := provider.Preview(ctx, request, before)
 		if err != nil {
 			return nil, safePreflightError(err)
+		}
+		if err := s.authorize(ctx, principal, request); err != nil {
+			return nil, err
 		}
 		stateHash, err := planFingerprint(before, projected)
 		if err != nil {

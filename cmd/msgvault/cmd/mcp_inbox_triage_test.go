@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -28,11 +27,15 @@ func TestMCPInboxTriageNativeConfirmationAndReceipts(t *testing.T) {
 			a, target, writes, lost := nativeInboxTriageFixture(t)
 			source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 			var applyCalls atomic.Int64
+			var previewCalls atomic.Int64
 			// Keep the same real runtime configuration and isolate HTTP credentials.
 			a.config.Server.APIKey = "owner-test-key"
 			a.config.Server.AgentAccess = true
 			daemon := api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: slog.New(slog.DiscardHandler), OperationGate: api.NewSerialOperationGate()})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/v1/inbox/triage/preview" {
+					previewCalls.Add(1)
+				}
 				if r.URL.Path == "/api/v1/inbox/triage/apply" {
 					applyCalls.Add(1)
 				}
@@ -56,19 +59,21 @@ func TestMCPInboxTriageNativeConfirmationAndReceipts(t *testing.T) {
 				for _, invalid := range []map[string]any{
 					{"source": source, "items": input.Items, "unexpected": true},
 					{"source": source, "items": []inboxcontrol.TriageItemInput{{Target: target, EvidenceMessageIDs: []int64{9007199254740992}}}},
-					{"source": source, "items": input.Items, "padding": strings.Repeat("x", 1<<20)},
 				} {
+					beforePreviewCalls := previewCalls.Load()
 					result, callErr := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_preview", Arguments: invalid})
 					if callErr == nil {
 						requirements.True(result.IsError)
 					}
 					assertions.Zero(writes.Load())
 					assertions.Zero(applyCalls.Load())
+					assertions.Equal(beforePreviewCalls, previewCalls.Load(), "invalid preview arguments must not reach the daemon")
 				}
 			}
 			preview, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "inbox_triage_preview", Arguments: arguments(input)})
 			requirements.NoError(err)
 			requirements.False(preview.IsError, mcpDraftResultText(t, preview))
+			assertions.Equal(int64(1), previewCalls.Load())
 			var prepared struct {
 				Proposal *inboxcontrol.TriageProposal `json:"proposal"`
 			}

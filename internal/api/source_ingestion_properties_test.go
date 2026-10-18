@@ -40,10 +40,6 @@ func FuzzReportedSyncErrorsRemainPartialAcrossRunMetadata(f *testing.F) {
 	})
 }
 
-func TestRecordedItemErrorsRemainPartialWithoutAggregateCounter(t *testing.T) {
-	assert.Equal(t, "partial", sourceProviderIngestion(&SyncRunStatus{Status: store.SyncStatusCompleted, ItemErrors: []SyncRunItemStatus{{}}}).Status)
-}
-
 func FuzzRecordedItemErrorsRemainPartialWithoutAggregateCounter(f *testing.F) {
 	f.Add("completed", "", "", int64(0))
 	f.Add("running", "\x00", "synthetic parser refusal", int64(math.MaxInt64))

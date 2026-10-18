@@ -19,9 +19,12 @@ import (
 type controlProvider struct {
 	state             inboxcontrol.State
 	dispatches, reads int
+	previews          int
 	dispatch          func(context.Context) error
 	observeError      error
 	onObserve         func(context.Context, int, inboxcontrol.Request) error
+	onPreview         func(context.Context, inboxcontrol.Request) error
+	onFolders         func(context.Context, inboxcontrol.SourceIdentity) ([]inboxcontrol.Folder, error)
 	verifyError       error
 	previewLocation   string
 	previewFolders    []inboxcontrol.Folder
@@ -40,7 +43,13 @@ func (p *controlProvider) Observe(ctx context.Context, request inboxcontrol.Requ
 	}
 	return p.state, ctx.Err()
 }
-func (p *controlProvider) Preview(_ context.Context, request inboxcontrol.Request, state inboxcontrol.State) (inboxcontrol.State, error) {
+func (p *controlProvider) Preview(ctx context.Context, request inboxcontrol.Request, state inboxcontrol.State) (inboxcontrol.State, error) {
+	p.previews++
+	if p.onPreview != nil {
+		if err := p.onPreview(ctx, request); err != nil {
+			return inboxcontrol.State{}, err
+		}
+	}
 	if request.Operation != inboxcontrol.OpArchive || state.Inbox == nil {
 		return inboxcontrol.State{}, inboxcontrol.ErrUnavailable
 	}
@@ -73,7 +82,10 @@ func (p *controlProvider) Verify(_ inboxcontrol.Request, before, projected, afte
 	}
 	return nil
 }
-func (p *controlProvider) Folders(context.Context, inboxcontrol.SourceIdentity) ([]inboxcontrol.Folder, error) {
+func (p *controlProvider) Folders(ctx context.Context, source inboxcontrol.SourceIdentity) ([]inboxcontrol.Folder, error) {
+	if p.onFolders != nil {
+		return p.onFolders(ctx, source)
+	}
 	return nil, nil
 }
 
@@ -182,6 +194,89 @@ func TestInboxControlPreviewDoesNotWrite(t *testing.T) {
 	requirements.NoError(f.archive.Store.DB().QueryRow("SELECT COUNT(*) FROM inbox_provider_states").Scan(&observations))
 	assertions.Equal(0, receipts)
 	assertions.Equal(0, observations)
+}
+
+func TestInboxControlReauthorizesAfterObservationBeforeReturningMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request func(*controlFixture) inboxcontrol.Request
+	}{
+		{"get-state", func(f *controlFixture) inboxcontrol.Request {
+			return inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: f.request.Target}
+		}},
+		{"preview", func(f *controlFixture) inboxcontrol.Request { return f.request }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := newControlFixture(t)
+			f.provider.onObserve = func(context.Context, int, inboxcontrol.Request) error {
+				f.denied = true
+				return nil
+			}
+
+			result, err := f.service.Control(t.Context(), tc.request(f), f.principal, f.gate)
+			requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+			assertions.Nil(result)
+			assertions.Zero(f.provider.dispatches)
+			if tc.name == "preview" {
+				assertions.Zero(f.provider.previews, "a revoked read grant stops before preview I/O")
+			}
+		})
+	}
+}
+
+func TestInboxControlReauthorizesAfterProviderPreviewBeforeSigning(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newControlFixture(t)
+	f.provider.onPreview = func(context.Context, inboxcontrol.Request) error {
+		f.denied = true
+		return nil
+	}
+
+	result, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+	assertions.Nil(result)
+	assertions.Equal(1, f.provider.previews)
+}
+
+func TestInboxControlReauthorizesAfterFolderRead(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newControlFixture(t)
+	target := *f.request.Target
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+	f.service.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return f.provider, nil }
+	f.provider.onFolders = func(context.Context, inboxcontrol.SourceIdentity) ([]inboxcontrol.Folder, error) {
+		f.denied = true
+		return []inboxcontrol.Folder{{ID: "private-folder", Name: "Private folder"}}, nil
+	}
+
+	result, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpListFolders, Source: &source}, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+	assertions.Nil(result)
+}
+
+func TestInboxControlReauthorizesAfterCapabilitiesRead(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newControlFixture(t)
+	target := *f.request.Target
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+	cp := &capabilityProvider{controlProvider: f.provider, capabilities: &inboxcontrol.Capabilities{
+		Source: source, LocationModel: "labels", ObservedAt: f.now,
+		Operations: []inboxcontrol.Capability{{Operation: inboxcontrol.OpGetState, Status: inboxcontrol.CapabilitySupported}},
+	}}
+	cp.onCapabilities = func(context.Context, inboxcontrol.Request) error {
+		f.denied = true
+		return nil
+	}
+	f.service.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return cp, nil }
+
+	result, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+	assertions.Nil(result)
 }
 
 func TestInboxControlVerifiedReplayBeforeExpiryAndChangedState(t *testing.T) {
@@ -448,10 +543,16 @@ func TestInboxControlReceiptRetainsAuthenticatedProjection(t *testing.T) {
 type capabilityProvider struct {
 	*controlProvider
 
-	capabilities *inboxcontrol.Capabilities
+	capabilities   *inboxcontrol.Capabilities
+	onCapabilities func(context.Context, inboxcontrol.Request) error
 }
 
-func (p *capabilityProvider) Capabilities(context.Context, inboxcontrol.Request) (*inboxcontrol.Capabilities, error) {
+func (p *capabilityProvider) Capabilities(ctx context.Context, request inboxcontrol.Request) (*inboxcontrol.Capabilities, error) {
+	if p.onCapabilities != nil {
+		if err := p.onCapabilities(ctx, request); err != nil {
+			return nil, err
+		}
+	}
 	return p.capabilities, nil
 }
 

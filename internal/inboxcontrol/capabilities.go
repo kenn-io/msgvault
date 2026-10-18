@@ -48,6 +48,9 @@ func (s *Service) readCapabilities(ctx context.Context, provider Provider, reque
 	if err != nil {
 		return nil, safePreflightError(err)
 	}
+	if err := s.authorize(ctx, principal, request); err != nil {
+		return nil, err
+	}
 	if observed == nil || request.Source == nil || observed.Source != *request.Source || observed.ObservedAt.IsZero() {
 		return nil, ErrUnavailable
 	}
