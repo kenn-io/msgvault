@@ -336,3 +336,67 @@ func TestIdentityOperationReceiptSurvivesSourceCleanupAndRejectsOwnerReuse(t *te
 	_, err = st.IdentityOperationReceiptAuthorizedContext(t.Context(), request.Principal, request.IdempotencyKey, request.AuthorityFingerprint, allow)
 	requirements.ErrorIs(err, ErrIdentityOperationReceiptDenied)
 }
+
+func TestIdentityOperationReceiptIgnoresDescriptiveSourceConfigAndRejectsOwnerChange(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, a, b := newUnlinkGuardStore(t)
+
+	calendar, err := st.GetOrCreateSource("gcal", "team@example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(calendar.ID,
+		`{"account_email":"owner@example.test","calendar_id":"team@example.test","calendar_summary":"Original Team Calendar","access_role":"owner","time_zone":"UTC"}`))
+	beeper, err := st.GetOrCreateSource("beeper", "synthetic-device")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(beeper.ID,
+		`{"repair_version":"v7","repair_after_id":10}`))
+
+	for _, source := range []struct {
+		id  int64
+		key string
+	}{
+		{calendar.ID, "calendar"},
+		{beeper.ID, "beeper"},
+	} {
+		conversation, err := st.EnsureConversation(source.id, "synthetic-identity-"+source.key+"-thread", "Synthetic Identity Thread")
+		requirements.NoError(err)
+		for i, participant := range []int64{a, b} {
+			_, err = st.UpsertMessage(&Message{
+				SourceID: source.id, ConversationID: conversation, SourceMessageID: source.key + "-" + strconv.Itoa(i),
+				MessageType: "email", SenderID: sql.NullInt64{Int64: participant, Valid: true},
+			})
+			requirements.NoError(err)
+		}
+	}
+
+	request := receiptRequest(t, st, identitycontrol.OperationGraphLink,
+		identitycontrol.IdentityTarget{ParticipantID: a, OtherParticipantID: b}, "synthetic-config-recovery")
+	request.AuthorityFingerprint = strings.Repeat("f", 64)
+	allow := func(context.Context, *IdentitySnapshot) error { return nil }
+	receipt, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, allow, allow)
+	requirements.NoError(err)
+
+	requirements.NoError(st.UpdateSourceSyncConfig(calendar.ID,
+		`{"account_email":"owner@example.test","calendar_id":"team@example.test","calendar_summary":"Renamed Team Calendar","access_role":"owner","time_zone":"America/Vancouver"}`))
+	requirements.NoError(st.UpdateSourceSyncConfig(beeper.ID,
+		`{"repair_version":"v8","repair_after_id":20}`))
+
+	recovered, err := st.IdentityOperationReceiptAuthorizedContext(
+		t.Context(), request.Principal, request.IdempotencyKey, request.AuthorityFingerprint, allow,
+	)
+	requirements.NoError(err)
+	assertions.Equal(receipt, recovered, "descriptive calendar metadata and repair checkpoints must not break recovery")
+
+	retried, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, allow, allow)
+	requirements.NoError(err)
+	assertions.Equal(receipt, retried, "exact retry must survive descriptive and operational config changes")
+
+	requirements.NoError(st.UpdateSourceSyncConfig(calendar.ID,
+		`{"account_email":"different-owner@example.test","calendar_id":"team@example.test","calendar_summary":"Renamed Team Calendar","access_role":"owner","time_zone":"America/Vancouver"}`))
+	_, err = st.IdentityOperationReceiptAuthorizedContext(
+		t.Context(), request.Principal, request.IdempotencyKey, request.AuthorityFingerprint, allow,
+	)
+	requirements.ErrorIs(err, ErrIdentityOperationReceiptDenied, "a different token account changes source ownership")
+	_, err = st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, allow, allow)
+	requirements.ErrorIs(err, ErrIdentityOperationReceiptDenied, "exact retries must recheck source ownership")
+}

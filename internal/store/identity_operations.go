@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"go.kenn.io/msgvault/internal/identitycontrol"
 )
@@ -427,13 +429,38 @@ func identitySnapshotSourceIDsTx(ctx context.Context, tx *loggedTx, x *IdentityS
 			return err
 		}
 		var err error
-		source.OwnershipFingerprint, err = identityEvidenceHash([]string{owner, config, app})
+		source.OwnershipFingerprint, err = identitySourceOwnershipFingerprint(owner, config, app)
 		if err != nil {
 			return err
 		}
 		x.Sources = append(x.Sources, source)
 		return nil
 	})
+}
+
+// sync_config carries provider metadata and repair checkpoints alongside the
+// account email used by calendar and meeting sources to select OAuth tokens.
+// Only that email is an ownership field; source type/identifier, google_user_id
+// and oauth_app are captured separately. Keep malformed legacy configs opaque
+// so an unknown owner remains fail-closed.
+func identitySourceOwnershipFingerprint(googleUserID, syncConfig, oauthApp string) (string, error) {
+	var config struct {
+		AccountEmail string `json:"account_email"`
+	}
+	if strings.TrimSpace(syncConfig) != "" {
+		if err := json.Unmarshal([]byte(syncConfig), &config); err != nil {
+			return identityEvidenceHash(struct {
+				GoogleUserID string
+				SyncConfig   string
+				OAuthApp     string
+			}{googleUserID, syncConfig, oauthApp})
+		}
+	}
+	return identityEvidenceHash(struct {
+		GoogleUserID string
+		AccountEmail string
+		OAuthApp     string
+	}{googleUserID, strings.ToLower(strings.TrimSpace(config.AccountEmail)), oauthApp})
 }
 
 func (s *Store) identitySnapshotPersonsTx(ctx context.Context, tx *loggedTx, x *IdentitySnapshot, people []int64) error {
