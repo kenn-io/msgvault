@@ -56,7 +56,19 @@ func PrepareRecording(ctx context.Context, dbPath, savedPath string, maxBytes in
 	if maxBytes <= 0 {
 		maxBytes = DefaultRecordingMaxBytes
 	}
-	base, err := filepath.Abs(filepath.Join(filepath.Dir(dbPath), "meeting-recordings"))
+	databasePath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, nil
+	}
+	// Muesli may open its database through a symlink, while saved recording
+	// paths remain beside the real database file. If the database is not
+	// present, resolve its existing parent so both paths use the same spelling.
+	if resolved, resolveErr := filepath.EvalSymlinks(databasePath); resolveErr == nil {
+		databasePath = resolved
+	} else if databaseDir, dirErr := filepath.EvalSymlinks(filepath.Dir(databasePath)); dirErr == nil {
+		databasePath = filepath.Join(databaseDir, filepath.Base(databasePath))
+	}
+	base, err := filepath.Abs(filepath.Join(filepath.Dir(databasePath), "meeting-recordings"))
 	if err != nil {
 		return nil, nil
 	}
@@ -64,6 +76,15 @@ func PrepareRecording(ctx context.Context, dbPath, savedPath string, maxBytes in
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(base, target)
 	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		return nil, nil
+	}
+	targetDir, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return nil, nil
+	}
+	target = filepath.Join(targetDir, filepath.Base(target))
 	rel, err := filepath.Rel(base, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, nil

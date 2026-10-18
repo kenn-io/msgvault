@@ -91,6 +91,31 @@ func TestImportRecordingOptInLateArrivalAndReplacement(t *testing.T) {
 	assert.Equal(candidates, after, "deleting source audio preserves archived bytes")
 }
 
+func TestImportRecordingThroughDatabaseSymlink(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+	insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+	databaseAlias := filepath.Join(t.TempDir(), "muesli.db")
+	require.NoError(os.Symlink(f.path, databaseAlias))
+	require.NoError(f.muesli.Close())
+	recording, err := PrepareRecording(t.Context(), databaseAlias, path, 0)
+	require.NoError(err)
+	require.NotNil(recording, "the recording path must be confined beside the resolved database")
+	require.NoError(recording.Close())
+	summary, err := f.run(t, ImportOptions{DBPath: databaseAlias, Recordings: true, AttachmentsDir: t.TempDir()})
+	require.NoError(err)
+	require.Equal(int64(1), summary.MeetingsProcessed)
+
+	candidates, err := f.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+	require.NoError(err)
+	require.Len(candidates, 1, "recordings must resolve beside the database target")
+	assert.Equal("audio/wav", candidates[0].MIMEType)
+}
+
 func TestPrepareRecordingDefersUnsafeAndUnfinishedFiles(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
