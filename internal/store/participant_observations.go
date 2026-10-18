@@ -453,7 +453,153 @@ func (s *Store) recordProviderEmailObservationTx(
 	return err
 }
 
+// recordConversationPolicyParticipantObservationTx records exact provider
+// metadata after the caller has admitted the participant in this Full room.
+// The support edge keeps names and identifiers out of derived views once the
+// room becomes Cold.
+func (s *Store) recordConversationPolicyParticipantObservationTx(
+	ctx context.Context,
+	tx *loggedTx,
+	participantID, sourceID, roomID int64,
+	addressKind ContactAddressKind,
+	serviceSlug, scopeKind, scopeValue, providerUserID *string,
+	value string,
+) error {
+	if addressKind != ContactAddressDisplayName && addressKind != ContactAddressProviderIdentity {
+		return ErrInvalidContactAddressKind
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ErrObservationValueMissing
+	}
+	scopeKind = trimmedOrNil(scopeKind)
+	scopeValue = trimmedOrNil(scopeValue)
+	providerUserID = trimmedOrNil(providerUserID)
+	service, hasService, err := resolveCommunicationServiceTx(ctx, tx, serviceSlug)
+	if err != nil {
+		return err
+	}
+	if err := ValidateServiceScope(service, scopeKind, scopeValue); err != nil {
+		return err
+	}
+	var normalized string
+	if addressKind == ContactAddressProviderIdentity {
+		normalized = value
+	} else {
+		normalized, err = NormalizeServiceValue(service, addressKind, value)
+		if err != nil {
+			return err
+		}
+	}
+	var serviceID any
+	normalization := fallbackContactNormalization(addressKind)
+	version := 1
+	if hasService {
+		serviceID = service.ID
+		if addressKind != ContactAddressProviderIdentity {
+			normalization = service.Normalization
+			version = service.NormalizationVersion
+		}
+	}
+	if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "source-contact-observation", sourceID); err != nil {
+		return err
+	}
+	if err := s.lockParticipantObservationOwnerTxContext(ctx, tx, participantID); err != nil {
+		return err
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM participants WHERE id=?`, participantID).Scan(&exists); err != nil {
+		return fmt.Errorf("check participant: %w", err)
+	}
+	if exists == 0 {
+		return ErrParticipantNotFound
+	}
+	if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "participant-contact-observation",
+		participantID, sourceID, addressKind, serviceID, stringValue(scopeKind),
+		stringValue(scopeValue), normalized); err != nil {
+		return err
+	}
+	observation, err := findParticipantObservationTx(
+		ctx, tx, participantID, &sourceID, addressKind, serviceID,
+		scopeKind, scopeValue, normalized,
+	)
+	if errors.Is(err, ErrProfileValueNotFound) {
+		envelope, envelopeErr := resolveProfileEnvelopeForOwnerTx(
+			ctx, tx, "participant_contact_observations", "participant_id", "address_kind",
+			participantID, addressKind,
+			ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+		)
+		if envelopeErr != nil {
+			return envelopeErr
+		}
+		args := []any{
+			participantID, sourceID, addressKind, serviceID,
+			stringValue(scopeKind), stringValue(scopeValue), stringValue(providerUserID),
+			value, normalized, normalization, version, timeValue(nil),
+		}
+		args = append(args, profileEnvelopeArgs(envelope)...)
+		var id int64
+		if err := tx.QueryRowContext(ctx, `INSERT INTO participant_contact_observations (
+			participant_id, source_id, address_kind, service_id, scope_kind,
+			scope_value, provider_user_id, original_value, normalized_value,
+			normalization, normalization_version, observed_at, `+
+			profileEnvelopeWriteColumns+`, created_at, updated_at
+		) VALUES (
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			`+s.dialect.Now()+`, `+s.dialect.Now()+`
+		) RETURNING id`, args...).Scan(&id); err != nil {
+			return fmt.Errorf("record participant policy observation: %w", err)
+		}
+		observation, err = getParticipantObservationTx(ctx, tx, participantID, id)
+		if err != nil {
+			return err
+		}
+		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	} else if providerUserID != nil {
+		if observation.ProviderUserID != nil && *observation.ProviderUserID != *providerUserID {
+			return fmt.Errorf("provider identity observation conflicts for participant %d", participantID)
+		}
+		if observation.ProviderUserID == nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
+				SET provider_user_id=?, updated_at=`+s.dialect.Now()+` WHERE id=?`,
+				*providerUserID, observation.Envelope.ID); err != nil {
+				return fmt.Errorf("update provider identity observation: %w", err)
+			}
+			observation, err = getParticipantObservationTx(ctx, tx, participantID, observation.Envelope.ID)
+			if err != nil {
+				return err
+			}
+			if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+				return err
+			}
+		}
+	}
+	room := roomID
+	if _, err := s.recordObservationConversationTx(ctx, tx, observation, &room); err != nil {
+		return err
+	}
+	eligible, err := fullObservationTx(ctx, tx, observation.Envelope.ID)
+	if err != nil {
+		return err
+	}
+	if !eligible {
+		return ErrConversationPolicyStale
+	}
+	if addressKind == ContactAddressProviderIdentity {
+		_, err = s.recordObservationConflictsTx(ctx, tx, observation, serviceID)
+	}
+	return err
+}
+
 func (s *Store) recordObservationConflictsTx(ctx context.Context, tx *loggedTx, observation *ParticipantContactObservation, serviceID any) ([]int64, error) {
+	if observation.AddressKind == ContactAddressDisplayName {
+		return nil, nil
+	}
 	var ids []int64
 	otherParticipantIDs, err := findConflictingObservationParticipantIDsTx(
 		ctx, tx, observation.ParticipantID, observation.AddressKind, serviceID,

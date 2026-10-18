@@ -185,7 +185,9 @@ func setupTestSQLite(t *testing.T) string {
 		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
 		CREATE TABLE participant_contact_observations (
 			id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER,
-			address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL, source TEXT NOT NULL,
+			address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT,
+			provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL,
+			source TEXT NOT NULL, source_ref TEXT,
 			active_until DATETIME, superseded_at DATETIME
 		);
 		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
@@ -3070,7 +3072,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
 		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
 		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
-		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL, source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME);
+		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT, provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL, source TEXT NOT NULL, source_ref TEXT, active_until DATETIME, superseded_at DATETIME);
 		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
 		CREATE TABLE person_contact_points (person_id INTEGER NOT NULL, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL, source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME);
 		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -3413,7 +3415,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 
 		CREATE TABLE conversation_policy (conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE, effective_tier TEXT NOT NULL DEFAULT 'full' CHECK(effective_tier IN ('full','cold','stub','skip')), override_tier TEXT CHECK(override_tier IN ('full','cold','stub','skip')), last_activity_at DATETIME);
 		CREATE TABLE communication_services (id INTEGER PRIMARY KEY, slug TEXT NOT NULL UNIQUE);
-		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, normalized_value TEXT NOT NULL, source TEXT NOT NULL, active_until DATETIME, superseded_at DATETIME);
+		CREATE TABLE participant_contact_observations (id INTEGER PRIMARY KEY, participant_id INTEGER NOT NULL, source_id INTEGER, address_kind TEXT NOT NULL, service_id INTEGER, scope_kind TEXT, scope_value TEXT, provider_user_id TEXT, original_value TEXT, normalized_value TEXT NOT NULL, source TEXT NOT NULL, source_ref TEXT, active_until DATETIME, superseded_at DATETIME);
 		CREATE TABLE participant_contact_observation_conversations (observation_id INTEGER NOT NULL, conversation_id INTEGER NOT NULL, PRIMARY KEY(observation_id, conversation_id));
 		CREATE TABLE archive_metadata (
 			key TEXT PRIMARY KEY,

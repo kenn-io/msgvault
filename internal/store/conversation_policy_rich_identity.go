@@ -29,6 +29,7 @@ type ConversationParticipantResolution struct {
 func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room int64, input ConversationParticipantIdentity) (ConversationParticipantResolution, error) {
 	input.IdentifierType = strings.TrimSpace(input.IdentifierType)
 	input.IdentifierValue = strings.TrimSpace(input.IdentifierValue)
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	if input.IdentifierType == "" || input.IdentifierValue == "" {
 		return ConversationParticipantResolution{}, errors.New("identifier type and value are required")
@@ -45,15 +46,45 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 		if !full {
 			return ErrConversationPolicyStale
 		}
-		recordEmailObservation := func() error {
-			if input.Email == "" {
-				return nil
-			}
+		recordAdmittedObservations := func() error {
 			var sourceID int64
 			if err := tx.QueryRowContext(ctx, `SELECT source_id FROM conversations WHERE id=?`, room).Scan(&sourceID); err != nil {
 				return err
 			}
-			return s.recordProviderEmailObservationTx(ctx, tx, result.ParticipantID, sourceID, room, input.Email)
+			if input.Email != "" {
+				if err := s.recordProviderEmailObservationTx(ctx, tx, result.ParticipantID, sourceID, room, input.Email); err != nil {
+					return err
+				}
+			}
+			if input.IdentifierType != "beeper" {
+				var serviceSlug *string
+				var scopeKind, scopeValue *string
+				if classification, ok := classifyParticipantIdentifier(input.IdentifierType, input.IdentifierValue); ok {
+					serviceSlug = &classification.ServiceSlug
+					scopeKind = classification.ScopeKind
+					scopeValue = classification.ScopeValue
+				}
+				if err := s.recordConversationPolicyParticipantObservationTx(
+					ctx, tx, result.ParticipantID, sourceID, room,
+					ContactAddressProviderIdentity, serviceSlug, scopeKind, scopeValue,
+					&input.IdentifierValue, input.IdentifierValue,
+				); err != nil {
+					return err
+				}
+			}
+			if input.DisplayName != "" {
+				var displayName sql.NullString
+				if err := tx.QueryRowContext(ctx, `SELECT display_name FROM participants WHERE id=?`, result.ParticipantID).Scan(&displayName); err != nil {
+					return err
+				}
+				if displayName.Valid && displayName.String == input.DisplayName {
+					return s.recordConversationPolicyParticipantObservationTx(
+						ctx, tx, result.ParticipantID, sourceID, room,
+						ContactAddressDisplayName, nil, nil, nil, nil, input.DisplayName,
+					)
+				}
+			}
+			return nil
 		}
 		var previous int64
 		var previousPhone string
@@ -64,7 +95,7 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 		// Existing phone resolution is never downgraded by an email-only sighting.
 		if input.Phone == "" && previousPhone != "" {
 			result = ConversationParticipantResolution{ParticipantID: previous, ByPhone: true}
-			return recordEmailObservation()
+			return recordAdmittedObservations()
 		}
 		target := previous
 		switch {
@@ -108,7 +139,7 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 			}
 			if stable {
 				result = ConversationParticipantResolution{ParticipantID: previous}
-				return recordEmailObservation()
+				return recordAdmittedObservations()
 			}
 		}
 		state, err := s.captureParticipantConversationPolicyTx(ctx, tx, previous, target)
@@ -142,7 +173,7 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 		if err = s.setParticipantIdentifierTx(ctx, tx, result.ParticipantID, input.IdentifierType, input.IdentifierValue); err != nil {
 			return err
 		}
-		if err = recordEmailObservation(); err != nil {
+		if err = recordAdmittedObservations(); err != nil {
 			return err
 		}
 		after, err := conversationParticipantMutationRevision(ctx, tx)

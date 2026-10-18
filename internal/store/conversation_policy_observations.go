@@ -322,9 +322,13 @@ func FullParticipantIdentifierWhereSQLite(alias string) string {
 func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	const observation = "identifier_observation"
 	const source = "identifier_source"
-	classification := observation + `.service_id IS NOT DISTINCT FROM ` + alias + `.service_id
- AND ` + observation + `.scope_kind IS NOT DISTINCT FROM ` + alias + `.scope_kind
- AND ` + observation + `.scope_value IS NOT DISTINCT FROM ` + alias + `.scope_value`
+	nullSafeEqual := "IS"
+	if postgres {
+		nullSafeEqual = "IS NOT DISTINCT FROM"
+	}
+	classification := observation + `.service_id ` + nullSafeEqual + ` ` + alias + `.service_id
+ AND ` + observation + `.scope_kind ` + nullSafeEqual + ` ` + alias + `.scope_kind
+ AND ` + observation + `.scope_value ` + nullSafeEqual + ` ` + alias + `.scope_value`
 	// Beeper's identifier is its account/user fallback anchor; provider_user_id
 	// may instead be a native provider key. The recorder's source_ref binds the
 	// raw user to the source account. Rebuild the existing length-delimited anchor
@@ -355,15 +359,31 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
  AND ((` + classification + ` AND ((` + beeper + `) OR (` + provider + `))) OR (` + address + `))))`
 }
 
-// Shared raw names need exact-value evidence in a live Full envelope.
-// A sender/roster ID alone cannot attest to the name stored on its shared row.
+// Shared raw names need exact-value evidence from a live Full envelope or a
+// room-scoped importer observation. A sender/roster ID alone cannot attest to
+// the name stored on its shared row.
 // Independent curated profile names are read separately from this fallback.
 // FullParticipantNameWhere returns the SQL predicate for using one exact raw
 // participant display name. Chat-derived names require a matching display
-// value on a live Full message; a shared participant row is not enough.
+// value on a live Full message or a surviving Full-room name observation.
 func FullParticipantNameWhere(id, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
+ SELECT 1 FROM participant_contact_observations name_observation
+ WHERE name_observation.participant_id=` + id + ` AND name_observation.address_kind='display_name'
+ AND name_observation.normalized_value=` + value + `
+ AND name_observation.active_until IS NULL AND name_observation.superseded_at IS NULL
+ AND ` + FullObservationWhere("name_observation") + `) OR EXISTS(
  SELECT 1 FROM message_recipients name_recipient JOIN messages name_message ON name_message.id=name_recipient.message_id
  WHERE name_recipient.participant_id=` + id + ` AND name_recipient.display_name=` + value + `
  AND ` + FullMessageWhere("name_message") + ` AND ` + LiveMessagesWhere("name_message", true) + `))`
+}
+
+// FullParticipantDisplaySQL renders the eligible display fallback for a
+// participant row joined under alias. Keep embedding assembly and publication
+// digest checks on the same value-level policy.
+func FullParticipantDisplaySQL(alias string) string {
+	name := `CASE WHEN ` + FullParticipantNameWhere(alias+`.id`, alias+`.display_name`) + ` THEN ` + alias + `.display_name END`
+	email := `CASE WHEN ` + FullParticipantValueWhere(alias+`.id`, `'email'`, alias+`.email_address`) + ` THEN ` + alias + `.email_address END`
+	phone := `CASE WHEN ` + FullParticipantValueWhere(alias+`.id`, `'phone'`, alias+`.phone_number`) + ` THEN ` + alias + `.phone_number END`
+	return `COALESCE(NULLIF(TRIM(` + name + `), ''), NULLIF(` + email + `, ''), NULLIF(` + phone + `, ''), '')`
 }

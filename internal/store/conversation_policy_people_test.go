@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personenrichment"
+	"go.kenn.io/msgvault/internal/personmatch"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -69,6 +70,24 @@ func TestConversationPolicyIdentitySuggestionsAndScoring(t *testing.T) {
 	}
 }
 
+func fullParticipantIdentifiers(t *testing.T, s *store.Store, participantID int64) []personmatch.PairIdentifier {
+	t.Helper()
+	rows, err := s.DB().Query(s.Rebind(`SELECT pi.identifier_type,pi.identifier_value,
+		COALESCE(cs.slug,''),COALESCE(pi.scope_kind,''),COALESCE(pi.scope_value,'')
+		FROM participant_identifiers pi LEFT JOIN communication_services cs ON cs.id=pi.service_id
+		WHERE pi.participant_id=? AND `+store.FullParticipantIdentifierWhereSQLite("pi")+` ORDER BY pi.id`), participantID)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var identifiers []personmatch.PairIdentifier
+	for rows.Next() {
+		var identifier personmatch.PairIdentifier
+		require.NoError(t, rows.Scan(&identifier.Type, &identifier.Value, &identifier.ServiceSlug, &identifier.ScopeKind, &identifier.ScopeValue))
+		identifiers = append(identifiers, identifier)
+	}
+	require.NoError(t, rows.Err())
+	return identifiers
+}
+
 func TestConversationParticipantResolutionSupportsEmailOnlyInFullRoom(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -93,6 +112,13 @@ func TestConversationParticipantResolutionSupportsEmailOnlyInFullRoom(t *testing
 	packet, err := s.PersonMatchPairSummariesContext(t.Context(), resolution.ParticipantID, peer)
 	requirements.NoError(err)
 	assertions.Equal("provider-user@example.test", packet.Left.Email)
+	assertions.Equal("Synthetic Provider User", packet.Left.DisplayName)
+	identifier := personmatch.PairIdentifier{
+		Type: "slack", Value: "WORKSPACE:USER", ServiceSlug: "slack",
+		ScopeKind: "workspace", ScopeValue: "WORKSPACE",
+	}
+	assertions.Contains(fullParticipantIdentifiers(t, s, resolution.ParticipantID), identifier,
+		"the admitted provider identifier retains its namespace and room support")
 
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "full", conversationpolicy.Cold))
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Full))
@@ -102,12 +128,69 @@ func TestConversationParticipantResolutionSupportsEmailOnlyInFullRoom(t *testing
 	packet, err = s.PersonMatchPairSummariesContext(t.Context(), resolution.ParticipantID, peer)
 	requirements.NoError(err)
 	assertions.Empty(packet.Left.Email)
+	assertions.Empty(packet.Left.DisplayName)
+	assertions.NotContains(fullParticipantIdentifiers(t, s, resolution.ParticipantID), identifier,
+		"a different Full room does not borrow identifier support")
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "full", conversationpolicy.Full))
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Cold))
 	input, err = s.LoadRequestInput(t.Context(), lease)
 	requirements.NoError(err)
 	requirements.Len(input.Emails, 1)
 	assertions.Equal("provider-user@example.test", input.Emails[0].Value)
+	packet, err = s.PersonMatchPairSummariesContext(t.Context(), resolution.ParticipantID, peer)
+	requirements.NoError(err)
+	assertions.Equal("Synthetic Provider User", packet.Left.DisplayName)
+	assertions.Contains(fullParticipantIdentifiers(t, s, resolution.ParticipantID), identifier)
+}
+
+func TestConversationParticipantResolutionExportsProviderIdentityAndNameByRoom(t *testing.T) {
+	cases := []struct {
+		name           string
+		sourceType     string
+		identifierType string
+		identifier     string
+		serviceSlug    string
+		scopeKind      string
+		scopeValue     string
+	}{
+		{name: "slack", sourceType: "slack", identifierType: "slack", identifier: "WORKSPACE:USER", serviceSlug: "slack", scopeKind: "workspace", scopeValue: "WORKSPACE"},
+		{name: "slackdump", sourceType: "slackdump", identifierType: "slack", identifier: "WORKSPACE:USER", serviceSlug: "slack", scopeKind: "workspace", scopeValue: "WORKSPACE"},
+		{name: "discord", sourceType: "discord", identifierType: "discord_user_id", identifier: "synthetic-discord-user", serviceSlug: "discord"},
+		{name: "teams", sourceType: "teams", identifierType: "teams", identifier: "synthetic-teams-user"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
+			s, source, full, _, _ := policyObservationFixture(t)
+			_, err := s.DB().Exec(s.Rebind(`UPDATE sources SET source_type=? WHERE id=?`), test.sourceType, source)
+			requirements.NoError(err)
+			peer, err := s.EnsureParticipant("peer@example.test", "Synthetic Peer", "example.test")
+			requirements.NoError(err)
+			resolved, err := s.ResolveConversationParticipantContext(t.Context(), full, store.ConversationParticipantIdentity{
+				IdentifierType: test.identifierType, IdentifierValue: test.identifier,
+				DisplayName: "Synthetic Roster User",
+			})
+			requirements.NoError(err)
+			packet, err := s.PersonMatchPairSummariesContext(t.Context(), resolved.ParticipantID, peer)
+			requirements.NoError(err)
+			assertions.Equal("Synthetic Roster User", packet.Left.DisplayName)
+			identifier := personmatch.PairIdentifier{
+				Type: test.identifierType, Value: test.identifier, ServiceSlug: test.serviceSlug,
+				ScopeKind: test.scopeKind, ScopeValue: test.scopeValue,
+			}
+			assertions.Contains(fullParticipantIdentifiers(t, s, resolved.ParticipantID), identifier,
+				"exact provider identifiers retain their namespace and Full-room support")
+
+			requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "full", conversationpolicy.Cold))
+			requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Full))
+			packet, err = s.PersonMatchPairSummariesContext(t.Context(), resolved.ParticipantID, peer)
+			requirements.NoError(err)
+			assertions.Empty(packet.Left.DisplayName, "roster-only names from a Cold room are excluded")
+			assertions.NotContains(fullParticipantIdentifiers(t, s, resolved.ParticipantID), identifier)
+		})
+	}
 }
 
 func TestConversationPolicyBootstrapRetractsLegacyUnprovenance(t *testing.T) {
