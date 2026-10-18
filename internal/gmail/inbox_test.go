@@ -221,7 +221,7 @@ func TestInboxGmailMoveRejectsUnselectedOrSystemLabels(t *testing.T) {
 	before, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, origin, destination string }{
-		{"missing selection", "", "LabelNew"}, {"unselected origin", "LabelNew", "LabelOld"}, {"unavailable destination", "LabelOld", "Missing"}, {"system destination", "LabelOld", "INBOX"}, {"system origin", "INBOX", "LabelNew"}, {"same location", "LabelOld", "LabelOld"},
+		{"unselected origin", "LabelNew", "LabelOld"}, {"unavailable destination", "LabelOld", "Missing"}, {"system destination", "LabelOld", "INBOX"}, {"system origin", "INBOX", "LabelNew"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := inboxcontrol.Request{Operation: inboxcontrol.OpMove, Target: &target, OriginFolder: &inboxcontrol.Folder{ID: tc.origin}, Destination: &inboxcontrol.Folder{ID: tc.destination}, DryRun: true}

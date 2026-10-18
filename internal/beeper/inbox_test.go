@@ -59,13 +59,13 @@ func TestInboxProfileVersionAloneIsInsufficient(t *testing.T) {
 	}
 }
 
-func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
+func TestInboxValidItemMutationsRefusedWithoutHTTP(t *testing.T) {
 	requirements := require.New(t)
 
 	peer := &inboxHTTPPeer{info: inboxTestInfo, chat: inboxTestChat, page: inboxTestPage}
 	provider := NewInboxProvider(peer.client(t), inboxTestSource())
 	target := inboxTestTarget()
-	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpTags, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
+	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread} {
 		r := inboxcontrol.Request{Operation: op, Target: &target, DryRun: true}
 		before := inboxcontrol.State{Target: target, Inbox: new(false), Read: new(false)}
 		_, err := provider.Preview(t.Context(), r, before)

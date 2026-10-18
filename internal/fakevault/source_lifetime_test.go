@@ -41,7 +41,7 @@ func TestAppendRefusesRemovedOrReimportedSourceLifetime(t *testing.T) {
 			assert.Equal(messages, afterMessages)
 			assert.Equal(participants, afterParticipants)
 			_, err = st.GetSourceByID(source.ID)
-			assert.Error(err, "append never restores the retired fixed source")
+			require.Error(err, "append never restores the retired fixed source")
 			if reimported {
 				current, err := st.GetSourceByID(recreated.ID)
 				require.NoError(err)
