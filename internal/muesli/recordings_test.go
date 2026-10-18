@@ -271,6 +271,56 @@ func TestScanRemoteRecordingAcknowledgementUsesMeetingIdentity(t *testing.T) {
 	assert.Equal(2, uploads, "identical audio for a reused row ID still reaches the new archive message")
 }
 
+func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		full           bool
+		editTranscript bool
+	}{
+		{name: "full scan", full: true},
+		{name: "newly created after transcript edit", editTranscript: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newImporterFixture(t)
+			registerRemoteFixture(t, f)
+			path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+			meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+			writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+			opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
+			activeImporter := f.imp
+			uploads := 0
+			dir := t.TempDir()
+			opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
+				uploads++
+				_, err := activeImporter.ImportRecording(ctx, upload, dir, io.NewSectionReader(recording.File, 0, recording.Size), 0)
+				return err
+			}
+			_, err := ScanRemote(t.Context(), opts, f.imp.ImportRemote)
+			require.NoError(t, err)
+			require.Equal(t, 1, uploads)
+
+			// Model restoring an older daemon backup: the recorder keeps its
+			// local receipt, but the restored archive does not contain the meeting.
+			restored := newImporterFixture(t)
+			registerRemoteFixture(t, restored)
+			activeImporter = restored.imp
+			if tt.editTranscript {
+				_, err := f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+				require.NoError(t, err)
+			}
+			recoveryOpts := opts
+			recoveryOpts.Full = tt.full
+			_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
+			require.NoError(t, err)
+			assert.Equal(t, 2, uploads, "a newly created archive message needs its recording even when the recorder has a receipt")
+			candidates, err := restored.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
+			require.NoError(t, err)
+			assert.Len(t, candidates, 1)
+		})
+	}
+}
+
 func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

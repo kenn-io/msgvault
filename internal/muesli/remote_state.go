@@ -102,6 +102,13 @@ func (u *remoteUploads) recordRecording(identity, hash string) {
 	}
 }
 
+func (u *remoteUploads) forgetRecording(identity string) {
+	if _, ok := u.Recordings[identity]; ok {
+		delete(u.Recordings, identity)
+		u.dirty = true
+	}
+}
+
 func (u *remoteUploads) save() error {
 	if !u.dirty {
 		return nil
