@@ -16,6 +16,7 @@ const (
 	Observed       Direction = "observed"
 	ReplyOwed                = "reply_owed"
 	AwaitingReply            = "awaiting_reply"
+	StatusAll                = "all"
 	RulesetVersion           = 1
 )
 

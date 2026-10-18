@@ -399,6 +399,10 @@ var operationGateExemptPaths = map[string]bool{
 	"/api/v1/cli/deduplicate/plan":     true,
 	backupFreezeBeginPath:              true,
 	backupFreezeEndPath:                true,
+	// Loop routes only queue or coalesce background work; the runner acquires
+	// the operation gate inside the scheduled job or manual worker.
+	"/api/v1/loops/run":     true,
+	"/api/v1/loops/rebuild": true,
 	// Telemetry changes no archive state; gating it would make opening the app yield a running sync.
 	telemetryEventsPath: true,
 }
