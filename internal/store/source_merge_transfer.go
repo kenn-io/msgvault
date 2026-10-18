@@ -177,6 +177,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		`UPDATE activity_events SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET owner_source_id = ? WHERE owner_source_id = ?`,
 		`UPDATE person_contact_state SET last_contact_source_id = ? WHERE last_contact_source_id = ?`,
+		`UPDATE open_loops SET source_id = ? WHERE source_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {
 			return err

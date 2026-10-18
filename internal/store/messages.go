@@ -93,6 +93,7 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	AutomationSignals         *MessageAutomationSignals
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -2384,6 +2385,11 @@ func (s *Store) persistMessageWith(
 	messageID, err := upsertMessageWith(q, s.dialect, message)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
+	}
+	if data.AutomationSignals != nil {
+		if err := persistMessageAutomationSignalsWith(q, messageID, *data.AutomationSignals); err != nil {
+			return 0, fmt.Errorf("persist message automation signals: %w", err)
+		}
 	}
 	if data.Delivery != nil {
 		if err := setMessageDeliveryEvidenceWith(q, messageID, *data.Delivery); err != nil {

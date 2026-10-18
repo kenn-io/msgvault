@@ -1,0 +1,220 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"go.kenn.io/msgvault/internal/loops"
+)
+
+// LoopConversationAnchorExistsContext distinguishes an older window gap from
+// an anchor deleted or moved out of the conversation being reconciled.
+func (s *Store) LoopConversationAnchorExistsContext(ctx context.Context, conversationID, messageID int64) (bool, error) {
+	var live bool
+	err := s.db.QueryRowContext(ctx, "SELECT deleted_at IS NULL AND deleted_from_source_at IS NULL FROM messages WHERE id=? AND conversation_id=?", messageID, conversationID).Scan(&live)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return live, err
+}
+
+func (s *Store) LoopMessageBodyContext(ctx context.Context, messageID int64) (string, error) {
+	var body sql.NullString
+	err := s.db.QueryRowContext(ctx, "SELECT body_text FROM message_bodies WHERE message_id=?", messageID).Scan(&body)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return body.String, err
+}
+
+// LoadLoopConversationContext reads a bounded newest metadata window and returns it chronologically.
+func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID int64, limit int) (LoopConversation, error) {
+	var out LoopConversation
+	if conversationID <= 0 || limit < 1 || limit > loops.MaxConversationMessageLimit {
+		return out, fmt.Errorf("%w: conversation and limit required", ErrInvalidLoop)
+	}
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var last sql.NullTime
+		err := tx.QueryRowContext(ctx, `SELECT c.id,c.source_id,s.source_type,c.conversation_type,
+COALESCE((SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m WHERE m.conversation_id=c.id),c.last_message_at)
+FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversationID).Scan(&out.ConversationID, &out.SourceID, &out.SourceType, &out.ConversationType, &last)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrLoopNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if last.Valid {
+			out.LastMessageAt = last.Time
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id,source_id,conversation_id,message_type,sent_at,received_at,internal_date,COALESCE(source_is_from_me,FALSE),deleted_at,deleted_from_source_at,sender_id,COALESCE(subject,''),COALESCE(snippet,''),COALESCE(list_id,'') FROM messages WHERE conversation_id=? ORDER BY COALESCE(sent_at,received_at,internal_date) DESC,id DESC LIMIT ?`, conversationID, limit)
+		if err != nil {
+			return err
+		}
+		var candidates []ActivityCandidate
+		var senderIDs []*int64
+		for rows.Next() {
+			var m LoopMessage
+			var c ActivityCandidate
+			var sent, received, internal, deleted, sourceDeleted sql.NullTime
+			var sender *int64
+			if err := rows.Scan(&m.ID, &c.SourceID, &c.ConversationID, &c.MessageType, &sent, &received, &internal, &c.SourceIsFromMe, &deleted, &sourceDeleted, &sender, &m.Subject, &m.Snippet, &m.ListID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			c.MessageID = m.ID
+			c.ConversationType = out.ConversationType
+			c.SentAt = activityTimePointer(sent)
+			c.ReceivedAt = activityTimePointer(received)
+			c.InternalDate = activityTimePointer(internal)
+			m.Deleted = deleted.Valid || sourceDeleted.Valid
+			for _, at := range []*sql.NullTime{&sent, &received, &internal} {
+				if at.Valid && !at.Time.IsZero() {
+					m.OccurredAt = at.Time
+					break
+				}
+			}
+			candidates = append(candidates, c)
+			out.Messages = append(out.Messages, m)
+			senderIDs = append(senderIDs, sender)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		candidates, err = s.attachActivityCounterpartsQueryerContext(ctx, tx, candidates)
+		if err != nil {
+			return err
+		}
+		// Hydrate every counterpart, including departed members, plus sender metadata.
+		byID := map[int64]LoopParticipant{}
+		participantMetadataIDs := `SELECT participant_id FROM conversation_participants WHERE conversation_id=?
+UNION SELECT sender_id FROM messages WHERE conversation_id=? AND sender_id IS NOT NULL
+UNION SELECT mr.participant_id FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.conversation_id=?`
+		rows, err = tx.QueryContext(ctx, `SELECT p.id,pp.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),COALESCE(p.display_name,''),COALESCE(p.canonical_id,'') FROM (`+participantMetadataIDs+`) participant_ids JOIN participants p ON p.id=participant_ids.participant_id LEFT JOIN person_participants pp ON pp.participant_id=p.id ORDER BY p.id`, conversationID, conversationID, conversationID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var p LoopParticipant
+			if err := rows.Scan(&p.ParticipantID, &p.PersonID, &p.EmailAddress, &p.PhoneNumber, &p.DisplayName, &p.CanonicalID); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			byID[p.ParticipantID] = p
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		for i, c := range candidates {
+			class := ClassifyActivityCandidate(c, DefaultMaxDirectActivityCounterparts)
+			out.Messages[i].Direction = class.Direction
+			out.Messages[i].OwnerAddress = class.OwnerAddress
+			if senderIDs[i] != nil {
+				out.Messages[i].Sender = byID[*senderIDs[i]]
+			}
+			for _, cp := range c.Counterparts {
+				p := byID[cp.ParticipantID]
+				p.PersonID = cp.PersonID
+				p.IsOwner = cp.IsOwner
+				if cp.IsOwner {
+					aggregate := byID[cp.ParticipantID]
+					aggregate.IsOwner = true
+					byID[cp.ParticipantID] = aggregate
+				}
+				if cp.RecipientType == meetingSenderRole {
+					if senderIDs[i] == nil || *senderIDs[i] == p.ParticipantID {
+						out.Messages[i].Sender = p
+					}
+					continue
+				}
+				out.Messages[i].Recipients = append(out.Messages[i].Recipients, LoopRecipient{LoopParticipant: p, RecipientType: cp.RecipientType})
+			}
+		}
+		// Group eligibility uses current members and senders. Email recipients also
+		// establish participation when the archive has no conversation roster rows.
+		participantIDs := `SELECT participant_id FROM conversation_participants WHERE conversation_id=? AND left_at IS NULL
+UNION SELECT sender_id FROM messages WHERE conversation_id=? AND sender_id IS NOT NULL`
+		participantArgs := []any{conversationID, conversationID}
+		if out.ConversationType == "email_thread" {
+			participantIDs += ` UNION SELECT mr.participant_id FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.conversation_id=?`
+			participantArgs = append(participantArgs, conversationID)
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT participant_id FROM (`+participantIDs+`) loop_participant_ids ORDER BY participant_id`, participantArgs...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			out.Participants = append(out.Participants, byID[id])
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return err
+		}
+		if len(out.Messages) > 0 {
+			ids := make([]any, len(out.Messages))
+			positions := map[int64]int{}
+			for i, m := range out.Messages {
+				ids[i] = m.ID
+				positions[m.ID] = i
+			}
+			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+			rows, err = tx.QueryContext(ctx, `SELECT ml.message_id,l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id IN (`+placeholders+`) AND l.source_label_id IS NOT NULL ORDER BY ml.message_id,l.source_label_id`, ids...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id int64
+				var label string
+				if err := rows.Scan(&id, &label); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				i := positions[id]
+				out.Messages[i].Labels = append(out.Messages[i].Labels, label)
+			}
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				return err
+			}
+			rows, err = tx.QueryContext(ctx, `SELECT message_id,auto_submitted,precedence_bulk,list_unsubscribe,calendar_part,reply_to_noreply,parser_version FROM message_automation_signals WHERE message_id IN (`+placeholders+`)`, ids...)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var id int64
+				var signals MessageAutomationSignals
+				if err := rows.Scan(&id, &signals.AutoSubmitted, &signals.PrecedenceBulk, &signals.ListUnsubscribe, &signals.CalendarPart, &signals.ReplyToNoReply, &signals.ParserVersion); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				out.Messages[positions[id]].Signals = &signals
+			}
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				return err
+			}
+		}
+		slices.Reverse(out.Messages)
+		return nil
+	})
+	if err != nil {
+		return LoopConversation{}, fmt.Errorf("load loop conversation: %w", err)
+	}
+	return out, nil
+}
