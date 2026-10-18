@@ -12,8 +12,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +31,43 @@ import (
 type publicationBrokenOutput struct{ err error }
 
 func (w publicationBrokenOutput) Write([]byte) (int, error) { return 0, w.err }
+
+func TestScopedPersonCardDAVPublishRunsThroughRootInAgentMode(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var previewCalls atomic.Int64
+	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_, err := io.WriteString(w, `{"status":"ok","api_schema_version":"3.16.0"}`)
+			assertions.NoError(err)
+		case "/api/v1/session":
+			_, err := io.WriteString(w, `{"auth_mode":"delegated"}`)
+			assertions.NoError(err)
+		case "/api/v1/carddav/scoped/publications/1/preview":
+			previewCalls.Add(1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(daemon.Close)
+	tokenFile := filepath.Join(t.TempDir(), "agent.token")
+	requirements.NoError(os.WriteFile(tokenFile, []byte("synthetic-agent-token\n"), 0o600))
+	rootCmd.SetOut(io.Discard)
+	rootCmd.SetErr(io.Discard)
+	rootCmd.SetArgs([]string{
+		"--agent-url", daemon.URL,
+		"--agent-token-file", tokenFile,
+		"--agent-allow-insecure",
+		"person", "publish", "1", "--scoped", "--preview",
+	})
+	err := executeRootContext(t.Context(), rootCmd)
+	requirements.Error(err)
+	assertions.Equal(int64(1), previewCalls.Load())
+	assertions.NotContains(err.Error(), "publish is not available in agent-delegated mode")
+}
 
 func TestScopedCardDAVCLIRecoversOriginalReceiptAfterLostOutput(t *testing.T) {
 	assertions := assert.New(t)

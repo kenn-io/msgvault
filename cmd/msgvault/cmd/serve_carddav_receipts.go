@@ -24,3 +24,7 @@ func (a *storeAPIAdapter) ReviewedCardDAVPublicationRecoveryContext(ctx context.
 func (a *storeAPIAdapter) LoadCardDAVPublicationReviewSourceAuthorizedContext(ctx context.Context, personID int64, authorize store.PersonEditAuthorizer) (*store.CardDAVPublicationReviewSource, error) {
 	return a.store.LoadCardDAVPublicationReviewSourceAuthorizedContext(ctx, personID, authorize)
 }
+
+func (a *storeAPIAdapter) CardDAVPublicationReceiptByIDContext(ctx context.Context, id string, authorize func(context.Context) error) (*store.CardDAVPublicationReceipt, error) {
+	return a.store.CardDAVPublicationReceiptByIDContext(ctx, id, authorize)
+}

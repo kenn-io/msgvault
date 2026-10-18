@@ -263,7 +263,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // work without local configuration or a local daemon are permitted; all others
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
-	if isIdentityOperationCommand(cmd) {
+	if isIdentityOperationCommand(cmd) || isScopedPersonCardDAVPublishCommand(cmd) {
 		return true
 	}
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
@@ -272,6 +272,18 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 		}
 	}
 	return agentDelegatedCommand(cmd.Name()) && (!cmd.HasParent() || cmd.Parent() == cmd.Root())
+}
+
+func isScopedPersonCardDAVPublishCommand(cmd *cobra.Command) bool {
+	if cmd == nil || cmd.Name() != "publish" {
+		return false
+	}
+	parent := cmd.Parent()
+	if parent == nil || parent.Name() != "person" {
+		return false
+	}
+	scoped, err := cmd.Flags().GetBool("scoped")
+	return err == nil && scoped
 }
 
 // agentDelegatedCommand owns the command set offered to an agent grant.

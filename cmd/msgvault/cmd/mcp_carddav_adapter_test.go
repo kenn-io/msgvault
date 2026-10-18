@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -15,6 +16,27 @@ import (
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestDaemonCardDAVHistoricalReceiptUsesProductionStoreAdapter(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}}
+	daemon := api.NewServerWithOptions(api.ServerOptions{
+		Config: cfg,
+		Store:  &storeAPIAdapter{store: st, config: cfg},
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	t.Cleanup(func() { assertions.NoError(daemon.Shutdown(context.Background())) })
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/carddav/scoped/publication-receipts/00000000-0000-4000-8000-000000000000", nil)
+	request.Header.Set("Authorization", "Bearer "+cfg.Server.APIKey)
+	response := httptest.NewRecorder()
+	daemon.Router().ServeHTTP(response, request)
+
+	requirements.Equal(http.StatusNotFound, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "carddav_receipt_not_found")
+}
 
 func TestDaemonMCPScopedCardDAVRecoveryUsesProductionStoreAdapter(t *testing.T) {
 	requirements := require.New(t)
