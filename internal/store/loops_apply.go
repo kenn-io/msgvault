@@ -115,7 +115,7 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 		}
 		if !sameTurn && row.Status == "closed" && loopTerminal(*row) {
 			boundaryAfterTerminal := previousTurnAfterLoopActivity(open, row)
-			if !open.PreviousTurnKnown || !boundaryAfterTerminal {
+			if !boundaryAfterTerminal {
 				terminalOutside = true
 			}
 		}
@@ -182,10 +182,13 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 }
 
 func previousTurnAfterLoopActivity(open LoopOpenDecision, terminal *OpenLoop) bool {
+	if !open.PreviousTurnKnown {
+		return false
+	}
 	if open.PreviousTurnAt.After(terminal.LastActivityAt) {
 		return true
 	}
-	if !open.PreviousTurnAt.Equal(terminal.LastActivityAt) || open.PreviousTurnMessageID <= 0 || terminal.LastActivityMessageID == nil {
+	if !open.PreviousTurnAt.Equal(terminal.LastActivityAt) || terminal.LastActivityMessageID == nil {
 		return false
 	}
 	return open.PreviousTurnMessageID > *terminal.LastActivityMessageID

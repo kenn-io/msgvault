@@ -85,6 +85,41 @@ func TestLoopApplyDoneWinsRewrittenAnchorAndWindow(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(rows, 1, "observed opposite boundary proves a later turn")
 }
+
+func TestLoopApplyTerminalBoundaryAllowsNonpositiveMessageIDs(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	override := ""
+	if f.Store.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	for _, id := range []int64{-1, 0} {
+		loopExec(t, f.Store, "INSERT INTO messages(id,conversation_id,source_id,source_message_id,message_type,sent_at)"+override+" VALUES(?,?,?,?,?,?)", id, f.ConvID, f.Source.ID, fmt.Sprintf("terminal-boundary-%d", id), "email", loopTestStamp(f.Store, now))
+	}
+	terminal := loopOpenChronology(t, f, -1, -1, now, now)
+	applyLoop(t, f, terminal, now)
+	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	closed, err := f.Store.CloseLoopContext(t.Context(), rows[0].ID, "handled", now)
+	requirements.NoError(err)
+	requirements.NotNil(closed.ClosedReason)
+	assertions.Equal("done", *closed.ClosedReason)
+
+	newTurn := loopOpenChronology(t, f, 0, 0, now, now)
+	newTurn.PreviousTurnKnown = true
+	newTurn.PreviousTurnAt = now
+	newTurn.PreviousTurnMessageID = 0
+	applyLoop(t, f, newTurn, now)
+	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	requirements.NotNil(rows[0].AnchorMessageID)
+	assertions.Equal(int64(0), *rows[0].AnchorMessageID)
+}
+
 func TestLoopApplyRewriteCyclePreservesOwnerStateAndCAS(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

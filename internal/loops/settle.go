@@ -93,7 +93,10 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, nil
 	}
 	if bulkReplyAnchor && !priorOwnerParticipation && !laterSameSideActivity {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		// A live bulk-reply loop was established from owner participation. If the
+		// bounded metadata window no longer contains that proof, absence is not
+		// evidence that the anchor was unsolicited automation.
+		return nil, true, &v.Messages[anchor], nil
 	}
 	if anchorUnreadable {
 		return nil, true, &v.Messages[anchor], nil

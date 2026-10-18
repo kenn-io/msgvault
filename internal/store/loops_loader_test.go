@@ -153,6 +153,38 @@ func TestLoopListFiltersAndCursor(t *testing.T) {
 	assertions.ErrorIs(err, store.ErrLoopNotFound)
 }
 
+func TestLoopPersonFilterResolvesPromotionAfterClosure(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	counterparty := f.EnsureParticipant("promoted-after-close@example.test", "Promoted Counterparty", "example.test")
+	messageID := f.CreateMessage("closed-before-promotion")
+	loopExec(t, f.Store, "UPDATE messages SET sender_id=?,sent_at=? WHERE id=?", counterparty, loopTestStamp(f.Store, now), messageID)
+	open := loopOpen(t, f, messageID, messageID, now)
+	open.CounterpartyParticipantID = &counterparty
+	applyLoop(t, f, open, now)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	closed, err := f.Store.CloseLoopContext(t.Context(), live[0].ID, "handled", now)
+	requirements.NoError(err)
+	requirements.NotNil(closed.ClosedReason)
+	assertions.Equal("done", *closed.ClosedReason)
+
+	person, _, err := f.Store.CreatePersonFromParticipantContext(t.Context(), counterparty)
+	requirements.NoError(err)
+	rows, err := f.Store.ListOpenLoopsContext(t.Context(), store.LoopListFilter{
+		Status: "all", PersonID: person.ID, IncludeSnoozed: true, Limit: 20, Now: now,
+	})
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Equal(live[0].ID, rows[0].ID)
+	assertions.Equal("closed", rows[0].Status)
+	requirements.NotNil(rows[0].CounterpartyPersonID)
+	assertions.Equal(person.ID, *rows[0].CounterpartyPersonID)
+}
+
 func loopTestStamp(s *store.Store, at time.Time) any {
 	if s.IsPostgreSQL() {
 		return at

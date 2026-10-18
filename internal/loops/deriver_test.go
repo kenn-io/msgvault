@@ -219,6 +219,8 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f, cfg, now := deriveFixture(t)
+	cfg.ConversationMessageLimit = 3
+	cfg.RunMessageLimit = 3
 	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
 	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
@@ -264,6 +266,16 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	until := now.Add(24 * time.Hour)
 	_, err = f.Store.SnoozeLoopContext(t.Context(), live[0].ID, until, now)
 	requirements.NoError(err)
+	for i, at := range []time.Time{now.Add(-time.Hour), now.Add(-30 * time.Minute)} {
+		neutral := &store.Message{
+			SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: fmt.Sprintf("neutral-followup-%d", i),
+			MessageType: "email", SenderID: sql.NullInt64{Int64: peer, Valid: true},
+			SentAt: sql.NullTime{Time: at, Valid: true}, Subject: sql.NullString{String: "Thread observation", Valid: true},
+		}
+		_, err = f.Store.UpsertMessage(neutral)
+		requirements.NoError(err)
+	}
+	deriveExec(t, f, "UPDATE conversations SET last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-30*time.Minute)), f.ConvID)
 
 	now = now.Add(time.Minute)
 	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "bulk-reply-refresh", now))
@@ -272,6 +284,7 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	preserved, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
 	requirements.NoError(err)
 	assertions.Equal("open", preserved.Status)
+	assertions.Contains(string(preserved.EvidenceJSON), `"coverage_gap":true`)
 	requirements.NotNil(preserved.SnoozedUntil)
 	assertions.True(until.Equal(*preserved.SnoozedUntil))
 	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
