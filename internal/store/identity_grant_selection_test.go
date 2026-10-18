@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 )
 
 func newResourceScopeStore(t *testing.T) (*Store, int64) {
@@ -75,9 +76,21 @@ func TestIdentityGrantSelectionTracksAddressBookOwnership(t *testing.T) {
 
 func TestIdentityGrantSelectionRejectsInvalidMissingAndCancelledScope(t *testing.T) {
 	st, _ := newResourceScopeStore(t)
-	for _, ids := range [][]int64{nil, {0}, {9_007_199_254_740_992}, {1, 1}, {8_000_000}} {
-		_, err := st.IdentityGrantSelectionContext(t.Context(), ids, nil)
-		require.Error(t, err)
+	for _, tc := range []struct {
+		name string
+		ids  []int64
+		want error
+	}{
+		{name: "empty", want: identitycontrol.ErrInvalidRequest},
+		{name: "zero", ids: []int64{0}, want: identitycontrol.ErrInvalidRequest},
+		{name: "unsafe", ids: []int64{9_007_199_254_740_992}, want: identitycontrol.ErrInvalidRequest},
+		{name: "duplicate", ids: []int64{1, 1}, want: identitycontrol.ErrInvalidRequest},
+		{name: "missing", ids: []int64{8_000_000}, want: ErrPersonNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := st.IdentityGrantSelectionContext(t.Context(), tc.ids, nil)
+			require.ErrorIs(t, err, tc.want)
+		})
 	}
 	_, err := st.IdentityGrantSelectionContext(t.Context(), nil, []int64{8_000_000})
 	require.ErrorIs(t, err, ErrCardDAVAddressBookNotFound)

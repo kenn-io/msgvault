@@ -80,19 +80,37 @@ func mergeIdentityReceiptCoverage(snapshot *IdentitySnapshot, coverage identityR
 }
 
 func mergeIdentityReceiptAuthorizationEvidence(snapshot, original *IdentitySnapshot) error {
-	sources, err := mergeIdentityReceiptResourceEvidence(snapshot.Sources, original.Sources, func(source IdentitySourceEvidence) int64 { return source.ID })
+	sources, err := mergeIdentityReceiptResourceEvidence(snapshot.Sources, original.Sources,
+		func(source IdentitySourceEvidence) int64 { return source.ID },
+		func(current, original IdentitySourceEvidence) bool {
+			return current.Type == original.Type && current.Identifier == original.Identifier && current.OwnershipFingerprint == original.OwnershipFingerprint
+		},
+	)
 	if err != nil {
 		return err
 	}
-	persons, err := mergeIdentityReceiptResourceEvidence(snapshot.Persons, original.Persons, func(person IdentityPersonEvidence) int64 { return person.ID })
+	persons, err := mergeIdentityReceiptResourceEvidence(snapshot.Persons, original.Persons,
+		func(person IdentityPersonEvidence) int64 { return person.ID },
+		func(current, original IdentityPersonEvidence) bool { return current.UID == original.UID },
+	)
 	if err != nil {
 		return err
 	}
-	accounts, err := mergeIdentityReceiptResourceEvidence(snapshot.Accounts, original.Accounts, func(account IdentityAccountEvidence) int64 { return account.ID })
+	accounts, err := mergeIdentityReceiptResourceEvidence(snapshot.Accounts, original.Accounts,
+		func(account IdentityAccountEvidence) int64 { return account.ID },
+		func(current, original IdentityAccountEvidence) bool {
+			return current.OwnershipFingerprint == original.OwnershipFingerprint
+		},
+	)
 	if err != nil {
 		return err
 	}
-	books, err := mergeIdentityReceiptResourceEvidence(snapshot.Books, original.Books, func(book IdentityBookEvidence) int64 { return book.ID })
+	books, err := mergeIdentityReceiptResourceEvidence(snapshot.Books, original.Books,
+		func(book IdentityBookEvidence) int64 { return book.ID },
+		func(current, original IdentityBookEvidence) bool {
+			return current.AccountID == original.AccountID && current.CanonicalURL == original.CanonicalURL
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -104,21 +122,27 @@ func mergeIdentityReceiptAuthorizationEvidence(snapshot, original *IdentitySnaps
 	return nil
 }
 
-func mergeIdentityReceiptResourceEvidence[T comparable](current, original []T, id func(T) int64) ([]T, error) {
+func mergeIdentityReceiptResourceEvidence[T any](current, original []T, id func(T) int64, sameIdentity func(T, T) bool) ([]T, error) {
 	byID := make(map[int64]T, len(current)+len(original))
-	for _, evidence := range current {
+	add := func(evidence T) error {
 		resourceID := id(evidence)
-		if previous, ok := byID[resourceID]; ok && previous != evidence {
-			return nil, ErrIdentityOperationReceiptDenied
+		if previous, ok := byID[resourceID]; ok && !sameIdentity(previous, evidence) {
+			return ErrIdentityOperationReceiptDenied
 		}
 		byID[resourceID] = evidence
+		return nil
 	}
+	// Seed saved evidence first, then retain current revisions and other live
+	// fields when the same stable resource identity is present in both snapshots.
 	for _, evidence := range original {
-		resourceID := id(evidence)
-		if previous, ok := byID[resourceID]; ok && previous != evidence {
-			return nil, ErrIdentityOperationReceiptDenied
+		if err := add(evidence); err != nil {
+			return nil, err
 		}
-		byID[resourceID] = evidence
+	}
+	for _, evidence := range current {
+		if err := add(evidence); err != nil {
+			return nil, err
+		}
 	}
 	merged := make([]T, 0, len(byID))
 	for _, evidence := range byID {

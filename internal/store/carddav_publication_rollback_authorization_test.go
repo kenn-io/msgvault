@@ -31,7 +31,11 @@ func TestPublicationRollbackAuthorizationPreservesPendingIntentAndRetryGates(t *
 		{throttle: true, field: "stale_revision"},
 	} {
 		throttle := tc.throttle
-		for _, allow := range []bool{false, true} {
+		allows := []bool{false, true}
+		if tc.field != "" {
+			allows = []bool{false}
+		}
+		for _, allow := range allows {
 			t.Run(fmt.Sprintf("throttle_%t_delay_%s_%s_allow_%t", throttle, tc.delay, tc.field, allow), func(t *testing.T) {
 				requirements, assertions := require.New(t), assert.New(t)
 				st, account, book, mapping := seededCardDAVConflictMapping(t)

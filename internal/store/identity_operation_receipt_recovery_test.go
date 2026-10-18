@@ -247,6 +247,60 @@ func TestIdentityOperationReceiptAuthorizationRetainsSourceEvidenceAfterRosterRe
 	assertions.Equal(receipt, retried)
 }
 
+func TestIdentityOperationReceiptCardDAVResourcesIgnoreRevisionChanges(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, a, b := newUnlinkGuardStore(t)
+	person, _, err := st.CreatePersonFromParticipant(b)
+	requirements.NoError(err)
+	allowed := true
+	bookURL := "https://contacts.example.test/books/synthetic/receipt/"
+	_, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), CardDAVDiscoveryInput{
+		BaseURL: "https://contacts.example.test/dav", Username: "synthetic",
+		PrincipalURL: "https://contacts.example.test/principal/synthetic/",
+		HomeURL:      "https://contacts.example.test/books/synthetic/",
+		Books:        []CardDAVDiscoveredBook{{CanonicalURL: bookURL, DisplayName: "Synthetic Receipt Contacts", CanCreate: &allowed, CanUpdate: &allowed, CanDelete: &allowed}},
+	})
+	requirements.NoError(err)
+	requirements.Len(books, 1)
+	requirements.NoError(st.SetCardDAVBookRolesContext(t.Context(), books[0].ID, CardDAVBookRoles{IsWriteTarget: true, IsSubscribed: true, IsLookupSource: true}))
+	local, err := st.LoadPersonVCardSnapshotContext(t.Context(), person.ID)
+	requirements.NoError(err)
+	_, err = st.PrepareCardDAVPublicationContext(t.Context(), CardDAVPublicationPlan{
+		PersonID: person.ID, Desired: true, AddressBookID: books[0].ID,
+		Href:                 bookURL + person.VCardUID + ".vcf",
+		OutgoingBody:         []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:" + person.VCardUID + "\r\nFN:Synthetic Person\r\nEND:VCARD\r\n"),
+		OutgoingSemanticHash: "synthetic-receipt-semantic", LocalHash: local.Fingerprint,
+	})
+	requirements.NoError(err)
+	request := receiptRequest(t, st, identitycontrol.OperationGraphLink,
+		identitycontrol.IdentityTarget{ParticipantID: a, OtherParticipantID: b}, "synthetic-carddav-revision-receipt")
+	request.AuthorityFingerprint = strings.Repeat("e", 64)
+	authorize := func(context.Context, *IdentitySnapshot) error { return nil }
+	receipt, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, authorize, authorize)
+	requirements.NoError(err)
+
+	var observed []*IdentitySnapshot
+	authorize = func(_ context.Context, snapshot *IdentitySnapshot) error {
+		observed = append(observed, snapshot)
+		return nil
+	}
+	readback, err := st.IdentityOperationReceiptAuthorizedContext(t.Context(), request.Principal, request.IdempotencyKey, request.AuthorityFingerprint, authorize)
+	requirements.NoError(err)
+	assertions.Equal(receipt, readback)
+	requirements.Len(observed, 2)
+	requirements.Len(observed[0].Accounts, 1)
+	requirements.Len(observed[0].Books, 1)
+	requirements.Zero(observed[0].Accounts[0].ConnectionGeneration)
+	requirements.Zero(observed[0].Books[0].SyncRevision)
+	assertions.Positive(observed[1].Accounts[0].ConnectionGeneration)
+	assertions.Positive(observed[1].Books[0].SyncRevision)
+
+	retried, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, authorize, authorize)
+	requirements.NoError(err)
+	assertions.Equal(receipt, retried)
+}
+
 func TestIdentityOperationReceiptSurvivesSourceCleanupAndRejectsOwnerReuse(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

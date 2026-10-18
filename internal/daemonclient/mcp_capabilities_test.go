@@ -25,7 +25,7 @@ func TestMCPDiscoveryRejectsUntrustedContracts(t *testing.T) {
 		{"identity-only daemon", "3.15.0", `{"version":1,"delegated":false,"routes":[],"identity_operations":[]}`, false, true},
 		{"current", "3.16.0", `{"version":1,"delegated":false,"routes":[],"identity_operations":[]}`, false, true},
 		{"contact-only daemon", "3.14.0", `{"version":1,"delegated":false,"routes":[]}`, false, false},
-		{"unknown API major", "4.0.0", `{"version":1,"routes":[]}`, false, false},
+		{"unknown API major", "4.0.0", `{"version":1,"delegated":false,"routes":[]}`, false, false},
 		{"unknown descriptor", "3.16.0", `{"version":2,"delegated":false,"routes":[]}`, false, false},
 		{"missing caller mode", "3.16.0", `{"version":1,"routes":[]}`, false, false},
 		{"missing routes", "3.16.0", `{"version":1,"delegated":false}`, false, false},
