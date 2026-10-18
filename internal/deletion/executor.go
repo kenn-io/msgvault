@@ -129,13 +129,16 @@ const (
 
 // deleteOne attempts to delete a single message and updates the local database on success.
 // Returns resultSuccess (including 404/already-deleted), resultFailed for transient errors,
-// or resultFatal for scope errors that should halt execution.
+// or resultFatal for unsupported methods or scope errors that should halt execution.
 func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string, method Method) (deleteResult, error) {
 	var err error
-	if method == MethodTrash {
+	switch method {
+	case MethodTrash:
 		err = e.client.TrashMessage(ctx, gmailID)
-	} else {
+	case MethodDelete:
 		err = e.client.DeleteMessage(ctx, gmailID)
+	default:
+		return resultFatal, fmt.Errorf("unsupported deletion method %q for message %s", method, gmailID)
 	}
 
 	if err == nil || isNotFoundError(err) {
@@ -413,6 +416,9 @@ func (e *Executor) persistTerminalManifest(manifestID string, manifest *Manifest
 func (e *Executor) Execute(ctx context.Context, manifestID string, opts *ExecuteOptions) (retErr error) {
 	if opts == nil {
 		opts = DefaultExecuteOptions()
+	}
+	if !opts.Method.known() {
+		return fmt.Errorf("unsupported deletion method %q", opts.Method)
 	}
 
 	manifest, err := e.prepareExecution(manifestID, opts.Method)

@@ -55,6 +55,10 @@ const (
 	MethodDelete Method = "delete" // Permanent deletion
 )
 
+func (m Method) known() bool {
+	return m == MethodTrash || m == MethodDelete
+}
+
 // ErrManifestNotFound reports a manifest ID with no file in any status
 // directory. Callers use errors.Is to map it to HTTP 404.
 var ErrManifestNotFound = errors.New("manifest not found")
