@@ -10,6 +10,7 @@ import (
 )
 
 type EmailFamilyDecisionBackend interface {
+	GetEmailFamilyDecisionContext(ctx context.Context, decisionID int64, options store.EmailFamilyOptions) (*store.EmailFamilyDecisionResult, error)
 	PreviewEmailFamilyDecisionContext(ctx context.Context, input store.EmailFamilyDecisionInput) (*store.EmailFamilyDecisionPreview, error)
 	ApplyEmailFamilyDecisionContext(ctx context.Context, input store.EmailFamilyDecisionInput) (*store.EmailFamilyDecisionResult, error)
 	UndoEmailFamilyDecisionContext(ctx context.Context, decisionID int64, revision int64, familyRevision string, options store.EmailFamilyOptions) (*store.EmailFamilyDecisionResult, error)
@@ -40,11 +41,31 @@ func emailFamilyDecisionDefinitions() []toolDefinition {
 		"message_id": safeIDSchema("Live archived email ID"), "source_ids": {Type: "array", Items: safeIDSchema("Authorized source"), MaxItems: new(100)},
 	}, "message_id"), outputSchemaFor[emailFamilyDecisionHistory](), (*handlers).listEmailFamilyDecisions)
 	history.annotations = toolAnnotations(true)
-	definitions := []toolDefinition{preview, apply, undo, history}
+	get := readDefinition("get_email_family_decision", "Read a local decision and its current surviving copy union by decision ID, including an empty union after target deletion", closedObject(map[string]*jsonschema.Schema{
+		"decision_id": safeIDSchema("Decision ID"), "source_ids": {Type: "array", Items: safeIDSchema("Authorized source"), MaxItems: new(100)},
+	}, "decision_id"), outputSchemaFor[store.EmailFamilyDecisionResult](), (*handlers).getEmailFamilyDecision)
+	definitions := []toolDefinition{get, preview, apply, undo, history}
 	for i := range definitions {
 		definitions[i].availability = func(c catalogCapabilities) bool { return c.emailFamilyDecisions }
 	}
 	return definitions
+}
+
+func (h *handlers) getEmailFamilyDecision(ctx context.Context, req toolRequest) (*toolResult, error) {
+	args := req.GetArguments()
+	id, err := positiveInt64Arg(args, "decision_id")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	sources, err := positiveInt64ArrayArg(args, "source_ids")
+	if err != nil {
+		return toolErrorResult(err.Error()), nil
+	}
+	result, err := h.emailFamilyDecisions.GetEmailFamilyDecisionContext(ctx, id, store.EmailFamilyOptions{SourceIDs: sources})
+	if err != nil {
+		return emailFamilyDecisionToolError(err)
+	}
+	return jsonResult(result)
 }
 
 func emailFamilyDecisionArgs(req toolRequest) (store.EmailFamilyDecisionInput, error) {

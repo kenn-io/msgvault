@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -306,7 +307,7 @@ func (s *Store) emailFamilySnapshotIDs(ctx context.Context, ids []int64, project
 		Identities map[int64][]string
 		Truncated  bool
 		Decisions  []EmailFamilyDecision
-	}{result.Members, identities, result.Truncated, result.Decisions}, json.Deterministic(true))
+	}{result.Members, identities, result.Truncated, result.Decisions}, json.Deterministic(true), jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return nil, err
 	}

@@ -95,6 +95,27 @@ func TestEmailFamilyRevisionTracksOnlyRelatedEvidence(t *testing.T) {
 	assert.Equal("unknown", after.Handling.State)
 }
 
+func TestEmailFamilyRevisionUsesAPIInvalidUTF8Replacement(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttrFixture(t, "imap", "invalid-utf8@example.test")
+	id := f.persist(attrMail{raw: "Message-ID: <invalid-utf8@example.test>\r\n\r\n"})
+	invalidSnippet := "damaged \xff snippet"
+	replacementSnippet := "damaged \uFFFD snippet"
+	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET snippet=? WHERE id=?`), invalidSnippet, id)
+	require.NoError(err)
+
+	invalid, err := f.st.EmailFamilyContext(t.Context(), id, store.EmailFamilyOptions{})
+	require.NoError(err)
+	assert.NotEmpty(invalid.Revision)
+
+	_, err = f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET snippet=? WHERE id=?`), replacementSnippet, id)
+	require.NoError(err)
+	replacement, err := f.st.EmailFamilyContext(t.Context(), id, store.EmailFamilyOptions{})
+	require.NoError(err)
+	assert.Equal(replacement.Revision, invalid.Revision, "invalid UTF-8 hashes as the API's U+FFFD replacement")
+}
+
 func TestEmailFamilyPositiveSentReplyAndImmutableEnvelopes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

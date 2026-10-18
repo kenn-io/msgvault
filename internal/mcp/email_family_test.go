@@ -29,16 +29,55 @@ func TestEmailFamilyCatalogAndReads(t *testing.T) {
 	content := toolStructuredContent(t, response.Result)
 	assert.EqualValues(id, content["anchor_message_id"])
 	delegated := ServeOptions{
-		Engine:             &querytest.MockEngine{},
-		EmailFamilyBackend: st,
-		DelegatedOnly:      true,
-		GrantPermissions:   []string{string(agentgrant.PermissionMessageRead)},
+		Engine:               &querytest.MockEngine{},
+		EmailFamilyBackend:   st,
+		EmailFamilyDecisions: st,
+		DelegatedOnly:        true,
+		GrantPermissions:     []string{string(agentgrant.PermissionMessageRead)},
 	}
 	delegatedListed := toolsByName(t, rawListTools(t, delegated, false))
 	require.Contains(delegatedListed, ToolGetMessage, "message.read must expose a supported message read")
 	assert.NotContains(delegatedListed, "get_email_family", "message.read must not expose the owner-only family read")
-	assert.NotContains(delegatedListed, "preview_email_family_decision")
-	assert.NotContains(delegatedListed, "apply_email_family_decision")
+	assert.NotContains(delegatedListed, "get_email_family_decision", "message.read must not expose the owner-only decision read")
+}
+
+func TestEmailFamilyDecisionCanBeReadByIDAfterTargetsAreDeleted(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "decision-read@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(source.ID, "thread", "Decision read")
+	require.NoError(err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "target", MessageType: "email"}, RawMIME: []byte("Message-ID: <target@example.test>\r\n\r\n")})
+	require.NoError(err)
+	input := store.EmailFamilyDecisionInput{Kind: "handled", RequestKey: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MessageIDs: []int64{id}, ActorKind: "mcp"}
+	preview, err := st.PreviewEmailFamilyDecisionContext(t.Context(), input)
+	require.NoError(err)
+	input.ExpectedFamilyRevision = preview.BeforeRevision
+	created, err := st.ApplyEmailFamilyDecisionContext(t.Context(), input)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM messages WHERE id=?`), id)
+	require.NoError(err)
+
+	opts := ServeOptions{Engine: &querytest.MockEngine{}, EmailFamilyDecisions: st}
+	listed := toolsByName(t, rawListTools(t, opts, false))
+	tool, ok := listed["get_email_family_decision"]
+	require.True(ok, "read-only clients must be able to refresh a decision by ID")
+	assert.Equal(true, toolReadOnlyHint(t, tool))
+	response := rawModernCall(t, opts, HTTPOptions{}, "tools/call", map[string]any{
+		"name":      "get_email_family_decision",
+		"arguments": map[string]any{"decision_id": created.Decision.ID},
+	})
+	content := toolStructuredContent(t, response.Result)
+	encoded, err := json.Marshal(content)
+	require.NoError(err)
+	var current store.EmailFamilyDecisionResult
+	require.NoError(json.Unmarshal(encoded, &current))
+	assert.Equal(created.Decision.ID, current.Decision.ID)
+	assert.Equal("active", current.Decision.State)
+	assert.Empty(current.Family.Members)
+	assert.NotEmpty(current.Family.Revision)
 }
 
 func TestEmailFamilyDecisionToolsNeedWriteOptInAndConfirmation(t *testing.T) {

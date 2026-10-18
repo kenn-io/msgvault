@@ -4392,6 +4392,13 @@ synthesizes reply evidence. Truncated families cannot be changed. History lists
 the latest 20 decisions for one live copy. Deduplication retargets decisions to
 the survivor; undoing deduplication does not move them back.
 
+The owner-only MCP read tools `get_email_family` and
+`get_email_family_decision` accept `message_id` and `decision_id`, respectively,
+plus optional `source_ids`. The decision lookup returns the current surviving
+copy union even when all original targets are deleted, so clients can refresh
+the revisions needed to undo. These reads are available without write opt-in;
+restricted agent grants do not expose them.
+
 The MCP decision tools `preview_email_family_decision`,
 `apply_email_family_decision`, `list_email_family_decisions` and
 `undo_email_family_decision` require writes to be enabled. Apply and undo also
@@ -4400,9 +4407,7 @@ these actions.
 
 Older archives derive identifiers during sync, import or
 [`repair-derived`](#repair-derived). Family reads do not fetch or repair raw mail.
-The owner-only MCP tool `get_email_family` accepts `message_id` and optional
-`source_ids` with the same behavior. An explicit empty MCP source list excludes
-all sources. Restricted agent grants do not provide this capability.
+An explicit empty MCP source list excludes all sources.
 
 ## show-message
 
