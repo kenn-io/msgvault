@@ -253,6 +253,7 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 		SentAt:          sql.NullTime{Time: sentAt, Valid: !sentAt.IsZero()},
 		SenderID:        sql.NullInt64{Int64: senderID, Valid: senderID != 0},
 		IsFromMe:        fromMe,
+		IsSent:          nativeSentState(raw),
 		Subject:         sql.NullString{String: subject, Valid: subject != ""},
 		Snippet:         sql.NullString{String: body, Valid: body != ""},
 		SizeEstimate:    int64(len(body)),
@@ -287,6 +288,26 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 			"error", err)
 	}
 	return msgID, nil
+}
+
+func nativeSentState(record any) sql.NullBool {
+	switch message := record.(type) {
+	case SMS:
+		switch message.Type {
+		case SMSTypeInbox, SMSTypeSent:
+			return sql.NullBool{Bool: true, Valid: true}
+		case SMSTypeDraft, SMSTypeOutbox, SMSTypeFailed, SMSTypeQueued:
+			return sql.NullBool{Bool: false, Valid: true}
+		}
+	case MMS:
+		switch message.MessageBox {
+		case MMSBoxInbox, MMSBoxSent:
+			return sql.NullBool{Bool: true, Valid: true}
+		case MMSBoxDraft, MMSBoxOutbox:
+			return sql.NullBool{Bool: false, Valid: true}
+		}
+	}
+	return sql.NullBool{}
 }
 
 func (i *Importer) participantID(address, displayName string) (int64, error) {

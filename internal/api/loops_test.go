@@ -364,10 +364,6 @@ func TestLoopGeneratedNullableObjects(t *testing.T) {
 	requirements.NoError(err)
 	assertions.JSONEq(body, string(encoded), "an unwired surface must remain null through generated client decoding")
 	requirements.NotPanics(func() { assert.NoError(t, report.Validate()) }, "generated validation must accept nullable map entries")
-
-	var preview generated.LoopSuppressionResult
-	requirements.NoError(json.Unmarshal([]byte(`{"suppression":null,"would_close":0}`), &preview))
-	assertions.Nil(preview.Suppression)
 }
 
 // These are actual daemon DTOs, encoded exactly as the HTTP handlers encode

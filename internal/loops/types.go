@@ -77,11 +77,12 @@ type ConversationView struct {
 }
 
 type LiveLoop struct {
-	ID                        int64
-	Kind                      string
-	AnchorMessageID           int64
-	CounterpartyParticipantID int64
-	CounterpartyPersonID      int64
+	ID                          int64
+	Kind                        string
+	AnchorMessageID             int64
+	CounterpartyParticipantID   int64
+	CounterpartyPersonID        int64
+	OwnerParticipationMessageID int64
 }
 
 type Suppressions struct {
@@ -96,9 +97,10 @@ type Spec struct {
 	TurnMessageIDs        []int64
 	// PreviousTurnKnown, PreviousTurnAt, and PreviousTurnMessageID identify the
 	// opposing boundary inside the window; the ID resolves equal-time ordering.
-	PreviousTurnKnown     bool
-	PreviousTurnAt        time.Time
-	PreviousTurnMessageID int64
+	PreviousTurnKnown           bool
+	PreviousTurnAt              time.Time
+	PreviousTurnMessageID       int64
+	OwnerParticipationMessageID int64
 	// TruncatedRun marks body-limited or unreadable evidence in the trailing run.
 	TruncatedRun bool
 }

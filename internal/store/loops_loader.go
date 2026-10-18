@@ -16,13 +16,21 @@ import (
 func (s *Store) LoopConversationAnchorExistsContext(ctx context.Context, conversationID, messageID int64) (bool, error) {
 	var live bool
 	err := s.db.QueryRowContext(ctx, `SELECT messages.deleted_at IS NULL AND messages.deleted_from_source_at IS NULL
-		AND NOT (`+draftEvidenceSQL("messages", "sources")+`)
+		AND NOT (`+loopMessageExcludedSQL("messages", "sources")+`)
 		FROM messages JOIN sources ON sources.id=messages.source_id
 		WHERE messages.id=? AND messages.conversation_id=?`, messageID, conversationID).Scan(&live)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	return live, err
+}
+
+func loopMessageExcludedSQL(message, source string) string {
+	return `(` + draftEvidenceSQL(message, source) + `
+		OR ` + message + `.message_type='synctech_sms_call'
+		OR (` + source + `.source_type='synctech_sms'
+			AND ` + message + `.message_type IN ('sms','mms')
+			AND ` + message + `.is_sent=FALSE))`
 }
 
 func (s *Store) LoopMessageBodyContext(ctx context.Context, messageID int64) (string, error) {
@@ -56,7 +64,7 @@ FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversat
 			out.LastMessageAt = last.Time
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.source_id,m.conversation_id,m.message_type,m.sent_at,m.received_at,m.internal_date,COALESCE(m.source_is_from_me,FALSE),m.deleted_at,m.deleted_from_source_at,m.sender_id,COALESCE(m.subject,''),COALESCE(m.snippet,''),COALESCE(m.list_id,''),`+draftEvidenceSQL("m", "src")+` FROM messages m JOIN sources src ON src.id=m.source_id
-WHERE m.conversation_id=? AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+draftEvidenceSQL("m", "src")+`)
+WHERE m.conversation_id=? AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+loopMessageExcludedSQL("m", "src")+`)
 ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id DESC LIMIT ?`, conversationID, limit)
 		if err != nil {
 			return err

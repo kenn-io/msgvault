@@ -916,8 +916,9 @@ func TestDetectPreservesLiveBulkAnchorWhenPreviousTurnFallsOutsideWindow(t *test
 	assertions.Empty(got.CoverageGaps)
 	requirements.NotNil(got.Open)
 	assertions.Equal(anchor.ID, got.Open.Anchor.ID)
-	assertions.False(got.Open.PreviousTurnKnown)
-	assertions.Zero(extensions, "the live anchor remains inside the bounded window")
+	assertions.True(got.Open.PreviousTurnKnown)
+	assertions.Equal(int64(9), got.Open.OwnerParticipationMessageID)
+	assertions.Equal(1, extensions, "the extension recovers durable owner-participation evidence")
 }
 
 func TestDetectAggregatesBulkSignalsAcrossInboundTurn(t *testing.T) {
@@ -1185,11 +1186,38 @@ func TestDetectRetainsEstablishedBulkLoopWhenPriorParticipationIsOutsideWindow(t
 	}
 	view.LastMessageAt = view.Messages[len(view.Messages)-1].OccurredAt
 	view.AnchorExists = func(int64) (bool, error) { return true, nil }
-	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID}}, now, DefaultThresholds(), Suppressions{})
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID, OwnerParticipationMessageID: 9}}, now, DefaultThresholds(), Suppressions{})
 	requirements.NoError(got.Err)
 	assertions.Empty(got.Close)
 	requirements.NotNil(got.Open)
 	assertions.Equal(anchor.ID, got.Open.Anchor.ID)
+}
+
+func TestDetectWithdrawsUnprovenRetainedBulkAnchorOutsideRecentWindow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	anchor := view.Messages[0]
+	anchor.ID = 10
+	anchor.OccurredAt = now.Add(-72 * time.Hour)
+	anchor.Signals = &mime.AutomationSignals{PrecedenceBulk: true}
+	recent := view.Messages[0]
+	recent.ID = 20
+	recent.OccurredAt = now.Add(-time.Hour)
+	view.Messages = []LoopMessage{recent}
+	view.LastMessageAt = recent.OccurredAt
+	view.AnchorExists = func(int64) (bool, error) { return true, nil }
+	view.Extend = func() (ConversationView, error) {
+		extended := view
+		extended.Messages = []LoopMessage{anchor, recent}
+		return extended, nil
+	}
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	assertions.Nil(got.Open)
 }
 
 func TestDetectRetainsSingleBulkReplyAfterOwnerParticipation(t *testing.T) {

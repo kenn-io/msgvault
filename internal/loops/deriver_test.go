@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -220,6 +222,7 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	requirements := require.New(t)
 	f, cfg, now := deriveFixture(t)
 	cfg.ConversationMessageLimit = 3
+	cfg.ConversationMessageLimitExtended = 3
 	cfg.RunMessageLimit = 3
 	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
@@ -284,13 +287,144 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	preserved, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
 	requirements.NoError(err)
 	assertions.Equal("open", preserved.Status)
-	assertions.Contains(string(preserved.EvidenceJSON), `"coverage_gap":true`)
+	assertions.Contains(string(preserved.EvidenceJSON), fmt.Sprintf(`"owner_participation_message_id":%d`, ownerMessageID))
+	assertions.NotContains(string(preserved.EvidenceJSON), `"coverage_gap":true`)
 	requirements.NotNil(preserved.SnoozedUntil)
 	assertions.True(until.Equal(*preserved.SnoozedUntil))
 	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	requirements.Len(afterRefresh, 1)
 	assertions.Equal(live[0].ID, afterRefresh[0].ID)
+}
+
+func TestDeriverWithdrawsBulkReplyDiscoveredByBackfillWithoutOwnerParticipation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, peer)
+
+	message := &store.Message{
+		SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "historical-bulk-without-owner-turn",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: peer, Valid: true},
+		SentAt:  sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true},
+		Subject: sql.NullString{String: "Weekly update", Valid: true},
+	}
+	messageID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: message, BodyText: sql.NullString{String: "A mailing list update.", Valid: true},
+		RawFormat: "mime", RawMIME: []byte("From: peer@example.test\r\nTo: owner@example.test\r\nPrecedence: bulk\r\nSubject: Weekly update\r\n\r\nA mailing list update."),
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", messageID, owner)
+	deriveExec(t, f, "UPDATE conversations SET last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-48*time.Hour)), f.ConvID)
+
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1, "the first drain runs before MIME signal backfill")
+	assertions.Equal(messageID, *live[0].AnchorMessageID)
+	loopID := live[0].ID
+
+	var precedenceBulk bool
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT precedence_bulk FROM message_automation_signals WHERE message_id=?"), messageID).Scan(&precedenceBulk))
+	assertions.True(precedenceBulk, "the background MIME pass discovers the bulk header")
+
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	assertions.Empty(live, "a backfilled bulk anchor without owner participation is not a reply owed")
+	closed, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	requirements.NotNil(closed.ClosedReason)
+	assertions.Equal("withdrawn", *closed.ClosedReason)
+}
+
+func TestDeriverExcludesImportedUnsentSynctechSMSFromTurnDetection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		typ  synctechsms.SMSType
+	}{
+		{name: "draft", typ: synctechsms.SMSTypeDraft},
+		{name: "outbox", typ: synctechsms.SMSTypeOutbox},
+		{name: "failed", typ: synctechsms.SMSTypeFailed},
+		{name: "queued", typ: synctechsms.SMSTypeQueued},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f, cfg, now := deriveFixture(t)
+			ownerPhone := "+15550000001"
+			peerPhone := "+15550000002"
+			xml := fmt.Sprintf(`<smses count="2">
+  <sms address="%s" date="%d" type="%d" body="Can you send the file?" read="1" status="-1" />
+  <sms address="%s" date="%d" type="%d" body="Unsent reply" read="1" status="0" />
+</smses>`, peerPhone, now.Add(-48*time.Hour).UnixMilli(), synctechsms.SMSTypeInbox,
+				peerPhone, now.Add(-47*time.Hour).UnixMilli(), tc.typ)
+			summary := importSynctechMessages(t, f, ownerPhone, xml)
+			requirements.Len(summary.MessageIDs, 2)
+			var conversationID int64
+			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT conversation_id FROM messages WHERE id=?"), summary.MessageIDs[0]).Scan(&conversationID))
+
+			d, err := NewDeriver(f.Store, &cfg)
+			requirements.NoError(err)
+			d.now = func() time.Time { return now }
+			_, err = d.RunOnce(t.Context())
+			requirements.NoError(err)
+			live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), conversationID)
+			requirements.NoError(err)
+			requirements.Len(live, 1)
+			assertions.Equal(ReplyOwed, live[0].Kind)
+			requirements.NotNil(live[0].AnchorMessageID)
+			assertions.Equal(summary.MessageIDs[0], *live[0].AnchorMessageID)
+		})
+	}
+}
+
+func TestDeriverExcludesImportedSynctechCallLogs(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	xml := fmt.Sprintf(`<calls count="1"><call number="+15550000002" duration="42" date="%d" type="1" presentation="1" /></calls>`, now.Add(-48*time.Hour).UnixMilli())
+	summary := importSynctechRecords(t, f, "+15550000001", xml, false, true)
+	requirements.Len(summary.MessageIDs, 1)
+	var conversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT conversation_id FROM messages WHERE id=?"), summary.MessageIDs[0]).Scan(&conversationID))
+
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), conversationID)
+	requirements.NoError(err)
+	assertions.Empty(live)
+}
+
+func importSynctechMessages(t *testing.T, f *storetest.Fixture, ownerPhone, xml string) synctechsms.ImportSummary {
+	t.Helper()
+	return importSynctechRecords(t, f, ownerPhone, xml, true, false)
+}
+
+func importSynctechRecords(t *testing.T, f *storetest.Fixture, ownerPhone, xml string, includeSMS, includeCalls bool) synctechsms.ImportSummary {
+	t.Helper()
+	source, err := f.Store.GetOrCreateSource(synctechsms.SourceType, ownerPhone)
+	require.NoError(t, err)
+	require.NoError(t, f.Store.AddAccountIdentity(source.ID, ownerPhone, "account-identifier"))
+	file := synctechsms.BackupFile{Name: "synthetic-backup.xml", Opener: func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(xml)), nil
+	}}
+	summary, err := synctechsms.NewImporter(f.Store, synctechsms.ImportOptions{
+		OwnerPhone: ownerPhone, IncludeSMS: includeSMS, IncludeCalls: includeCalls,
+	}).ImportFilesIntoSource(source.ID, []synctechsms.BackupFile{file})
+	require.NoError(t, err)
+	return summary
 }
 
 func TestDeriverWithdrawsMovedOrReclassifiedAnchor(t *testing.T) {

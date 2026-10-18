@@ -145,7 +145,11 @@ func (d *Deriver) drain(ctx context.Context, now time.Time, result *RunResult) e
 				withdrawn = append(withdrawn, store.LoopCloseDecision{ID: row.ID, Reason: "withdrawn", At: now})
 				continue
 			}
-			loop := LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID}
+			ownerParticipationMessageID, err := ownerParticipationFromEvidence(row.EvidenceJSON)
+			if err != nil {
+				return fmt.Errorf("read owner participation evidence for loop %d: %w", row.ID, err)
+			}
+			loop := LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID, OwnerParticipationMessageID: ownerParticipationMessageID}
 			if row.CounterpartyParticipantID != nil {
 				loop.CounterpartyParticipantID = *row.CounterpartyParticipantID
 			}
@@ -222,7 +226,7 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 		return out, nil
 	}
 	spec := v.Open
-	evidence, err := json.Marshal([]storedEvidence{{MessageID: spec.Anchor.ID, ConversationID: view.ConversationID, OccurredAt: spec.Anchor.OccurredAt, Subject: spec.Anchor.Subject, TruncatedRun: spec.TruncatedRun}}, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+	evidence, err := json.Marshal([]storedEvidence{{MessageID: spec.Anchor.ID, ConversationID: view.ConversationID, OccurredAt: spec.Anchor.OccurredAt, Subject: spec.Anchor.Subject, TruncatedRun: spec.TruncatedRun, OwnerParticipationMessageID: spec.OwnerParticipationMessageID}}, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return out, err
 	}
@@ -243,12 +247,24 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 	return out, nil
 }
 
+func ownerParticipationFromEvidence(raw jsontext.Value) (int64, error) {
+	var evidence []storedEvidence
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		return 0, err
+	}
+	if len(evidence) == 0 {
+		return 0, nil
+	}
+	return evidence[0].OwnerParticipationMessageID, nil
+}
+
 // storedEvidence preserves the persisted evidence JSON shape without changing
 // the Reader's independently versioned Evidence contract.
 type storedEvidence struct {
-	MessageID      int64     `json:"message_id"`
-	ConversationID int64     `json:"conversation_id"`
-	OccurredAt     time.Time `json:"occurred_at"`
-	Subject        string    `json:"subject"`
-	TruncatedRun   bool      `json:"truncated_run,omitzero"`
+	MessageID                   int64     `json:"message_id"`
+	ConversationID              int64     `json:"conversation_id"`
+	OccurredAt                  time.Time `json:"occurred_at"`
+	Subject                     string    `json:"subject"`
+	TruncatedRun                bool      `json:"truncated_run,omitzero"`
+	OwnerParticipationMessageID int64     `json:"owner_participation_message_id,omitzero"`
 }

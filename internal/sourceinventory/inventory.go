@@ -87,8 +87,10 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		id := source.ID
 		item := Item{SourceID: &id, SourceType: source.SourceType, Identifier: source.Identifier, Scheduling: "manual", Outcome: "never"}
 		item.SyncCommand = syncCommand(item)
+		configuredSource := false
 		for i, entry := range configured {
 			if matches(source, entry) {
+				configuredSource = true
 				matched[i] = true
 				item.Scheduling = scheduling(entry.enabled, entry.schedule)
 				if entry.command != "" {
@@ -101,7 +103,7 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		}
 		// History-only Beeper archives are excluded from synchronization even
 		// when the provider itself has a scheduled job.
-		if source.HistoryOnly || staticSource(item.SourceType) {
+		if source.HistoryOnly || (staticSource(item.SourceType) && !configuredSource) {
 			item.Scheduling = "static"
 			item.SyncCommand = ""
 		}
@@ -251,9 +253,9 @@ func configuration(cfg *config.Config) []configuredSource {
 
 func staticSource(kind string) bool {
 	return slices.Contains([]string{
-		"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups",
-		"facebook_messenger", "imazing_csv", "slackdump", "synctech-sms",
-		"whatsapp", "apple_messages", "google_messages", "imessage",
+		"apple-mail", "apple_messages", "mbox", "pst", "eml", "maildir", "hey", "google-groups",
+		"facebook_messenger", "imazing_csv", "slackdump", "synctech-sms", "synctech_sms",
+		"whatsapp", "google_messages", "imessage",
 	}, kind)
 }
 

@@ -70,7 +70,7 @@ func (s *Store) ListOpenLoopsContext(ctx context.Context, filter LoopListFilter)
 		args = append(args, filter.SourceID)
 	}
 	if !filter.IncludeSnoozed {
-		query += " AND (l.snoozed_until IS NULL OR l.snoozed_until<=?)"
+		query += " AND (l.status='closed' OR l.snoozed_until IS NULL OR l.snoozed_until<=?)"
 		args = append(args, s.dialect.TimestampParam(filter.Now))
 	}
 	if filter.HasCursor {

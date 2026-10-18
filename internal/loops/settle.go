@@ -5,14 +5,15 @@ import (
 	"time"
 )
 
-func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg Thresholds) (decision *CloseDecision, gap bool, retained *LoopMessage, err error) {
+func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg Thresholds) (decision *CloseDecision, gap bool, retained *LoopMessage, ownerParticipationMessageID int64, err error) {
+	ownerParticipationMessageID = live.OwnerParticipationMessageID
 	if v.AnchorExists != nil {
 		exists, lookupErr := v.AnchorExists(live.AnchorMessageID)
 		if lookupErr != nil {
-			return nil, false, nil, fmt.Errorf("check loop anchor: %w", lookupErr)
+			return nil, false, nil, ownerParticipationMessageID, fmt.Errorf("check loop anchor: %w", lookupErr)
 		}
 		if !exists {
-			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 		}
 	}
 	anchor := -1
@@ -23,7 +24,7 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		}
 	}
 	if anchor < 0 {
-		return nil, true, nil, nil
+		return nil, true, nil, ownerParticipationMessageID, nil
 	}
 	var side Direction
 	switch live.Kind {
@@ -32,41 +33,43 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	case AwaitingReply:
 		side = Outbound
 	default:
-		return nil, false, nil, fmt.Errorf("unsupported live loop kind %q", live.Kind)
+		return nil, false, nil, ownerParticipationMessageID, fmt.Errorf("unsupported live loop kind %q", live.Kind)
 	}
 	if live.Kind == AwaitingReply && v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 	}
 	// Corrected automation or ownership metadata can disqualify the anchor
 	// itself. Neutral messages after an eligible anchor do not.
 	anchorMessage := v.Messages[anchor]
 	if !metadataSubstantive(anchorMessage) || anchorMessage.Direction != side {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 	}
 	if live.Kind == ReplyOwed && anchorMessage.ListID != "" {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 	}
 	bulkReplyAnchor := live.Kind == ReplyOwed && isBulkMessage(anchorMessage)
-	priorOwnerParticipation := false
-	if bulkReplyAnchor {
+	priorOwnerParticipation := ownerParticipationMessageID != 0
+	if bulkReplyAnchor && !priorOwnerParticipation {
 		for i := anchor - 1; i >= 0; i-- {
 			if !t.substantive(v, i) {
 				continue
 			}
 			priorOwnerParticipation = v.Messages[i].Direction == Outbound
+			if priorOwnerParticipation {
+				ownerParticipationMessageID = v.Messages[i].ID
+			}
 			break
 		}
 	}
+	large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
 	if _, ok := obligationCounterparty(v, live.Kind, anchorMessage); !ok {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
+	}
+	if live.Kind == ReplyOwed && !addressedToOwner(anchorMessage, v.ConversationType, large) {
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 	}
 	anchorUnreadable := false
 	switch live.Kind {
-	case ReplyOwed:
-		large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
-		if !addressedToOwner(anchorMessage, v.ConversationType, large) {
-			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
-		}
 	case AwaitingReply:
 		body := t.body(v, anchorMessage.ID)
 		if !body.ok {
@@ -74,8 +77,8 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 			// checking for a conclusive opposing turn before treating this pass as
 			// uncertain; a later inbound answer still settles the live obligation.
 			anchorUnreadable = true
-		} else if !asksQuestion(body.text) || !hasAwaitingReplyCounterparty(v, anchorMessage) {
-			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+		} else if !asksQuestion(body.text) || large || !hasAwaitingReplyCounterparty(v, anchorMessage) {
+			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 		}
 	}
 	laterSameSideActivity := false
@@ -90,18 +93,18 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		if !t.substantive(v, i) {
 			continue
 		}
-		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, nil
+		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, ownerParticipationMessageID, nil
 	}
 	if bulkReplyAnchor && !priorOwnerParticipation && !laterSameSideActivity {
-		// A live bulk-reply loop was established from owner participation. If the
-		// bounded metadata window no longer contains that proof, absence is not
-		// evidence that the anchor was unsolicited automation.
-		return nil, true, &v.Messages[anchor], nil
+		// A bounded metadata window cannot prove owner participation. Keep the
+		// anchor available to the detector, which requires durable participation
+		// evidence before allowing the bulk message to remain a reply owed.
+		return nil, true, &v.Messages[anchor], ownerParticipationMessageID, nil
 	}
 	if anchorUnreadable {
-		return nil, true, &v.Messages[anchor], nil
+		return nil, true, &v.Messages[anchor], ownerParticipationMessageID, nil
 	}
-	return nil, false, &v.Messages[anchor], nil
+	return nil, false, &v.Messages[anchor], ownerParticipationMessageID, nil
 }
 
 func hasAwaitingReplyCounterparty(view ConversationView, anchor LoopMessage) bool {

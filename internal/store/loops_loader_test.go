@@ -153,6 +153,24 @@ func TestLoopListFiltersAndCursor(t *testing.T) {
 	assertions.ErrorIs(err, store.ErrLoopNotFound)
 }
 
+func TestLoopListIncludesSnoozedClosedHistory(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	id := insertSchemaLoop(t, f, "snoozed-closed-history", "reply_owed", "turn_state")
+	loopExec(t, f.Store, "UPDATE open_loops SET snoozed_until=? WHERE id=?", loopTestStamp(f.Store, now.Add(24*time.Hour)), id)
+	closed, err := f.Store.CloseLoopContext(t.Context(), id, "handled", now)
+	requirements.NoError(err)
+	assertions.Equal("closed", closed.Status)
+
+	rows, err := f.Store.ListOpenLoopsContext(t.Context(), store.LoopListFilter{Status: "all", Limit: 20, Now: now})
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Equal(id, rows[0].ID)
+	assertions.Equal("closed", rows[0].Status)
+}
+
 func TestLoopPersonFilterResolvesPromotionAfterClosure(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

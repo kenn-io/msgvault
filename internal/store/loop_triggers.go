@@ -38,8 +38,12 @@ func (d *SQLiteDialect) EnsureLoopProjectionTriggers(q querier) error {
 				fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON message_%s FOR EACH ROW BEGIN %s END", name, strings.ToUpper(event), association, body.String()))
 		}
 	}
-	messageUpdateColumns := []string{"conversation_id"}
-	messageUpdateConditions := []string{"OLD.conversation_id IS NOT NEW.conversation_id"}
+	messageUpdateColumns := []string{"conversation_id", "message_type", "is_sent"}
+	messageUpdateConditions := []string{
+		"OLD.conversation_id IS NOT NEW.conversation_id",
+		"OLD.message_type IS NOT NEW.message_type",
+		"OLD.is_sent IS NOT NEW.is_sent",
+	}
 	for _, column := range []string{"source_is_from_me", "identity_is_from_me"} {
 		var present int
 		if err := q.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name=?", column).Scan(&present); err != nil {
@@ -132,8 +136,10 @@ func (d *PostgreSQLDialect) EnsureLoopProjectionTriggers(q querier) error {
    $$ LANGUAGE plpgsql`,
 		`DROP TRIGGER IF EXISTS trg_loop_queue_messages_move ON messages`,
 		`CREATE TRIGGER trg_loop_queue_messages_move
-	   AFTER UPDATE OF conversation_id, source_is_from_me, identity_is_from_me ON messages FOR EACH ROW
+ AFTER UPDATE OF conversation_id, message_type, is_sent, source_is_from_me, identity_is_from_me ON messages FOR EACH ROW
    WHEN (OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
+	      OR OLD.message_type IS DISTINCT FROM NEW.message_type
+	      OR OLD.is_sent IS DISTINCT FROM NEW.is_sent
 	      OR OLD.source_is_from_me IS DISTINCT FROM NEW.source_is_from_me
 	      OR OLD.identity_is_from_me IS DISTINCT FROM NEW.identity_is_from_me)
    EXECUTE FUNCTION queue_loop_messages_move()`,

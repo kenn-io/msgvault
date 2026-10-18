@@ -427,6 +427,10 @@ type Message struct {
 	SenderID         sql.NullInt64
 	ReplyToMessageID sql.NullInt64
 	IsFromMe         bool
+	// IsSent records source-native send completion when the importer can tell.
+	// An invalid value preserves the current archive value and leaves fresh
+	// messages at the schema default.
+	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
 	// account identity rather than a source-native sent-by-me signal.
 	IdentityDerivedIsFromMe bool
@@ -1376,12 +1380,14 @@ func upsertMessageSQL(now string) string {
 		sent_at, received_at, internal_date, sender_id,
 		reply_to_message_id,
 		is_from_me, source_is_from_me, identity_is_from_me,
+		is_sent,
 		subject, snippet, size_estimate,
 		has_attachments, attachment_count, archived_at, last_modified
 	)
 	SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 	       (source_is_from_me OR identity_is_from_me),
 	       source_is_from_me, identity_is_from_me,
+	       COALESCE(?, TRUE),
 	       ?, ?, ?, ?, ?, %[1]s, %[1]s
 	FROM attribution
 	WHERE TRUE
@@ -1403,6 +1409,7 @@ func upsertMessageSQL(now string) string {
 		is_from_me = excluded.is_from_me,
 		source_is_from_me = excluded.source_is_from_me,
 		identity_is_from_me = excluded.identity_is_from_me,
+		is_sent = CASE WHEN ? THEN excluded.is_sent ELSE messages.is_sent END,
 		subject = excluded.subject,
 		snippet = excluded.snippet,
 		size_estimate = excluded.size_estimate,
@@ -1498,9 +1505,11 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		msg.RFC822MessageID, msg.ListID, msg.MessageType,
 		msg.SentAt, msg.ReceivedAt, msg.InternalDate, msg.SenderID,
 		msg.ReplyToMessageID,
+		msg.IsSent,
 		msg.Subject, msg.Snippet, msg.SizeEstimate,
 		msg.HasAttachments, msg.AttachmentCount,
 		msg.PreserveAttachmentStats, msg.PreserveAttachmentStats,
+		msg.IsSent.Valid,
 	}
 
 	// Use RETURNING to avoid an extra SELECT per message when supported.

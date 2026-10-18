@@ -292,6 +292,52 @@ func TestWhatsAppDatabaseImportIsStaticAndDoesNotBlockFreshness(t *testing.T) {
 	assertions.False(report.Stale, "a static WhatsApp backup must not make waiting views stale")
 }
 
+func TestSynctechSMSImportIsStaticButConfiguredSourceKeepsItsSchedule(t *testing.T) {
+	t.Run("standalone import is static", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		st := testutil.NewTestStore(t)
+		_, err := st.GetOrCreateSource("synctech_sms", "+15550000001")
+		requirements.NoError(err)
+		items, err := Build(t.Context(), config.NewDefaultConfig(), st)
+		requirements.NoError(err)
+		requirements.Len(items, 1)
+		assertions.Equal("static", items[0].Scheduling)
+		assertions.Empty(items[0].SyncCommand)
+		report, err := freshness.Build(t.Context(), freshness.Inputs{
+			Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
+		})
+		requirements.NoError(err)
+		assertions.False(report.Stale, "an imported SMS backup must not make waiting views stale")
+	})
+
+	for _, tc := range []struct {
+		name, schedule, want string
+		enabled              bool
+	}{
+		{name: "scheduled", enabled: true, schedule: "0 * * * *", want: "scheduled"},
+		{name: "manual", enabled: true, want: "manual"},
+		{name: "disabled", enabled: false, schedule: "0 * * * *", want: "disabled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource("synctech_sms", "+15550000001")
+			requirements.NoError(err)
+			cfg := config.NewDefaultConfig()
+			cfg.SynctechSMS.Sources = []config.SynctechSMSSource{{
+				Name: "pixel", Backend: "drive", OwnerPhone: "+15550000001", Enabled: tc.enabled, Schedule: tc.schedule,
+			}}
+			items, err := Build(t.Context(), cfg, st)
+			requirements.NoError(err)
+			requirements.Len(items, 1)
+			assertions.Equal(tc.want, items[0].Scheduling)
+			assertions.Equal("msgvault sync-synctech-sms pixel", items[0].SyncCommand)
+		})
+	}
+}
+
 func TestArchiveAndConfigurationUnion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

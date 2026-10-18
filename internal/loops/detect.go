@@ -23,7 +23,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	}
 	closeKept := func(kind, reason string) {
 		for _, l := range live {
-			if (kind == "" || l.Kind == kind) && (l.Kind == ReplyOwed || l.Kind == AwaitingReply) {
+			if (kind == "" || l.Kind == kind) && (l.Kind == ReplyOwed || l.Kind == AwaitingReply) && !slices.Contains(v.CoverageGaps, l.ID) {
 				closeLive(l, reason)
 			}
 		}
@@ -78,14 +78,17 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	settledTurnFlip := false
 	type settledLoop struct {
 		loop   LiveLoop
-		anchor LoopMessage
+		anchor *LoopMessage
 	}
 	retained := make(map[string]settledLoop)
+	unprovenBulkAnchors := make(map[int64]int64)
 	for _, l := range live {
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
 		}
-		if !slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID }) && !extended && view.Extend != nil {
+		anchorInWindow := slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
+		needsOwnerParticipationEvidence := l.Kind == ReplyOwed && l.OwnerParticipationMessageID == 0
+		if (!anchorInWindow || needsOwnerParticipationEvidence) && !extended && view.Extend != nil {
 			var err error
 			settlementView, err = view.Extend()
 			extended = true
@@ -102,7 +105,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settlementView.AnchorExists = view.AnchorExists
 			settlementView.BodyText = view.BodyText
 		}
-		closed, gap, anchor, err := t.settle(settlementView, l, now, cfg)
+		closed, gap, anchor, ownerParticipationMessageID, err := t.settle(settlementView, l, now, cfg)
 		if err != nil {
 			v.Err = err
 			return v
@@ -114,8 +117,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if gap && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
-		if anchor != nil {
-			retained[l.Kind] = settledLoop{loop: l, anchor: *anchor}
+		if closed == nil {
+			l.OwnerParticipationMessageID = ownerParticipationMessageID
+			retained[l.Kind] = settledLoop{loop: l, anchor: anchor}
+			if gap && l.Kind == ReplyOwed && ownerParticipationMessageID == 0 && anchor != nil && isBulkMessage(*anchor) {
+				unprovenBulkAnchors[l.ID] = anchor.ID
+			}
 		}
 	}
 	if extended && (len(turns) > 0 || settledTurnFlip) {
@@ -145,6 +152,11 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	if extended && !settledTurnFlip && !hasEligibleTrailingAnchor(view, recentTurns, &t, cfg) {
 		// A statement nudge or CC-only message in the recent window cannot
 		// create a second Open for a retained live anchor found by extension.
+		for _, loop := range live {
+			if _, unproven := unprovenBulkAnchors[loop.ID]; unproven {
+				closeLive(loop, "withdrawn")
+			}
+		}
 		return v
 	}
 	trailing := turns[0]
@@ -152,19 +164,23 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	large := settlementView.ConversationType == "group_chat" && nonOwnerCount(settlementView.Participants) > cfg.MaxGroupCounterparts
 	var anchor *LoopMessage
 	var counterparty LoopParticipant
+	ownerParticipationMessageID := int64(0)
 	kind, threshold := ReplyOwed, cfg.ReplyOwedAfter
 	var uncertain bool
 	if trailing.direction == Inbound {
-		if settled, ok := retained[ReplyOwed]; ok {
-			anchorCopy := settled.anchor
-			anchor = &anchorCopy
-		}
 		ownerWrote := len(turns) > 1 && turns[1].direction == Outbound
-		if _, alreadyEstablished := retained[ReplyOwed]; alreadyEstablished {
-			// A live turn was opened only after owner participation was proven.
-			// Preserve that proof when the bounded window no longer includes the
-			// earlier owner turn.
-			ownerWrote = true
+		if ownerWrote && len(turns[1].messages) > 0 {
+			ownerParticipationMessageID = turns[1].messages[len(turns[1].messages)-1].ID
+		}
+		retainedOwnerParticipationMessageID := int64(0)
+		retainedAnchorMessageID := int64(0)
+		if settled, ok := retained[ReplyOwed]; ok {
+			if anchor == nil && settled.anchor != nil {
+				anchorCopy := *settled.anchor
+				anchor = &anchorCopy
+			}
+			retainedOwnerParticipationMessageID = settled.loop.OwnerParticipationMessageID
+			retainedAnchorMessageID = settled.loop.AnchorMessageID
 		}
 		bulk := false
 		list := false
@@ -182,12 +198,24 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				counterparty = candidateCounterparty
 			}
 		}
-		if anchor != nil && counterparty.ID == 0 {
-			if settled, ok := retained[ReplyOwed]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
-				counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
-			} else {
-				counterparty = anchor.Sender
+		if anchor != nil {
+			if counterparty.ID == 0 {
+				if settled, ok := retained[ReplyOwed]; ok && settled.anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
+					counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
+				} else {
+					counterparty = anchor.Sender
+				}
 			}
+			// A retained anchor can come from the extended settlement window,
+			// outside the recent messages used to classify this trailing turn.
+			list = list || anchor.ListID != ""
+			bulk = bulk || isBulkMessage(*anchor)
+		}
+		if ownerParticipationMessageID == 0 && anchor != nil && anchor.ID == retainedAnchorMessageID {
+			ownerParticipationMessageID = retainedOwnerParticipationMessageID
+		}
+		if ownerParticipationMessageID != 0 {
+			ownerWrote = true
 		}
 		if anchor != nil && suppressed(counterparty, supp) {
 			closeKept(kind, "muted")
@@ -201,12 +229,19 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		})
 		if anchor != nil && (list || (bulk && !ownerWrote && !liveAnchorInTurn)) {
 			closeKept(kind, "withdrawn")
+			if bulk && !ownerWrote {
+				for _, loop := range live {
+					if anchorID, unproven := unprovenBulkAnchors[loop.ID]; unproven && anchorID == anchor.ID {
+						closeLive(loop, "withdrawn")
+					}
+				}
+			}
 			return v
 		}
 	} else {
 		kind, threshold = AwaitingReply, cfg.AwaitingReplyAfter
-		if settled, ok := retained[kind]; ok {
-			anchorCopy := settled.anchor
+		if settled, ok := retained[AwaitingReply]; ok && settled.anchor != nil {
+			anchorCopy := *settled.anchor
 			anchor = &anchorCopy
 		}
 		if large {
@@ -218,8 +253,13 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			uncertain = uncertain || !body.ok
 			if body.ok && asksQuestion(body.text) &&
 				(anchor == nil || messageBefore(m, *anchor)) {
+				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
+				if !ok || suppressed(candidateCounterparty, supp) {
+					continue
+				}
 				candidate := m
 				anchor = &candidate
+				counterparty = candidateCounterparty
 			}
 		}
 		var candidates []LoopParticipant
@@ -243,7 +283,17 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			}
 		}
 		retainedCounterparty := false
-		if settled, ok := retained[kind]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
+		explicitCounterparty := false
+		if anchor != nil {
+			for _, recipient := range anchor.Recipients {
+				priority, valid := counterpartyRecipientPriority(recipient.Type, settlementView.ConversationType)
+				if valid && priority < 2 && recipient.ID == counterparty.ID && !recipient.IsOwner {
+					explicitCounterparty = true
+					break
+				}
+			}
+		}
+		if settled, ok := retained[kind]; ok && settled.anchor != nil && anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
 			for _, participant := range candidates {
 				if participant.ID == settled.loop.CounterpartyParticipantID {
 					counterparty = participant
@@ -253,7 +303,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			}
 		}
 		for _, participant := range candidates {
-			if retainedCounterparty {
+			if retainedCounterparty || explicitCounterparty {
 				continue
 			}
 			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] || (counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
@@ -309,7 +359,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	}
 	v.Open = &Spec{Kind: kind, Status: status, Summary: summary, Anchor: *anchor, LastActivity: last, Counterparty: counterparty,
 		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain,
-		PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt, PreviousTurnMessageID: previousTurnMessageID}
+		PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt, PreviousTurnMessageID: previousTurnMessageID,
+		OwnerParticipationMessageID: ownerParticipationMessageID}
 	for _, m := range trailing.messages {
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}
