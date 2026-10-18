@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-02
+last_edited: 2026-10-18
 title: Frequently Asked Questions
 description: Common questions about msgvault, Gmail API safety, and what the tool can and cannot do.
 ---
@@ -18,7 +18,9 @@ existing-account restrictions.
 
 <p class="faq-question">What can an AI assistant do through MCP?</p>
 
-MCP exposes archive search, messages, files, analytics, and people tools.
+MCP exposes archive search, messages, files, analytics, and people tools. On
+unreleased `main`, owner sessions with a compatible daemon can also read
+open-loop state.
 Assistants can read private message content and can explicitly request private
 person notes. General profile reads omit Notes and sensitive attributes; this
 is not a promise that the assistant cannot access private archive content.
@@ -27,9 +29,11 @@ MCP can stage a deletion manifest but cannot execute remote deletion, send mail,
 or sync new messages. Optional profile writes require `--allow-profile-writes`;
 calendar event mutations require `--allow-calendar-writes` and explicit
 per-operation approval through an MCP client that supports elicitation; Kata
-issues that quote archive text require `--allow-kata-writes`. HTTP writes also
-need `--http-allow-writes`. Execution of a staged mail deletion
-remains a separate CLI step. See the [MCP tool and access reference](usage/chat.md).
+issues that quote archive text require `--allow-kata-writes`. On unreleased
+`main`, open-loop completion, snooze, mute, and unmute require
+`--allow-loop-writes` and explicit confirmation for each call. HTTP writes also
+need `--http-allow-writes`. Execution of a staged mail deletion remains a
+separate CLI step. See the [MCP tool and access reference](usage/chat.md).
 
 Treat imported messages, attachments, and generated briefs as untrusted input to
 an assistant. Choose an assistant and model provider you are willing to give

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-18"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -351,7 +351,13 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
-| `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
+| `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. On unreleased `main`, includes an open-loop summary when the selected daemon advertises loop routes. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
+| `list_open_loops` | Read daemon-derived loop rows or waiting rankings with freshness. A stale `waiting` view returns status and `next_action` without rows unless `allow_stale` is true. Waiting does not accept `kind`, `person_id`, or `cursor`. | `view` (`open` by default, `waiting`, `held`, `closed`), `kind` (non-waiting view), `person_id` (non-waiting view), `limit` (default 50; 1–200, waiting 1–50), `cursor` (non-waiting view), `allow_stale` (waiting view) |
+| `get_open_loop` | Read one loop history row and its archived evidence references with freshness. | `id` (positive int, required) |
+| `close_open_loop` | Mark one loop done after client confirmation of the loop ID and optional note. | `id` (positive int, required), `note` |
+| `snooze_open_loop` | Snooze one loop after client confirmation of the exact future instant. | `id` (positive int, required), `until` (future RFC3339 timestamp, local `YYYY-MM-DD`, or positive duration) |
+| `mute_open_loops` | Mute loops for a person, participant, or conversation after client confirmation of the exact target, note, and preview setting. | `target_kind` (`person`, `participant`, `conversation`), `id` (positive int), `note`, `dry_run` (bool) |
+| `unmute_open_loops` | Remove the mute for the exact target after client confirmation. | `target_kind` (`person`, `participant`, `conversation`), `id` (positive int) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
 `query_sql` needs a SQLite daemon with API schema 2.31.0 or newer. It can read archive
@@ -692,6 +698,26 @@ Omitted fields are preserved; `false` and empty arrays are explicit changes.
 A stale ETag returns `settings_conflict`. Selection changes retain archived data
 and may require a daemon restart; inspect `pending_restart` in the response.
 
+## Open loops
+
+On unreleased `main`, owner MCP sessions discover the loop tools when the
+selected daemon advertises the Open Loops routes. `list_open_loops` and
+`get_open_loop` are read-only and show projection freshness. The `waiting` view
+ranks people owed a reply; when its projection is stale, the response has no
+rows unless you explicitly set `allow_stale=true`. Mention stale freshness when
+present. `get_person_profile` includes `open_loops` counts, up to five rows, and
+freshness when the projection is available. If the projection cannot be read,
+the profile remains available with an `open_loops_warning`.
+
+`close_open_loop`, `snooze_open_loop`, `mute_open_loops`, and
+`unmute_open_loops` are available only with `--allow-loop-writes`. Each call
+requires client confirmation of the exact action and arguments. A mute preview
+with `dry_run=true` also asks for confirmation. Snooze approval shows the exact
+future instant; date-only values use the MCP process's local timezone. HTTP
+sessions also require `--http-allow-writes`. The tool descriptions in the table
+above list each action's parameters. A declined or cancelled request makes no
+change, and changed arguments cannot reuse an earlier confirmation.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -702,6 +728,7 @@ Enable only the writes intended for the assistant's session:
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
+| Open-loop completion, snooze, mute, and unmute | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 
 `draft_delete` and `draft_recover` require confirmation for each call under both transports, even when the write tools are available.
 
@@ -773,7 +800,7 @@ msgvault mcp --http 8080
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
 | `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
-| `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
+| `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review and scoring, person merges, CardDAV writes, profile writes, source writes, calendar writes, Kata writes, and open-loop writes also need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
@@ -782,6 +809,7 @@ msgvault mcp --http 8080
 | `--allow-carddav-writes` | `false` | Expose CardDAV publication and sync tools. Each write needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`, which write quoted archive text to the configured Kata project. The flag is the consent for these writes; they ask for no per-call confirmation, so stdio clients and reviews that file several issues work. `link_kata_evidence` writes only to issues in the configured project. HTTP also requires `--http-allow-writes`. The read-only `find_kata_issues` and `get_kata_issue_context` need API schema 3.12.0 or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`. Treat event text as untrusted input and enable this only for sessions where the user has authorized calendar writes. |
+| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop completion, snooze, mute, and unmute tools. Each call requires client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced. Without a key, use only behind your own network or authentication layer. |
 
 Identity tools include `list_identity_matches`, `get_identity_match`,

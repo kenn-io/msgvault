@@ -5,11 +5,13 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type toolRequest struct {
+	confirmationTime              time.Time
 	arguments                     map[string]any
 	session                       *sdkmcp.ServerSession
 	inputResponses                sdkmcp.InputResponseMap
