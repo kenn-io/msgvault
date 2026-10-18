@@ -13,9 +13,6 @@ All notable changes to msgvault, grouped by release.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
 - Optional [attachment mirror](configuration.md#mirror-stored-attachments-to-docbank-unreleased) copies stored attachments to a Docbank folder. Files retained after source deletion are included. Duplicate bytes share one delivery across sources. Temporary errors retry automatically; backfill retries failed files. Status reports progress and failure reasons. Attachment and message details in the CLI, HTTP API and MCP show delivery receipts; list and search views omit them. The attachment mirror requires archive schema version 8 and HTTP API schema 3.21.0.
-- [Twilio recordings](usage/meetings.md#twilio) now default to a 1 GiB capture cap
-  per recording, configurable with `max_media_mb`. Stored WAV audio reaches
-  Docbank under `all_sources_upload_consent`.
 
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.
@@ -116,7 +113,7 @@ All notable changes to msgvault, grouped by release.
   guest notifications default to `none`. The daemon verifies calendar access
   and archives successful changes immediately.
 - [Twilio calls](usage/meetings.md#twilio) archive as searchable meetings with
-  their recordings saved locally.
+  their recordings saved locally, up to 1 GiB each by default (`max_media_mb`).
 - [Kata issues](usage/kata-issues.md) can quote an exact passage from a
   message, transcript, or file, from the Web UI, `msgvault kata`, HTTP, or MCP
   (`--allow-kata-writes`). Retrying a create returns the original issue, and

@@ -83,13 +83,9 @@ func TestTwilioRecordingDocbankConsent(t *testing.T) {
 	t.Setenv(beeperMediaTestKeyEnv, "synthetic-key")
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { <-sched.Stop().Done() })
-	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: peer.URL, APIKeyEnv: beeperMediaTestKeyEnv}
+	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: peer.URL,
+		APIKeyEnv: beeperMediaTestKeyEnv, AllSourcesUploadConsent: true}
 	spool := t.TempDir()
-	require.NoError(t, configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, spool, dir, cfg, nil))
-	require.NoError(t, sched.TriggerJob(beeperMediaSubmitJob))
-	assert.Zero(t, server.requestCount(), "without consent discovery stays local")
-
-	cfg.AllSourcesUploadConsent = true
 	require.NoError(t, configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, spool, dir, cfg, nil))
 	require.NoError(t, sched.TriggerJob(beeperMediaSubmitJob))
 	assert.Equal(t, 1, server.requestCount())

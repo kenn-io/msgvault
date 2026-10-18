@@ -28,10 +28,8 @@ func (s TwilioSource) EffectiveAccountEmail() (string, error) {
 	return effectiveMeetingAccountEmail("twilio", s.Identifier, s.AccountEmail)
 }
 
-// MediaPolicy caps each recording at 1 GiB unless max_media_mb is set.
-// Recordings last as long as calls, up to 24 hours, with a 4-hour default.
-// Twilio WAV uses 128 kbps per channel, so the longest recordings exceed
-// 1 GiB, the largest file Docbank's audio route delivers.
+// MediaPolicy caps each recording at 1 GiB, the largest file msgvault's
+// Docbank audio route delivers, unless max_media_mb is set.
 func (s TwilioSource) MediaPolicy() attachmentpolicy.Policy {
 	return resolveMediaPolicy(s.Media, "", 0, s.MaxMediaMB, 1<<30, MediaAccountConfig{}, false)
 }
