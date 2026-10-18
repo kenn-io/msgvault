@@ -770,6 +770,12 @@ func (s *Store) restorePersonSplitRowsTx(
 	if err != nil {
 		return nil, err
 	}
+	tierEventIDs := make([]int64, 0, len(move))
+	for _, row := range move {
+		if row.tableName == personTierEventsTableName && row.currentRowID.Valid {
+			tierEventIDs = append(tierEventIDs, row.currentRowID.Int64)
+		}
+	}
 	unsupportedEvidence, err := s.personSplitUnsupportedGeneratedEvidenceTx(
 		ctx, tx, move, rowsByPath, unsupportedCandidates,
 	)
@@ -828,11 +834,21 @@ func (s *Store) restorePersonSplitRowsTx(
 		}
 		if row.action == personMergeActionDeduplicated {
 			var restore bool
-			snapshotRow, restore, err = s.preparePersonSplitDeduplicatedRowTx(
-				ctx, tx, row, snapshotRow,
-			)
+			replacedPresenceGrant, err := s.personSplitPresenceRowReplacedTx(ctx, tx, row)
 			if err != nil {
 				return nil, err
+			}
+			if replacedPresenceGrant {
+				// A post-merge replacement belongs to the surviving person. Keep the
+				// absorbed person's original grant snapshot for the split person.
+				restore = true
+			} else {
+				snapshotRow, restore, err = s.preparePersonSplitDeduplicatedRowTx(
+					ctx, tx, row, snapshotRow,
+				)
+				if err != nil {
+					return nil, err
+				}
 			}
 			if !restore {
 				appendPersonSplitUnrestoredRow(unrestored, selection, row)
@@ -927,11 +943,16 @@ func (s *Store) restorePersonSplitRowsTx(
 			return nil, err
 		}
 		if replaced {
-			if err := s.insertPersonSplitSnapshotRowTx(
-				ctx, tx, snapshotRow, sourceID, newPersonID,
-				survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID,
-			); err != nil {
-				return nil, err
+			// A replaced absorbed grant belongs with the restored person. A
+			// replaced survivor grant is later user state and remains on the
+			// source person; recreating its snapshot there collides with it.
+			if row.originSide != personMergeOriginSurvivor {
+				if err := s.insertPersonSplitSnapshotRowTx(
+					ctx, tx, snapshotRow, sourceID, newPersonID,
+					survivorSnapshotID, absorbedSnapshotID, sourceUID, newUID,
+				); err != nil {
+					return nil, err
+				}
 			}
 			if err := s.rebasePriorPersonMergeRowsAfterSplitTx(
 				ctx, tx, mergeID, row, snapshotRow, sourceID, newPersonID,
@@ -959,6 +980,9 @@ func (s *Store) restorePersonSplitRowsTx(
 		if err := markPersonSplitJournalRowTx(ctx, tx, mergeID, splitID, row); err != nil {
 			return nil, err
 		}
+	}
+	if err := s.rebasePriorPersonTierEventOriginsTx(ctx, tx, mergeID, tierEventIDs); err != nil {
+		return nil, err
 	}
 	return ambiguous, nil
 }
@@ -1193,6 +1217,9 @@ func (s *Store) personSplitSnapshotDependenciesPresentTx(
 			ErrPersonMergeInvalid, row.TableName)
 	}
 	for _, reference := range spec.PersonReferences {
+		if reference.Kind == personMergeReferenceHistorical {
+			continue
+		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personSplitSnapshotRowText(row, reference.KindColumn) != reference.KindValue {
 			continue
@@ -1272,6 +1299,7 @@ func (s *Store) personSplitSnapshotRecordTargetPresentTx(
 
 func personSplitNullablePersonReference(table, column string) bool {
 	return (table == personRelationshipReviewsTableName && column == "matched_person_id") ||
+		(table == personTierEventsTableName && column == "merged_from_person_id") ||
 		(table == "person_uid_aliases" && column == "surviving_person_id") ||
 		(table == "person_merges" && column == "current_person_id")
 }
@@ -1609,6 +1637,9 @@ func rebasePersonMergePostRowReferences(
 	currentByName := personSplitSnapshotColumnsByName(current.Columns)
 	changed := false
 	for _, reference := range spec.PersonReferences {
+		if reference.Kind == personMergeReferenceHistorical {
+			continue
+		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personSplitSnapshotRowText(post, reference.KindColumn) != reference.KindValue {
 			continue
@@ -1676,6 +1707,9 @@ func (s *Store) personSplitExistingColumnValueTx(
 	for _, reference := range spec.PersonReferences {
 		if reference.IDColumn != column.Name {
 			continue
+		}
+		if reference.Kind == personMergeReferenceHistorical {
+			return personSplitSnapshotValue(column.Value), true, true, nil
 		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personSplitSnapshotRowText(row, reference.KindColumn) != reference.KindValue {
@@ -1790,6 +1824,9 @@ func (s *Store) personSplitSnapshotColumnValueTx(
 	for _, reference := range spec.PersonReferences {
 		if reference.IDColumn != column.Name {
 			continue
+		}
+		if reference.Kind == personMergeReferenceHistorical {
+			return value, nil
 		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personSplitSnapshotRowText(row, reference.KindColumn) != reference.KindValue {
@@ -2009,13 +2046,29 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 	return nil
 }
 
-// personSplitPresenceRowColumns names the row-presence opt-in tables and the
-// columns that identify one grant. A grant whose columns differ from the
-// post-merge state was replaced after the merge, so an exact split inserts the
-// snapshot row for the new person instead of moving the live grant back.
+// personSplitPresenceRowColumns names the columns that identify a post-merge
+// replacement. For tracking and brief grants, provenance and actor distinguish
+// replacements while timestamp-only edits remain supported by the deduplicated
+// row preparation. Tier singleton columns identify rewritten authority that
+// must remain with the surviving person.
 var personSplitPresenceRowColumns = map[string][]string{
+	"person_tracking":          {"provenance", "actor"},
+	"person_brief_enrollments": {"provenance", "actor"},
+	"person_tier_state": {
+		"tier", "tier_since", "candidate_tier", "candidate_since", "lanes_json",
+		"enrichment_eligible", "rule", "rule_version", "config_fingerprint",
+		"as_of_local_date", "run_id", "run_started_at", "applied_at",
+	},
+	"person_tier_observations": {
+		"computed_tier", "rule", "signals_json", "shadow_tier", "shadow_since",
+		"shadow_candidate_tier", "shadow_candidate_since", "rule_version",
+		"config_fingerprint", "as_of_local_date", "activity_ready", "evaluated_at",
+	},
+}
+
+var personSplitMovedPresenceRowColumns = map[string][]string{
 	"person_tracking":          {"tracked_at"},
-	"person_brief_enrollments": {"enabled_at", "actor"},
+	"person_brief_enrollments": {"enabled_at"},
 }
 
 func (s *Store) personSplitPresenceRowReplacedTx(
@@ -2024,6 +2077,10 @@ func (s *Store) personSplitPresenceRowReplacedTx(
 	columns, presence := personSplitPresenceRowColumns[journal.tableName]
 	if !presence || !journal.postMergeJSON.Valid {
 		return false, nil
+	}
+	columns = slices.Clone(columns)
+	if journal.action == "moved" {
+		columns = append(columns, personSplitMovedPresenceRowColumns[journal.tableName]...)
 	}
 	var post personMergeSnapshotRow
 	if err := json.Unmarshal([]byte(journal.postMergeJSON.String), &post); err != nil {
@@ -2050,11 +2107,44 @@ func (s *Store) personSplitPresenceRowReplacedTx(
 	currentColumns := personSplitSnapshotColumnsByName(current[0].Columns)
 	postColumns := personSplitSnapshotColumnsByName(post.Columns)
 	for _, column := range columns {
-		if !reflect.DeepEqual(currentColumns[column], postColumns[column]) {
+		currentValue, hasCurrent := currentColumns[column]
+		postValue, hasPost := postColumns[column]
+		if !hasCurrent {
+			return true, nil
+		}
+		if !hasPost {
+			if personSplitLegacyPresenceColumnDefaultMatches(journal.tableName, column, currentValue) {
+				continue
+			}
+			return true, nil
+		}
+		if !reflect.DeepEqual(currentValue, postValue) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func personSplitLegacyPresenceColumnDefaultMatches(
+	table, column string, value personMergeSnapshotValue,
+) bool {
+	if value.Kind != personMergeSnapshotText || value.Text == nil {
+		return false
+	}
+	switch table {
+	case "person_tracking":
+		switch column {
+		case "provenance":
+			return *value.Text == "manual"
+		case "actor":
+			return *value.Text == ""
+		}
+	case "person_brief_enrollments":
+		if column == "provenance" {
+			return *value.Text == "manual"
+		}
+	}
+	return false
 }
 
 func (s *Store) personSplitRestoredRowLocatorTx(
