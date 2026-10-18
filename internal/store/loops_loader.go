@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/looplimits"
 )
 
 // LoopConversationAnchorExistsContext distinguishes an older window gap from
@@ -34,7 +34,7 @@ func (s *Store) LoopMessageBodyContext(ctx context.Context, messageID int64) (st
 // LoadLoopConversationContext reads a bounded newest metadata window and returns it chronologically.
 func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID int64, limit int) (LoopConversation, error) {
 	var out LoopConversation
-	if conversationID <= 0 || limit < 1 || limit > loops.MaxConversationMessageLimit {
+	if conversationID <= 0 || limit < 1 || limit > looplimits.MaxConversationMessageLimit {
 		return out, fmt.Errorf("%w: conversation and limit required", ErrInvalidLoop)
 	}
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
