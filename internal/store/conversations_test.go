@@ -327,3 +327,26 @@ func TestConversationMetadataBatchScopesSourceAndPreservesMissingMetadata(t *tes
 	assert.False(metadata["channel-1"].Valid)
 	assert.NotContains(metadata, "missing")
 }
+
+func TestConversationTitlesBatchContext(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	first, err := st.GetOrCreateSource("beeper", "first")
+	require.NoError(t, err)
+	second, err := st.GetOrCreateSource("beeper", "second")
+	require.NoError(t, err)
+	_, err = st.EnsureConversation(first.ID, "shared", "First title")
+	require.NoError(t, err)
+	_, err = st.EnsureConversation(second.ID, "shared", "Second title")
+	require.NoError(t, err)
+	_, err = st.EnsureConversation(first.ID, "empty", "")
+	require.NoError(t, err)
+	titles, err := st.ConversationTitlesBatchContext(t.Context(), first.ID, []string{"shared", "empty", "missing"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"shared": "First title", "empty": ""}, titles)
+	titles, err = st.ConversationTitlesBatchContext(t.Context(), second.ID, []string{"shared"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"shared": "Second title"}, titles)
+	titles, err = st.ConversationTitlesBatchContext(t.Context(), first.ID, nil)
+	require.NoError(t, err)
+	assert.Empty(t, titles)
+}
