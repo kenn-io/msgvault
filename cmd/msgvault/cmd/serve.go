@@ -868,6 +868,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
+		inboxCacheRequest:      cacheRefresher.Request,
 		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
 		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
 		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
@@ -1762,6 +1763,7 @@ type storeAPIAdapter struct {
 	inboxKey                  []byte
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
+	inboxCacheRequest         func(string) bool
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error

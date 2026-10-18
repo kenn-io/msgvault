@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestInboxGmailReconcileUpdatesLabelsAndKeepsUIRead(t *testing.T) {
@@ -54,6 +55,71 @@ func TestInboxGmailReconcileUpdatesLabelsAndKeepsUIRead(t *testing.T) {
 			assertions.Equal([]string{"Next", "Other"}, messageLabels(t, st, id))
 		})
 	}
+}
+
+func TestInboxGmailReconcileSwappedLabelNamesPreservesMemberships(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st, source, firstID := tagFixture(t, "gmail", "gmail-reconcile-swap-a")
+	conversationID, err := st.EnsureConversation(source.ID, "thread-swap-b", "Label swap")
+	requirements.NoError(err)
+	secondID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-reconcile-swap-b", MessageType: "email"})
+	requirements.NoError(err)
+	originalCatalog := []emailtags.MessageTag{{ID: "LabelA", Name: "Alpha"}, {ID: "LabelB", Name: "Beta"}}
+	for _, fixture := range []struct {
+		id  int64
+		tag string
+	}{{firstID, "LabelA"}, {secondID, "LabelB"}} {
+		target, err := st.EmailTagTargetContext(t.Context(), fixture.id, "")
+		requirements.NoError(err)
+		requirements.NoError(st.SaveEmailTagsContext(t.Context(), target, &emailtags.MessageTagResult{
+			Provider: "gmail", Tags: []string{fixture.tag}, AvailableTags: originalCatalog, Verified: true,
+		}))
+	}
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: firstID, ProviderID: "gmail-reconcile-swap-a"}
+	now := time.Now().UTC()
+	before := inboxcontrol.State{
+		Target: target, Tags: []string{"LabelA"}, Folders: []inboxcontrol.Folder{{ID: "LabelA", Name: "Alpha"}, {ID: "LabelB", Name: "Beta"}},
+		Inbox: new(true), Read: new(true), ObservedAt: now,
+	}
+	after := before
+	after.Folders = []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}, {ID: "LabelB", Name: "Alpha"}}
+	after.ObservedAt = now.Add(time.Second)
+	requirements.NoError(st.ReconcileInboxProviderState(t.Context(), target, before, after))
+	assertions.Equal([]string{"Beta"}, messageLabels(t, st, firstID))
+	assertions.Equal([]string{"Alpha"}, messageLabels(t, st, secondID), "the other message keeps its distinct provider label identity")
+}
+
+func TestInboxGmailReconcileRejectsUnresolvedLabelNameConflict(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st, source, firstID := tagFixture(t, "gmail", "gmail-reconcile-conflict-a")
+	conversationID, err := st.EnsureConversation(source.ID, "thread-conflict-b", "Label conflict")
+	requirements.NoError(err)
+	secondID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-reconcile-conflict-b", MessageType: "email"})
+	requirements.NoError(err)
+	for _, fixture := range []struct {
+		id   int64
+		tag  string
+		name string
+	}{{firstID, "LabelA", "Current"}, {secondID, "LabelRetired", "Collision"}} {
+		native, err := st.EmailTagTargetContext(t.Context(), fixture.id, "")
+		requirements.NoError(err)
+		requirements.NoError(st.SaveEmailTagsContext(t.Context(), native, &emailtags.MessageTagResult{
+			Provider: "gmail", Tags: []string{fixture.tag}, AvailableTags: []emailtags.MessageTag{{ID: fixture.tag, Name: fixture.name}}, Verified: true,
+		}))
+	}
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: firstID, ProviderID: "gmail-reconcile-conflict-a"}
+	now := time.Now().UTC()
+	before := inboxcontrol.State{Target: target, Tags: []string{"LabelA"}, Inbox: new(true), Read: new(true), ObservedAt: now}
+	after := before
+	after.Folders = []inboxcontrol.Folder{{ID: "LabelA", Name: "Collision"}}
+	after.ObservedAt = now.Add(time.Second)
+	requirements.ErrorIs(st.ReconcileInboxProviderState(t.Context(), target, before, after), inboxcontrol.ErrConflict)
+	assertions.Equal([]string{"Current"}, messageLabels(t, st, firstID))
+	assertions.Equal([]string{"Collision"}, messageLabels(t, st, secondID), "unresolved local identity must not transfer memberships")
 }
 
 func TestInboxGmailReconcileUnavailableLocalLabelRollsBack(t *testing.T) {

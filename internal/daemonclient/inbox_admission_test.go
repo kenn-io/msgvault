@@ -34,7 +34,7 @@ func TestInboxClientRequiresLiveContractBeforeControl(t *testing.T) {
 		{name: "wrong path", body: `{"version":1,"routes":[` + strings.ReplaceAll(route, "/inbox/control", "/inbox/other") + `],"inbox_operations":["receipt-get"]}`},
 		{name: "missing signed field", body: `{"version":1,"routes":[` + strings.ReplaceAll(route, `,"origin_folder"`, "") + `],"inbox_operations":["receipt-get"]}`},
 		{name: "operation not admitted", body: `{"version":1,"routes":[` + route + `],"inbox_operations":["get-state"]}`},
-		{name: "oversized", body: strings.Repeat(" ", (1<<20)+1) + `{"version":1,"routes":[]}`},
+		{name: "oversized", body: syntheticInboxDescriptor + strings.Repeat(" ", (1<<20)+1-len(syntheticInboxDescriptor))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var posts atomic.Int64

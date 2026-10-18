@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,6 +90,12 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 			request := inboxcontrol.Request{Operation: tc.op, Target: &target, Tags: tc.tags, OriginFolder: tc.origin, Destination: tc.destination, DryRun: true}
 			before, err := provider.Observe(context.Background(), request)
 			requirements.NoError(err)
+			assertions.ElementsMatch([]inboxcontrol.Folder{
+				{ID: "LabelOld", Name: "Old"},
+				{ID: "LabelNew", Name: "New"},
+				{ID: "LabelOther", Name: "Other"},
+				{ID: "ConcurrentLabel", Name: "Concurrent"},
+			}, before.Folders, "message observations retain the full live folder catalog")
 			projected, err := provider.Preview(context.Background(), request, before)
 			requirements.NoError(err)
 			assertions.Equal(0, posts)
@@ -314,6 +323,112 @@ func TestInboxGmailMetadataBatchPreservesGoneCause(t *testing.T) {
 	require.ErrorIs(t, results[0].Err, ErrMessageGone)
 	var gone *NotFoundError
 	assertions.ErrorAs(results[0].Err, &gone)
+}
+
+func TestInboxGmailMetadataBatchUsesBoundedConcurrencyAndPreservesResults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	started := make(chan string, 3)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	var active, maxActive atomic.Int32
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/gmail/v1/users/me/messages/")
+		current := active.Add(1)
+		defer active.Add(-1)
+		for previous := maxActive.Load(); current > previous; previous = maxActive.Load() {
+			if maxActive.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		started <- id
+		<-release
+		switch id {
+		case "metadata-error":
+			w.WriteHeader(http.StatusBadRequest)
+		case "metadata-gone":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "labelIds": []string{"INBOX"}, "historyId": "12"})
+		}
+	}))
+	client.concurrency = 2
+	defer releaseOnce.Do(func() { close(release) })
+
+	ids := []string{"metadata-ok", "metadata-error", "metadata-gone"}
+	type batchResult struct {
+		results []MessageLabelsBatchResult
+		err     error
+	}
+	done := make(chan batchResult, 1)
+	go func() {
+		results, err := client.GetMessageLabelsBatch(t.Context(), ids)
+		done <- batchResult{results: results, err: err}
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			requirements.FailNow("metadata requests did not fill the configured concurrency limit")
+		}
+	}
+	select {
+	case id := <-started:
+		requirements.FailNow("metadata batch exceeded configured concurrency before a request completed: %s", id)
+	case <-time.After(time.Second):
+	}
+	releaseOnce.Do(func() { close(release) })
+
+	var got batchResult
+	select {
+	case got = <-done:
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("metadata batch did not finish after the blocked requests were released")
+	}
+	requirements.NoError(got.err)
+	requirements.Len(got.results, len(ids))
+	assertions.Equal(int32(2), maxActive.Load())
+	for i, id := range ids {
+		assertions.Equal(id, got.results[i].ID)
+	}
+	requirements.NoError(got.results[0].Err)
+	assertions.Equal([]string{"INBOX"}, got.results[0].LabelIDs)
+	requirements.Error(got.results[1].Err)
+	assertions.ErrorIs(got.results[2].Err, ErrMessageGone)
+}
+
+func TestInboxGmailMetadataBatchReturnsCancellation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	started := make(chan struct{})
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	client.concurrency = 1
+	ctx, cancel := context.WithCancel(t.Context())
+	type batchResult struct {
+		results []MessageLabelsBatchResult
+		err     error
+	}
+	done := make(chan batchResult, 1)
+	go func() {
+		results, err := client.GetMessageLabelsBatch(ctx, []string{"metadata-cancel"})
+		done <- batchResult{results: results, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("metadata request did not start")
+	}
+	cancel()
+	select {
+	case got := <-done:
+		assertions.Nil(got.results)
+		assertions.ErrorIs(got.err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("metadata batch did not stop after context cancellation")
+	}
 }
 
 func TestInboxGmailFolderCreationThroughController(t *testing.T) {

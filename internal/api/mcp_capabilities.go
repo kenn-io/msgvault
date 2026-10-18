@@ -18,14 +18,14 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[MCPCapabilitiesResponse](apiV1,
 		"getMCPCapabilities", http.MethodGet, "/mcp/capabilities",
 		"Describe supported MCP daemon operations", func(w http.ResponseWriter, r *http.Request) {
-		auth := s.requestAuthentication(r)
-		if auth.Mode != AuthModeCaller {
-			auth = s.classifyAPIRequestDirect(r)
-		}
-		if auth.Mode == AuthModeRequired {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
-			return
-		}
+			auth := s.requestAuthentication(r)
+			if auth.Mode != AuthModeCaller {
+				auth = s.classifyAPIRequestDirect(r)
+			}
+			if auth.Mode == AuthModeRequired {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+				return
+			}
 			response := MCPCapabilitiesResponse{
 				Version:         1,
 				Delegated:       auth.Mode == AuthModeDelegated,

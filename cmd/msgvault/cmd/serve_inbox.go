@@ -63,7 +63,34 @@ func (a *storeAPIAdapter) ControlInbox(ctx context.Context, request inboxcontrol
 		_, _, err := a.inboxBinding(ctx, intent)
 		return err
 	}
-	return a.inboxControlService(checkedAuthorize).Control(a.invocationContext(ctx), request, principal, acquireWrite)
+	service := a.inboxControlService(checkedAuthorize)
+	reconciled := false
+	reconcileState := service.ReconcileState
+	service.ReconcileState = func(ctx context.Context, before, after inboxcontrol.State) error {
+		if err := reconcileState(ctx, before, after); err != nil {
+			return err
+		}
+		reconciled = true
+		return nil
+	}
+	result, err := service.Control(a.invocationContext(ctx), request, principal, acquireWrite)
+	if reconciled && result != nil && result.After != nil {
+		identifier := result.After.Target.SourceIdentifier
+		if identifier == "" {
+			identifier = result.After.Source.SourceIdentifier
+		}
+		a.requestInboxCacheRefresh(identifier)
+	}
+	return result, err
+}
+
+func (a *storeAPIAdapter) requestInboxCacheRefresh(sourceIdentifier string) {
+	if sourceIdentifier == "" || a.inboxCacheRequest == nil {
+		return
+	}
+	if !a.inboxCacheRequest(sourceIdentifier) && a.logger != nil {
+		a.logger.Warn("Inbox analytics cache refresh could not be queued", "source", sourceIdentifier)
+	}
 }
 
 func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) *inboxcontrol.Service {
@@ -138,8 +165,7 @@ func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol
 			}
 			return source, binding, nil
 		}
-		native, err := a.store.EmailTagTargetContext(ctx, request.Target.ItemID, request.Target.Mailbox)
-		if err != nil || native.SourceID != request.Target.SourceID || native.Provider != request.Target.SourceType || native.SourceMessageID != request.Target.ProviderID || native.Mailbox != request.Target.Mailbox || native.UIDValidity != request.Target.UIDValidity || native.UID != request.Target.UID {
+		if err := a.store.ValidateInboxTargetContext(ctx, *request.Target); err != nil {
 			return nil, binding, inboxcontrol.ErrDenied
 		}
 	}

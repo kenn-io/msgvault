@@ -81,6 +81,21 @@ func TestDaemonInboxIMAPNativeSignedReadState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	a, target := inboxIMAPDaemonFixture(t)
+	cacheRequests := 0
+	a.inboxCacheRequest = func(identifier string) bool {
+		cacheRequests++
+		assertions.Equal(target.SourceIdentifier, identifier)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		execution, err := a.store.AcquireInboxExecutionContext(ctx, target.SourceID)
+		requirements.NoError(err, "cache refresh is queued after source ownership is released")
+		requirements.NoError(execution.Release())
+		stored, err := a.store.GetInboxProviderState(t.Context(), target)
+		requirements.NoError(err)
+		requirements.NotNil(stored)
+		assertions.Equal([]string{"\\Seen"}, stored.Flags, "local reconciliation is durable before cache refresh is queued")
+		return true
+	}
 	principal := inboxcontrol.Principal{ID: "owner", Owner: true}
 	authorize := func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error { return nil }
 	gates := 0
@@ -107,10 +122,41 @@ func TestDaemonInboxIMAPNativeSignedReadState(t *testing.T) {
 	requirements.NotNil(stored)
 	assertions.Equal([]string{}, stored.Tags)
 	assertions.Equal([]string{"\\Seen"}, stored.Flags)
+	assertions.Equal(1, cacheRequests)
 	replay, err := a.ControlInbox(t.Context(), request, principal, authorize, gate)
 	requirements.NoError(err)
 	assertions.Equal(result.Receipt.ID, replay.Receipt.ID)
 	assertions.Equal(1, gates)
+	assertions.Equal(1, cacheRequests, "verified replay does not queue a duplicate cache refresh")
+	for _, column := range []string{"deleted_at", "deleted_from_source_at"} {
+		_, err = a.store.DB().Exec(a.store.Rebind("UPDATE messages SET "+column+"=CURRENT_TIMESTAMP WHERE id=?"), target.ItemID)
+		requirements.NoError(err)
+		_, err = a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}, principal, authorize, gate)
+		assertions.ErrorIs(err, inboxcontrol.ErrDenied, "tombstoned items cannot start new provider reads")
+		retained, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: result.Receipt.ID}, principal, authorize, gate)
+		requirements.NoError(err, "a verified receipt remains readable while its original item is tombstoned")
+		requirements.NotNil(retained.Receipt)
+		assertions.Equal(result.Receipt.ID, retained.Receipt.ID)
+		retainedReplay, err := a.ControlInbox(t.Context(), request, principal, authorize, gate)
+		requirements.NoError(err, "an idempotent replay remains readable while its original item is tombstoned")
+		assertions.Equal(result.Receipt.ID, retainedReplay.Receipt.ID)
+		_, err = a.store.DB().Exec(a.store.Rebind("UPDATE messages SET "+column+"=NULL WHERE id=?"), target.ItemID)
+		requirements.NoError(err)
+	}
+}
+
+func TestDaemonInboxIMAPAcceptsExactAlternateMembership(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	a, target := inboxIMAPDaemonFixture(t)
+	_, err := a.store.DB().Exec(a.store.Rebind(`INSERT INTO imap_message_memberships (source_id, mailbox, uidvalidity, uid, message_id, flags) VALUES (?, ?, ?, ?, ?, ?)`), target.SourceID, target.Mailbox, target.UIDValidity, target.UID+1, target.ItemID, `[]`)
+	requirements.NoError(err)
+	target.UID++
+	source, binding, err := a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &target})
+	requirements.NoError(err, "a current copy in the requested mailbox need not be the canonical UID")
+	requirements.NotNil(source)
+	assertions.Equal(target.SourceID, binding.SourceID)
+	assertions.Equal(target.AccountID, binding.AccountID)
 }
 
 func TestDaemonInboxIMAPRejectsAccountAndConfigMismatchBeforeFactory(t *testing.T) {

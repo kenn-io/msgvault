@@ -96,13 +96,29 @@ func TestInboxCLIArchiveDefaultsPreviewAndPreservesUnknownReceipt(t *testing.T) 
 	}
 }
 func TestInboxCLIRejectsInvalidInputBeforeHTTPControl(t *testing.T) {
+	target := inboxcontrol.Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.com", AccountID: "reader@example.com", Scope: inboxcontrol.ScopeMessage, ItemID: 2, ProviderID: "m2"}
+	targetJSON, err := json.Marshal(target)
+	require.NoError(t, err)
+	unknownMember := `{"target":` + string(targetJSON) + `,"surprise":true}`
+	validMove, err := json.Marshal(inboxcontrol.Request{
+		Operation: inboxcontrol.OpMove, Target: &target,
+		OriginFolder: &inboxcontrol.Folder{ID: "LabelOld"},
+		Destination:  &inboxcontrol.Folder{ID: "LabelNew"},
+		DryRun:       true,
+	})
+	require.NoError(t, err)
+	operationOverride, err := json.Marshal(inboxcontrol.Request{
+		Operation: inboxcontrol.OpMove, Target: &target, DryRun: true,
+	})
+	require.NoError(t, err)
+	oversized := string(validMove) + string(bytes.Repeat([]byte(" "), maxInboxCLIRequest+1-len(validMove)))
 	for _, tc := range []struct {
 		name, input string
 		args        []string
 	}{
-		{"unknown member", `{"surprise":true}`, []string{"get-state", "--request", "-"}},
-		{"operation override", `{"operation":"move"}`, []string{"archive", "--request", "-"}},
-		{"oversize", string(bytes.Repeat([]byte(" "), (1<<20)+1)), []string{"get-state", "--request", "-"}},
+		{"unknown member", unknownMember, []string{"get-state", "--request", "-"}},
+		{"operation override", string(operationOverride), []string{"archive", "--request", "-"}},
+		{"oversize", oversized, []string{"move", "--request", "-"}},
 		{"unsigned apply", `{"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}}`, []string{"archive", "--request", "-", "--apply"}},
 		{"apply read", `{"receipt_id":"r1"}`, []string{"receipt-get", "--request", "-", "--apply"}},
 	} {

@@ -133,6 +133,19 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	key, err := prepareInboxRuntime(t.Context(), cfg, st)
 	requirements.NoError(err)
 	adapter := &storeAPIAdapter{store: st, config: cfg, inboxKey: key, emailTagClientFactory: factory}
+	var cacheRequests []string
+	adapter.inboxCacheRequest = func(identifier string) bool {
+		mu.Lock()
+		cacheRequests = append(cacheRequests, identifier)
+		mu.Unlock()
+		assertions.Equal(source.Identifier, identifier)
+		stored, err := adapter.store.GetInboxProviderState(t.Context(), target)
+		requirements.NoError(err)
+		requirements.NotNil(stored)
+		requirements.NotNil(stored.Inbox)
+		assertions.False(*stored.Inbox, "the cache request follows durable local provider reconciliation")
+		return true
+	}
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.Default(), OperationGate: api.NewSerialOperationGate()})
 	call := func(method, path string, payload any, secret string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -271,6 +284,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	mu.Lock()
 	assertions.Equal(1, posts)
 	assertions.Equal(1, readbacks, "success requires independent native metadata GET")
+	assertions.Equal([]string{account}, cacheRequests)
 	mu.Unlock()
 	response = call(http.MethodPost, "/api/v1/inbox/control", request, secret)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
@@ -344,6 +358,9 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &recovered))
 	requirements.NotNil(recovered.Receipt)
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status, "an authorized unknown receipt actually reconciles before removal")
+	mu.Lock()
+	assertions.Equal([]string{account, account}, cacheRequests, "receipt reconciliation queues the same best-effort cache refresh after local state is durable")
+	mu.Unlock()
 	retiredPending := makeUnknown("native-retired-unknown")
 	requirements.NoError(st.RemoveSource(source.ID))
 	response = call(http.MethodPost, "/api/v1/inbox/control", receiptRequest, "")

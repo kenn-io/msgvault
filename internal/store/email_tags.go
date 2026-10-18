@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 const (
@@ -188,10 +189,12 @@ func (s *Store) saveEmailTagsTx(ctx context.Context, tx *loggedTx, target EmailT
 		if _, included := descriptors[conflict.String]; included {
 			continue
 		}
-		if name, ok := available[conflict.String]; ok {
-			descriptors[conflict.String] = LabelInfo{Name: name, Type: "user"}
-			pending = append(pending, conflict.String)
+		name, live := available[conflict.String]
+		if !live {
+			return fmt.Errorf("%w: unresolved Gmail label name conflict", inboxcontrol.ErrConflict)
 		}
+		descriptors[conflict.String] = LabelInfo{Name: name, Type: "user"}
+		pending = append(pending, conflict.String)
 	}
 	ids, err := ensureLabelsBatchWith(q, target.SourceID, descriptors, labelFlipsTx(ctx, tx, target.SourceID))
 	if err != nil {

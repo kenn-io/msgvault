@@ -27,6 +27,8 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/gmail"
 	imaplib "go.kenn.io/msgvault/internal/imap"
+	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -65,9 +67,13 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 		if change != nil {
 			result.DryRun = change.DryRun
 			if change.DryRun {
+				assert.Empty(change.Add)
+				assert.Equal([]string{"Label_next"}, change.Remove)
 				result.Tags = []string{"INBOX", "UNREAD"}
 				return result, nil
 			}
+			assert.Equal([]string{"Label_next"}, change.Add)
+			assert.Empty(change.Remove)
 			writes++
 			tags = append(tags, "Label_next")
 			result.Tags = append([]string{}, tags...)
@@ -146,41 +152,56 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 	if !st.IsPostgreSQL() {
 		t.Skip("requires PostgreSQL to disconnect the source lock session")
 	}
-	source, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	source, err := st.GetOrCreateSource(sourceTypeMSMail, "owner@example.test")
 	require.NoError(err)
 	conversationID, err := st.EnsureConversation(source.ID, "thread-1", "Tags")
 	require.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "gmail-1", MessageType: "email"})
+	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "immutable-1", MessageType: "email"})
 	require.NoError(err)
-	client := &daemonTagGmailClient{MockAPI: gmail.NewMockAPI()}
-	client.tags = func(ctx context.Context, id string, change *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
-		assert.Equal("gmail-1", id)
-		require.NotNil(change)
-		assert.Equal([]string{"Label_next"}, change.Add)
-		// Disconnect only this fixture's advisory-lock session. The archive
-		// save uses another connection and must retain its successful result.
-		var lockPID int
-		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`
-			SELECT pid FROM pg_locks
-			WHERE locktype='advisory' AND granted AND objsubid=1
-			AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
-			AND ((classid::bigint << 32) | objid::bigint)=hashtextextended(
-				current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0)
-		`), source.ID).Scan(&lockPID))
-		var terminated bool
-		require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT pg_terminate_backend(?, 5000)`), lockPID).Scan(&terminated))
-		require.True(terminated)
-		return &emailtags.MessageTagResult{
-			Provider: "gmail", Tags: []string{"Label_next"}, Verified: true,
-			AvailableTags: []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}},
-		}, nil
-	}
+	cfg := lifecycleTestConfig(t.TempDir())
+	tokenPath := microsoft.NewGraphMailManager("", "", "", cfg.TokensDir(), nil).TokenPath(source.Identifier)
+	require.NoError(os.MkdirAll(filepath.Dir(tokenPath), 0o700))
+	token, err := json.Marshal(map[string]any{"access_token": "synthetic-token", "token_type": "Bearer", "scopes": microsoft.GraphMailWriteScopes()})
+	require.NoError(err)
+	require.NoError(os.WriteFile(tokenPath, token, 0o600))
+	tags := []string{}
+	writes := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/me/messages/immutable-1", r.URL.Path)
+		if r.Method == http.MethodPatch {
+			writes++
+			assert.NotEmpty(r.Header.Get("If-Match"))
+			var body struct {
+				Categories []string `json:"categories"`
+			}
+			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			tags = body.Categories
+			// Disconnect only this fixture's advisory-lock session. The archive
+			// save uses another connection and must retain its successful result.
+			var lockPID int
+			require.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`
+				SELECT pid FROM pg_locks
+				WHERE locktype='advisory' AND granted AND objsubid=1
+				AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+				AND ((classid::bigint << 32) | objid::bigint)=hashtextextended(
+					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0)
+			`), source.ID).Scan(&lockPID))
+			var terminated bool
+			require.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`SELECT pg_terminate_backend(?, 5000)`), lockPID).Scan(&terminated))
+			require.True(terminated)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "immutable-1", "categories": tags, "@odata.etag": `W/"v1"`}))
+	}))
+	t.Cleanup(server.Close)
 	var logs bytes.Buffer
 	var cachedLabels []string
 	a := &storeAPIAdapter{
-		store: st, config: &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}},
-		logger:                slog.New(slog.NewTextHandler(&logs, nil)),
-		emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) { return client, nil },
+		store: st, config: cfg,
+		logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		microsoftTagClientFactory: func(context.Context, *store.Source, bool) (*msmail.Client, error) {
+			return msmail.NewClient(server.URL, func(context.Context) (string, error) { return "synthetic-token", nil }, 1000), nil
+		},
 		draftCacheRefresh: func(ctx context.Context, account string) error {
 			require.NoError(ctx.Err())
 			assert.Equal("owner@example.test", account)
@@ -190,14 +211,15 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 			return nil
 		},
 	}
-	// Test cleanup at the adapter boundary. HTTP Gmail mutations require a
-	// signed Inbox preview and have their own native transport coverage.
-	result, err := a.MessageTags(t.Context(), messageID, &emailtags.MessageTagChange{Add: []string{"Label_next"}}, "", nil)
+	// Exercise the supported direct-write provider through the adapter. The
+	// PostgreSQL lock failure must not discard its saved category update.
+	result, err := a.MessageTags(t.Context(), messageID, &emailtags.MessageTagChange{Add: []string{"Next"}}, "", nil)
 	require.NoError(err)
 	require.NotNil(result)
 	assert.True(result.Verified)
-	assert.Equal([]string{"Label_next"}, result.Tags)
-	assert.Equal([]string{"Next"}, cachedLabels)
+	assert.Equal([]string{"Next"}, result.Tags)
+	assert.Equal([]string{"Category: Next"}, cachedLabels)
+	assert.Equal(1, writes)
 	assert.Contains(logs.String(), "release source")
 	execution, err := st.AcquireSyncExecutionContext(t.Context(), source.ID)
 	require.NoError(err, "a disconnected lock session must not leave the source busy")

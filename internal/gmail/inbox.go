@@ -14,6 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/googleaccount"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
+	"golang.org/x/sync/errgroup"
 )
 
 // InboxProvider applies native label deltas to one Store-resolved Gmail account.
@@ -77,21 +78,16 @@ func (p *InboxProvider) Observe(ctx context.Context, request inboxcontrol.Reques
 		return inboxcontrol.State{}, err
 	}
 
-	var assigned []inboxcontrol.Folder
+	var folders []inboxcontrol.Folder
 	if request.Operation.IsMutation() {
-		catalog, err := p.folderCatalog(ctx)
+		folders, err = p.folderCatalog(ctx)
 		if err != nil {
 			return inboxcontrol.State{}, err
-		}
-		for _, folder := range catalog {
-			if slices.Contains(labels, folder.ID) {
-				assigned = append(assigned, folder)
-			}
 		}
 	}
 	inbox := slices.Contains(labels, "INBOX")
 	read := !slices.Contains(labels, "UNREAD")
-	return inboxcontrol.State{Target: target, Tags: labels, Folders: assigned, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}, nil
+	return inboxcontrol.State{Target: target, Tags: labels, Folders: folders, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}, nil
 }
 
 func (p *InboxProvider) change(ctx context.Context, request inboxcontrol.Request, before inboxcontrol.State) (emailtags.MessageTagChange, error) {
@@ -251,16 +247,44 @@ func (c *Client) inboxMetadata(ctx context.Context, id string) ([]string, uint64
 // GetMessageLabelsBatch supplies the optional metadata-only sync path. Each
 // result preserves its own read failure; no message bodies are downloaded.
 func (c *Client) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]MessageLabelsBatchResult, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
 	results := make([]MessageLabelsBatchResult, len(ids))
+	concurrency := c.concurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
+	group, batchCtx := errgroup.WithContext(ctx)
 	for i, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		group.Go(func() error {
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-batchCtx.Done():
+				return batchCtx.Err()
+			}
+
+			labels, history, err := c.inboxMetadata(batchCtx, id)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if _, gone := errors.AsType[*NotFoundError](err); gone {
+				err = errors.Join(ErrMessageGone, err)
+			}
+			results[i] = MessageLabelsBatchResult{ID: id, LabelIDs: labels, HistoryID: history, Err: err}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		labels, history, err := c.inboxMetadata(ctx, id)
-		if _, gone := errors.AsType[*NotFoundError](err); gone {
-			err = errors.Join(ErrMessageGone, err)
-		}
-		results[i] = MessageLabelsBatchResult{ID: id, LabelIDs: labels, HistoryID: history, Err: err}
+		return nil, fmt.Errorf("fetch Gmail message metadata concurrently: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return results, nil
 }

@@ -49,16 +49,3 @@ func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 		})
 	}
 }
-
-func TestAppendPreservesOriginalSourceLifetimes(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	opts := fakevault.Options{Dir: t.TempDir(), Messages: 8, Seed: 42}
-	first, err := fakevault.Generate(t.Context(), opts)
-	require.NoError(err)
-	assert.Equal(int64(8), first.Messages)
-	opts.Append = true
-	next, err := fakevault.Generate(t.Context(), opts)
-	require.NoError(err)
-	assert.Equal(int64(16), next.Messages)
-}

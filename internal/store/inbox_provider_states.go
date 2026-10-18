@@ -75,6 +75,16 @@ func validateInboxArchiveTarget(ctx context.Context, tx *loggedTx, target inboxc
 	if err := validateInboxArchiveIdentity(ctx, tx, target); err != nil {
 		return err
 	}
+	if target.Scope == inboxcontrol.ScopeMessage {
+		var live int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE id = ? AND source_id = ? AND source_message_id = ?
+			AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, target.ItemID, target.SourceID, target.ProviderID).Scan(&live); err != nil {
+			return fmt.Errorf("resolve live inbox item: %w", err)
+		}
+		if live != 1 {
+			return fmt.Errorf("%w: inbox item is no longer live", inboxcontrol.ErrInvalid)
+		}
+	}
 	if target.SourceType == sourceTypeIMAP {
 		return validateInboxIMAPMembership(ctx, tx, target)
 	}

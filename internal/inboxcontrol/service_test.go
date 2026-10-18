@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,6 +88,22 @@ type controlFixture struct {
 	denied    bool
 	gateCalls int
 	gate      func(context.Context) (func(), error)
+}
+
+type receiptCallerContextKey struct{}
+
+type signalReceiptReadLedger struct {
+	inboxcontrol.Ledger
+	secondRead chan struct{}
+	once       sync.Once
+}
+
+func (l *signalReceiptReadLedger) GetInboxReceipt(ctx context.Context, id string) (*inboxcontrol.Receipt, error) {
+	receipt, err := l.Ledger.GetInboxReceipt(ctx, id)
+	if ctx.Value(receiptCallerContextKey{}) == "second" {
+		l.once.Do(func() { close(l.secondRead) })
+	}
+	return receipt, err
 }
 
 func TestInboxControlRejectsPreFixPreviewWithCollapsedEmptyEvidence(t *testing.T) {
@@ -566,5 +583,99 @@ func TestInboxReceiptReconcileHasSeparateSettlementDeadline(t *testing.T) {
 	requirements.NotNil(result.Receipt)
 	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
 	assertions.Equal("local-reconcile-failed", result.Receipt.FailureCode)
+	assertions.Equal(1, f.provider.dispatches)
+}
+
+func TestInboxReceiptReconcileReloadsAfterWaitingForGate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newControlFixture(t)
+	request := f.execution(t)
+	reconcile := f.service.ReconcileState
+	f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+		return errors.New("synthetic local reconciliation failure")
+	}
+	pending, err := f.service.Control(t.Context(), request, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(pending.Receipt)
+	assertions.Equal(inboxcontrol.StatusReconcileOnly, pending.Receipt.Status)
+	f.service.ReconcileState = reconcile
+
+	secondRead := make(chan struct{})
+	secondWaiting := make(chan struct{})
+	firstWaiting := make(chan struct{})
+	gateLock := &sync.Mutex{}
+	var callLock sync.Mutex
+	gateCalls := 0
+	gate := func(ctx context.Context) (func(), error) {
+		callLock.Lock()
+		gateCalls++
+		call := gateCalls
+		callLock.Unlock()
+		if call == 1 {
+			gateLock.Lock()
+			close(firstWaiting)
+			select {
+			case <-secondRead:
+			case <-ctx.Done():
+				gateLock.Unlock()
+				return nil, ctx.Err()
+			}
+			select {
+			case <-secondWaiting:
+			case <-ctx.Done():
+				gateLock.Unlock()
+				return nil, ctx.Err()
+			}
+			return gateLock.Unlock, nil
+		}
+		close(secondWaiting)
+		gateLock.Lock()
+		return gateLock.Unlock, nil
+	}
+	f.service.Ledger = &signalReceiptReadLedger{Ledger: f.archive.Store, secondRead: secondRead}
+	reconcileRequest := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: pending.Receipt.ID}
+	readsBefore := f.provider.reads
+	type controlResult struct {
+		result *inboxcontrol.Result
+		err    error
+	}
+	firstDone := make(chan controlResult, 1)
+	secondDone := make(chan controlResult, 1)
+	firstCtx := context.WithValue(t.Context(), receiptCallerContextKey{}, "first")
+	secondCtx := context.WithValue(t.Context(), receiptCallerContextKey{}, "second")
+	go func() {
+		result, err := f.service.Control(firstCtx, reconcileRequest, f.principal, gate)
+		firstDone <- controlResult{result: result, err: err}
+	}()
+	select {
+	case <-firstWaiting:
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("first receipt reconciliation did not acquire the gate")
+	}
+	go func() {
+		result, err := f.service.Control(secondCtx, reconcileRequest, f.principal, gate)
+		secondDone <- controlResult{result: result, err: err}
+	}()
+
+	for name, signal := range map[string]<-chan struct{}{"second stale read": secondRead, "second gate wait": secondWaiting} {
+		select {
+		case <-signal:
+		case <-time.After(5 * time.Second):
+			requirements.FailNow("%s did not occur", name)
+		}
+	}
+	for name, done := range map[string]<-chan controlResult{"first reconciliation": firstDone, "second reconciliation": secondDone} {
+		select {
+		case got := <-done:
+			requirements.NoError(got.err, "%s", name)
+			requirements.NotNil(got.result)
+			requirements.NotNil(got.result.Receipt)
+			assertions.Equal(inboxcontrol.StatusVerified, got.result.Receipt.Status, "%s sees the settled receipt", name)
+		case <-time.After(5 * time.Second):
+			requirements.FailNow("%s did not complete", name)
+		}
+	}
+	assertions.Equal(readsBefore+1, f.provider.reads, "the second request returns the refreshed terminal receipt without another provider observation")
 	assertions.Equal(1, f.provider.dispatches)
 }

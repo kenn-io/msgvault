@@ -60,6 +60,7 @@ type catalogCapabilities struct {
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
+	inboxTags       bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -149,6 +150,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
+		inboxTags:       opts.Inbox != nil && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags),
 	}
 }
 

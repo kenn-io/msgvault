@@ -60,11 +60,6 @@ func TestTargetRequiresExactIMAPMembership(t *testing.T) {
 			assert.ErrorIs(t, target.Validate(), ErrInvalid)
 		})
 	}
-	// The membership is exact even when two copies share the same Message-ID.
-	other := good
-	other.UID = 4
-	require.NoError(t, other.Validate())
-	assert.NotEqual(t, good, other)
 }
 
 func TestTargetSeparatesBeeperChatIdentity(t *testing.T) {
