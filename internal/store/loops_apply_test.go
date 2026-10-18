@@ -54,6 +54,44 @@ func TestLoopApplyDoneWinsRewrittenAnchorAndWindow(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(rows, 1, "observed opposite boundary proves a later turn")
 }
+
+func TestLoopApplyPreservesLiveTurnWhenPriorTerminalIsOutsideWindow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	ids := f.CreateMessages(4)
+
+	completed := loopOpen(t, f, ids[0], ids[0], now)
+	applyLoop(t, f, completed, now)
+	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	_, err = f.Store.CloseLoopContext(t.Context(), rows[0].ID, "handled", now)
+	requirements.NoError(err)
+
+	live := loopOpen(t, f, ids[1], ids[2], now)
+	live.PreviousTurnKnown = true
+	live.TurnMessageIDs = ids[1:3]
+	applyLoop(t, f, live, now)
+	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	liveID := rows[0].ID
+
+	// A later bounded run no longer includes the earlier completed turn or
+	// this live anchor. Settlement has already established the live turn.
+	newest := loopOpen(t, f, ids[3], ids[3], now)
+	newest.PreviousTurnKnown = false
+	newest.TurnMessageIDs = []int64{ids[3]}
+	applyLoop(t, f, newest, now)
+
+	got, err := f.Store.GetOpenLoopContext(t.Context(), liveID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	assertions.Equal(ids[1], *got.AnchorMessageID)
+}
+
 func TestLoopApplyRewriteCyclePreservesOwnerStateAndCAS(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

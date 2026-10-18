@@ -57,7 +57,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settlementView.AnchorExists = view.AnchorExists
 			settlementView.BodyText = view.BodyText
 		}
-		closed, gap, err := t.settle(settlementView, l, now)
+		closed, gap, err := t.settle(settlementView, l, now, cfg)
 		if err != nil {
 			v.Err = err
 			return v
@@ -98,13 +98,22 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if last.Signals != nil {
 			bulk = bulk || last.Signals.PrecedenceBulk || last.Signals.ListUnsubscribe
 		}
+		if !ownerWrote && bulk {
+			ownerWrote = t.ownerParticipatedBefore(settlementView, trailing.messages[0].ID)
+		}
 		counterparty = last.Sender
 		if suppressed(counterparty, supp) {
 			closeKept(kind, "muted")
 			return v
 		}
-		if list || (bulk && !ownerWrote) || anchor == nil {
+		if list || anchor == nil {
 			closeKept(kind, "withdrawn")
+			return v
+		}
+		if bulk && !ownerWrote {
+			// The normal window does not prove that the owner never wrote.
+			// Keep an established loop until bounded history can resolve it.
+			keepUncertain(kind)
 			return v
 		}
 	} else {
@@ -201,6 +210,24 @@ func nonOwnerCount(participants []LoopParticipant) int {
 		}
 	}
 	return len(ids)
+}
+
+func (t *traversal) ownerParticipatedBefore(v ConversationView, beforeID int64) bool {
+	start := slices.IndexFunc(v.Messages, func(message LoopMessage) bool { return message.ID == beforeID })
+	if start < 0 {
+		return false
+	}
+	for i := start - 1; i >= 0; i-- {
+		message := v.Messages[i]
+		if message.Direction != Outbound || !metadataSubstantive(message) {
+			continue
+		}
+		body := t.body(v, message.ID)
+		if body.ok && !isAcknowledgementOnly(body.text) {
+			return true
+		}
+	}
+	return false
 }
 
 func eligibleConversation(v ConversationView, now time.Time, cfg Thresholds) bool {

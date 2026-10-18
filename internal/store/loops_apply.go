@@ -117,7 +117,7 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 		}
 	}
 	// A done anchor that fell beyond the bounded same-side window stays authoritative.
-	blocked := latest != nil && loopTerminal(*latest) || !open.PreviousTurnKnown && terminalOutside
+	blocked := latest != nil && loopTerminal(*latest) || !open.PreviousTurnKnown && terminalOutside && live == nil
 	var muted bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions WHERE conversation_id=? OR participant_id=? OR person_id=? OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, open.ConversationID, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.CounterpartyParticipantID).Scan(&muted); err != nil {
 		return err

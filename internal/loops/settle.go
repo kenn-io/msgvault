@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time) (close *CloseDecision, gap bool, err error) {
+func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg Thresholds) (close *CloseDecision, gap bool, err error) {
 	if v.AnchorExists != nil {
 		exists, lookupErr := v.AnchorExists(live.AnchorMessageID)
 		if lookupErr != nil {
@@ -33,6 +33,12 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time) (cl
 	// itself. Neutral messages after an eligible anchor do not.
 	if !metadataSubstantive(v.Messages[anchor]) || v.Messages[anchor].Direction != side {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil
+	}
+	if live.Kind == ReplyOwed {
+		large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
+		if !addressedToOwner(v.Messages[anchor], v.ConversationType, large) {
+			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil
+		}
 	}
 	for i := anchor + 1; i < len(v.Messages); i++ {
 		m := v.Messages[i]

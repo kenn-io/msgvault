@@ -303,6 +303,8 @@ func TestOpenLoopDaemonErrorsBecomeSafeToolErrors(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			backend := loopMCPErrorBackend{
 				loopMCPBackend: &loopMCPBackend{},
 				err:            &daemonclient.APIError{Status: tc.status, Code: tc.code, Message: "private daemon error"},
@@ -311,16 +313,16 @@ func TestOpenLoopDaemonErrorsBecomeSafeToolErrors(t *testing.T) {
 			opts.Loops = backend
 			result := confirmedCallTool(t, opts, tc.tool, tc.args, true)
 
-			require.Equal(t, true, result["isError"])
+			requirements.Equal(true, result["isError"])
 			content, ok := result["content"].([]any)
-			require.True(t, ok, "%v", result)
-			require.Len(t, content, 1)
+			requirements.True(ok, "%v", result)
+			requirements.Len(content, 1)
 			item, ok := content[0].(map[string]any)
-			require.True(t, ok, "%v", content[0])
+			requirements.True(ok, "%v", content[0])
 			message, ok := item["text"].(string)
-			require.True(t, ok, "%v", item["text"])
-			assert.Equal(t, tc.want, message)
-			assert.NotContains(t, message, "private daemon error")
+			requirements.True(ok, "%v", item["text"])
+			assertions.Equal(tc.want, message)
+			assertions.NotContains(message, "private daemon error")
 		})
 	}
 }
@@ -366,10 +368,11 @@ func TestOpenLoopsChangedArgumentsCannotReuseConfirmation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/"+tc.key, func(t *testing.T) {
+			assertions := assert.New(t)
 			b := &loopMCPBackend{suppressions: []loops.Suppression{{ID: 99, TargetKind: "person", PersonID: new(int64(7))}, {ID: 100, TargetKind: "person", PersonID: new(int64(8))}}}
 			result := confirmedCallTool(t, loopMCPOptions(b), tc.name, tc.args, true, func(string) { tc.args[tc.key] = tc.value })
-			assert.Equal(t, true, result["isError"])
-			assert.Empty(t, b.calls)
+			assertions.Equal(true, result["isError"])
+			assertions.Empty(b.calls)
 		})
 	}
 }
@@ -432,6 +435,8 @@ func TestOpenLoopsSnoozeRetainsDisclosedInstantAcrossDelayedModernApproval(t *te
 }
 
 func TestOpenLoopsSnoozeExpiresDuringConfirmation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	reference := time.Now().UTC().Add(-2 * time.Minute)
 	manager := newConfirmationChallenges()
 	manager.now = func() time.Time { return reference }
@@ -445,19 +450,19 @@ func TestOpenLoopsSnoozeExpiresDuringConfirmation(t *testing.T) {
 	args := map[string]any{"id": float64(9), "until": "1s"}
 
 	first, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "snooze_open_loop", Arguments: args})
-	require.NoError(t, err)
-	require.True(t, first.NeedsInput())
+	requirements.NoError(err)
+	requirements.True(first.NeedsInput())
 	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{
 		Name: "snooze_open_loop", Arguments: args, RequestState: first.RequestState,
 		InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}},
 	})
-	require.NoError(t, err)
-	assert.True(t, result.IsError)
-	require.Len(t, result.Content, 1)
+	requirements.NoError(err)
+	assertions.True(result.IsError)
+	requirements.Len(result.Content, 1)
 	message, ok := result.Content[0].(*sdkmcp.TextContent)
-	require.True(t, ok)
-	assert.Equal(t, "snooze instant has passed; re-run with a later until", message.Text)
-	assert.Empty(t, b.calls)
+	requirements.True(ok)
+	assertions.Equal("snooze instant has passed; re-run with a later until", message.Text)
+	assertions.Empty(b.calls)
 }
 
 func TestOpenLoopsCatalogReusesSchemaRoots(t *testing.T) {

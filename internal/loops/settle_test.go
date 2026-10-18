@@ -86,6 +86,29 @@ func TestSettlementWithdrawsReclassifiedAnchor(t *testing.T) {
 	}
 }
 
+func TestSettlementReanchorsWhenInboundAddressingIsCorrected(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	old := view.Messages[0]
+	old.Recipients = append([]LoopRecipient(nil), old.Recipients...)
+	old.Recipients[0].Type = "cc"
+	newer := old
+	newer.ID = old.ID + 1
+	newer.OccurredAt = now.Add(-time.Hour)
+	newer.Recipients = append([]LoopRecipient(nil), newer.Recipients...)
+	newer.Recipients[0].Type = "to"
+	view.Messages = []LoopMessage{old, newer}
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: old.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	requirements.NotNil(got.Open)
+	assertions.Equal(newer.ID, got.Open.Anchor.ID)
+	assertions.Equal(newer.OccurredAt, got.Open.OwedSinceAt)
+}
+
 func TestSettlementLookupErrorPreventsApply(t *testing.T) {
 	view, now := detectorFixture()
 	view.AnchorExists = func(int64) (bool, error) { return false, errors.New("archive unavailable") }

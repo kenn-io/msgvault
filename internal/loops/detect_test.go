@@ -106,6 +106,57 @@ func TestDetectEligibility(t *testing.T) {
 	}
 }
 
+func TestDetectBulkWindowRecoversOrPreservesPriorParticipation(t *testing.T) {
+	for _, priorOwner := range []bool{true, false} {
+		t.Run(map[bool]string{true: "extended owner participation", false: "unknown participation"}[priorOwner], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			view, now := detectorFixture()
+			oldAnchor := view.Messages[0]
+			oldAnchor.ID = 10
+			oldAnchor.OccurredAt = now.Add(-72 * time.Hour)
+			view.Messages = nil
+			for i := range 12 {
+				message := oldAnchor
+				message.ID = int64(20 + i)
+				message.OccurredAt = now.Add(time.Duration(i-24) * time.Hour)
+				message.Labels = []string{"CATEGORY_PROMOTIONS"}
+				view.Messages = append(view.Messages, message)
+			}
+			extendedMessages := []LoopMessage{oldAnchor}
+			if priorOwner {
+				ownerMessage := oldAnchor
+				ownerMessage.ID = 9
+				ownerMessage.Direction = Outbound
+				ownerMessage.Sender = view.Participants[0]
+				ownerMessage.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+				ownerMessage.OccurredAt = now.Add(-96 * time.Hour)
+				extendedMessages = []LoopMessage{ownerMessage, oldAnchor}
+			}
+			extendedMessages = append(extendedMessages, view.Messages...)
+			view.AnchorExists = func(int64) (bool, error) { return true, nil }
+			view.Extend = func() (ConversationView, error) {
+				extended := view
+				extended.Messages = extendedMessages
+				return extended, nil
+			}
+			view.BodyText = func(int64) (string, error) { return "Can you check?", nil }
+
+			got := Detect(view, []LiveLoop{{ID: 7, Kind: ReplyOwed, AnchorMessageID: oldAnchor.ID}}, now, DefaultThresholds(), Suppressions{})
+			requirements.NoError(got.Err)
+			assertions.Empty(got.Close)
+			if priorOwner {
+				requirements.NotNil(got.Open)
+				assertions.Equal(int64(20), got.Open.Anchor.ID)
+				assertions.Empty(got.CoverageGaps)
+			} else {
+				assertions.Nil(got.Open)
+				assertions.Equal([]int64{7}, got.CoverageGaps)
+			}
+		})
+	}
+}
+
 func TestDetectOutboundQuestion(t *testing.T) {
 	for _, tt := range []struct {
 		body string

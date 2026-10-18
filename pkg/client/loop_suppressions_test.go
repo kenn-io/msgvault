@@ -24,18 +24,20 @@ func TestCreateLoopSuppressionReturnsDryRunPreview(t *testing.T) {
 		{name: "created", status: http.StatusCreated, body: `{"would_close":0,"suppression":{"id":5,"target_kind":"person","created_at":"2026-10-17T12:00:00Z"}}`, wantMuted: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/api/v1/loops/suppressions", r.URL.Path)
+				assertions.Equal(http.MethodPost, r.Method)
+				assertions.Equal("/api/v1/loops/suppressions", r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
 				_, err := w.Write([]byte(tc.body))
-				assert.NoError(t, err)
+				assertions.NoError(err)
 			}))
 			t.Cleanup(server.Close)
 
 			apiClient, err := client.New(server.URL)
-			require.NoError(t, err)
+			requirements.NoError(err)
 			personID := int64(7)
 			dryRun := tc.dryRun
 			result, err := apiClient.CreateLoopSuppression(t.Context(), &generated.CreateLoopSuppressionRequestOptions{
@@ -45,10 +47,10 @@ func TestCreateLoopSuppressionReturnsDryRunPreview(t *testing.T) {
 					DryRun:     &dryRun,
 				},
 			})
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			assert.Equal(t, tc.wantClosing, result.WouldClose)
-			assert.Equal(t, tc.wantMuted, result.Suppression != nil)
+			requirements.NoError(err)
+			requirements.NotNil(result)
+			assertions.Equal(tc.wantClosing, result.WouldClose)
+			assertions.Equal(tc.wantMuted, result.Suppression != nil)
 		})
 	}
 }
