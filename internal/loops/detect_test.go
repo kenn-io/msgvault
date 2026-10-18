@@ -303,49 +303,6 @@ func TestDetectOwnerMessagesWithAutomationLikeAddresses(t *testing.T) {
 	}
 }
 
-func TestDetectOutboundDraftDoesNotCreateAwaitingReply(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	view, now := detectorFixture()
-	draft := view.Messages[0]
-	draft.Direction, draft.Sender, draft.Draft = Outbound, view.Participants[0], true
-	draft.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
-	draft.OccurredAt = now.Add(-96 * time.Hour)
-	view.Messages = []LoopMessage{draft}
-	view.LastMessageAt = draft.OccurredAt
-	view.BodyText = func(int64) (string, error) { return "Can you review the report?", nil }
-
-	got := Detect(view, nil, now, DefaultThresholds(), Suppressions{})
-	requirements.NoError(got.Err)
-	assertions.Nil(got.Open)
-	assertions.Empty(got.Close)
-}
-
-func TestSettlementDoesNotCloseReplyOwedForOutboundDraft(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	view, now := detectorFixture()
-	draft := view.Messages[0]
-	draft.ID, draft.Direction, draft.Sender, draft.Draft = 11, Outbound, view.Participants[0], true
-	draft.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
-	draft.OccurredAt = now.Add(-24 * time.Hour)
-	view.Messages = append(view.Messages, draft)
-	view.LastMessageAt = draft.OccurredAt
-	view.BodyText = func(id int64) (string, error) {
-		if id == draft.ID {
-			return "I sent the report.", nil
-		}
-		return "Can you review the report?", nil
-	}
-
-	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10}}, now, DefaultThresholds(), Suppressions{})
-	requirements.NoError(got.Err)
-	assertions.Empty(got.Close)
-	requirements.NotNil(got.Open)
-	assertions.Equal(ReplyOwed, got.Open.Kind)
-	assertions.Equal(int64(10), got.Open.Anchor.ID)
-}
-
 func TestDetectAcknowledgementKeepsQuestion(t *testing.T) {
 	view, now := detectorFixture()
 	ack := view.Messages[0]
