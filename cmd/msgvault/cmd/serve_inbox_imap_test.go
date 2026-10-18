@@ -137,6 +137,29 @@ func TestDaemonInboxIMAPRejectsAccountAndConfigMismatchBeforeFactory(t *testing.
 	}
 }
 
+func TestDaemonInboxIMAPBindingAcceptsRequestedSecondaryCopy(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	a, target := inboxIMAPDaemonFixture(t)
+	secondaryUID := target.UID + 1
+	requirements.NoError(a.store.ApplyIMAPMailboxDeltas(target.SourceID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: target.UIDValidity, UIDNext: secondaryUID + 1},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: target.UID, CanonicalSourceMessageID: target.ProviderID, Flags: []string{}},
+			{UID: secondaryUID, CanonicalSourceMessageID: target.ProviderID, Flags: []string{}},
+		},
+	}}))
+
+	secondary := target
+	secondary.UID = secondaryUID
+	source, binding, err := a.inboxBinding(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &secondary})
+	requirements.NoError(err)
+	assertions.Equal(target.SourceID, source.ID)
+	assertions.Equal(inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}, binding)
+}
+
 func TestDaemonInboxIMAPSDKPreservesEmptyExpectedState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

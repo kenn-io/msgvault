@@ -259,6 +259,20 @@ func TestInboxGmailTriagePreviewBoundsAndMissingMappings(t *testing.T) {
 	assertions.Zero(f.writes.Load())
 }
 
+func TestInboxGmailTriageInputRejectsMoreThanHundredEvidenceIDs(t *testing.T) {
+	requirements := require.New(t)
+
+	f := newTriagePreviewFixture(t)
+	input := f.input
+	input.Items = slices.Clone(f.input.Items)
+	input.Items[0].EvidenceMessageIDs = make([]int64, 101)
+	for i := range input.Items[0].EvidenceMessageIDs {
+		input.Items[0].EvidenceMessageIDs[i] = int64(i + 1)
+	}
+
+	requirements.ErrorIs(input.Validate(), inboxcontrol.ErrInvalid)
+}
+
 func TestInboxGmailTriagePreviewAcceptsHundredExplicitTargets(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

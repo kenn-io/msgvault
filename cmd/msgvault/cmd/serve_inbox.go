@@ -205,9 +205,15 @@ func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol
 			}
 			return source, binding, nil
 		}
-		native, err := a.store.EmailTagTargetContext(ctx, request.Target.ItemID, request.Target.Mailbox)
-		if err != nil || native.SourceID != request.Target.SourceID || native.Provider != request.Target.SourceType || native.SourceMessageID != request.Target.ProviderID || native.Mailbox != request.Target.Mailbox || native.UIDValidity != request.Target.UIDValidity || native.UID != request.Target.UID {
-			return nil, binding, inboxcontrol.ErrDenied
+		if request.Target.SourceType == sourceTypeIMAP {
+			if err := a.store.ValidateActiveInboxMessageTargetContext(ctx, *request.Target); err != nil {
+				return nil, binding, inboxcontrol.ErrDenied
+			}
+		} else {
+			native, err := a.store.EmailTagTargetContext(ctx, request.Target.ItemID, request.Target.Mailbox)
+			if err != nil || native.SourceID != request.Target.SourceID || native.Provider != request.Target.SourceType || native.SourceMessageID != request.Target.ProviderID || native.Mailbox != request.Target.Mailbox || native.UIDValidity != request.Target.UIDValidity || native.UID != request.Target.UID {
+				return nil, binding, inboxcontrol.ErrDenied
+			}
 		}
 	}
 	return source, binding, nil

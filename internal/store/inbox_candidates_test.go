@@ -436,6 +436,42 @@ func TestInboxCandidatesRequireCurrentInboxMembershipObservation(t *testing.T) {
 	assertions.False(page.Unavailable, "a current Archive observation covers an item with no current INBOX membership")
 }
 
+func TestInboxCandidatesRequireObservationForEveryCurrentInboxCopy(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	f, target := newInboxIMAPSyncFixture(t)
+	secondUID := target.UID + 1
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: target.UIDValidity, UIDNext: secondUID + 1, HighestModSeq: 900},
+		Reset:   true,
+		Memberships: []store.IMAPMembershipObservation{
+			{Mailbox: "INBOX", UIDValidity: target.UIDValidity, UID: target.UID, CanonicalSourceMessageID: target.ProviderID, Flags: []string{}},
+			{Mailbox: "INBOX", UIDValidity: target.UIDValidity, UID: secondUID, CanonicalSourceMessageID: target.ProviderID, Flags: []string{}},
+		},
+	}}))
+
+	secondary := store.EmailTagTarget{
+		MessageIdentityGuard: store.MessageIdentityGuard{ID: target.ItemID, SourceID: target.SourceID, SourceMessageID: target.ProviderID},
+		Provider:             "imap",
+		Mailbox:              "INBOX",
+		UIDValidity:          target.UIDValidity,
+		UID:                  secondUID,
+	}
+	requirements.NoError(f.store.SaveEmailTagsContext(t.Context(), secondary, &emailtags.MessageTagResult{
+		Provider: "imap", Tags: []string{}, Flags: []string{}, Mailbox: "INBOX", UIDValidity: target.UIDValidity, UID: secondUID, Verified: true,
+	}))
+
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+	page, err := f.store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 10, "")
+	requirements.NoError(err)
+	requirements.Len(page.Candidates, 1)
+	assertions.Equal(target.UID, page.Candidates[0].State.Target.UID)
+	assertions.True(page.Unavailable, "an observation for one copy cannot cover a second current INBOX copy")
+}
+
 func TestInboxCandidatesDeletedUnknownDoesNotMakeInboxUnavailable(t *testing.T) {
 	t.Parallel()
 	for _, column := range []string{"deleted_at", "deleted_from_source_at"} {

@@ -167,20 +167,31 @@ func inboxCandidateMembershipSQL(source inboxcontrol.SourceIdentity) string {
     AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity))`
 }
 
-// An item with a current INBOX membership needs an observation for that exact
-// copy. A current observation from another mailbox only covers an item that no
+// Every current INBOX copy of an item needs an observation for that exact UID.
+// A current observation from another mailbox only covers an item that no
 // longer has a current INBOX membership.
 func inboxCandidateCoverageMembershipSQL(source inboxcontrol.SourceIdentity) string {
 	membership := inboxCandidateMembershipSQL(source)
 	if source.SourceType != "imap" {
 		return membership
 	}
-	return fmt.Sprintf(`(%s AND (UPPER(p.mailbox)='INBOX' OR NOT EXISTS (
-  SELECT 1 FROM imap_message_memberships inbox_member
+	currentInboxMembership := `EXISTS (SELECT 1 FROM imap_message_memberships inbox_member
   JOIN imap_folder_state inbox_folder ON inbox_folder.source_id=inbox_member.source_id
     AND inbox_folder.mailbox=inbox_member.mailbox AND inbox_folder.uidvalidity=inbox_member.uidvalidity
-  WHERE inbox_member.source_id=r.source_id AND inbox_member.message_id=r.id AND UPPER(inbox_member.mailbox)='INBOX'
-)))`, membership)
+  WHERE inbox_member.source_id=r.source_id AND inbox_member.message_id=r.id AND UPPER(inbox_member.mailbox)='INBOX')`
+	return fmt.Sprintf(`(%s AND (
+  (UPPER(p.mailbox)='INBOX' AND NOT EXISTS (
+    SELECT 1 FROM imap_message_memberships inbox_member
+    JOIN imap_folder_state inbox_folder ON inbox_folder.source_id=inbox_member.source_id
+      AND inbox_folder.mailbox=inbox_member.mailbox AND inbox_folder.uidvalidity=inbox_member.uidvalidity
+    WHERE inbox_member.source_id=r.source_id AND inbox_member.message_id=r.id AND UPPER(inbox_member.mailbox)='INBOX'
+      AND NOT EXISTS (SELECT 1 FROM inbox_provider_states inbox_observation
+        WHERE inbox_observation.source_id=inbox_member.source_id AND inbox_observation.scope=p.scope
+          AND inbox_observation.item_id=inbox_member.message_id AND inbox_observation.provider_id=p.provider_id
+          AND inbox_observation.mailbox=inbox_member.mailbox AND inbox_observation.uidvalidity=inbox_member.uidvalidity
+          AND inbox_observation.uid=inbox_member.uid AND inbox_observation.is_inbox IS NOT NULL)
+  )) OR (UPPER(p.mailbox)<>'INBOX' AND NOT %s)
+))`, membership, currentInboxMembership)
 }
 
 func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontrol.SourceIdentity, scope inboxcontrol.Scope) (string, bool, error) {
