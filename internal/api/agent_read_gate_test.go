@@ -83,6 +83,9 @@ func TestAgentReadSourceRemovalSnapshot(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "glacier allowed", "allowed body")
 			requirements.NoError(err)
+			labelID, err := st.EnsureLabel(src.ID, "snapshot-label", "Snapshot label", "user")
+			requirements.NoError(err)
+			requirements.NoError(st.ReplaceMessageLabels(id, []int64{labelID}))
 			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.test")
 			requirements.NoError(err)
 			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
@@ -101,7 +104,18 @@ func TestAgentReadSourceRemovalSnapshot(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.test", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.test", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
+			path := map[string]string{
+				"cached search": "/api/v1/search/fast?q=glacier",
+				"domain":        "/api/v1/search/domains?domains=example.test",
+				"stats":         "/api/v1/stats/total",
+				"subaggregate":  fmt.Sprintf("/api/v1/aggregates/sub?view_type=labels&source_id=%d", src.ID),
+				"list":          "/api/v1/messages",
+				"search":        "/api/v1/search/fast?q=glacier",
+				"aggregate":     "/api/v1/aggregates?view_type=labels",
+				"message":       fmt.Sprintf("/api/v1/messages/%d", id),
+				"store message": fmt.Sprintf("/api/v1/messages/%d", id),
+				"thread":        fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id),
+			}[route]
 			get := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequest(http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -127,7 +141,13 @@ func TestAgentReadSourceRemovalSnapshot(t *testing.T) {
 			close(resume)
 			response := <-readDone
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-			if route == "stats" {
+			if route == "aggregate" || route == "subaggregate" {
+				var result AggregateResponse
+				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+				requirements.Len(result.Rows, 1)
+				assertions.Equal("Snapshot label", result.Rows[0].Key)
+				assertions.Equal(int64(1), result.Rows[0].Count)
+			} else if route == "stats" {
 				var result TotalStatsResponse
 				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 				assertions.Equal(int64(1), result.MessageCount)

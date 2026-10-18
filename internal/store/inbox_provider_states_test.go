@@ -68,9 +68,17 @@ func TestInboxProviderStateRequiresExactMembership(t *testing.T) {
 	state.ObservedAt = time.Time{}
 	_, err = f.Store.ObserveInboxState(t.Context(), state)
 	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
-	other := receipt.Before.Target
+	state = receipt.Before
+	changed, err := f.Store.ObserveInboxState(t.Context(), state)
+	requirements.NoError(err)
+	assertions.True(changed)
+	got, err := f.Store.GetInboxProviderState(t.Context(), state.Target)
+	requirements.NoError(err)
+	requirements.NotNil(got)
+	assertions.Equal(state, *got)
+	other := state.Target
 	other.SourceIdentifier = "other@example.com"
-	got, err := f.Store.GetInboxProviderState(t.Context(), other)
+	got, err = f.Store.GetInboxProviderState(t.Context(), other)
 	requirements.NoError(err)
 	assertions.Nil(got)
 }
