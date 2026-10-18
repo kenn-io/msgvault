@@ -276,11 +276,16 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 		name           string
 		full           bool
 		editTranscript bool
+		seedExisting   bool
+		deferRecording bool
 	}{
-		{name: "full scan", full: true},
+		{name: "full scan with existing restored message", full: true, seedExisting: true},
 		{name: "newly created after transcript edit", editTranscript: true},
+		{name: "created while recording is deferred", full: true, deferRecording: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newImporterFixture(t)
 			registerRemoteFixture(t, f)
 			path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
@@ -297,26 +302,50 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 				return err
 			}
 			_, err := ScanRemote(t.Context(), opts, f.imp.ImportRemote)
-			require.NoError(t, err)
-			require.Equal(t, 1, uploads)
+			require.NoError(err)
+			require.Equal(1, uploads)
 
-			// Model restoring an older daemon backup: the recorder keeps its
-			// local receipt, but the restored archive does not contain the meeting.
+			// Model restoring a daemon backup: the recorder's cache survives
+			// while the archive state is set independently for each case.
 			restored := newImporterFixture(t)
 			registerRemoteFixture(t, restored)
 			activeImporter = restored.imp
+			if tt.seedExisting {
+				reader, err := Open(t.Context(), f.path)
+				require.NoError(err)
+				meetings, err := reader.listMeetings(t.Context(), meetingID)
+				require.NoError(err)
+				require.Len(meetings, 1)
+				require.NoError(reader.Close())
+
+				request := RemoteRequest{Action: "upsert", Source: remoteTestRequest().Source, Meeting: NewRemoteMeeting(meetings[0])}
+				request, err = request.Normalize()
+				require.NoError(err)
+				_, err = restored.imp.ImportRemote(t.Context(), request)
+				require.NoError(err)
+			}
 			if tt.editTranscript {
 				_, err := f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
-				require.NoError(t, err)
+				require.NoError(err)
+			}
+			if tt.deferRecording {
+				require.NoError(os.Remove(path))
 			}
 			recoveryOpts := opts
 			recoveryOpts.Full = tt.full
 			_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
-			require.NoError(t, err)
-			assert.Equal(t, 2, uploads, "a newly created archive message needs its recording even when the recorder has a receipt")
+			require.NoError(err)
+			if tt.deferRecording {
+				assert.Equal(1, uploads, "a deferred recording is not uploaded")
+				writeRecording(t, f.path, "meeting.wav", recordingWAV())
+				recoveryOpts.Full = false
+				_, err = ScanRemote(t.Context(), recoveryOpts, restored.imp.ImportRemote)
+				require.NoError(err)
+			}
+			assert.Equal(2, uploads, "a newly created archive message needs its recording even when the recorder has a receipt")
 			candidates, err := restored.st.ListBeeperMediaCandidates(t.Context(), 0, 10)
-			require.NoError(t, err)
-			assert.Len(t, candidates, 1)
+			require.NoError(err)
+			assert.Len(candidates, 1)
 		})
 	}
 }

@@ -145,11 +145,13 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	}
 	recordingAcknowledged := false
 	recordingIdentity := ""
-	if recording != nil {
+	if p.opts.Recordings {
 		recordingIdentity, err = meeting.SourceMessageID()
 		if err != nil {
 			return remoteInvalid("meeting", "cannot identify recording acknowledgement")
 		}
+	}
+	if recording != nil {
 		recordingAcknowledged = !p.opts.Full && p.uploads.recordingAcknowledged(recordingIdentity, recording.Hash)
 		if recordingAcknowledged {
 			p.uploads.recordRecording(recordingIdentity, recording.Hash)
@@ -168,7 +170,7 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	} else if result.Changed {
 		p.sum.MeetingsUpdated++
 	}
-	if result.Status == "created" && recording != nil {
+	if result.Status == "created" && p.opts.Recordings {
 		p.uploads.forgetRecording(recordingIdentity)
 		recordingAcknowledged = false
 	}
