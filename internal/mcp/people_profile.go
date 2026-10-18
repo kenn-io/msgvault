@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ type getPersonProfileResponse struct {
 	// ContactState is the deterministic activity projection; null until the
 	// activity job has computed a row for this person.
 	ContactState *store.ContactState `json:"contact_state"`
+	// OpenLoops is null when unwired or unavailable; an uncertified projection
+	// stays present with its daemon freshness report. Counts cover all pages.
+	OpenLoops *personProfileOpenLoops `json:"open_loops"`
+	// OpenLoopsWarning distinguishes an unavailable projection from an unwired one.
+	OpenLoopsWarning string `json:"open_loops_warning,omitempty"`
 	// PrimaryChannel is the curated primary_channel attribute when set.
 	PrimaryChannel string `json:"primary_channel,omitempty"`
 	// InferredChannel is the channel the activity projection derived from
@@ -290,7 +296,14 @@ func (h *handlers) getPersonProfile(ctx context.Context, req toolRequest) (*tool
 	if profile == nil {
 		return nil, newInternalError("get person profile", errors.New("empty response"))
 	}
-	return jsonResult(personProfileResponse(*profile))
+	response := personProfileResponse(*profile)
+	response.OpenLoops, err = h.personOpenLoops(ctx, profile.Person.ID)
+	if err != nil {
+		slog.Warn("MCP person profile open loops are unavailable", "person_id", profile.Person.ID, "error", err)
+		response.OpenLoops = nil
+		response.OpenLoopsWarning = "Open loops are temporarily unavailable."
+	}
+	return jsonResult(response)
 }
 
 func personProfileResponse(profile peoplebrowser.PersonProfile) getPersonProfileResponse {
