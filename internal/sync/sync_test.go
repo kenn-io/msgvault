@@ -2644,6 +2644,8 @@ func TestIncrementalSyncBatchesLabelMetadataForUniqueMessagesPerHistoryPage(t *t
 
 func TestIncrementalSyncRetainsCursorWhenBatchedLabelMetadataHasMessageError(t *testing.T) {
 	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	env := newTestEnv(t)
 	env.Mock.Profile.MessagesTotal = 2
 	env.Mock.Profile.HistoryID = 12340
@@ -2669,16 +2671,16 @@ func TestIncrementalSyncRetainsCursorWhenBatchedLabelMetadataHasMessageError(t *
 		historyLabelAdded("msg-b", "STARRED"),
 	)
 	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	_, err = env.Syncer.Incremental(env.Context, source)
 
-	require.ErrorContains(t, err, "metadata unavailable")
-	require.ErrorContains(t, err, "history cursor retained")
-	assert.Equal(t, [][]string{{"msg-a", "msg-b"}}, metadataAPI.labelCalls)
+	requirements.ErrorContains(err, "metadata unavailable")
+	requirements.ErrorContains(err, "history cursor retained")
+	assertions.Equal([][]string{{"msg-a", "msg-b"}}, metadataAPI.labelCalls)
 	refreshed, err := env.Store.GetSourceByID(source.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "12340", refreshed.SyncCursor.String)
+	requirements.NoError(err)
+	assertions.Equal("12340", refreshed.SyncCursor.String)
 }
 
 func TestIncrementalSyncWithLabelRemoved(t *testing.T) {

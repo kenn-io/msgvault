@@ -17,25 +17,27 @@ func TestInboxPermissionGrantKeepsPermissionsIsolated(t *testing.T) {
 		"inbox.move", "inbox.folder-create",
 	} {
 		t.Run(string(permission), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
 			source := SourceRef{ID: 1, Type: "gmail", Identifier: "reader@example.test"}
 			registry := NewRegistry()
 			expires := time.Now().Add(time.Hour)
 			_, secret, grant, err := registry.Issue("inbox", []Permission{permission}, []SourceRef{source}, expires)
-			require.NoError(t, err)
-			assert.True(t, grant.Allows(permission, source))
-			assert.False(t, grant.Allows(permission, SourceRef{ID: 2, Type: "gmail", Identifier: "other@example.test"}))
+			requirements.NoError(err)
+			assertions.True(grant.Allows(permission, source))
+			assertions.False(grant.Allows(permission, SourceRef{ID: 2, Type: "gmail", Identifier: "other@example.test"}))
 			for _, other := range []Permission{
 				"inbox.read", "inbox.tag", "inbox.archive", "inbox.read-state",
 				"inbox.move", "inbox.folder-create",
 			} {
 				if other != permission {
-					assert.False(t, grant.Allows(other, source), "permission %s must not imply %s", permission, other)
+					assertions.False(grant.Allows(other, source), "permission %s must not imply %s", permission, other)
 				}
 			}
-			assert.False(t, grant.HasPermission(PermissionDraftCreate))
-			assert.False(t, grant.HasPermission(PermissionMessageRead))
+			assertions.False(grant.HasPermission(PermissionDraftCreate))
+			assertions.False(grant.HasPermission(PermissionMessageRead))
 			_, allowed := registry.Lookup(secret)
-			require.True(t, allowed)
+			requirements.True(allowed)
 		})
 	}
 }

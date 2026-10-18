@@ -571,6 +571,8 @@ func TestInboxReceiptReconcileHasSeparateSettlementDeadline(t *testing.T) {
 }
 
 func TestInboxReceiptReconcileReturnsCurrentReceiptAfterWaitingForOwnership(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.provider.dispatch = func(context.Context) error {
@@ -578,9 +580,9 @@ func TestInboxReceiptReconcileReturnsCurrentReceiptAfterWaitingForOwnership(t *t
 		return errors.New("synthetic lost dispatch response")
 	}
 	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.NotNil(t, unknown.Receipt)
-	require.Equal(t, inboxcontrol.StatusUnknown, unknown.Receipt.Status)
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.NotNil(unknown.Receipt)
+	requirements.Equal(inboxcontrol.StatusUnknown, unknown.Receipt.Status)
 	f.provider.dispatch = nil
 
 	var reconciliationCalls int
@@ -614,34 +616,35 @@ func TestInboxReceiptReconcileReturnsCurrentReceiptAfterWaitingForOwnership(t *t
 	select {
 	case <-enteredGate:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "reconciler did not wait for mutation ownership")
+		requirements.FailNow("reconciler did not wait for mutation ownership")
 	}
 
 	completed, err := f.service.Control(t.Context(), request, f.principal, f.gate)
-	require.NoError(t, err)
-	require.NotNil(t, completed.Receipt)
-	require.Equal(t, inboxcontrol.StatusVerified, completed.Receipt.Status)
+	requirements.NoError(err)
+	requirements.NotNil(completed.Receipt)
+	requirements.Equal(inboxcontrol.StatusVerified, completed.Receipt.Status)
 	readsAfterCompletion := f.provider.reads
 	release()
 	waiting := <-waitingResult
-	require.NoError(t, waiting.err)
-	require.NotNil(t, waiting.result)
-	require.NotNil(t, waiting.result.Receipt)
-	assert.Equal(t, completed.Receipt.ID, waiting.result.Receipt.ID)
-	assert.Equal(t, inboxcontrol.StatusVerified, waiting.result.Receipt.Status)
-	assert.Equal(t, 1, reconciliationCalls, "the waiter must not reconcile or finalize stale receipt data")
-	assert.Equal(t, readsAfterCompletion, f.provider.reads, "the waiter must return the current receipt without provider readback")
+	requirements.NoError(waiting.err)
+	requirements.NotNil(waiting.result)
+	requirements.NotNil(waiting.result.Receipt)
+	assertions.Equal(completed.Receipt.ID, waiting.result.Receipt.ID)
+	assertions.Equal(inboxcontrol.StatusVerified, waiting.result.Receipt.Status)
+	assertions.Equal(1, reconciliationCalls, "the waiter must not reconcile or finalize stale receipt data")
+	assertions.Equal(readsAfterCompletion, f.provider.reads, "the waiter must return the current receipt without provider readback")
 }
 
 func TestInboxReceiptReconcileReturnsCurrentFailureAfterWaitingForOwnership(t *testing.T) {
 	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := newControlFixture(t)
 	r := f.execution(t)
 	f.provider.dispatch = func(context.Context) error { return errors.New("synthetic lost dispatch response") }
 	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.NotNil(t, unknown.Receipt)
-	require.Equal(t, inboxcontrol.StatusUnknown, unknown.Receipt.Status)
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.NotNil(unknown.Receipt)
+	requirements.Equal(inboxcontrol.StatusUnknown, unknown.Receipt.Status)
 
 	enteredGate := make(chan struct{})
 	releaseGate := make(chan struct{})
@@ -668,15 +671,15 @@ func TestInboxReceiptReconcileReturnsCurrentFailureAfterWaitingForOwnership(t *t
 	select {
 	case <-enteredGate:
 	case <-time.After(5 * time.Second):
-		require.FailNow(t, "reconciler did not wait for mutation ownership")
+		requirements.FailNow("reconciler did not wait for mutation ownership")
 	}
-	require.NoError(t, f.archive.Store.FinishInboxReceipt(t.Context(), unknown.Receipt.ID, inboxcontrol.StatusFailed, nil, "provider-rejected"))
+	requirements.NoError(f.archive.Store.FinishInboxReceipt(t.Context(), unknown.Receipt.ID, inboxcontrol.StatusFailed, nil, "provider-rejected"))
 	readsBeforeReturn := f.provider.reads
 	release()
 	waiting := <-waitingResult
-	require.NoError(t, waiting.err)
-	require.NotNil(t, waiting.result)
-	require.NotNil(t, waiting.result.Receipt)
+	requirements.NoError(waiting.err)
+	requirements.NotNil(waiting.result)
+	requirements.NotNil(waiting.result.Receipt)
 	assertions.Equal(inboxcontrol.StatusFailed, waiting.result.Receipt.Status)
 	assertions.Equal("provider-rejected", waiting.result.Receipt.FailureCode)
 	assertions.Equal(readsBeforeReturn, f.provider.reads, "a completed failure must not trigger stale provider readback")
