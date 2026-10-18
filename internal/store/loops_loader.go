@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"go.kenn.io/msgvault/internal/loops"
+	"go.kenn.io/msgvault/internal/looplimits"
 )
 
 // LoopConversationAnchorExistsContext distinguishes an older window gap from
@@ -34,13 +34,14 @@ func (s *Store) LoopMessageBodyContext(ctx context.Context, messageID int64) (st
 // LoadLoopConversationContext reads a bounded newest metadata window and returns it chronologically.
 func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID int64, limit int) (LoopConversation, error) {
 	var out LoopConversation
-	if conversationID <= 0 || limit < 1 || limit > loops.MaxConversationMessageLimit {
+	if conversationID <= 0 || limit < 1 || limit > looplimits.MaxConversationMessageLimit {
 		return out, fmt.Errorf("%w: conversation and limit required", ErrInvalidLoop)
 	}
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var last nullableTimestamp
 		err := tx.QueryRowContext(ctx, `SELECT c.id,c.source_id,s.source_type,c.conversation_type,
-COALESCE((SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m WHERE m.conversation_id=c.id),c.last_message_at)
+COALESCE((SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m
+WHERE m.conversation_id=c.id AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL),c.last_message_at)
 FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversationID).Scan(&out.ConversationID, &out.SourceID, &out.SourceType, &out.ConversationType, &last)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrLoopNotFound
