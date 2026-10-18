@@ -1607,7 +1607,9 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 // default collection membership. A retry reuses an already committed source.
 func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
 	now := s.dialect.Now()
-	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+	var source *Source
+	err := s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
+		row := tx.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO sources (source_type, identifier, created_at, updated_at)
 		VALUES (?, ?, %s, %s)
 		ON CONFLICT (source_type, identifier) DO UPDATE
@@ -1617,7 +1619,10 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		          created_at, updated_at
 	`, now, now), sourceType, identifier)
 
-	source, err := scanSource(row)
+		var err error
+		source, err = scanSource(row)
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("upsert source: %w", err)
 	}

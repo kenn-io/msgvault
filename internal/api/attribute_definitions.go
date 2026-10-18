@@ -294,6 +294,8 @@ func (s *Server) writeAttributeError(w http.ResponseWriter, err error) {
 	}
 	var valueConflict *store.AttributeValueConflictError
 	switch {
+	case errors.Is(err, errPersonScopeDenied), errors.Is(err, store.ErrIdentityOperationTooLarge), errors.Is(err, store.ErrPersonRevisionConflict):
+		s.writePersonError(w, err)
 	case errors.Is(err, store.ErrAttributeUniquenessUnsupported):
 		writeError(w, http.StatusBadRequest, "attribute_uniqueness_unsupported", err.Error())
 	case errors.Is(err, store.ErrAttributeDefinitionInvalid):

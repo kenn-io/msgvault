@@ -6,6 +6,7 @@ type LoginSessionBody = SessionLoginRequest
 
 type AddAccountBody = AddAccountRequest
 
+// IssueAgentTokenBody Select 1–100 explicit resources in total across sources, people and address books.
 type IssueAgentTokenBody = AgentTokenIssueRequest
 
 type CreateAttributeDefinitionBody = CreateAttributeDefinitionRequest

@@ -100,9 +100,11 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.14.0**.
+it is separate from the binary release version. The current schema is **3.15.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
+
+Schema 3.15.0 adds [scoped contact grants](#restricted-contact-operations) and delegated native person edits.
 
 Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcript search is configured. It also adds source filename, title and date to transcript search results and optional `conversation_title` to `GET /messages/{id}`.
 
@@ -2774,14 +2776,30 @@ reads select only granted sources. Explicit accounts, collections, and source ID
 sets must fit entirely inside the grant. A missing permission or an account
 selector outside the grant returns `403 permission_denied` and names the
 permission. A message, thread, or attachment outside the grant returns the same
-`404` as a missing one. At most two agent reads run at once; others wait, and a
+`404` as a missing one. At most two delegated archive reads run at once; others wait, and a
 request that ends while waiting returns `503 agent_read_busy`. Unsupported routes remain
-owner-only, including SQL, exports, writes, configuration, and grant management.
+owner-only, including SQL, exports, configuration, and grant management.
+Native contact writes have a separate explicit resource grant described below.
 
 Delegated reads use the daemon's ordinary request deadline, normally 60 seconds.
 
 See [agent-token](cli-reference.md#agent-token) for grant lifetime, expiry,
 revocation, issuance, remote CLI and MCP usage, and supported read capabilities.
+
+### Restricted contact operations
+
+Unreleased main (schema 3.15.0) adds `person_ids` and `address_book_ids` to
+`POST /api/v1/agent-tokens`. The daemon resolves current UID and ownership
+references and returns them in `persons` and `address_books`. Existing source
+selections, expiry, listing, self-inspection and revocation retain their behavior.
+
+Delegated callers can read `GET /people/{id}`, `GET /people/{id}/profile`, and
+`GET /people/{id}/attributes`; patch the first two; set or clear
+`/people/{id}/attributes/{slug}`; and `POST /people/{id}/merge`. These paths are
+relative to `/api/v1`. Each mutation uses native transaction authorization.
+See [scoped contact edits](cli-reference.md#scoped-contact-edits) for exact
+permissions, resource bounds, ETag and slot CAS requirements, and denial codes.
+All other person and identity routes remain owner-only.
 
 ## Configuration Reference
 

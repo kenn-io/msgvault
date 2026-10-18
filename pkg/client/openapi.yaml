@@ -268,9 +268,37 @@ components:
         - Email
         - Name
       type: object
+    AgentTokenAddressBookView:
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        book_id:
+          format: int64
+          type: integer
+        canonical_url:
+          type: string
+        ownership_fingerprint:
+          type: string
+      required:
+        - account_id
+        - book_id
+        - canonical_url
+        - ownership_fingerprint
+      type: object
     AgentTokenIssueRequest:
       additionalProperties: false
+      description: Select 1–100 explicit resources in total across sources, people and address books.
       properties:
+        address_book_ids:
+          items:
+            format: int64
+            maximum: 9007199254740991
+            minimum: 1
+            type: integer
+          maxItems: 100
+          type: array
+          uniqueItems: true
         expires_at:
           format: date-time
           type: string
@@ -280,6 +308,15 @@ components:
           items:
             type: string
           type: array
+        person_ids:
+          items:
+            format: int64
+            maximum: 9007199254740991
+            minimum: 1
+            type: integer
+          maxItems: 100
+          type: array
+          uniqueItems: true
         sender_selections:
           additionalProperties:
             items:
@@ -289,15 +326,22 @@ components:
         source_ids:
           items:
             format: int64
+            maximum: 9007199254740991
+            minimum: 1
             type: integer
+          maxItems: 100
           type: array
+          uniqueItems: true
       required:
         - label
         - permissions
-        - source_ids
       type: object
     AgentTokenIssueResponse:
       properties:
+        address_books:
+          items:
+            $ref: "#/components/schemas/AgentTokenAddressBookView"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -314,6 +358,10 @@ components:
           items:
             type: string
           type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/AgentTokenPersonView"
+          type: array
         secret:
           type: string
         sources:
@@ -321,6 +369,8 @@ components:
             $ref: "#/components/schemas/AgentTokenSourceView"
           type: array
       required:
+        - persons
+        - address_books
         - id
         - label
         - permissions
@@ -337,6 +387,17 @@ components:
           type: array
       required:
         - tokens
+      type: object
+    AgentTokenPersonView:
+      properties:
+        id:
+          format: int64
+          type: integer
+        uid:
+          type: string
+      required:
+        - id
+        - uid
       type: object
     AgentTokenSourceView:
       properties:
@@ -359,6 +420,10 @@ components:
       type: object
     AgentTokenView:
       properties:
+        address_books:
+          items:
+            $ref: "#/components/schemas/AgentTokenAddressBookView"
+          type: array
         created_at:
           format: date-time
           type: string
@@ -373,11 +438,17 @@ components:
           items:
             type: string
           type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/AgentTokenPersonView"
+          type: array
         sources:
           items:
             $ref: "#/components/schemas/AgentTokenSourceView"
           type: array
       required:
+        - persons
+        - address_books
         - id
         - label
         - permissions
@@ -13307,7 +13378,9 @@ components:
           format: double
           type: number
         expected_value_id:
+          description: Current value ID, or zero to require an empty slot; required for delegated edits. Multi-valued creation requires an explicit ordinal.
           format: int64
+          minimum: 0
           type: integer
         ordinal:
           format: int64
@@ -15048,7 +15121,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.14.0
+  version: 3.15.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24793,6 +24866,12 @@ paths:
               description: Strong person profile revision tag for optimistic concurrency
               schema:
                 type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -24850,6 +24929,12 @@ paths:
               description: Strong person profile revision tag for optimistic concurrency
               schema:
                 type: string
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -24862,7 +24947,19 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -25267,7 +25364,30 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributesResponse"
           description: OK
+          headers:
+            ETag:
+              description: Strong person profile revision tag for optimistic concurrency
+              schema:
+                type: string
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -25307,6 +25427,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+          in: header
+          name: If-Match
+          schema:
+            type: string
         - description: Ordinal for a multi-valued definition
           in: query
           name: ordinal
@@ -25337,6 +25462,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -25349,6 +25480,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributeConflictResponse"
           description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "503":
           content:
             application/json:
@@ -25382,6 +25531,11 @@ paths:
           required: true
           schema:
             type: string
+        - description: Person revision tag from the attributes response. Required for delegated edits; checked when supplied by an owner. Value-slot CAS is separate.
+          in: header
+          name: If-Match
+          schema:
+            type: string
         - description: Validate and preview without writing
           in: query
           name: dry_run
@@ -25406,6 +25560,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -25418,6 +25578,24 @@ paths:
               schema:
                 $ref: "#/components/schemas/PersonAttributeConflictResponse"
           description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "503":
           content:
             application/json:
@@ -26624,6 +26802,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -26636,6 +26820,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "428":
           content:
             application/json:
@@ -26643,6 +26833,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:
@@ -26880,6 +27076,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -26944,6 +27146,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -26963,6 +27171,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "428":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
           content:
             application/json:
               schema:

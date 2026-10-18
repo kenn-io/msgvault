@@ -26,6 +26,10 @@ const (
 	PermissionCalendarEventRead Permission = "calendar.event.read"
 	PermissionCalendarWrite     Permission = "calendar.write"
 	PermissionCalendarInvite    Permission = "calendar.invite"
+	PermissionPersonRead        Permission = "person.read"
+	PermissionPersonEdit        Permission = "person.edit"
+	PermissionPersonMerge       Permission = "person.merge"
+	PermissionCardDAVWrite      Permission = "carddav.write"
 )
 
 var knownPermissions = map[string]Permission{
@@ -40,6 +44,10 @@ var knownPermissions = map[string]Permission{
 	string(PermissionCalendarEventRead): PermissionCalendarEventRead,
 	string(PermissionCalendarWrite):     PermissionCalendarWrite,
 	string(PermissionCalendarInvite):    PermissionCalendarInvite,
+	string(PermissionPersonRead):        PermissionPersonRead,
+	string(PermissionPersonEdit):        PermissionPersonEdit,
+	string(PermissionPersonMerge):       PermissionPersonMerge,
+	string(PermissionCardDAVWrite):      PermissionCardDAVWrite,
 }
 
 func KnownPermission(s string) (Permission, bool) {
@@ -56,12 +64,14 @@ type SourceRef struct {
 }
 
 type Grant struct {
-	ID          string
-	Label       string
-	Permissions []Permission
-	Sources     []SourceRef
-	CreatedAt   time.Time
-	ExpiresAt   time.Time
+	ID           string
+	Label        string
+	Permissions  []Permission
+	Sources      []SourceRef
+	Persons      []PersonRef
+	AddressBooks []AddressBookRef
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
 }
 
 func (g Grant) HasPermission(p Permission) bool {
@@ -98,12 +108,14 @@ func (g Grant) AllowsSender(p Permission, src SourceRef, senderKey string) bool 
 
 func cloneGrant(g Grant) Grant {
 	clone := Grant{
-		ID:          g.ID,
-		Label:       g.Label,
-		Permissions: append([]Permission(nil), g.Permissions...),
-		CreatedAt:   g.CreatedAt,
-		ExpiresAt:   g.ExpiresAt,
-		Sources:     make([]SourceRef, len(g.Sources)),
+		ID:           g.ID,
+		Label:        g.Label,
+		Permissions:  append([]Permission(nil), g.Permissions...),
+		CreatedAt:    g.CreatedAt,
+		ExpiresAt:    g.ExpiresAt,
+		Sources:      make([]SourceRef, len(g.Sources)),
+		Persons:      slices.Clone(g.Persons),
+		AddressBooks: slices.Clone(g.AddressBooks),
 	}
 	for i, source := range g.Sources {
 		clone.Sources[i] = SourceRef{
@@ -135,6 +147,11 @@ func NewRegistry() *Registry {
 
 // Issue creates a grant; a zero expiry keeps it valid until revoked or restart.
 func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, expires time.Time) (id, secret string, g Grant, err error) {
+	return r.issue(label, perms, ResourceScopes{Sources: sources}, expires, false)
+}
+
+func (r *Registry) issue(label string, perms []Permission, scope ResourceScopes, expires time.Time, allowResourceOnly bool) (id, secret string, g Grant, err error) {
+	sources := scope.Sources
 	if !expires.IsZero() && !expires.After(time.Now()) {
 		return "", "", Grant{}, errors.New("agentgrant: expiry must be in the future")
 	}
@@ -145,7 +162,7 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 	if len(perms) == 0 {
 		return "", "", Grant{}, errors.New("agentgrant: permission set must not be empty")
 	}
-	if len(sources) == 0 {
+	if len(sources) == 0 && !allowResourceOnly {
 		return "", "", Grant{}, errors.New("agentgrant: source set must not be empty")
 	}
 	// validate perms
@@ -192,12 +209,14 @@ func (r *Registry) Issue(label string, perms []Permission, sources []SourceRef, 
 	digest := sha256.Sum256([]byte(secretPlain))
 
 	g = Grant{
-		ID:          id,
-		Label:       label,
-		Permissions: append([]Permission(nil), perms...),
-		Sources:     append([]SourceRef(nil), sources...),
-		CreatedAt:   time.Now(),
-		ExpiresAt:   expires,
+		ID:           id,
+		Label:        label,
+		Permissions:  append([]Permission(nil), perms...),
+		Sources:      append([]SourceRef(nil), sources...),
+		Persons:      slices.Clone(scope.Persons),
+		AddressBooks: slices.Clone(scope.AddressBooks),
+		CreatedAt:    time.Now(),
+		ExpiresAt:    expires,
 	}
 
 	r.mu.Lock()

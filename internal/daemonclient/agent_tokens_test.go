@@ -181,3 +181,51 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
 }
+
+func TestIssueScopedAgentTokenContactSchemaBoundary(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		schemaVersion string
+		wantPost      bool
+	}{
+		{name: "predecessor schema", schemaVersion: "3.14.0"},
+		{name: "contact scope schema", schemaVersion: "3.15.0", wantPost: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			postCount := 0
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + tt.schemaVersion + `"}`))
+			})
+			mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, r *http.Request) {
+				postCount++
+				assertions.Equal(http.MethodPost, r.Method)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"secret":"synthetic-secret"}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+
+			client, err := New(Config{URL: server.URL, APIKey: "synthetic-owner", AllowInsecure: true})
+			requirements.NoError(err)
+			defer client.Close()
+
+			result, err := client.IssueScopedAgentToken(t.Context(), "synthetic contact grant", []string{"person.read"}, nil, []int64{1}, nil, nil, time.Time{})
+			if tt.wantPost {
+				requirements.NoError(err)
+				requirements.NotNil(result)
+				assertions.Equal("synthetic-secret", result.Secret)
+				assertions.Equal(1, postCount)
+				return
+			}
+			requirements.Error(err)
+			assertions.ErrorContains(err, "contact grant selection requires daemon API schema 3.15.0 or newer")
+			assertions.Nil(result)
+			assertions.Zero(postCount)
+		})
+	}
+}

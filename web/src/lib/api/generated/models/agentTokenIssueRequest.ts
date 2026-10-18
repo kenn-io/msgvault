@@ -3,10 +3,30 @@
  */
 import type { AgentTokenIssueRequestSenderSelections } from "./agentTokenIssueRequestSenderSelections";
 
+/**
+ * Select 1–100 explicit resources in total across sources, people and address books.
+ */
 export interface AgentTokenIssueRequest {
+  /**
+   * @maxItems 100
+   * @items.minimum 1
+   * @items.maximum 9007199254740991
+   */
+  address_book_ids?: number[];
   expires_at?: string;
   label: string;
   permissions: string[];
+  /**
+   * @maxItems 100
+   * @items.minimum 1
+   * @items.maximum 9007199254740991
+   */
+  person_ids?: number[];
   sender_selections?: AgentTokenIssueRequestSenderSelections;
-  source_ids: number[];
+  /**
+   * @maxItems 100
+   * @items.minimum 1
+   * @items.maximum 9007199254740991
+   */
+  source_ids?: number[];
 }

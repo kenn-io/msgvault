@@ -8011,6 +8011,7 @@ func (o *ListPersonAttributesRequestOptions) GetHeader() (map[string]string, err
 type ClearPersonAttributeRequestOptions struct {
 	PathParams *ClearPersonAttributePath
 	Query      *ClearPersonAttributeQuery
+	Header     *ClearPersonAttributeHeaders
 }
 
 // Validate validates all the fields in the options.
@@ -8030,6 +8031,14 @@ func (o *ClearPersonAttributeRequestOptions) Validate() error {
 		if v, ok := any(o.Query).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Query", err)
+			}
+		}
+	}
+
+	if o.Header != nil {
+		if v, ok := any(o.Header).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Header", err)
 			}
 		}
 	}
@@ -8057,7 +8066,7 @@ func (o *ClearPersonAttributeRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *ClearPersonAttributeRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	return runtime.AsMap[string](o.Header)
 }
 
 // SetPersonAttributeRequestOptions is the options needed to make a request to SetPersonAttribute.
@@ -8065,6 +8074,7 @@ type SetPersonAttributeRequestOptions struct {
 	PathParams *SetPersonAttributePath
 	Query      *SetPersonAttributeQuery
 	Body       *SetPersonAttributeBody
+	Header     *SetPersonAttributeHeaders
 }
 
 // Validate validates all the fields in the options.
@@ -8095,6 +8105,14 @@ func (o *SetPersonAttributeRequestOptions) Validate() error {
 			}
 		}
 	}
+
+	if o.Header != nil {
+		if v, ok := any(o.Header).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Header", err)
+			}
+		}
+	}
 	if len(errors) == 0 {
 		return nil
 	}
@@ -8119,7 +8137,7 @@ func (o *SetPersonAttributeRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *SetPersonAttributeRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	return runtime.AsMap[string](o.Header)
 }
 
 // GetPersonBriefRequestOptions is the options needed to make a request to GetPersonBrief.

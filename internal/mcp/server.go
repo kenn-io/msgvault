@@ -175,6 +175,9 @@ type ServeOptions struct {
 	// PersonCardDAV is present only when the daemon serves revision-guarded
 	// person merge and token-guarded CardDAV publication routes.
 	PersonCardDAV PersonCardDAVBackend
+	// PersonMerge and PersonRecords expose only native contact routes.
+	PersonMerge   PersonMergeBackend
+	PersonRecords PersonRecordsBackend
 	// IdentityScoring exposes consented manual scoring. Consent is
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
@@ -205,16 +208,18 @@ func officialToolHandler(
 		var session *sdkmcp.ServerSession
 		var inputResponses sdkmcp.InputResponseMap
 		var toolName, requestState string
+		var argumentsJSON []byte
 		if request != nil {
 			session = request.Session
 			if request.Params != nil {
+				argumentsJSON = request.Params.Arguments
 				inputResponses = request.Params.InputResponses
 				toolName = request.Params.Name
 				requestState = request.Params.RequestState
 			}
 		}
 		result, err := handler(ctx, toolRequest{
-			arguments: arguments, session: session, inputResponses: inputResponses,
+			arguments: arguments, argumentsJSON: argumentsJSON, session: session, inputResponses: inputResponses,
 			toolName: toolName, requestState: requestState, confirmations: confirmation.manager,
 			confirmationSessionKey:        confirmation.sessionKey,
 			requireConfirmationSessionKey: confirmation.requireSessionKey,
@@ -381,10 +386,15 @@ func newMCPServerWithPolicy(
 		kata:                opts.Kata,
 		identityReview:      opts.IdentityReview,
 		personCardDAV:       opts.PersonCardDAV,
+		personMerge:         opts.PersonMerge,
+		personRecords:       opts.PersonRecords,
 		identityScoring:     opts.IdentityScoring,
 		drafts:              opts.Drafts,
 	}
 
+	if h.personMerge == nil {
+		h.personMerge = opts.PersonCardDAV
+	}
 	for _, definition := range operationCatalog(opts, h) {
 		if definition.security == toolSecurityWrite && !allowWrites {
 			continue
