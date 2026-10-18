@@ -174,10 +174,10 @@ func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, 
 		if cf.FetchErrors > 0 {
 			phases = append(phases, fmt.Sprintf("%d fetch", cf.FetchErrors))
 		}
-		_, _ = fmt.Fprintf(out, "    %s: %s errors; last: %s\n", label, strings.Join(phases, ", "), textutil.TruncateRunes(textutil.SanitizeTerminal(cf.LastError), 160))
+		_, _ = fmt.Fprintf(out, "    %s: %s %s; last: %s\n", label, strings.Join(phases, ", "), plural(cf.MediaErrors+cf.FetchErrors, "error", "errors"), textutil.TruncateRunes(textutil.SanitizeTerminal(cf.LastError), 160))
 	}
 	if remaining := sum.Errors - total; remaining > 0 {
-		_, _ = fmt.Fprintf(out, "  %d other errors have no chat detail.\n", remaining)
+		_, _ = fmt.Fprintf(out, "  %d other %s listed by chat; re-run to retry.\n", remaining, plural(remaining, "error isn't", "errors aren't"))
 	}
 	if total > 0 {
 		_, _ = fmt.Fprintln(out, "  Retry with the same global options (such as --local):")
@@ -192,6 +192,13 @@ func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, 
 			_, _ = fmt.Fprintf(out, "    attachment errors: msgvault %s --account %s\n", mediaCmd, textutil.SanitizeTerminal(accountID))
 		}
 	}
+}
+
+func plural(n int64, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func printBeeperSummary(out io.Writer, accountID string, sum *beeper.ImportSummary) {

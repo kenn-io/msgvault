@@ -111,7 +111,7 @@ account's summary reports an error count, followed by the chats behind it:
   Failed chats (49 errors in 2 chats):
     Book Club (!abc:beeper.local): 36 attachment, 2 fetch errors; last: asset download timed out
     !def:beeper.local: 11 fetch errors; last: connect to Beeper Desktop refused
-  5 other errors have no chat detail.
+  5 other errors aren't listed by chat; re-run to retry.
   Retry with the same global options (such as --local):
     fetch errors: msgvault sync-beeper --account signal
     attachment errors: msgvault backfill-beeper-media --account signal

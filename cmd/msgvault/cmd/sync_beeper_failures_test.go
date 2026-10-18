@@ -84,16 +84,16 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	assert.Contains(text, "Club Title (!top :example.test): 3 attachment errors; last: bad  "+strings.Repeat("界", 152)+"...")
 	assert.NotContains(text, strings.Repeat("界", 153))
 	assert.NotContains(text, "\x1b")
-	assert.Contains(text, "!18:example.test: 1 attachment errors")
+	assert.Contains(text, "    !18:example.test: 1 attachment error; last: failed\n")
 	assert.NotContains(text, "!19:example.test:")
 	assert.Contains(text, "...and 2 more chats")
-	assert.Contains(text, "1 other errors have no chat detail.")
+	assert.Contains(text, "  1 other error isn't listed by chat; re-run to retry.\n")
 	assert.NotContains(text, "fetch errors:")
 	assert.Contains(text, "attachment errors: msgvault backfill-beeper-media --account signal \n")
 
 	out.Reset()
 	writeBeeperRunFailures(t.Context(), &out, st, &beeper.ImportSummary{Errors: 4}, "signal", "sync-beeper")
-	assert.Equal("  4 other errors have no chat detail.\n", out.String())
+	assert.Equal("  4 other errors aren't listed by chat; re-run to retry.\n", out.String())
 	out.Reset()
 	writeBeeperRunFailures(t.Context(), &out, st, &beeper.ImportSummary{}, "signal", "sync-beeper")
 	assert.Empty(out.String())
@@ -108,8 +108,11 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 
 	sum.FailedChats["!top\n:example.test"].FetchErrors = 2
 	sum.Errors += 2
+	sum.FailedChats["!mixed:example.test"] = &beeper.ChatFailure{MediaErrors: 1, FetchErrors: 1, LastError: "failed"}
+	sum.Errors += 2
 	out.Reset()
 	writeBeeperRunFailures(t.Context(), &out, st, sum, "signal", "backfill-beeper-media")
+	assert.Contains(out.String(), "    !mixed:example.test: 1 attachment, 1 fetch errors; last: failed\n")
 	_, retry, found := strings.Cut(out.String(), "  Retry with the same global options (such as --local):\n")
 	require.True(found)
 	assert.Equal("    msgvault backfill-beeper-media --account signal\n", retry)
