@@ -146,6 +146,7 @@ func TestPublicationReceiptSettlesWithNativeIntent(t *testing.T) {
 				assert.Equal("verified", state)
 				assert.Equal(`"verified-receipt"`, etag)
 				assert.Empty(current.PendingIntentID)
+				assert.Empty(current.PendingOperation)
 			}
 		})
 	}

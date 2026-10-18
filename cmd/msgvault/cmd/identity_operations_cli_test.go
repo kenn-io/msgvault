@@ -128,16 +128,19 @@ func TestIdentityCLIRejectsInvalidInputBeforeNativeCall(t *testing.T) {
 	require.NoError(t, err)
 	valid, err := json.Marshal(identitycontrol.PreviewRequest{Operation: identitycontrol.OperationGraphLink, Target: identitycontrol.IdentityTarget{ParticipantID: first, OtherParticipantID: second}})
 	require.NoError(t, err)
+	unknownMember := strings.TrimSuffix(string(valid), "}") + `,"surprise":true}`
+	oversized := string(valid) + strings.Repeat(" ", 16*1024+1-len(valid))
+	require.Greater(t, len(oversized), 16*1024)
 	for _, tc := range []struct {
 		name, input string
 		apply       bool
 	}{
-		{"unknown member", `{"surprise":true}`, false},
+		{"unknown member", unknownMember, false},
 		{"operation override", `{"operation":"graph-unlink","target":{"participant_id":1,"other_participant_id":2}}`, false},
 		{"unsafe integer", `{"target":{"participant_id":9007199254740992,"other_participant_id":2}}`, false},
 		{"duplicate field", `{"target":{"participant_id":1,"participant_id":2,"other_participant_id":3}}`, false},
 		{"null field", strings.TrimSuffix(string(valid), "}") + `,"preview_token":null}`, false},
-		{"oversize", string(bytes.Repeat([]byte(" "), 16*1024+1)), false},
+		{"oversize", oversized, false},
 		{"unsigned apply", string(valid), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

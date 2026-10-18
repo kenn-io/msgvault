@@ -42,6 +42,10 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 			requirements.NoError(err)
 			person, _, err := fixture.store.CreatePersonFromParticipant(participant)
 			requirements.NoError(err)
+			outsideParticipant, err := fixture.store.EnsureParticipant("outside-scope@example.test", "Outside Scope Example", "example.test")
+			requirements.NoError(err)
+			outsidePerson, _, err := fixture.store.CreatePersonFromParticipant(outsideParticipant)
+			requirements.NoError(err)
 			var previousNameID int64
 			if tc.write {
 				previousName, err := fixture.store.AddPersonNameContext(t.Context(), person.ID, store.PersonNameInput{NameKind: store.PersonNameFormatted, Formatted: new("Previous Structured Example"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
@@ -103,15 +107,17 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 				after, err := fixture.store.GetPerson(person.ID)
 				requirements.NoError(err)
 				assertions.Equal(person, after, "MCP read must preserve native person")
-				outside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_edit_context", Arguments: map[string]any{"person_id": int64(999999)}})
+				outside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_edit_context", Arguments: map[string]any{"person_id": outsidePerson.ID}})
 				requirements.NoError(err)
 				assertions.True(outside.IsError)
+				assertions.Contains(mcpDraftResultText(t, outside), "(403)")
 				structuredRead, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_structured_profile", Arguments: map[string]any{"person_id": person.ID}})
 				requirements.NoError(err)
 				requirements.False(structuredRead.IsError, mcpDraftResultText(t, structuredRead))
-				structuredOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_structured_profile", Arguments: map[string]any{"person_id": int64(999999)}})
+				structuredOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_structured_profile", Arguments: map[string]any{"person_id": outsidePerson.ID}})
 				requirements.NoError(err)
 				assertions.True(structuredOutside.IsError)
+				assertions.Contains(mcpDraftResultText(t, structuredOutside), "(403)")
 				attributeRead, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_attributes", Arguments: map[string]any{"person_id": person.ID}})
 				requirements.NoError(err)
 				requirements.False(attributeRead.IsError, mcpDraftResultText(t, attributeRead))
@@ -124,10 +130,14 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 				requirements.NoError(json.Unmarshal(attributeJSON, &attributeContext))
 				assertions.NotEmpty(attributeContext.ETag)
 				assertions.Equal(person.ID, attributeContext.Attributes.PersonID)
-				attributeOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_attributes", Arguments: map[string]any{"person_id": int64(999999)}})
+				attributeOutside, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "get_person_attributes", Arguments: map[string]any{"person_id": outsidePerson.ID}})
 				requirements.NoError(err)
 				assertions.True(attributeOutside.IsError)
+				assertions.Contains(mcpDraftResultText(t, attributeOutside), "(403)")
 				if tc.write {
+					outsideAttributeContext, err := owner.GetPersonAttributesContext(t.Context(), outsidePerson.ID)
+					requirements.NoError(err)
+					requirements.NotEmpty(outsideAttributeContext.ETag)
 					attributeArgs := map[string]any{"person_id": person.ID, "etag": attributeContext.ETag, "attribute_slug": definition.Slug, "expected_value_id": int64(0), "value": map[string]any{"type": "text", "text": "Synthetic external page 42"}}
 					for _, field := range []string{"person_id", "expected_value_id", "ordinal"} {
 						unsafeArgs := maps.Clone(attributeArgs)
@@ -138,10 +148,12 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 						assertions.False(unsafe.NeedsInput(), "unsafe JSON IDs must not reach confirmation")
 					}
 					outsideAttributeArgs := maps.Clone(attributeArgs)
-					outsideAttributeArgs["person_id"] = int64(999999)
+					outsideAttributeArgs["person_id"] = outsidePerson.ID
+					outsideAttributeArgs["etag"] = outsideAttributeContext.ETag
 					outsideAttributeSet, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: outsideAttributeArgs})
 					requirements.NoError(err)
 					assertions.True(outsideAttributeSet.IsError)
+					assertions.Contains(mcpDraftResultText(t, outsideAttributeSet), "(403)")
 					attributePending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "set_person_attribute", Arguments: attributeArgs})
 					requirements.NoError(err)
 					requirements.True(attributePending.NeedsInput())
