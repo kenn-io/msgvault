@@ -37,6 +37,8 @@ func TestEmailFamilyCatalogAndReads(t *testing.T) {
 	delegatedListed := toolsByName(t, rawListTools(t, delegated, false))
 	require.Contains(delegatedListed, ToolGetMessage, "message.read must expose a supported message read")
 	assert.NotContains(delegatedListed, "get_email_family", "message.read must not expose the owner-only family read")
+	assert.NotContains(delegatedListed, "preview_email_family_decision")
+	assert.NotContains(delegatedListed, "apply_email_family_decision")
 }
 
 func TestEmailFamilyDecisionToolsNeedWriteOptInAndConfirmation(t *testing.T) {

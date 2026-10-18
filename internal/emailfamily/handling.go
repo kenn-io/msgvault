@@ -198,6 +198,9 @@ func Evaluate(members []Activity) Handling {
 			}
 			for _, parent := range event.parents {
 				if ancestor, found := identityEvent[parent]; found {
+					if closed[ancestor] {
+						continue
+					}
 					ancestorEvent := events[ancestor]
 					if !ancestorEvent.hasTime || !event.occurredAt.After(ancestorEvent.occurredAt) {
 						if !closed[ancestor] {
