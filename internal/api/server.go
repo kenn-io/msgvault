@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonauth"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/providercredentials"
@@ -266,6 +267,9 @@ type Server struct {
 
 	cfg                    *config.Config
 	store                  MessageStore
+	loopService            *loops.Service
+	loopRunner             *loops.Runner
+	loopState              func(context.Context) (store.LoopDerivationState, error)
 	analyticsState         atomic.Pointer[analyticsEngineState]
 	savedViewStore         SavedViewStore
 	sqlQueryRunner         SQLQueryRunner
@@ -532,6 +536,11 @@ const (
 type ServerOptions struct {
 	Config *config.Config
 	Store  MessageStore
+	// Loop capabilities are separate from MessageStore so embedded readers and
+	// lightweight API stores need not implement derived archive maintenance.
+	LoopService *loops.Service
+	LoopRunner  *loops.Runner
+	LoopState   func(context.Context) (store.LoopDerivationState, error)
 	// SavedViewStore owns durable analytical view definitions. It is separate
 	// from the minimal MessageStore so API consumers do not need to implement
 	// unrelated persistence methods.
@@ -639,6 +648,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	s := &Server{
 		cfg:                    opts.Config,
 		store:                  opts.Store,
+		loopService:            opts.LoopService,
+		loopRunner:             opts.LoopRunner,
+		loopState:              opts.LoopState,
 		savedViewStore:         opts.SavedViewStore,
 		sqlQueryRunner:         opts.SQLQueryRunner,
 		archiveSQLQueryRunner:  opts.ArchiveSQLQueryRunner,
@@ -698,6 +710,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		started:                  make(chan struct{}),
 		readSnapshotSlots:        make(chan struct{}, readSnapshotConcurrency),
 	}
+	if s.loopService != nil {
+		s.loopService.SetAccountSnapshot(s.configuredAccountsSnapshot)
+	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,
 		analyticsInitializationActive: opts.AnalyticsInitializationActive,
@@ -728,6 +743,12 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	s.router = s.setupRouter()
 	return s
+}
+
+func (s *Server) configuredAccountsSnapshot() []config.AccountSchedule {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+	return slices.Clone(s.cfg.Accounts)
 }
 
 // setupRouter configures the Huma API router and standard HTTP middleware.

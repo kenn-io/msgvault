@@ -76,6 +76,8 @@ import type {
   CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
+  CloseOpenLoopPathParameters,
+  CloseOpenLoopRequest,
   CommunicationService,
   CommunicationServicesResponse,
   ConsentSettingsPeopleInferenceProviderPathParameters,
@@ -103,6 +105,7 @@ import type {
   DeleteAttributeDefinitionPathParameters,
   DeleteDayEntryPathParameters,
   DeleteEmploymentPathParameters,
+  DeleteLoopSuppressionPathParameters,
   DeleteOrganizationPathParameters,
   DeletePersonPathParameters,
   DeletePersonRelationshipPathParameters,
@@ -172,6 +175,7 @@ import type {
   GetMessagePathParameters,
   GetMessageTagsParams,
   GetMessageTagsPathParameters,
+  GetOpenLoopPathParameters,
   GetOperationRunPathParameters,
   GetOrganizationHistoryPathParameters,
   GetOrganizationPathParameters,
@@ -202,6 +206,7 @@ import type {
   GetTextAggregatesParams,
   GetTextStatsParams,
   GetTotalStatsParams,
+  GetWaitingLoopsParams,
   GmailIDsResponse,
   HealthResponse,
   HybridSearchResponse,
@@ -236,6 +241,7 @@ import type {
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
   ListMessagesParams,
+  ListOpenLoopsParams,
   ListOperationRunsParams,
   ListOrganizationAttributesParams,
   ListOrganizationAttributesPathParameters,
@@ -263,6 +269,8 @@ import type {
   ListPersonFactPinsPathParameters,
   ListPersonFactTargetsParams,
   ListPersonIdentitiesPathParameters,
+  ListPersonLoopsParams,
+  ListPersonLoopsPathParameters,
   ListPersonMatchJudgmentsParams,
   ListPersonMergesParams,
   ListPersonMergesPathParameters,
@@ -274,6 +282,14 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  LoopDetailResponse,
+  LoopListResponse,
+  LoopRunResponse,
+  LoopStatusResponse,
+  LoopSuppressionListResponse,
+  LoopSuppressionRequest,
+  LoopSuppressionResult,
+  LoopWaitingResponse,
   MCPCapabilities,
   Manifest,
   MediaSearchResponse,
@@ -429,6 +445,8 @@ import type {
   SettingsPatchRequest,
   SettingsResponse,
   SimilarSearchResponse,
+  SnoozeOpenLoopPathParameters,
+  SnoozeOpenLoopRequest,
   SourceIdentitiesResponse,
   SourceStatusResponse,
   SplitPersonMergePathParameters,
@@ -461,6 +479,7 @@ import type {
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
+  UnsnoozeOpenLoopPathParameters,
   UpdateCardDAVBookRolesPathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
@@ -2173,6 +2192,169 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary List open-loop history
+ */
+export const listOpenLoops = (
+  params?: ListOpenLoopsParams,
+  options?: SecondParameter<typeof orvalFetch<LoopListResponse>>,
+) => {
+  return orvalFetch<LoopListResponse>(
+    { url: `/api/v1/loops`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Request a preserving loop rebuild
+ */
+export const rebuildLoops = (
+  options?: SecondParameter<typeof orvalFetch<LoopRunResponse>>,
+) => {
+  return orvalFetch<LoopRunResponse>(
+    { url: `/api/v1/loops/rebuild`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Request one bounded derivation pass
+ */
+export const runLoops = (
+  options?: SecondParameter<typeof orvalFetch<LoopRunResponse>>,
+) => {
+  return orvalFetch<LoopRunResponse>(
+    { url: `/api/v1/loops/run`, method: "POST" },
+    options,
+  );
+};
+/**
+ * @summary Get certified loop progress and archive freshness
+ */
+export const getLoopsStatus = (
+  options?: SecondParameter<typeof orvalFetch<LoopStatusResponse>>,
+) => {
+  return orvalFetch<LoopStatusResponse>(
+    { url: `/api/v1/loops/status`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary List owner loop suppressions
+ */
+export const listLoopSuppressions = (
+  options?: SecondParameter<typeof orvalFetch<LoopSuppressionListResponse>>,
+) => {
+  return orvalFetch<LoopSuppressionListResponse>(
+    { url: `/api/v1/loops/suppressions`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Mute a loop target or preview affected loops
+ */
+export const createLoopSuppression = (
+  loopSuppressionRequest: LoopSuppressionRequest,
+  options?: SecondParameter<typeof orvalFetch<LoopSuppressionResult>>,
+) => {
+  return orvalFetch<LoopSuppressionResult>(
+    {
+      url: `/api/v1/loops/suppressions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: loopSuppressionRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Unmute a suppressed target
+ */
+export const deleteLoopSuppression = (
+  { id }: DeleteLoopSuppressionPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/loops/suppressions/${encodeURIComponent(String(id))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Rank people waiting for the owner's reply
+ */
+export const getWaitingLoops = (
+  params?: GetWaitingLoopsParams,
+  options?: SecondParameter<typeof orvalFetch<LoopWaitingResponse>>,
+) => {
+  return orvalFetch<LoopWaitingResponse>(
+    { url: `/api/v1/loops/waiting`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Get one loop and archived evidence references
+ */
+export const getOpenLoop = (
+  { id }: GetOpenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDetailResponse>>,
+) => {
+  return orvalFetch<LoopDetailResponse>(
+    { url: `/api/v1/loops/${encodeURIComponent(String(id))}`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Mark an unanswered turn done
+ */
+export const closeOpenLoop = (
+  { id }: CloseOpenLoopPathParameters,
+  closeOpenLoopRequest: CloseOpenLoopRequest,
+  options?: SecondParameter<typeof orvalFetch<LoopDetailResponse>>,
+) => {
+  return orvalFetch<LoopDetailResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(id))}/done`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: closeOpenLoopRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Remove a loop's snooze
+ */
+export const unsnoozeOpenLoop = (
+  { id }: UnsnoozeOpenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDetailResponse>>,
+) => {
+  return orvalFetch<LoopDetailResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(id))}/snooze`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Snooze an open loop
+ */
+export const snoozeOpenLoop = (
+  { id }: SnoozeOpenLoopPathParameters,
+  snoozeOpenLoopRequest: SnoozeOpenLoopRequest,
+  options?: SecondParameter<typeof orvalFetch<LoopDetailResponse>>,
+) => {
+  return orvalFetch<LoopDetailResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(id))}/snooze`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: snoozeOpenLoopRequest,
+    },
+    options,
+  );
+};
+/**
  * @summary Describe supported MCP daemon operations
  */
 export const getMCPCapabilities = (
@@ -3305,6 +3487,23 @@ export const listPersonIdentities = (
     {
       url: `/api/v1/people/${encodeURIComponent(String(id))}/identities`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary List a person's open loops
+ */
+export const listPersonLoops = (
+  { id }: ListPersonLoopsPathParameters,
+  params?: ListPersonLoopsParams,
+  options?: SecondParameter<typeof orvalFetch<LoopListResponse>>,
+) => {
+  return orvalFetch<LoopListResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/loops`,
+      method: "GET",
+      params,
     },
     options,
   );

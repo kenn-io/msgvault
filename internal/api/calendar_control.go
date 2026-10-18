@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -17,9 +18,8 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Calendar and Muesli domain types share short names such as Person, Result,
-// and RemoteRequest with the archive. Prefix only those packages' types to
-// preserve existing wire names.
+// Domain packages share short names such as Result and Evidence with the
+// archive. Prefix their generic schema names while preserving established names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
@@ -33,6 +33,16 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 		return "Calendar" + name
 	case "go.kenn.io/msgvault/internal/muesli":
 		return "Muesli" + name
+	case "go.kenn.io/msgvault/internal/loops":
+		if strings.HasPrefix(name, "Loop") {
+			return name
+		}
+		return "Loop" + name
+	case "go.kenn.io/msgvault/internal/freshness":
+		if name == "Report" {
+			return "FreshnessReport"
+		}
+		return name
 	default:
 		return name
 	}

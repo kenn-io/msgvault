@@ -36,9 +36,11 @@ const (
 	toolSecurityCardDAVWrite
 	toolSecurityCalendarWrite
 	toolSecurityKataWrite
+	toolSecurityLoopWrite
 )
 
 type catalogCapabilities struct {
+	loops           bool
 	sqlQuery        bool
 	semanticSearch  bool
 	vectorInMessage bool
@@ -128,6 +130,7 @@ func (d toolDefinition) bind(h *handlers) func(context.Context, toolRequest) (*t
 
 func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 	return catalogCapabilities{
+		loops:           opts.Loops != nil,
 		sqlQuery:        opts.ArchiveSQLQuerier != nil,
 		semanticSearch:  opts.HybridEngine != nil || opts.HybridSearcher != nil,
 		vectorInMessage: opts.HybridEngine != nil && opts.Backend != nil,
@@ -269,6 +272,9 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		updateSavedViewDefinition(nil),
 	}
 	definitions = append(definitions, kataDefinitions(capabilities.kataDocbank)...)
+	if capabilities.loops {
+		definitions = append(definitions, loopDefinitions()...)
+	}
 
 	available := definitions[:0]
 	for _, definition := range definitions {

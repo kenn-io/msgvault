@@ -16,10 +16,11 @@ import (
 )
 
 type confirmationChallenge struct {
-	session    *sdkmcp.ServerSession
-	sessionKey string
-	digest     [32]byte
-	expires    time.Time
+	session       *sdkmcp.ServerSession
+	sessionKey    string
+	digest        [32]byte
+	expires       time.Time
+	referenceTime time.Time
 }
 
 type confirmationChallenges struct {
@@ -38,7 +39,7 @@ func newConfirmationChallenges() *confirmationChallenges {
 	return &confirmationChallenges{pending: make(map[string]confirmationChallenge), now: time.Now}
 }
 
-func (c *confirmationChallenges) issue(session *sdkmcp.ServerSession, sessionKey, toolName string, arguments map[string]any, message string) (string, error) {
+func (c *confirmationChallenges) issue(session *sdkmcp.ServerSession, sessionKey, toolName string, arguments map[string]any, message string, referenceTimes ...time.Time) (string, error) {
 	if session == nil && sessionKey == "" {
 		return "", errors.New("confirmation requires an active session")
 	}
@@ -70,8 +71,31 @@ func (c *confirmationChallenges) issue(session *sdkmcp.ServerSession, sessionKey
 	if len(c.pending) >= maxPendingConfirmations {
 		return "", errors.New("too many pending confirmation requests")
 	}
-	c.pending[token] = confirmationChallenge{session: session, sessionKey: sessionKey, digest: digest, expires: now.Add(confirmationChallengeTTL)}
+	reference := now
+	if len(referenceTimes) > 0 && !referenceTimes[0].IsZero() {
+		reference = referenceTimes[0]
+	}
+	c.pending[token] = confirmationChallenge{session: session, sessionKey: sessionKey, digest: digest, expires: now.Add(confirmationChallengeTTL), referenceTime: reference}
 	return token, nil
+}
+
+// referenceTime restores the first request's clock without consuming approval.
+// The normal consume path still verifies the complete arguments and disclosure.
+func (c *confirmationChallenges) referenceTime(token string, session *sdkmcp.ServerSession, sessionKey string) (time.Time, bool) {
+	if token == "" || (session == nil && sessionKey == "") {
+		return time.Time{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	challenge, ok := c.pending[token]
+	if !ok || c.closed || !challenge.expires.After(c.now()) {
+		return time.Time{}, false
+	}
+	matched := sessionKey != "" && challenge.sessionKey == sessionKey || sessionKey == "" && challenge.sessionKey == "" && challenge.session == session
+	if !matched {
+		return time.Time{}, false
+	}
+	return challenge.referenceTime, true
 }
 
 func (c *confirmationChallenges) consume(token string, session *sdkmcp.ServerSession, sessionKey, toolName string, arguments map[string]any, message string) bool {
@@ -125,7 +149,7 @@ func (r toolRequest) confirmUserAction(ctx context.Context, message string) erro
 		return nil
 	}
 	if version := r.session.InitializeParams().ProtocolVersion; version >= "2026-07-28" {
-		return &confirmationRequiredError{params: params}
+		return &confirmationRequiredError{params: params, referenceTime: r.confirmationTime}
 	}
 	if r.requireConfirmationSessionKey {
 		return errors.New("client confirmation is unsupported on legacy HTTP")
@@ -141,7 +165,8 @@ func (r toolRequest) confirmUserAction(ctx context.Context, message string) erro
 }
 
 type confirmationRequiredError struct {
-	params *sdkmcp.ElicitParams
+	referenceTime time.Time
+	params        *sdkmcp.ElicitParams
 }
 
 func (e *confirmationRequiredError) Error() string {
