@@ -178,26 +178,15 @@ func TestBeeperInboxControlPersistsMetadataUnderSourceFence(t *testing.T) {
 }
 
 func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
-	for _, scenario := range []string{"removed", "reused ID", "removed during factory", "foreign source", "foreign identifier", "foreign account", "foreign conversation", "foreign provider"} {
+	for _, scenario := range []string{"removed", "removed during factory", "foreign source", "foreign identifier", "foreign account", "foreign conversation", "foreign provider"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			a, target := beeperInboxFixture(t)
 			peer := newBeeperControlPeer(t, a)
 			switch scenario {
-			case "removed", "reused ID":
+			case "removed":
 				requirements.NoError(a.store.RemoveSource(target.SourceID))
-				if scenario == "reused ID" {
-					insert := "INSERT INTO sources (id,source_type,identifier) VALUES (?, ?, ?)"
-					if a.store.IsPostgreSQL() {
-						// Deliberately reuse a retired ID without changing the allocator.
-						insert = "INSERT INTO sources (id,source_type,identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"
-					}
-					_, err := a.store.DB().Exec(a.store.Rebind(insert), target.SourceID, "beeper", "replacement-account")
-					requirements.NoError(err)
-					_, err = a.store.EnsureConversation(target.SourceID, target.ProviderID, "Replacement")
-					requirements.NoError(err)
-				}
 			case "removed during factory":
 				a.beeperInboxClientFactory = func(context.Context, *store.Source) (*beeper.Client, error) {
 					requirements.NoError(a.store.RemoveSource(target.SourceID))

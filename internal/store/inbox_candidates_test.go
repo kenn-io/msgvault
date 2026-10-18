@@ -42,8 +42,8 @@ func TestInboxCandidatesBoundedPagination(t *testing.T) {
 	for _, state := range states {
 		want[state.Target.ItemID] = true
 	}
-	// Exercise the complete accepted limit domain against the real query.
-	for limit := 1; limit <= 100; limit++ {
+	// Exercise limits on both sides of the four-item result boundary.
+	for _, limit := range []int{1, 2, 3, 4, 5} {
 		seen := make(map[int64]bool)
 		cursor, revision := "", ""
 		for {

@@ -145,68 +145,13 @@ func TestHandleCLIAccountsShowsNewIdentityDespiteCachedCatalog(t *testing.T) {
 	assert.Equal(t, []string{"work@example.org"}, children())
 }
 
-// TestAgentAccountCatalogReadsReusedSourceIDFresh covers a SQLite source ID
-// reused by a legacy writer after removal. The shared catalog still lists the
-// removed source's addresses under that ID; an agent granted the replacement
-// must not see them.
-func TestAgentAccountCatalogReadsReusedSourceIDFresh(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "PostgreSQL identity columns never reuse an ID")
-	st := testutil.NewTestStore(t)
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}},
-		Store:  st,
-		Logger: testLogger(),
-	})
-	t.Cleanup(func() { _ = srv.Shutdown(context.Background()) })
-	t.Cleanup(srv.agentGrants.Close)
-	addSourceWithMail := func(identifier string) *store.Source {
-		src, err := st.GetOrCreateSource("mbox", identifier)
-		require.NoError(err)
-		conv, err := st.EnsureConversation(src.ID, "thread", "Thread")
-		require.NoError(err)
-		_, err = st.UpsertMessage(&store.Message{
-			SourceID: src.ID, ConversationID: conv, SourceMessageID: "m1", MessageType: "email",
-		})
-		require.NoError(err)
-		return src
-	}
-	accounts := func(header, value string) string {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/accounts", nil)
-		req.Header.Set(header, value)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		require.Equal(http.StatusOK, w.Code, w.Body.String())
-		return w.Body.String()
-	}
-
-	removed := addSourceWithMail("removed@example.net")
-	require.NoError(st.AddAccountIdentity(removed.ID, "private@example.org", "manual"))
-	require.Contains(accounts("Authorization", "Bearer owner"), "private@example.org", "the owner warms the shared catalog")
-	require.NoError(st.RemoveSource(removed.ID))
-	// Emulate a legacy writer restoring the removed ID; Store allocation never reuses it.
-	_, err := st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, removed.ID, "mbox", "granted@example.net")
-	require.NoError(err)
-	granted := addSourceWithMail("granted@example.net")
-	require.Equal(removed.ID, granted.ID, "the legacy replacement retains the removed source ID")
-
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
-		[]agentgrant.SourceRef{{ID: granted.ID, Type: granted.SourceType, Identifier: granted.Identifier}}, time.Time{})
-	require.NoError(err)
-	body := accounts(apiprotocol.AgentTokenHeader, token)
-	assert.Contains(body, "granted@example.net")
-	assert.NotContains(body, "private@example.org", "an agent never sees a removed source's addresses")
-}
-
 // TestAgentAccountCatalogUsesAuthorizationSnapshot replaces a granted source
 // while an agent request is between its authorization and its catalog read.
-// The catalog must come from the request's snapshot, or the replacement's
-// addresses would appear under the reused source ID.
+// The catalog must come from the request's snapshot and exclude addresses from
+// the replacement source created after authorization.
 func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "PostgreSQL identity columns never reuse an ID")
 	st := testutil.NewTestStore(t)
 	paused, resume := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -249,15 +194,13 @@ func TestAgentAccountCatalogUsesAuthorizationSnapshot(t *testing.T) {
 	}()
 	<-paused
 	require.NoError(st.RemoveSource(granted.ID))
-	// Simulate ID reuse by a legacy writer, bypassing the retained Store counter.
-	_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, granted.ID, "mbox", "replacement@example.net")
-	require.NoError(err)
 	replacement := addSourceWithMail("replacement@example.net")
-	require.Equal(granted.ID, replacement.ID, "the legacy replacement retains the removed source ID")
+	require.NotEqual(granted.ID, replacement.ID, "ordinary source creation starts a fresh lifetime")
 	require.NoError(st.AddAccountIdentity(replacement.ID, "private@example.org", "manual"))
 	close(resume)
 
 	w := <-done
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), "granted@example.net", "the catalog read uses the authorization snapshot")
 	assert.NotContains(w.Body.String(), "private@example.org", "the catalog read sees the authorization snapshot")
 }

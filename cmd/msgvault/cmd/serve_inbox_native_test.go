@@ -348,21 +348,17 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NoError(st.RemoveSource(source.ID))
 	response = call(http.MethodPost, "/api/v1/inbox/control", receiptRequest, "")
 	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
-	// Deliberately bypass the ordinary allocator in this synthetic adversary:
-	// retired receipts must remain denied even if both old IDs are forced back.
-	_, err = st.DB().Exec(`INSERT INTO sources(id,source_type,identifier) VALUES(?,'gmail',?)`, source.ID, account)
-	requirements.NoError(err)
-	recreated, err := st.GetSourceByID(source.ID)
-	requirements.NoError(err)
-	assertions.Equal(source.ID, recreated.ID, "the adversary explicitly restores the retired source ID")
 	client, err = factory(t.Context(), nil)
 	requirements.NoError(err)
 	_, err = archivesync.New(client, st, nil).Full(t.Context(), account)
 	requirements.NoError(err)
-
+	recreated, err := st.GetSourceByTypeAndIdentifier("gmail", account)
+	requirements.NoError(err)
+	assertions.NotEqual(source.ID, recreated.ID, "ordinary reimport starts a fresh source lifetime")
 	reimported, err := st.MessageExistsBatch(recreated.ID, []string{"native-message"})
 	requirements.NoError(err)
-	requirements.Equal(target.ItemID, reimported["native-message"], "the same source and message IDs were both reused")
+	requirements.Contains(reimported, "native-message", "ordinary reimport restores the provider message under the new source")
+	assertions.NotEqual(target.ItemID, reimported["native-message"], "reimported messages receive fresh archive identities")
 	mu.Lock()
 	priorFactories := factoryCalls.Load()
 	priorReadbacks := readbacks

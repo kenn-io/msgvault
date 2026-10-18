@@ -63,12 +63,10 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 		if change != nil {
 			result.DryRun = change.DryRun
 			if change.DryRun {
-				assert.True(result.DryRun)
 				assert.Empty(change.Add)
 				assert.Equal([]string{"Label_next"}, change.Remove)
 				return result, nil
 			}
-			assert.False(result.DryRun)
 			assert.Equal([]string{"Label_next"}, change.Add)
 			assert.Empty(change.Remove)
 			writes++
