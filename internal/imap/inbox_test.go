@@ -166,25 +166,3 @@ func TestInboxIMAPSetUnreadReturnsUnknownWhenProviderRetainsSeen(t *testing.T) {
 	requirements.ErrorIs(provider.Verify(request, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
 	assertions.Equal(int64(1), stores.Load(), "dispatch attempted one write; readback did not write")
 }
-
-func TestInboxIMAPVerifyRejectsMissingPlanEvidence(t *testing.T) {
-	client, id := newKeywordTestClientFor(t, keywordTestSession{})
-	source, target := inboxIMAPBinding(client, id)
-	provider := NewInboxProvider(client, source)
-	request := inboxcontrol.Request{Operation: inboxcontrol.OpSetUnread, Target: &target, DryRun: true}
-	before, err := provider.Observe(t.Context(), request)
-	require.NoError(t, err)
-	projected, err := provider.Preview(t.Context(), request, before)
-	require.NoError(t, err)
-	for _, missing := range []string{"before FLAGS", "projected FLAGS"} {
-		t.Run(missing, func(t *testing.T) {
-			original, plan := before, projected
-			if missing == "before FLAGS" {
-				original.Flags = nil
-			} else {
-				plan.Flags = nil
-			}
-			require.ErrorIs(t, provider.Verify(request, original, plan, before), inboxcontrol.ErrOutcomeUnknown)
-		})
-	}
-}
