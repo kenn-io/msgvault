@@ -6,7 +6,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -107,35 +106,4 @@ func TestIncrementalSyncMetadataRefreshFailureKeepsHistoryCursor(t *testing.T) {
 	updated, err := env.Store.GetSourceByID(source.ID)
 	requirements.NoError(err)
 	assertions.Equal("12350", updated.SyncCursor.String)
-}
-
-func TestInboxGmailReceiveParsePersistsProviderObservation(t *testing.T) {
-	assert := assert.New(t)
-
-	require := require.New(t)
-
-	env := newTestEnv(t)
-	env.Mock.Profile.MessagesTotal = 1
-	env.Mock.AddMessage("received-message", testMIME(), []string{"INBOX", "UNREAD"})
-	env.Mock.Messages["received-message"].HistoryID = 170
-	source := env.CreateSource(t)
-	runFullSync(t, env)
-	ids, err := env.Store.MessageExistsBatch(source.ID, []string{"received-message"})
-	require.NoError(err)
-	require.Contains(ids, "received-message")
-	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: ids["received-message"], ProviderID: "received-message"}
-	state, err := env.Store.GetInboxProviderState(t.Context(), target)
-	require.NoError(err)
-	require.NotNil(state)
-	require.NotNil(state.Inbox)
-	require.NotNil(state.Read)
-	assert.True(*state.Inbox)
-	assert.False(*state.Read)
-	assert.Equal("170", state.Revision)
-	assert.ElementsMatch([]string{"INBOX", "UNREAD"}, state.Tags)
-	// The sync parser also persisted the MIME body; this is not an observation-only fixture.
-	var body string
-	err = env.Store.DB().QueryRow(env.Store.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), target.ItemID).Scan(&body)
-	require.NoError(err)
-	assert.NotEmpty(body)
 }

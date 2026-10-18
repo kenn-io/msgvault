@@ -54,6 +54,9 @@ func TestInboxGmailSyncRecordsAndRefreshesProviderState(t *testing.T) {
 	assertions.True(*initial.Inbox)
 	assertions.False(*initial.Read)
 	assertions.Equal("123", initial.Revision)
+	var body string
+	requirements.NoError(env.Store.DB().QueryRow(env.Store.Rebind("SELECT body_text FROM message_bodies WHERE message_id = ?"), row.ID).Scan(&body))
+	assertions.NotEmpty(body, "the initial sync also persists the parsed MIME body")
 	var uiRead bool
 	requirements.NoError(env.Store.DB().QueryRow(env.Store.Rebind(`SELECT is_read FROM messages WHERE id=?`), row.ID).Scan(&uiRead))
 	assertions.True(uiRead, "provider unread must not change default UI read state")

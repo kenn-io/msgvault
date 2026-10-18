@@ -261,7 +261,10 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		return s.replay(ctx, receipt, intentHash, principal)
 	}
 	if err := s.Ledger.MarkInboxDispatching(ctx, receipt.ID); err != nil {
-		return &Result{Receipt: receipt}, ErrInternal
+		// No provider request has been sent, so this claim can be failed safely.
+		// Settle it independently of caller cancellation to avoid leaving an
+		// undispatched prepared receipt that blocks replay and reconciliation.
+		return s.finishDetached(ctx, &Result{Receipt: receipt}, StatusFailed, nil, "dispatch-not-started", ErrNoWrite)
 	}
 	result := &Result{Before: &before, Projected: &projected, Receipt: receipt}
 	dispatchRequest := request

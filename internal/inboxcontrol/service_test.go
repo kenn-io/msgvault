@@ -29,6 +29,19 @@ type controlProvider struct {
 	dispatchRequest   func(inboxcontrol.Request) error
 }
 
+type cancelAfterPrepareLedger struct {
+	inboxcontrol.Ledger
+	cancel context.CancelFunc
+}
+
+func (l cancelAfterPrepareLedger) PrepareInboxReceipt(ctx context.Context, receipt inboxcontrol.Receipt) (*inboxcontrol.Receipt, bool, error) {
+	prepared, claimed, err := l.Ledger.PrepareInboxReceipt(ctx, receipt)
+	if err == nil && claimed {
+		l.cancel()
+	}
+	return prepared, claimed, err
+}
+
 func (p *controlProvider) Observe(ctx context.Context, request inboxcontrol.Request) (inboxcontrol.State, error) {
 	p.reads++
 	if p.onObserve != nil {
@@ -329,6 +342,29 @@ func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(inboxcontrol.StatusUnknown, stored.Status)
 	assertions.NotNil(stored.FinishedAt)
+}
+
+func TestInboxControlCancellationAfterReceiptPreparationSettlesWithoutDispatch(t *testing.T) {
+	f := newControlFixture(t)
+	r := f.execution(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	f.service.Ledger = cancelAfterPrepareLedger{Ledger: f.archive.Store, cancel: cancel}
+
+	result, err := f.service.Control(ctx, r, f.principal, f.gate)
+
+	require.ErrorIs(t, err, inboxcontrol.ErrNoWrite)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt)
+	assert.Zero(t, f.provider.dispatches)
+	assert.Equal(t, inboxcontrol.StatusFailed, result.Receipt.Status)
+	assert.Equal(t, "dispatch-not-started", result.Receipt.FailureCode)
+	assert.NotNil(t, result.Receipt.FinishedAt)
+	stored, err := f.archive.Store.GetInboxReceipt(t.Context(), result.Receipt.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, inboxcontrol.StatusFailed, stored.Status)
+	assert.Equal(t, "dispatch-not-started", stored.FailureCode)
 }
 
 func TestInboxControlReadbackDoesNotConsumeCompletionDeadline(t *testing.T) {
