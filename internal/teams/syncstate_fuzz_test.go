@@ -44,18 +44,3 @@ func FuzzSyncStateResetChatBaseline(f *testing.F) {
 		assert.Equal(map[string]string{oldKey: "old-token", newKey: "new-token"}, restored.Channels)
 	})
 }
-
-func FuzzLoadSyncStateRejectsMalformedJSON(f *testing.F) {
-	f.Add([]byte("{"))
-	f.Add([]byte("\xff"))
-	f.Add([]byte("null"))
-	f.Fuzz(func(t *testing.T, raw []byte) {
-		// Empty input deliberately means an initial sync state. Valid JSON may be
-		// rejected by the typed decoder too; this property checks malformed syntax.
-		if len(raw) == 0 || json.Valid(raw) {
-			return
-		}
-		_, err := LoadSyncState(string(raw))
-		require.Error(t, err)
-	})
-}

@@ -592,6 +592,14 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 			return err
 		}
 	}
+	var observeGmailPermissionFailure func(context.Context, error) error
+	if src.SourceType == sourceTypeGmail && src.ID > 0 {
+		var err error
+		observeGmailPermissionFailure, err = sync.PinNativeGmailPermissionObserver(ctx, s, src)
+		if err != nil {
+			return err
+		}
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -627,6 +635,9 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	}
 	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
 	if err != nil {
+		if observeGmailPermissionFailure != nil {
+			err = observeGmailPermissionFailure(ctx, err)
+		}
 		return pauseNativeMessagePermission(ctx, s, permission, err)
 	}
 	defer func() { _ = apiClient.Close() }()

@@ -114,6 +114,66 @@ func TestMCPEventsPurgesEndPendingConversationSubscriptions(t *testing.T) {
 	}
 }
 
+func TestMCPEventsChannelPurgeAdvancesPendingArchiveImport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	const owner = "owner:synthetic-channel-purge"
+	const family = "msgvault.import_message_archived"
+	_, err := f.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{
+		Enabled: true, Principal: owner, ImportNotifications: true,
+		Capabilities: []store.MCPEventCapability{{Family: family, SourceType: "eml", Kinds: []string{"message"}}},
+	})
+	require.NoError(err)
+	source, err := f.Store.GetOrCreateSource("slack", "T_SYNTH:U_OWNER")
+	require.NoError(err)
+	conversation, err := f.Store.EnsureConversationWithType(source.ID, "C_PURGED", "channel", "Synthetic purged channel")
+	require.NoError(err)
+	f.Source, f.ConvID = source, conversation
+	_, binding, err := f.Store.ResolveMCPSubscriptionResource(t.Context(), family, "archive", 0, []string{"message"}, "")
+	require.NoError(err)
+	now := time.Now().UTC()
+	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Now: now, ResourceBinding: binding, Subscription: store.MCPSubscription{
+		ID: "sub_synthetic_channel_purge_archive", Principal: owner, Name: family,
+		Arguments: []byte(`{"include_from_me":false,"source_id":"*"}`), ScopeKind: "archive",
+		CallbackURL: "https://receiver.example.net/imports", SecretEnc: []byte("synthetic-encrypted-secret"),
+		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(time.Hour),
+	}})
+	require.NoError(err)
+	require.NotNil(active)
+	view, finish := newSyntheticImportView(t, f, owner, true)
+	_, err = view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().WithSourceMessageID("synthetic-purged-import").Build()})
+	require.NoError(err)
+	finish()
+	pending, err := f.Store.PrepareMCPDelivery(t.Context(), active.ID, active.Generation, now, func(_ store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
+		return event.Data, nil
+	})
+	require.NoError(err)
+	require.NotNil(pending)
+	require.NoError(f.Store.PurgeChannelContext(t.Context(), source.ID, "C_PURGED"))
+	retained, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(retained)
+	assert.Equal("active", retained.State)
+	assert.Empty(retained.StopReason)
+	assert.Equal(pending.Event.Seq, retained.CursorSeq)
+	assert.Zero(retained.PendingSeq)
+
+	remaining, err := f.Store.EnsureConversationWithType(source.ID, "C_REMAINS", "channel", "Synthetic remaining channel")
+	require.NoError(err)
+	f.ConvID = remaining
+	view, finish = newSyntheticImportView(t, f, owner, true)
+	messageID, err := view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().WithSourceMessageID("synthetic-remaining-import").Build()})
+	require.NoError(err)
+	finish()
+	next, err := f.Store.PrepareMCPDelivery(t.Context(), active.ID, active.Generation, now.Add(time.Second), func(_ store.MCPSubscription, event store.MCPEvent) ([]byte, error) {
+		return event.Data, nil
+	})
+	require.NoError(err)
+	require.NotNil(next, "purging one channel must not strand a broader pending cursor")
+	assert.Equal(messageID, next.Event.MessageID)
+}
+
 func TestMCPEventsConversationReferenceRejectsPhysicalReuse(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

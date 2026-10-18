@@ -703,6 +703,7 @@ func TestRenewalRejectsReboundResourceBeforeChallenge(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(before)
 	require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, "replacement-synthetic@example.com"))
+	requireNativeGmailFixtureReadForIdentity(t, f, "replacement-synthetic@example.com")
 	var calls atomic.Int32
 	s.webhook = tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -984,7 +985,15 @@ func TestWorkerRetryBackoffWaitIsCancellationAware(t *testing.T) {
 // integration tests separately exercise real provider parsing and SDK delivery.
 func requireNativeGmailFixtureRead(t *testing.T, fixture *storetest.Fixture) {
 	t.Helper()
+	requireNativeGmailFixtureReadForIdentity(t, fixture, fixture.Source.Identifier)
+}
+
+func requireNativeGmailFixtureReadForIdentity(t *testing.T, fixture *storetest.Fixture, identity string) {
+	t.Helper()
 	resource, err := fixture.Store.GetMCPResource(t.Context(), "source", fixture.Source.ID)
 	Require.NoError(t, err)
-	Require.NoError(t, fixture.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: fixture.Source.ID, SourceReference: resource.Reference, SourceType: "gmail", NativeIdentity: fixture.Source.Identifier, Known: true, MessageRead: true}))
+	Require.NoError(t, fixture.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: fixture.Source.ID, SourceReference: resource.Reference, SourceType: "gmail", NativeIdentity: identity, Known: true, MessageRead: true}))
+	allowed, err := fixture.Store.NativeSourceMessagePermission(t.Context(), fixture.Source.ID)
+	Require.NoError(t, err)
+	Require.True(t, allowed, "current source lifetime has native message-read permission")
 }

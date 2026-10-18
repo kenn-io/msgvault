@@ -671,19 +671,29 @@ func importPstWithBatchSize(
 		return summary, nil
 	}
 	finalMsg := fmt.Sprintf("folders:%d messages:%d", summary.FoldersImported, summary.MessagesProcessed)
-	if hardErrors {
-		if err := progressStore.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
-			return summary, fmt.Errorf("fail sync: %w", err)
-		}
-		return summary, nil
-	}
-
 	if err := finishPstThreads(ctx, st, src.ID); err != nil {
 		if ctx.Err() != nil {
 			return summary, nil
 		}
 		failSync(err.Error())
 		return summary, err
+	}
+	if opts.NotifyImports {
+		if err := st.PublishPSTImportEventsContext(ctx); err != nil {
+			if ctx.Err() != nil {
+				return summary, nil
+			}
+			summary.Errors++
+			summary.HardErrors = true
+			failSync(err.Error())
+			return summary, fmt.Errorf("publish PST import events: %w", err)
+		}
+	}
+	if hardErrors {
+		if err := progressStore.FailSync(syncID, fmt.Sprintf("completed with %d errors", cp.ErrorsCount)); err != nil {
+			return summary, fmt.Errorf("fail sync: %w", err)
+		}
+		return summary, nil
 	}
 	if err := progressStore.CompleteSyncContext(ctx, syncID, finalMsg); err != nil {
 		if ctx.Err() != nil {

@@ -34,6 +34,14 @@ func nativeTeamsDenied(err error) bool {
 	return ok && refresh.ErrorCode == "invalid_grant"
 }
 
+func nativeTeamsAuthenticationFailure(err error) bool {
+	if errors.Is(err, msgraph.ErrUnauthorized) {
+		return true
+	}
+	refresh, ok := errors.AsType[*oauth2.RetrieveError](err)
+	return ok && refresh.ErrorCode == "invalid_grant"
+}
+
 // Bind saved native grant evidence to the actual Graph account before any
 // message work. Unknown legacy metadata can archive without Events authority.
 func (imp *Importer) observeNativeTeamsPermission(ctx context.Context, source *store.Source) error {

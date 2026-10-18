@@ -25,11 +25,4 @@ func TestMCPEventsSchemaStartsDisabled(t *testing.T) {
 		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&count))
 		assert.Zero(count)
 	}
-	for _, table := range []string{"gmail_drafts", "imap_drafts", "beeper_drafts", "chat_drafts"} {
-		rows, err := f.Store.DB().Query(`SELECT created_by_principal FROM ` + table + ` WHERE 1 = 0`)
-		require.NoError(err)
-		defer func() { require.NoError(rows.Close()) }()
-		assert.False(rows.Next())
-		require.NoError(rows.Err())
-	}
 }

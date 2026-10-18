@@ -131,6 +131,8 @@ func (s *Syncer) nativeIMAPProfileWithPermission(ctx context.Context, source *st
 		}
 		return s.client.GetProfile(ctx)
 	}
+	s.nativeIMAPSourceReference = resource.Reference
+	s.nativeIMAPAuthority = &nativeIMAPAuthorityState{sourceID: source.ID, sourceReference: resource.Reference, identity: source.Identifier, epochs: map[string]uint32{}, pins: map[string]store.NativeMessageScopeIdentity{}}
 	profile, err := s.client.GetProfile(ctx)
 	if err != nil {
 		revoked := false
@@ -146,6 +148,27 @@ func (s *Syncer) nativeIMAPProfileWithPermission(ctx context.Context, source *st
 		}
 	}
 	return profile, err
+}
+
+func (s *Syncer) nativeIMAPPermissionFailure(ctx context.Context, cause error) error {
+	state := s.nativeIMAPAuthority
+	if cause == nil || state == nil {
+		return cause
+	}
+	denied := false
+	if status, ok := errors.AsType[*imaplib.Error](cause); ok {
+		denied = status.Code == imaplib.ResponseCodeAuthenticationFailed || status.Code == imaplib.ResponseCodeAuthorizationFailed
+	}
+	if refresh, ok := errors.AsType[*oauth2.RetrieveError](cause); ok {
+		denied = denied || refresh.ErrorCode == "invalid_grant"
+	}
+	if !denied {
+		return cause
+	}
+	state.mu.Lock()
+	observation := store.NativeSourcePermission{SourceID: state.sourceID, SourceReference: state.sourceReference, SourceType: sourceTypeIMAP, NativeIdentity: state.identity, Known: true}
+	state.mu.Unlock()
+	return errors.Join(cause, s.store.ObserveNativeSourcePermission(ctx, observation))
 }
 
 // Per-run state serializes snapshots of native SELECT evidence before applying

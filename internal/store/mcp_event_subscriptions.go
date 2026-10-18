@@ -640,7 +640,7 @@ func (s *Store) CheckMCPSubscription(ctx context.Context, id string, generation 
 	if err := s.ValidateMCPSubscriptionResource(ctx, sub); err != nil {
 		return err
 	}
-	if allowed, err := s.mcpSubscriptionTeamsChatAllowed(ctx, s.DB(), sub); err != nil {
+	if allowed, err := s.mcpSubscriptionConversationAllowed(ctx, s.DB(), sub); err != nil {
 		return mcpSafeError(err)
 	} else if !allowed {
 		return mcpStoreError("subscription_inactive")
@@ -836,7 +836,7 @@ func (s *Store) PrepareMCPDelivery(ctx context.Context, id string, generation in
 			stopMCPSubscription(sub, "stopped", reason, now)
 			return s.saveMCPSubscription(ctx, tx, sub)
 		}
-		allowed, err := s.mcpSubscriptionTeamsChatAllowed(ctx, tx, sub)
+		allowed, err := s.mcpSubscriptionConversationAllowed(ctx, tx, sub)
 		if err != nil {
 			return err
 		}
@@ -1051,7 +1051,11 @@ func (s *Store) pruneExpiredMCPEventsTx(ctx context.Context, tx *sql.Tx, clock M
 const mcpScopeEventThroughFloorSQL = `EXISTS (
  SELECT 1 FROM mcp_event_log event
  WHERE event.epoch=mcp_event_subscriptions.cursor_epoch AND event.family=mcp_event_subscriptions.name
- AND event.scope_kind=mcp_event_subscriptions.scope_kind AND event.scope_id=mcp_event_subscriptions.scope_id
+ AND ((event.scope_kind=mcp_event_subscriptions.scope_kind AND event.scope_id=mcp_event_subscriptions.scope_id)
+   OR (mcp_event_subscriptions.name='msgvault.import_message_archived'
+     AND mcp_event_subscriptions.scope_kind='archive' AND mcp_event_subscriptions.scope_id=0
+     AND mcp_event_subscriptions.source_id IS NULL
+     AND event.scope_kind='source' AND event.source_id>0))
  AND event.seq>mcp_event_subscriptions.cursor_seq AND event.seq<=?
 )`
 

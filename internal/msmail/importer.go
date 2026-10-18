@@ -127,6 +127,9 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	if err != nil {
 		return sum, fmt.Errorf("list mail folders: %w", err)
 	}
+	if err = recheckNativeMailPermission(ctx, st, permission, c); err != nil {
+		return sum, fmt.Errorf("refresh native mail permission after folder listing: %w", err)
+	}
 	if permission.MessageRead {
 		inventory := store.NativeMessageScopeInventory{SourceID: src.ID, SourceReference: permission.SourceReference, SourceType: SourceType, NativeIdentity: src.Identifier, Kind: "msmail_folder", Complete: true}
 		for _, folder := range folders {
@@ -142,6 +145,9 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 	}
 	if s.labels, err = s.ensureLabels(ctx, folders); err != nil {
 		return sum, err
+	}
+	if err = recheckNativeMailPermission(ctx, st, permission, c); err != nil {
+		return sum, fmt.Errorf("refresh native mail permission after folder resolution: %w", err)
 	}
 	if err = s.retryMessages(ctx); err != nil {
 		return sum, err
@@ -172,6 +178,11 @@ func Import(ctx context.Context, st *store.Store, c *Client, opts Options, log *
 		}
 		for {
 			page, perr := c.DeltaPage(ctx, link)
+			if perr == nil {
+				if err = recheckNativeMailPermission(ctx, st, permission, c); err != nil {
+					return sum, fmt.Errorf("refresh native mail permission after delta request: %w", err)
+				}
+			}
 			if errors.Is(perr, msgraph.ErrGone) && !restarted {
 				// The token expired. Walk the folder again; messages already
 				// in the vault are not downloaded again.

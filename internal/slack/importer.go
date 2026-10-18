@@ -269,6 +269,14 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (_ *ImportS
 	// remain resumable without being reported as provider failures.
 	defer func() {
 		if retErr != nil {
+			if errors.Is(retErr, ErrCredentialRevoked) && imp.nativeSlackSourceReference != "" {
+				denied := store.NativeSourcePermission{
+					SourceID: imp.sourceID, SourceReference: imp.nativeSlackSourceReference,
+					SourceType: sourceTypeSlack, NativeIdentity: opts.TeamID + ":" + imp.ownerID,
+					Known: true,
+				}
+				retErr = errors.Join(retErr, imp.store.ObserveNativeSourcePermission(ctx, denied))
+			}
 			if state.HistoryPass != nil && state.HistoryPass.FetchErrors > 0 && sum.FetchErrors == 0 {
 				retErr = errors.Join(retErr, fmt.Errorf("partial Slack sync: earlier attempts had %d fetch error(s)", state.HistoryPass.FetchErrors))
 			}
@@ -745,6 +753,16 @@ func (imp *Importer) walkWindow(ctx context.Context, cc *convScope, state *SyncS
 				}
 				return nil
 			}
+			if errors.Is(err, ErrScopeDenied) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_denied", err)
+				cs.Done = true
+				cs.BackfillCursor, cs.BackfillLatest = "", ""
+				cs.LastSkippedAt = tsFormat(imp.now())
+				return nil
+			}
 			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -880,6 +898,14 @@ func (imp *Importer) drainPendingThreads(ctx context.Context, cc *convScope, sum
 				}
 				// Thread gone between discovery and drain: expected churn.
 				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
+				cs.PendingThreads = cs.PendingThreads[1:]
+				continue
+			}
+			if errors.Is(err, ErrScopeDenied) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, pt.RootTS); retireErr != nil {
+					return retireErr
+				}
+				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, pt.RootTS), "thread", store.SyncRunItemStatusSkipped, "slack_thread_denied", err)
 				cs.PendingThreads = cs.PendingThreads[1:]
 				continue
 			}
@@ -1038,6 +1064,17 @@ func (imp *Importer) threadCatchUp(ctx context.Context, cc *convScope, state *Sy
 				}
 				return nil
 			}
+			if errors.Is(err, ErrScopeDenied) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_denied", err)
+				cs.ThreadsPending = false
+				cs.CatchUpCursor, cs.CatchUpLatest = "", ""
+				cs.AuditPending = false
+				cs.AuditedThrough = tsFormat(imp.now())
+				return nil
+			}
 			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -1159,6 +1196,13 @@ func (imp *Importer) rescanHead(ctx context.Context, cc *convScope, sum *ImportS
 				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_gone", err)
 				return nil
 			}
+			if errors.Is(err, ErrScopeDenied) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, ""); retireErr != nil {
+					return retireErr
+				}
+				imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusSkipped, "slack_channel_denied", err)
+				return nil
+			}
 			imp.recordItem(ctx, cc.syncID, cc.channelID, "fetch", store.SyncRunItemStatusError, "slack_fetch_error", err)
 			sum.FetchErrors++
 			sum.Errors++
@@ -1214,6 +1258,13 @@ func (imp *Importer) rescanThread(ctx context.Context, cc *convScope, rootTS str
 					return retireErr
 				}
 				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_gone", err)
+				return nil
+			}
+			if errors.Is(err, ErrScopeDenied) {
+				if retireErr := imp.retireNativeSlackReadScope(ctx, cc.channelID, rootTS); retireErr != nil {
+					return retireErr
+				}
+				imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusSkipped, "slack_thread_denied", err)
 				return nil
 			}
 			imp.recordItem(ctx, cc.syncID, sourceMessageID(cc.channelID, rootTS), "maintenance", store.SyncRunItemStatusError, "slack_fetch_error", err)

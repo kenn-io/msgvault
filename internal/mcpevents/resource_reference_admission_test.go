@@ -32,6 +32,7 @@ func TestOptionalResourceReferenceAdmissionBeforeChallenge(t *testing.T) {
 			case "stale":
 				require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, "replacement@example.net"))
 				require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, f.Source.Identifier))
+				requireNativeGmailFixtureReadForIdentity(t, f, f.Source.Identifier)
 			}
 			request.Arguments["conversation_ref"] = reference
 			var calls atomic.Int32

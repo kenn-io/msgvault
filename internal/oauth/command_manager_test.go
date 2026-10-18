@@ -220,7 +220,7 @@ func TestCommandManagerPersistsLaterHTTPRefresh(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"access_token":"example-refreshed-%d","refresh_token":"example-refresh","token_type":"Bearer","expires_in":1}`, calls.Add(1))
+		_, _ = fmt.Fprintf(w, `{"access_token":"example-refreshed-%d","refresh_token":"example-refresh","token_type":"Bearer","expires_in":1,"scope":%q}`, calls.Add(1), ScopeGmailMetadata)
 	}))
 	defer server.Close()
 	mgr.config.Endpoint = oauth2.Endpoint{TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams}
@@ -233,7 +233,27 @@ func TestCommandManagerPersistsLaterHTTPRefresh(t *testing.T) {
 	saved, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
 	require.NoError(err)
 	assert.Equal("example-refreshed-2", saved.AccessToken)
-	assert.ElementsMatch(ScopesGmailReadonly, saved.Scopes)
+	assert.Equal([]string{ScopeGmailMetadata}, saved.Scopes, "an explicitly narrowed refresh response replaces the prior grant")
+}
+
+func TestCommandManagerRefreshKeepsLegacyGrantUnknownWhenScopeOmitted(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr, _ := commandManager(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"refreshed-legacy","refresh_token":"legacy-refresh","token_type":"Bearer","expires_in":3600}`))
+	}))
+	t.Cleanup(server.Close)
+	mgr.config.Endpoint = oauth2.Endpoint{TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams}
+	require.NoError(mgr.saveToken("reader@example.com", &oauth2.Token{AccessToken: "expired", RefreshToken: "legacy-refresh", Expiry: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)}, nil))
+	source, err := mgr.TokenSource(t.Context(), "reader@example.com")
+	require.NoError(err)
+	_, err = source.Token()
+	require.NoError(err)
+	saved, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
+	require.NoError(err)
+	assert.Empty(saved.Scopes, "the manager's requested scopes do not prove a legacy token's grant")
 }
 
 func TestCommandTokenSelectionNormalizesScopes(t *testing.T) {

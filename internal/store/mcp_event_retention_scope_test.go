@@ -120,6 +120,42 @@ func TestMCPEventsPruningKeepsExpiredSubscriptionLossVisible(t *testing.T) {
 	assert.True(truncated, "an event pruned while the subscription was expired is reported on renewal")
 }
 
+func TestMCPEventsPruningReportsUnpreparedArchiveImportLoss(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	const owner = "owner:synthetic-import-retention"
+	const family = "msgvault.import_message_archived"
+	cfg := store.MCPEventsConfig{Enabled: true, Principal: owner, ImportNotifications: true, Retention: 9 * 24 * time.Hour, Capabilities: []store.MCPEventCapability{{Family: family, SourceType: "eml", Kinds: []string{"message"}}}}
+	_, err := f.Store.ConfigureMCPEvents(t.Context(), cfg)
+	require.NoError(err)
+	_, binding, err := f.Store.ResolveMCPSubscriptionResource(t.Context(), family, "archive", 0, []string{"message"}, "")
+	require.NoError(err)
+	active, _, err := f.Store.ActivateMCPSubscription(t.Context(), store.MCPActivation{Now: now, ResourceBinding: binding, Subscription: store.MCPSubscription{
+		ID: "sub_synthetic_import_retention", Principal: owner, Name: family,
+		Arguments: []byte(`{"include_from_me":false,"source_id":"*"}`), ScopeKind: "archive",
+		CallbackURL: "https://receiver.example.net/imports", SecretEnc: []byte("synthetic-encrypted-secret"),
+		SecretRevision: 1, VerifiedRevision: 1, ExpiresAt: now.Add(24 * time.Hour),
+	}})
+	require.NoError(err)
+	require.NotNil(active)
+	view, finish := newSyntheticImportView(t, f, owner, true)
+	_, err = view.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().WithSourceMessageID("synthetic-unprepared-expired-import").Build()})
+	require.NoError(err)
+	finish()
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE mcp_event_log SET recorded_at=? WHERE family=?`), now.Add(-8*24*time.Hour).Format(time.RFC3339Nano), family)
+	require.NoError(err)
+
+	require.NoError(f.Store.PruneMCPEvents(t.Context(), now, 7*24*time.Hour))
+	stopped, err := f.Store.GetMCPSubscription(t.Context(), active.ID)
+	require.NoError(err)
+	require.NotNil(stopped)
+	assert.Equal("stopped", stopped.State, "the unseen source-scoped occurrence is still a loss to the archive subscription")
+	assert.Equal("retention", stopped.StopReason)
+	assert.Empty(stopped.PendingSeq)
+}
+
 // An owner change revokes retained subscriptions even while Events stay off,
 // so restoring the old owner later cannot renew them. A process that does not
 // know the owner revokes nothing.

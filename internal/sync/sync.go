@@ -90,6 +90,8 @@ func DefaultOptions() *Options {
 type Syncer struct {
 	// Set only on the per-run copy, before message fetches or worker startup.
 	nativeGmailSourceReference string
+	nativeGmailSourceID        int64
+	nativeGmailNativeIdentity  string
 	nativeGmailScopePins       map[string]store.NativeMessageScopeIdentity
 	nativeIMAPSourceReference  string
 	nativeIMAPAuthority        *nativeIMAPAuthorityState
@@ -1400,6 +1402,7 @@ func (s *Syncer) full(
 	for {
 		// List messages
 		listResp, err := s.client.ListMessages(ctx, s.opts.Query, pageToken)
+		err = s.nativeMailPermissionFailure(ctx, err)
 		// SELECT can prove an epoch reset even when this page is empty or fails.
 		// Publish that lifetime observation before any message or receipt can use it.
 		err = errors.Join(err, s.observeNativeIMAPSelectedEpochs(ctx))
@@ -1582,7 +1585,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 	}
 	labels, err := s.client.ListLabels(ctx)
 	if err != nil {
-		return nil, s.nativeGmailLabelInventoryError(ctx, inventory, err)
+		return nil, s.nativeMailPermissionFailure(ctx, s.nativeGmailLabelInventoryError(ctx, inventory, err))
 	}
 
 	labelInfos := make(map[string]store.LabelInfo)

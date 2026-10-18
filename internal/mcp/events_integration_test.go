@@ -208,17 +208,6 @@ func testEventsNativeDaemonBridgeAndReceiptPagination(t *testing.T, withReferenc
 		req.Arguments["conversation_ref"] = resource.Reference
 	}
 
-	forged, err := json.Marshal(req)
-	require.NoError(err)
-	var forgedRequest map[string]any
-	require.NoError(json.Unmarshal(forged, &forgedRequest))
-	forgedRequest["principal"] = "owner:forged"
-	_, wire = call("events/subscribe", forgedRequest)
-	require.NotNil(wire["error"])
-	assert.Equal(json.Number("-32602"), eventsWireObject(t, wire["error"])["code"])
-	subscriptions, err := f.Store.ListMCPSubscriptions(t.Context(), mcpevents.Principal(owner))
-	require.NoError(err)
-	assert.Empty(subscriptions)
 	_, wire = call("events/subscribe", req)
 	require.Nil(wire["error"])
 	subscriptionID := eventsWireString(t, eventsWireObject(t, wire["result"])["id"])

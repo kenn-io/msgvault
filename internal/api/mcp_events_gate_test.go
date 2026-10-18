@@ -31,7 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestMCPEventsDeliveryOperationSignalsScheduledWorkWaiter(t *testing.T) {
+func TestMCPEventsStoreOperationsRunWhileManualSyncHoldsArchiveGate(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
 	f := storetest.New(t)
@@ -39,19 +39,21 @@ func TestMCPEventsDeliveryOperationSignalsScheduledWorkWaiter(t *testing.T) {
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), OperationGate: gate})
 	t.Cleanup(func() { Require.NoError(t, srv.Shutdown(context.Background())) })
 
-	releaseSync, held := gate.BeginLabeledWorkContext(t.Context(), "scheduled sync")
+	releaseSync, held := gate.BeginLabeledWorkContext(t.Context(), "manual sync")
 	require.True(held)
 	t.Cleanup(releaseSync)
-	deliveryCtx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.MCPEventsDeliveryOperation(deliveryCtx, func() error { return nil })
-	}()
-	require.Eventually(gate.HasRequestWaiters, 10*time.Second, 10*time.Millisecond, "delivery must be visible to scheduled work as a request waiter")
-	releaseSync()
-	require.NoError(<-done)
-	assert.False(gate.HasRequestWaiters(), "delivery waiter should drain after gate admission")
+	var prepared, delivered bool
+	require.NoError(srv.MCPEventsOperation(t.Context(), func() error {
+		prepared = true
+		return nil
+	}))
+	require.NoError(srv.MCPEventsDeliveryOperation(t.Context(), func() error {
+		delivered = true
+		return nil
+	}))
+	assert.True(prepared, "bounded subscription transactions can run during a manual sync")
+	assert.True(delivered, "bounded delivery preparation can run during a manual sync")
+	assert.False(gate.HasRequestWaiters(), "Events Store steps do not wait for the archive gate")
 }
 
 func TestMCPEventsCallbackVerificationReleasesDaemonOperationGate(t *testing.T) {

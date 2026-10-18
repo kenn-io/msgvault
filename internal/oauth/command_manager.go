@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 
 	"go.kenn.io/msgvault/internal/config"
@@ -198,8 +199,8 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 			return token, nil
 		}
 		scopes := s.expected.Scopes
-		if len(scopes) == 0 {
-			scopes = s.manager.config.Scopes
+		if refreshed, ok := token.Extra("scope").(string); ok {
+			scopes = strings.Fields(refreshed)
 		}
 		err = s.manager.saveTokenComparedContext(s.ctx, s.email, token, scopes, s.expected)
 		if err == nil {

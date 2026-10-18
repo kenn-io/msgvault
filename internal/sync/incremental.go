@@ -171,6 +171,7 @@ func (s *Syncer) incremental(
 
 		for {
 			historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
+			err = s.nativeMailPermissionFailure(ctx, err)
 			if err != nil {
 				// Check for 404 - history too old
 				if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
@@ -499,6 +500,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 		if isAdd {
 			checkpoint.MessagesProcessed++
 			raw, err := s.client.GetMessageRaw(ctx, messageID)
+			err = s.nativeMailPermissionFailure(ctx, err)
 			if err != nil {
 				if isGmailNotFound(err) {
 					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, err)

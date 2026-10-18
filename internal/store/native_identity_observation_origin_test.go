@@ -12,11 +12,12 @@ import (
 // observation may pause read admission, but cannot prove native revocation.
 // Full old-schema fixture adoption is tested independently.
 func TestNativeIdentityOnlyObservationPreservesExistingConversationOrigin(t *testing.T) {
-	for _, tc := range []struct{ source, account, kind, provider string }{
-		{"discord", "200", "discord_channel", "300"},
-		{"teams", "owner@example.net", "teams_chat", "synthetic-chat"},
-		{"matrix", "@archive:example.org", "matrix_room", "!room:example.org"},
-		{"beeper", "synthetic-login", "beeper_member", "!member:example.org"},
+	for _, tc := range []struct{ source, account, kind, provider, permissionDomain string }{
+		{"discord", "200", "discord_channel", "300", ""},
+		{"teams", "owner@example.net", "teams_chat", "synthetic-chat", ""},
+		{"matrix", "@archive:example.org", "matrix_room", "!room:example.org", ""},
+		{"beeper", "synthetic-login", "beeper_member", "!member:example.org", ""},
+		{"slack", "T_SYNTH:U_OWNER", "slack_channel", "C_SYNTH", "channels"},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			assert, require := Assert.New(t), Require.New(t)
@@ -34,7 +35,7 @@ func TestNativeIdentityOnlyObservationPreservesExistingConversationOrigin(t *tes
 			if tc.source == "beeper" {
 				parent = tc.account
 			}
-			observation := store.NativeMessageScopeInventory{SourceID: source.ID, SourceReference: sourceResource.Reference, SourceType: tc.source, NativeIdentity: tc.account, Kind: tc.kind, ParentProviderID: parent, Complete: true, IdentityOnly: true, Scopes: []store.NativeMessageScope{{ProviderID: tc.provider, DisplayName: "Synthetic container"}}}
+			observation := store.NativeMessageScopeInventory{SourceID: source.ID, SourceReference: sourceResource.Reference, SourceType: tc.source, NativeIdentity: tc.account, Kind: tc.kind, ParentProviderID: parent, Complete: true, IdentityOnly: true, Scopes: []store.NativeMessageScope{{ProviderID: tc.provider, DisplayName: "Synthetic container", PermissionDomain: tc.permissionDomain}}}
 			require.NoError(st.ObserveNativeMessageScopes(t.Context(), observation))
 			unknown, err := st.GetMCPResource(t.Context(), "conversation", conversation)
 			require.NoError(err)

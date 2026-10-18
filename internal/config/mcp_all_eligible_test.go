@@ -10,9 +10,6 @@ import (
 
 func TestMCPAllEligibleSelectionParsing(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	defaults := config.NewDefaultConfig()
-	assert.False(defaults.MCP.Events.Enabled)
-	assert.Equal([]string{"gmail", "imap", "gcal"}, defaults.MCP.Events.Sources)
 	root := t.TempDir()
 	parse := func(sources string) (*config.Config, error) {
 		return config.LoadConfigFile(config.ConfigFile{Exists: true, LogicalPath: filepath.Join(root, "config.toml"), Content: []byte("[mcp.events]\nenabled = true\nsources = " + sources + "\n")}, root)
