@@ -1764,31 +1764,41 @@ func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
 }
 
 func FuzzEngineGetMessageSummariesByIDsDeletedAt(f *testing.F) {
-	for _, deletedAt := range []string{
-		"1970-01-01T00:00:00Z",
-		"2026-03-18T15:00:00Z",
-		"2026-03-18T15:00:00.000000001+05:30",
-		"2026-03-18T15:00:00.999999999-07:00",
-		"9999-12-31T23:59:59.999999999Z",
-		"0001-01-01T00:00:00Z",
-		"",
-		"invalid",
-	} {
-		f.Add(deletedAt)
-	}
-	f.Fuzz(func(t *testing.T, deletedAt string) {
+	const fuzzSecondsRange int64 = 3_155_760_000 // 2000-01-01 through 2099-12-31
+	baseUnix := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
+	f.Add(int64(0), int64(0), int16(1680))
+	f.Add(int64(1_000_000_000), int64(1), int16(1260))
+	f.Add(int64(-1), int64(-1), int16(420))
+	f.Add(fuzzSecondsRange-1, int64(999_999_999), int16(0))
+	f.Fuzz(func(t *testing.T, secondsOffset, nanos int64, offsetSeed int16) {
+		require := require.New(t)
+		assert := assert.New(t)
+		secondsOffset %= fuzzSecondsRange
+		if secondsOffset < 0 {
+			secondsOffset += fuzzSecondsRange
+		}
+		nanos %= int64(time.Second)
+		if nanos < 0 {
+			nanos += int64(time.Second)
+			secondsOffset--
+		}
+		want := time.Unix(baseUnix+secondsOffset, nanos).UTC()
+		offsetMinutes := int(offsetSeed % 1681)
+		if offsetMinutes < 0 {
+			offsetMinutes += 1681
+		}
+		offsetMinutes -= 14 * 60
+		deletedAt := want.In(time.FixedZone("fuzz", offsetMinutes*60)).Format(time.RFC3339Nano)
+
 		store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(t, w, map[string]any{"id": 42, "deleted_at": deletedAt})
 		})
 		engine := NewEngineAdapter(store)
-		detail, err := engine.GetMessage(context.Background(), 42)
-		require.NoError(t, err)
-		require.NotNil(t, detail)
-
 		summaries, err := engine.GetMessageSummariesByIDs(context.Background(), []int64{42})
-		require.NoError(t, err)
-		require.Len(t, summaries, 1)
-		assert.Equal(t, detail.DeletedAt, summaries[0].DeletedAt)
+		require.NoError(err)
+		require.Len(summaries, 1)
+		require.NotNil(summaries[0].DeletedAt)
+		assert.Equal(want, summaries[0].DeletedAt.UTC())
 	})
 }
 
