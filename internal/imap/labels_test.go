@@ -1,6 +1,7 @@
 package imap
 
 import (
+	"strings"
 	"testing"
 
 	imap "github.com/emersion/go-imap/v2"
@@ -103,4 +104,51 @@ func TestClassifyLabelType(t *testing.T) {
 func TestSystemRoleForMailboxTrustsSpecialUseNotName(t *testing.T) {
 	assert.Equal(t, "sent", systemRoleForMailbox([]imap.MailboxAttr{imap.MailboxAttrSent}))
 	assert.Empty(t, systemRoleForMailbox(nil), "a folder name is not part of role classification")
+}
+
+func TestSystemRoleForMailbox(t *testing.T) {
+	tests := []struct {
+		name  string
+		attrs []imap.MailboxAttr
+		want  string
+	}{
+		{name: "empty", attrs: []imap.MailboxAttr{}},
+		{name: "drafts", attrs: []imap.MailboxAttr{imap.MailboxAttrDrafts}, want: "drafts"},
+		{name: "sent then drafts", attrs: []imap.MailboxAttr{imap.MailboxAttrSent, imap.MailboxAttrDrafts}, want: "drafts"},
+		{name: "drafts then sent", attrs: []imap.MailboxAttr{imap.MailboxAttrDrafts, imap.MailboxAttrSent}, want: "drafts"},
+		{name: "repeated conflict", attrs: []imap.MailboxAttr{imap.MailboxAttrSent, imap.MailboxAttrJunk, imap.MailboxAttrDrafts, imap.MailboxAttrSent, imap.MailboxAttrDrafts}, want: "drafts"},
+		{name: "unrelated", attrs: []imap.MailboxAttr{imap.MailboxAttrArchive, imap.MailboxAttrTrash, imap.MailboxAttrJunk}},
+		{name: "near matches", attrs: []imap.MailboxAttr{`\drafts`, `\DRAFTS`, `\Draft`, ` \Drafts`, `\Drafts `, `x\Drafts`, `\Draftsx`, `\sent`, `\SENT`, `prefix\Sent suffix`, ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, systemRoleForMailbox(tt.attrs))
+		})
+	}
+}
+
+func FuzzSystemRoleForMailbox(f *testing.F) {
+	for _, seed := range []string{
+		"", `\Sent`, `\Drafts`, "\\Sent\x00\\Drafts", "\\Drafts\x00\\Sent",
+		"\\Sent\x00\\Junk\x00\\Drafts\x00\\Sent\x00\\Drafts",
+		"\\Archive\x00\\Trash\x00\\Flagged", "\\drafts\x00\\Draft\x00 \\Drafts\x00\\Sent ",
+	} {
+		f.Add(seed, "")
+	}
+	f.Fuzz(func(t *testing.T, raw, extra string) {
+		parts := append(strings.Split(raw, "\x00"), extra)
+		attrs := make([]imap.MailboxAttr, len(parts))
+		present := make(map[string]bool, len(parts))
+		for i, part := range parts {
+			attrs[i] = imap.MailboxAttr(part)
+			present[part] = true
+		}
+		// Pin all four evidence combinations independently of check order.
+		roles := map[[2]bool]string{
+			{false, false}: "", {true, false}: "sent",
+			{false, true}: "drafts", {true, true}: "drafts",
+		}
+		want := roles[[2]bool{present[`\Sent`], present[`\Drafts`]}]
+		assert.Equal(t, want, systemRoleForMailbox(attrs))
+	})
 }
