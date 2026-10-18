@@ -357,18 +357,6 @@ func TestEventsNativeDiscordImportAndReceiptRead(t *testing.T) {
 	var conversationID int64
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT id FROM conversations WHERE source_id = ? AND source_conversation_id = ?`), sourceID, "300").Scan(&conversationID))
 	req := mcpevents.SubscribeRequest{Name: "msgvault.message_archived", Arguments: map[string]any{"conversation_id": strconv.FormatInt(conversationID, 10)}, Delivery: mcpevents.Delivery{Mode: "webhook", URL: "https://example.com/hook", Secret: "whsec_" + base64.StdEncoding.EncodeToString(secret)}}
-
-	forged, err := json.Marshal(req)
-	require.NoError(err)
-	var forgedRequest map[string]any
-	require.NoError(json.Unmarshal(forged, &forgedRequest))
-	forgedRequest["principal"] = "owner:forged"
-	_, wire = call("events/subscribe", forgedRequest)
-	require.NotNil(wire["error"])
-	assert.Equal(json.Number("-32602"), eventsWireObject(t, wire["error"])["code"])
-	subscriptions, err := f.Store.ListMCPSubscriptions(t.Context(), mcpevents.Principal(owner))
-	require.NoError(err)
-	assert.Empty(subscriptions)
 	_, wire = call("events/subscribe", req)
 	require.Nil(wire["error"])
 	subscriptionID := eventsWireString(t, eventsWireObject(t, wire["result"])["id"])

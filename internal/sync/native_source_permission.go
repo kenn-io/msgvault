@@ -39,6 +39,9 @@ func (s *Syncer) nativeProfileWithPermission(ctx context.Context, source *store.
 		return nil, errors.New("native_authority_unavailable")
 	}
 	observation := store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: sourceTypeGmail, NativeIdentity: source.Identifier}
+	s.nativeGmailSourceID = source.ID
+	s.nativeGmailSourceReference = resource.Reference
+	s.nativeGmailNativeIdentity = source.Identifier
 	if _, native := s.client.(nativeMessageReadPermission); !native {
 		// Events-only grant checks must preserve ordinary archival semantics.
 		// Generic archive adapters cannot establish native permission evidence.
@@ -87,4 +90,63 @@ func (s *Syncer) nativeProfileWithPermission(ctx context.Context, source *store.
 		return nil, err
 	}
 	return profile, nil
+}
+
+// nativeGmailPermissionFailure applies an authorization loss observed after
+// the initial profile probe through the source reference pinned for this run.
+// The observer never reloads the resource, so a stale request cannot revoke a
+// replacement source lifetime.
+func (s *Syncer) nativeGmailPermissionFailure(ctx context.Context, cause error) error {
+	if cause == nil || s.nativeGmailSourceID <= 0 || s.nativeGmailSourceReference == "" {
+		return cause
+	}
+	denied := false
+	if refresh, ok := errors.AsType[*oauth2.RetrieveError](cause); ok && refresh.ErrorCode == "invalid_grant" {
+		denied = true
+	}
+	if status, ok := errors.AsType[*gmail.StatusError](cause); ok {
+		denied = denied || status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusForbidden
+	}
+	if !denied {
+		return cause
+	}
+	observation := store.NativeSourcePermission{SourceID: s.nativeGmailSourceID, SourceReference: s.nativeGmailSourceReference, SourceType: sourceTypeGmail, NativeIdentity: s.nativeGmailNativeIdentity, Known: true}
+	return errors.Join(cause, s.store.ObserveNativeSourcePermission(ctx, observation))
+}
+
+func (s *Syncer) nativeMailPermissionFailure(ctx context.Context, cause error) error {
+	return s.nativeIMAPPermissionFailure(ctx, s.nativeGmailPermissionFailure(ctx, cause))
+}
+
+// PinNativeGmailPermissionObserver captures the selected Gmail source lifetime
+// for manual command setup, which may fail before a Syncer can run its profile
+// probe. Returned failures preserve their typed causes for normal error handling.
+func PinNativeGmailPermissionObserver(ctx context.Context, st *store.Store, source *store.Source) (func(context.Context, error) error, error) {
+	if source == nil || source.SourceType != sourceTypeGmail {
+		return nil, errors.New("not a Gmail source")
+	}
+	resource, err := st.GetMCPResource(ctx, "source", source.ID)
+	if err != nil {
+		return nil, err
+	}
+	if resource.SourceType != sourceTypeGmail || !store.EqualIdentifier(resource.ProviderID, source.Identifier) {
+		return nil, errors.New("native_authority_unavailable")
+	}
+	observation := store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: sourceTypeGmail, NativeIdentity: source.Identifier, Known: true}
+	return func(failureCtx context.Context, cause error) error {
+		if cause == nil {
+			return nil
+		}
+		denied := false
+		if refresh, ok := errors.AsType[*oauth2.RetrieveError](cause); ok {
+			denied = refresh.ErrorCode == "invalid_grant"
+		}
+		if status, ok := errors.AsType[*gmail.StatusError](cause); ok {
+			denied = denied || status.StatusCode == http.StatusUnauthorized || status.StatusCode == http.StatusForbidden
+		}
+		if !denied {
+			return cause
+		}
+		return errors.Join(cause, st.ObserveNativeSourcePermission(failureCtx, observation))
+	}, nil
 }

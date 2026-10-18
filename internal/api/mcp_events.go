@@ -21,7 +21,6 @@ var mcpEventsOperationIDs = map[string]bool{
 	"getMCPEvent": true, "getMCPEventMessage": true, "discoverMCPEventResources": true,
 }
 
-type mcpEventsRequestKey struct{}
 type MCPEventsListRequest struct{}
 type MCPEventsErrorResponse struct {
 	Error   string `json:"error"`
@@ -48,37 +47,23 @@ func (s *Server) SetMCPEventsUnavailable(err error) {
 	}
 }
 
-// MCPEventsOperation holds the archive gate only for a Store command. The
-// service resolves and contacts callbacks outside this function.
-func (s *Server) MCPEventsOperation(ctx context.Context, operation func() error) error {
-	var release func()
-	var acquired bool
-	if requested, _ := ctx.Value(mcpEventsRequestKey{}).(bool); requested {
-		release, acquired = s.beginLabeledOperationGateWork(ctx, "MCP Events")
-	} else {
-		release, acquired = s.beginBackgroundOperationGateWork(ctx, "MCP Events")
+// MCPEventsOperation runs a bounded Store transaction. Store identity,
+// subscription-generation, and event-clock fences serialize it with imports;
+// the archive operation gate must remain available to long manual syncs.
+func (*Server) MCPEventsOperation(ctx context.Context, operation func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if !acquired {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return errors.New("events_storage_unavailable")
-	}
-	defer release()
 	return operation()
 }
 
-// MCPEventsDeliveryOperation counts commit-triggered delivery as request work
-// so resumable scheduled jobs yield while a live occurrence is delivered.
-func (s *Server) MCPEventsDeliveryOperation(ctx context.Context, operation func() error) error {
-	release, acquired := s.beginLabeledOperationGateWork(ctx, "MCP Events delivery")
-	if !acquired {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return errors.New("events_storage_unavailable")
+// MCPEventsDeliveryOperation runs only the worker's bounded Store step.
+// Callback I/O is outside this function, and Store fences serialize the step
+// with manual imports without waiting for their subprocesses to exit.
+func (*Server) MCPEventsDeliveryOperation(ctx context.Context, operation func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	defer release()
 	return operation()
 }
 
@@ -171,10 +156,6 @@ func writeMCPEventsError(w http.ResponseWriter, err error) {
 	writeJSON(w, status, MCPEventsErrorResponse{Error: "mcp_events_error", Message: safe.Reason, Code: safe.Code, Reason: safe.Reason})
 }
 
-func mcpEventsRequestContext(r *http.Request) context.Context {
-	return context.WithValue(r.Context(), mcpEventsRequestKey{}, true)
-}
-
 func (s *Server) handleMCPEventsList(w http.ResponseWriter, r *http.Request) {
 	service, _, ok := s.mcpEventsOwner(w, r)
 	if !ok {
@@ -196,7 +177,7 @@ func (s *Server) handleMCPEventsSubscribe(w http.ResponseWriter, r *http.Request
 	if !decodeMCPEventsRequest(w, r, &request) {
 		return
 	}
-	result, err := service.Subscribe(mcpEventsRequestContext(r), principal, request)
+	result, err := service.Subscribe(r.Context(), principal, request)
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return
@@ -213,7 +194,7 @@ func (s *Server) handleMCPEventsUnsubscribe(w http.ResponseWriter, r *http.Reque
 	if !decodeMCPEventsRequest(w, r, &request) {
 		return
 	}
-	if err := service.Unsubscribe(mcpEventsRequestContext(r), principal, request); err != nil {
+	if err := service.Unsubscribe(r.Context(), principal, request); err != nil {
 		writeMCPEventsError(w, err)
 		return
 	}
@@ -225,7 +206,7 @@ func (s *Server) handleMCPEventsStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := service.Status(mcpEventsRequestContext(r), principal)
+	rows, err := service.Status(r.Context(), principal)
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return
@@ -238,7 +219,7 @@ func (s *Server) handleMCPCalendarSources(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	rows, err := service.CalendarSources(mcpEventsRequestContext(r), principal)
+	rows, err := service.CalendarSources(r.Context(), principal)
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return
@@ -256,7 +237,7 @@ func (s *Server) handleMCPEvent(w http.ResponseWriter, r *http.Request) {
 		writeMCPEventsError(w, &mcpevents.Error{Code: -32602, Reason: "invalid_event_id"})
 		return
 	}
-	event, err := service.GetEvent(mcpEventsRequestContext(r), principal, values[0])
+	event, err := service.GetEvent(r.Context(), principal, values[0])
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return
@@ -276,7 +257,7 @@ func (s *Server) handleMCPEventMessage(w http.ResponseWriter, r *http.Request) {
 		writeMCPEventsError(w, &mcpevents.Error{Code: -32602, Reason: "invalid_identifier"})
 		return
 	}
-	message, err := service.GetMessage(mcpEventsRequestContext(r), principal, values[0], id)
+	message, err := service.GetMessage(r.Context(), principal, values[0], id)
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return
@@ -307,7 +288,7 @@ func (s *Server) handleMCPEventResources(w http.ResponseWriter, r *http.Request)
 	if !decodeMCPEventsRequest(w, r, &query) {
 		return
 	}
-	result, err := s.mcpEvents.DiscoverResources(mcpEventsRequestContext(r), s.mcpEventsPrincipal, query)
+	result, err := s.mcpEvents.DiscoverResources(r.Context(), s.mcpEventsPrincipal, query)
 	if err != nil {
 		writeMCPEventsError(w, err)
 		return

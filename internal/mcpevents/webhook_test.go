@@ -1,6 +1,7 @@
 package mcpevents
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -90,7 +91,7 @@ func TestWebhookChallengeRejectsRedirectMismatchAndOversize(t *testing.T) {
 	}{
 		{"redirect", 302, ``, "challenge_failed"},
 		{"mismatch", 200, `{"challenge":"wrong"}`, "challenge_failed"},
-		{"oversize", 200, strings.Repeat("x", 4097), "challenge_failed"},
+		{"oversize", 200, "", "challenge_failed"},
 		{"client", 403, ``, "http_4xx"},
 		{"server", 503, ``, "http_5xx"},
 	} {
@@ -100,7 +101,23 @@ func TestWebhookChallengeRejectsRedirectMismatchAndOversize(t *testing.T) {
 			w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
 				rw.Header().Set("Location", "https://other.example.net/secret-marker")
 				rw.WriteHeader(tc.status)
-				_, err := io.WriteString(rw, tc.body)
+				body := []byte(tc.body)
+				if tc.name == "oversize" {
+					var request struct {
+						Challenge string `json:"challenge"`
+					}
+					requestBody, readErr := io.ReadAll(r.Body)
+					if !assert.NoError(readErr) || !assert.NoError(json.Unmarshal(requestBody, &request)) {
+						return
+					}
+					encodedBody, marshalErr := json.Marshal(map[string]string{"challenge": request.Challenge})
+					if !assert.NoError(marshalErr) {
+						return
+					}
+					body = encodedBody
+					body = append(body, bytes.Repeat([]byte(" "), 4097-len(body))...)
+				}
+				_, err := rw.Write(body)
 				if !assert.NoError(err) {
 					return
 				}
@@ -153,6 +170,11 @@ func TestWebhookDeliveryRotationSignsBothAndBoundsResponses(t *testing.T) {
 	require := Require.New(t)
 	current, previous := []byte(strings.Repeat("n", 32)), []byte(strings.Repeat("p", 32))
 	body := []byte(`{"eventId":"evt_synthetic"}`)
+	flushed := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseResponse := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseResponse)
 	w := tlsWebhook(t, func(rw http.ResponseWriter, r *http.Request) {
 		Assert.Equal(t, webhookSignature(current, "evt_synthetic", r.Header.Get("Webhook-Timestamp"), body)+" "+webhookSignature(previous, "evt_synthetic", r.Header.Get("Webhook-Timestamp"), body), r.Header.Get("Webhook-Signature"))
 		rw.Header().Set("Retry-After", "120")
@@ -161,12 +183,35 @@ func TestWebhookDeliveryRotationSignsBothAndBoundsResponses(t *testing.T) {
 		if !Assert.NoError(t, err) {
 			return
 		}
+		rw.(http.Flusher).Flush()
+		close(flushed)
+		<-release
 	})
-	status, header, err := w.post(t.Context(), "https://receiver.example.net/events", "sub_synthetic", "evt_synthetic", body, current, previous, nil)
-	require.NoError(err)
-	assert.Equal(503, status)
-	assert.Equal("120", header)
-	status, _, err = w.post(t.Context(), "https://receiver.example.net/events", "sub_synthetic", "evt_synthetic", make([]byte, 262145), current, nil, nil)
+	type response struct {
+		status int
+		header string
+		err    error
+	}
+	posted := make(chan response, 1)
+	go func() {
+		status, header, err := w.post(t.Context(), "https://receiver.example.net/events", "sub_synthetic", "evt_synthetic", body, current, previous, nil)
+		posted <- response{status: status, header: header, err: err}
+	}()
+	select {
+	case <-flushed:
+	case <-time.After(10 * time.Second):
+		require.FailNow("webhook receiver did not flush its oversized response")
+	}
+	select {
+	case got := <-posted:
+		require.NoError(got.err)
+		assert.Equal(503, got.status)
+		assert.Equal("120", got.header)
+	case <-time.After(10 * time.Second):
+		require.FailNow("delivery waited for the receiver to finish sending its response")
+	}
+	releaseResponse()
+	status, _, err := w.post(t.Context(), "https://receiver.example.net/events", "sub_synthetic", "evt_synthetic", make([]byte, 262145), current, nil, nil)
 	require.Error(err)
 	assert.Zero(status)
 }

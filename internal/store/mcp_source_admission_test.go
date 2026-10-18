@@ -40,6 +40,10 @@ func TestMCPSourceAdmissionUsesExactSourceLifetime(t *testing.T) {
 			case "stale_source":
 				require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, "replacement-source@example.net"))
 				require.NoError(f.Store.UpdateSourceIdentifier(f.Source.ID, f.Source.Identifier))
+				grantSyntheticSourceAuthority(t, f.Store, f.Source.ID)
+				allowed, err := f.Store.NativeSourceMessagePermission(t.Context(), f.Source.ID)
+				require.NoError(err)
+				assert.True(allowed, "the replacement source lifetime has current native permission")
 			}
 			source, binding, err := f.Store.ResolveMCPSubscriptionResource(t.Context(), family, "source", f.Source.ID, []string{"message"}, reference)
 			if mode == "valid" {

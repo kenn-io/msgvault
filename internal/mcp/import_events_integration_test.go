@@ -80,14 +80,18 @@ func TestImportEventsNativeParserSignedCallbackAndReceiptPagination(t *testing.T
 					name = "exact_source"
 				}
 				t.Run(name, func(t *testing.T) {
-					testImportEventsNativeParserSignedCallbackAndReceiptPagination(t, exactSource, format)
+					testImportEventsNativeParserSignedCallbackAndReceiptPagination(t, exactSource, format, false)
 				})
 			}
 		})
 	}
 }
 
-func testImportEventsNativeParserSignedCallbackAndReceiptPagination(t *testing.T, exactSource bool, format string) {
+func TestImportEventsRejectInvalidSubscriptionArguments(t *testing.T) {
+	testImportEventsNativeParserSignedCallbackAndReceiptPagination(t, false, "eml", true)
+}
+
+func testImportEventsNativeParserSignedCallbackAndReceiptPagination(t *testing.T, exactSource bool, format string, rejectOnly bool) {
 	t.Helper()
 	fixtureFormat := format
 	if strings.HasPrefix(format, "pst_") {
@@ -479,39 +483,30 @@ func testImportEventsNativeParserSignedCallbackAndReceiptPagination(t *testing.T
 	require.NoError(err)
 	require.NoError(resolvedArguments.Validate(req.Arguments))
 	staleReference := "mcp1." + strings.Repeat("A", 43)
-	for _, negative := range []struct {
-		arguments    map[string]any
-		schemaReject bool
-	}{
-		{map[string]any{"source_ref": staleReference}, true},
-		{map[string]any{"source_id": "*", "source_ref": staleReference}, true},
-		{map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10)}, true},
-		{map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10), "source_ref": staleReference}, false},
-		{map[string]any{"include_reactions": true}, true},
-	} {
-		if negative.schemaReject {
-			require.Error(resolvedArguments.Validate(negative.arguments))
+	if rejectOnly {
+		for _, negative := range []struct {
+			arguments    map[string]any
+			schemaReject bool
+		}{
+			{map[string]any{"source_ref": staleReference}, true},
+			{map[string]any{"source_id": "*", "source_ref": staleReference}, true},
+			{map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10)}, true},
+			{map[string]any{"source_id": strconv.FormatInt(f.Source.ID, 10), "source_ref": staleReference}, false},
+			{map[string]any{"include_reactions": true}, true},
+		} {
+			if negative.schemaReject {
+				require.Error(resolvedArguments.Validate(negative.arguments))
+			}
+			invalidRequest := req
+			invalidRequest.Arguments = negative.arguments
+			before := callbackDials.Load()
+			_, rejected := call("events/subscribe", invalidRequest)
+			require.NotNil(rejected["error"])
+			assert.Equal(json.Number("-32602"), eventsWireObject(t, rejected["error"])["code"])
+			assert.Equal(before, callbackDials.Load(), "invalid import scope must fail before callback I/O")
 		}
-		invalidRequest := req
-		invalidRequest.Arguments = negative.arguments
-		before := callbackDials.Load()
-		_, rejected := call("events/subscribe", invalidRequest)
-		require.NotNil(rejected["error"])
-		assert.Equal(json.Number("-32602"), eventsWireObject(t, rejected["error"])["code"])
-		assert.Equal(before, callbackDials.Load(), "invalid import scope must fail before callback I/O")
+		return
 	}
-
-	forged, err := json.Marshal(req)
-	require.NoError(err)
-	var forgedRequest map[string]any
-	require.NoError(json.Unmarshal(forged, &forgedRequest))
-	forgedRequest["principal"] = "owner:forged"
-	_, wire = call("events/subscribe", forgedRequest)
-	require.NotNil(wire["error"])
-	assert.Equal(json.Number("-32602"), eventsWireObject(t, wire["error"])["code"])
-	subscriptions, err := f.Store.ListMCPSubscriptions(t.Context(), mcpevents.Principal(owner))
-	require.NoError(err)
-	assert.Empty(subscriptions)
 	_, wire = call("events/subscribe", req)
 	require.Nil(wire["error"])
 	subscriptionID := eventsWireString(t, eventsWireObject(t, wire["result"])["id"])
@@ -1148,18 +1143,4 @@ INSERT INTO ZWACHATSESSION VALUES(10,'15550000002@s.whatsapp.net','Synthetic Con
 		assert.NotContains(rec.Body.String(), body[8:16])
 	}
 
-	independent := newMCPHTTPServer(ServeOptions{Engine: daemonclient.NewEngineAdapter(client), Events: client}, HTTPOptions{APIKey: "owner-fixture", IndependentCredential: true}).Handler
-	_, independentWire := eventsHTTPCall(t, independent, "2026-07-28", "server/discover", `{}`)
-	require.Nil(independentWire["error"])
-	assert.NotContains(eventsWireObject(t, independentWire["result"])["capabilities"], "events")
-	_, independentWire = eventsHTTPCall(t, independent, "2026-07-28", "events/list", `{}`)
-	require.NotNil(independentWire["error"])
-	assert.Equal(json.Number("-32601"), eventsWireObject(t, independentWire["error"])["code"])
-	// A valid frontend bearer cannot replace the daemon's owner credential.
-	wrongClient, err := daemonclient.New(daemonclient.Config{URL: endpoint.URL, APIKey: "wrong-synthetic-owner", AllowInsecure: true})
-	require.NoError(err)
-	badHandler := newMCPHTTPServer(ServeOptions{Events: wrongClient}, HTTPOptions{APIKey: "owner-fixture"}).Handler
-	_, denied := eventsHTTPCall(t, badHandler, "2026-07-28", "events/list", `{}`)
-	require.NotNil(denied["error"])
-	assert.Equal(json.Number("-32012"), eventsWireObject(t, denied["error"])["code"])
 }

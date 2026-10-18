@@ -43,11 +43,12 @@ func (s *Store) recordImportDecisionTx(ctx context.Context, tx *loggedTx, id int
 	}
 	runtime := s.mcpRoot().mcpConfig.Load()
 	notify := newlyCreated && !retainedIdentity && messageType != "calendar_event" && run.NotifyImports && runtime != nil && runtime.config.Enabled && runtime.config.ImportNotifications && runtime.kinds["msgvault.import_message_archived"+"\x00"+run.Format][string(RefKindMessage)]
+	deferNotification := notify && run.Format == "pst"
 	var decisionRun, decisionTime any
 	if newlyCreated {
 		decisionRun, decisionTime = run.ID, mcpTime(archived)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO import_message_decisions (source_generation,source_message_id,source_id,import_run_id,archived_at,notified) VALUES (?,?,?,?,?,?) ON CONFLICT (source_generation,source_message_id) DO NOTHING`, run.SourceGeneration, nativeID, source, decisionRun, decisionTime, notify)
+	result, err := tx.ExecContext(ctx, `INSERT INTO import_message_decisions (source_generation,source_message_id,source_id,import_run_id,archived_at,notified) VALUES (?,?,?,?,?,?) ON CONFLICT (source_generation,source_message_id) DO NOTHING`, run.SourceGeneration, nativeID, source, decisionRun, decisionTime, notify && !deferNotification)
 	if err != nil {
 		return mcpSafeError(err)
 	}
@@ -55,7 +56,7 @@ func (s *Store) recordImportDecisionTx(ctx context.Context, tx *loggedTx, id int
 	if err != nil {
 		return mcpSafeError(err)
 	}
-	if !notify || added == 0 {
+	if !notify || deferNotification || added == 0 {
 		return nil
 	}
 	var sentAt any
@@ -72,6 +73,76 @@ func (s *Store) recordImportDecisionTx(ctx context.Context, tx *loggedTx, id int
 		return err
 	}
 	return s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.import_message_archived", Kind: string(RefKindMessage), ScopeKind: "source", ScopeID: source, SourceID: source, ConversationID: conversation, MessageID: id, ItemKey: fmt.Sprintf("message:%d", id), FromMe: fromMe, OccurredAt: archived, Data: data})
+}
+
+// PublishPSTImportEventsContext publishes staged PST import events after the
+// importer has reconciled final conversation identities. Decisions remain
+// durable across interrupted attempts, while silent import decisions are
+// excluded by their owning import run's notify flag.
+func (s *Store) PublishPSTImportEventsContext(ctx context.Context) error {
+	run := s.mcpIngest.importRun
+	if s.mcpIngest.Mode != IngestImport || run == nil || run.Format != "pst" || !run.NotifyImports {
+		return mcpStoreError("invalid_import_run")
+	}
+	type pendingPSTEvent struct {
+		messageID, conversationID, sourceID int64
+		fromMe                              bool
+		sentAt                              sql.NullTime
+		archivedAt                          time.Time
+		runID, sourceMessageID              string
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.validateImportWriteTx(ctx, tx); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT m.id,m.conversation_id,m.source_id,m.is_from_me,m.sent_at,m.archived_at,d.import_run_id,d.source_message_id
+FROM import_message_decisions d
+JOIN import_runs run ON run.id=d.import_run_id AND run.notify_imports=TRUE AND run.import_format='pst'
+JOIN messages m ON m.source_id=d.source_id AND m.source_message_id=d.source_message_id
+WHERE d.source_generation=? AND d.source_id=? AND d.notified=FALSE AND d.import_run_id IS NOT NULL
+ORDER BY m.id`), run.SourceGeneration, run.SourceID)
+		if err != nil {
+			return mcpSafeError(err)
+		}
+		pending := make([]pendingPSTEvent, 0)
+		for rows.Next() {
+			var event pendingPSTEvent
+			if err := rows.Scan(&event.messageID, &event.conversationID, &event.sourceID, &event.fromMe, &event.sentAt, &event.archivedAt, &event.runID, &event.sourceMessageID); err != nil {
+				_ = rows.Close()
+				return mcpSafeError(err)
+			}
+			pending = append(pending, event)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return mcpSafeError(err)
+		}
+		for _, event := range pending {
+			var sentAt any
+			if event.sentAt.Valid {
+				sentAt = event.sentAt.Time.UTC().Format(time.RFC3339Nano)
+			}
+			data, err := json.Marshal(map[string]any{
+				"kind": string(RefKindMessage), "message_id": strconv.FormatInt(event.messageID, 10),
+				"conversation_id": strconv.FormatInt(event.conversationID, 10), "source_id": strconv.FormatInt(event.sourceID, 10),
+				"from_me": event.fromMe, "sent_at": sentAt, "archived_at": event.archivedAt.UTC().Format(time.RFC3339Nano),
+				"ingestion_mode": "import", "import_run_id": event.runID, "import_format": "pst",
+			})
+			if err != nil {
+				return err
+			}
+			if err := s.appendMCPEventTx(ctx, tx, MCPEvent{Family: "msgvault.import_message_archived", Kind: string(RefKindMessage), ScopeKind: "source", ScopeID: event.sourceID, SourceID: event.sourceID, ConversationID: event.conversationID, MessageID: event.messageID, ItemKey: fmt.Sprintf("message:%d", event.messageID), FromMe: event.fromMe, OccurredAt: event.archivedAt, Data: data}); err != nil {
+				return err
+			}
+			result, err := tx.ExecContext(ctx, s.Rebind(`UPDATE import_message_decisions SET notified=TRUE WHERE source_generation=? AND source_message_id=? AND notified=FALSE`), run.SourceGeneration, event.sourceMessageID)
+			if err != nil {
+				return mcpSafeError(err)
+			}
+			if updated, err := result.RowsAffected(); err != nil || updated != 1 {
+				return errors.Join(err, errors.New("PST import notification decision changed"))
+			}
+		}
+		return nil
+	})
 }
 
 // adoptImportIdentitiesTx preserves only native identity, before enabling capture

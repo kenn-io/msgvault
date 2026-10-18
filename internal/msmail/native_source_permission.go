@@ -35,6 +35,10 @@ func observeNativeMailPermission(ctx context.Context, st *store.Store, source *s
 			permission.MessageRead = false
 			return permission, errors.Join(errors.New("native_authority_unavailable"), st.ObserveNativeSourcePermission(ctx, *permission))
 		}
+		// Profile verification may have refreshed the token. Bind Events
+		// authority to the scopes on that refreshed token, not the snapshot
+		// taken before the request.
+		permission.Known, permission.MessageRead = nativeMailGrant(c)
 	}
 	return permission, st.ObserveNativeSourcePermission(ctx, *permission)
 }

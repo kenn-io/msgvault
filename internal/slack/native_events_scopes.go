@@ -19,7 +19,7 @@ func (imp *Importer) pinNativeSlackAccount(ctx context.Context, source *store.So
 	observation := store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: sourceTypeSlack, NativeIdentity: source.Identifier}
 	auth, probeErr := imp.client.AuthTest(ctx)
 	if probeErr != nil {
-		observation.Known = errors.Is(probeErr, ErrAuth)
+		observation.Known = errors.Is(probeErr, ErrAuth) || errors.Is(probeErr, ErrCredentialRevoked)
 		return errors.Join(probeErr, imp.store.ObserveNativeSourcePermission(ctx, observation))
 	}
 	if auth.TeamID != opts.TeamID || auth.UserID != opts.UserID {

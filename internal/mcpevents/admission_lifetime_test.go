@@ -55,8 +55,10 @@ func TestNewSubscriptionRejectsResourceRebindDuringChallenge(t *testing.T) {
 			case <-time.After(30 * time.Second):
 				require.FailNow("source mutation blocked behind callback")
 			}
+			requireNativeGmailFixtureReadForIdentity(t, fixture, "replacement@example.net")
 			if awayBack {
 				require.NoError(fixture.Store.UpdateSourceIdentifier(fixture.Source.ID, fixture.Source.Identifier))
+				requireNativeGmailFixtureReadForIdentity(t, fixture, fixture.Source.Identifier)
 			}
 			unblock()
 			select {

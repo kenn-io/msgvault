@@ -474,7 +474,7 @@ func (s *Store) validateMCPEventScope(ctx context.Context, db SQLReader, r *mcpR
 	return sourceType, sourceID, nil
 }
 
-// mcpNativeConversationAllowed applies native Teams chat and Discord container boundaries without
+// mcpNativeConversationAllowed applies current native conversation boundaries without
 // requiring capture to remain enabled for retained receipt reads. Subscription
 // lifetime checks separately revoke removed scopes and sources.
 func (s *Store) mcpNativeConversationAllowed(ctx context.Context, db SQLReader, family string, sourceID, conversationID int64) (bool, error) {
@@ -486,7 +486,7 @@ func (s *Store) mcpNativeConversationAllowed(ctx context.Context, db SQLReader, 
 		(NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='teams')
 		OR EXISTS (SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=?
 			AND c.conversation_type IN ('direct_chat','group_chat') AND EXISTS (SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='teams_chat' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation))))
-  AND (NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='discord') OR EXISTS (SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS (SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind IN ('discord_channel','discord_thread') AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='matrix') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='matrix_room' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='beeper') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='beeper_member' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation))))`), sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID).Scan(&allowed)
+  AND (NOT EXISTS (SELECT 1 FROM sources WHERE id=? AND source_type='discord') OR EXISTS (SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS (SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind IN ('discord_channel','discord_thread') AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS (SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='matrix') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='matrix_room' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='beeper') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='beeper_member' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation)))) AND (NOT EXISTS(SELECT 1 FROM sources WHERE id=? AND source_type='slack') OR EXISTS(SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=? AND EXISTS(SELECT 1 FROM native_message_scopes n WHERE n.source_id=c.source_id AND n.scope_kind='slack_channel' AND n.provider_id=c.source_conversation_id AND n.present AND EXISTS(SELECT 1 FROM mcp_source_resources r WHERE r.source_id=n.source_id AND r.generation=n.source_generation))))`), sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID, sourceID, conversationID, sourceID).Scan(&allowed)
 	return allowed, err
 }
 
@@ -604,7 +604,7 @@ func (s *Store) removeMCPEventSource(ctx context.Context, db contextQuerier, sou
 
 // Source admission has no conversation yet; every occurrence validates its
 // actual origin separately. A source ID is never used as a conversation ID.
-func (s *Store) mcpSubscriptionTeamsChatAllowed(ctx context.Context, db SQLReader, sub *MCPSubscription) (bool, error) {
+func (s *Store) mcpSubscriptionConversationAllowed(ctx context.Context, db SQLReader, sub *MCPSubscription) (bool, error) {
 	if sub.ScopeKind != mcpScopeConversation {
 		return true, nil
 	}
@@ -613,6 +613,7 @@ func (s *Store) mcpSubscriptionTeamsChatAllowed(ctx context.Context, db SQLReade
 
 func (s *Store) removeMCPEventConversations(ctx context.Context, db contextQuerier, targets string, args []any) error {
 	queries := []string{
+		`UPDATE mcp_event_subscriptions SET cursor_seq=CASE WHEN pending_seq>cursor_seq THEN pending_seq ELSE cursor_seq END,pending_seq=NULL,pending_envelope=NULL,pending_generation=NULL,attempt_count=0,next_attempt_at=NULL WHERE scope_kind<>'conversation' AND pending_seq IS NOT NULL AND EXISTS (SELECT 1 FROM mcp_event_log event WHERE event.seq=mcp_event_subscriptions.pending_seq AND event.conversation_id IN (` + targets + `))`,
 		`DELETE FROM mcp_event_log WHERE conversation_id IN (` + targets + `)`,
 		`DELETE FROM mcp_event_dead_letters WHERE EXISTS (SELECT 1 FROM mcp_event_subscriptions s WHERE s.id=mcp_event_dead_letters.subscription_id AND s.scope_kind='conversation' AND s.scope_id IN (` + targets + `))`,
 	}

@@ -276,7 +276,7 @@ func (s *Store) retireNativeMessageDependentsTx(ctx context.Context, tx *sql.Tx,
 			}
 		}
 	}
-	if observation.SourceType != sourceTypeDiscord && observation.SourceType != sourceTypeMatrix && observation.SourceType != "beeper" && (observation.SourceType != "teams" || observation.Kind != "teams_chat") {
+	if observation.SourceType != sourceTypeSlack && observation.SourceType != sourceTypeDiscord && observation.SourceType != sourceTypeMatrix && observation.SourceType != "beeper" && (observation.SourceType != "teams" || observation.Kind != "teams_chat") {
 		return nil
 	}
 	// Retire origins only for positive absence, denial or rebind, including an
