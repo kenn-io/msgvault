@@ -307,6 +307,14 @@ func (s *Store) ApplyPersonTiersPageContext(ctx context.Context, request PersonT
 	return s.ProcessPersonTierRunPageContext(ctx, *run, limit, request.Actor)
 }
 func (s *Store) ProcessPersonTierRunPageContext(ctx context.Context, run PersonTierRun, limit int, actor string) (*PersonTierPage, error) {
+	return s.ProcessPersonTierRunPageWithCheckpointContext(ctx, run, limit, actor, nil)
+}
+
+// ProcessPersonTierRunPageWithCheckpointContext reports each committed person
+// checkpoint after its decision and run cursor have committed. Scheduled jobs
+// use the callback to let the scheduler queue a continuation after a budgeted
+// partial pass; manual callers keep their page-level response semantics.
+func (s *Store) ProcessPersonTierRunPageWithCheckpointContext(ctx context.Context, run PersonTierRun, limit int, actor string, onCheckpoint func()) (*PersonTierPage, error) {
 	if limit < 1 || limit > 500 {
 		return nil, ErrInvalidPersonTierRequest
 	}
@@ -328,8 +336,15 @@ func (s *Store) ProcessPersonTierRunPageContext(ctx context.Context, run PersonT
 		if err = ctx.Err(); err != nil {
 			return nil, err
 		}
+		checkpointCursor := ""
+		if run.Kind == "scheduled" {
+			checkpointCursor = encodePersonTierCursor(personTierCursor{
+				AfterID: input.PersonID, AsOf: run.AsOf, Fingerprint: run.ConfigFingerprint,
+				RunID: run.RunID, Timezone: run.Timezone, MaxDirect: run.MaxDirect,
+			})
+		}
 		var applied PersonTierInput
-		applied, err = s.applyPersonTierDecisionContext(ctx, run, input)
+		applied, err = s.applyPersonTierDecisionWithCheckpointContext(ctx, run, input, checkpointCursor)
 		if errors.Is(err, ErrPersonTierRunSuperseded) {
 			page.Counts["superseded"]++
 			continue
@@ -340,13 +355,19 @@ func (s *Store) ProcessPersonTierRunPageContext(ctx context.Context, run PersonT
 			}
 			page.Counts["failed"]++
 			slog.WarnContext(ctx, "people tier evaluation failed", "person_id", input.PersonID, "error", err)
-			if recordErr := s.recordPersonTierFailure(ctx, run, input, actor); recordErr != nil {
+			if recordErr := s.recordPersonTierFailureWithCheckpointContext(ctx, run, input, actor, checkpointCursor); recordErr != nil {
 				return nil, fmt.Errorf("record people tier failure: %w", recordErr)
+			}
+			if checkpointCursor != "" && onCheckpoint != nil {
+				onCheckpoint()
 			}
 			continue
 		}
 		page.People[i] = applied
 		countPersonTierDecision(page.Counts, applied.Decision)
+		if checkpointCursor != "" && onCheckpoint != nil {
+			onCheckpoint()
+		}
 	}
 	page.Counts["evaluated"] = len(page.People)
 	run.Cursor = page.NextCursor

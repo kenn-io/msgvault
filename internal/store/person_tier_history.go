@@ -117,6 +117,10 @@ func personTierFailureKey(id int64) string {
 	return "people_tiers_failure:" + strconv.FormatInt(id, 10)
 }
 func (s *Store) recordPersonTierFailure(ctx context.Context, run PersonTierRun, input PersonTierInput, actor string) error {
+	return s.recordPersonTierFailureWithCheckpointContext(ctx, run, input, actor, "")
+}
+
+func (s *Store) recordPersonTierFailureWithCheckpointContext(ctx context.Context, run PersonTierRun, input PersonTierInput, actor, checkpointCursor string) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
@@ -129,7 +133,7 @@ func (s *Store) recordPersonTierFailure(ctx context.Context, run PersonTierRun, 
 			return err
 		}
 		if !exists {
-			return nil
+			return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 		}
 		var value string
 		err := tx.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key=?`, personTierFailureKey(input.PersonID)).Scan(&value)
@@ -146,7 +150,7 @@ func (s *Store) recordPersonTierFailure(ctx context.Context, run PersonTierRun, 
 			}
 		}
 		if failure.RunID == run.RunID {
-			return nil
+			return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 		}
 		failure.RunID = run.RunID
 		failure.Count++
@@ -158,9 +162,11 @@ func (s *Store) recordPersonTierFailure(ctx context.Context, run PersonTierRun, 
 			if d.Tier == 0 {
 				d.Tier = 3
 			}
-			return s.insertPersonTierEventTx(ctx, tx, run, input, d, "apply_failed", runEventMode(run), actor, s.personEnrichmentTime())
+			if err := s.insertPersonTierEventTx(ctx, tx, run, input, d, "apply_failed", runEventMode(run), actor, s.personEnrichmentTime()); err != nil {
+				return err
+			}
 		}
-		return nil
+		return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 	})
 }
 func runEventMode(run PersonTierRun) string {
