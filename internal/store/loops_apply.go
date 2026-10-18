@@ -35,7 +35,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 		return fmt.Errorf("%w: conversation, observed revision and time required", ErrInvalidLoop)
 	}
 	if open := apply.Verdict.Open; open != nil {
-		if open.ConversationID != apply.ConversationID || open.SourceID <= 0 || open.TurnKey == "" || !slices.Contains([]string{"reply_owed", "awaiting_reply"}, open.Kind) || !slices.Contains([]string{"email", "chat"}, open.Channel) || open.OwedSinceAt.IsZero() || open.OpensAt.IsZero() || open.LastActivityAt.IsZero() || open.RulesetVersion < 1 || !jsontext.Value(open.EvidenceJSON).IsValid() || utf8.RuneCountInString(open.Summary) > 200 {
+		if open.ConversationID != apply.ConversationID || open.SourceID <= 0 || open.TurnKey == "" || !slices.Contains([]string{"reply_owed", "awaiting_reply"}, open.Kind) || !slices.Contains([]string{"email", "chat"}, open.Channel) || open.OwedSinceAt.IsZero() || open.OpensAt.IsZero() || open.LastActivityAt.IsZero() || open.RulesetVersion < 1 || !open.EvidenceJSON.IsValid() || utf8.RuneCountInString(open.Summary) > 200 {
 			return fmt.Errorf("%w: invalid open decision", ErrInvalidLoop)
 		}
 	}

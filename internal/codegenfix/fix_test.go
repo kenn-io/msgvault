@@ -90,6 +90,8 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 }
 
 func TestRewriteCreateLoopSuppressionClientAcceptsBothSuccessStatuses(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	fixture := `package generated
 func (c *Client) AnotherMethod() error {
 	if resp.StatusCode != 201 { return nil }
@@ -107,13 +109,13 @@ func (c *Client) CreateLoopSuppression(ctx context.Context, options *CreateLoopS
 `
 
 	got, err := RewriteCreateLoopSuppressionClient([]byte(fixture))
-	require.NoError(t, err)
-	assert.Contains(t, string(got), "if resp.StatusCode != 200 && resp.StatusCode != 201 {")
-	assert.Contains(t, string(got), "func (c *Client) AnotherMethod() error {\n\tif resp.StatusCode != 201 {")
+	requirements.NoError(err)
+	assertions.Contains(string(got), "if resp.StatusCode != 200 && resp.StatusCode != 201 {")
+	assertions.Contains(string(got), "func (c *Client) AnotherMethod() error {\n\tif resp.StatusCode != 201 {")
 
 	again, err := RewriteCreateLoopSuppressionClient(got)
-	require.NoError(t, err)
-	assert.Equal(t, got, again)
+	requirements.NoError(err)
+	assertions.Equal(got, again)
 }
 
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {

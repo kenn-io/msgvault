@@ -38,6 +38,7 @@ func insertSchemaLoop(t *testing.T, f *storetest.Fixture, key, kind, detector st
 
 func TestLoopSchemaConstraints(t *testing.T) {
 	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	s := f.Store
 	assertions.Equal(1, loopCount(t, s, "loop_derivation_state"))
@@ -46,37 +47,38 @@ func TestLoopSchemaConstraints(t *testing.T) {
 	}
 	id := insertSchemaLoop(t, f, "turn-a", "reply_owed", "turn_state")
 	_, err := s.DB().Exec(s.Rebind(`INSERT INTO open_loops (turn_key,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version) SELECT 'turn-b',conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version FROM open_loops WHERE id=?`), id)
-	require.Error(t, err, "one live turn-state loop per conversation and kind")
+	requirements.Error(err, "one live turn-state loop per conversation and kind")
 	commit := insertSchemaLoop(t, f, "commit-a", "commitment_owed_by_me", "commitment_extraction")
 	_, err = s.DB().Exec(s.Rebind(`INSERT INTO open_loops (turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version) SELECT turn_key,2,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version FROM open_loops WHERE id=?`), commit)
-	require.Error(t, err, "one live occurrence per turn, including commitments")
+	requirements.Error(err, "one live occurrence per turn, including commitments")
 	insertSchemaLoop(t, f, "commit-b", "commitment_owed_by_me", "commitment_extraction")
 	insertSchemaLoop(t, f, "await-a", "awaiting_reply", "turn_state")
 	for _, assignment := range []string{"status='closed'", "closed_at=CURRENT_TIMESTAMP", "closed_reason='done'", "closed_by='user'", "cycle=0", "kind='invalid'", "detector='invalid'", "status='invalid'", "channel='invalid'", "agenda_state='invalid'", "closed_message_id=-1", "fact_claim_id=-1"} {
 		t.Run(assignment, func(t *testing.T) {
+			requirements := require.New(t)
 			_, err := s.DB().Exec(s.Rebind("UPDATE open_loops SET "+assignment+" WHERE id=?"), id)
-			require.Error(t, err)
+			requirements.Error(err)
 		})
 	}
 	loopExec(t, s, "UPDATE open_loops SET status='closed',closed_at=CURRENT_TIMESTAMP,closed_reason='done',closed_by='user' WHERE id=?", id)
 	for _, assignment := range []string{"closed_at=NULL", "closed_reason=NULL", "closed_by=NULL", "closed_reason='invalid'", "closed_by='invalid'"} {
 		_, err = s.DB().Exec(s.Rebind("UPDATE open_loops SET "+assignment+" WHERE id=?"), id)
-		require.Error(t, err)
+		requirements.Error(err)
 	}
 	_, err = s.DB().Exec(s.Rebind(`INSERT INTO open_loops (turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version,closed_at,closed_reason,closed_by) SELECT turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version,closed_at,closed_reason,closed_by FROM open_loops WHERE id=?`), id)
-	require.Error(t, err, "turn/cycle identity remains unique for closed history")
+	requirements.Error(err, "turn/cycle identity remains unique for closed history")
 	loopExec(t, s, `INSERT INTO open_loops (turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version) SELECT turn_key,2,conversation_id,source_id,kind,detector,'held',channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version FROM open_loops WHERE id=?`, id)
 	for _, cycle := range []int{1, 3} {
 		_, err := s.DB().Exec(s.Rebind(`INSERT INTO open_loops (turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version) SELECT turn_key,?,conversation_id,source_id,kind,detector,'held',channel,owed_since_at,last_activity_at,opens_at,evidence_json,ruleset_version FROM open_loops WHERE id=?`), cycle, id)
-		require.Error(t, err, "unique historical cycle or live key")
+		requirements.Error(err, "unique historical cycle or live key")
 	}
 	_, err = s.DB().Exec("INSERT INTO loop_derivation_state(singleton) VALUES(2)")
-	require.Error(t, err)
+	requirements.Error(err)
 	_, err = s.DB().Exec("INSERT INTO loop_derivation_state(singleton) VALUES(1)")
-	require.Error(t, err)
+	requirements.Error(err)
 	for _, q := range []string{"INSERT INTO loop_conversation_queue(conversation_id,revision) VALUES(?,0)", "INSERT INTO loop_conversation_queue(conversation_id,processed_revision) VALUES(?,-1)", "INSERT INTO loop_conversation_queue(conversation_id,processed_revision) VALUES(?,2)"} {
 		_, err = s.DB().Exec(s.Rebind(q), f.ConvID)
-		require.Error(t, err)
+		requirements.Error(err)
 	}
 }
 
@@ -246,7 +248,6 @@ func TestLoopSchemaAssociationTriggers(t *testing.T) {
 			assertions.Equal(int64(5), queueRevision(t, s, conv), "association cascades ignore a deleted message")
 			loopExec(t, s, "DELETE FROM conversations WHERE id=?", conv)
 			assertions.Equal(1, loopCount(t, s, "loop_conversation_queue"))
-
 		})
 	}
 }
@@ -279,7 +280,6 @@ func TestLoopSchemaMessageMoveOwnershipTriggers(t *testing.T) {
 	loopExec(t, s, "UPDATE messages SET conversation_id=? WHERE id=?", old, mid)
 	assertions.Equal(int64(6), queueRevision(t, s, next))
 	assertions.Equal(int64(2), queueRevision(t, s, old))
-
 }
 
 // Rebuilding the legacy recipient table must restore loop triggers even when

@@ -13,11 +13,13 @@ import (
 )
 
 func TestLoopFreshnessUsesCurrentConfiguredAccounts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	fixture := storetest.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Loops.Enabled = true
 	service, err := loops.NewService(fixture.Store, cfg, nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	server := NewServerWithOptions(ServerOptions{
 		Config:      cfg,
 		Store:       fixture.Store,
@@ -31,14 +33,14 @@ func TestLoopFreshnessUsesCurrentConfiguredAccounts(t *testing.T) {
 	server.cfgMu.Unlock()
 
 	report, err := service.Freshness(t.Context(), time.Now().UTC(), nil)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	var found bool
 	for _, source := range report.Sources {
 		if source.Identifier == account.Email {
 			found = true
-			assert.Nil(t, source.SourceID)
-			assert.True(t, source.Stale)
+			assertions.Nil(source.SourceID)
+			assertions.True(source.Stale)
 		}
 	}
-	assert.True(t, found, "freshness must include configured accounts added after service construction")
+	assertions.True(found, "freshness must include configured accounts added after service construction")
 }

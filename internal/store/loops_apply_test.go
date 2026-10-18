@@ -49,6 +49,7 @@ func TestLoopApplyDoneWinsRewrittenAnchorAndWindow(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(rows, "done outside window retains authority")
 	outside.PreviousTurnKnown = true
+	outside.PreviousTurnAt = now.Add(time.Minute)
 	applyLoop(t, f, outside, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
@@ -322,6 +323,7 @@ func TestLoopTerminalHistoryCollisionWithdrawsLive(t *testing.T) {
 	requirements.NoError(err)
 	newer := loopOpen(t, f, ids[1], ids[2], now)
 	newer.PreviousTurnKnown = true
+	newer.PreviousTurnAt = now.Add(time.Minute)
 	applyLoop(t, f, newer, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)

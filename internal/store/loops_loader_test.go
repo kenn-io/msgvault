@@ -193,8 +193,11 @@ func TestLoopLoaderParticipantParityAndLegalNonpositiveMessageIDs(t *testing.T) 
 		requirements.Len(message.Recipients, 1)
 		assertions.True(message.Recipients[0].IsOwner)
 	}
-	requirements.Len(view.Participants, 1)
-	assertions.Equal("Peer", view.Participants[0].DisplayName)
+	requirements.Len(view.Participants, 2)
+	assertions.Equal("Owner", view.Participants[0].DisplayName)
+	assertions.True(view.Participants[0].IsOwner)
+	assertions.Equal("Peer", view.Participants[1].DisplayName)
+	assertions.False(view.Participants[1].IsOwner)
 	exists, err := f.Store.LoopConversationAnchorExistsContext(t.Context(), f.ConvID, 0)
 	requirements.NoError(err)
 	assertions.True(exists)
@@ -204,6 +207,7 @@ func TestLoopLoaderSkipsNullProviderLabelID(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
 	message := f.CreateMessage("nullable-provider-label")
+	loopExec(t, f.Store, "UPDATE messages SET sent_at=? WHERE id=?", loopTestStamp(f.Store, time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)), message)
 	var localLabel int64
 	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("INSERT INTO labels(source_id,name,label_type) VALUES(?,?,'user') RETURNING id"), f.Source.ID, "Local label").Scan(&localLabel))
 	providerLabel, err := f.Store.EnsureLabel(f.Source.ID, "provider-label", "Provider label", "user")
@@ -211,6 +215,10 @@ func TestLoopLoaderSkipsNullProviderLabelID(t *testing.T) {
 	for _, label := range []int64{localLabel, providerLabel} {
 		loopExec(t, f.Store, "INSERT INTO message_labels(message_id,label_id) VALUES(?,?)", message, label)
 	}
+	var storedProviderLabelID sql.NullString
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT source_label_id FROM labels WHERE id=?"), providerLabel).Scan(&storedProviderLabelID))
+	requirements.True(storedProviderLabelID.Valid)
+	requirements.Equal("provider-label", storedProviderLabelID.String)
 	view, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 10)
 	requirements.NoError(err)
 	requirements.Len(view.Messages, 1)

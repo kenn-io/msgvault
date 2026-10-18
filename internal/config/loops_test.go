@@ -90,17 +90,18 @@ func TestLoadRejectsExtendedConversationMessageLimitAboveLoaderMaximum(t *testin
 		{limit: 10001, wantErr: true},
 	} {
 		t.Run(strconv.Itoa(tc.limit), func(t *testing.T) {
+			requirements := require.New(t)
 			path := filepath.Join(t.TempDir(), "config.toml")
 			contents := []byte("[loops]\nconversation_message_limit_extended = " + strconv.Itoa(tc.limit) + "\n")
-			require.NoError(t, os.WriteFile(path, contents, 0600))
+			requirements.NoError(os.WriteFile(path, contents, 0600))
 			loaded, err := Load(path, "")
 			if tc.wantErr {
-				require.ErrorContains(t, err, "conversation_message_limit_extended")
-				require.ErrorContains(t, err, "10000")
+				requirements.ErrorContains(err, "conversation_message_limit_extended")
+				requirements.ErrorContains(err, "10000")
 				return
 			}
-			require.NoError(t, err)
-			require.Equal(t, tc.limit, loaded.Loops.ConversationMessageLimitExtended)
+			requirements.NoError(err)
+			requirements.Equal(tc.limit, loaded.Loops.ConversationMessageLimitExtended)
 		})
 	}
 }

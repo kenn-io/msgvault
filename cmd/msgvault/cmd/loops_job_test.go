@@ -16,14 +16,16 @@ import (
 )
 
 func TestLoopRuntimeDisabledHasNoCapabilities(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Loops.Enabled = false
 	runtime, err := newLoopRuntime(t.Context(), nil, nil, nil, cfg)
-	require.NoError(t, err)
-	require.NotNil(t, runtime)
-	assert.Nil(t, runtime.service)
-	assert.Nil(t, runtime.runner)
-	assert.Nil(t, runtime.deriver)
+	requirements.NoError(err)
+	requirements.NotNil(runtime)
+	assertions.Nil(runtime.service)
+	assertions.Nil(runtime.runner)
+	assertions.Nil(runtime.deriver)
 }
 
 func TestLoopRuntimeManualDerivesAndReportsAppliedProgress(t *testing.T) {

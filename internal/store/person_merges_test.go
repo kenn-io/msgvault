@@ -194,7 +194,7 @@ func TestPersonMergeTransfersLoopDecisionsAndSplitRestoresThem(t *testing.T) {
 	require.True(counterpart.Valid)
 	assert.Equal(survivor.ID, counterpart.Int64)
 	assert.Equal("owner summary", summary)
-	assert.Equal(snoozedUntil, gotSnoozed.Time)
+	assert.True(snoozedUntil.Equal(gotSnoozed.Time))
 	assert.Equal("created", agendaState)
 	var suppressionCount int
 	var mergedNote string

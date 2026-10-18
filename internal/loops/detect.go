@@ -12,15 +12,18 @@ import (
 // settlement. Unread owner text counts as an answer, never as a new question.
 func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Thresholds, supp Suppressions) Verdict {
 	v := Verdict{}
-	closeLive := func(loop LiveLoop, reason string) {
-		v.CoverageGaps = slices.DeleteFunc(v.CoverageGaps, func(id int64) bool { return id == loop.ID })
-		if !slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == loop.ID }) {
-			v.Close = append(v.Close, CloseDecision{ID: loop.ID, Reason: reason, At: now})
+	recordClose := func(decision CloseDecision) {
+		if !slices.ContainsFunc(v.Close, func(existing CloseDecision) bool { return existing.ID == decision.ID }) {
+			v.Close = append(v.Close, decision)
 		}
+		v.CoverageGaps = slices.DeleteFunc(v.CoverageGaps, func(id int64) bool { return id == decision.ID })
+	}
+	closeLive := func(loop LiveLoop, reason string) {
+		recordClose(CloseDecision{ID: loop.ID, Reason: reason, At: now})
 	}
 	closeKept := func(kind, reason string) {
 		for _, l := range live {
-			if (kind == "" || l.Kind == kind) && (l.Kind == ReplyOwed || l.Kind == AwaitingReply) && !slices.Contains(v.CoverageGaps, l.ID) {
+			if (kind == "" || l.Kind == kind) && (l.Kind == ReplyOwed || l.Kind == AwaitingReply) {
 				closeLive(l, reason)
 			}
 		}
@@ -37,6 +40,15 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	if slices.Contains(supp.Conversations, view.ConversationID) {
 		closeKept("", "muted")
 		return v
+	}
+	// A person link or suppression may change while the message window remains
+	// neutral. Close a live row from its saved counterpart identity even when
+	// there is no new Open decision for the store to recheck.
+	for _, loop := range live {
+		counterparty := LoopParticipant{ID: loop.CounterpartyParticipantID, PersonID: loop.CounterpartyPersonID}
+		if (counterparty.ID != 0 || counterparty.PersonID != 0) && suppressed(counterparty, supp) {
+			recordClose(CloseDecision{ID: loop.ID, Reason: "muted", At: now})
+		}
 	}
 	if !eligibleConversation(view, now, cfg) {
 		closeKept("", "withdrawn")
@@ -83,11 +95,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		if closed != nil {
 			settledTurnFlip = settledTurnFlip || closed.Reason == "turn_flip"
-			v.Close = append(v.Close, *closed)
+			recordClose(*closed)
 		}
 		if gap {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
-		} else if anchor != nil {
+		}
+		if anchor != nil {
 			retained[l.Kind] = settledLoop{loop: l, anchor: *anchor}
 		}
 	}
@@ -188,43 +201,59 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			body := t.body(settlementView, m.ID)
 			uncertain = uncertain || !body.ok
 			if body.ok && asksQuestion(body.text) && anchor == nil {
-				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
-				if !ok || suppressed(candidateCounterparty, supp) {
-					continue
-				}
 				candidate := m
 				anchor = &candidate
-				counterparty = candidateCounterparty
 			}
 		}
-		if anchor != nil && counterparty.ID == 0 {
-			if settled, ok := retained[kind]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
-				for _, participant := range settlementView.Participants {
-					if participant.ID == settled.loop.CounterpartyParticipantID {
-						counterparty = participant
-						break
-					}
+		var candidates []LoopParticipant
+		if settlementView.ConversationType == "direct_chat" || settlementView.ConversationType == "group_chat" {
+			for _, participant := range settlementView.Participants {
+				if !participant.IsOwner {
+					candidates = append(candidates, participant)
 				}
-				if counterparty.ID == 0 {
-					counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
+			}
+		} else if anchor != nil {
+			for _, recipient := range anchor.Recipients {
+				if recipient.Type == "to" && !recipient.IsOwner {
+					candidates = append(candidates, recipient.LoopParticipant)
 				}
-			} else {
-				candidate, ok := obligationCounterparty(settlementView, kind, *anchor)
-				if !ok {
-					closeKept(kind, "withdrawn")
-					return v
-				}
-				counterparty = candidate
 			}
 		}
-		if anchor != nil && suppressed(counterparty, supp) {
+		counts := make(map[int64]int)
+		for _, turn := range turns {
+			for _, message := range turn.messages {
+				counts[message.Sender.ID]++
+			}
+		}
+		if settled, ok := retained[kind]; ok && settled.loop.CounterpartyParticipantID != 0 {
+			for _, participant := range candidates {
+				if participant.ID == settled.loop.CounterpartyParticipantID {
+					counterparty = participant
+					break
+				}
+			}
+		}
+		for _, participant := range candidates {
+			if counterparty.ID != 0 {
+				break
+			}
+			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] || (counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
+				counterparty = participant
+			}
+		}
+		if suppressed(counterparty, supp) {
 			closeKept(kind, "muted")
 			return v
 		}
 		if uncertain {
-			// A budget limit or failed read cannot disprove a live question.
-			// Preserve its original evidence instead of selecting a newer nudge.
+			// A body budget or read failure cannot prove that the live question
+			// has no recipient or has been withdrawn.
 			keepUncertain(kind)
+			return v
+		}
+		if len(candidates) == 0 {
+			closeKept(kind, "withdrawn")
+			return v
 		}
 	}
 	// Missing or unread evidence cannot prove a new turn. Reconciliation can

@@ -4407,6 +4407,7 @@ func TestCopySubset_UpgradedAuxiliaryColumnOrder(t *testing.T) {
 		`DROP INDEX IF EXISTS idx_conversations_type`,
 		`DROP TRIGGER IF EXISTS trg_embedding_changes_conversation_title`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
+		`DROP TRIGGER IF EXISTS trg_loop_queue_conversation_type_update`,
 		`ALTER TABLE conversations DROP COLUMN conversation_type`,
 		`ALTER TABLE conversations DROP COLUMN title`,
 		`ALTER TABLE conversations ADD COLUMN title TEXT`,

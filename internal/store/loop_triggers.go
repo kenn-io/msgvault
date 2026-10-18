@@ -53,12 +53,12 @@ func (d *SQLiteDialect) EnsureLoopProjectionTriggers(q querier) error {
 	}
 	reason := "CASE WHEN OLD.conversation_id IS NOT NEW.conversation_id THEN 'moved' ELSE 'ownership' END"
 	body := loopSQLiteEnqueue("conversations", "id", "id=OLD.conversation_id", reason) + loopSQLiteEnqueue("conversations", "id", "id=NEW.conversation_id", reason)
-	statements = append(statements, "DROP TRIGGER IF EXISTS trg_loop_queue_messages_move",
+	statements = append(statements,
+		"DROP TRIGGER IF EXISTS trg_loop_queue_messages_move",
 		fmt.Sprintf(`CREATE TRIGGER trg_loop_queue_messages_move
  AFTER UPDATE OF %s ON messages FOR EACH ROW
  WHEN %s
- BEGIN %s END`, strings.Join(messageUpdateColumns, ", "), strings.Join(messageUpdateConditions, "\n   OR "), body))
-	statements = append(statements,
+	 BEGIN %s END`, strings.Join(messageUpdateColumns, ", "), strings.Join(messageUpdateConditions, "\n   OR "), body),
 		"DROP TRIGGER IF EXISTS trg_loop_queue_conversation_type_update",
 		`CREATE TRIGGER trg_loop_queue_conversation_type_update
  AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
