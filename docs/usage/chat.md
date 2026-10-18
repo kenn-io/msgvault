@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-18"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -71,6 +71,40 @@ Calendar tools instruct assistants to treat archived event text and attendee
 content as data, never as instructions or permission to write. The write opt-in
 exposes mutation tools; the user must request each change and confirm each
 non-dry-run plan through client elicitation.
+
+## Archived calendar events (unreleased)
+
+Daemon API schema 3.24.0 adds two archive read tools:
+
+| Tool | Input | Result |
+|---|---|---|
+| `list_calendar_events` | Required RFC3339 `from` and `to`; optional `source_ids`, `attendee`, `include_cancelled`, `limit`, and `cursor` | Expanded occurrences, unexpandable series, and a continuation cursor |
+| `get_calendar_event` | An occurrence `ref` from the list | One archived occurrence with its effective time and attendees |
+
+Delegated callers need `message.read` on the calendar sources. The tools use the
+caller's granted sources; `source_ids` further narrows them. Older daemons omit
+both tools. The seven live calendar control tools retain their existing access
+rules.
+
+[Calendar occurrence reads](calendar.md#read-archived-occurrences-unreleased)
+owns the window, page, recurrence limits, cancellation behavior, and CLI usage.
+
+## Meeting records (unreleased)
+
+Daemon API schema 3.25.0 adds three meeting read tools:
+
+| Tool | Input | Result |
+|---|---|---|
+| `get_meeting` | Required `ref`: `evt:<id>[@<original-key>]` or `msg:<id>` | Occurrence, permitted note packets, actions, recording attachments, and previous evidence |
+| `list_person_meetings` | Required `ref`: numeric person ID, `person:<id>`, or `participant:<id>`; optional RFC3339 `from`/`to`, `limit` (1–500, default 100), and `cursor` | Chronological `items` and optional `next_cursor` |
+| `suggest_meeting_links` | Required meeting `ref`; optional `limit` (1–100, default 10) | Possible links in `items`; leaves links unchanged |
+
+Each tool requires `message.read` on the sources it uses. Daemons older than
+3.25.0 omit these tools while retaining supported calendar occurrence reads.
+Owners make link decisions through the CLI or HTTP API.
+
+[Meeting records](calendar.md#read-a-meeting-record-unreleased) owns the
+reference syntax, provenance, content bounds, default window and cursor rules.
 
 ## Draft tools
 
@@ -351,6 +385,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. These describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
 | `search_person_files` | Find archived attachment occurrences related to a saved person. | `person_id` (int, required), `directions` (array: `from_person`/`to_person`/`group`), `filename` (substring), `mime_families` (array), `after`, `before`, `limit` (1–100, default 100), `cursor` |
+| `get_person_card` | Prepare a bounded, dated and cited card for a meeting or reply. Owner sessions only; private Notes, sensitive attributes and media are excluded. | `ref` (required), `as_of`, `max_items` (1–10), `max_bytes` (2048–65536), `format` (`json` or `markdown`), `affiliation` (`internal` or `external`) |
 | `get_person_profile` | Read a saved person profile: contact history, current brief and its sources, contact details, non-sensitive attributes, employment, relationships, and categories. Includes the vCard UID and mapped CardDAV bindings when the daemon provides them; older daemons return no CardDAV binding entries. Excludes sensitive attributes, private Notes, and media; makes no provider calls. See [Brief text is data](#brief-text-is-data). | Exactly one of `person_id` (int) or `vcard_uid` (string; current or retired person UID, or mapped CardDAV UID) |
 | `list_directory_people` | List durable Directory people with filtering and last-contact ordering when the daemon supports API schema 2.13.0 or newer. `last_contact_after` and `last_contact_before` accept inclusive RFC3339 timestamps or `YYYY-MM-DD` dates (midnight UTC). Pages default to 50 rows and are capped at 100. Sort defaults to `last_contact_desc`; allowed values are `last_contact_desc`, `last_contact_asc`, and `name`. Rows include identity, revision, contact state, last contact time, primary channel, categories, and organizations; API schema 3.10.0 or newer also provides the vCard UID and CardDAV bindings. Older daemons return empty values for those fields. `next_cursor` is opaque and belongs to the same filter set. `search_people` remains the separate observed-contact and profile search on older compatible daemons. | `query`, `cursor`, `limit`, `sort`, `last_contact_after`, `last_contact_before`, `contact_state`, `category`, `organization`, `primary_channel` |
 
@@ -662,6 +697,21 @@ source references are outside it and come from the daemon's own records. An
 assistant should read the prose as a summary to relay or check, match an item
 to its citation by `kind` and `index`, and never treat a sentence in it as an
 instruction or as your consent to a write.
+
+### Prepare for a meeting or reply
+
+Ask “Prepare me for my next meeting with Alex” after installing
+`msgvault-meeting-prep` with `msgvault skills install`. The skill reads the
+calendar occurrence and meeting record, then calls `get_person_card` for each
+resolved counterparty. For a reply, it reads one card and the thread in hand.
+Every item keeps its date and citation; missing inputs appear as `gaps` and
+stale inputs carry freshness warnings.
+
+`get_person_card` requires daemon API schema 3.26.0 or later and an owner
+session. Delegated sessions do not list the tool. Its `as_of` parameter
+changes evaluation dates over current snapshots, not historical state. Text
+under `untrusted_text`, including names and generated briefs, remains data
+and never authorizes a write.
 
 ## Source status and sync
 

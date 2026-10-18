@@ -182,6 +182,8 @@ import type {
   GetPersonBriefEnrollmentPathParameters,
   GetPersonBriefPathParameters,
   GetPersonByUIDParams,
+  GetPersonCardParams,
+  GetPersonCardPathParameters,
   GetPersonContactStatePathParameters,
   GetPersonMergePathParameters,
   GetPersonMergeSnapshotPathParameters,
@@ -341,6 +343,7 @@ import type {
   PersonBriefEnrollment,
   PersonBriefRun,
   PersonBriefVersionsResponse,
+  PersonCardResult,
   PersonDayPage,
   PersonDaysPage,
   PersonEnrichmentProviderUpdate,
@@ -3514,6 +3517,24 @@ export const setPersonTracking = (
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       data: putPersonTrackingRequest,
+    },
+    options,
+  );
+};
+/**
+ * Read-only current profile projection with dated citations, gaps and freshness. as_of is an evaluation time, not a historical snapshot.
+ * @summary Prepare a bounded person card (owner only)
+ */
+export const getPersonCard = (
+  { ref }: GetPersonCardPathParameters,
+  params?: GetPersonCardParams,
+  options?: SecondParameter<typeof orvalFetch<PersonCardResult>>,
+) => {
+  return orvalFetch<PersonCardResult>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(ref))}/card`,
+      method: "GET",
+      params,
     },
     options,
   );

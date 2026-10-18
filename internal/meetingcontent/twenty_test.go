@@ -34,9 +34,12 @@ func TestTwentyContent(t *testing.T) {
 	require.Len(c.SourceParticipants, 3)
 	assert.Equal("organizer@example.com", c.SourceParticipants[0].Email)
 	assert.Equal("from", c.SourceParticipants[0].Role)
+	assert.Equal("invited", c.SourceParticipants[0].Provenance)
 	assert.Equal("to", c.SourceParticipants[1].Role)
+	assert.Equal("invited", c.SourceParticipants[1].Provenance)
 	assert.Equal("Guest", c.SourceParticipants[2].Name)
 	assert.Empty(c.SourceParticipants[2].Email)
+	assert.Equal("invited", c.SourceParticipants[2].Provenance)
 }
 
 func TestTwentyMarkersAndInvalidTranscriptPreserveSummary(t *testing.T) {

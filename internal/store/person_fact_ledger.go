@@ -500,7 +500,7 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{Target: filter.Target, AnyRevision: filter.AnyRevision, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -590,8 +590,13 @@ func (s *Store) queryPersonFactEvidenceTx(
 			SELECT 1 FROM person_fact_claim_evidence ce
 			JOIN person_fact_claims c ON c.id = ce.claim_id
 			WHERE ce.evidence_id = e.id AND c.person_id = e.person_id
-			  AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?)`
-		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+			  AND c.target_kind = ? AND c.target_key = ?`
+		args = append(args, filter.Target.Kind, filter.Target.Key)
+		if !filter.AnyRevision {
+			query += ` AND c.target_revision = ?`
+			args = append(args, filter.Target.Revision)
+		}
+		query += `)`
 	}
 	query += ` ORDER BY e.id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
@@ -736,8 +741,12 @@ func (s *Store) listPersonFactClaimsTx(
 		FROM person_fact_claims c WHERE c.person_id = ?`
 	args := []any{personID}
 	if filter.Target != nil {
-		query += ` AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?`
-		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+		query += ` AND c.target_kind = ? AND c.target_key = ?`
+		args = append(args, filter.Target.Kind, filter.Target.Key)
+		if !filter.AnyRevision {
+			query += ` AND c.target_revision = ?`
+			args = append(args, filter.Target.Revision)
+		}
 	}
 	if extraPredicate != "" {
 		query += ` AND ` + extraPredicate

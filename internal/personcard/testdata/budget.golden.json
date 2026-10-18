@@ -1,0 +1,185 @@
+{
+  "schema_version": 1,
+  "status": "ok",
+  "ref": "person:7",
+  "as_of": "2026-10-17T12:00:00Z",
+  "collected_at": "2026-10-17T12:00:00Z",
+  "format": "json",
+  "card": {
+    "person": {
+      "person_id": 7,
+      "vcard_uid": "",
+      "tracked": true,
+      "emails": [
+        "alex@example.com"
+      ],
+      "primary_channel": "email",
+      "inferred_channel": "email",
+      "content_trust": "source_controlled",
+      "untrusted_text": {
+        "display_name": "Alex Example",
+        "organization_name": "Example Cooperative",
+        "title": "Engineer",
+        "categories": [
+          "client"
+        ]
+      }
+    },
+    "last_interaction": {
+      "at": "2026-10-12T09:14:00Z",
+      "channel": "email",
+      "direction": "inbound",
+      "ref": "message:4411",
+      "web_url": "/messages/4411",
+      "last_inbound_at": "2026-10-12T09:14:00Z",
+      "last_outbound_at": "2026-10-09T16:02:00Z",
+      "interaction_count": 212,
+      "cadence_status": "overdue",
+      "cadence_due_at": "2026-10-15T00:00:00Z",
+      "cadence_overdue_at_as_of": true,
+      "projection_computed_at": "2026-10-17T12:00:00Z",
+      "projection_stale": false
+    },
+    "items": [
+      {
+        "id": "L12",
+        "kind": "open_loop",
+        "subkind": "reply_owed",
+        "rank": 1,
+        "date": "2026-10-14",
+        "date_role": "due",
+        "overdue": true,
+        "stale": false,
+        "content_trust": "may_carry_third_party_message_text",
+        "untrusted_text": {
+          "text": "Alex asked for the revised budget"
+        },
+        "cite": {
+          "kind": "message",
+          "ref": "message:4411",
+          "web_url": "/messages/4411",
+          "at": "2026-10-12T09:14:00Z"
+        }
+      }
+    ],
+    "items_dropped_by_rank": 0,
+    "coverage": {
+      "actions": {
+        "meeting_count": 1,
+        "available": 1,
+        "partial": 0,
+        "unsupported": 0,
+        "unavailable": 0,
+        "truncated": false
+      },
+      "agenda_truncated": false,
+      "loops_truncated": false,
+      "loops_invalid_evidence": 0,
+      "meetings_truncated": false
+    },
+    "meetings": {
+      "window_days": 365,
+      "count": 2,
+      "count_by_basis": {
+        "invited": 1,
+        "transcript": 1
+      },
+      "last_met_at": "2026-09-19T15:00:00Z",
+      "last_invited_at": "2026-10-03T15:00:00Z",
+      "recent": [
+        {
+          "ref": "evt:510@20261003T150000Z",
+          "start": "2026-10-03T15:00:00Z",
+          "basis": "invited",
+          "content_trust": "source_controlled",
+          "untrusted_text": {
+            "title": "Weekly sync"
+          }
+        },
+        {
+          "ref": "msg:4000",
+          "start": "2026-09-19T15:00:00Z",
+          "basis": "transcript",
+          "content_trust": "source_controlled",
+          "untrusted_text": {
+            "title": "Project discussion"
+          }
+        }
+      ]
+    },
+    "brief": {
+      "version": 2,
+      "generated_at": "2026-08-29T12:00:00Z",
+      "content_trust": "derived_from_third_party_messages",
+      "untrusted_text": null,
+      "citations": [
+        "message:4000"
+      ],
+      "evidence": [
+        "message:4000"
+      ],
+      "citations_count": 1
+    },
+    "excluded": [
+      "sensitive_attributes",
+      "notes",
+      "media"
+    ]
+  },
+  "content": null,
+  "content_bytes": 2086,
+  "truncated": true,
+  "omitted": {
+    "brief": true,
+    "items": 2,
+    "meetings": 0,
+    "sources": 0
+  },
+  "freshness": {
+    "as_of": "2026-10-17T12:00:00Z",
+    "stale_after_seconds": 86400,
+    "stale": false,
+    "stale_reasons": [],
+    "warnings": [],
+    "projections": {
+      "activity": {
+        "computed_at": "2026-10-17T12:00:00Z",
+        "age_seconds": 0,
+        "stale": false
+      },
+      "brief": {
+        "computed_at": "2026-08-29T12:00:00Z",
+        "age_seconds": 4233600,
+        "stale": true
+      },
+      "open_loops": {
+        "computed_at": "2026-10-17T12:00:00Z",
+        "age_seconds": 0,
+        "stale": false
+      }
+    },
+    "sources": [
+      {
+        "source_id": 1,
+        "source_type": "gmail",
+        "identifier": "you@example.com",
+        "scheduling": "manual",
+        "last_successful_sync_at": "2026-10-17T11:00:00Z",
+        "last_sync_errors": 0,
+        "outcome": "unknown",
+        "age_seconds": 3600,
+        "stale": false,
+        "sync_command": "msgvault sync-incremental you@example.com",
+        "can_sync": true,
+        "sync_unavailable_reason": ""
+      }
+    ],
+    "collected_at": "2026-10-17T12:00:00Z",
+    "sources_omitted": 0
+  },
+  "gaps": [
+    "agenda_not_configured"
+  ],
+  "participant_id": null,
+  "candidates": []
+}

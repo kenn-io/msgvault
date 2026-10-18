@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.26.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -196,6 +196,13 @@ Schema 3.18.0 adds optional `related_message_id` to message detail,
 conversation windows, and `show-message --json`. It links a
 [Chatwoot](guides/chatwoot.md) call and its meeting. Other messages and
 unavailable counterparts omit it.
+Schema 3.24.0 adds archived calendar occurrence reads at
+`GET /api/v1/calendar/events` and `GET /api/v1/calendar/events/{ref}`.
+See [archived calendar reads](usage/calendar.md#read-archived-occurrences-unreleased).
+Schema 3.25.0 adds `GET /api/v1/meetings/{ref}`,
+`GET /api/v1/people/{ref}/meetings`, `GET /api/v1/meetings/{ref}/suggestions`,
+and owner-only meeting link and unlink operations. See
+[meeting records](usage/calendar.md#read-a-meeting-record-unreleased).
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -708,6 +715,66 @@ Invalid depths return `400`; an unknown durable person returns `404`. The
 projection has no ETag because it is not a mutation resource.
 
 ---
+
+### Person card (unreleased)
+
+**Endpoint:** `GET /api/v1/people/{ref}/card` (API schema 3.26.0)
+
+Returns a deterministic read-only projection for meeting or reply preparation.
+Owner daemon keys and admitted library callers can read it. Agent tokens
+receive 403 `ref_not_permitted` before profile resolution. No model call or
+archive write occurs.
+
+`ref` accepts a numeric person ID, `person:<id>`, `participant:<id>`, or
+`email:<address>`. Query parameters:
+
+| Parameter | Default | Contract |
+|---|---|---|
+| `as_of` | collection time | RFC3339 evaluation time, from ten years before to one year after collection; current snapshots only |
+| `max_items` | 3 | 1–10 ranked items |
+| `max_bytes` | 16384 | 2048–65536 UTF-8 bytes of canonical card JSON or Markdown content; envelope excluded |
+| `format` | `json` | `json` or `markdown`; both return `application/json` |
+| `affiliation` | unset | Optional `internal` or `external` Markdown header word |
+
+The `PersonCardResult` envelope contains `schema_version`, `status`, `ref`,
+`as_of`, `collected_at`, `format`, `card`, `content`, `content_bytes`,
+`truncated`, `omitted`, `freshness`, `gaps`, `participant_id`, and `candidates`.
+`card` is populated for JSON and `content` for Markdown. HTTP 200 statuses are
+`ok`, `observed_only` (no saved profile), `unknown` (no archive match), and
+`ambiguous` (up to five candidate profiles, with `candidates_more` when needed).
+A missing numeric or `person:` profile returns 404 `person_not_found`.
+
+Cards exclude private Notes, sensitive attributes, and media. All display
+text is quarantined under `untrusted_text` with `content_trust`. Item ranking
+prioritizes overdue and due-dated loops/actions, pending undated actions,
+newest supported fact change, observed loops, and live agenda items. Each
+selected item has a validated citation. Meeting history distinguishes
+invitations from note/transcript evidence.
+
+`freshness` shares source/projection reporting with Open Loops. Its collection
+clock is `collected_at` (`as_of` in the shared report), threshold is
+`stale_after_seconds` (86400), and it carries `stale`, bounded `sources`,
+`projections`, `warnings`, and `sources_omitted`. Sources include their last
+successful sync completion, age, `can_sync`, a locally built `sync_command`
+when supported, and `sync_unavailable_reason`. Ages always use collection
+time. Sources are selected from current participant observations, newest
+first, capped at ten; omitted sources conservatively retain a stale signal.
+Staleness fails open, with marked items and warnings.
+
+Optional reader failures appear as closed `gaps` codes such as
+`actions_unavailable`, `facts_unavailable`, or `sources_unavailable`.
+Successful empty reads use `*_none`. Missing task integration uses
+`agenda_not_configured`; the unconnected Open Loops reader uses
+`open_loops_unavailable`. These do not infer enrollment, completeness, or
+attendance. Required profile reads still fail normally.
+
+Malformed refs or parameters return 400 with `invalid_ref`, `invalid_as_of`,
+`invalid_max_items`, `invalid_max_bytes`, `invalid_format`, or
+`invalid_affiliation`. The byte budget drops brief text, lowest-ranked items,
+oldest recent meetings, then source detail beyond the first three. If the
+capped content still cannot fit, 400 `budget_too_small` asks the caller to
+raise the budget. `items_dropped_by_rank`, upstream `coverage` and budget
+`omitted` describe different reductions.
 
 ### Person brief enrollment {#get-apiv1peopleidbrief-enrollment}
 
@@ -2218,6 +2285,10 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+| `GET /api/v1/meetings/{ref}` | Read a meeting record and its permitted note evidence |
+| `GET /api/v1/people/{ref}/meetings` | List archived meetings for a saved person or participant |
+| `GET /api/v1/meetings/{ref}/suggestions` | Suggest archive links without changing them |
+| `POST /api/v1/meetings/{ref}/links` and `DELETE /api/v1/meetings/{ref}/links/{message_id}` | Owner-only link and unlink decisions |
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

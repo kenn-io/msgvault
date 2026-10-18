@@ -29,7 +29,7 @@ func TestReviewRound1NotionMentionDoesNotInventAssignee(t *testing.T) {
 	assertions.Equal("Send draft to @Example", content.Actions[0].Title)
 	assertions.Empty(content.Actions[0].AssigneeName)
 	assertions.Empty(content.Actions[0].AssigneeEmail)
-	assertions.Equal([]Participant{{Name: "Example Person", Email: "person@example.com", Role: "to"}}, content.SourceParticipants)
+	assertions.Equal([]Participant{{Name: "Example Person", Email: "person@example.com", Role: "to", Provenance: "invited"}}, content.SourceParticipants)
 }
 
 func TestReviewRound1RendererFinishesProvenanceBeforeContent(t *testing.T) {

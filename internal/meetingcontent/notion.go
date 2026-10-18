@@ -389,7 +389,7 @@ func notionParticipants(fields map[string]jsontext.Value, discovery notionDiscov
 			name = user.Name
 		}
 		if name != "" || user.Email != "" {
-			participants = append(participants, Participant{Name: name, Email: user.Email, Role: "to"})
+			participants = append(participants, Participant{Name: name, Email: user.Email, Role: "to", Provenance: "invited"})
 		}
 	}
 	return participants

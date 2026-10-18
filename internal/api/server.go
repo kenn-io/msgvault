@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonauth"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/personagenda"
+	"go.kenn.io/msgvault/internal/personcard"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
@@ -453,6 +454,7 @@ type Server struct {
 	// validation. It is never exposed to the browser with its credentials.
 	taskIntegrationProbe     TaskIntegrationProbe
 	taskLinkOperations       TaskLinkOperations
+	personCardOpenLoops      personcard.OpenLoopReader
 	personAgendaOperations   PersonAgendaOperations
 	kataIssueOperations      KataIssueOperations
 	taskIdentityResolver     TaskIdentityResolver
@@ -601,6 +603,7 @@ type ServerOptions struct {
 	TaskIntegrationProbe   TaskIntegrationProbe
 	TaskLinkOperations     TaskLinkOperations
 	TaskIdentityResolver   TaskIdentityResolver
+	PersonCardOpenLoops    personcard.OpenLoopReader
 	PersonAgendaOperations PersonAgendaOperations
 	KataIssueOperations    KataIssueOperations
 	// FastmailInventoryFactory is the provider-read seam used by identity
@@ -690,6 +693,7 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 		settingsConfigEditor:     config.EditConfigFilePrivate,
 		taskIntegrationProbe:     taskProbe,
 		taskLinkOperations:       opts.TaskLinkOperations,
+		personCardOpenLoops:      opts.PersonCardOpenLoops,
 		personAgendaOperations:   opts.PersonAgendaOperations,
 		kataIssueOperations:      opts.KataIssueOperations,
 		taskIdentityResolver:     opts.TaskIdentityResolver,

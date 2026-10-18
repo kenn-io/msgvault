@@ -208,6 +208,10 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 	req, _ := humago.Unwrap(ctx)
 	auth := s.requestAuthentication(req)
 	if auth.Mode == AuthModeDelegated {
+		if op := ctx.Operation(); op != nil && op.OperationID == "getPersonCard" {
+			writeHumaError(ctx, http.StatusForbidden, "ref_not_permitted", "Person cards require owner access")
+			return
+		}
 		if op := ctx.Operation(); op != nil && delegatedOperationAllowed(op.OperationID) {
 			permission, err := agentReadPermission(op.OperationID, auth.Grant)
 			if err != nil {
@@ -460,6 +464,9 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerMuesliImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
+	s.registerCalendarEventsRoutes(apiV1)
+	s.registerMeetingRecordsRoutes(apiV1)
+	s.registerPersonCardRoutes(apiV1)
 	registerAPIV1RawHumaJSONRoute[ConversationResponse](apiV1, "getConversation", http.MethodGet, "/conversations/{id}", "Get a bounded containing conversation", s.handleGetConversation)
 	registerAPIV1RawHumaJSONRoute[AttachmentInfo](apiV1, "getAttachment", http.MethodGet, "/attachments/{id}", "Get attachment metadata", s.handleGetAttachment)
 	registerAPIV1RawHumaBinaryRoute(

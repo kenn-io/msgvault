@@ -4673,3 +4673,88 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Typed calendar evidence rebuilt from raw provider snapshots.
+CREATE TABLE IF NOT EXISTS calendar_events (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    namespace TEXT NOT NULL DEFAULT '',
+    provider_event_id TEXT NOT NULL DEFAULT '',
+    series_provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    original_start_at DATETIME,
+    original_start_date TEXT NOT NULL DEFAULT '',
+    ical_uid TEXT NOT NULL DEFAULT '',
+    sequence INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT '',
+    has_bounds BOOLEAN NOT NULL DEFAULT FALSE,
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    start_at DATETIME,
+    end_at DATETIME,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    event_time_zone TEXT NOT NULL DEFAULT '',
+    calendar_time_zone TEXT NOT NULL DEFAULT '',
+    recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_end_at DATETIME,
+    recurrence_error TEXT NOT NULL DEFAULT '',
+    join_url TEXT NOT NULL DEFAULT '',
+    join_key TEXT NOT NULL DEFAULT '',
+    organizer_email TEXT NOT NULL DEFAULT '',
+    calendar_id TEXT NOT NULL DEFAULT '',
+    transparency TEXT NOT NULL DEFAULT '',
+    visibility TEXT NOT NULL DEFAULT '',
+    event_type TEXT NOT NULL DEFAULT '',
+    location TEXT NOT NULL DEFAULT '',
+    copy_self_rsvp TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    description_truncated BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(namespace, provider_event_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(namespace, series_provider_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_ical_uid ON calendar_events(ical_uid);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_join_key ON calendar_events(join_key);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
+CREATE TABLE IF NOT EXISTS calendar_event_attendees (
+    message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    rsvp TEXT NOT NULL,
+    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_event_attendees_email ON calendar_event_attendees(email);
+-- Independent projection state covers empty key sets as well as keyed notes.
+CREATE TABLE IF NOT EXISTS meeting_link_key_state (
+ message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ key_version INTEGER NOT NULL,
+ key_hash TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meeting_link_keys (
+ message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ ordinal INTEGER NOT NULL,
+ kind TEXT NOT NULL,
+ value TEXT NOT NULL,
+ base TEXT NOT NULL DEFAULT '',
+ instance_key TEXT NOT NULL DEFAULT '',
+ scheduled_at DATETIME,
+ PRIMARY KEY(message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_keys_value ON meeting_link_keys(kind, value);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_keys_base ON meeting_link_keys(kind, base);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+ member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ target_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+ target_ref TEXT NOT NULL,
+ target_logical TEXT NOT NULL DEFAULT '',
+ decision TEXT NOT NULL CHECK(decision IN ('link','split')),
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(member_message_id, target_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_ref ON meeting_link_decisions(target_ref);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_logical ON meeting_link_decisions(target_logical);

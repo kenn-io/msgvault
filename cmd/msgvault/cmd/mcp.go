@@ -210,6 +210,12 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.AttachmentReader = st
 		opts.GrantPermissions = grant.Permissions
 	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingRecordsMinAPISchemaVersion) {
+		opts.MeetingRecords = st
+	}
+	if daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveCalendarEventsMinAPISchemaVersion) {
+		opts.ArchiveCalendarEvents = st
+	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
@@ -321,11 +327,20 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	} else if daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingsMinAPISchemaVersion) {
 		opts.Meetings = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, meetingRecordsMinAPISchemaVersion) {
+		opts.MeetingRecords = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveCalendarEventsMinAPISchemaVersion) {
+		opts.ArchiveCalendarEvents = st
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
 		opts.ContactRoutesBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardsMinAPISchemaVersion) {
+		opts.PersonCards = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st

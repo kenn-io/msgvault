@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -141,4 +142,45 @@ func TestCreateSubsetVCardResourcesRequireFlag(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(alias.SurvivingPersonID)
 	assert.Equal(person.ID, *alias.SurvivingPersonID)
+}
+
+func TestCreateSubsetReportsDroppedMeetingDecisions(t *testing.T) {
+	requirements := require.New(t)
+
+	cfg := lifecycleTestConfig(t.TempDir())
+	ctx := withStoreResolverConfig(t, cfg)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	st, err := store.Open(cfg.DatabaseDSN())
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("meeting_import", "owner@example.com")
+	requirements.NoError(err)
+	conv, err := st.EnsureConversationWithType(source.ID, "meeting", "meeting", "Synthetic meeting")
+	requirements.NoError(err)
+	event, err := st.PersistMessage(&store.MessagePersistData{
+		Message:   &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}},
+		RawFormat: "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`),
+	})
+	requirements.NoError(err)
+	note, err := st.PersistMessage(&store.MessagePersistData{
+		Message:   &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC), Valid: true}},
+		RawFormat: "plaud_json", RawMIME: []byte(`{"summary":"Synthetic notes"}`),
+	})
+	requirements.NoError(err)
+	_, err = st.DB().Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_ref,decision) VALUES (?, ?, 'link')`, note, fmt.Sprintf("evt:%d", event))
+	requirements.NoError(err)
+	requirements.NoError(st.Close())
+	oldRows, oldOutput := subsetRows, subsetOutput
+	oldIdentity, oldAttributes, oldProfiles, oldResources := subsetIncludeIdentity, subsetIncludeAttributes, subsetIncludeProfiles, subsetIncludeVCardResources
+	t.Cleanup(func() {
+		subsetRows, subsetOutput = oldRows, oldOutput
+		subsetIncludeIdentity, subsetIncludeAttributes, subsetIncludeProfiles, subsetIncludeVCardResources = oldIdentity, oldAttributes, oldProfiles, oldResources
+	})
+	subsetRows, subsetOutput = 1, t.TempDir()
+	subsetIncludeIdentity, subsetIncludeAttributes, subsetIncludeProfiles, subsetIncludeVCardResources = false, false, false, false
+	done := captureStdout(t)
+	cmd := &cobra.Command{Use: "create-subset"}
+	cmd.SetContext(ctx)
+	requirements.NoError(runCreateSubset(cmd, nil))
+	assert.Contains(t, done(), "Meeting links: 0 copied, 1 omitted")
 }

@@ -3,11 +3,22 @@
  */
 import type {
   ActionsPage,
+  GetMeetingPathParameters,
+  LinkMeetingPathParameters,
+  ListPersonMeetingsParams,
+  ListPersonMeetingsPathParameters,
   MeetingActionsRequest,
   MeetingContextRequest,
+  MeetingLinkRequest,
   MeetingMetricsRequest,
+  MeetingRecord,
+  MeetingSuggestion,
   Metrics,
   PacketResult,
+  PersonMeetingsResponse,
+  SuggestMeetingLinksParams,
+  SuggestMeetingLinksPathParameters,
+  UnlinkMeetingPathParameters,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -61,6 +72,88 @@ export const getMeetingMetrics = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: meetingMetricsRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read a meeting record
+ */
+export const getMeeting = (
+  { ref }: GetMeetingPathParameters,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    {
+      url: `/api/v1/meetings/${encodeURIComponent(String(ref))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Link an archived note to an occurrence (owner only)
+ */
+export const linkMeeting = (
+  { ref }: LinkMeetingPathParameters,
+  meetingLinkRequest: MeetingLinkRequest,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    {
+      url: `/api/v1/meetings/${encodeURIComponent(String(ref))}/links`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: meetingLinkRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Split an archived note from an occurrence (owner only)
+ */
+export const unlinkMeeting = (
+  { ref, messageId }: UnlinkMeetingPathParameters,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    {
+      url: `/api/v1/meetings/${encodeURIComponent(String(ref))}/links/${encodeURIComponent(String(messageId))}`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Suggest archive meeting links
+ */
+export const suggestMeetingLinks = (
+  { ref }: SuggestMeetingLinksPathParameters,
+  params?: SuggestMeetingLinksParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingSuggestion[]>>,
+) => {
+  return orvalFetch<MeetingSuggestion[]>(
+    {
+      url: `/api/v1/meetings/${encodeURIComponent(String(ref))}/suggestions`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary List a person's archived meetings
+ */
+export const listPersonMeetings = (
+  { ref }: ListPersonMeetingsPathParameters,
+  params?: ListPersonMeetingsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonMeetingsResponse>>,
+) => {
+  return orvalFetch<PersonMeetingsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(ref))}/meetings`,
+      method: "GET",
+      params,
     },
     options,
   );

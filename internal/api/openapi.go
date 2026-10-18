@@ -374,12 +374,18 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds archived calendar occurrence reads at GET /api/v1/calendar/events
+// and /api/v1/calendar/events/{ref}.
+// 3.25.0 adds meeting records, person meeting history, link suggestions,
+// and owner-only meeting link decisions.
+// 3.26.0 adds owner-only, bounded person cards for meeting and reply preparation.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
+	hardenPersonCardSchemas(doc, false)
 	hardenSourceStatusPublicSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
@@ -389,6 +395,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
+	hardenPersonCardSchemas(doc, true)
 	hardenSourceStatusClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
@@ -995,6 +1002,11 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		{"MessagingRoute", "network_label"},
 		{"MessagingRoute", "provider_chat_id"},
 		{"PersonMessagingRoutesPage", "alias_reason"},
+		{"MeetingEventDetail", "description"},
+		{"MeetingEventDetail", "location"},
+		{"MeetingItem", "basis"},
+		{"MeetingItem", "origin"},
+		{"MeetingRecord", "owner_rsvp"},
 	} {
 		if schema := schemas[field.schema]; schema != nil {
 			if property := schema.Properties[field.property]; property != nil {
@@ -1009,6 +1021,22 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	const emailProperty = "email"
+	// These required response properties legitimately carry empty strings or
+	// zero timestamps. Client-only nullable overrides produce pointers that
+	// distinguish presence from value; codegenfix requires their presence.
+	for schemaName, fields := range map[string][]string{
+		"Identity":           {"Date", "Instant"},
+		"Attendee":           {"DisplayName", "Email"},
+		"CalendarOccurrence": {"subject", "status", "start", "end"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, field := range fields {
+				if property := schema.Properties[field]; property != nil {
+					property.Nullable = true
+				}
+			}
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {
@@ -1078,6 +1106,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			setCodegenGoType(average, "*float64")
 		}
 		nullableSchemaProperty(totals, "average_known_seconds")
+	}
+	if content := schemas["Content"]; content != nil {
+		if duration := content.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(content, "duration_seconds")
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
@@ -1465,6 +1499,11 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
 		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
+	if projection := schemas["ProjectionFreshness"]; projection != nil && projection.Properties["extra"] != nil {
+		if values, ok := projection.Properties["extra"].AdditionalProperties.(*huma.Schema); ok {
 			setCodegenGoType(values, "any")
 		}
 	}
