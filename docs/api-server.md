@@ -100,11 +100,14 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.17.0**.
+it is separate from the binary release version. The current schema is **3.18.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
 Schema 3.17.0 adds [reviewed scoped CardDAV publication and recovery](usage/people-carddav.md#recover-a-reviewed-mapped-update) with durable receipts.
+
+Schema 3.18.0 adds owner-authorized reads of retained scoped CardDAV publication
+receipts, including those created under expired or revoked delegated grants.
 
 Schema 3.15.0 adds [scoped contact grants](#restricted-contact-operations) and delegated native person edits.
 

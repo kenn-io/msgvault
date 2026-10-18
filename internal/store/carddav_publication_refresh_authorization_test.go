@@ -13,10 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type authorizedPublicationRefreshStore interface {
-	RefreshCardDAVPublicationFenceAuthorizedContext(ctx context.Context, expected store.CardDAVPublication, authorize store.PersonEditAuthorizer) (*store.CardDAVPublication, error)
-}
-
 func prepareSyntheticReviewedMappedUpdate(t *testing.T, st *store.Store, mapping *store.CardDAVResource, name string) *store.CardDAVPublication {
 	t.Helper()
 	require.NotNil(t, mapping.PersonID)
@@ -39,8 +35,7 @@ func TestPublicationRefreshAuthorizationBindsOriginalPendingIntent(t *testing.T)
 		t.Run(field, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			st, account, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(authorizedPublicationRefreshStore)
-			requirements.True(ok, "native recovery-fence refresh must authorize the original pending mutation")
+			backend := st
 			pending := prepareSyntheticReviewedMappedUpdate(t, st, mapping, "Synthetic Corrected")
 			books, err := st.ListCardDAVAddressBooksContext(t.Context(), account.ID)
 			requirements.NoError(err)

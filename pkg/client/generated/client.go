@@ -199,6 +199,10 @@ type ClientInterface interface {
 	ListCardDAVRuns(ctx context.Context, options *ListCardDAVRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVRunsResponse, error)
 	ListCardDAVRunsWithResponse(ctx context.Context, options *ListCardDAVRunsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCardDAVRunsResp, error)
 
+	// GetScopedCardDAVPublicationReceipt Read one retained CardDAV publication receipt as the current owner
+	GetScopedCardDAVPublicationReceipt(ctx context.Context, options *GetScopedCardDAVPublicationReceiptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetScopedCardDAVPublicationReceiptResponse, error)
+	GetScopedCardDAVPublicationReceiptWithResponse(ctx context.Context, options *GetScopedCardDAVPublicationReceiptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetScopedCardDAVPublicationReceiptResp, error)
+
 	// ApproveScopedCardDAVPublication Approve one mapped CardDAV update with a durable receipt
 	ApproveScopedCardDAVPublication(ctx context.Context, options *ApproveScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApproveScopedCardDAVPublicationResponseJSON, error)
 	ApproveScopedCardDAVPublicationWithResponse(ctx context.Context, options *ApproveScopedCardDAVPublicationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApproveScopedCardDAVPublicationResp, error)
@@ -3762,6 +3766,69 @@ func (c *Client) ListCardDAVRuns(ctx context.Context, options *ListCardDAVRunsRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/runs")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetScopedCardDAVPublicationReceipt Read one retained CardDAV publication receipt as the current owner
+func (c *Client) GetScopedCardDAVPublicationReceipt(ctx context.Context, options *GetScopedCardDAVPublicationReceiptRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetScopedCardDAVPublicationReceiptResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/carddav/scoped/publication-receipts/{receipt_id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetScopedCardDAVPublicationReceiptResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetScopedCardDAVPublicationReceiptErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetScopedCardDAVPublicationReceiptErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetScopedCardDAVPublicationReceiptResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetScopedCardDAVPublicationReceiptResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/carddav/scoped/publication-receipts/{receipt_id}")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

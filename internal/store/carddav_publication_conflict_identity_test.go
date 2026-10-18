@@ -32,10 +32,8 @@ func TestConflictPublicationCannotInheritStandardPendingIntentIdentity(t *testin
 	requirements.NoError(err)
 	requirements.Empty(prepared.PendingIntentID, "new conflict-origin publication must not inherit an unrelated standard intent nonce")
 	requirements.Equal(conflict.ID, prepared.ResolutionConflictID)
-	backend, ok := any(st).(authorizedPublicationRefreshStore)
-	requirements.True(ok)
 	seen := false
-	_, err = backend.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), *prepared, func(_ context.Context, _ *store.IdentityGrantSelection) error { seen = true; return nil })
+	_, err = st.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), *prepared, func(_ context.Context, _ *store.IdentityGrantSelection) error { seen = true; return nil })
 	requirements.ErrorIs(err, store.ErrCardDAVInvalidPlan)
 	assertions.False(seen)
 	canonical := store.CardDAVRemoteResource{Href: prepared.Href, RemoteUID: "synthetic-conflicting", RemoteETag: `"synthetic-settled"`, RemoteBody: prepared.OutgoingBody, SemanticHash: prepared.OutgoingSemanticHash}

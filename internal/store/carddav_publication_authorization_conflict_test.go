@@ -17,8 +17,7 @@ func TestAuthorizedPublicationSettlementRejectsCarriedForeignConflict(t *testing
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st, _, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(authorizedPublicationSettlementStore)
-			requirements.True(ok)
+			backend := st
 			requirements.NotNil(mapping.PersonID)
 			personID := *mapping.PersonID
 			plan := reviewedCurrentPlan(t, st, personID)

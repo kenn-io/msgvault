@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -22,10 +21,7 @@ func FuzzPublicationReceiptBindingBounds(f *testing.F) {
 	require.NoError(f, err)
 	f.Cleanup(func() { require.NoError(f, st.Close()) })
 	require.NoError(f, st.InitSchema())
-	binding, ok := any(st).(interface {
-		WithCardDAVPublicationReceipt(ctx context.Context, principal, key string) (context.Context, error)
-	})
-	require.True(f, ok, "receipt binding must validate the complete principal/key domain")
+	binding := st
 	f.Fuzz(func(t *testing.T, principal, key string) {
 		ctx, err := binding.WithCardDAVPublicationReceipt(t.Context(), principal, key)
 		valid := strings.TrimSpace(principal) != "" && len(principal) <= 256 && utf8.ValidString(principal) && strings.TrimSpace(key) != "" && len(key) <= 256 && utf8.ValidString(key)

@@ -4,6 +4,7 @@ package generated
 
 import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
+	"github.com/google/uuid"
 )
 
 type RevokeAgentTokenPath struct {
@@ -124,6 +125,23 @@ type PreviewCardDAVPublicationPath struct {
 
 func (p PreviewCardDAVPublicationPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type GetScopedCardDAVPublicationReceiptPath struct {
+	ReceiptID uuid.UUID `json:"receipt_id" validate:"required"`
+}
+
+func (g GetScopedCardDAVPublicationReceiptPath) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(g.ReceiptID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReceiptID", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ApproveScopedCardDAVPublicationPath struct {

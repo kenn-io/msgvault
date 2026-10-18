@@ -13,19 +13,13 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type publicationReceiptStore interface {
-	WithCardDAVPublicationReceipt(ctx context.Context, principal, key string) (context.Context, error)
-	AdmitCardDAVPublicationReceiptContext(ctx context.Context, expected store.CardDAVPublication, authorize store.PersonEditAuthorizer) error
-}
-
 func TestPublicationReceiptSettlesWithNativeIntent(t *testing.T) {
 	for _, mode := range []string{"allowed", "settlement_failure", "denied", "nil_authorizer", "changed_intent", "owner_recovery", "owner_settlement_failure", "owner_hash_mismatch", "owner_canonical_mismatch", "unbound_scoped"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st, _, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(publicationReceiptStore)
-			require.True(ok, "durable publication receipts must share native intent settlement")
+			backend := st
 			require.NotNil(mapping.PersonID)
 			personID := *mapping.PersonID
 			source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)
@@ -125,11 +119,16 @@ func TestPublicationReceiptSettlesWithNativeIntent(t *testing.T) {
 			read()
 			switch mode {
 			case "owner_hash_mismatch", "owner_canonical_mismatch", "unbound_scoped":
-				wantErr := store.ErrCardDAVPublicationPending
-				if mode == "unbound_scoped" {
-					wantErr = store.ErrCardDAVInvalidPlan
+				switch mode {
+				case "owner_hash_mismatch":
+					require.ErrorIs(err, store.ErrCardDAVPublicationPending)
+				case "owner_canonical_mismatch":
+					// Let the owner recovery service turn this observation into a
+					// reviewable conflict while retaining the receipt.
+					require.ErrorIs(err, store.ErrCardDAVPublicationMismatch)
+				case "unbound_scoped":
+					require.ErrorIs(err, store.ErrCardDAVInvalidPlan)
 				}
-				require.ErrorIs(err, wantErr)
 				assert.Equal("dispatching", state)
 				assert.Equal(pending.PendingIntentID, current.PendingIntentID)
 				after, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)

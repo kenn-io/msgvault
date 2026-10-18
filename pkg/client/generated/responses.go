@@ -321,6 +321,18 @@ type ListCardDAVRunsErrorResponseJSON = ErrorResponse
 
 type ListCardDAVRunsErrorResponseJSON503 = ErrorResponse
 
+type GetScopedCardDAVPublicationReceiptResponse = CardDAVScopedPublicationReceiptResponse
+
+type GetScopedCardDAVPublicationReceiptErrorResponse = ErrorResponse
+
+type GetScopedCardDAVPublicationReceiptErrorResponseJSON = ErrorResponse
+
+type GetScopedCardDAVPublicationReceiptErrorResponseJSON404 = ErrorResponse
+
+type GetScopedCardDAVPublicationReceiptErrorResponseJSON500 = ErrorResponse
+
+type GetScopedCardDAVPublicationReceiptErrorResponseJSON501 = ErrorResponse
+
 type ApproveScopedCardDAVPublicationResponse = CardDAVScopedPublicationReceiptResponse
 
 type ApproveScopedCardDAVPublicationResponseJSON = CardDAVScopedPublicationReceiptResponse
@@ -4116,6 +4128,18 @@ type ListCardDAVRunsResp struct {
 	JSON400      *ListCardDAVRunsErrorResponse
 	JSON500      *ListCardDAVRunsErrorResponseJSON
 	JSON503      *ListCardDAVRunsErrorResponseJSON503
+}
+
+type GetScopedCardDAVPublicationReceiptResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetScopedCardDAVPublicationReceiptResponse
+	JSON400      *GetScopedCardDAVPublicationReceiptErrorResponse
+	JSON403      *GetScopedCardDAVPublicationReceiptErrorResponseJSON
+	JSON404      *GetScopedCardDAVPublicationReceiptErrorResponseJSON404
+	JSON500      *GetScopedCardDAVPublicationReceiptErrorResponseJSON500
+	JSON501      *GetScopedCardDAVPublicationReceiptErrorResponseJSON501
 }
 
 type ApproveScopedCardDAVPublicationResp503Headers struct {

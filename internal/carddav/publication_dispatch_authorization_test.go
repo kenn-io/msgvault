@@ -14,10 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type publicationRequestAuthorityFactory interface {
-	withPublicationRequestAuthority(ctx context.Context, expected store.CardDAVPublication, authorize store.PersonEditAuthorizer) context.Context
-}
-
 func TestScopedPublicationRechecksEveryHTTPDispatch(t *testing.T) {
 	for _, mode := range []string{"digest_revoked", "redirect_other_book", "throttle_revoked"} {
 		t.Run(mode, func(t *testing.T) {
@@ -56,8 +52,7 @@ func TestScopedPublicationRechecksEveryHTTPDispatch(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			service, st, personID, _ := seededMutationServiceForServer(t, server)
-			factory, ok := any(service).(publicationRequestAuthorityFactory)
-			requirements.True(ok, "scoped publication must carry immutable native authority to each actual HTTP attempt")
+			factory := service
 			requirements.NoError(service.PublishPerson(t.Context(), personID))
 			appendInferenceReviewNote(t, st, personID, "Synthetic reviewed change")
 			source, plan, err := service.currentPublicationPlan(t.Context(), personID)
@@ -147,8 +142,7 @@ func TestScopedPublicationDispatchRejectsAnotherConnectionClient(t *testing.T) {
 				service = service.ForConnection(account.ConnectionName, account.ConnectionGeneration)
 				want = ErrConnectionMismatch
 			}
-			factory, ok := any(service).(publicationRequestAuthorityFactory)
-			requirements.True(ok)
+			factory := service
 			var authorizations atomic.Int32
 			operationCtx := factory.withPublicationRequestAuthority(t.Context(), *pending, func(_ context.Context, _ *store.IdentityGrantSelection) error { authorizations.Add(1); return nil })
 			scoped.Store(true)

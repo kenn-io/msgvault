@@ -54,10 +54,8 @@ func TestLegacyCardDAVPendingPublicationKeepsOwnerRecoveryAfterIntentMigration(t
 	legacyJSON, err := json.Marshal(legacy)
 	requirements.NoError(err)
 	assertions.JSONEq(string(expectedJSON), string(legacyJSON), "schema migration preserves all native legacy recovery evidence")
-	backend, ok := any(reopened).(authorizedPublicationRefreshStore)
-	requirements.True(ok)
 	seen := false
-	_, err = backend.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), *legacy, func(_ context.Context, _ *store.IdentityGrantSelection) error { seen = true; return nil })
+	_, err = reopened.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), *legacy, func(_ context.Context, _ *store.IdentityGrantSelection) error { seen = true; return nil })
 	requirements.ErrorIs(err, store.ErrCardDAVStalePlan)
 	assertions.False(seen, "scoped recovery must not admit unidentified legacy intent")
 	unchanged, err := reopened.GetCardDAVPublicationContext(t.Context(), pending.PersonID)

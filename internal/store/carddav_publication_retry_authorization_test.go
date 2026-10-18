@@ -12,17 +12,12 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type authorizedPublicationRetryStore interface {
-	SetCardDAVPublicationRetryAfterAuthorizedContext(ctx context.Context, expected store.CardDAVPublication, retryAfter time.Time, authorize store.PersonEditAuthorizer) error
-}
-
 func TestPublicationRetryGateAuthorizationPreservesRevokedPendingIntent(t *testing.T) {
 	for _, field := range []string{"allowed", "denied", "stale_revision", "foreign_conflict", "conflict_owned"} {
 		t.Run(field, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			st, account, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(authorizedPublicationRetryStore)
-			requirements.True(ok, "a provider pause must authorize local retry-gate writes for the pending publication")
+			backend := st
 			pending := prepareSyntheticReviewedMappedUpdate(t, st, mapping, "Synthetic Corrected")
 			otherAccount, otherBooks, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 				ConnectionName: "work", BaseURL: "https://dav.example.test", Username: "synthetic-other-user", PrincipalURL: "https://dav.example.test/other-principal/", HomeURL: "https://dav.example.test/books/",

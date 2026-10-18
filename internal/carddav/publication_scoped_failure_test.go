@@ -34,8 +34,7 @@ func TestScopedPublicationBoundsProviderFailureEffects(t *testing.T) {
 			}))
 			t.Cleanup(server.Close)
 			service, st, personID, book := seededMutationServiceForServer(t, server)
-			backend, ok := any(service).(scopedPublicationService)
-			requirements.True(ok)
+			backend := service
 			requirements.NoError(service.PublishPerson(t.Context(), personID))
 			appendInferenceReviewNote(t, st, personID, "Synthetic authorized correction")
 			denied := errors.New("synthetic settlement authority revoked")
@@ -113,4 +112,38 @@ func TestScopedPublicationBoundsProviderFailureEffects(t *testing.T) {
 			fixture.mu.Unlock()
 		})
 	}
+}
+
+func TestScopedPublicationNotSentSettlesRejectedReceipt(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	fixture := &mutationFixture{}
+	server := httptest.NewServer(fixture.handler(t))
+	t.Cleanup(server.Close)
+	service, st, personID, _ := seededMutationServiceForServer(t, server)
+	requirements.NoError(service.PublishPerson(t.Context(), personID))
+	appendInferenceReviewNote(t, st, personID, "Synthetic reviewed contact correction")
+	authorize := func(context.Context, *store.IdentityGrantSelection) error { return nil }
+	preview, err := service.PreviewPublicationAuthorized(t.Context(), personID, authorize)
+	requirements.NoError(err)
+	service.dav().client.bearerToken = func(context.Context) (string, error) {
+		return "", errors.Join(ErrGoogleAuthorizationRequired, ErrWriteNotSent)
+	}
+
+	receipt, err := service.PublishReviewedPersonWithReceipt(t.Context(), personID, preview.ApprovalToken, "synthetic-owner", "synthetic-not-sent-key", authorize)
+	requirements.ErrorIs(err, ErrWriteNotSent)
+	requirements.NotNil(receipt)
+	assertions.Equal("rejected", receipt.State)
+	assertions.Equal("provider_rejected", receipt.ErrorCode)
+	publication, err := st.GetCardDAVPublicationContext(t.Context(), personID)
+	requirements.NoError(err)
+	assertions.Empty(publication.PendingOperation, "an unsent update must not remain eligible for GET-only recovery")
+	assertions.Empty(publication.PendingIntentID)
+	assertions.Equal(1, fixture.puts, "the refresh failure happens before the provider request")
+
+	retry, err := service.PublishReviewedPersonWithReceipt(t.Context(), personID, preview.ApprovalToken, "synthetic-owner", "synthetic-not-sent-key", authorize)
+	requirements.NoError(err)
+	requirements.NotNil(retry)
+	assertions.Equal(receipt.ID, retry.ID)
+	assertions.Equal("rejected", retry.State)
+	assertions.Equal(1, fixture.puts, "an exact retry returns the recorded outcome without sending another update")
 }

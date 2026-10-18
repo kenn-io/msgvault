@@ -122,6 +122,14 @@ func (s *Service) publishReviewedPersonAuthorizedUnderLease(ctx context.Context,
 		if status := retryStatus(err); status != nil {
 			return errors.Join(err, s.store.RollbackCardDAVPublicationThrottleAuthorizedContext(operationCtx, pending, time.Now().Add(status.RetryAfter).UTC(), authorize))
 		}
+		if notSent(err) {
+			// A known pre-dispatch failure cannot be recovered by observing the
+			// remote card. Clear this admitted intent and reject its receipt under
+			// current authority so a later approval can start a fresh attempt.
+			rollbackCtx, rollbackCancel := context.WithTimeout(context.WithoutCancel(operationCtx), 30*time.Second)
+			defer rollbackCancel()
+			return errors.Join(err, s.store.RollbackCardDAVPublicationAuthorizedContext(rollbackCtx, pending, authorize))
+		}
 		if isStatus(err, http.StatusPreconditionFailed) {
 			return errors.Join(ErrScopedPublicationReconciliationRequired, err)
 		}

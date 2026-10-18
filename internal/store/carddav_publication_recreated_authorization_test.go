@@ -66,26 +66,18 @@ func TestAuthorizedPublicationRejectsRecreatedRowRevisionCollision(t *testing.T)
 				authorize := func(_ context.Context, _ *store.IdentityGrantSelection) error { seen = true; return nil }
 				switch operation {
 				case "settlement":
-					backend, ok := any(st).(authorizedPublicationSettlementStore)
-					requirements.True(ok)
 					canonical := store.CardDAVRemoteResource{Href: replacement.Href, RemoteUID: person.Person.VCardUID, RemoteETag: `"replacement-canonical"`, RemoteBody: replacement.OutgoingBody, SemanticHash: replacement.OutgoingSemanticHash}
-					err = backend.CommitCardDAVPublicationAuthorizedContext(t.Context(), store.CardDAVCanonicalMutation{Publication: expected, Remote: canonical}, authorize)
+					err = st.CommitCardDAVPublicationAuthorizedContext(t.Context(), store.CardDAVCanonicalMutation{Publication: expected, Remote: canonical}, authorize)
 				case "rollback", "rollback_throttle":
-					backend, ok := any(st).(authorizedPublicationRollbackStore)
-					requirements.True(ok)
 					if operation == "rollback_throttle" {
-						err = backend.RollbackCardDAVPublicationThrottleAuthorizedContext(t.Context(), &expected, originalGate.Add(time.Hour), authorize)
+						err = st.RollbackCardDAVPublicationThrottleAuthorizedContext(t.Context(), &expected, originalGate.Add(time.Hour), authorize)
 					} else {
-						err = backend.RollbackCardDAVPublicationAuthorizedContext(t.Context(), &expected, authorize)
+						err = st.RollbackCardDAVPublicationAuthorizedContext(t.Context(), &expected, authorize)
 					}
 				case "retry":
-					backend, ok := any(st).(authorizedPublicationRetryStore)
-					requirements.True(ok)
-					err = backend.SetCardDAVPublicationRetryAfterAuthorizedContext(t.Context(), expected, originalGate.Add(time.Hour), authorize)
+					err = st.SetCardDAVPublicationRetryAfterAuthorizedContext(t.Context(), expected, originalGate.Add(time.Hour), authorize)
 				case "refresh":
-					backend, ok := any(st).(authorizedPublicationRefreshStore)
-					requirements.True(ok)
-					_, err = backend.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), expected, authorize)
+					_, err = st.RefreshCardDAVPublicationFenceAuthorizedContext(t.Context(), expected, authorize)
 				}
 				requirements.ErrorIs(err, store.ErrCardDAVStalePlan)
 				assertions.False(seen, "old operation evidence must not admit a replacement intent")

@@ -683,9 +683,7 @@ func (s *Store) CommitCardDAVPublicationAuthorizedContext(
 	if authorize != nil && (pending.ResolutionConflictID != 0 || pending.ConflictOwned) {
 		return ErrCardDAVInvalidPlan
 	}
-	ownerReceiptRecovery := false
 	err = s.withIdentityTxContext(ctx, nil, func(tx *loggedTx) error {
-		ownerReceiptRecovery = false
 		var settlementReceipt *cardDAVReceiptBinding
 		settlementIntent := pending
 		if hasReceipt {
@@ -725,7 +723,6 @@ func (s *Store) CommitCardDAVPublicationAuthorizedContext(
 				return ErrCardDAVInvalidPlan
 			}
 			settlementIntent = *current
-			ownerReceiptRecovery = settlementReceipt != nil
 		}
 		if authorize != nil {
 			if err := requireCardDAVPublicationTargetTx(ctx, tx, current.AddressBookID); err != nil {
@@ -875,11 +872,6 @@ func (s *Store) CommitCardDAVPublicationAuthorizedContext(
 		}
 		return s.resolvePublicationConflictAuditTx(ctx, tx, pending)
 	})
-	// An ambiguous receipt observation must retain the original intent.
-	// Legacy owner conflict capture would clear that recovery evidence.
-	if ownerReceiptRecovery && errors.Is(err, ErrCardDAVPublicationMismatch) {
-		return ErrCardDAVPublicationPending
-	}
 	return err
 }
 

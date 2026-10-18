@@ -329,7 +329,7 @@ commands when approval is required.
 
 ### Recover a reviewed mapped update
 
-On `main` (daemon API 3.16 or newer), scoped publication can update an existing
+On `main` (daemon API 3.17 or newer), scoped publication can update an existing
 mapped CardDAV contact and retain a durable receipt. A delegated token needs
 `person.read` for that person and `carddav.write` for its current write target.
 The native CardDAV transport supports this workflow; Microsoft Graph contacts
@@ -356,10 +356,13 @@ An unchanged card produces a verified receipt with `noop: true` without provider
 requests. A rejected request keeps its original outcome; after resolving the
 failure or waiting out throttling, review a fresh preview and use a new key.
 Receipts contain identifiers and digests rather than vCards or credentials.
-Their lookup survives preview expiry, but every read and recovery checks current
-authority. Revoked, expired or narrowed grants, a replaced person or book, or a
-changed write target deny access. Owner historical receipt reads can survive
-resource cleanup without dispatching another update.
+Delegated lookup and recovery survive preview expiry but recheck the current
+grant and exact resource scope. A revoked, expired or narrowed grant, a replaced
+person or book, or a changed write target denies delegated access. Owners can
+read retained receipt history after resource cleanup without dispatching another
+update. This owner lookup requires daemon API 3.18 or newer. Owners can retrieve
+a receipt by ID with `GET /api/v1/carddav/scoped/publication-receipts/{receipt_id}`
+after the original delegated grant expires or is revoked.
 
 API clients use `GET /api/v1/carddav/scoped/publications/{person_id}/preview`
 and `POST` to the same prefix's `/approve` or `/reconcile` route with

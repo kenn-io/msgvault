@@ -16166,7 +16166,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.17.0
+  version: 3.18.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -18194,6 +18194,64 @@ paths:
       security:
         - apiKey: []
       summary: List CardDAV synchronization runs
+      tags:
+        - API
+  /api/v1/carddav/scoped/publication-receipts/{receipt_id}:
+    get:
+      operationId: getScopedCardDAVPublicationReceipt
+      parameters:
+        - in: path
+          name: receipt_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CardDAVScopedPublicationReceiptResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read one retained CardDAV publication receipt as the current owner
       tags:
         - API
   /api/v1/carddav/scoped/publications/{person_id}/approve:

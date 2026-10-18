@@ -119,3 +119,32 @@ func TestScopedCardDAVDiscoveryAdmitsExactIndependentRoutes(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerMCPRequiresContactScopeSchemaForPersonTools(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		want    bool
+	}{{"3.14.0", false}, {"3.15.0", true}} {
+		t.Run(tc.version, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			mux := http.NewServeMux()
+			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + tc.version + `"}`))
+			})
+			mux.HandleFunc("/api/v1/mcp/capabilities", func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"version":1,"delegated":false,"routes":[],"identity_operations":[]}`))
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+			requirements.NoError(err)
+			t.Cleanup(func() { assertions.NoError(client.Close()) })
+
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
+			assertions.Equal(tc.want, opts.PersonRecords != nil)
+		})
+	}
+}

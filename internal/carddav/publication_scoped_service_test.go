@@ -14,12 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type scopedPublicationService interface {
-	PreviewPublicationAuthorized(ctx context.Context, personID int64, authorize store.PersonEditAuthorizer) (*PublicationPreview, error)
-	PublishReviewedPersonAuthorized(ctx context.Context, personID int64, token string, authorize store.PersonEditAuthorizer) error
-	RecoverPublicationAuthorized(ctx context.Context, expected store.CardDAVPublication, authorize store.PersonEditAuthorizer) error
-}
-
 func TestScopedReviewedPublicationUsesCurrentAuthorityForEachEffect(t *testing.T) {
 	for _, mode := range []string{"allowed", "denied", "post_put_revoked", "empty_token"} {
 		t.Run(mode, func(t *testing.T) {
@@ -46,8 +40,7 @@ func TestScopedReviewedPublicationUsesCurrentAuthorityForEachEffect(t *testing.T
 			}))
 			t.Cleanup(server.Close)
 			service, st, personID, _ := seededMutationServiceForServer(t, server)
-			backend, ok := any(service).(scopedPublicationService)
-			requirements.True(ok, "mapped reviewed publication requires a separate authorized Service path")
+			backend := service
 			requirements.NoError(service.PublishPerson(t.Context(), personID))
 			appendInferenceReviewNote(t, st, personID, "Synthetic reviewed contact correction")
 			denied := errors.New("synthetic publication grant revoked")

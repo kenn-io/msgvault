@@ -12,18 +12,13 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type authorizedPublicationRequestStore interface {
-	AuthorizeCardDAVPublicationRequestContext(ctx context.Context, expected store.CardDAVPublication, method, target string, authorize store.PersonEditAuthorizer) error
-}
-
 func TestPublicationRequestAuthorizationChecksCurrentNativeIntentBeforeDispatch(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodGet} {
 		for _, change := range []string{"allowed", "denied", "wrong_nonce", "wrong_target", "book_revision", "projection", "stale_generation", "target_removed"} {
 			t.Run(method+"/"+change, func(t *testing.T) {
 				requirements, assertions := require.New(t), assert.New(t)
 				st, account, book, mapping := seededCardDAVConflictMapping(t)
-				backend, ok := any(st).(authorizedPublicationRequestStore)
-				requirements.True(ok, "provider dispatch must authorize the exact native pending intent")
+				backend := st
 				pending := prepareSyntheticReviewedMappedUpdate(t, st, mapping, "Synthetic Corrected")
 				expected := *pending
 				target := pending.Href

@@ -29,7 +29,7 @@ import (
 )
 
 func TestScopedCardDAVAPIUsesCurrentExactGrantAndReceipt(t *testing.T) {
-	for _, mode := range []string{"allowed", "owner", "caller", "caller_invalid_header", "dispatching", "transport_removed", "wrong_book", "missing_key", "changed_token", "revoked_after_put", "receipt_not_found", "mcp_allowed", "mcp_dispatching", "mcp_transport_removed", "owner_restart", "recreated_person", "rebound_book", "target_removed", "narrowed_grant", "expired_grant"} {
+	for _, mode := range []string{"allowed", "owner", "owner_receipt_lookup", "caller", "caller_invalid_header", "dispatching", "transport_removed", "wrong_book", "missing_key", "changed_token", "revoked_after_put", "receipt_not_found", "mcp_allowed", "mcp_dispatching", "mcp_transport_removed", "owner_restart", "recreated_person", "rebound_book", "target_removed", "narrowed_grant", "expired_grant"} {
 		t.Run(mode, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			restart := mode == "owner_restart"
@@ -289,6 +289,23 @@ func TestScopedCardDAVAPIUsesCurrentExactGrantAndReceipt(t *testing.T) {
 			require.NoError(json.Unmarshal(response.Body.Bytes(), &first))
 			require.NotNil(first.Receipt)
 			assert.Equal(wantState, first.Receipt.State)
+			if mode == "owner_receipt_lookup" {
+				receiptPath := "/api/v1/carddav/scoped/publication-receipts/" + first.Receipt.ID
+				delegated := delegatedPersonNativeRequest(t, srv, http.MethodGet, receiptPath, issued.Secret, "", nil)
+				require.Equal(http.StatusForbidden, delegated.Code, "%s", delegated.Body.String())
+				require.True(srv.agentGrants.Revoke(issued.ID))
+				_, err = st.DB().ExecContext(t.Context(), `DELETE FROM carddav_accounts WHERE id=?`, books[0].AccountID)
+				require.NoError(err)
+				recovered := publicationNativeOwnerRequest(t, srv, http.MethodGet, receiptPath, nil)
+				require.Equal(http.StatusOK, recovered.Code, "%s", recovered.Body.String())
+				var historical CardDAVScopedPublicationReceiptResponse
+				require.NoError(json.Unmarshal(recovered.Body.Bytes(), &historical))
+				require.NotNil(historical.Receipt)
+				assert.Equal(first.Receipt, historical.Receipt, "the owner can retrieve a delegated receipt after grant revocation and resource cleanup")
+				assert.Equal(int32(1), puts.Load())
+				assert.Equal(int32(1), gets.Load(), "historical lookup performs no provider work")
+				return
+			}
 			if useMCP {
 				repeated := scopedCardDAVMCPCall(t, mcpSession, "approve_scoped_carddav_publication", map[string]any{"person_id": person.ID, "approval_token": preview.ApprovalToken, "idempotency_key": "synthetic-api-key"}, true)
 				require.False(repeated.IsError)

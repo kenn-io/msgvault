@@ -13,10 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type authorizedPublicationSettlementStore interface {
-	CommitCardDAVPublicationAuthorizedContext(ctx context.Context, input store.CardDAVCanonicalMutation, authorize store.PersonEditAuthorizer) error
-}
-
 func TestPublicationSettlementAuthorizationPreservesPendingIntentOnDenial(t *testing.T) {
 	for _, allow := range []bool{false, true} {
 		name := "denied"
@@ -27,8 +23,7 @@ func TestPublicationSettlementAuthorizationPreservesPendingIntentOnDenial(t *tes
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			st, account, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(authorizedPublicationSettlementStore)
-			requirements.True(ok, "native canonical settlement must authorize inside its existing transaction")
+			backend := st
 			requirements.NotNil(mapping.PersonID)
 			personID := *mapping.PersonID
 			source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)

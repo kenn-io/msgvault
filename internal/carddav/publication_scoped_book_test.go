@@ -49,8 +49,7 @@ func TestScopedPublicationImportedNameReplacementPreservesResourceIdentity(t *te
 			_, err = st.GetCardDAVPublicationContext(t.Context(), personID)
 			requirements.ErrorIs(err, store.ErrCardDAVPublicationNotFound)
 			service = service.ForConnection(account.ConnectionName, account.ConnectionGeneration)
-			backend, ok := any(service).(scopedPublicationService)
-			requirements.True(ok)
+			backend := service
 			authorize := func(_ context.Context, scope *store.IdentityGrantSelection) error {
 				requirements.Len(scope.Persons, 1)
 				requirements.Len(scope.AddressBooks, 1)

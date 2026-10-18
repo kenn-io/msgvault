@@ -123,18 +123,13 @@ func TestPublicationReceiptReadPreservesHistoryWithCurrentAuthority(t *testing.T
 	}
 }
 
-type publicationReceiptOwnerReader interface {
-	CardDAVPublicationReceiptByIDContext(ctx context.Context, id string, authorize func(context.Context) error) (*store.CardDAVPublicationReceipt, error)
-}
-
 func TestPublicationReceiptOwnerReadSurvivesResourceCleanup(t *testing.T) {
 	for _, mode := range []string{"allowed", "resource_cleanup", "revoked", "nil_authorizer", "unknown_id"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st, account, book, mapping := seededCardDAVConflictMapping(t)
-			backend, ok := any(st).(publicationReceiptOwnerReader)
-			require.True(ok, "current owner needs exact historical lookup after native resource cleanup")
+			backend := st
 			require.NotNil(mapping.PersonID)
 			source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), *mapping.PersonID)
 			require.NoError(err)

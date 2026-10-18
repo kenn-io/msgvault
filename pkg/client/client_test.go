@@ -266,6 +266,40 @@ func TestGeneratedCardDAVConflictAndPublicationRoundTrips(t *testing.T) {
 	assert.Equal(3, requests)
 }
 
+func TestScopedCardDAVPublicationConvenienceMethodsAcceptBothSuccessStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusAccepted} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"receipt":{"id":"synthetic-receipt","state":"verified"}}`))
+			}))
+			t.Cleanup(server.Close)
+			client, err := New(server.URL)
+			requirements.NoError(err)
+
+			approved, err := client.ApproveScopedCardDAVPublication(t.Context(), &generated.ApproveScopedCardDAVPublicationRequestOptions{
+				PathParams: &generated.ApproveScopedCardDAVPublicationPath{PersonID: 1},
+				Body:       &generated.ApproveScopedCardDAVPublicationBody{ApprovalToken: "synthetic-token", IdempotencyKey: "synthetic-key"},
+			})
+			requirements.NoError(err)
+			requirements.NotNil(approved)
+			assertions.Equal("synthetic-receipt", approved.Receipt.ID)
+			assertions.Equal("verified", approved.Receipt.State)
+
+			reconciled, err := client.ReconcileScopedCardDAVPublication(t.Context(), &generated.ReconcileScopedCardDAVPublicationRequestOptions{
+				PathParams: &generated.ReconcileScopedCardDAVPublicationPath{PersonID: 1},
+				Body:       &generated.ReconcileScopedCardDAVPublicationBody{ApprovalToken: "synthetic-token", IdempotencyKey: "synthetic-key"},
+			})
+			requirements.NoError(err)
+			requirements.NotNil(reconciled)
+			assertions.Equal("synthetic-receipt", reconciled.Receipt.ID)
+			assertions.Equal("verified", reconciled.Receipt.State)
+		})
+	}
+}
+
 func TestOperationGeneratedClientDecodesSafeStatusListAndDetail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

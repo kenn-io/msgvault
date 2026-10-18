@@ -15,10 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/vcard"
 )
 
-type authorizedReviewedPublicationStore interface {
-	PrepareReviewedCardDAVPublicationAuthorizedContext(ctx context.Context, plan store.CardDAVReviewedPublicationPlan, authorize store.PersonEditAuthorizer) (*store.CardDAVPublication, error)
-}
-
 func TestReviewedPublicationAuthorizesBeforeAnyNativePreparationWrite(t *testing.T) {
 	for _, change := range []bool{false, true} {
 		for _, allow := range []bool{false, true} {
@@ -35,8 +31,7 @@ func TestReviewedPublicationAuthorizesBeforeAnyNativePreparationWrite(t *testing
 				requirements := require.New(t)
 				assertions := assert.New(t)
 				st := testutil.NewTestStore(t)
-				backend, ok := any(st).(authorizedReviewedPublicationStore)
-				requirements.True(ok, "native reviewed publication must support in-transaction authorization")
+				backend := st
 				account, books, err := st.ReplaceCardDAVDiscoveryContext(t.Context(), store.CardDAVDiscoveryInput{
 					ConnectionName: "default", BaseURL: "https://dav.example.test", Username: "synthetic-user",
 					PrincipalURL: "https://dav.example.test/principal/", HomeURL: "https://dav.example.test/books/",

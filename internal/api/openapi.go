@@ -364,7 +364,8 @@ import (
 // 3.15.0 adds explicit contact resource grants and delegated native person edits.
 // 3.16.0 adds scoped identity operation preview/apply and durable receipt recovery.
 // 3.17.0 adds scoped reviewed CardDAV publication receipts, recovery and discovery.
-const APISchemaVersion = "3.17.0"
+// 3.18.0 adds owner-authorized reads of retained CardDAV publication receipts.
+const APISchemaVersion = "3.18.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

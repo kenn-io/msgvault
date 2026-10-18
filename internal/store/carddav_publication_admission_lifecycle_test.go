@@ -28,12 +28,7 @@ func TestMappedPublicationReceiptAdmissionAndSettlement(t *testing.T) {
 	fence := store.CardDAVCurrentReviewFence(source, body, mapping.Href)
 	pending, err := st.PrepareReviewedCardDAVPublicationContext(t.Context(), store.CardDAVReviewedPublicationPlan{Publication: plan, Fence: fence, ApprovalToken: store.CardDAVReviewToken(fence)})
 	requirements.NoError(err)
-	receipts, ok := any(st).(interface {
-		WithCardDAVPublicationReceipt(ctx context.Context, principal, key string) (context.Context, error)
-		AdmitCardDAVPublicationReceiptContext(ctx context.Context, expected store.CardDAVPublication, authorize store.PersonEditAuthorizer) error
-		CommitCardDAVPublicationAuthorizedContext(ctx context.Context, mutation store.CardDAVCanonicalMutation, authorize store.PersonEditAuthorizer) error
-	})
-	requirements.True(ok, "mapped publications must durably admit and atomically settle receipts")
+	receipts := st
 	ctx, err := receipts.WithCardDAVPublicationReceipt(t.Context(), "synthetic-principal", "synthetic-request")
 	requirements.NoError(err)
 	allow := func(context.Context, *store.IdentityGrantSelection) error { return nil }

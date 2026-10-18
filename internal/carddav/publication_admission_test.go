@@ -15,10 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type publicationAdmissionService interface {
-	PublishReviewedPersonAuthorizedWithAdmission(ctx context.Context, personID int64, token string, authorize store.PersonEditAuthorizer, admission func(context.Context, store.CardDAVPublication) error) error
-}
-
 func TestPublicationAdmissionCommitsBeforeProviderDispatch(t *testing.T) {
 	for _, mode := range []string{"allowed", "sql_failure", "nil_admission", "mutated_snapshot", "revoked_after_admission"} {
 		t.Run(mode, func(t *testing.T) {
@@ -56,8 +52,7 @@ func TestPublicationAdmissionCommitsBeforeProviderDispatch(t *testing.T) {
 			t.Cleanup(server.Close)
 			service, nativeStore, personID, _ := seededMutationServiceForServer(t, server)
 			st = nativeStore
-			backend, ok := any(service).(publicationAdmissionService)
-			require.True(ok, "receipt admission must run after native preparation and before any HTTP")
+			backend := service
 			_, err := st.DB().ExecContext(t.Context(), "CREATE TABLE publication_admission_probe (intent TEXT PRIMARY KEY)")
 			require.NoError(err)
 			t.Cleanup(func() {

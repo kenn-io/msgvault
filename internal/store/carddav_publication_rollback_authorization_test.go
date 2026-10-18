@@ -14,11 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-type authorizedPublicationRollbackStore interface {
-	RollbackCardDAVPublicationAuthorizedContext(ctx context.Context, pending *store.CardDAVPublication, authorize store.PersonEditAuthorizer) error
-	RollbackCardDAVPublicationThrottleAuthorizedContext(ctx context.Context, pending *store.CardDAVPublication, retryAfter time.Time, authorize store.PersonEditAuthorizer) error
-}
-
 func TestPublicationRollbackAuthorizationPreservesPendingIntentAndRetryGates(t *testing.T) {
 	for _, tc := range []struct {
 		throttle bool
@@ -40,8 +35,7 @@ func TestPublicationRollbackAuthorizationPreservesPendingIntentAndRetryGates(t *
 			t.Run(fmt.Sprintf("throttle_%t_delay_%s_%s_allow_%t", throttle, tc.delay, tc.field, allow), func(t *testing.T) {
 				requirements, assertions := require.New(t), assert.New(t)
 				st, account, book, mapping := seededCardDAVConflictMapping(t)
-				backend, ok := any(st).(authorizedPublicationRollbackStore)
-				requirements.True(ok, "native rollback must check current authority before changing recovery evidence")
+				backend := st
 				requirements.NotNil(mapping.PersonID)
 				personID := *mapping.PersonID
 				source, err := st.LoadCardDAVPublicationReviewSourceContext(t.Context(), personID)

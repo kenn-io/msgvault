@@ -33,6 +33,10 @@ type scopedCardDAVReceiptStore interface {
 	LoadCardDAVPublicationReviewSourceAuthorizedContext(ctx context.Context, personID int64, authorize store.PersonEditAuthorizer) (*store.CardDAVPublicationReviewSource, error)
 }
 
+type scopedCardDAVHistoricalReceiptStore interface {
+	CardDAVPublicationReceiptByIDContext(ctx context.Context, id string, authorize func(context.Context) error) (*store.CardDAVPublicationReceipt, error)
+}
+
 type CardDAVScopedPublicationApprovalRequest struct {
 	ApprovalToken  string `json:"approval_token" minLength:"1" maxLength:"256"`
 	IdempotencyKey string `json:"idempotency_key" minLength:"1" maxLength:"256"`
@@ -58,6 +62,44 @@ func (s *Server) registerScopedCardDAVPublicationRoutes(api huma.API) {
 	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusBadGateway)
 	addCardDAVRetryAfterHeader(op.Responses)
 	registerRawHumaRoute(api, op, s.handleScopedCardDAVPublicationReconcile)
+	op = rawAPIV1Operation("getScopedCardDAVPublicationReceipt", http.MethodGet, "/carddav/scoped/publication-receipts/{receipt_id}", "Read one retained CardDAV publication receipt as the current owner")
+	op.Parameters = append(op.Parameters, &huma.Param{Name: "receipt_id", In: pathKey, Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "uuid"}})
+	op.Responses = jsonResponsesFor[CardDAVScopedPublicationReceiptResponse](api)
+	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError, http.StatusNotImplemented)
+	registerRawHumaRoute(api, op, s.handleScopedCardDAVPublicationReceipt)
+}
+
+func (s *Server) handleScopedCardDAVPublicationReceipt(w http.ResponseWriter, r *http.Request) {
+	auth := s.requestAuthentication(r)
+	if auth.Mode != AuthModeCaller {
+		auth = s.classifyAPIRequestDirect(r)
+	}
+	principal, err := identityOperationPrincipal(auth)
+	if err != nil || principal != "owner" {
+		s.writeScopedCardDAVPublicationError(w, errPersonScopeDenied)
+		return
+	}
+	backend, ok := s.store.(scopedCardDAVHistoricalReceiptStore)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "carddav_scope_unavailable", "Native CardDAV publication receipt reads are unavailable")
+		return
+	}
+	ownerAuthorize := func(context.Context) error {
+		if s.requestAuthentication(r).Mode == AuthModeCaller {
+			return nil
+		}
+		current, err := identityOperationPrincipal(s.classifyAPIRequestDirect(r))
+		if err != nil || current != "owner" {
+			return errPersonScopeDenied
+		}
+		return nil
+	}
+	receipt, err := backend.CardDAVPublicationReceiptByIDContext(r.Context(), r.PathValue("receipt_id"), ownerAuthorize)
+	if err != nil {
+		s.writeScopedCardDAVPublicationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, CardDAVScopedPublicationReceiptResponse{Receipt: receipt})
 }
 
 func (s *Server) handleScopedCardDAVPublicationReconcile(w http.ResponseWriter, r *http.Request) {

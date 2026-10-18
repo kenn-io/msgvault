@@ -359,6 +359,53 @@ func (c *Client) CreatePerson(
 	return nil, fmt.Errorf("create person: %w", err)
 }
 
+// ApproveScopedCardDAVPublication accepts both a newly dispatched receipt and
+// an already settled idempotent receipt. The generated convenience method
+// accepts only 202 even though settled outcomes return 200.
+func (c *Client) ApproveScopedCardDAVPublication(
+	ctx context.Context,
+	options *generated.ApproveScopedCardDAVPublicationRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ApproveScopedCardDAVPublicationResponseJSON, error) {
+	resp, err := c.ApproveScopedCardDAVPublicationWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("approve scoped CardDAV publication: missing response")
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	if resp.JSON202 != nil {
+		return resp.JSON202, nil
+	}
+	return nil, fmt.Errorf("approve scoped CardDAV publication: missing receipt for status %d", resp.StatusCode)
+}
+
+// ReconcileScopedCardDAVPublication accepts both newly reconciled and already
+// settled receipts. The generated convenience method accepts only 202.
+func (c *Client) ReconcileScopedCardDAVPublication(
+	ctx context.Context,
+	options *generated.ReconcileScopedCardDAVPublicationRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.ReconcileScopedCardDAVPublicationResponseJSON, error) {
+	resp, err := c.ReconcileScopedCardDAVPublicationWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil {
+		return nil, errors.New("reconcile scoped CardDAV publication: missing response")
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	if resp.JSON202 != nil {
+		return resp.JSON202, nil
+	}
+	return nil, fmt.Errorf("reconcile scoped CardDAV publication: missing receipt for status %d", resp.StatusCode)
+}
+
 type httpClientDoer struct {
 	client *http.Client
 }
