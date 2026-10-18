@@ -38,6 +38,20 @@ func IsAutomatedAddress(address string) bool {
 		strings.Contains(local, "noreply") || strings.Contains(local, "no-reply")
 }
 
+// IsNoReplyAddress recognizes explicit no-reply markers. Other automated
+// service addresses such as support@example.test and hello@example.test may
+// accept replies, so they are not enough to disqualify a message by Reply-To.
+func IsNoReplyAddress(address string) bool {
+	address = strings.TrimSpace(address)
+	local, _, ok := strings.Cut(address, "@")
+	if !ok {
+		return false
+	}
+	local = strings.ToLower(local)
+	return strings.Contains(local, "noreply") || strings.Contains(local, "no-reply") ||
+		strings.Contains(local, "donotreply") || strings.Contains(local, "do-not-reply")
+}
+
 // AutomationSignals returns the header and part facts available to downstream
 // rules. Missing evidence remains false, including on header-only recovery.
 func (m *Message) AutomationSignals() AutomationSignals {
@@ -58,7 +72,7 @@ func (m *Message) AutomationSignals() AutomationSignals {
 		result.PrecedenceBulk = true
 	}
 	for _, address := range m.ReplyTo {
-		if IsAutomatedAddress(address.Email) {
+		if IsNoReplyAddress(address.Email) {
 			result.ReplyToNoReply = true
 			break
 		}

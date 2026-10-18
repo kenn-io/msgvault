@@ -68,6 +68,32 @@ func emailMergeFixtureMessage(
 	return messageID
 }
 
+func emailMergeFixtureMessageInThread(t *testing.T, st *store.Store, sourceID int64, threadID, providerID string) (int64, int64) {
+	t.Helper()
+	require := require.New(t)
+	sender, err := st.EnsureParticipant("sender@example.test", "Example Sender", "example.test")
+	require.NoError(err)
+	recipient, err := st.EnsureParticipant("recipient@example.test", "Example Recipient", "example.test")
+	require.NoError(err)
+	conversation, err := st.EnsureConversationWithType(sourceID, threadID, "email_thread", "Example subject")
+	require.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: conversation,
+		SourceMessageID: providerID, MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		SentAt:  sql.NullTime{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Valid: true},
+		Subject: sql.NullString{String: "Example subject", Valid: true}})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(message, sql.NullString{String: "same body", Valid: true}, sql.NullString{}))
+	require.NoError(st.ReplaceMessageRecipientsContext(t.Context(), message, "from", []int64{sender}, []string{"Example Sender"}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_recipients SET email_address = 'sender@example.test'
+		WHERE message_id = ? AND recipient_type = 'from'`), message)
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipientsContext(t.Context(), message, "to", []int64{recipient}, []string{"Example Recipient"}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_recipients SET email_address = 'recipient@example.test'
+		WHERE message_id = ? AND recipient_type = 'to'`), message)
+	require.NoError(err)
+	return message, conversation
+}
+
 func mergeFixtureLoop(t *testing.T, st *store.Store, sourceID, conversationID, anchorID int64, kind string, now time.Time) int64 {
 	t.Helper()
 	require := require.New(t)
@@ -231,6 +257,69 @@ func TestMergeSourcesRemapsDuplicateLoopAnchorsAndEvidence(t *testing.T) {
 	require.NotNil(live[0].SnoozedUntil)
 	assert.True(snoozeUntil.Equal(*live[0].SnoozedUntil))
 	assert.Equal("dismissed", live[0].AgendaState)
+}
+
+func TestMergeSourcesMovesDuplicateEmailLoopToSurvivingAnchorConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		withCollision bool
+	}{
+		{name: "without collision"},
+		{name: "resolves live collision", withCollision: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			from, err := st.GetOrCreateSource("gmail", "history-email-source")
+			require.NoError(err)
+			into, err := st.GetOrCreateSource("gmail", "live-email-source")
+			require.NoError(err)
+			now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+			hiddenMessage, hiddenConversation := emailMergeFixtureMessageInThread(t, st, from.ID, "history-thread", "history-1")
+			survivorMessage, survivorConversation := emailMergeFixtureMessageInThread(t, st, into.ID, "live-thread", "live-1")
+			require.NotEqual(hiddenConversation, survivorConversation)
+			open := sourceMergeLoopOpen(hiddenConversation, from.ID, hiddenMessage, "reply_owed", now)
+			open.Channel = "email"
+			open.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"question","owner_note":"history decision"}]`, hiddenMessage, hiddenConversation))
+			require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+				ConversationID: hiddenConversation, Now: now, Verdict: store.LoopVerdict{Open: &open},
+			}))
+			var sourceLoopID int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id = ? AND source_id = ? AND kind = 'reply_owed'`), hiddenConversation, from.ID).Scan(&sourceLoopID))
+			snoozeUntil := now.Add(24 * time.Hour)
+			_, err = st.SnoozeLoopContext(t.Context(), sourceLoopID, snoozeUntil, now)
+			require.NoError(err)
+			var destinationLoopID int64
+			if tc.withCollision {
+				destinationLoopID = mergeFixtureLoop(t, st, into.ID, survivorConversation, survivorMessage, "reply_owed", now)
+			}
+
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+			require.NoError(err)
+			moved, err := st.GetOpenLoopContext(t.Context(), sourceLoopID)
+			require.NoError(err)
+			assert.Equal(survivorConversation, moved.ConversationID, "loop follows the surviving anchor even when its thread was not consolidated")
+			assert.Equal(into.ID, moved.SourceID)
+			assert.Equal(survivorMessage, *moved.AnchorMessageID)
+			assert.Equal("turn:"+strconv.FormatInt(survivorConversation, 10)+":reply_owed:"+strconv.FormatInt(survivorMessage, 10), moved.TurnKey)
+			require.NotNil(moved.SnoozedUntil)
+			assert.True(snoozeUntil.Equal(*moved.SnoozedUntil))
+
+			live, err := st.ListLiveConversationLoopsContext(t.Context(), survivorConversation)
+			require.NoError(err)
+			if tc.withCollision {
+				assert.Len(live, 1)
+				assert.Equal(destinationLoopID, live[0].ID)
+				assert.Equal("closed", moved.Status)
+				assert.Contains(string(live[0].EvidenceJSON), "history decision")
+			} else {
+				require.Len(live, 1)
+				assert.Equal(sourceLoopID, live[0].ID)
+				assert.Equal("open", moved.Status)
+			}
+		})
+	}
 }
 
 func TestMergeSourcesRetainsTerminalHistoryForDuplicateLoopAnchor(t *testing.T) {

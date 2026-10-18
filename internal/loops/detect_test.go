@@ -753,6 +753,44 @@ func TestDetectExtendedNeutralWindowFindsNewQuestionAfterSettlement(t *testing.T
 	assertions.Equal(question.ID, got.Open.Anchor.ID)
 }
 
+func TestDetectExtendedWindowFindsInboundRequestAfterEditedAnchorWithdrawal(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	anchor := view.Messages[0]
+	anchor.Direction, anchor.Sender = Outbound, view.Participants[0]
+	anchor.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	anchor.OccurredAt = now.Add(-120 * time.Hour)
+	request := anchor
+	request.ID, request.Direction, request.Sender = 11, Inbound, view.Participants[1]
+	request.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[0], Type: "to"}}
+	request.OccurredAt = now.Add(-96 * time.Hour)
+	neutral := anchor
+	neutral.ID, neutral.Direction = 12, Observed
+	neutral.OccurredAt = now.Add(-time.Hour)
+	view.Messages = []LoopMessage{neutral}
+	view.LastMessageAt = neutral.OccurredAt
+	view.BodyText = func(id int64) (string, error) {
+		if id == anchor.ID {
+			return "FYI, the meeting moved to Thursday.", nil
+		}
+		return "Can you review the draft?", nil
+	}
+	view.Extend = func() (ConversationView, error) {
+		extended := view
+		extended.Messages = []LoopMessage{anchor, request, neutral}
+		return extended, nil
+	}
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: AwaitingReply, AnchorMessageID: anchor.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	requirements.NotNil(got.Open)
+	assertions.Equal(ReplyOwed, got.Open.Kind)
+	assertions.Equal(request.ID, got.Open.Anchor.ID)
+}
+
 func TestDetectMarksUnreadableAwaitingQuestionRunIncomplete(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

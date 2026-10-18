@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
+
+type callerOperationOverrideContextKey struct{}
 
 // Operation identifies a registered operation. It is never taken from headers.
 type Operation struct {
@@ -41,6 +44,9 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		r, w := humago.Unwrap(ctx)
 		op := ctx.Operation()
 		operation := Operation{ID: op.OperationID, Method: op.Method, Path: op.Path}
+		if override, ok := r.Context().Value(callerOperationOverrideContextKey{}).(Operation); ok {
+			operation = override
+		}
 		if authorize != nil && !authorize(w, r, operation) {
 			return
 		}
@@ -79,10 +85,31 @@ func (s *Server) Handler(authorize func(http.ResponseWriter, *http.Request, Oper
 		security := requestSecurity{
 			auth: requestAuthentication{Mode: AuthModeRequired}, scheme: scheme, host: r.Host,
 		}
-		mux.ServeHTTP(boundary, r.WithContext(context.WithValue(ctx, requestSecurityContextKey{}, security)))
+		requestContext := context.WithValue(ctx, requestSecurityContextKey{}, security)
+		if operation, ok := libraryHandlerLoopDeleteOperation(r); ok {
+			requestContext = context.WithValue(requestContext, callerOperationOverrideContextKey{}, operation)
+		}
+		mux.ServeHTTP(boundary, r.WithContext(requestContext))
 	})
 	h = s.analyticsEngineMiddleware(h)
 	h = s.recoverMiddleware(h)
 	h = apiCacheControlMiddleware(h)
 	return requestIDMiddleware(h)
+}
+
+func libraryHandlerLoopDeleteOperation(r *http.Request) (Operation, bool) {
+	if r.Method != http.MethodDelete {
+		return Operation{}, false
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) != 5 || parts[0] != "api" || parts[1] != "v1" || parts[2] != "loops" {
+		return Operation{}, false
+	}
+	if parts[3] == "suppressions" {
+		return Operation{ID: "deleteLoopSuppression", Method: http.MethodDelete, Path: "/api/v1/loops/suppressions/{id}"}, true
+	}
+	if parts[4] == "snooze" {
+		return Operation{ID: "unsnoozeOpenLoop", Method: http.MethodDelete, Path: "/api/v1/loops/{id}/snooze"}, true
+	}
+	return Operation{}, false
 }

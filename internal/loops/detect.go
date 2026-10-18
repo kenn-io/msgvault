@@ -76,6 +76,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	settlementView := view
 	extended := false
 	settledTurnFlip := false
+	settledExtendedWithdrawal := false
 	type settledLoop struct {
 		loop   LiveLoop
 		anchor *LoopMessage
@@ -112,6 +113,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		if closed != nil {
 			settledTurnFlip = settledTurnFlip || closed.Reason == "turn_flip"
+			settledExtendedWithdrawal = settledExtendedWithdrawal ||
+				(closed.Reason == "withdrawn" && !slices.ContainsFunc(view.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID }))
 			recordClose(*closed)
 		}
 		if gap && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
@@ -125,7 +128,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			}
 		}
 	}
-	if extended && (len(turns) > 0 || settledTurnFlip) {
+	if extended && (len(turns) > 0 || settledTurnFlip || settledExtendedWithdrawal) {
 		// Extended evidence preserves a live anchor and reveals a new trailing
 		// turn after settlement closes an older obligation.
 		turns = t.trailing(settlementView)
@@ -149,7 +152,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		keepUncertain("")
 		return v
 	}
-	if extended && !settledTurnFlip && !hasEligibleTrailingAnchor(view, recentTurns, &t, cfg) {
+	if extended && !settledTurnFlip && !settledExtendedWithdrawal && !hasEligibleTrailingAnchor(view, recentTurns, &t, cfg) {
 		// A statement nudge or CC-only message in the recent window cannot
 		// create a second Open for a retained live anchor found by extension.
 		for _, loop := range live {
@@ -283,16 +286,6 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			}
 		}
 		retainedCounterparty := false
-		explicitCounterparty := false
-		if anchor != nil {
-			for _, recipient := range anchor.Recipients {
-				priority, valid := counterpartyRecipientPriority(recipient.Type, settlementView.ConversationType)
-				if valid && priority < 2 && recipient.ID == counterparty.ID && !recipient.IsOwner {
-					explicitCounterparty = true
-					break
-				}
-			}
-		}
 		if settled, ok := retained[kind]; ok && settled.anchor != nil && anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
 			for _, participant := range candidates {
 				if participant.ID == settled.loop.CounterpartyParticipantID {
@@ -302,11 +295,36 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				}
 			}
 		}
+		candidatePriorities := make(map[int64]int, len(candidates))
 		for _, participant := range candidates {
-			if retainedCounterparty || explicitCounterparty {
+			candidatePriorities[participant.ID] = 2
+		}
+		if anchor != nil {
+			for _, recipient := range anchor.Recipients {
+				priority, valid := counterpartyRecipientPriority(recipient.Type, settlementView.ConversationType)
+				if !valid || recipient.ID == 0 || recipient.IsOwner {
+					continue
+				}
+				if current, ok := candidatePriorities[recipient.ID]; ok && priority < current {
+					candidatePriorities[recipient.ID] = priority
+				}
+			}
+		}
+		bestPriority := 3
+		for _, participant := range candidates {
+			if priority := candidatePriorities[participant.ID]; priority < bestPriority {
+				bestPriority = priority
+			}
+		}
+		if !retainedCounterparty {
+			counterparty = LoopParticipant{}
+		}
+		for _, participant := range candidates {
+			if retainedCounterparty || candidatePriorities[participant.ID] != bestPriority {
 				continue
 			}
-			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] || (counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
+			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] ||
+				(counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
 				counterparty = participant
 			}
 		}

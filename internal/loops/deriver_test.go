@@ -387,6 +387,40 @@ func TestDeriverExcludesImportedUnsentSynctechSMSFromTurnDetection(t *testing.T)
 	}
 }
 
+func TestDeriverBackfillsOldSynctechUnsentStateBeforeDetection(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	ownerPhone := "+15550000001"
+	peerPhone := "+15550000002"
+	xml := fmt.Sprintf(`<smses count="2">
+  <sms address="%s" date="%d" type="%d" body="Can you send the file?" read="1" status="-1" />
+  <sms address="%s" date="%d" type="%d" body="Unsent reply" read="1" status="0" />
+</smses>`, peerPhone, now.Add(-48*time.Hour).UnixMilli(), synctechsms.SMSTypeInbox,
+		peerPhone, now.Add(-47*time.Hour).UnixMilli(), synctechsms.SMSTypeOutbox)
+	summary := importSynctechMessages(t, f, ownerPhone, xml)
+	requirements.Len(summary.MessageIDs, 2)
+	unsentID := summary.MessageIDs[1]
+	var conversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT conversation_id FROM messages WHERE id=?"), summary.MessageIDs[0]).Scan(&conversationID))
+	// Old imports left unsent owner messages at the schema's TRUE default.
+	deriveExec(t, f, "UPDATE messages SET is_sent=TRUE WHERE id=?", unsentID)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), conversationID)
+	requirements.NoError(err)
+	requirements.Len(live, 1, "an archived unsent reply must not close the inbound request")
+	assertions.Equal(ReplyOwed, live[0].Kind)
+	requirements.NotNil(live[0].AnchorMessageID)
+	assertions.Equal(summary.MessageIDs[0], *live[0].AnchorMessageID)
+	var sent bool
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT is_sent FROM messages WHERE id=?"), unsentID).Scan(&sent))
+	assertions.False(sent, "the native unsent state is persisted before loop derivation")
+}
+
 func TestDeriverExcludesImportedSynctechCallLogs(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -593,6 +627,27 @@ func TestDeriverSignalsBackfillWithdrawsAutomatedLiveLoop(t *testing.T) {
 	assertions.Equal("closed", got.Status)
 	requirements.NotNil(got.ClosedReason)
 	assertions.Equal("withdrawn", *got.ClosedReason)
+}
+
+func TestDeriverUsesArchivedFromEnvelopeForAutomationEligibility(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f, cfg, now := deriveFixture(t)
+	id := deriveInbound(t, f, now)
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	deriveExec(t, f, `INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
+		VALUES(?,?,'from','peer@example.test')`, id, peer)
+	deriveExec(t, f, `UPDATE participants SET email_address='noreply@example.test' WHERE id=?`, peer)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1, "the archived human From address remains substantive after participant metadata changes")
+	assertions.Equal(id, *live[0].AnchorMessageID)
 }
 
 func TestDeriverTimersPromoteHeldAndExpireSnoozeWithoutNewMessages(t *testing.T) {

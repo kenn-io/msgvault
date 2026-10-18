@@ -221,28 +221,38 @@ func TestHistoryOnlyBeeperSourceIsStatic(t *testing.T) {
 }
 
 func TestExcludedBeeperAccountIsDisabledInFreshnessInventory(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("beeper", "excluded-account")
-	requirements.NoError(err)
-	cfg := config.NewDefaultConfig()
-	cfg.Beeper.Enabled = true
-	cfg.Beeper.Schedule = "*/15 * * * *"
-	cfg.Beeper.ExcludeAccounts = []string{"excluded-account"}
+	for _, tc := range []struct {
+		name   string
+		filter func(*config.BeeperConfig)
+	}{
+		{name: "excluded account", filter: func(cfg *config.BeeperConfig) { cfg.ExcludeAccounts = []string{"excluded-account"} }},
+		{name: "outside account allowlist", filter: func(cfg *config.BeeperConfig) { cfg.Accounts = []string{"included-account"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("beeper", "excluded-account")
+			requirements.NoError(err)
+			cfg := config.NewDefaultConfig()
+			cfg.Beeper.Enabled = true
+			cfg.Beeper.Schedule = "*/15 * * * *"
+			tc.filter(&cfg.Beeper)
 
-	items, err := Build(t.Context(), cfg, st)
-	requirements.NoError(err)
-	requirements.Len(items, 1)
-	assertions.Equal(source.ID, *items[0].SourceID)
-	assertions.Equal("disabled", items[0].Scheduling)
-	assertions.Empty(items[0].SyncCommand)
+			items, err := Build(t.Context(), cfg, st)
+			requirements.NoError(err)
+			requirements.Len(items, 1)
+			assertions.Equal(source.ID, *items[0].SourceID)
+			assertions.Equal("disabled", items[0].Scheduling)
+			assertions.Empty(items[0].SyncCommand)
 
-	report, err := freshness.Build(t.Context(), freshness.Inputs{
-		Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
-	})
-	requirements.NoError(err)
-	assertions.False(report.Stale, "excluded accounts must not block freshness-ranked views")
+			report, err := freshness.Build(t.Context(), freshness.Inputs{
+				Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
+			})
+			requirements.NoError(err)
+			assertions.False(report.Stale, "excluded accounts must not block freshness-ranked views")
+		})
+	}
 }
 
 func TestImportOnlyChatSourcesAreStatic(t *testing.T) {
@@ -270,26 +280,6 @@ func TestImportOnlyChatSourcesAreStatic(t *testing.T) {
 			assertions.False(report.Stale, "an import-only archive cannot be refreshed by a sync command")
 		})
 	}
-}
-
-func TestWhatsAppDatabaseImportIsStaticAndDoesNotBlockFreshness(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource("whatsapp", "phone-backup")
-	requirements.NoError(err)
-
-	items, err := Build(t.Context(), config.NewDefaultConfig(), st)
-	requirements.NoError(err)
-	requirements.Len(items, 1)
-	assertions.Equal("static", items[0].Scheduling)
-	assertions.Empty(items[0].SyncCommand)
-
-	report, err := freshness.Build(t.Context(), freshness.Inputs{
-		Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
-	})
-	requirements.NoError(err)
-	assertions.False(report.Stale, "a static WhatsApp backup must not make waiting views stale")
 }
 
 func TestSynctechSMSImportIsStaticButConfiguredSourceKeepsItsSchedule(t *testing.T) {

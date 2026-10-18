@@ -268,9 +268,6 @@ func (s *Store) transferSourceMergeLoopState(
 			if err := s.transferSourceMergeConversationSuppression(ctx, tx, conversation.id, conversation.destination); err != nil {
 				return fmt.Errorf("transfer conversation mute %d to %d: %w", conversation.id, conversation.destination, err)
 			}
-			if err := s.resolveSourceMergeLiveLoopCollision(ctx, tx, conversation.id, conversation.destination); err != nil {
-				return fmt.Errorf("resolve live loops for conversations %d and %d: %w", conversation.id, conversation.destination, err)
-			}
 		}
 		if err := s.transferSourceMergeLoopReferences(ctx, tx, conversation.id, conversation.destination, destinationSourceID, survivors); err != nil {
 			return fmt.Errorf("transfer loops for conversation %d to %d: %w", conversation.id, conversation.destination, err)
@@ -340,54 +337,46 @@ type sourceMergeLiveLoop struct {
 func (s *Store) resolveSourceMergeLiveLoopCollision(
 	ctx context.Context,
 	tx *loggedTx,
-	sourceConversationID, destinationConversationID int64,
+	sourceLoopID, destinationConversationID int64,
 ) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
+	var sourceLoop sourceMergeLiveLoop
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
 		fulfilment_suggested_at, evidence_json FROM open_loops
-		WHERE conversation_id = ? AND detector = 'turn_state' AND status <> 'closed' ORDER BY id`, sourceConversationID)
+		WHERE id = ? AND detector = 'turn_state' AND status <> 'closed'`, sourceLoopID).
+		Scan(&sourceLoop.id, &sourceLoop.kind, &sourceLoop.lastActivityAt, &sourceLoop.snoozedUntil,
+			&sourceLoop.agendaState, &sourceLoop.fulfilmentSuggestedAt, &sourceLoop.evidence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	var sourceLoops []sourceMergeLiveLoop
-	for rows.Next() {
-		var loop sourceMergeLiveLoop
-		if err := rows.Scan(&loop.id, &loop.kind, &loop.lastActivityAt, &loop.snoozedUntil, &loop.agendaState, &loop.fulfilmentSuggestedAt, &loop.evidence); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		sourceLoops = append(sourceLoops, loop)
+	var destinationLoop sourceMergeLiveLoop
+	err = tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
+		fulfilment_suggested_at, evidence_json FROM open_loops
+		WHERE conversation_id = ? AND kind = ? AND detector = 'turn_state' AND status <> 'closed'
+		ORDER BY last_activity_at DESC, id LIMIT 1`, destinationConversationID, sourceLoop.kind).
+		Scan(&destinationLoop.id, &destinationLoop.kind, &destinationLoop.lastActivityAt,
+			&destinationLoop.snoozedUntil, &destinationLoop.agendaState,
+			&destinationLoop.fulfilmentSuggestedAt, &destinationLoop.evidence)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+	if err != nil {
 		return err
 	}
-	for _, sourceLoop := range sourceLoops {
-		var destinationLoop sourceMergeLiveLoop
-		err := tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
-			fulfilment_suggested_at, evidence_json FROM open_loops
-			WHERE conversation_id = ? AND kind = ? AND detector = 'turn_state' AND status <> 'closed'
-			ORDER BY last_activity_at DESC, id LIMIT 1`, destinationConversationID, sourceLoop.kind).
-			Scan(&destinationLoop.id, &destinationLoop.kind, &destinationLoop.lastActivityAt,
-				&destinationLoop.snoozedUntil, &destinationLoop.agendaState,
-				&destinationLoop.fulfilmentSuggestedAt, &destinationLoop.evidence)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		winner, retired := &destinationLoop, &sourceLoop
-		if sourceLoop.lastActivityAt.After(destinationLoop.lastActivityAt) {
-			winner, retired = &sourceLoop, &destinationLoop
-		}
-		if err := s.transferSourceMergeLiveLoopOwnerState(ctx, tx, winner, retired); err != nil {
-			return fmt.Errorf("transfer owner state from loop %d to %d: %w", retired.id, winner.id, err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status = 'closed',
-			closed_at = `+s.dialect.Now()+`, closed_reason = 'withdrawn', closed_by = 'system',
-			closed_message_id = NULL, updated_at = `+s.dialect.Now()+`
-			WHERE id = ? AND status <> 'closed'`, retired.id); err != nil {
-			return err
-		}
+	winner, retired := &destinationLoop, &sourceLoop
+	if sourceLoop.lastActivityAt.After(destinationLoop.lastActivityAt) {
+		winner, retired = &sourceLoop, &destinationLoop
+	}
+	if err := s.transferSourceMergeLiveLoopOwnerState(ctx, tx, winner, retired); err != nil {
+		return fmt.Errorf("transfer owner state from loop %d to %d: %w", retired.id, winner.id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status = 'closed',
+		closed_at = `+s.dialect.Now()+`, closed_reason = 'withdrawn', closed_by = 'system',
+		closed_message_id = NULL, updated_at = `+s.dialect.Now()+`
+		WHERE id = ? AND status <> 'closed'`, retired.id); err != nil {
+		return err
 	}
 	return nil
 }
@@ -429,14 +418,32 @@ func (s *Store) transferSourceMergeLoopReferences(
 		anchor := remapSourceMergeLoopMessageID(loop.anchor, messageSurvivors)
 		activity := remapSourceMergeLoopMessageID(loop.activity, messageSurvivors)
 		closedMessage := remapSourceMergeLoopMessageID(loop.end, messageSurvivors)
-		evidence, err := remapSourceMergeLoopEvidence(loop.evidence, sourceConversationID, destinationConversationID, messageSurvivors)
+		loopConversationID := destinationConversationID
+		if anchor.Valid {
+			var anchorConversationID int64
+			if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages WHERE id = ?`, anchor.Int64).Scan(&anchorConversationID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("find loop %d surviving anchor conversation: %w", loop.id, err)
+			} else if anchorConversationID != 0 {
+				loopConversationID = anchorConversationID
+			}
+		}
+		loopEvidence := loop.evidence
+		if loopConversationID != sourceConversationID {
+			if err := s.resolveSourceMergeLiveLoopCollision(ctx, tx, loop.id, loopConversationID); err != nil {
+				return fmt.Errorf("resolve live loop %d collision in conversation %d: %w", loop.id, loopConversationID, err)
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT evidence_json FROM open_loops WHERE id = ?`, loop.id).Scan(&loopEvidence); err != nil {
+				return fmt.Errorf("reload loop %d evidence after collision: %w", loop.id, err)
+			}
+		}
+		evidence, err := remapSourceMergeLoopEvidence(loopEvidence, sourceConversationID, loopConversationID, messageSurvivors)
 		if err != nil {
 			return fmt.Errorf("remap evidence for loop %d: %w", loop.id, err)
 		}
 		turnKey, cycle := loop.turnKey, loop.cycle
 		if loop.detector == "turn_state" && loop.anchor.Valid &&
 			loop.turnKey == fmt.Sprintf("turn:%d:%s:%d", sourceConversationID, loop.kind, loop.anchor.Int64) {
-			turnKey = fmt.Sprintf("turn:%d:%s:%d", destinationConversationID, loop.kind, anchor.Int64)
+			turnKey = fmt.Sprintf("turn:%d:%s:%d", loopConversationID, loop.kind, anchor.Int64)
 			if turnKey != loop.turnKey {
 				var maxCycle int64
 				if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(cycle), 0) FROM open_loops WHERE turn_key = ? AND id <> ?`, turnKey, loop.id).Scan(&maxCycle); err != nil {
@@ -450,7 +457,7 @@ func (s *Store) transferSourceMergeLoopReferences(
 		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id = ?, source_id = ?,
 			turn_key = ?, cycle = ?, anchor_message_id = ?, last_activity_message_id = ?,
 			closed_message_id = ?, evidence_json = ? WHERE id = ?`,
-			destinationConversationID, destinationSourceID, turnKey, cycle, anchor, activity, closedMessage, string(evidence), loop.id); err != nil {
+			loopConversationID, destinationSourceID, turnKey, cycle, anchor, activity, closedMessage, string(evidence), loop.id); err != nil {
 			return err
 		}
 	}

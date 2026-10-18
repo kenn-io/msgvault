@@ -124,6 +124,34 @@ func TestServiceWaitingFreshnessAndGrouping(t *testing.T) {
 	assertions.Equal("A question", detail.Loop.Evidence[0].Subject)
 }
 
+func TestServiceFreshnessIncludesConfiguredChatwootWithoutArchiveRows(t *testing.T) {
+	requirements := require.New(t)
+	_, f, now, _ := serviceFixture(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Accounts = []config.AccountSchedule{{Email: f.Source.Identifier, Enabled: false}}
+	cfg.Chatwoot = []config.ChatwootSource{{
+		Identifier: "support", URL: "https://support.example.test", AccountID: 7,
+		Enabled: true, Schedule: "0 * * * *",
+	}}
+	service, err := NewService(f.Store, cfg, func(context.Context) (freshness.ProjectionState, error) {
+		return freshness.ProjectionState{ComputedAt: &now}, nil
+	})
+	requirements.NoError(err)
+
+	report, err := service.Freshness(t.Context(), now, nil)
+	requirements.NoError(err)
+	requirements.True(report.Stale, "an enabled Chatwoot account without an archive source must block a fresh ranking")
+	var found bool
+	for _, source := range report.Sources {
+		if source.SourceType == "chatwoot" && source.Identifier == "support" {
+			found = true
+			requirements.True(source.Stale)
+			requirements.Nil(source.SourceID)
+		}
+	}
+	requirements.True(found, "configured Chatwoot sources remain visible without archive rows")
+}
+
 func TestServiceWaitingExcludesSnoozedAndAwaitingReply(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

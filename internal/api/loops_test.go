@@ -119,6 +119,34 @@ func loopHTTPRequest(t *testing.T, server *api.Server, method, path, body, agent
 	return response
 }
 
+func TestLoopDeletesUseDocumentedOperationsForHandlerAuthorization(t *testing.T) {
+	f := newLoopHTTPFixture(t)
+	personID := f.personID
+	created, err := f.store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "person", PersonID: &personID,
+	}, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, created.Suppression)
+
+	var seen []api.Operation
+	handler := f.server.Handler(func(_ http.ResponseWriter, _ *http.Request, operation api.Operation) bool {
+		seen = append(seen, operation)
+		return true
+	})
+	for _, path := range []string{
+		fmt.Sprintf("/api/v1/loops/%d/snooze", f.loopID),
+		fmt.Sprintf("/api/v1/loops/suppressions/%d", created.Suppression.ID),
+	} {
+		request := httptest.NewRequest(http.MethodDelete, path, nil)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+	}
+
+	require.Len(t, seen, 2)
+	assert.Equal(t, api.Operation{ID: "unsnoozeOpenLoop", Method: http.MethodDelete, Path: "/api/v1/loops/{id}/snooze"}, seen[0])
+	assert.Equal(t, api.Operation{ID: "deleteLoopSuppression", Method: http.MethodDelete, Path: "/api/v1/loops/suppressions/{id}"}, seen[1])
+}
+
 func TestLoopHTTPInvalidActionsNameLoopRequests(t *testing.T) {
 	f := newLoopHTTPFixture(t)
 	for _, path := range []string{fmt.Sprintf("/api/v1/loops/%d/done", f.loopID), fmt.Sprintf("/api/v1/loops/%d/snooze", f.loopID), "/api/v1/loops/suppressions"} {

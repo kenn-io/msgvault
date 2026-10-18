@@ -107,6 +107,10 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 			item.Scheduling = "static"
 			item.SyncCommand = ""
 		}
+		if item.SourceType == "beeper" && !cfg.Beeper.AccountIncluded(item.Identifier) {
+			item.Scheduling = "disabled"
+			item.SyncCommand = ""
+		}
 		item.Outcome, err = st.LatestSyncOutcomeContext(ctx, source.ID)
 		if err != nil {
 			return nil, fmt.Errorf("read latest freshness sync: %w", err)

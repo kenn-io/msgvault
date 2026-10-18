@@ -25,7 +25,10 @@ func TestParseAutomationSignals(t *testing.T) {
 		{"empty unsubscribe", "List-Unsubscribe:\n", AutomationSignals{ListUnsubscribe: true}},
 		{"reply address", "Reply-To: Alex Example <alex@example.test>\n", AutomationSignals{}},
 		{"no reply", "Reply-To: Example <NO-REPLY+case@example.test>\n", AutomationSignals{ReplyToNoReply: true}},
-		{"multiple reply addresses", "Reply-To: alex@example.test, notifications@example.test\n", AutomationSignals{ReplyToNoReply: true}},
+		{"multiple reply addresses with explicit no reply", "Reply-To: alex@example.test, noreply@example.test\n", AutomationSignals{ReplyToNoReply: true}},
+		{"support reply address is monitored", "Reply-To: support@example.test\n", AutomationSignals{}},
+		{"hello reply address is monitored", "Reply-To: hello@example.test\n", AutomationSignals{}},
+		{"notifications reply address is monitored", "Reply-To: notifications@example.test\n", AutomationSignals{}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			for _, newline := range []string{"\n", "\r\n"} {

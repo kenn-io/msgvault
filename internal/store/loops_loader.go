@@ -210,6 +210,31 @@ AND NOT EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation
 			if err != nil {
 				return err
 			}
+			rows, err = tx.QueryContext(ctx, `SELECT message_id, email_address FROM message_recipients
+				WHERE message_id IN (`+placeholders+`) AND LOWER(TRIM(recipient_type)) = 'from'
+				AND TRIM(COALESCE(email_address, '')) <> '' ORDER BY message_id, id`, ids...)
+			if err != nil {
+				return err
+			}
+			seenFrom := make(map[int64]bool)
+			for rows.Next() {
+				var id int64
+				var address string
+				if err := rows.Scan(&id, &address); err != nil {
+					_ = rows.Close()
+					return err
+				}
+				if seenFrom[id] {
+					continue
+				}
+				seenFrom[id] = true
+				out.Messages[positions[id]].Sender.EmailAddress = strings.TrimSpace(address)
+			}
+			err = rows.Err()
+			_ = rows.Close()
+			if err != nil {
+				return err
+			}
 			rows, err = tx.QueryContext(ctx, `SELECT message_id,auto_submitted,precedence_bulk,list_unsubscribe,calendar_part,reply_to_noreply,parser_version FROM message_automation_signals WHERE message_id IN (`+placeholders+`)`, ids...)
 			if err != nil {
 				return err

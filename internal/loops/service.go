@@ -124,7 +124,7 @@ func (s *Service) Freshness(ctx context.Context, now time.Time, sourceIDs []int6
 	}
 	filtered := make([]freshness.SourceInventoryItem, 0, len(items))
 	for _, item := range items {
-		if slices.Contains(freshness.EmailSourceTypes, item.SourceType) || slices.Contains(freshness.ChatSourceTypes, item.SourceType) || (item.SourceID != nil && slices.Contains(sourceIDs, *item.SourceID)) {
+		if messageSourceTypes[item.SourceType] || (item.SourceID != nil && slices.Contains(sourceIDs, *item.SourceID)) {
 			filtered = append(filtered, item)
 		}
 	}

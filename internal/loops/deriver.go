@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechsms"
 )
 
 // Deriver applies bounded, resumable batches to the daemon-owned projection.
@@ -73,6 +74,9 @@ func (d *Deriver) RunOnce(ctx context.Context) (result RunResult, err error) {
 	}()
 	if err = ctx.Err(); err != nil {
 		return result, err
+	}
+	if _, err = synctechsms.BackfillNativeSendStateContext(ctx, d.st); err != nil {
+		return result, fmt.Errorf("backfill Synctech SMS native send state: %w", err)
 	}
 	epoch, err := d.prepareRescan(ctx, now)
 	if err != nil {
