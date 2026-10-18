@@ -1727,6 +1727,71 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
 	assert.True(s.HasAttachments, "HasAttachments")
 }
+
+func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	deletedAt, err := time.Parse(time.RFC3339Nano, "2026-03-18T15:00:00.123456789-07:00")
+	require.NoError(err)
+	epoch := time.Unix(0, 0).UTC()
+	fixtures := map[string]map[string]any{
+		"/api/v1/messages/42": {"id": 42, "deleted_at": deletedAt.Format(time.RFC3339Nano)},
+		"/api/v1/messages/7":  {"id": 7},
+		"/api/v1/messages/99": {"id": 99, "deleted_at": nil},
+		"/api/v1/messages/3":  {"id": 3, "deleted_at": epoch.Format(time.RFC3339Nano)},
+	}
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		fixture, ok := fixtures[r.URL.Path]
+		assert.True(ok, "unexpected path: %s", r.URL.Path)
+		writeJSONResponse(t, w, fixture)
+	})
+	engine := NewEngineAdapter(store)
+	ids := []int64{42, 7, 99, 3, 42}
+	want := []*time.Time{&deletedAt, nil, nil, &epoch, &deletedAt}
+
+	summaries, err := engine.GetMessageSummariesByIDs(context.Background(), ids)
+	require.NoError(err)
+	require.Len(summaries, len(ids))
+	for i, summary := range summaries {
+		assert.Equal(ids[i], summary.ID)
+		if want[i] == nil {
+			assert.Nil(summary.DeletedAt, "message %d", summary.ID)
+			continue
+		}
+		require.NotNil(summary.DeletedAt, "message %d", summary.ID)
+		assert.Equal(want[i].UTC(), summary.DeletedAt.UTC(), "message %d", summary.ID)
+	}
+}
+
+func FuzzEngineGetMessageSummariesByIDsDeletedAt(f *testing.F) {
+	for _, deletedAt := range []string{
+		"1970-01-01T00:00:00Z",
+		"2026-03-18T15:00:00Z",
+		"2026-03-18T15:00:00.000000001+05:30",
+		"2026-03-18T15:00:00.999999999-07:00",
+		"9999-12-31T23:59:59.999999999Z",
+		"0001-01-01T00:00:00Z",
+		"",
+		"invalid",
+	} {
+		f.Add(deletedAt)
+	}
+	f.Fuzz(func(t *testing.T, deletedAt string) {
+		store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+			writeJSONResponse(t, w, map[string]any{"id": 42, "deleted_at": deletedAt})
+		})
+		engine := NewEngineAdapter(store)
+		detail, err := engine.GetMessage(context.Background(), 42)
+		require.NoError(t, err)
+		require.NotNil(t, detail)
+
+		summaries, err := engine.GetMessageSummariesByIDs(context.Background(), []int64{42})
+		require.NoError(t, err)
+		require.Len(t, summaries, 1)
+		assert.Equal(t, detail.DeletedAt, summaries[0].DeletedAt)
+	})
+}
+
 func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

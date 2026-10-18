@@ -916,6 +916,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			Subject:              md.Subject,
 			Snippet:              md.Snippet,
 			SentAt:               md.SentAt,
+			DeletedAt:            md.DeletedAt,
 			SizeEstimate:         md.SizeEstimate,
 			HasAttachments:       md.HasAttachments,
 			AttachmentCount:      len(md.Attachments),
