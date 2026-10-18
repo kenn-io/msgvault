@@ -220,6 +220,46 @@ func TestTierEnrichmentOptOutRestoresManualTriggerForResumedAttempt(t *testing.T
 	require.NoError(t, f.store.AuthorizeAttemptPoll(t.Context(), resumed.Token))
 }
 
+func TestTierEnrichmentOptOutRestoresManualTriggerBeforeAttemptStarts(t *testing.T) {
+	f := newTierEnrichmentFixture(t)
+	run, _, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profile.Fingerprint, "manual-unstarted-opt-out", f.now)
+	require.NoError(t, err)
+
+	lease := f.claim(t, run.ID, "manual-worker")
+	require.Nil(t, lease.ActiveAttempt)
+	assert.Equal(t, "manual:manual-unstarted-opt-out", lease.Trigger.Generation)
+
+	require.NoError(t, f.store.EnqueuePersonEnrichmentContext(t.Context(), store.EnrichmentTriggerInput{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		Kind: personenrichment.TriggerTracked, Generation: "scheduled-before-attempt", DueAt: f.now,
+	}))
+	coalesced := f.work(t)
+	require.Len(t, coalesced, 1)
+	assert.True(t, coalesced[0].HasFreshTrigger)
+	assert.Equal(t, "scheduled-before-attempt", coalesced[0].TriggerGeneration)
+
+	require.NoError(t, f.store.SetPersonTierOptOutContext(
+		t.Context(), f.person.ID, "enrichment", true, "owner", "pause scheduled enrichment"))
+	work := f.work(t)
+	require.Len(t, work, 1)
+	assert.Equal(t, int64(16), work[0].TriggerMask)
+	assert.Equal(t, "manual:manual-unstarted-opt-out", work[0].TriggerGeneration)
+	assert.False(t, work[0].HasFreshTrigger)
+	assert.Nil(t, work[0].ActiveAttemptID)
+
+	f.setNow(lease.LeaseUntil)
+	resumed := f.claim(t, run.ID, "manual-worker-after-restart")
+	assert.Equal(t, personenrichment.TriggerManual, resumed.Trigger.Kind)
+	assert.Equal(t, "manual:manual-unstarted-opt-out", resumed.Trigger.Generation)
+
+	start := tierEnrichmentAttemptStart(&f, run.ID, "c")
+	start.Trigger = resumed.Trigger
+	attempt, _, err := f.store.BeginAttempt(t.Context(), resumed.Token, start)
+	require.NoError(t, err)
+	assert.Equal(t, "manual:manual-unstarted-opt-out", attempt.Trigger.Generation)
+}
+
 func TestTierEnrichmentManualWorkRemainsClaimableAfterBudgetDeferral(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

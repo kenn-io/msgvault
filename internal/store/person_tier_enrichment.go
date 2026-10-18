@@ -144,14 +144,20 @@ func (s *Store) cancelScheduledPersonEnrichmentTx(
 		return fmt.Errorf("delete scheduled person enrichment work: %w", err)
 	}
 	// A fresh scheduled publication can replace a leased manual mask and
-	// generation. The immutable exact target and its active attempt remain
-	// authoritative for the manual bit and generation.
+	// generation. The immutable exact target and its manual run key remain
+	// authoritative until an active attempt supplies its generation.
 	if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work AS w
   SET trigger_mask = 16,
       trigger_generation = COALESCE(
         (SELECT a.trigger_generation FROM person_enrichment_attempts a
          WHERE a.id = w.active_attempt_id AND a.run_id = w.run_id
            AND a.trigger_kind = 'manual'),
+        (SELECT 'manual:' || r.requested_by
+         FROM person_enrichment_runs r
+         JOIN person_enrichment_manual_run_targets manual_target ON manual_target.run_id = r.id
+         WHERE r.id = w.run_id AND r.kind = 'manual'
+           AND manual_target.person_id = w.person_id
+           AND manual_target.profile_fingerprint = w.profile_fingerprint),
         w.trigger_generation),
       has_fresh_trigger = FALSE
   WHERE w.person_id = ? AND `+personEnrichmentExactManualTargetSQL("w"), personID); err != nil {
