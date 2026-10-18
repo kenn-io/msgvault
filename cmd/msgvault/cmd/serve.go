@@ -165,9 +165,9 @@ func (s serveSchedulers) Stop() context.Context {
 }
 
 // newServeSchedulers returns the daemon scheduler, whose jobs hold the
-// operation gate, and one for Beeper media delivery. A media upload can run
-// for minutes, so that job takes the gate only around its Store writes.
-// Media passes do not count as activity; shutdown cancels and drains them.
+// operation gate, and one for jobs that acquire admission for bounded steps.
+// Media delivery and people tier evaluation release the gate between steps.
+// These passes do not count as activity; shutdown cancels and drains them.
 func newServeSchedulers(
 	syncFunc scheduler.SyncFunc, logger *slog.Logger, idle scheduler.WorkTracker, gate api.LabeledOperationGate,
 ) (*scheduler.Scheduler, *scheduler.Scheduler) {
@@ -541,6 +541,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerActivityProjectionJob(
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
+	}
+	if err := registerPeopleTierJob(mediaSched, s, cfg, operationGate, logger); err != nil {
+		return fmt.Errorf("schedule people tiers: %w", err)
 	}
 	if cfg.People.Sweep.Enabled {
 		if err := cfg.People.Sweep.Validate(); err != nil {

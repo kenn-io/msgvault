@@ -58,6 +58,14 @@ func (e *RescheduleError) Unwrap() []error { return []error{ErrReschedule, e.Err
 // ErrDeferUntilNextTrigger finishes this attempt without an immediate follow-up.
 var ErrDeferUntilNextTrigger = errors.New("scheduled job deferred until next trigger")
 
+// DeferError finishes this attempt without an immediate follow-up and records
+// Err as the run's failure, even when its runtime budget has expired.
+type DeferError struct{ Err error }
+
+func (e *DeferError) Error() string { return e.Err.Error() }
+
+func (e *DeferError) Unwrap() error { return e.Err }
+
 // yieldPollInterval is how often a running scheduled job checks for waiters.
 // Variable only so tests can shorten it.
 var yieldPollInterval = 5 * time.Second
@@ -898,6 +906,11 @@ func (s *Scheduler) runJob(name string, run func(context.Context) error) error {
 		delete(s.genericLastErr, name)
 		s.genericLastRun[name] = time.Now()
 		return nil
+	}
+	if _, deferred := errors.AsType[*DeferError](err); deferred {
+		delete(s.genericPending, name)
+		s.genericLastErr[name] = err
+		return err
 	}
 	budgetExpired := errors.Is(context.Cause(runCtx), jobctx.ErrRunBudgetExceeded)
 	if budgetExpired && !jobctx.HasProgress(runCtx) {

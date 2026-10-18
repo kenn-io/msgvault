@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-08"
+last_edited: "2026-10-17"
 title: External Person Enrichment
 description: Look up public profile information with explicit provider policies, request limits, and opt-outs.
 ---
@@ -13,6 +13,29 @@ facts extracted from your archive.
 Enrichment is disabled by default. Each provider needs its own policy, request
 limits, and consent. Existing [fact pins](/docs/usage/people-automation/#understand-and-correct-automatic-facts)
 also apply to enrichment results.
+
+## Which people can receive scheduled lookups?
+
+Manual tracking permits scheduled enrichment unless the person has an
+`enrichment` lane opt-out. Automatic tracking requires enrichment eligibility
+saved by a tier apply, normally Tier 1. Tier 2 tracking alone does not authorize
+a scheduled provider request. See [profile automation](people-automation.md#preview-selection-from-interaction-patterns)
+for tier selection and rollout; tier functionality is unreleased on `main`.
+
+Every request still needs a consented policy, allowed identifiers, no applicable
+suppression, and remaining provider limits. Editing `tier1_lanes` alone changes
+no authority; the next apply saves the new eligibility. Turning tier apply off
+freezes existing grants and eligibility. Reset removes automatic grants while
+preserving manual choices.
+
+`person tiers opt-out 7 --lane enrichment` cancels scheduled work even when
+tracking is manual. It preserves an exact manual run's target, attempt, dispatch,
+and result path. A manually requested enrichment run remains allowed for a
+tracked person with provider consent, including an automatically tracked Tier 2
+person. Demotion or reset that would remove tracking waits for such a target to
+finish and reports the open run ID. `person untrack` removes
+all tracking authority and invalidates open enrichment work, including manual
+requests.
 
 ## Choose a provider and eligible identifiers
 

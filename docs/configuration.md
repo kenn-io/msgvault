@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -92,6 +92,90 @@ Set `enabled = false` to disable scoring in the configuration. See
 [identity scoring](usage/people.md#optional-identity-scoring) for the workflow
 and [the API reference](api-server.md#identity-match-review-and-scoring) for
 endpoints.
+
+## People tiers
+
+`[people.tiers]` selects maintenance for saved profiles from archived
+interaction metadata. It is disabled by default. Manual preview and apply
+commands remain available while scheduling is disabled. See
+[profile automation](usage/people-automation.md#preview-selection-from-interaction-patterns)
+for rollout, manual precedence, opt-outs, and reset. These settings are
+unreleased functionality on `main`.
+
+```toml
+[people.tiers]
+enabled = true
+apply = false
+schedule = "45 1 * * *"
+short_window_days = 90
+long_window_days = 365
+demotion_grace_days = 30
+minimum_tier = 3
+tier1_lanes = ["tracking", "briefs", "enrichment"]
+tier2_lanes = ["tracking"]
+exclude_list_messages = true
+preview_retention_days = 90
+```
+
+| Key | Default | Contract |
+|---|---|---|
+| `enabled` | `false` | Register the `people-tiers` scheduled job. |
+| `apply` | `false` | Record observations and shadow history. `true` also changes automatic grants and applied authority. Turning it off freezes existing applied state. |
+| `schedule` | `45 1 * * *` | Five-field cron expression, thirty minutes before the default sweep. |
+| `short_window_days` | `90` | Inclusive calendar days ending on the evaluation date in `[activity] timezone`. At least 1. |
+| `long_window_days` | `365` | At least the short window and at most 3650. |
+| `demotion_grace_days` | `30` | Calendar days below the applied tier before demotion; 0–365. Readiness and open manual work can defer it. |
+| `minimum_tier` | `3` | `2` or `3`. `2` floors saved profiles at Tier 2 when they pass hard exclusions, including profiles without linked participants. Default Tier 2 lanes track them, subject to manual opt-outs. It never creates profiles. |
+| `tier1_lanes` | `["tracking", "briefs", "enrichment"]` | Unique maintenance lanes granted at Tier 1. |
+| `tier2_lanes` | `["tracking"]` | Unique subset of Tier 1 lanes; cannot include `enrichment`. |
+| `exclude_list_messages` | `true` | Exclude events with a non-null message `list_id`. |
+| `exclude_address_patterns` | See below | Automated email local parts. Every linked email must match, and the profile must have no phone or chat identifiers, for exclusion. |
+| `exclude_domain_patterns` | `["resource.calendar.google.com"]` | Calendar-resource domains. Every linked email domain must match for exclusion. |
+| `preview_retention_days` | `90` | Keep scheduled preview audit rows for 1–3650 days. Applied audit rows remain until person deletion. |
+
+A `briefs` lane requires `tracking` in the same tier. Globally disabled sweep,
+brief, or enrichment settings keep their workers idle; they do not stop a tier
+apply from recording its lane grants. Enrichment authority reads the lanes saved
+by apply, so editing configuration alone cannot authorize a provider request.
+
+Patterns must be lower-case, nonempty, and contain no `@` or whitespace. A
+trailing `*` matches a prefix; otherwise the entire local part or domain must
+match. No other wildcard is accepted. Default automated local parts are:
+
+```toml
+exclude_address_patterns = [
+  "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+  "notification", "notifications", "mailer-daemon", "postmaster",
+  "bounce", "bounces", "newsletter", "digest", "alerts", "calendar-notification"
+]
+```
+
+Thresholds are rules, not a weighted score:
+
+| Table and key | Default | Meaning |
+|---|---|---|
+| `people.tiers.tier1.min_outbound_short` | `2` | Required outbound messages in the short window. |
+| `people.tiers.tier1.min_inbound_short` | `2` | Required inbound messages in the short window. |
+| `people.tiers.tier1.min_active_days_short` | `6` | Active days for the intensity path. |
+| `people.tiers.tier1.breadth_min_active_days_short` | `3` | Active days for the breadth path. |
+| `people.tiers.tier1.breadth_min_channels_long` | `2` | Channels for the breadth alternative; `0` disables it, otherwise at least 2. |
+| `people.tiers.tier1.breadth_min_meeting_days_long` | `2` | Meeting days for the breadth alternative; `0` disables it. |
+| `people.tiers.tier2.min_outbound_long` | `1` | Required outbound messages for the two-way path. |
+| `people.tiers.tier2.min_inbound_long` | `1` | Required inbound messages for the two-way path. |
+| `people.tiers.tier2.min_active_days_long` | `3` | Active days for the two-way path. |
+| `people.tiers.tier2.min_meeting_days_long` | `2` | Meeting-only alternative; `0` disables it. |
+
+All other thresholds must be at least 1. Tier 1 requires both short-window
+message thresholds and either intensity or breadth. Tier 2 requires all three
+two-way thresholds or the meeting alternative. Meeting days are distinct dates,
+so duplicate imports on one day do not inflate them. `explain` shows each
+observed value, required value, enabled alternative, and result.
+
+A run freezes semantic settings, timezone, direct-counterpart limit, and its
+evaluation date across continuations and daemon restarts. Changes to operational
+switches take effect on the next run; retention is applied when a run finishes.
+Turning scheduling or apply off does not remove earlier automatic grants. Use
+`person tiers reset --yes` to remove automatic authority explicitly.
 
 ## People sweep inference
 

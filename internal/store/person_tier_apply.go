@@ -22,6 +22,10 @@ func (s *Store) ApplyPersonTierDecisionContext(ctx context.Context, run PersonTi
 }
 
 func (s *Store) applyPersonTierDecisionContext(ctx context.Context, run PersonTierRun, input PersonTierInput) (PersonTierInput, error) {
+	return s.applyPersonTierDecisionWithCheckpointContext(ctx, run, input, "")
+}
+
+func (s *Store) applyPersonTierDecisionWithCheckpointContext(ctx context.Context, run PersonTierRun, input PersonTierInput, checkpointCursor string) (PersonTierInput, error) {
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
 			return err
@@ -47,7 +51,7 @@ func (s *Store) applyPersonTierDecisionContext(ctx context.Context, run PersonTi
 			return ErrPersonTierRunSuperseded
 		}
 		if run.Mode == "apply" && priorRunID == run.RunID {
-			return nil
+			return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 		}
 		loc, _ := time.LoadLocation(run.Timezone)
 		asOf := run.AsOf.In(loc)
@@ -65,8 +69,10 @@ func (s *Store) applyPersonTierDecisionContext(ctx context.Context, run PersonTi
 			if err = s.recordPersonTierObservationTx(ctx, tx, run, input, actor, now); err != nil {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, personTierFailureKey(input.PersonID))
-			return err
+			if _, err = tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, personTierFailureKey(input.PersonID)); err != nil {
+				return err
+			}
+			return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 		}
 		wasEligible, err := s.personEnrichmentScheduledEligibleTx(ctx, tx, input.PersonID)
 		if err != nil {
@@ -133,11 +139,23 @@ func (s *Store) applyPersonTierDecisionContext(ctx context.Context, run PersonTi
 		if err = s.recordPersonTierObservationTx(ctx, tx, run, input, actor, now); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, personTierFailureKey(input.PersonID))
-		return err
+		if _, err = tx.ExecContext(ctx, `DELETE FROM archive_metadata WHERE key=?`, personTierFailureKey(input.PersonID)); err != nil {
+			return err
+		}
+		return s.persistPersonTierRunCheckpointTx(ctx, tx, run, checkpointCursor)
 	})
 	return input, err
 }
+
+func (s *Store) persistPersonTierRunCheckpointTx(ctx context.Context, tx *loggedTx, run PersonTierRun, cursor string) error {
+	if cursor == "" || run.Kind != "scheduled" {
+		return nil
+	}
+	checkpoint := run
+	checkpoint.Cursor = cursor
+	return putPersonTierMetadataTx(ctx, tx, personTierRunKey(run.Kind), checkpoint)
+}
+
 func personTierEventReason(d persontiers.Decision) string {
 	if d.DeferredReason != "" {
 		return "deferred"
