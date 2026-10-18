@@ -503,13 +503,6 @@ Run it again until the summary says the sync is complete.
 - **Call details.** Phone numbers, direction, status and duration stay as
   provider evidence. A phone number is not treated as proof of who spoke.
 
-Stored WAV recordings also reach Docbank when `[integrations.docbank]` has
-`enabled = true` and `all_sources_upload_consent = true`. Without upload consent,
-the job only records local discovery. See
-[Send stored audio to Docbank](../configuration.md#send-stored-audio-to-docbank)
-for credentials and optional audio processing. Twilio transcripts remain in the
-meeting archive; this route sends the recording audio without a supplied transcript.
-
 Summaries and action items are not available from Twilio. A call with audio
 but no transcript shows the transcript as unavailable. An encrypted recording
 is archived as an unavailable attachment with no audio. Recordings kept on
