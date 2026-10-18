@@ -89,6 +89,11 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		anchorInWindow := slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
 		needsOwnerParticipationEvidence := l.Kind == ReplyOwed && l.OwnerParticipationMessageID == 0
+		if l.Kind == ReplyOwed && l.OwnerParticipationMessageID != 0 {
+			anchorIndex := slices.IndexFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
+			needsOwnerParticipationEvidence = anchorIndex >= 0 && isBulkMessage(settlementView.Messages[anchorIndex]) &&
+				!slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.OwnerParticipationMessageID })
+		}
 		if (!anchorInWindow || needsOwnerParticipationEvidence) && !extended && view.Extend != nil {
 			var err error
 			settlementView, err = view.Extend()
@@ -234,7 +239,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			closeKept(kind, "withdrawn")
 			if bulk && !ownerWrote {
 				for _, loop := range live {
-					if anchorID, unproven := unprovenBulkAnchors[loop.ID]; unproven && anchorID == anchor.ID {
+					if anchorID, unproven := unprovenBulkAnchors[loop.ID]; unproven && slices.ContainsFunc(trailing.messages, func(message LoopMessage) bool { return message.ID == anchorID }) {
 						closeLive(loop, "withdrawn")
 					}
 				}

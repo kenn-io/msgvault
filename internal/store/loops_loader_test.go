@@ -52,7 +52,7 @@ func TestLoopLoaderOrderAndNativeDirection(t *testing.T) {
 	assertions.ErrorIs(err, store.ErrInvalidLoop)
 }
 
-func TestLoopLoaderMarksCurrentProviderDrafts(t *testing.T) {
+func TestLoopLoaderExcludesCurrentProviderDrafts(t *testing.T) {
 	for _, provider := range []string{"gmail", "imap"} {
 		t.Run(provider, func(t *testing.T) {
 			requirements := require.New(t)
@@ -106,30 +106,48 @@ func TestLoopLoaderMarksCurrentProviderDrafts(t *testing.T) {
 				requirements.NoError(persistErr)
 				messageID = draft.CurrentMessageID
 			}
+			ownerID, err := f.Store.EnsureParticipant("owner@example.test", "", "example.test")
+			requirements.NoError(err)
+			peerID, err := f.Store.EnsureParticipant("peer@example.test", "", "example.test")
+			requirements.NoError(err)
+			controlID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: sourceID.ID, SourceMessageID: "sent-control",
+					ConversationID: conversationID, MessageType: store.MessageTypeEmail,
+					SenderID: sql.NullInt64{Int64: ownerID, Valid: true},
+					SentAt:   sql.NullTime{Time: time.Date(2026, 10, 17, 13, 0, 0, 0, time.UTC), Valid: true},
+					IsFromMe: true,
+				},
+				Recipients: []store.RecipientSet{
+					{Type: "from", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{"owner@example.test"}},
+					{Type: "to", ParticipantIDs: []int64{peerID}, EmailAddresses: []string{"peer@example.test"}},
+				},
+			})
+			requirements.NoError(err)
 
 			view, err := f.Store.LoadLoopConversationContext(t.Context(), conversationID, 10)
 			requirements.NoError(err)
 			requirements.Len(view.Messages, 1)
-			assertions.Equal(messageID, view.Messages[0].ID)
+			assertions.Equal(controlID, view.Messages[0].ID)
+			assertions.NotEqual(messageID, view.Messages[0].ID)
 			assertions.Equal(store.DirectionOutbound, view.Messages[0].Direction)
-			assertions.True(view.Messages[0].Draft)
+			assertions.False(view.Messages[0].Draft)
 		})
 	}
 }
 
-func TestLoopLoaderOrdersUntimedMessagesAfterDatedMessages(t *testing.T) {
+func TestLoopLoaderExcludesUntimedMessages(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := storetest.New(t)
-	ids := f.CreateMessages(2)
+	ids := f.CreateMessages(3)
 	dated := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	loopExec(t, f.Store, "UPDATE messages SET sent_at=? WHERE id=?", loopTestStamp(f.Store, dated), ids[0])
+	loopExec(t, f.Store, "UPDATE messages SET sent_at=?,source_is_from_me=TRUE WHERE id=?", loopTestStamp(f.Store, dated), ids[1])
 
-	view, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 2)
+	view, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 3)
 	requirements.NoError(err)
-	requirements.Len(view.Messages, 2)
-	assertions.Equal(ids[0], view.Messages[0].ID, "PostgreSQL DESC ordering must not place NULL activity times first")
-	assertions.Equal(ids[1], view.Messages[1].ID)
+	requirements.Len(view.Messages, 1)
+	assertions.Equal(ids[1], view.Messages[0].ID, "the dated sent control must be returned")
 }
 
 func TestLoopListFiltersAndCursor(t *testing.T) {

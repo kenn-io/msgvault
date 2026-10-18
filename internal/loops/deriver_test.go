@@ -288,7 +288,7 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("open", preserved.Status)
 	assertions.Contains(string(preserved.EvidenceJSON), fmt.Sprintf(`"owner_participation_message_id":%d`, ownerMessageID))
-	assertions.NotContains(string(preserved.EvidenceJSON), `"coverage_gap":true`)
+	assertions.Contains(string(preserved.EvidenceJSON), `"coverage_gap":true`, "saved participation outside the extended window remains uncertain")
 	requirements.NotNil(preserved.SnoozedUntil)
 	assertions.True(until.Equal(*preserved.SnoozedUntil))
 	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)

@@ -48,7 +48,43 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 	}
 	bulkReplyAnchor := live.Kind == ReplyOwed && isBulkMessage(anchorMessage)
-	priorOwnerParticipation := ownerParticipationMessageID != 0
+	priorOwnerParticipation := false
+	ownerParticipationUncertain := false
+	if bulkReplyAnchor && ownerParticipationMessageID != 0 {
+		participation := -1
+		for i, message := range v.Messages {
+			if message.ID == ownerParticipationMessageID {
+				participation = i
+				break
+			}
+		}
+		if participation >= 0 {
+			message := v.Messages[participation]
+			if participation < anchor && message.Direction == Outbound && t.substantive(v, participation) {
+				priorOwnerParticipation = true
+			} else {
+				ownerParticipationMessageID = 0
+			}
+		} else if v.AnchorExists == nil {
+			// A pure detector may not have an archive lookup. Keep the persisted
+			// proof, but report that its current eligibility is unknown.
+			priorOwnerParticipation = true
+			ownerParticipationUncertain = true
+		} else {
+			exists, lookupErr := v.AnchorExists(ownerParticipationMessageID)
+			if lookupErr != nil {
+				return nil, false, nil, ownerParticipationMessageID, fmt.Errorf("check owner participation message: %w", lookupErr)
+			}
+			if exists {
+				// The current window cannot validate ownership or MIME eligibility
+				// for this older message. Preserve its proof until it is available.
+				priorOwnerParticipation = true
+				ownerParticipationUncertain = true
+			} else {
+				ownerParticipationMessageID = 0
+			}
+		}
+	}
 	if bulkReplyAnchor && !priorOwnerParticipation {
 		for i := anchor - 1; i >= 0; i-- {
 			if !t.substantive(v, i) {
@@ -81,13 +117,9 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, ownerParticipationMessageID, nil
 		}
 	}
-	laterSameSideActivity := false
 	for i := anchor + 1; i < len(v.Messages); i++ {
 		m := v.Messages[i]
 		if m.Direction == side {
-			if bulkReplyAnchor && !laterSameSideActivity {
-				laterSameSideActivity = t.substantive(v, i)
-			}
 			continue
 		}
 		if !t.substantive(v, i) {
@@ -95,10 +127,13 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		}
 		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, ownerParticipationMessageID, nil
 	}
-	if bulkReplyAnchor && !priorOwnerParticipation && !laterSameSideActivity {
+	if bulkReplyAnchor && !priorOwnerParticipation {
 		// A bounded metadata window cannot prove owner participation. Keep the
 		// anchor available to the detector, which requires durable participation
 		// evidence before allowing the bulk message to remain a reply owed.
+		return nil, true, &v.Messages[anchor], ownerParticipationMessageID, nil
+	}
+	if ownerParticipationUncertain {
 		return nil, true, &v.Messages[anchor], ownerParticipationMessageID, nil
 	}
 	if anchorUnreadable {
