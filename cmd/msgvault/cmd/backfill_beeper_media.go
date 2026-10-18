@@ -60,7 +60,7 @@ Examples:
 					)
 				}
 				writeBeeperMediaBackfillSummary(cmd.OutOrStdout(), accountID, sum)
-				writeBeeperRunFailures(ctx, cmd.OutOrStdout(), s, sum, accountID, "backfill-beeper-media", "backfill-beeper-media")
+				writeBeeperRunFailures(ctx, cmd.OutOrStdout(), s, sum, accountID, "backfill-beeper-media")
 			}
 
 			return rebuildCacheAfterWrite(dbPath, state)

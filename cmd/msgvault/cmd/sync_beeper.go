@@ -122,7 +122,7 @@ func runBeeperSyncAccounts(ctx context.Context, out io.Writer, s *store.Store, a
 		if sum != nil && (err == nil || errors.As(err, &partial)) {
 			printBeeperSummary(out, accountID, sum)
 		}
-		writeBeeperRunFailures(ctx, out, s, sum, accountID, "sync-beeper", "backfill-beeper-media")
+		writeBeeperRunFailures(ctx, out, s, sum, accountID, "sync-beeper")
 		if err != nil {
 			syncErrors = append(syncErrors, fmt.Sprintf("%s: %v", accountID, err))
 		}
@@ -130,7 +130,8 @@ func runBeeperSyncAccounts(ctx context.Context, out io.Writer, s *store.Store, a
 	return syncErrors
 }
 
-func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, sum *beeper.ImportSummary, accountID, fetchCmd, mediaCmd string) {
+func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, sum *beeper.ImportSummary, accountID, fetchCmd string) {
+	const mediaCmd = "backfill-beeper-media"
 	if sum == nil || sum.Errors == 0 {
 		return
 	}
