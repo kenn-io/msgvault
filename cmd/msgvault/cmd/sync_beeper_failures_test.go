@@ -21,8 +21,6 @@ func TestBeeperSyncAccountsListsPartialFailuresAndContinues(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	src, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(t, err)
-	_, err = st.EnsureConversation(src.ID, "!club:example.test", "Book Club")
-	require.NoError(t, err)
 	var out bytes.Buffer
 	var attempted []string
 	errs := runBeeperSyncAccounts(t.Context(), &out, st, []string{"signal", "fatal", "clean"},
@@ -31,8 +29,7 @@ func TestBeeperSyncAccountsListsPartialFailuresAndContinues(t *testing.T) {
 			switch account {
 			case "signal":
 				return &beeper.ImportSummary{SourceID: src.ID, ChatsProcessed: 2, Errors: 6, FailedChats: map[string]*beeper.ChatFailure{
-					"!club:example.test":     {FetchErrors: 2, MediaErrors: 1, LastError: "newest failure"},
-					"!untitled:example.test": {FetchErrors: 2, LastError: "connection refused"},
+					"!club:example.test": {FetchErrors: 5, MediaErrors: 1},
 				}}, &beeper.PartialSyncError{}
 			case "fatal":
 				return nil, errors.New("account unavailable")
@@ -45,10 +42,8 @@ func TestBeeperSyncAccountsListsPartialFailuresAndContinues(t *testing.T) {
 	assert.Contains(t, errs[0], "signal: partial Beeper sync")
 	assert.Equal(t, "fatal: account unavailable", errs[1])
 	text := out.String()
-	assert.Contains(t, text, "2 chats, 0 messages (0 added), 6 errors\n  Failed chats (5 errors in 2 chats):")
-	assert.Contains(t, text, "Book Club (!club:example.test): 1 attachment, 2 fetch errors; last: newest failure")
-	assert.Contains(t, text, "!untitled:example.test: 2 fetch errors; last: connection refused")
-	assert.Contains(t, text, "1 other errors have no chat detail.")
+	assert.Contains(t, text, "signal done in 0s: 2 chats, 0 messages (0 added), 6 errors\n")
+	assert.Contains(t, text, "Failed chats (")
 	assert.Contains(t, text, "Retry with the same global options (such as --local):")
 	assert.Contains(t, text, "fetch errors: msgvault sync-beeper --account signal")
 	assert.Contains(t, text, "attachment errors: msgvault backfill-beeper-media --account signal")

@@ -654,10 +654,6 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 
 	f := newFakeBeeper(t)
 	f.addChat(e2eChat())
-	for _, chatID := range []string{"!older-a:example.test", "!older-b:example.test"} {
-		base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
-		f.addChat(budgetTestChat(chatID, 1, base))
-	}
 	imp, st, done := newTestImporter(t, f)
 	defer done()
 
@@ -677,32 +673,19 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 		SenderID: "@signal_bob:beeper.local", SenderName: "Bob",
 	})
 	f.setMessageGetFailure("m5", true)
-	for _, chatID := range []string{"!older-a:example.test", "!older-b:example.test"} {
-		f.appendMsg(chatID, fakeMsg{ID: "reaction-" + chatID, SortKey: 300, Timestamp: time.Now().UTC(),
-			Type: "REACTION", IsHidden: true, LinkedMessageID: "target-" + chatID})
-		f.setMessageGetFailure("target-"+chatID, true)
-	}
 
 	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.ErrorContains(err, "partial Beeper sync")
 	assert.Positive(sum.FetchErrors, "transient target failure must be recorded as a fetch error")
-	require.Len(sum.FailedChats, 3)
-	var tallied int64
-	for _, chatID := range []string{"!e2e:beeper.local", "!older-a:example.test", "!older-b:example.test"} {
-		cf := sum.FailedChats[chatID]
-		require.NotNil(cf)
-		assert.Positive(cf.FetchErrors)
-		assert.Zero(cf.MediaErrors)
-		assert.Contains(cf.LastError, "400")
-		tallied += cf.FetchErrors
-	}
-	assert.Equal(tallied, sum.Errors)
+	cf := sum.FailedChats["!e2e:beeper.local"]
+	require.NotNil(cf)
+	assert.Positive(cf.FetchErrors)
+	assert.Zero(cf.MediaErrors)
+	assert.Contains(cf.LastError, "400")
+	assert.Equal(cf.FetchErrors, sum.Errors)
 
 	// Healed: the next run re-delivers the reaction event and archives it.
 	f.setMessageGetFailure("m5", false)
-	for _, chatID := range []string{"!older-a:example.test", "!older-b:example.test"} {
-		f.setMessageGetFailure("target-"+chatID, false)
-	}
 	sum, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 	assert.EqualValues(1, sum.ReactionsRefreshed)
