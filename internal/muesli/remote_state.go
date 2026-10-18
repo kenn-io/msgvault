@@ -9,18 +9,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.kenn.io/kit/atomicfile"
 )
 
-// remoteUploads remembers the digest of each meeting payload a daemon
-// acknowledged, so scheduled rescans upload only new or edited meetings. It is
-// a cache: losing it costs one full re-upload, never archive data.
+// remoteUploads remembers acknowledged meeting payloads and recording hashes,
+// so scheduled rescans only send new or changed data. It is a cache: losing it
+// costs a full re-upload, never archive data.
 type remoteUploads struct {
-	path     string
-	Version  int              `json:"version"`
-	Meetings map[int64]string `json:"meetings"`
-	dirty    bool
+	path       string
+	Version    int              `json:"version"`
+	Meetings   map[int64]string `json:"meetings"`
+	Recordings map[int64]string `json:"recordings"`
+	dirty      bool
 }
 
 const remoteUploadsVersion = 1
@@ -33,7 +35,10 @@ func remoteUploadsPath(lockDir, canonicalDB, identifier, target string) string {
 }
 
 func loadRemoteUploads(path string) (*remoteUploads, error) {
-	uploads := &remoteUploads{path: path, Version: remoteUploadsVersion, Meetings: map[int64]string{}}
+	uploads := &remoteUploads{
+		path: path, Version: remoteUploadsVersion,
+		Meetings: map[int64]string{}, Recordings: map[int64]string{},
+	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return uploads, nil
@@ -49,6 +54,9 @@ func loadRemoteUploads(path string) (*remoteUploads, error) {
 		return uploads, nil //nolint:nilerr // A corrupt cache must not block sync.
 	}
 	uploads.Meetings = stored.Meetings
+	if stored.Recordings != nil {
+		uploads.Recordings = stored.Recordings
+	}
 	return uploads, nil
 }
 
@@ -68,6 +76,17 @@ func (u *remoteUploads) acknowledged(id int64, digest string) bool {
 func (u *remoteUploads) record(id int64, digest string) {
 	if u.Meetings[id] != digest {
 		u.Meetings[id] = digest
+		u.dirty = true
+	}
+}
+
+func (u *remoteUploads) recordingAcknowledged(id int64, hash string) bool {
+	return u.Recordings[id] == hash || strings.HasSuffix(u.Meetings[id], ":"+hash)
+}
+
+func (u *remoteUploads) recordRecording(id int64, hash string) {
+	if u.Recordings[id] != hash {
+		u.Recordings[id] = hash
 		u.dirty = true
 	}
 }

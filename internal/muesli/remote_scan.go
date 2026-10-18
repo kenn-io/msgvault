@@ -143,6 +143,15 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 			p.sum.RecordingsSkipped++
 		}
 	}
+	recordingAcknowledged := false
+	if recording != nil {
+		recordingAcknowledged = p.uploads.recordingAcknowledged(meeting.ID, recording.Hash)
+		if recordingAcknowledged {
+			// Older upload records included this hash in the meeting digest.
+			// Persist it in the dedicated recording map as the cache is read.
+			p.uploads.recordRecording(meeting.ID, recording.Hash)
+		}
+	}
 	if !p.opts.Full && !hasContactReview(r.Meeting) && p.uploads.acknowledged(meeting.ID, digest) {
 		return recordingErr
 	}
@@ -158,7 +167,7 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 	if err != nil {
 		return err
 	}
-	if recording != nil {
+	if recording != nil && !recordingAcknowledged {
 		if p.opts.SendRecording == nil {
 			return errors.New("muesli recording transport is unavailable")
 		}
@@ -166,6 +175,7 @@ func (p remotePush) meeting(ctx context.Context, meeting Meeting) error {
 		if err := p.opts.SendRecording(ctx, upload, recording); err != nil {
 			return err
 		}
+		p.uploads.recordRecording(meeting.ID, recording.Hash)
 		p.sum.RecordingsStored++
 	}
 	p.uploads.record(meeting.ID, digest)

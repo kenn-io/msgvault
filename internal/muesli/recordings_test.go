@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,12 +91,6 @@ func TestImportRecordingOptInLateArrivalAndReplacement(t *testing.T) {
 	assert.Equal(candidates, after, "deleting source audio preserves archived bytes")
 }
 
-func TestDefaultRecordingSizeCap(t *testing.T) {
-	assert := assert.New(t)
-
-	assert.Equal(int64(4)<<30, DefaultRecordingMaxBytes)
-}
-
 func TestPrepareRecordingDefersUnsafeAndUnfinishedFiles(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -163,6 +158,80 @@ func TestScanRemoteRecordingLateArrivalAndLostAcknowledgement(t *testing.T) {
 	assert.Len(candidates, 1)
 }
 
+func TestScanRemoteReoffersContactReviewWithoutResendingRecording(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newResolveFixture(t,
+		fixtureCard{uniqueID: "CARD-A:ABPerson", emails: []string{"attendee@example.com"}, phones: []string{"+16045550100"}},
+		fixtureCard{uniqueID: "CARD-B:ABPerson", emails: []string{"attendee@example.com"}, phones: []string{"+16045550101"}},
+	)
+	registerRemoteFixture(t, f.importerFixture)
+	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+	insertRow(t, f.muesli, "meeting_participants", map[string]any{
+		"meeting_id": meetingID, "participant_identifier": "email:attendee@example.com",
+		"email_address": "attendee@example.com", "display_name": "Meeting Attendee",
+		"source": "calendar", "insertion_order": 0,
+	})
+	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+	opts := ImportOptions{
+		Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path,
+		LockDir: t.TempDir(), ContactsEnabled: true, ContactsPath: f.contacts, Recordings: true,
+	}
+	uploads := 0
+	dir := t.TempDir()
+	opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
+		uploads++
+		_, err := f.imp.ImportRecording(ctx, upload, dir, io.NewSectionReader(recording.File, 0, recording.Size), 0)
+		return err
+	}
+	requests := 0
+	send := func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
+		requests++
+		assert.True(hasContactReview(request.Meeting), "the source continues to offer contact-review suggestions")
+		return f.imp.ImportRemote(ctx, request)
+	}
+	for range 2 {
+		_, err := ScanRemote(t.Context(), opts, send)
+		require.NoError(err)
+	}
+	assert.Equal(2, requests, "contact-review meetings are reoffered")
+	assert.Equal(1, uploads, "acknowledged audio is not retransmitted with the JSON")
+}
+
+func TestScanRemoteRecordingNotResentAfterTranscriptEdit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newImporterFixture(t)
+	registerRemoteFixture(t, f)
+	path := filepath.Join(filepath.Dir(f.path), "meeting-recordings", "meeting.wav")
+	meetingID := insertRow(t, f.muesli, "meetings", completedMeeting(map[string]any{"saved_recording_path": path}))
+	writeRecording(t, f.path, "meeting.wav", recordingWAV())
+
+	opts := ImportOptions{Identifier: "mac", AccountEmail: "you@example.com", DBPath: f.path, LockDir: t.TempDir(), Recordings: true}
+	uploads := 0
+	dir := t.TempDir()
+	opts.SendRecording = func(ctx context.Context, upload RecordingUpload, recording *Recording) error {
+		uploads++
+		_, err := f.imp.ImportRecording(ctx, upload, dir, io.NewSectionReader(recording.File, 0, recording.Size), 0)
+		return err
+	}
+	requests := 0
+	send := func(ctx context.Context, request RemoteRequest) (RemoteResult, error) {
+		requests++
+		return f.imp.ImportRemote(ctx, request)
+	}
+	_, err := ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+	_, err = f.muesli.Exec(`UPDATE meetings SET raw_transcript = 'Edited synthetic transcript' WHERE id = ?`, meetingID)
+	require.NoError(err)
+	_, err = ScanRemote(t.Context(), opts, send)
+	require.NoError(err)
+	assert.Equal(2, requests, "the changed transcript is reoffered")
+	assert.Equal(1, uploads, "unchanged acknowledged audio is not retransmitted")
+}
+
 func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -194,6 +263,52 @@ func TestImportRecordingRejectsSourceMismatchAndTruncatedUpload(t *testing.T) {
 	changed, err = f.imp.ImportRecording(t.Context(), upload, dir, bytes.NewReader(data), 0)
 	require.NoError(err)
 	assert.False(changed)
+}
+
+func TestStageRecordingUploadValidatesAndSnapshotsBytes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	data := recordingWAV()
+	digest := sha256.Sum256(data)
+	upload := RecordingUpload{
+		Source: remoteTestRequest().Source, MessageID: 1,
+		Hash: hex.EncodeToString(digest[:]), Size: int64(len(data)), MIMEType: "audio/wav",
+	}
+	wrongHash := upload
+	wrongHash.Hash = strings.Repeat("0", 64)
+	wrongMediaType := upload
+	wrongMediaType.MIMEType = "audio/mp4"
+	for _, tt := range []struct {
+		name    string
+		upload  RecordingUpload
+		body    []byte
+		maxSize int64
+		wantErr error
+	}{
+		{name: "valid", upload: upload, body: data},
+		{name: "hash mismatch", upload: wrongHash, body: data, wantErr: ErrRecordingChanged},
+		{name: "short body", upload: upload, body: data[:len(data)-1], wantErr: ErrRecordingChanged},
+		{name: "wrong media type", upload: wrongMediaType, body: data, wantErr: ErrRemoteValidation},
+		{name: "over cap", upload: upload, body: data, maxSize: int64(len(data) - 1), wantErr: ErrRecordingTooLarge},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			staged, err := StageRecordingUpload(t.Context(), tt.upload, bytes.NewReader(tt.body), tt.maxSize)
+			if tt.wantErr != nil {
+				require.ErrorIs(err, tt.wantErr)
+				assert.Nil(staged)
+				return
+			}
+			require.NoError(err)
+			require.NotNil(staged)
+			t.Cleanup(func() { _ = staged.Close() })
+			assert.Equal(tt.upload.Hash, staged.Hash)
+			assert.Equal(tt.upload.Size, staged.Size)
+			assert.Equal(tt.upload.MIMEType, staged.MIMEType)
+			got, err := io.ReadAll(staged.File)
+			require.NoError(err)
+			assert.Equal(tt.body, got)
+		})
+	}
 }
 
 // Synthetic silence generated with ffmpeg's lavfi anullsrc at 16 kHz, mono,

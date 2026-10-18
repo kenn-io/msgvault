@@ -75,6 +75,13 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "service_unavailable", "Muesli recording import is unavailable")
 		return
 	}
+	staged, err := muesli.StageRecordingUpload(r.Context(), upload, r.Body, capBytes)
+	if err != nil {
+		s.writeMuesliRecordingImportError(w, r, err)
+		return
+	}
+	defer func() { _ = staged.Close() }()
+
 	gateCtx, cancel := context.WithTimeout(r.Context(), operationGateWaitLimit)
 	defer cancel()
 	done, ok := s.beginLabeledOperationGateWork(gateCtx, "Muesli recording import")
@@ -83,21 +90,9 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer done()
-	changed, err := importer.ImportMuesliRecording(r.Context(), upload, r.Body, capBytes)
+	changed, err := importer.ImportMuesliRecording(r.Context(), upload, io.NewSectionReader(staged.File, 0, staged.Size), capBytes)
 	if err != nil {
-		if s.writeIfContextError(w, err) {
-			return
-		}
-		switch {
-		case errors.Is(err, muesli.ErrRecordingTooLarge):
-			writeError(w, 413, "recording_too_large", muesli.ErrRecordingTooLarge.Error())
-		case errors.Is(err, muesli.ErrRemoteValidation), errors.Is(err, muesli.ErrRecordingChanged):
-			writeError(w, 422, "record_validation_failed", "Recording failed validation; sync again")
-		case errors.Is(err, store.ErrSourceNotFound):
-			writeError(w, 404, "source_not_found", "Muesli source is not registered")
-		default:
-			writeError(w, 500, "internal_error", "Muesli recording import failed")
-		}
+		s.writeMuesliRecordingImportError(w, r, err)
 		return
 	}
 	status := "unchanged"
@@ -105,4 +100,20 @@ func (s *Server) handleMuesliRecording(w http.ResponseWriter, r *http.Request) {
 		status = "updated"
 	}
 	writeJSON(w, http.StatusOK, muesli.RemoteResult{Status: status, MessageID: messageID, Changed: changed})
+}
+
+func (s *Server) writeMuesliRecordingImportError(w http.ResponseWriter, r *http.Request, err error) {
+	if s.writeIfContextError(w, err) {
+		return
+	}
+	switch {
+	case errors.Is(err, muesli.ErrRecordingTooLarge):
+		writeError(w, 413, "recording_too_large", muesli.ErrRecordingTooLarge.Error())
+	case errors.Is(err, muesli.ErrRemoteValidation), errors.Is(err, muesli.ErrRecordingChanged):
+		writeError(w, 422, "record_validation_failed", "Recording failed validation; sync again")
+	case errors.Is(err, store.ErrSourceNotFound):
+		writeError(w, 404, "source_not_found", "Muesli source is not registered")
+	default:
+		writeError(w, 500, "internal_error", "Muesli recording import failed")
+	}
 }

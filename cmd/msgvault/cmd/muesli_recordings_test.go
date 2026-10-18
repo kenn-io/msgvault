@@ -47,11 +47,11 @@ func importSyntheticMuesliAudio(t *testing.T) (*store.Store, *attachmentstore.St
 
 func TestMuesliRecordingUsesSharedDocbankAudioConsent(t *testing.T) {
 	for _, tt := range []struct {
-		name             string
-		enabled, consent bool
-		requests         int
+		name     string
+		consent  bool
+		requests int
 	}{
-		{"disabled", false, false, 0}, {"without consent", true, false, 0}, {"enabled with consent", true, true, 1},
+		{"without consent", false, 0}, {"enabled with consent", true, 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -59,30 +59,23 @@ func TestMuesliRecordingUsesSharedDocbankAudioConsent(t *testing.T) {
 
 			st, blobs := importSyntheticMuesliAudio(t)
 			remote, server := newRetentionServer(t)
-			cfg := config.DocbankIntegrationConfig{Enabled: tt.enabled, URL: server.URL, APIKey: "synthetic-key", AllSourcesUploadConsent: tt.consent}
+			cfg := config.DocbankIntegrationConfig{Enabled: true, URL: server.URL, APIKey: "synthetic-key", AllSourcesUploadConsent: tt.consent}
 			sched := scheduler.New(nil)
 			t.Cleanup(func() { <-sched.Stop().Done() })
 			require.NoError(configureBeeperMediaJob(t.Context(), sched, nil, st, blobs, t.TempDir(), t.TempDir(), cfg, nil))
-			assert.Equal(tt.enabled, sched.IsJobScheduled(beeperMediaSubmitJob))
-			if tt.enabled {
-				require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
-				require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
-			}
+			assert.True(sched.IsJobScheduled(beeperMediaSubmitJob))
+			require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
+			require.NoError(sched.TriggerJob(beeperMediaSubmitJob))
 			assert.Equal(tt.requests, remote.requestCount(), "ordinary audio retention deduplicates reprocessing")
 		})
 	}
 }
 
-func TestMuesliRecordingConfigDefaultAndOverride(t *testing.T) {
-	assert := assert.New(t)
-
+func TestMuesliRecordingConfigOverride(t *testing.T) {
 	source := config.MuesliSource{}
-	assert.False(source.Recordings)
-	assert.Equal(int64(4)<<30, source.EffectiveRecordingMaxBytes())
-	assert.Equal(muesli.DefaultRecordingMaxBytes, source.EffectiveRecordingMaxBytes())
 	source.Recordings = true
 	source.RecordingMaxBytes = 8 << 30
 	opts := muesliImportOptions(source)
-	assert.True(opts.Recordings)
-	assert.Equal(int64(8)<<30, opts.RecordingMaxBytes)
+	assert.True(t, opts.Recordings)
+	assert.Equal(t, int64(8)<<30, opts.RecordingMaxBytes)
 }

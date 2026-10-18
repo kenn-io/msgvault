@@ -241,6 +241,72 @@ func (u RecordingUpload) Validate() error {
 	return err
 }
 
+// StageRecordingUpload copies a bounded recording upload to a private file and
+// validates its declared size, hash, and media type before archive work starts.
+// The caller owns the returned snapshot and must close it.
+func StageRecordingUpload(ctx context.Context, u RecordingUpload, input io.Reader, maxBytes int64) (*Recording, error) {
+	u, err := u.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes <= 0 {
+		maxBytes = DefaultRecordingMaxBytes
+	}
+	if u.Size > maxBytes {
+		return nil, ErrRecordingTooLarge
+	}
+	if input == nil {
+		return nil, ErrRecordingChanged
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	snapshot, err := os.CreateTemp("", "msgvault-muesli-upload-*")
+	if err != nil {
+		return nil, fmt.Errorf("create recording upload snapshot: %w", err)
+	}
+	recording := &Recording{File: snapshot}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = recording.Close()
+		}
+	}()
+
+	limit := maxBytes
+	if limit < math.MaxInt64 {
+		limit++
+	}
+	h := sha256.New()
+	size, err := io.Copy(io.MultiWriter(snapshot, h), &contextReader{ctx: ctx, r: io.LimitReader(input, limit)})
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if size > maxBytes {
+		return nil, ErrRecordingTooLarge
+	}
+	if err != nil {
+		return nil, fmt.Errorf("stage recording upload: %w", err)
+	}
+	if size != u.Size || hex.EncodeToString(h.Sum(nil)) != u.Hash {
+		return nil, ErrRecordingChanged
+	}
+	mediaType, err := recordingMediaType(snapshot, size)
+	if err != nil {
+		return nil, err
+	}
+	if mediaType != u.MIMEType {
+		return nil, ErrRemoteRecordValidation
+	}
+	if _, err := snapshot.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewind recording upload snapshot: %w", err)
+	}
+	recording.Hash, recording.Size, recording.MIMEType = u.Hash, size, mediaType
+	keep = true
+	return recording, nil
+}
+
 // ImportRecording validates source membership before reading any upload bytes.
 func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir string, input io.Reader, maxBytes int64) (bool, error) {
 	u, err := u.Normalize()
