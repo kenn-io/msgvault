@@ -16,6 +16,21 @@ func loopOpen(t *testing.T, f *storetest.Fixture, anchor, last int64, now time.T
 	t.Helper()
 	return store.LoopOpenDecision{TurnKey: fmt.Sprintf("turn:%d:reply_owed:%d", f.ConvID, anchor), Kind: "reply_owed", Status: "open", Channel: "email", ConversationID: f.ConvID, SourceID: f.Source.ID, AnchorMessageID: anchor, LastActivityMessageID: last, OwedSinceAt: now.Add(-48 * time.Hour), LastActivityAt: now, OpensAt: now.Add(-24 * time.Hour), EvidenceJSON: []byte(fmt.Sprintf(`[{"message_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8}]`, anchor)), RulesetVersion: 1, TurnMessageIDs: []int64{anchor, last}}
 }
+
+func loopMessageAt(t *testing.T, f *storetest.Fixture, sentAt time.Time, fromMe bool) int64 {
+	t.Helper()
+	return f.NewMessage().WithSentAt(sentAt).WithIsFromMe(fromMe).Create(t, f.Store)
+}
+
+func loopOpenChronology(t *testing.T, f *storetest.Fixture, anchor, last int64, anchorAt, lastActivityAt time.Time) store.LoopOpenDecision {
+	t.Helper()
+	open := loopOpen(t, f, anchor, last, lastActivityAt)
+	open.OwedSinceAt = anchorAt
+	open.LastActivityAt = lastActivityAt
+	open.OpensAt = anchorAt.Add(24 * time.Hour)
+	return open
+}
+
 func applyLoop(t *testing.T, f *storetest.Fixture, open store.LoopOpenDecision, now time.Time) {
 	t.Helper()
 	require.NoError(t, f.Store.ApplyLoopVerdictContext(t.Context(), store.LoopApply{ConversationID: f.ConvID, Now: now, Verdict: store.LoopVerdict{Open: &open}}))
@@ -25,8 +40,23 @@ func TestLoopApplyDoneWinsRewrittenAnchorAndWindow(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	ids := f.CreateMessages(4)
-	open := loopOpen(t, f, ids[1], ids[2], now)
+	timeline := []time.Time{
+		now.Add(-72 * time.Hour),
+		now.Add(-71 * time.Hour),
+		now.Add(-70 * time.Hour),
+		now.Add(-69 * time.Hour),
+		now.Add(-68 * time.Hour),
+		now.Add(-67 * time.Hour),
+	}
+	ids := []int64{
+		loopMessageAt(t, f, timeline[0], true),  // earlier message in the same owner turn
+		loopMessageAt(t, f, timeline[1], true),  // anchor first seen by detection
+		loopMessageAt(t, f, timeline[2], true),  // latest activity in that turn
+		loopMessageAt(t, f, timeline[3], false), // opposite turn before a later obligation
+		loopMessageAt(t, f, timeline[4], true),  // anchor of the later owner turn
+		loopMessageAt(t, f, timeline[5], true),  // latest activity in the later turn
+	}
+	open := loopOpenChronology(t, f, ids[1], ids[2], timeline[1], timeline[2])
 	applyLoop(t, f, open, now)
 	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
@@ -37,19 +67,19 @@ func TestLoopApplyDoneWinsRewrittenAnchorAndWindow(t *testing.T) {
 	assertions.JSONEq(fmt.Sprintf(`[{"message_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8,"owner_note":"handled"}]`, ids[1]), string(done.EvidenceJSON))
 	_, err = f.Store.CloseLoopContext(t.Context(), done.ID, "", now)
 	requirements.ErrorIs(err, store.ErrLoopAlreadyClosed)
-	rewritten := loopOpen(t, f, ids[0], ids[2], now)
+	rewritten := loopOpenChronology(t, f, ids[0], ids[2], timeline[0], timeline[2])
 	rewritten.TurnMessageIDs = ids[:3]
 	applyLoop(t, f, rewritten, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	assertions.Empty(rows)
-	outside := loopOpen(t, f, ids[3], ids[3], now)
+	outside := loopOpenChronology(t, f, ids[4], ids[5], timeline[4], timeline[5])
 	applyLoop(t, f, outside, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	assertions.Empty(rows, "done outside window retains authority")
 	outside.PreviousTurnKnown = true
-	outside.PreviousTurnAt = now.Add(time.Minute)
+	outside.PreviousTurnAt = timeline[3]
 	applyLoop(t, f, outside, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
@@ -313,24 +343,40 @@ func TestLoopTerminalHistoryCollisionWithdrawsLive(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	ids := f.CreateMessages(3)
-	old := loopOpen(t, f, ids[0], ids[0], now)
+	timeline := []time.Time{
+		now.Add(-72 * time.Hour),
+		now.Add(-71 * time.Hour),
+		now.Add(-70 * time.Hour),
+		now.Add(-69 * time.Hour),
+		now.Add(-68 * time.Hour),
+		now.Add(-67 * time.Hour),
+	}
+	ids := []int64{
+		loopMessageAt(t, f, timeline[0], false), // prior turn before the old obligation
+		loopMessageAt(t, f, timeline[1], true),  // old owner anchor
+		loopMessageAt(t, f, timeline[2], true),  // old owner turn activity
+		loopMessageAt(t, f, timeline[3], false), // new opposite turn after terminal history
+		loopMessageAt(t, f, timeline[4], true),  // newer owner anchor
+		loopMessageAt(t, f, timeline[5], true),  // newer owner turn activity
+	}
+	old := loopOpenChronology(t, f, ids[1], ids[2], timeline[1], timeline[2])
+	old.PreviousTurnKnown = true
+	old.PreviousTurnAt = timeline[0]
 	applyLoop(t, f, old, now)
 	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	_, err = f.Store.CloseLoopContext(t.Context(), rows[0].ID, "", now)
 	requirements.NoError(err)
-	newer := loopOpen(t, f, ids[1], ids[2], now)
+	newer := loopOpenChronology(t, f, ids[4], ids[5], timeline[4], timeline[5])
 	newer.PreviousTurnKnown = true
-	newer.PreviousTurnAt = now.Add(time.Minute)
+	newer.PreviousTurnAt = timeline[3]
 	applyLoop(t, f, newer, now)
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
 	requirements.NoError(err)
 	requirements.Len(rows, 1)
 	live := rows[0]
-	old.TurnMessageIDs = ids
-	old.PreviousTurnKnown = true
+	// The delayed old verdict stays within its original same-side turn.
 	applyLoop(t, f, old, now)
 	got, err := f.Store.GetOpenLoopContext(t.Context(), live.ID)
 	requirements.NoError(err)

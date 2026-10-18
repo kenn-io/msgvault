@@ -60,6 +60,9 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	case AwaitingReply:
 		body := t.body(v, v.Messages[anchor].ID)
 		if !body.ok {
+			// The shared budget may have been consumed by newer messages. Keep
+			// checking for a conclusive opposing turn before treating this pass as
+			// uncertain; a later inbound answer still settles the live obligation.
 			anchorUnreadable = true
 		} else if !asksQuestion(body.text) || !hasAwaitingReplyCounterparty(v, v.Messages[anchor]) {
 			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
@@ -73,7 +76,7 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, nil
 	}
 	if anchorUnreadable {
-		return nil, true, nil, nil
+		return nil, true, &v.Messages[anchor], nil
 	}
 	return nil, false, &v.Messages[anchor], nil
 }

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,7 +73,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
-	if err := s.transferSourceMergeLoopState(ctx, tx, into, plan.conversations); err != nil {
+	if err := s.transferSourceMergeLoopState(ctx, tx, into, plan.conversations, plan.messages); err != nil {
 		return fmt.Errorf("transfer source merge loop state: %w", err)
 	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
@@ -253,7 +255,14 @@ func (s *Store) transferSourceMergeLoopState(
 	tx *loggedTx,
 	destinationSourceID int64,
 	conversations []mergeConversation,
+	messages []mergeMessage,
 ) error {
+	survivors := make(map[int64]int64)
+	for _, message := range messages {
+		if message.survivor != 0 {
+			survivors[message.id] = message.survivor
+		}
+	}
 	for _, conversation := range conversations {
 		if conversation.id != conversation.destination {
 			if err := s.transferSourceMergeConversationSuppression(ctx, tx, conversation.id, conversation.destination); err != nil {
@@ -263,8 +272,7 @@ func (s *Store) transferSourceMergeLoopState(
 				return fmt.Errorf("resolve live loops for conversations %d and %d: %w", conversation.id, conversation.destination, err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id = ?, source_id = ? WHERE conversation_id = ?`,
-			conversation.destination, destinationSourceID, conversation.id); err != nil {
+		if err := s.transferSourceMergeLoopReferences(ctx, tx, conversation.id, conversation.destination, destinationSourceID, survivors); err != nil {
 			return fmt.Errorf("transfer loops for conversation %d to %d: %w", conversation.id, conversation.destination, err)
 		}
 	}
@@ -319,25 +327,31 @@ func (s *Store) transferSourceMergeConversationSuppression(
 	return nil
 }
 
+type sourceMergeLiveLoop struct {
+	id                    int64
+	kind                  string
+	lastActivityAt        time.Time
+	snoozedUntil          sql.NullTime
+	agendaState           string
+	fulfilmentSuggestedAt sql.NullTime
+	evidence              []byte
+}
+
 func (s *Store) resolveSourceMergeLiveLoopCollision(
 	ctx context.Context,
 	tx *loggedTx,
 	sourceConversationID, destinationConversationID int64,
 ) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, kind, last_activity_at FROM open_loops
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
+		fulfilment_suggested_at, evidence_json FROM open_loops
 		WHERE conversation_id = ? AND detector = 'turn_state' AND status <> 'closed' ORDER BY id`, sourceConversationID)
 	if err != nil {
 		return err
 	}
-	type liveLoop struct {
-		id             int64
-		kind           string
-		lastActivityAt time.Time
-	}
-	var sourceLoops []liveLoop
+	var sourceLoops []sourceMergeLiveLoop
 	for rows.Next() {
-		var loop liveLoop
-		if err := rows.Scan(&loop.id, &loop.kind, &loop.lastActivityAt); err != nil {
+		var loop sourceMergeLiveLoop
+		if err := rows.Scan(&loop.id, &loop.kind, &loop.lastActivityAt, &loop.snoozedUntil, &loop.agendaState, &loop.fulfilmentSuggestedAt, &loop.evidence); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -347,30 +361,216 @@ func (s *Store) resolveSourceMergeLiveLoopCollision(
 		return err
 	}
 	for _, sourceLoop := range sourceLoops {
-		var destinationLoopID int64
-		var destinationLastActivityAt time.Time
-		err := tx.QueryRowContext(ctx, `SELECT id, last_activity_at FROM open_loops
+		var destinationLoop sourceMergeLiveLoop
+		err := tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
+			fulfilment_suggested_at, evidence_json FROM open_loops
 			WHERE conversation_id = ? AND kind = ? AND detector = 'turn_state' AND status <> 'closed'
 			ORDER BY last_activity_at DESC, id LIMIT 1`, destinationConversationID, sourceLoop.kind).
-			Scan(&destinationLoopID, &destinationLastActivityAt)
+			Scan(&destinationLoop.id, &destinationLoop.kind, &destinationLoop.lastActivityAt,
+				&destinationLoop.snoozedUntil, &destinationLoop.agendaState,
+				&destinationLoop.fulfilmentSuggestedAt, &destinationLoop.evidence)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		retiredID := sourceLoop.id
-		if sourceLoop.lastActivityAt.After(destinationLastActivityAt) {
-			retiredID = destinationLoopID
+		winner, retired := &destinationLoop, &sourceLoop
+		if sourceLoop.lastActivityAt.After(destinationLoop.lastActivityAt) {
+			winner, retired = &sourceLoop, &destinationLoop
+		}
+		if err := s.transferSourceMergeLiveLoopOwnerState(ctx, tx, winner, retired); err != nil {
+			return fmt.Errorf("transfer owner state from loop %d to %d: %w", retired.id, winner.id, err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status = 'closed',
 			closed_at = `+s.dialect.Now()+`, closed_reason = 'withdrawn', closed_by = 'system',
 			closed_message_id = NULL, updated_at = `+s.dialect.Now()+`
-			WHERE id = ? AND status <> 'closed'`, retiredID); err != nil {
+			WHERE id = ? AND status <> 'closed'`, retired.id); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Store) transferSourceMergeLoopReferences(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceConversationID, destinationConversationID, destinationSourceID int64,
+	messageSurvivors map[int64]int64,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, turn_key, cycle, kind, detector,
+		anchor_message_id, last_activity_message_id, closed_message_id, evidence_json
+		FROM open_loops WHERE conversation_id = ? ORDER BY id`, sourceConversationID)
+	if err != nil {
+		return err
+	}
+	type loopRow struct {
+		id                    int64
+		turnKey               string
+		cycle                 int64
+		kind, detector        string
+		anchor, activity, end sql.NullInt64
+		evidence              []byte
+	}
+	var loops []loopRow
+	for rows.Next() {
+		var loop loopRow
+		if err := rows.Scan(&loop.id, &loop.turnKey, &loop.cycle, &loop.kind, &loop.detector,
+			&loop.anchor, &loop.activity, &loop.end, &loop.evidence); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		loops = append(loops, loop)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, loop := range loops {
+		anchor := remapSourceMergeLoopMessageID(loop.anchor, messageSurvivors)
+		activity := remapSourceMergeLoopMessageID(loop.activity, messageSurvivors)
+		closedMessage := remapSourceMergeLoopMessageID(loop.end, messageSurvivors)
+		evidence, err := remapSourceMergeLoopEvidence(loop.evidence, sourceConversationID, destinationConversationID, messageSurvivors)
+		if err != nil {
+			return fmt.Errorf("remap evidence for loop %d: %w", loop.id, err)
+		}
+		turnKey, cycle := loop.turnKey, loop.cycle
+		if loop.detector == "turn_state" && loop.anchor.Valid &&
+			loop.turnKey == fmt.Sprintf("turn:%d:%s:%d", sourceConversationID, loop.kind, loop.anchor.Int64) {
+			turnKey = fmt.Sprintf("turn:%d:%s:%d", destinationConversationID, loop.kind, anchor.Int64)
+			if turnKey != loop.turnKey {
+				var maxCycle int64
+				if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(cycle), 0) FROM open_loops WHERE turn_key = ? AND id <> ?`, turnKey, loop.id).Scan(&maxCycle); err != nil {
+					return err
+				}
+				if maxCycle >= cycle {
+					cycle = maxCycle + 1
+				}
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id = ?, source_id = ?,
+			turn_key = ?, cycle = ?, anchor_message_id = ?, last_activity_message_id = ?,
+			closed_message_id = ?, evidence_json = ? WHERE id = ?`,
+			destinationConversationID, destinationSourceID, turnKey, cycle, anchor, activity, closedMessage, string(evidence), loop.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func remapSourceMergeLoopMessageID(messageID sql.NullInt64, survivors map[int64]int64) sql.NullInt64 {
+	if !messageID.Valid {
+		return messageID
+	}
+	if survivor, ok := survivors[messageID.Int64]; ok {
+		messageID.Int64 = survivor
+	}
+	return messageID
+}
+
+func remapSourceMergeLoopEvidence(raw []byte, sourceConversationID, destinationConversationID int64, survivors map[int64]int64) ([]byte, error) {
+	var evidence []map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		return nil, fmt.Errorf("decode loop evidence: %w", err)
+	}
+	changed := false
+	for _, item := range evidence {
+		for key, remap := range map[string]func(int64) (int64, bool){
+			"message_id": func(id int64) (int64, bool) {
+				survivor, ok := survivors[id]
+				return survivor, ok
+			},
+			"conversation_id": func(id int64) (int64, bool) {
+				if id == sourceConversationID {
+					return destinationConversationID, true
+				}
+				return id, false
+			},
+		} {
+			value, ok := item[key]
+			if !ok {
+				continue
+			}
+			var id int64
+			if err := json.Unmarshal(value, &id); err != nil {
+				continue
+			}
+			mapped, ok := remap(id)
+			if !ok || mapped == id {
+				continue
+			}
+			encoded, err := json.Marshal(mapped)
+			if err != nil {
+				return nil, err
+			}
+			item[key] = jsontext.Value(encoded)
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, nil
+	}
+	return json.Marshal(evidence)
+}
+
+func (s *Store) transferSourceMergeLiveLoopOwnerState(ctx context.Context, tx *loggedTx, winner, retired *sourceMergeLiveLoop) error {
+	evidence, err := mergeSourceMergeLoopOwnerNote(winner.evidence, retired.evidence)
+	if err != nil {
+		return fmt.Errorf("merge loop owner notes: %w", err)
+	}
+	var snoozedUntil any
+	if retired.snoozedUntil.Valid {
+		snoozedUntil = s.dialect.TimestampParam(retired.snoozedUntil.Time)
+	}
+	var fulfilmentSuggestedAt any
+	if retired.fulfilmentSuggestedAt.Valid {
+		fulfilmentSuggestedAt = s.dialect.TimestampParam(retired.fulfilmentSuggestedAt.Time)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE open_loops SET
+		snoozed_until = CASE WHEN ? IS NOT NULL AND ? > `+s.dialect.Now()+`
+			AND (snoozed_until IS NULL OR snoozed_until <= `+s.dialect.Now()+` OR ? > snoozed_until)
+			THEN ? ELSE snoozed_until END,
+		agenda_state = CASE WHEN agenda_state = 'none' AND ? <> 'none' THEN ? ELSE agenda_state END,
+		fulfilment_suggested_at = COALESCE(fulfilment_suggested_at, ?), evidence_json = ?
+		WHERE id = ?`, snoozedUntil, snoozedUntil, snoozedUntil, snoozedUntil,
+		retired.agendaState, retired.agendaState, fulfilmentSuggestedAt, string(evidence), winner.id)
+	return err
+}
+
+func mergeSourceMergeLoopOwnerNote(winnerEvidence, retiredEvidence []byte) ([]byte, error) {
+	winnerNote, err := sourceMergeLoopOwnerNote(winnerEvidence)
+	if err != nil {
+		return nil, err
+	}
+	retiredNote, err := sourceMergeLoopOwnerNote(retiredEvidence)
+	if err != nil {
+		return nil, err
+	}
+	if retiredNote == "" || retiredNote == winnerNote {
+		return winnerEvidence, nil
+	}
+	if winnerNote != "" {
+		retiredNote = winnerNote + "\n" + retiredNote
+	}
+	return loopEvidenceMetadata(winnerEvidence, "owner_note", retiredNote)
+}
+
+func sourceMergeLoopOwnerNote(raw []byte) (string, error) {
+	var evidence []map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		return "", fmt.Errorf("decode loop evidence: %w", err)
+	}
+	if len(evidence) == 0 || evidence[0] == nil {
+		return "", nil
+	}
+	encoded, ok := evidence[0]["owner_note"]
+	if !ok {
+		return "", nil
+	}
+	var note string
+	if err := json.Unmarshal(encoded, &note); err != nil {
+		return "", fmt.Errorf("decode owner note: %w", err)
+	}
+	return note, nil
 }
 
 // Copy only occurrences not already represented on the survivor. Compare

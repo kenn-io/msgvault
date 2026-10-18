@@ -50,7 +50,22 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	// neutral. Close a live row from its saved counterpart identity even when
 	// there is no new Open decision for the store to recheck.
 	for _, loop := range live {
-		counterparty := LoopParticipant{ID: loop.CounterpartyParticipantID, PersonID: loop.CounterpartyPersonID}
+		counterparty := LoopParticipant{ID: loop.CounterpartyParticipantID}
+		if counterparty.ID == 0 {
+			counterparty.PersonID = loop.CounterpartyPersonID
+		} else {
+			found := false
+			for _, participant := range view.Participants {
+				if participant.ID == counterparty.ID {
+					counterparty = participant
+					found = true
+					break
+				}
+			}
+			if !found {
+				counterparty.PersonID = loop.CounterpartyPersonID
+			}
+		}
 		if (counterparty.ID != 0 || counterparty.PersonID != 0) && suppressed(counterparty, supp) {
 			recordClose(CloseDecision{ID: loop.ID, Reason: "muted", At: now})
 		}
@@ -102,7 +117,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settledTurnFlip = settledTurnFlip || closed.Reason == "turn_flip"
 			recordClose(*closed)
 		}
-		if gap {
+		if gap && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
 		if anchor != nil {
@@ -151,6 +166,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			anchor = &anchorCopy
 		}
 		ownerWrote := len(turns) > 1 && turns[1].direction == Outbound
+		if _, alreadyEstablished := retained[ReplyOwed]; alreadyEstablished {
+			// A live turn was opened only after owner participation was proven.
+			// Preserve that proof when the bounded window no longer includes the
+			// earlier owner turn.
+			ownerWrote = true
+		}
 		bulk := false
 		list := false
 		for _, m := range trailing.messages {
@@ -161,7 +182,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			if m.Signals != nil {
 				bulk = bulk || m.Signals.PrecedenceBulk || m.Signals.ListUnsubscribe
 			}
-			if addressedToOwner(m, settlementView.ConversationType, large) && anchor == nil {
+			if addressedToOwner(m, settlementView.ConversationType, large) &&
+				(anchor == nil || messageBefore(m, *anchor)) {
 				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
 				if !ok || suppressed(candidateCounterparty, supp) {
 					continue
@@ -205,7 +227,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		for _, m := range trailing.messages {
 			body := t.body(settlementView, m.ID)
 			uncertain = uncertain || !body.ok
-			if body.ok && asksQuestion(body.text) && anchor == nil {
+			if body.ok && asksQuestion(body.text) &&
+				(anchor == nil || messageBefore(m, *anchor)) {
 				candidate := m
 				anchor = &candidate
 			}
@@ -230,17 +253,19 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				counts[message.Sender.ID]++
 			}
 		}
-		if settled, ok := retained[kind]; ok && settled.loop.CounterpartyParticipantID != 0 {
+		retainedCounterparty := false
+		if settled, ok := retained[kind]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
 			for _, participant := range candidates {
 				if participant.ID == settled.loop.CounterpartyParticipantID {
 					counterparty = participant
+					retainedCounterparty = true
 					break
 				}
 			}
 		}
 		for _, participant := range candidates {
-			if counterparty.ID != 0 {
-				break
+			if retainedCounterparty {
+				continue
 			}
 			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] || (counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
 				counterparty = participant
@@ -296,6 +321,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}
 	return v
+}
+
+func messageBefore(a, b LoopMessage) bool {
+	return a.OccurredAt.Before(b.OccurredAt) || (a.OccurredAt.Equal(b.OccurredAt) && a.ID < b.ID)
 }
 
 func nonOwnerCount(participants []LoopParticipant) int {

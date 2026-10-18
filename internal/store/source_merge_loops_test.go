@@ -13,7 +13,7 @@ import (
 
 func sourceMergeLoopOpen(conversationID, sourceID, messageID int64, kind string, now time.Time) store.LoopOpenDecision {
 	return store.LoopOpenDecision{
-		TurnKey:               fmt.Sprintf("source-merge:%d:%s:%d", conversationID, kind, messageID),
+		TurnKey:               fmt.Sprintf("turn:%d:%s:%d", conversationID, kind, messageID),
 		Kind:                  kind,
 		Status:                "open",
 		Channel:               "chat",
@@ -27,6 +27,172 @@ func sourceMergeLoopOpen(conversationID, sourceID, messageID int64, kind string,
 		EvidenceJSON:          []byte("[]"),
 		RulesetVersion:        1,
 		TurnMessageIDs:        []int64{messageID},
+	}
+}
+
+func TestMergeSourcesRemapsLoopReferencesForHiddenMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-loop-references-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-loop-references-example")
+	require.NoError(err)
+
+	survivor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-loop-reference", "live-message", "same payload", 1)
+	duplicate, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-loop-reference", "history-message", "same payload", 1)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	open := sourceMergeLoopOpen(sourceConversation, from.ID, duplicate, "reply_owed", now)
+	open.OwnerAddress = "owner@example.test"
+	open.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"history question","owner_note":"keep this note"}]`, duplicate, sourceConversation))
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: sourceConversation,
+		Now:            now,
+		Verdict:        store.LoopVerdict{Open: &open},
+	}))
+	openRows, err := st.ListLiveConversationLoopsContext(t.Context(), sourceConversation)
+	require.NoError(err)
+	require.Len(openRows, 1)
+
+	closed := sourceMergeLoopOpen(sourceConversation, from.ID, duplicate, "awaiting_reply", now)
+	closed.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"closed history"}]`, duplicate, sourceConversation))
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: sourceConversation,
+		Now:            now,
+		Verdict:        store.LoopVerdict{Open: &closed},
+	}))
+	closedRows, err := st.ListLiveConversationLoopsContext(t.Context(), sourceConversation)
+	require.NoError(err)
+	require.Len(closedRows, 2)
+	var closedLoopID int64
+	for _, row := range closedRows {
+		if row.Kind == "awaiting_reply" {
+			closedLoopID = row.ID
+		}
+	}
+	require.NotZero(closedLoopID)
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: sourceConversation,
+		Now:            now,
+		Verdict: store.LoopVerdict{Close: []store.LoopCloseDecision{{
+			ID: closedLoopID, Reason: "turn_flip", At: now, MessageID: &duplicate,
+		}}},
+	}))
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden)
+
+	gotOpen, err := st.GetOpenLoopContext(t.Context(), openRows[0].ID)
+	require.NoError(err)
+	require.NotNil(gotOpen.AnchorMessageID)
+	assert.Equal(survivor, *gotOpen.AnchorMessageID)
+	require.NotNil(gotOpen.LastActivityMessageID)
+	assert.Equal(survivor, *gotOpen.LastActivityMessageID)
+	assert.Equal(destinationConversation, gotOpen.ConversationID)
+	assert.Equal(fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor), gotOpen.TurnKey)
+	assert.Equal("owner@example.test", gotOpen.OwnerAddress)
+	assert.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"history question","owner_note":"keep this note"}]`, survivor, destinationConversation), string(gotOpen.EvidenceJSON))
+
+	gotClosed, err := st.GetOpenLoopContext(t.Context(), closedLoopID)
+	require.NoError(err)
+	require.NotNil(gotClosed.AnchorMessageID)
+	assert.Equal(survivor, *gotClosed.AnchorMessageID)
+	require.NotNil(gotClosed.LastActivityMessageID)
+	assert.Equal(survivor, *gotClosed.LastActivityMessageID)
+	require.NotNil(gotClosed.ClosedMessageID)
+	assert.Equal(survivor, *gotClosed.ClosedMessageID)
+	assert.Equal(destinationConversation, gotClosed.ConversationID)
+	assert.Equal(fmt.Sprintf("turn:%d:awaiting_reply:%d", destinationConversation, survivor), gotClosed.TurnKey)
+	assert.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"closed history"}]`, survivor, destinationConversation), string(gotClosed.EvidenceJSON))
+}
+
+func TestMergeSourcesTransfersRetiredLoopOwnerStateToWinner(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		retiredSource bool
+	}{
+		{name: "retired source loop", retiredSource: true},
+		{name: "retired destination loop"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			from, err := st.GetOrCreateSource("beeper", "history-loop-owner-state-example")
+			require.NoError(err)
+			into, err := st.GetOrCreateSource("beeper", "live-loop-owner-state-example")
+			require.NoError(err)
+
+			historyMessage, historyConversation := mergeFixtureMessage(t, st, from.ID, "shared-owner-state", "history-message", "history payload", 1)
+			liveMessage, liveConversation := mergeFixtureMessage(t, st, into.ID, "shared-owner-state", "live-message", "live payload", 2)
+			now := time.Date(2035, 2, 1, 12, 0, 0, 0, time.UTC)
+			retiredConversation := liveConversation
+			winnerConversation := historyConversation
+			retiredSourceID, winnerSourceID := into.ID, from.ID
+			retiredMessage, winnerMessage := liveMessage, historyMessage
+			retiredOwner, winnerOwner := "live-owner@example.test", "archive-owner@example.test"
+			if test.retiredSource {
+				retiredConversation, winnerConversation = historyConversation, liveConversation
+				retiredSourceID, winnerSourceID = from.ID, into.ID
+				retiredMessage, winnerMessage = historyMessage, liveMessage
+				retiredOwner, winnerOwner = "archive-owner@example.test", "live-owner@example.test"
+			}
+
+			retiredOpen := sourceMergeLoopOpen(retiredConversation, retiredSourceID, retiredMessage, "awaiting_reply", now)
+			retiredOpen.OwnerAddress = retiredOwner
+			retiredOpen.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_note":"retired note"}]`, retiredMessage, retiredConversation))
+			require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+				ConversationID: retiredConversation,
+				Now:            now,
+				Verdict:        store.LoopVerdict{Open: &retiredOpen},
+			}))
+			retiredRows, err := st.ListLiveConversationLoopsContext(t.Context(), retiredConversation)
+			require.NoError(err)
+			require.Len(retiredRows, 1)
+			retiredLoopID := retiredRows[0].ID
+			snoozedUntil := now.Add(24 * time.Hour)
+			_, err = st.SnoozeLoopContext(t.Context(), retiredLoopID, snoozedUntil, now)
+			require.NoError(err)
+			fulfilmentSuggestedAt := now.Add(-30 * time.Minute)
+			_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET agenda_state = 'created', fulfilment_suggested_at = ? WHERE id = ?`), fulfilmentSuggestedAt, retiredLoopID)
+			require.NoError(err)
+
+			winnerOpen := sourceMergeLoopOpen(winnerConversation, winnerSourceID, winnerMessage, "awaiting_reply", now)
+			winnerOpen.OwnerAddress = winnerOwner
+			winnerOpen.EvidenceJSON = []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_note":"winner note"}]`, winnerMessage, winnerConversation))
+			winnerOpen.LastActivityAt = now.Add(time.Hour)
+			if test.retiredSource {
+				winnerOpen.LastActivityAt = now
+			}
+			require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+				ConversationID: winnerConversation,
+				Now:            now,
+				Verdict:        store.LoopVerdict{Open: &winnerOpen},
+			}))
+			winnerRows, err := st.ListLiveConversationLoopsContext(t.Context(), winnerConversation)
+			require.NoError(err)
+			require.Len(winnerRows, 1)
+			winnerLoopID := winnerRows[0].ID
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+			require.NoError(err)
+			winner, err := st.GetOpenLoopContext(t.Context(), winnerLoopID)
+			require.NoError(err)
+			assert.Equal("open", winner.Status)
+			assert.Equal(winnerOwner, winner.OwnerAddress)
+			assert.Equal(liveConversation, winner.ConversationID)
+			require.NotNil(winner.SnoozedUntil)
+			assert.True(snoozedUntil.Equal(*winner.SnoozedUntil))
+			assert.Equal("created", winner.AgendaState)
+			require.NotNil(winner.FulfilmentSuggestedAt)
+			assert.True(fulfilmentSuggestedAt.Equal(*winner.FulfilmentSuggestedAt))
+			assert.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_note":"winner note\nretired note"}]`, winnerMessage, liveConversation), string(winner.EvidenceJSON))
+
+			retired, err := st.GetOpenLoopContext(t.Context(), retiredLoopID)
+			require.NoError(err)
+			assert.Equal("closed", retired.Status)
+		})
 	}
 }
 
