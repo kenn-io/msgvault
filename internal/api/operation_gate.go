@@ -425,11 +425,12 @@ var operationGateExemptPaths = map[string]bool{
 // while a long archive operation holds the gate. Kata evidence preparation
 // only reads message bodies and extracted document text. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
-// Email family previews read snapshots without taking the gate.
+// Email family previews and exports read snapshots without taking the gate.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
 	"/api/v1/messages/family/decisions/preview",
+	"/api/v1/messages/{id}/family/export",
 	"/api/v1/saved-views/{id}/run",
 	remoteImagePath,
 	cardDAVAccountTestPath,

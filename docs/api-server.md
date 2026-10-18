@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.25.0**.
+it is separate from the binary release version. The current schema is **3.26.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,7 @@ requests remain valid.
 
 Schema 3.24.0 adds owner-only [email family lookup](#email-families).
 Schema 3.25.0 adds reversible local family links and handling decisions.
+Schema 3.26.0 adds provenance ZIP export.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
@@ -2783,6 +2784,18 @@ the survivor and preserves existing deficits. Undoing deduplication does not
 move decisions back. Subset copies omit decisions with incomplete endpoints.
 A handled batch covers each selected copy independently; a duplicate copy
 remains outstanding until it has reply evidence or its own local confirmation.
+
+`POST /api/v1/messages/{id}/family/export` accepts `expected_family_revision`
+and optional `source_ids`. It returns `application/zip` from the same archive
+snapshot used to check the revision. A stale token returns `409 family_changed`
+before download headers. No provider is contacted.
+
+The ZIP stores opaque `copies/N.eml` filenames and `manifest.json`. Each manifest
+member includes archive identifiers, source and account, dates, labels, linkage
+outcome, raw format, filename and SHA-256. Original bytes are preserved. Missing,
+encrypted, unsupported or undecodable originals are listed with an explicit
+state and no file. `complete` is false if an original could not be exported or
+the family lookup was truncated. Decoded originals are limited to 64 MiB each.
 
 See [`family`](cli-reference.md#family) for evidence and handling rules.
 These routes require the owner credential and are unavailable to delegated grants.

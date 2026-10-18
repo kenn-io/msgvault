@@ -47,7 +47,7 @@ func TestEmailFamilyHTTPRequiresOwner(t *testing.T) {
 	srv, reg := newTestServerWithAgentGrants(t)
 	_, secret, _, err := reg.Issue("family-read", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "owner@example.test"}}, time.Time{})
 	require.NoError(t, err)
-	for i, route := range []struct{ method, path string }{{"GET", "/api/v1/messages/1/family"}, {"POST", "/api/v1/messages/family/decisions/preview"}, {"POST", "/api/v1/messages/family/decisions"}, {"POST", "/api/v1/messages/family/decisions/1/undo"}, {"GET", "/api/v1/messages/family/decisions?message_id=1"}, {"GET", "/api/v1/messages/family/decisions/1"}} {
+	for i, route := range []struct{ method, path string }{{"GET", "/api/v1/messages/1/family"}, {"POST", "/api/v1/messages/1/family/export"}, {"POST", "/api/v1/messages/family/decisions/preview"}, {"POST", "/api/v1/messages/family/decisions"}, {"POST", "/api/v1/messages/family/decisions/1/undo"}, {"GET", "/api/v1/messages/family/decisions?message_id=1"}, {"GET", "/api/v1/messages/family/decisions/1"}} {
 		for _, tc := range []struct {
 			header, value string
 			status        int
@@ -192,4 +192,39 @@ func TestEmailFamilyPreviewHTTPWhileArchiveOperationRuns(t *testing.T) {
 	var preview store.EmailFamilyDecisionPreview
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &preview))
 	require.Len(preview.Family.Members, 1)
+}
+
+func TestEmailFamilyExportHTTPStaleBeforeZIP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	srv, st, gate := newEmailFamilyOperationGateTestServer(t)
+	source, err := st.GetOrCreateSource("imap", "export@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic mail")
+	require.NoError(err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "seed", MessageType: "email"}, RawMIME: []byte("Message-ID: <seed@example.test>\r\n\r\n")})
+	require.NoError(err)
+	family, err := st.EmailFamilyContext(t.Context(), id, store.EmailFamilyOptions{})
+	require.NoError(err)
+	release, ok := gate.BeginWorkContext(t.Context())
+	require.True(ok)
+	defer release()
+	for _, tc := range []struct {
+		revision string
+		status   int
+	}{{"stale", 409}, {family.Revision, 200}} {
+		body, err := json.Marshal(map[string]string{"expected_family_revision": tc.revision})
+		require.NoError(err)
+		request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/family/export", id), bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		require.Equal(tc.status, response.Code, response.Body.String())
+		if tc.status == 200 {
+			assert.Equal("application/zip", response.Header().Get("Content-Type"))
+			assert.True(bytes.HasPrefix(response.Body.Bytes(), []byte("PK")))
+		} else {
+			assert.NotContains(response.Header().Get("Content-Type"), "zip")
+		}
+	}
 }

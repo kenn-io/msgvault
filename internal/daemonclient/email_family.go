@@ -143,3 +143,36 @@ func (c *Client) ListEmailFamilyDecisionsContext(ctx context.Context, id int64, 
 	err := c.emailFamilyJSON(ctx, http.MethodGet, path, nil, &result)
 	return result, err
 }
+
+// ExportEmailFamilyContext streams a staged archive from the daemon.
+func (c *Client) ExportEmailFamilyContext(ctx context.Context, id int64, revision string, options store.EmailFamilyOptions, output io.Writer) error {
+	input := struct {
+		ExpectedFamilyRevision string  `json:"expected_family_revision"`
+		SourceIDs              []int64 `json:"source_ids,omitzero"`
+	}{revision, options.SourceIDs}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	response, err := c.doGeneratedRequestWithHTTPClient(ctx, http.MethodPost, fmt.Sprintf("/api/v1/messages/%d/family/export", id), emailFamilyRequestOptions{body: body}, httpClientWithoutTimeout(c.httpClient), maxErrorBodyBytes)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		data, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes))
+		if err != nil {
+			return err
+		}
+		_, code, _ := apiErrorMessage(data)
+		if code == "family_changed" {
+			return store.ErrEmailFamilyChanged
+		}
+		if code == "not_found" {
+			return store.ErrNotFound
+		}
+		return handleErrorBody(response.StatusCode, data)
+	}
+	_, err = io.Copy(output, response.Body)
+	return err
+}

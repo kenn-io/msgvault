@@ -24,12 +24,13 @@ const (
 var (
 	exportEMLOutput  string
 	exportEMLThread  bool
+	exportEMLFamily  bool
 	exportEMLAccount string
 )
 
 var exportEMLCmd = &cobra.Command{
 	Use:   "export-eml <id>",
-	Short: "Export a message as .eml file",
+	Short: "Export archived MIME originals or a family ZIP",
 	Long: `Export a message from the archive as a standard .eml (MIME) file.
 <id> is the "id" from 'msgvault search --json' or a provider message ID.
 
@@ -38,16 +39,23 @@ to a file. The .eml format is compatible with most email clients.
 
 With --thread, it writes every message in the conversation that has stored
 MIME into a directory, numbered oldest first, and reports messages it had to
-skip and when the account last synced.`,
+skip and when the account last synced.
+
+With --family and a numeric archive ID, it downloads related originals and
+a provenance manifest as a ZIP. Missing originals remain listed in the manifest.`,
 	Example: `  msgvault export-eml 12345
   msgvault export-eml 12345 --output message.eml
   msgvault export-eml 18f0abc123def -o important.eml
-  msgvault export-eml 18f0abc123def --thread -o thread/`,
+  msgvault export-eml 18f0abc123def --thread -o thread/
+  msgvault export-eml 12345 --family -o family.zip`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id, err := resolveMessageIDArg(args[0])
 		if err != nil {
 			return err
+		}
+		if exportEMLFamily {
+			return runExportEMLFamily(cmd, id, exportEMLOutput)
 		}
 		if exportEMLThread {
 			return runExportEMLThread(cmd, id, exportEMLAccount, exportEMLOutput)
@@ -197,7 +205,9 @@ func runExportEMLThread(cmd *cobra.Command, messageRef, account, outputDir strin
 
 func init() {
 	rootCmd.AddCommand(exportEMLCmd)
+	exportEMLCmd.Flags().BoolVar(&exportEMLFamily, "family", false, "Export related archived copies and provenance as a ZIP")
 	exportEMLCmd.Flags().StringVarP(&exportEMLOutput, "output", "o", "", "Output file path (default: <source_message_id>.eml, use - for stdout); with --thread, the output directory (default: current directory)")
 	exportEMLCmd.Flags().BoolVar(&exportEMLThread, "thread", false, "Export every message in the conversation that has stored MIME")
+	exportEMLCmd.MarkFlagsMutuallyExclusive("family", "thread")
 	exportEMLCmd.Flags().StringVar(&exportEMLAccount, "account", "", "With --thread, the account (email address) that holds a provider message ID found in several accounts")
 }

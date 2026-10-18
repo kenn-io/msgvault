@@ -320,6 +320,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerContactRouteRoutes(apiV1)
 	s.registerEmailFamilyRoutes(apiV1)
 	s.registerEmailFamilyDecisionRoutes(apiV1)
+	s.registerEmailFamilyExportRoutes(apiV1)
 	s.registerPersonNetworkRoutes(apiV1)
 	s.registerPersonTrackingRoutes(apiV1)
 	s.registerEmailTagRoutes(apiV1)

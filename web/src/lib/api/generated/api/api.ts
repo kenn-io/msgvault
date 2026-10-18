@@ -127,12 +127,14 @@ import type {
   EmailFamilyDecisionPreview,
   EmailFamilyDecisionResult,
   EmailFamilyDecisionUndo,
+  EmailFamilyExportInput,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
   EmploymentsResponse,
   EndEmploymentBody,
   EndEmploymentPathParameters,
+  ExportEmailFamilyPathParameters,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -2376,6 +2378,25 @@ export const getEmailFamily = (
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
       method: "GET",
       params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Download archived email copies and provenance from one snapshot
+ */
+export const exportEmailFamily = (
+  { id }: ExportEmailFamilyPathParameters,
+  emailFamilyExportInput: EmailFamilyExportInput,
+  options?: SecondParameter<typeof orvalFetch<Blob>>,
+) => {
+  return orvalFetch<Blob>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family/export`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: emailFamilyExportInput,
+      responseType: "blob",
     },
     options,
   );

@@ -938,7 +938,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
-	familyReads := []string{"/api/v1/messages/family/decisions/preview"}
+	familyReads := []string{"/api/v1/messages/family/decisions/preview", "/api/v1/messages/{id}/family/export"}
 	for _, path := range familyReads {
 		route := doc.Paths[path]
 		require.NotNil(route, "email family route must exist: %s", path)

@@ -345,6 +345,11 @@ type GetEmailFamilyPath struct {
 	ID int64 `json:"id"`
 }
 
+type ExportEmailFamilyPath struct {
+	// ID Live archived email message ID
+	ID int64 `json:"id"`
+}
+
 type GetMessageInlinePartPath struct {
 	// ID Message ID
 	ID int64 `json:"id"`

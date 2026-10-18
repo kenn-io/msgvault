@@ -2625,6 +2625,20 @@ stored MIME before they are read; other read or write errors stop the command.
 Hidden duplicate copies are excluded. The last-sync time describes account
 freshness, not conversation completeness.
 
+Use `--family` with a numeric archive message ID to download related copies
+from the daemon in one ZIP:
+
+```bash
+msgvault export-eml 42 --family -o family.zip
+```
+
+The default filename is `email-family-42.zip`; `-o -` streams to stdout.
+`--family` and `--thread` are mutually exclusive. The ZIP preserves each
+available original under `copies/N.eml`. Its manifest records provenance,
+SHA-256 hashes and unavailable originals. A partial or truncated export sets
+`complete` to false. The daemon checks the current family revision before
+starting the download. See [the API export contract](api-server.md#email-families)
+for manifest details and limits.
 
 ---
 

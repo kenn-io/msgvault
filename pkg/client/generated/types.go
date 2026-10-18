@@ -4227,6 +4227,15 @@ func (e EmailFamilyEnvelope) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
+type EmailFamilyExportInput struct {
+	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
+	SourceIds              []int64 `json:"source_ids,omitempty"`
+}
+
+func (e EmailFamilyExportInput) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type EmailFamilyMember struct {
 	AccountAddress        string                `json:"account_address" validate:"required"`
 	AccountPath           string                `json:"account_path" validate:"required"`

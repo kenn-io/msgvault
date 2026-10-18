@@ -4673,6 +4673,19 @@ components:
         - kind
         - address
       type: object
+    EmailFamilyExportInput:
+      additionalProperties: false
+      properties:
+        expected_family_revision:
+          type: string
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - expected_family_revision
+      type: object
     EmailFamilyMember:
       additionalProperties: true
       properties:
@@ -16832,7 +16845,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.25.0
+  version: 3.26.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -25149,6 +25162,79 @@ paths:
       security:
         - apiKey: []
       summary: Read related archived email copies and explicit handling evidence
+      tags:
+        - API
+  /api/v1/messages/{id}/family/export:
+    post:
+      operationId: exportEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyExportInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Download archived email copies and provenance from one snapshot
       tags:
         - API
   /api/v1/messages/{id}/inline:

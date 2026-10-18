@@ -59,6 +59,20 @@ func TestFamilyDecisionCommandPreviewsAndAppliesViaDaemon(t *testing.T) {
 	assert.Contains(out.String(), "active")
 }
 
+func TestFamilyExportCommandWritesDaemonZIP(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "export-cli@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(source.ID, "thread", "Synthetic mail")
+	require.NoError(err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "seed", MessageType: "email"}, RawMIME: []byte("Message-ID: <seed@example.test>\r\n\r\n")})
+	require.NoError(err)
+	cmd, out, _ := emlArchiveCommand(t, st, nil)
+	require.NoError(runExportEMLFamily(cmd, strconv.FormatInt(id, 10), "-"))
+	assert.True(t, strings.HasPrefix(out.String(), "PK"))
+}
+
 func TestFamilyDecisionUndoPreviewAfterDeletion(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
