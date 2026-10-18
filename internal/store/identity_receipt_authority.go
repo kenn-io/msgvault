@@ -79,6 +79,55 @@ func mergeIdentityReceiptCoverage(snapshot *IdentitySnapshot, coverage identityR
 	snapshot.SourceContributions = merged.SourceContributions
 }
 
+func mergeIdentityReceiptAuthorizationEvidence(snapshot, original *IdentitySnapshot) error {
+	sources, err := mergeIdentityReceiptResourceEvidence(snapshot.Sources, original.Sources, func(source IdentitySourceEvidence) int64 { return source.ID })
+	if err != nil {
+		return err
+	}
+	persons, err := mergeIdentityReceiptResourceEvidence(snapshot.Persons, original.Persons, func(person IdentityPersonEvidence) int64 { return person.ID })
+	if err != nil {
+		return err
+	}
+	accounts, err := mergeIdentityReceiptResourceEvidence(snapshot.Accounts, original.Accounts, func(account IdentityAccountEvidence) int64 { return account.ID })
+	if err != nil {
+		return err
+	}
+	books, err := mergeIdentityReceiptResourceEvidence(snapshot.Books, original.Books, func(book IdentityBookEvidence) int64 { return book.ID })
+	if err != nil {
+		return err
+	}
+	snapshot.Sources = sources
+	snapshot.Persons = persons
+	snapshot.Accounts = accounts
+	snapshot.Books = books
+	mergeIdentityReceiptCoverage(snapshot, identityReceiptCoverageFromSnapshot(original))
+	return nil
+}
+
+func mergeIdentityReceiptResourceEvidence[T comparable](current, original []T, id func(T) int64) ([]T, error) {
+	byID := make(map[int64]T, len(current)+len(original))
+	for _, evidence := range current {
+		resourceID := id(evidence)
+		if previous, ok := byID[resourceID]; ok && previous != evidence {
+			return nil, ErrIdentityOperationReceiptDenied
+		}
+		byID[resourceID] = evidence
+	}
+	for _, evidence := range original {
+		resourceID := id(evidence)
+		if previous, ok := byID[resourceID]; ok && previous != evidence {
+			return nil, ErrIdentityOperationReceiptDenied
+		}
+		byID[resourceID] = evidence
+	}
+	merged := make([]T, 0, len(byID))
+	for _, evidence := range byID {
+		merged = append(merged, evidence)
+	}
+	slices.SortFunc(merged, func(a, b T) int { return cmp.Compare(id(a), id(b)) })
+	return merged, nil
+}
+
 func identityReceiptCoverageFromSnapshot(snapshot *IdentitySnapshot) identityReceiptCoverage {
 	return identityReceiptCoverageFor(snapshot)
 }
@@ -215,7 +264,9 @@ func (s *Store) IdentityOperationReceiptAuthorizedContext(ctx context.Context, p
 			}
 			return err
 		}
-		mergeIdentityReceiptCoverage(current, identityReceiptCoverageFromSnapshot(original))
+		if err := mergeIdentityReceiptAuthorizationEvidence(current, original); err != nil {
+			return err
+		}
 		return authorize(ctx, current)
 	})
 	if err != nil {

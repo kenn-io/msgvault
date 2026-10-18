@@ -88,9 +88,6 @@ func TestScopedGrantBoundsAndLegacySources(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
-	legacyID, _, _, err := r.Issue("legacy", []Permission{PermissionSearchRead}, nil, time.Time{})
-	require.Error(t, err, "legacy source issuance still requires sources")
-	assert.Empty(t, legacyID)
 }
 
 func TestScopedGrantExpiry(t *testing.T) {

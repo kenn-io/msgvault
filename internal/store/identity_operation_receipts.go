@@ -159,7 +159,9 @@ func (s *Store) applyIdentityOperationContext(ctx context.Context, request Ident
 				if err := authorize(ctx, original); err != nil {
 					return err
 				}
-				mergeIdentityReceiptCoverage(before, identityReceiptCoverageFromSnapshot(original))
+				if err := mergeIdentityReceiptAuthorizationEvidence(before, original); err != nil {
+					return err
+				}
 				if err := authorize(ctx, before); err != nil {
 					return err
 				}

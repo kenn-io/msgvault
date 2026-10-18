@@ -198,6 +198,55 @@ func TestIdentityOperationReceiptBindsOriginalAuthority(t *testing.T) {
 	requirements.ErrorIs(err, ErrIdentityOperationReceiptDenied)
 }
 
+func TestIdentityOperationReceiptAuthorizationRetainsSourceEvidenceAfterRosterRemoval(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, a, b := newUnlinkGuardStore(t)
+	source, err := st.GetOrCreateSource("gmail", "synthetic-roster@example.test")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "synthetic-roster-thread", "Synthetic Roster Thread")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceConversationParticipantsContext(t.Context(), conversation, []ConversationParticipantRef{
+		{ParticipantID: a, Role: "member"},
+		{ParticipantID: b, Role: "member"},
+	}))
+	request := receiptRequest(t, st, identitycontrol.OperationGraphLink,
+		identitycontrol.IdentityTarget{ParticipantID: a, OtherParticipantID: b}, "synthetic-roster-receipt")
+	request.AuthorityFingerprint = strings.Repeat("d", 64)
+	missingEvidence := errors.New("synthetic source evidence missing")
+	authorize := func(_ context.Context, snapshot *IdentitySnapshot) error {
+		var sourceEvidence bool
+		var participantA, participantB bool
+		for _, candidate := range snapshot.Sources {
+			if candidate.ID == source.ID {
+				sourceEvidence = true
+			}
+		}
+		for _, contribution := range snapshot.SourceContributions {
+			if contribution.SourceID != source.ID {
+				continue
+			}
+			participantA = participantA || contribution.ParticipantID == a
+			participantB = participantB || contribution.ParticipantID == b
+		}
+		if !sourceEvidence || !participantA || !participantB {
+			return missingEvidence
+		}
+		return nil
+	}
+	receipt, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, authorize, authorize)
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceConversationParticipantsContext(t.Context(), conversation, nil))
+
+	recovered, err := st.IdentityOperationReceiptAuthorizedContext(t.Context(), request.Principal, request.IdempotencyKey, request.AuthorityFingerprint, authorize)
+	requirements.NoError(err)
+	assertions.Equal(receipt, recovered)
+
+	retried, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, authorize, authorize)
+	requirements.NoError(err)
+	assertions.Equal(receipt, retried)
+}
+
 func TestIdentityOperationReceiptSurvivesSourceCleanupAndRejectsOwnerReuse(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
