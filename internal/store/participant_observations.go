@@ -465,7 +465,7 @@ func (s *Store) recordConversationPolicyParticipantObservationTx(
 	serviceSlug, scopeKind, scopeValue, providerUserID *string,
 	value string,
 ) error {
-	if addressKind != ContactAddressDisplayName && addressKind != ContactAddressProviderIdentity {
+	if addressKind != ContactAddressDisplayName && addressKind != ContactAddressProviderIdentity && addressKind != ContactAddressPhone {
 		return ErrInvalidContactAddressKind
 	}
 	value = strings.TrimSpace(value)
@@ -590,7 +590,7 @@ func (s *Store) recordConversationPolicyParticipantObservationTx(
 	if !eligible {
 		return ErrConversationPolicyStale
 	}
-	if addressKind == ContactAddressProviderIdentity {
+	if addressKind != ContactAddressDisplayName {
 		_, err = s.recordObservationConflictsTx(ctx, tx, observation, serviceID)
 	}
 	return err

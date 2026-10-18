@@ -3064,7 +3064,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (id INTEGER PRIMARY KEY, participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN, service_id INTEGER, scope_kind TEXT, scope_value TEXT);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
+		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT, email_address TEXT);
 		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
 		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);

@@ -319,6 +319,12 @@ func FullParticipantIdentifierWhereSQLite(alias string) string {
 	return fullParticipantIdentifierWhere(alias, false)
 }
 
+// FullParticipantIdentifierWherePostgres returns the participant identifier
+// eligibility predicate for PostgreSQL archive projections.
+func FullParticipantIdentifierWherePostgres(alias string) string {
+	return fullParticipantIdentifierWhere(alias, true)
+}
+
 func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	const observation = "identifier_observation"
 	const source = "identifier_source"
@@ -359,13 +365,11 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
  AND ((` + classification + ` AND ((` + beeper + `) OR (` + provider + `))) OR (` + address + `))))`
 }
 
-// Shared raw names need exact-value evidence from a live Full envelope or a
-// room-scoped importer observation. A sender/roster ID alone cannot attest to
-// the name stored on its shared row.
-// Independent curated profile names are read separately from this fallback.
 // FullParticipantNameWhere returns the SQL predicate for using one exact raw
 // participant display name. Chat-derived names require a matching display
 // value on a live Full message or a surviving Full-room name observation.
+// A sender or roster ID alone cannot attest to the name stored on its shared
+// row. Independent curated profile names are read separately from this fallback.
 func FullParticipantNameWhere(id, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
  SELECT 1 FROM participant_contact_observations name_observation

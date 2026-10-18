@@ -59,6 +59,22 @@ func observationValues(
 	return values
 }
 
+func observationsOfKinds(
+	observations []store.ParticipantContactObservation, kinds ...store.ContactAddressKind,
+) []store.ParticipantContactObservation {
+	wanted := make(map[store.ContactAddressKind]struct{}, len(kinds))
+	for _, kind := range kinds {
+		wanted[kind] = struct{}{}
+	}
+	var selected []store.ParticipantContactObservation
+	for _, observation := range observations {
+		if _, ok := wanted[observation.AddressKind]; ok {
+			selected = append(selected, observation)
+		}
+	}
+	return selected
+}
+
 // observationChat builds a one-message chat whose participant list carries the
 // addresses under test. The timestamp sits well outside reconcileWindow so
 // the head re-walk terminates immediately.
@@ -104,6 +120,8 @@ func TestImportCapturesEveryObservedAddressForOneParticipant(t *testing.T) {
 	participantID := participantForBeeperUser(t, st, "@telegram_alice:beeper.local")
 	observations, err := st.ListParticipantObservationsContext(context.Background(), participantID, true)
 	require.NoError(err, "ListParticipantObservationsContext")
+	observations = observationsOfKinds(observations,
+		store.ContactAddressPhone, store.ContactAddressEmail, store.ContactAddressUsername)
 	require.Len(observations, 3, "phone, email, and username all attach to one participant")
 
 	values := observationValues(t, st, participantID)
@@ -173,6 +191,7 @@ func TestImportRecordsAUsernameThePhoneServiceRejectsWithoutAService(t *testing.
 	participantID := participantForBeeperUser(t, st, "@15550100001:beeper.local")
 	observations, err := st.ListParticipantObservationsContext(context.Background(), participantID, true)
 	require.NoError(err, "ListParticipantObservationsContext")
+	observations = observationsOfKinds(observations, store.ContactAddressPhone, store.ContactAddressUsername)
 	require.Len(observations, 2)
 
 	byKind := map[store.ContactAddressKind]store.ParticipantContactObservation{}
@@ -309,6 +328,8 @@ func TestImportUsesRequestedAccountForObservationIdentityScope(t *testing.T) {
 	require.NoError(err, "list account-a observations")
 	rightObservations, err := st.ListParticipantObservationsContext(context.Background(), right, true)
 	require.NoError(err, "list account-b observations")
+	leftObservations = observationsOfKinds(leftObservations, store.ContactAddressProviderIdentity)
+	rightObservations = observationsOfKinds(rightObservations, store.ContactAddressProviderIdentity)
 	require.Len(leftObservations, 1)
 	require.Len(rightObservations, 1)
 	require.NotNil(leftObservations[0].ProviderUserID)
@@ -346,6 +367,7 @@ func TestImportRegistersUnknownBridgeAndPreservesObservedValues(t *testing.T) {
 	participantID := participantForBeeperUser(t, st, "@example-bridge_alice:beeper.local")
 	observations, err := st.ListParticipantObservationsContext(context.Background(), participantID, true)
 	require.NoError(err, "ListParticipantObservationsContext")
+	observations = observationsOfKinds(observations, store.ContactAddressUsername)
 	require.Len(observations, 1)
 	assert.Equal("Alice.Example", observations[0].NormalizedValue,
 		"a 'none' strategy must not alter the observed value")
@@ -505,7 +527,7 @@ func TestImportCaptureIsIdempotentAcrossRuns(t *testing.T) {
 	participantID := participantForBeeperUser(t, st, "@telegram_alice:beeper.local")
 	all, err := st.ListParticipantObservationsContext(ctx, participantID, false)
 	require.NoError(err, "ListParticipantObservationsContext")
-	assert.Len(all, 2, "history must not grow on a re-import either")
+	assert.Len(all, 3, "phone, username, and roster-name evidence must not grow on re-import")
 }
 
 func TestImportResetsRunLocalObservationDedupe(t *testing.T) {
@@ -604,6 +626,7 @@ func TestImportUsesParticipantBridgePrefixBeforeOpaqueAccountFallback(t *testing
 		participantID := participantForBeeperUser(t, st, userID)
 		observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
 		require.NoError(err, "list observations for %s", userID)
+		observations = observationsOfKinds(observations, store.ContactAddressUsername)
 		require.Len(observations, 1)
 		require.NotNil(observations[0].ServiceSlug)
 		assert.Equal("mysterybridge", *observations[0].ServiceSlug)
@@ -638,6 +661,7 @@ func TestImportUsesEachParticipantsOwnBridgePrefix(t *testing.T) {
 		participantID := participantForBeeperUser(t, st, userID)
 		observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
 		require.NoError(err, "list observations for %s", userID)
+		observations = observationsOfKinds(observations, store.ContactAddressUsername)
 		require.Len(observations, 1)
 		require.NotNil(observations[0].ServiceSlug)
 		assert.Equal(wantSlug, *observations[0].ServiceSlug)
@@ -677,6 +701,7 @@ func TestImportDoesNotGuessChatPrefixWhenParticipantsDisagree(t *testing.T) {
 		participantID := participantForBeeperUser(t, st, userID)
 		observations, err := st.ListParticipantObservationsContext(ctx, participantID, true)
 		require.NoError(err, "list observations for %s", userID)
+		observations = observationsOfKinds(observations, store.ContactAddressUsername)
 		require.Len(observations, 1)
 		require.NotNil(observations[0].ServiceSlug)
 		assert.Equal(wantSlug, *observations[0].ServiceSlug,
@@ -713,6 +738,7 @@ func TestImportDoesNotUsePrefixConsensusFromIncompleteParticipants(t *testing.T)
 		participantID := participantForBeeperUser(t, st, userID)
 		observations, listErr := st.ListParticipantObservationsContext(ctx, participantID, true)
 		require.NoError(listErr, "list observations for %s", userID)
+		observations = observationsOfKinds(observations, store.ContactAddressUsername)
 		require.Len(observations, 1)
 		require.NotNil(observations[0].ServiceSlug)
 		assert.Equal(wantSlug, *observations[0].ServiceSlug,

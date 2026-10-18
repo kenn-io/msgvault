@@ -72,10 +72,14 @@ func TestConversationPolicyIdentitySuggestionsAndScoring(t *testing.T) {
 
 func fullParticipantIdentifiers(t *testing.T, s *store.Store, participantID int64) []personmatch.PairIdentifier {
 	t.Helper()
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	if s.IsPostgreSQL() {
+		identifierWhere = store.FullParticipantIdentifierWherePostgres("pi")
+	}
 	rows, err := s.DB().Query(s.Rebind(`SELECT pi.identifier_type,pi.identifier_value,
 		COALESCE(cs.slug,''),COALESCE(pi.scope_kind,''),COALESCE(pi.scope_value,'')
 		FROM participant_identifiers pi LEFT JOIN communication_services cs ON cs.id=pi.service_id
-		WHERE pi.participant_id=? AND `+store.FullParticipantIdentifierWhereSQLite("pi")+` ORDER BY pi.id`), participantID)
+		WHERE pi.participant_id=? AND `+identifierWhere+` ORDER BY pi.id`), participantID)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, rows.Close()) }()
 	var identifiers []personmatch.PairIdentifier

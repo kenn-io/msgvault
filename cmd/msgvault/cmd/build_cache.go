@@ -2061,7 +2061,13 @@ func (s *cacheSourceSnapshot) prepareParticipantExportTables() error {
 		if table.name != cacheExportParticipants && table.name != cacheExportParticipantIdentifiers {
 			continue
 		}
-		query := strings.ReplaceAll(table.query, "'", "''")
+		querySQL := table.query
+		if table.name == cacheExportParticipants {
+			querySQL = participantExportQuery(true)
+		} else {
+			querySQL = participantIdentifierExportQuery(true)
+		}
+		query := strings.ReplaceAll(querySQL, "'", "''")
 		statement := fmt.Sprintf(`CREATE TEMP TABLE "%s" AS SELECT * FROM sqlite_query('sqlite_db', '%s')`, table.name, query)
 		if _, err := s.duckTx.Exec(statement); err != nil {
 			return fmt.Errorf("prepare %s snapshot: %w", table.name, err)
@@ -2107,19 +2113,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
-	participantExportQuery := fmt.Sprintf(`SELECT p.id,
-		CASE WHEN %s THEN p.email_address END AS email_address,
-		CASE WHEN %s THEN p.domain END AS domain,
-		CASE WHEN %s THEN p.display_name END AS display_name,
-		CASE WHEN %s THEN p.phone_number END AS phone_number
-		FROM participants p`,
-		store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"),
-		store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"),
-		store.FullParticipantNameWhere("p.id", "p.display_name"),
-		store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number"),
-	)
-	participantIdentifierExportQuery := `SELECT pi.participant_id, pi.identifier_type, pi.identifier_value, pi.display_value, pi.is_primary
-		FROM participant_identifiers pi WHERE ` + store.FullParticipantIdentifierWhereSQLite("pi")
+	participantExportQuery := participantExportQuery(false)
+	participantIdentifierExportQuery := participantIdentifierExportQuery(false)
 
 	// Every column carries an explicit type so the schema DuckDB sees never
 	// depends on the data: read_csv_auto sniffs empty or all-NULL columns as
@@ -2165,11 +2160,47 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
 		{"sources", "SELECT id, identifier, source_type FROM sources",
 			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}", identityColumns("identifier")},
-		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations",
+		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(TRY_CAST(conversation_type AS VARCHAR), 'email_thread') AS conversation_type FROM conversations",
 			"types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
 			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
 	}
+}
+
+// participantExportQuery applies the value-level chat policy in SQLite. The
+// scanner path returns byte values so DuckDB can repair or reject malformed
+// UTF-8 in the final cache projection without decoding it while materializing
+// the temporary table.
+func participantExportQuery(asBlob bool) string {
+	value := func(eligible, column string) string {
+		expression := "CASE WHEN " + eligible + " THEN " + column + " END"
+		if asBlob {
+			return "CAST(" + expression + " AS BLOB)"
+		}
+		return expression
+	}
+	return fmt.Sprintf(`SELECT p.id,
+		%s AS email_address,
+		%s AS domain,
+		%s AS display_name,
+		%s AS phone_number
+		FROM participants p`,
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.email_address"),
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.domain"),
+		value(store.FullParticipantNameWhere("p.id", "p.display_name"), "p.display_name"),
+		value(store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number"), "p.phone_number"),
+	)
+}
+
+func participantIdentifierExportQuery(asBlob bool) string {
+	identifierType, identifierValue, displayValue := "pi.identifier_type", "pi.identifier_value", "pi.display_value"
+	if asBlob {
+		identifierType = "CAST(" + identifierType + " AS BLOB)"
+		identifierValue = "CAST(" + identifierValue + " AS BLOB)"
+		displayValue = "CAST(" + displayValue + " AS BLOB)"
+	}
+	return `SELECT pi.participant_id, ` + identifierType + ` AS identifier_type, ` + identifierValue + ` AS identifier_value, ` + displayValue + ` AS display_value, pi.is_primary
+		FROM participant_identifiers pi WHERE ` + store.FullParticipantIdentifierWhereSQLite("pi")
 }
 
 func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {

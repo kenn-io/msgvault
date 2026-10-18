@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/conversationpolicy"
@@ -246,12 +247,14 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 			// and explicitly managed exceptions. Email threads do not carry
 			// policy state and must not pay the correlated membership count.
 			// Keep prior cold exceptions discoverable after config removal.
-			filter = ` WHERE (src.source_type IN ('beeper','slack','slackdump','discord','teams') OR COALESCE(p.override_tier,'')<>'' OR p.effective_tier='cold'`
+			var filterBuilder strings.Builder
+			filterBuilder.WriteString(` WHERE (src.source_type IN ('beeper','slack','slackdump','discord','teams') OR COALESCE(p.override_tier,'')<>'' OR p.effective_tier='cold'`)
 			for _, override := range settings.Overrides {
-				filter += ` OR (src.source_type=? AND src.identifier=? AND c.source_conversation_id=?)`
+				filterBuilder.WriteString(` OR (src.source_type=? AND src.identifier=? AND c.source_conversation_id=?)`)
 				args = append(args, override.SourceType, override.SourceIdentifier, override.ConversationID)
 			}
-			filter += `)`
+			filterBuilder.WriteByte(')')
+			filter = filterBuilder.String()
 		}
 		rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT c.id,c.source_id,src.source_type,src.identifier,COALESCE(c.source_conversation_id,''),COALESCE(c.participant_count,0),(SELECT COUNT(DISTINCT cp.participant_id) FROM conversation_participants cp WHERE cp.conversation_id=c.id),COALESCE(CAST(c.metadata AS TEXT),''),COALESCE(p.effective_tier,''),COALESCE(p.override_tier,''),p.last_activity_at FROM conversations c JOIN sources src ON src.id=c.source_id LEFT JOIN conversation_policy p ON p.conversation_id=c.id`+filter+` ORDER BY c.id`), args...)
 		if err != nil {

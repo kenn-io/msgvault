@@ -187,7 +187,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 					FROM conversation_participants cp
 					WHERE cp.conversation_id=?
 					AND EXISTS(SELECT 1 FROM participant_contact_observations o
-						WHERE o.participant_id=cp.participant_id AND o.active_until IS NULL AND o.superseded_at IS NULL)`),
+						WHERE o.participant_id=cp.participant_id AND o.active_until IS NULL AND o.superseded_at IS NULL
+						AND o.address_kind NOT IN ('display_name','provider_identity'))`),
 					conversationID).Scan(&observedCount); err != nil {
 					return false
 				}
@@ -233,7 +234,8 @@ func TestEnsureConversationCancellation(t *testing.T) {
 				pid := participantForBeeperUser(t, st, participant.ID)
 				observations, err := st.ListParticipantObservationsContext(context.Background(), pid, true)
 				require.NoError(err)
-				if len(observations) > 0 {
+				if len(observationsOfKinds(observations,
+					store.ContactAddressEmail, store.ContactAddressPhone, store.ContactAddressUsername)) > 0 {
 					observed++
 				}
 			}

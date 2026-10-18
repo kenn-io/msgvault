@@ -48,11 +48,30 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 		}
 		recordAdmittedObservations := func() error {
 			var sourceID int64
-			if err := tx.QueryRowContext(ctx, `SELECT source_id FROM conversations WHERE id=?`, room).Scan(&sourceID); err != nil {
+			var sourceType string
+			if err := tx.QueryRowContext(ctx, `SELECT c.source_id,src.source_type FROM conversations c JOIN sources src ON src.id=c.source_id WHERE c.id=?`, room).Scan(&sourceID, &sourceType); err != nil {
 				return err
 			}
 			if input.Email != "" {
 				if err := s.recordProviderEmailObservationTx(ctx, tx, result.ParticipantID, sourceID, room, input.Email); err != nil {
+					return err
+				}
+			}
+			// Beeper records richer phone evidence with its bridge and account
+			// scope in observationRecorder. Avoid a second, unclassified copy;
+			// other chat importers only have this room-scoped value.
+			if input.Phone != "" && sourceType != "beeper" {
+				var serviceSlug *string
+				var scopeKind, scopeValue *string
+				if classification, ok := classifyParticipantIdentifier(input.IdentifierType, input.IdentifierValue); ok {
+					serviceSlug = &classification.ServiceSlug
+					scopeKind = classification.ScopeKind
+					scopeValue = classification.ScopeValue
+				}
+				if err := s.recordConversationPolicyParticipantObservationTx(
+					ctx, tx, result.ParticipantID, sourceID, room,
+					ContactAddressPhone, serviceSlug, scopeKind, scopeValue, nil, input.Phone,
+				); err != nil {
 					return err
 				}
 			}

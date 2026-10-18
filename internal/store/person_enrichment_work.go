@@ -2178,7 +2178,7 @@ func (s *Store) LoadRequestInput(
 			input.Phones = append(input.Phones, candidate)
 		case ContactAddressURL:
 			input.PublicProfileURLs = append(input.PublicProfileURLs, candidate)
-		case ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
+		case ContactAddressDisplayName, ContactAddressUsername, ContactAddressIMPP, ContactAddressSocial,
 			ContactAddressCalendar, ContactAddressContactURI, ContactAddressOrgDirectory,
 			ContactAddressLanguage, ContactAddressProviderIdentity:
 			// These classes are not one of the approved enrichment identity primitives.
