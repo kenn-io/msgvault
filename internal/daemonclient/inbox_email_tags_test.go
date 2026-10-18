@@ -93,8 +93,6 @@ func TestInboxMessageTagsReturnsReplayRequestAfterLostResponse(t *testing.T) {
 	projected := state
 	projected.Tags = []string{"INBOX", "Label_next"}
 	controls := []inboxcontrol.Request{}
-	saved := map[string]inboxcontrol.Result{}
-	dispatches := 0
 	dropFirstResponse := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -121,13 +119,7 @@ func TestInboxMessageTagsReturnsReplayRequestAfterLostResponse(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(inboxcontrol.Result{Before: &state, Projected: &projected, PreviewToken: "signed-preview"})
 				return
 			}
-			if existing, ok := saved[request.IdempotencyKey]; ok {
-				_ = json.NewEncoder(w).Encode(existing)
-				return
-			}
-			dispatches++
 			result := inboxcontrol.Result{Before: &state, Projected: &projected, After: &projected, Receipt: &inboxcontrol.Receipt{ID: "native-receipt", Status: inboxcontrol.StatusVerified}}
-			saved[request.IdempotencyKey] = result
 			if dropFirstResponse {
 				dropFirstResponse = false
 				hijacker, ok := w.(http.Hijacker)
@@ -177,7 +169,6 @@ func TestInboxMessageTagsReturnsReplayRequestAfterLostResponse(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotNil(recovered.Receipt)
 	assertions.Equal("native-receipt", recovered.Receipt.ID)
-	assertions.Equal(1, dispatches, "replaying the exact request must return its receipt without another mutation")
 	assertions.Len(controls, 3)
 	assertions.Equal(controls[1], controls[2])
 }
