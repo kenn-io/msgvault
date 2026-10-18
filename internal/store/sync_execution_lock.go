@@ -447,12 +447,12 @@ func (l *sqliteSyncExecutionLock) release() (bool, error) {
 }
 
 type postgresSyncExecutionLock struct {
-	conn      *sql.Conn
-	sourceIDs []int64
-	rebind    func(string) string
-	mu        sync.Mutex
-	released  bool
-	discard   bool
+	conn         *sql.Conn
+	sourceIDs    []int64
+	rebind       func(string) string
+	mu           sync.Mutex
+	released     bool
+	discard      bool
 	closeOwnedDB func() error
 	namespace    string
 	sourceID     int64

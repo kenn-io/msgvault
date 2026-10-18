@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -340,6 +341,74 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
 	assertions.Equal(1, f.provider.dispatches)
+}
+
+func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
+	f := newControlFixture(t)
+	r := f.execution(t)
+	f.provider.dispatch = func(context.Context) error {
+		f.provider.state.Inbox = new(false)
+		return errors.New("synthetic lost dispatch response")
+	}
+	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
+	require.NotNil(t, unknown.Receipt)
+
+	synctest.Test(t, func(t *testing.T) {
+		observeEntered := make(chan struct{}, 1)
+		allowObserve := make(chan struct{})
+		f.provider.onObserve = func(_ context.Context, read int, _ inboxcontrol.Request) error {
+			if read == 3 {
+				observeEntered <- struct{}{}
+				<-allowObserve
+			}
+			return nil
+		}
+		gateToken := make(chan struct{}, 1)
+		gateArrivals := make(chan struct{}, 2)
+		gate := func(ctx context.Context) (func(), error) {
+			gateArrivals <- struct{}{}
+			select {
+			case gateToken <- struct{}{}:
+				return func() { <-gateToken }, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		type controlOutcome struct {
+			result *inboxcontrol.Result
+			err    error
+		}
+		request := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: unknown.Receipt.ID}
+		firstDone := make(chan controlOutcome, 1)
+		go func() {
+			result, err := f.service.Control(t.Context(), request, f.principal, gate)
+			firstDone <- controlOutcome{result: result, err: err}
+		}()
+		synctest.Wait()
+		require.Len(t, observeEntered, 1, "the first reconciliation reaches provider readback while holding the gate")
+
+		secondDone := make(chan controlOutcome, 1)
+		go func() {
+			result, err := f.service.Control(t.Context(), request, f.principal, gate)
+			secondDone <- controlOutcome{result: result, err: err}
+		}()
+		synctest.Wait()
+		require.Len(t, gateArrivals, 2, "the second reconciliation has read the pending receipt and is waiting for ownership")
+
+		close(allowObserve)
+		synctest.Wait()
+		first := <-firstDone
+		second := <-secondDone
+		require.NoError(t, first.err)
+		require.NotNil(t, first.result)
+		assert.Equal(t, inboxcontrol.StatusVerified, first.result.Receipt.Status)
+		require.NoError(t, second.err)
+		require.NotNil(t, second.result)
+		assert.Equal(t, inboxcontrol.StatusVerified, second.result.Receipt.Status)
+		assert.Equal(t, 3, f.provider.reads, "the waiter returns the verified receipt without another provider read")
+		assert.Equal(t, 1, f.provider.dispatches, "reconciliation never repeats the provider mutation")
+	})
 }
 
 func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {

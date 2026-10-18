@@ -32,18 +32,29 @@ func SemanticFingerprint(state State) (string, error) {
 	state.Tags = canonicalSet(state.Tags, false)
 	state.Flags = canonicalSet(state.Flags, false)
 	state.Folders = slices.Clone(state.Folders)
-	slices.SortFunc(state.Folders, func(a, b Folder) int {
-		if n := strings.Compare(a.ID, b.ID); n != 0 {
-			return n
-		}
-		if n := strings.Compare(a.Name, b.Name); n != 0 {
-			return n
-		}
-		if n := strings.Compare(a.ParentID, b.ParentID); n != 0 {
-			return n
-		}
-		return cmp.Compare(a.UIDValidity, b.UIDValidity)
-	})
+	state.folderCatalog = slices.Clone(state.folderCatalog)
+	sortFolders := func(folders []Folder) {
+		slices.SortFunc(folders, func(a, b Folder) int {
+			if n := strings.Compare(a.ID, b.ID); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.Name, b.Name); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.ParentID, b.ParentID); n != 0 {
+				return n
+			}
+			return cmp.Compare(a.UIDValidity, b.UIDValidity)
+		})
+	}
+	sortFolders(state.Folders)
+	sortFolders(state.folderCatalog)
+	if state.folderCatalog != nil {
+		return fingerprint(struct {
+			State         `json:",inline"`
+			FolderCatalog []Folder `json:"folder_catalog"`
+		}{State: state, FolderCatalog: state.folderCatalog})
+	}
 	return fingerprint(state)
 }
 

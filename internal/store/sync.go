@@ -1695,7 +1695,7 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 			row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
 				VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
 				RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
-				source, err = scanSource(row)
+			source, err = scanSource(row)
 			if err != nil {
 				return fmt.Errorf("upsert source: %w", err)
 			}

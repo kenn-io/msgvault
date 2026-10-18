@@ -158,7 +158,7 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
-	for _, body := range []string{`{"id":`, strings.Repeat(" ", (1<<20)+1)} {
+	for _, body := range []string{`{"id":`, inboxTestChat + strings.Repeat(" ", (1<<20)+1)} {
 		peer := &inboxHTTPPeer{info: inboxTestInfo, chat: body, page: inboxTestPage}
 		provider := NewInboxProvider(peer.client(t), inboxTestSource())
 		target := inboxTestTarget()

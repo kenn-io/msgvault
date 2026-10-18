@@ -23,6 +23,28 @@ func inboxGmailTarget() inboxcontrol.Target {
 	return inboxcontrol.Target{SourceID: s.SourceID, SourceType: s.SourceType, SourceIdentifier: s.SourceIdentifier, AccountID: s.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: 1, ProviderID: "message-1"}
 }
 
+func TestInboxGmailObservationSeparatesAssignedLabelsFromCatalog(t *testing.T) {
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/profile":
+			_, _ = w.Write([]byte(`{"emailAddress":"owner@example.com"}`))
+		case "/gmail/v1/users/me/messages/message-1":
+			_, _ = w.Write([]byte(`{"id":"message-1","labelIds":["INBOX","LabelA"],"historyId":"12"}`))
+		case "/gmail/v1/users/me/labels":
+			_, _ = w.Write([]byte(`{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"LabelA","name":"Beta","type":"user"},{"id":"LabelB","name":"Alpha","type":"user"}]}`))
+		default:
+			assert.Fail(t, "unexpected Gmail request", r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	provider := NewInboxProvider(client, inboxGmailSource())
+	target := inboxGmailTarget()
+	state, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target})
+	require.NoError(t, err)
+	assert.Equal(t, []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}}, state.Folders)
+	assert.ElementsMatch(t, []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}, {ID: "LabelB", Name: "Alpha"}}, state.FolderCatalog())
+}
+
 func TestInboxGmailNativeDeltas(t *testing.T) {
 	for _, tc := range []struct {
 		name                string

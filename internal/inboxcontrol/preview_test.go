@@ -72,13 +72,13 @@ func TestPreviewRejectsMalformedEnvelope(t *testing.T) {
 func TestPreviewCannotExtendExpiryByEditingPayload(t *testing.T) {
 	now := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	key := bytes.Repeat([]byte{1}, 32)
-	claims := PreviewClaims{PrincipalID: "synthetic-grant", IntentHash: strings.Repeat("a", 64), StateHash: strings.Repeat("b", 64), IssuedAt: now, ExpiresAt: now.Add(5 * time.Minute)}
+	claims := PreviewClaims{PrincipalID: "synthetic-grant", IntentHash: strings.Repeat("a", 64), StateHash: strings.Repeat("b", 64), IssuedAt: now, ExpiresAt: now.Add(time.Minute)}
 	token, err := SignPreview(key, claims)
 	require.NoError(t, err)
 	parts := strings.Split(token, ".")
-	claims.ExpiresAt = now.Add(time.Hour)
+	claims.ExpiresAt = now.Add(4 * time.Minute)
 	payload, err := json.Marshal(claims, json.Deterministic(true))
 	require.NoError(t, err)
 	tampered := base64.RawURLEncoding.EncodeToString(payload) + "." + parts[1]
-	assert.ErrorIs(t, VerifyPreview(key, tampered, claims.PrincipalID, claims.IntentHash, claims.StateHash, now.Add(10*time.Minute)), ErrInvalid)
+	assert.ErrorIs(t, VerifyPreview(key, tampered, claims.PrincipalID, claims.IntentHash, claims.StateHash, now.Add(2*time.Minute)), ErrInvalid)
 }

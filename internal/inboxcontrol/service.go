@@ -392,8 +392,22 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 		return nil, err
 	}
 	defer done()
-	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
+	// Another reconciliation may have verified this receipt while this
+	// request waited for ownership. Reload it before provider I/O so recovery
+	// uses the latest durable status and any saved dispatch mapping.
+	receipt, err = s.Ledger.GetInboxReceipt(ctx, request.ReceiptID)
+	if err != nil {
+		return nil, ErrInternal
+	}
+	if receipt == nil {
+		return nil, ErrDenied
+	}
+	result, err = s.replay(ctx, receipt, receipt.IntentHash, principal)
+	if err != nil {
 		return nil, err
+	}
+	if receipt.Status == StatusVerified || receipt.Status == StatusFailed {
+		return result, nil
 	}
 	read := receipt.Intent
 	if receipt.Projected == nil {

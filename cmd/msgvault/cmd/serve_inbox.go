@@ -67,6 +67,7 @@ func (a *storeAPIAdapter) ControlInbox(ctx context.Context, request inboxcontrol
 }
 
 func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) *inboxcontrol.Service {
+	reconciled := false
 	return &inboxcontrol.Service{
 		Ledger: a.store, Key: a.inboxKey, Authorize: authorize,
 		Resolve: a.resolveInboxProvider,
@@ -79,10 +80,29 @@ func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, in
 				if err := execution.Release(); err != nil && a.logger != nil {
 					a.logger.Error("release inbox source ownership", "error", err)
 				}
+				if !reconciled || a.draftCacheRefresh == nil {
+					return
+				}
+				refreshCtx, cancel := localDraftEvidenceContext(ctx)
+				defer cancel()
+				source, err := a.store.GetSourceByIDContext(refreshCtx, sourceID)
+				if err != nil {
+					if a.logger != nil {
+						a.logger.Error("resolve source after Inbox reconciliation", "source_id", sourceID, "error", err)
+					}
+					return
+				}
+				if source != nil {
+					a.refreshDraftCache(refreshCtx, source)
+				}
 			}, nil
 		},
 		ReconcileState: func(ctx context.Context, before, after inboxcontrol.State) error {
-			return a.store.ReconcileInboxProviderState(ctx, before.Target, before, after)
+			if err := a.store.ReconcileInboxProviderState(ctx, before.Target, before, after); err != nil {
+				return err
+			}
+			reconciled = true
+			return nil
 		},
 	}
 }

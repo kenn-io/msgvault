@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestInboxGmailReconcileUpdatesLabelsAndKeepsUIRead(t *testing.T) {
@@ -54,6 +55,39 @@ func TestInboxGmailReconcileUpdatesLabelsAndKeepsUIRead(t *testing.T) {
 			assertions.Equal([]string{"Next", "Other"}, messageLabels(t, st, id))
 		})
 	}
+}
+
+func TestInboxGmailReconcileUsesUnassignedConflictingLabelCatalog(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st, source, first := tagFixture(t, "gmail", "gmail-catalog-first")
+	conversation, err := st.EnsureConversation(source.ID, "thread-catalog-second", "Catalog fixture")
+	requirements.NoError(err)
+	second, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "gmail-catalog-second", ConversationID: conversation, MessageType: "email"})
+	requirements.NoError(err)
+	labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+		"Label_a": {Name: "Alpha", Type: "user"},
+		"Label_b": {Name: "Beta", Type: "user"},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageLabels(first, []int64{labels["Label_a"]}))
+	requirements.NoError(st.ReplaceMessageLabels(second, []int64{labels["Label_b"]}))
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: first, ProviderID: "gmail-catalog-first"}
+	before := inboxcontrol.State{Target: target, Tags: []string{"Label_a"}, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()}
+	after := before
+	after.ObservedAt = before.ObservedAt.Add(time.Second)
+	after.Folders = []inboxcontrol.Folder{{ID: "Label_a", Name: "Beta"}}
+	after.SetFolderCatalog([]inboxcontrol.Folder{{ID: "Label_a", Name: "Beta"}, {ID: "Label_b", Name: "Alpha"}})
+
+	requirements.NoError(st.ReconcileInboxProviderState(t.Context(), target, before, after))
+	firstIDs, err := st.MessageLabelIDsContext(t.Context(), first)
+	requirements.NoError(err)
+	secondIDs, err := st.MessageLabelIDsContext(t.Context(), second)
+	requirements.NoError(err)
+	assertions.Equal([]int64{labels["Label_a"]}, firstIDs)
+	assertions.Equal([]int64{labels["Label_b"]}, secondIDs, "the unassigned conflicting label keeps its archived identity")
+	assertions.Equal([]string{"Beta"}, messageLabels(t, st, first))
+	assertions.Equal([]string{"Alpha"}, messageLabels(t, st, second))
 }
 
 func TestInboxGmailReconcileUnavailableLocalLabelRollsBack(t *testing.T) {

@@ -112,6 +112,18 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 
 	a, target := inboxGmailFixture(t)
 	a.config = &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}}
+	cacheRefreshes := 0
+	cacheRefreshAfterRelease := false
+	a.draftCacheRefresh = func(ctx context.Context, identifier string) error {
+		cacheRefreshes++
+		assertions.Equal(target.SourceIdentifier, identifier)
+		execution, err := a.store.AcquireSyncExecutionContext(ctx, target.SourceID)
+		if err != nil {
+			return err
+		}
+		cacheRefreshAfterRelease = true
+		return execution.Release()
+	}
 	labels := []string{"INBOX", "UNREAD", "STARRED"}
 	native, err := a.store.EmailTagTargetContext(t.Context(), target.ItemID, "")
 	requirements.NoError(err)
@@ -170,6 +182,7 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	assertions.False(*preview.Projected.Inbox)
 	assertions.Equal(0, posts)
 	assertions.Equal(0, gates)
+	assertions.Zero(cacheRefreshes, "preview does not request a cache refresh")
 	request.DryRun = false
 	request.Expected = preview.Before
 	request.PreviewToken = preview.PreviewToken
@@ -188,6 +201,8 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	assertions.Equal(1, posts)
 	assertions.Equal(1, gates)
 	assertions.Equal(1, releases)
+	assertions.Equal(1, cacheRefreshes)
+	assertions.True(cacheRefreshAfterRelease, "the cache callback can acquire the source after Inbox ownership is released")
 	observation, err := a.store.GetInboxProviderState(t.Context(), target)
 	requirements.NoError(err)
 	requirements.NotNil(observation)
@@ -196,6 +211,7 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(result.Receipt.ID, replay.Receipt.ID)
 	assertions.Equal(1, posts)
+	assertions.Equal(1, cacheRefreshes, "terminal receipt replay does not refresh again")
 
 	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 	capabilities, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, principal, authorize, gate)

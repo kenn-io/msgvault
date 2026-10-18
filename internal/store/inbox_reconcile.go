@@ -56,7 +56,7 @@ func (s *Store) ReconcileInboxProviderState(ctx context.Context, target inboxcon
 			native := EmailTagTarget{MessageIdentityGuard: guard, Provider: target.SourceType}
 			snapshot := &emailtags.MessageTagResult{Provider: target.SourceType, Tags: tags, Verified: true}
 			if target.SourceType == "gmail" {
-				for _, folder := range after.Folders {
+				for _, folder := range after.FolderCatalog() {
 					if folder.ID == "" || folder.Name == "" || folder.ParentID != "" || folder.UIDValidity != 0 || IsSystemLabel(folder.ID) {
 						return inboxcontrol.ErrInvalid
 					}

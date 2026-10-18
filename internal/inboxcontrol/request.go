@@ -2,6 +2,7 @@ package inboxcontrol
 
 import (
 	"fmt"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -75,7 +76,21 @@ type State struct {
 	Revision          string         `json:"revision,omitempty"`
 	LastMessageID     string         `json:"last_message_id,omitempty"`
 	ObservedAt        time.Time      `json:"observed_at"`
+	folderCatalog     []Folder
 }
+
+// SetFolderCatalog records provider catalog identity without adding it to the
+// transport state. Gmail reconciliation needs unassigned labels to preserve
+// identities while label names change.
+func (s *State) SetFolderCatalog(folders []Folder) {
+	if s != nil {
+		s.folderCatalog = slices.Clone(folders)
+	}
+}
+
+// FolderCatalog returns the complete provider folder catalog observed with
+// this state, when the provider supplies one.
+func (s State) FolderCatalog() []Folder { return slices.Clone(s.folderCatalog) }
 
 // Request carries one exact action. Preview (DryRun) reads live state without
 // requiring an existing plan. Execution requires expected state, a signed
