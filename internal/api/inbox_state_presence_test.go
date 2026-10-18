@@ -36,8 +36,9 @@ func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 	requirements := require.New(t)
 
 	target := inboxcontrol.Target{SourceID: 1, SourceType: "imap", SourceIdentifier: "imaps://reader@example.test:993", AccountID: "reader", Scope: inboxcontrol.ScopeMessage, ItemID: 2, ProviderID: "synthetic-message", Mailbox: "INBOX", UIDValidity: 17, UID: 1}
+	observedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	for _, values := range [][]string{nil, {}, {"Todo", "Next"}} {
-		before := inboxcontrol.State{Target: target, Read: new(false), Tags: values, Flags: values}
+		before := inboxcontrol.State{ObservedAt: observedAt, Target: target, Read: new(false), Tags: values, Flags: values}
 		responseJSON, err := json.Marshal(before)
 		requirements.NoError(err)
 		var sdk generated.InboxState
