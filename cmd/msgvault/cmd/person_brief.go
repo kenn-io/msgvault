@@ -261,7 +261,10 @@ func newPersonBriefEnrollmentCommand(action string, enrolled bool) *cobra.Comman
 				personID, state); err != nil {
 				return fmt.Errorf("write person brief enrollment: %w", err)
 			}
-			return nil
+			if response.JSON200.Enrolled {
+				return writePersonTierManualGrant(cmd.OutOrStdout(), response.JSON200.Provenance, response.JSON200.Actor)
+			}
+			return writePersonTierRemoval(cmd.OutOrStdout(), response.Body, personID, "briefs")
 		},
 	}
 	if enrolled {

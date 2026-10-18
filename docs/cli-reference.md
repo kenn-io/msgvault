@@ -2882,7 +2882,7 @@ grant consent to a provider or enroll a person in briefs.
 
 | Command | Purpose |
 |---|---|
-| `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
+| `person track <person-id>` / `person untrack <person-id>` | Enable or stop profile maintenance. `track` prints grant provenance and actor; on API 3.24.0+, `untrack` records tracking/briefs opt-outs. See [person tiers](#person-tiers) for reversal commands. |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
 | `person provider list` | List configured model profiles |
 | `person provider use <name>` | Select a checked profile and enable sweeps |
@@ -2919,6 +2919,46 @@ For setup, privacy controls, budgets, and recovery, see
 [Provider status](#person-provider-status), [reverify](#person-provider-reverify),
 [set](#person-provider-set), and [briefs](#person-brief) have additional details
 below.
+
+### person tiers
+
+Inspect tier decisions inferred from archived interactions and manage per-person
+automation opt-outs. These commands require a daemon with API schema 3.24.0 or
+newer. Every subcommand accepts `--json`; `apply` emits one JSON object per
+page.
+
+```bash
+msgvault person tiers preview [--limit 200] [--tier 1|2|3] [--changes-only] [--cursor <cursor>] [--json]
+msgvault person tiers explain <person-id> [--json]
+msgvault person tiers apply [--dry-run] [--yes] [--limit 500] [--max N] [--json]
+msgvault person tiers reset --yes [--json]
+msgvault person tiers history [--person <person-id>] [--limit 20] [--offset 0] [--json]
+msgvault person tiers candidates [--limit 50] [--cursor <cursor>] [--json]
+msgvault person tiers opt-out <person-id> --lane <tracking|briefs|enrichment> [--reason "..."] [--json]
+msgvault person tiers opt-in <person-id> --lane <tracking|briefs|enrichment> [--json]
+```
+
+`preview` is read-only and defaults to 200 people per page; `--limit` accepts
+1–500. `--tier` accepts 1, 2, or 3. `--changes-only` shows changed decisions,
+and `--cursor` continues from `next_cursor`. `explain` shows one person's
+signals, thresholds, grants, and preferences.
+
+`apply` defaults to 500 people per page; `--limit` accepts 1–500. `--max`
+defaults to 0, which means no total cap. With `--dry-run`, it prints one
+preview page and stops. Otherwise, `apply` previews one page and prompts for
+confirmation unless `--yes` is supplied; `--yes` skips the preview and prompt
+and is required when stdin is not a terminal. `reset --yes` removes automatic
+tier grants and state while retaining manual choices.
+
+`history` defaults to 20 events; `--limit` accepts 1–200, `--offset` must be
+nonnegative, and `--person` filters to one person using a positive ID.
+`candidates` lists unlinked participant approximations for manual review; its
+`--limit` defaults to 50 and accepts 1–500, and `--cursor` continues from
+`next_cursor`.
+
+`--lane` is required for `opt-out` and `opt-in`; its values are `tracking`,
+`briefs`, and `enrichment`. `opt-out` accepts an optional `--reason`, while
+`opt-in` clears the opt-out for that lane.
 
 ### person enrichment
 
@@ -3409,8 +3449,15 @@ msgvault person brief unenroll <person-id> [--json]
 
 Enrollment requires tracking; `--track` enables both. Generation uses the
 consented provider and its budget. History accepts limits from 1 to 200;
-rejection hides the current version but preserves it in history. Unenrolling
-stops future generation without deleting saved versions.
+rejection hides the current version but preserves it in history. Human output
+for `enroll` includes the manual grant's provenance and actor; `unenroll`
+prints `provenance: none` and stops future generation without deleting saved
+versions. On daemon API schema 3.24.0 or newer, `unenroll` also records a
+`briefs` opt-out and prints the command
+`msgvault person tiers opt-in <person-id> --lane briefs` to reverse it. Older
+daemons keep the prior unenroll behavior without recording that opt-out. These
+provenance and reversal lines appear in human output; `--json` returns the
+daemon response.
 
 See [person briefs](usage/people-briefs.md)
 for provider setup, supported sources, and a first-run example.

@@ -63,6 +63,7 @@ const (
 	ToolGetPersonProfile          = "get_person_profile"
 	ToolGetPersonRelationship     = "get_person_relationship"
 	ToolGetPersonAgenda           = "get_person_agenda"
+	ToolGetPersonTier             = "get_person_tier"
 	ToolFindContactCandidates     = "find_contact_candidates"
 	ToolGetPersonMessagingRoutes  = "get_person_messaging_routes"
 	ToolPromotePerson             = "promote_person"
@@ -128,6 +129,7 @@ type ServeOptions struct {
 	PeopleBackend          peoplebrowser.Backend
 	DirectoryBackend       peoplebrowser.DirectoryLister
 	PersonAgendaBackend    PersonAgendaBackend
+	PersonTierBackend      PersonTierBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
 	// KataLookup enables issue lookup and context reads.
@@ -389,6 +391,7 @@ func newMCPServerWithPolicy(
 		meetings:             opts.Meetings,
 		calendar:             opts.Calendar,
 		personAgendaBackend:  opts.PersonAgendaBackend,
+		personTierBackend:    opts.PersonTierBackend,
 		kata:                 opts.Kata,
 		identityReview:       opts.IdentityReview,
 		personCardDAV:        opts.PersonCardDAV,
