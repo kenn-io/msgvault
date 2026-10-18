@@ -354,6 +354,11 @@ func (s *Store) mergePersonsOnce(
 		if err := recordPersonMergeSnapshotRowsTx(ctx, tx, mergeID, snapshot.Rows); err != nil {
 			return err
 		}
+		if err := s.mergePersonLoopSuppressionsTx(
+			ctx, tx, mergeID, survivor.ID, absorbed.ID,
+		); err != nil {
+			return err
+		}
 		if err := s.moveCorePersonProfileTx(
 			ctx, tx, mergeID, survivor.ID, absorbed.ID, survivor.VCardUID,
 		); err != nil {

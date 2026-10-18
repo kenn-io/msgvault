@@ -4773,6 +4773,11 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
 			return err
 		}
+		if err := mergeParticipantLoopSuppressionsTx(
+			ctx, tx, oldID, newID,
+		); err != nil {
+			return err
+		}
 		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
 		if err != nil {
 			return err
