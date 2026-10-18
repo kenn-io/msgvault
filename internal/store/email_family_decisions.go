@@ -174,6 +174,14 @@ func (s *Store) ApplyEmailFamilyDecisionContext(ctx context.Context, input Email
 		if input.ExpectedFamilyRevision == "" || family.Revision != input.ExpectedFamilyRevision {
 			return ErrEmailFamilyChanged
 		}
+		projected := EmailFamilyDecision{Kind: input.Kind, State: "active", Revision: 1, ExpectedMemberCount: len(input.MessageIDs), MessageIDs: input.MessageIDs}
+		projectedFamily, err := s.emailFamilySnapshotIDs(ctx, input.MessageIDs, &projected)
+		if err != nil {
+			return err
+		}
+		if projectedFamily.Truncated {
+			return ErrEmailFamilyTruncated
+		}
 		var id int64
 		err = tx.QueryRowContext(ctx, `INSERT INTO email_family_decisions(request_key,kind,request_sha256,expected_member_count,actor_kind,actor_ref) VALUES(?,?,?,?,?,?) RETURNING id`, input.RequestKey, input.Kind, digest, len(input.MessageIDs), input.ActorKind, input.ActorRef).Scan(&id)
 		if err != nil {
@@ -191,6 +199,9 @@ func (s *Store) ApplyEmailFamilyDecisionContext(ctx context.Context, input Email
 		family, err = s.emailFamilySnapshotIDs(ctx, input.MessageIDs, nil)
 		if err != nil {
 			return err
+		}
+		if family.Truncated {
+			return ErrEmailFamilyTruncated
 		}
 		result = &EmailFamilyDecisionResult{Decision: *saved, Family: family}
 		return nil

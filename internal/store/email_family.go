@@ -103,6 +103,12 @@ func (s *Store) emailFamilySnapshotIDs(ctx context.Context, ids []int64, project
 	edgeCount := 0
 	if projected != nil {
 		result.Decisions = append(result.Decisions, *projected)
+		if projected.State == "active" {
+			edgeCount += len(projected.MessageIDs)
+			if edgeCount > emailFamilyDecisionEdgeLimit {
+				result.Truncated = true
+			}
+		}
 		if projected.Kind == "handled" {
 			for _, id := range projected.MessageIDs {
 				handled[id] = true

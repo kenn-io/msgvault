@@ -31,7 +31,7 @@ type GetAggregatesQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -72,7 +72,7 @@ type GetSubAggregatesQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -431,7 +431,7 @@ type SearchDocumentsQuery struct {
 	Q string `json:"q" validate:"required"`
 
 	// SourceID Source IDs to include; repeat or comma-separate values
-	SourceID []int64 `json:"source_id,omitempty"`
+	SourceID []int64 `json:"source_id,omitzero"`
 
 	// MessageType Message types to include; repeat or comma-separate values
 	MessageType []string `json:"message_type,omitempty"`
@@ -601,12 +601,12 @@ type ListEmailFamilyDecisionsQuery struct {
 	MessageID *int64 `json:"message_id,omitempty"`
 
 	// SourceID Narrow the source set
-	SourceID []int64 `json:"source_id,omitempty"`
+	SourceID []int64 `json:"source_id,omitzero"`
 }
 
 type GetEmailFamilyDecisionQuery struct {
 	// SourceID Narrow the source set
-	SourceID []int64 `json:"source_id,omitempty"`
+	SourceID []int64 `json:"source_id,omitzero"`
 }
 
 type FilterMessagesQuery struct {
@@ -650,7 +650,7 @@ type FilterMessagesQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -721,7 +721,7 @@ type GetGmailIDsByFilterQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -765,7 +765,7 @@ type GetGmailIDsByFilterQuery struct {
 
 type GetEmailFamilyQuery struct {
 	// SourceID Source IDs to include; repeat or comma-separate. Empty excludes all.
-	SourceID []int64 `json:"source_id,omitempty"`
+	SourceID []int64 `json:"source_id,omitzero"`
 }
 
 type GetMessageInlinePartQuery struct {
@@ -1283,7 +1283,7 @@ type DeepSearchQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values; not supported by deep search
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -1322,7 +1322,7 @@ type SearchMessagesByDomainsQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source account IDs
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// Domains Comma-separated participant domains
 	Domains string `json:"domains" validate:"required"`
@@ -1391,7 +1391,7 @@ type FastSearchQuery struct {
 	SourceID *int64 `json:"source_id,omitempty"`
 
 	// SourceIds Source IDs; repeat or comma-separate values
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// AttachmentsOnly Only include messages with attachments
 	AttachmentsOnly *bool `json:"attachments_only,omitempty"`
@@ -1458,7 +1458,7 @@ type ListSourceStatusQuery struct {
 
 type GetTotalStatsQuery struct {
 	// SourceIds Source IDs; repeat the parameter for multiple sources
-	SourceIds []int64 `json:"source_ids,omitempty"`
+	SourceIds []int64 `json:"source_ids,omitzero"`
 
 	// SearchQuery Search query; full text accepts standalone pipe-separated OR alternatives
 	SearchQuery *string `json:"search_query,omitempty"`

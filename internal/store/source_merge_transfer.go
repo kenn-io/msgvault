@@ -154,6 +154,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if m.survivor == 0 {
 			continue
 		}
+		if err := s.retargetEmailFamilyDecisions(ctx, tx, m.survivor, m.id); err != nil {
+			return err
+		}
 		if err := copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
 			return err
 		}

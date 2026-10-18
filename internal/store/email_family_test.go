@@ -56,6 +56,27 @@ func TestEmailFamilyScopeExcludesBridgesAndUnknownSeed(t *testing.T) {
 	require.ErrorIs(err, store.ErrNotFound)
 }
 
+func TestEmailFamilyGmailThreadStaysWithinItsSource(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttrFixture(t, "gmail", "thread-owner@example.test")
+	other := newAttrFixtureOn(t, f.st, "gmail", "thread-other@example.test")
+	const providerThreadID = "shared-provider-thread"
+	var err error
+	f.conv, err = f.st.EnsureConversation(f.source.ID, providerThreadID, "Shared thread")
+	require.NoError(err)
+	other.conv, err = f.st.EnsureConversation(other.source.ID, providerThreadID, "Shared thread")
+	require.NoError(err)
+	first := f.persist(attrMail{raw: "Message-ID: <thread-first@example.test>\r\n\r\n"})
+	second := f.persist(attrMail{raw: "Message-ID: <thread-second@example.test>\r\n\r\n"})
+	otherSource := other.persist(attrMail{raw: "Message-ID: <other-thread@example.test>\r\n\r\n"})
+
+	got, err := f.st.EmailFamilyContext(t.Context(), first, store.EmailFamilyOptions{})
+	require.NoError(err)
+	assert.Equal([]int64{first, second}, memberIDs(got.Members))
+	assert.NotContains(memberIDs(got.Members), otherSource)
+}
+
 func TestEmailFamilyRevisionTracksOnlyRelatedEvidence(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

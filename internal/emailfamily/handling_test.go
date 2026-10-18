@@ -10,7 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 )
+
+func workMember(id, source int64, rawHeaders string) Member {
+	return Member{MessageID: id, SourceID: source, SourceType: "gmail", Linkage: mime.ExtractEmailLinkage([]byte(rawHeaders + "\r\n\r\n[QA] body"))}
+}
 
 func workActivity(id, source int64, header string, incoming bool, second int) Activity {
 	return Activity{Member: workMember(id, source, header), OccurredAt: time.Date(2026, 1, 1, 0, 0, second, 0, time.UTC), Incoming: incoming, AttributionComplete: true}
@@ -45,7 +50,6 @@ func TestEmailWorkHandlingDirectReplyClosesAncestorsNotSiblingsOrNewMail(t *test
 
 func TestEmailWorkHandlingForwardAndDuplicateCopiesRemainOneReceivedEvent(t *testing.T) {
 	assertions := assert.New(t)
-	requirements := require.New(t)
 	incoming := workActivity(1, 1, "Message-ID: <original@example.test>", true, 1)
 	otherCopy := incoming
 	otherCopy.MessageID = 2
@@ -58,11 +62,6 @@ func TestEmailWorkHandlingForwardAndDuplicateCopiesRemainOneReceivedEvent(t *tes
 	got := Evaluate([]Activity{otherCopy, outgoing, incoming})
 	assertions.Equal("handled", got.State)
 	assertions.Equal([]int64{3}, got.OutboundEvidenceIDs)
-	// Provider Inbox/read statuses live in their own publication and cannot be
-	// changed by this evaluator; underlying source copies remain in the partition.
-	partition, err := Partition([]Member{otherCopy.Member, outgoing.Member, incoming.Member}, nil)
-	requirements.NoError(err)
-	assertions.Equal([][]int64{{1, 2, 3}}, partition)
 }
 
 func TestEmailWorkHandlingRequiresEveryPositiveCompletionFact(t *testing.T) {

@@ -4157,7 +4157,7 @@ type EmailFamilyDecisionInput struct {
 	Kind                   string  `json:"kind" validate:"required"`
 	MessageIds             []int64 `json:"message_ids" validate:"required"`
 	RequestKey             string  `json:"request_key" validate:"required"`
-	SourceIds              []int64 `json:"source_ids,omitempty"`
+	SourceIds              []int64 `json:"source_ids,omitzero"`
 }
 
 func (e EmailFamilyDecisionInput) Validate() error {
@@ -4211,7 +4211,7 @@ func (e EmailFamilyDecisionResult) Validate() error {
 type EmailFamilyDecisionUndo struct {
 	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
 	ExpectedRevision       int64   `json:"expected_revision"`
-	SourceIds              []int64 `json:"source_ids,omitempty"`
+	SourceIds              []int64 `json:"source_ids,omitzero"`
 }
 
 func (e EmailFamilyDecisionUndo) Validate() error {
@@ -5659,7 +5659,7 @@ type FileSuggestionHTTPRequest struct {
 	FilenameQuery string                                  `json:"filename_query" validate:"required"`
 	Limit         *int64                                  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
 	MimeFamilies  []FileSuggestionHTTPRequestMimeFamilies `json:"mime_families,omitempty"`
-	SourceIds     []int64                                 `json:"source_ids,omitempty"`
+	SourceIds     []int64                                 `json:"source_ids,omitzero"`
 }
 
 func (f FileSuggestionHTTPRequest) Validate() error {
@@ -7546,7 +7546,7 @@ type MeetingScopeRequest struct {
 	ParticipantID  *int64                       `json:"participant_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
 	ParticipantIds []int64                      `json:"participant_ids,omitempty"`
 	PersonID       *int64                       `json:"person_id,omitempty" validate:"omitempty,gte=1,lte=9007199254740991"`
-	SourceIds      []int64                      `json:"source_ids,omitempty"`
+	SourceIds      []int64                      `json:"source_ids,omitzero"`
 }
 
 func (m MeetingScopeRequest) Validate() error {
@@ -11536,7 +11536,7 @@ type PersonFileSuggestionHTTPRequest struct {
 	FilenameQuery string                                        `json:"filename_query" validate:"required"`
 	Limit         *int64                                        `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
 	MimeFamilies  []PersonFileSuggestionHTTPRequestMimeFamilies `json:"mime_families,omitempty"`
-	SourceIds     []int64                                       `json:"source_ids,omitempty"`
+	SourceIds     []int64                                       `json:"source_ids,omitzero"`
 }
 
 func (p PersonFileSuggestionHTTPRequest) Validate() error {

@@ -198,15 +198,16 @@ func Evaluate(members []Activity) Handling {
 			}
 			for _, parent := range event.parents {
 				if ancestor, found := identityEvent[parent]; found {
+					ancestorEvent := events[ancestor]
 					if closed[ancestor] {
+						// The local decision closes this event, but its known
+						// ancestry can still contribute older received events.
+						pending = append(pending, ancestor)
 						continue
 					}
-					ancestorEvent := events[ancestor]
 					if !ancestorEvent.hasTime || !event.occurredAt.After(ancestorEvent.occurredAt) {
-						if !closed[ancestor] {
-							reason("chronology_unavailable")
-							incomplete = true
-						}
+						reason("chronology_unavailable")
+						incomplete = true
 						continue
 					}
 					pending = append(pending, ancestor)

@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"go.kenn.io/msgvault/internal/store"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -66,25 +67,28 @@ func (c *Client) emailFamilyJSON(ctx context.Context, method, path string, input
 		return err
 	}
 	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+	if response.StatusCode == http.StatusOK {
+		if err := json.UnmarshalRead(response.Body, output); err != nil {
+			return fmt.Errorf("decode email family decision: %w", err)
+		}
+		return nil
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBodyBytes))
 	if err != nil {
 		return err
 	}
-	if response.StatusCode != http.StatusOK {
-		_, code, _ := apiErrorMessage(data)
-		switch code {
-		case "not_found":
-			return store.ErrNotFound
-		case "family_changed":
-			return store.ErrEmailFamilyChanged
-		case "family_truncated":
-			return store.ErrEmailFamilyTruncated
-		case "request_conflict":
-			return store.ErrEmailFamilyRequestConflict
-		}
-		return handleErrorBody(response.StatusCode, data)
+	_, code, _ := apiErrorMessage(data)
+	switch code {
+	case "not_found":
+		return store.ErrNotFound
+	case "family_changed":
+		return store.ErrEmailFamilyChanged
+	case "family_truncated":
+		return store.ErrEmailFamilyTruncated
+	case "request_conflict":
+		return store.ErrEmailFamilyRequestConflict
 	}
-	return json.Unmarshal(data, output)
+	return handleErrorBody(response.StatusCode, data)
 }
 
 func (c *Client) PreviewEmailFamilyDecisionContext(ctx context.Context, input store.EmailFamilyDecisionInput) (*store.EmailFamilyDecisionPreview, error) {

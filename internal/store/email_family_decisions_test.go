@@ -264,6 +264,44 @@ func TestEmailFamilyDecisionEdgeCapRejectsMutation(t *testing.T) {
 	assert.Len(history, 20)
 }
 
+func TestEmailFamilyDecisionEdgeCapIncludesProjectedMemberships(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttrFixture(t, "imap", "projected-edge-cap@example.test")
+	prepareEmailFamilyHandlingFixture(t, f)
+	id := persistAttributedIncoming(t, f, "bounded@example.test", "", 1)
+	tx, err := f.st.DB().BeginTx(t.Context(), nil)
+	require.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	for i := range 2000 {
+		var decisionID int64
+		err := tx.QueryRowContext(t.Context(), f.st.Rebind(`INSERT INTO email_family_decisions(request_key,kind,request_sha256,expected_member_count,actor_kind) VALUES(?,'handled',?,1,'owner') RETURNING id`), fmt.Sprintf("%032x", i), strings.Repeat("0", 64)).Scan(&decisionID)
+		require.NoError(err)
+		_, err = tx.ExecContext(t.Context(), f.st.Rebind(`INSERT INTO email_family_decision_members(decision_id,message_id) VALUES(?,?)`), decisionID, id)
+		require.NoError(err)
+	}
+	require.NoError(tx.Commit())
+
+	before, err := f.st.EmailFamilyContext(t.Context(), id, store.EmailFamilyOptions{})
+	require.NoError(err)
+	assert.False(before.Truncated)
+	assert.Equal("handled", before.Handling.State)
+	input := store.EmailFamilyDecisionInput{RequestKey: strings.Repeat("c", 32), Kind: "handled", MessageIDs: []int64{id}}
+	preview, err := f.st.PreviewEmailFamilyDecisionContext(t.Context(), input)
+	require.NoError(err)
+	assert.Equal(before.Revision, preview.BeforeRevision)
+	assert.True(preview.Family.Truncated)
+	assert.Equal("unknown", preview.Family.Handling.State)
+	assert.Contains(preview.Family.Handling.Reasons, "family_truncated")
+
+	input.ExpectedFamilyRevision = preview.BeforeRevision
+	_, err = f.st.ApplyEmailFamilyDecisionContext(t.Context(), input)
+	require.ErrorIs(err, store.ErrEmailFamilyTruncated)
+	var count int
+	require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM email_family_decisions`).Scan(&count))
+	assert.Equal(2000, count)
+}
+
 func TestEmailFamilyDecisionSubsetKeepsOnlyCompleteOriginalPopulation(t *testing.T) {
 	req := require.New(t)
 	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
