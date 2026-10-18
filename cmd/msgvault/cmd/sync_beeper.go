@@ -152,7 +152,7 @@ func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, 
 		}
 		return strings.Compare(a, b)
 	})
-	titles, _ := s.ConversationTitlesBatchContext(ctx, sum.SourceID, ids)
+	titles, _ := s.ConversationTitlesBatchContext(ctx, sum.SourceID, ids[:min(len(ids), 20)])
 	if len(ids) > 0 {
 		_, _ = fmt.Fprintf(out, "  Failed chats (%d errors in %d chats):\n", total, len(ids))
 	}
@@ -180,6 +180,10 @@ func writeBeeperRunFailures(ctx context.Context, out io.Writer, s *store.Store, 
 	}
 	if total > 0 {
 		_, _ = fmt.Fprintln(out, "  Retry with the same global options (such as --local):")
+		if fetch > 0 && media > 0 && fetchCmd == mediaCmd {
+			_, _ = fmt.Fprintf(out, "    msgvault %s --account %s\n", fetchCmd, textutil.SanitizeTerminal(accountID))
+			return
+		}
 		if fetch > 0 {
 			_, _ = fmt.Fprintf(out, "    fetch errors: msgvault %s --account %s\n", fetchCmd, textutil.SanitizeTerminal(accountID))
 		}

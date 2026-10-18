@@ -1563,7 +1563,7 @@ is resumable; later runs are incremental. Per-account failures do not stop the
 run: remaining accounts still sync, the analytics cache is rebuilt for the
 successful ones, and the command exits non-zero listing the failures. When an
 account reports errors, the output lists the chats they belong to (see
-[Failed chats](https://msgvault.io/docs/usage/beeper/#failed-chats)). Without
+[Failed chats](/docs/usage/beeper/#failed-chats)). Without
 `--account`, the `[beeper]` config `accounts`/`exclude_accounts` filters
 select which registered sources sync. See [Beeper](/docs/usage/beeper/).
 
@@ -1589,7 +1589,8 @@ size cap during `sync-beeper`). Idempotent: attachments are content-addressed.
 If the source message is gone (deleted in Beeper), its pending markers are
 cleared permanently — already-downloaded attachments are kept. Transient fetch
 errors keep the marker and count as still pending, so re-running retries them.
-Recorded errors list the [failed chats](https://msgvault.io/docs/usage/beeper/#failed-chats) and how to retry them.
+Recorded errors list the [failed chats](/docs/usage/beeper/#failed-chats) and
+how to retry them.
 
 ```bash
 msgvault backfill-beeper-media

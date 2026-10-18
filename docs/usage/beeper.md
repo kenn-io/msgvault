@@ -119,7 +119,8 @@ account's summary reports an error count, followed by the chats behind it:
 
 Each chat line shows its title or Beeper chat ID, error count, failed steps,
 and newest error. Counts cover the whole run; up to 20 chats are shown.
-A separate line counts errors with no chat. Keep the same global options, such as `--local`, when retrying that account's failures.
+A separate line counts errors with no chat. Keep the same global options, such
+as `--local`, when retrying that account's failures.
 
 ## What is archived
 

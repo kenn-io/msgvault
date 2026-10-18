@@ -3,14 +3,17 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -64,8 +67,19 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	for i := range 21 {
 		sum.FailedChats[fmt.Sprintf("!%02d:example.test", i)] = &beeper.ChatFailure{MediaErrors: 1, LastError: "failed"}
 	}
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	var out bytes.Buffer
 	writeBeeperRunFailures(t.Context(), &out, st, sum, "signal\n\x1b[0m", "backfill-beeper-media", "backfill-beeper-media")
+	var query struct {
+		NArgs int `json:"nargs"`
+	}
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &query))
+	assert.Equal(t, 21, query.NArgs, "look up only the 20 displayed chats, plus the source ID")
 	text := out.String()
 	assert.Contains(t, text, "Failed chats (24 errors in 22 chats):")
 	assert.Contains(t, text, "Club Title (!top :example.test): 3 attachment errors; last: bad  "+strings.Repeat("界", 152)+"...")
@@ -92,4 +106,12 @@ func TestWriteBeeperRunFailures(t *testing.T) {
 	writeBeeperRunFailures(ctx, &out, st, sum, "signal", "backfill-beeper-media", "backfill-beeper-media")
 	assert.Contains(t, out.String(), "!top :example.test: 3 attachment errors")
 	assert.NotContains(t, out.String(), "Club Title")
+
+	sum.FailedChats["!top\n:example.test"].FetchErrors = 2
+	sum.Errors += 2
+	out.Reset()
+	writeBeeperRunFailures(t.Context(), &out, st, sum, "signal", "backfill-beeper-media", "backfill-beeper-media")
+	_, retry, found := strings.Cut(out.String(), "  Retry with the same global options (such as --local):\n")
+	require.True(t, found)
+	assert.Equal(t, "    msgvault backfill-beeper-media --account signal\n", retry)
 }

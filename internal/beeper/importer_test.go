@@ -656,11 +656,7 @@ func TestImportReactionTargetTransientErrorRetries(t *testing.T) {
 	f.addChat(e2eChat())
 	for _, chatID := range []string{"!older-a:example.test", "!older-b:example.test"} {
 		base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
-		f.addChat(&fakeChat{
-			ID: chatID, AccountID: "signal", Network: "Signal", Type: "group", LastActivity: base,
-			Msgs: []fakeMsg{{ID: "seed-" + chatID, SortKey: 0, Timestamp: base, Text: "initial history",
-				SenderID: "@sender:example.test", SenderName: "Sender"}},
-		})
+		f.addChat(budgetTestChat(chatID, 1, base))
 	}
 	imp, st, done := newTestImporter(t, f)
 	defer done()
