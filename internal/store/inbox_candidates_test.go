@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -373,6 +374,66 @@ func TestInboxCandidatesIMAPVanishedMembershipInvalidatesPage(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(page.Candidates, 1)
 	assert.Equal(t, uint32(2), page.Candidates[0].State.Target.UID)
+}
+
+func TestInboxCandidatesRequireCurrentInboxMembershipObservation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	t.Parallel()
+	f, inboxTarget := newInboxIMAPSyncFixture(t)
+	archiveTarget := inboxTarget
+	archiveTarget.Mailbox, archiveTarget.UIDValidity, archiveTarget.UID = "Archive", 23, 7
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
+		{
+			Mailbox: "INBOX",
+			State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: inboxTarget.UIDValidity, UIDNext: 2},
+			Reset:   true,
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "INBOX", UIDValidity: inboxTarget.UIDValidity, UID: inboxTarget.UID, SourceMessageID: "INBOX|1", CanonicalSourceMessageID: inboxTarget.ProviderID, Flags: []string{},
+			}},
+		},
+		{
+			Mailbox: "Archive",
+			State:   store.IMAPFolderState{Mailbox: "Archive", UIDValidity: archiveTarget.UIDValidity, UIDNext: 8},
+			Reset:   true,
+			Memberships: []store.IMAPMembershipObservation{{
+				Mailbox: "Archive", UIDValidity: archiveTarget.UIDValidity, UID: archiveTarget.UID, SourceMessageID: "Archive|7", CanonicalSourceMessageID: archiveTarget.ProviderID, Flags: []string{},
+			}},
+		},
+	}))
+
+	page, err := f.store.InboxCandidates(t.Context(), inboxcontrol.SourceIdentity{SourceID: f.source.ID, SourceType: "imap", SourceIdentifier: f.source.Identifier, AccountID: "reader@example.test"}, inboxcontrol.ScopeMessage, 10, "")
+	requirements.NoError(err)
+	requirements.Len(page.Candidates, 1)
+	assertions.False(page.Unavailable)
+
+	native, err := f.store.EmailTagTargetContext(t.Context(), inboxTarget.ItemID, "INBOX")
+	requirements.NoError(err)
+	requirements.NoError(f.store.SaveEmailTagsContext(t.Context(), native, &emailtags.MessageTagResult{
+		Provider: "imap", Tags: []string{}, Flags: []string{}, Mailbox: "INBOX", UIDValidity: inboxTarget.UIDValidity, UID: inboxTarget.UID, Verified: true,
+	}))
+	archivedObservation, err := f.store.GetInboxProviderState(t.Context(), archiveTarget)
+	requirements.NoError(err)
+	requirements.NotNil(archivedObservation)
+	inboxObservation, err := f.store.GetInboxProviderState(t.Context(), inboxTarget)
+	requirements.NoError(err)
+	assertions.Nil(inboxObservation)
+
+	page, err = f.store.InboxCandidates(t.Context(), inboxcontrol.SourceIdentity{SourceID: f.source.ID, SourceType: "imap", SourceIdentifier: f.source.Identifier, AccountID: "reader@example.test"}, inboxcontrol.ScopeMessage, 10, "")
+	requirements.NoError(err)
+	assertions.Empty(page.Candidates)
+	assertions.True(page.Unavailable, "an Archive observation cannot cover a missing current INBOX observation")
+
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: inboxTarget.UIDValidity, UIDNext: 2},
+		Reset:   true,
+	}}))
+	page, err = f.store.InboxCandidates(t.Context(), inboxcontrol.SourceIdentity{SourceID: f.source.ID, SourceType: "imap", SourceIdentifier: f.source.Identifier, AccountID: "reader@example.test"}, inboxcontrol.ScopeMessage, 10, "")
+	requirements.NoError(err)
+	assertions.Empty(page.Candidates)
+	assertions.False(page.Unavailable, "a current Archive observation covers an item with no current INBOX membership")
 }
 
 func TestInboxCandidatesDeletedUnknownDoesNotMakeInboxUnavailable(t *testing.T) {

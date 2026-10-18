@@ -167,6 +167,22 @@ func inboxCandidateMembershipSQL(source inboxcontrol.SourceIdentity) string {
     AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity))`
 }
 
+// An item with a current INBOX membership needs an observation for that exact
+// copy. A current observation from another mailbox only covers an item that no
+// longer has a current INBOX membership.
+func inboxCandidateCoverageMembershipSQL(source inboxcontrol.SourceIdentity) string {
+	membership := inboxCandidateMembershipSQL(source)
+	if source.SourceType != "imap" {
+		return membership
+	}
+	return fmt.Sprintf(`(%s AND (UPPER(p.mailbox)='INBOX' OR NOT EXISTS (
+  SELECT 1 FROM imap_message_memberships inbox_member
+  JOIN imap_folder_state inbox_folder ON inbox_folder.source_id=inbox_member.source_id
+    AND inbox_folder.mailbox=inbox_member.mailbox AND inbox_folder.uidvalidity=inbox_member.uidvalidity
+  WHERE inbox_member.source_id=r.source_id AND inbox_member.message_id=r.id AND UPPER(inbox_member.mailbox)='INBOX'
+)))`, membership)
+}
+
 func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontrol.SourceIdentity, scope inboxcontrol.Scope) (string, bool, error) {
 	table, providerID, _, _, active := inboxCandidateRecordSQL(scope)
 	var archiveUID string
@@ -182,7 +198,7 @@ func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontr
 	}
 	query := fmt.Sprintf(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM inbox_provider_states p
   WHERE p.source_id=r.source_id AND p.scope=? AND p.item_id=r.id AND p.provider_id=r.%s AND p.is_inbox IS NOT NULL AND %s)
-  THEN 1 ELSE 0 END),0) FROM %s r WHERE r.source_id=? AND %s`, providerID, inboxCandidateMembershipSQL(source), table, active)
+	  THEN 1 ELSE 0 END),0) FROM %s r WHERE r.source_id=? AND %s`, providerID, inboxCandidateCoverageMembershipSQL(source), table, active)
 	if err := tx.QueryRowContext(ctx, query, scope, source.SourceID).Scan(&total, &missing); err != nil {
 		return "", false, fmt.Errorf("read inbox observation coverage: %w", err)
 	}
@@ -193,7 +209,7 @@ func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontr
 	unknownQuery := fmt.Sprintf(`SELECT COUNT(*) FROM inbox_provider_states p JOIN %s r
   ON r.id=p.item_id AND r.source_id=p.source_id AND r.%s=p.provider_id
   WHERE p.source_id=? AND p.scope=? AND %s AND %s
-  AND (p.is_inbox IS NULL OR (p.is_inbox=TRUE AND (%s)))`, table, providerID, active, inboxCandidateMembershipSQL(source), unknownMarkers)
+	  AND (p.is_inbox IS NULL OR (p.is_inbox=TRUE AND (%s)))`, table, providerID, active, inboxCandidateCoverageMembershipSQL(source), unknownMarkers)
 	if err := tx.QueryRowContext(ctx, unknownQuery, source.SourceID, scope).Scan(&unknown); err != nil {
 		return "", false, fmt.Errorf("read unknown inbox observations: %w", err)
 	}

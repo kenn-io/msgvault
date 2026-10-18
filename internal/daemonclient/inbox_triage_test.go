@@ -3,6 +3,7 @@ package daemonclient_test
 import (
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -208,7 +209,20 @@ func TestInboxTriageClientRejectsInvalidBeforeHTTP(t *testing.T) {
 	requirements.True(ok)
 	for _, count := range []int{0, 101} {
 		input, _ := triageClientInput()
-		input.Items = make([]inboxcontrol.TriageItemInput, count)
+		if count == 0 {
+			input.Items = nil
+		} else {
+			template := input.Items[0]
+			input.Items = make([]inboxcontrol.TriageItemInput, count)
+			for i := range input.Items {
+				item := template
+				item.Target.ItemID = int64(100 + i)
+				item.Target.ProviderID = fmt.Sprintf("synthetic-mail-%d", i)
+				item.EvidenceMessageIDs = []int64{int64(i + 1)}
+				item.IdempotencyKey = fmt.Sprintf("synthetic-key-%d", i)
+				input.Items[i] = item
+			}
+		}
 		_, err := triage.PreviewInboxTriage(t.Context(), input)
 		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	}

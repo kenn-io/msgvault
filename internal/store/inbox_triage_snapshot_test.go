@@ -64,7 +64,16 @@ func TestInboxTriageSnapshotRejectsUnavailableAndForeignTargets(t *testing.T) {
 		want    error
 	}{
 		{"empty", nil, inboxcontrol.ErrInvalid},
-		{"too many", make([]inboxcontrol.Target, 101), inboxcontrol.ErrInvalid},
+		{"too many", func() []inboxcontrol.Target {
+			targets := make([]inboxcontrol.Target, 101)
+			for i := range targets {
+				target := states[0].Target
+				target.ItemID = int64(100 + i)
+				target.ProviderID = fmt.Sprintf("synthetic-mail-%d", i)
+				targets[i] = target
+			}
+			return targets
+		}(), inboxcontrol.ErrInvalid},
 		{"duplicate", []inboxcontrol.Target{states[0].Target, states[0].Target}, inboxcontrol.ErrInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

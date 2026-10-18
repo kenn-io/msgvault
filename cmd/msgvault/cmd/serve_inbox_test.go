@@ -210,6 +210,27 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	}
 	assertions.Equal(1, posts)
 	assertions.Equal(1, gates)
+
+	_, err = a.store.DB().Exec(a.store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), target.ItemID)
+	requirements.NoError(err)
+	loaded, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: result.Receipt.ID}, principal, authorize, gate)
+	requirements.NoError(err)
+	requirements.NotNil(loaded.Receipt)
+	assertions.Equal(result.Receipt.ID, loaded.Receipt.ID)
+	assertions.Equal(inboxcontrol.StatusVerified, loaded.Receipt.Status)
+	replayed, err := a.ControlInbox(t.Context(), request, principal, authorize, gate)
+	requirements.NoError(err)
+	requirements.NotNil(replayed.Receipt)
+	assertions.Equal(result.Receipt.ID, replayed.Receipt.ID)
+	assertions.Equal(1, posts, "receipt retrieval and replay do not dispatch provider writes")
+	assertions.Equal(1, gates, "verified receipt reads do not reacquire provider mutation ownership")
+
+	_, err = a.store.DB().Exec(a.store.Rebind(`UPDATE messages SET deleted_from_source_at=NULL WHERE id=?`), target.ItemID)
+	requirements.NoError(err)
+	_, err = a.store.DB().Exec(a.store.Rebind(`UPDATE inbox_operation_receipts SET source_removed_at=? WHERE id=?`), time.Now().UTC().UnixNano(), result.Receipt.ID)
+	requirements.NoError(err)
+	_, err = a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: result.Receipt.ID}, principal, authorize, gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied, "retired receipt authority cannot be replayed while the source row remains")
 }
 
 func TestDaemonInboxCapabilitiesAllowReadonlyGmailCredential(t *testing.T) {

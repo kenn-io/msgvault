@@ -222,7 +222,18 @@ func TestInboxGmailTriagePreviewBoundsAndMissingMappings(t *testing.T) {
 		change func(*inboxcontrol.TriageInput)
 	}{
 		{"empty", func(i *inboxcontrol.TriageInput) { i.Items = nil }},
-		{"too many", func(i *inboxcontrol.TriageInput) { i.Items = make([]inboxcontrol.TriageItemInput, 101) }},
+		{"too many", func(i *inboxcontrol.TriageInput) {
+			template := i.Items[0]
+			i.Items = make([]inboxcontrol.TriageItemInput, 101)
+			for index := range i.Items {
+				item := template
+				item.Target.ItemID = int64(100 + index)
+				item.Target.ProviderID = fmt.Sprintf("synthetic-mail-%d", index)
+				item.EvidenceMessageIDs = []int64{int64(index + 1)}
+				item.IdempotencyKey = fmt.Sprintf("synthetic-key-%d", index)
+				i.Items[index] = item
+			}
+		}},
 		{"duplicate target", func(i *inboxcontrol.TriageInput) {
 			i.Items = append(i.Items, i.Items[0])
 			i.Items[1].IdempotencyKey = "other-key"

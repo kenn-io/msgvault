@@ -586,10 +586,25 @@ func ReceiptMoveTarget(ctx context.Context) (Target, bool) {
 type receiptAuthorityTargetKey struct{}
 
 func receiptAuthorityContext(ctx context.Context, receipt *Receipt) context.Context {
-	if receipt == nil || receipt.Projected == nil || receipt.After == nil || !imapMoveRequest(receipt.Intent) || *receipt.Intent.Target != receipt.Before.Target || receipt.SourceID != receipt.Before.Target.SourceID || receipt.Before.Target.Validate() != nil || receipt.Projected.Target != receipt.Before.Target || receipt.After.Target == receipt.Before.Target || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, receipt.After.Target) {
+	if receipt == nil {
+		return ctx
+	}
+	if validIdentity(receipt.ID) {
+		ctx = context.WithValue(ctx, receiptAuthorityIDKey{}, receipt.ID)
+	}
+	if receipt.Projected == nil || receipt.After == nil || !imapMoveRequest(receipt.Intent) || *receipt.Intent.Target != receipt.Before.Target || receipt.SourceID != receipt.Before.Target.SourceID || receipt.Before.Target.Validate() != nil || receipt.Projected.Target != receipt.Before.Target || receipt.After.Target == receipt.Before.Target || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, receipt.After.Target) {
 		return ctx
 	}
 	return context.WithValue(ctx, receiptAuthorityTargetKey{}, receipt.Before.Target)
+}
+
+type receiptAuthorityIDKey struct{}
+
+// ReceiptAuthorityID returns the trusted receipt identity attached by Service
+// while authorizing a saved-result read or replay. It is never request data.
+func ReceiptAuthorityID(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(receiptAuthorityIDKey{}).(string)
+	return id, ok && validIdentity(id)
 }
 
 // ReceiptAuthorityTarget is an internal hint, never a request field.

@@ -60,7 +60,13 @@ func (a *storeAPIAdapter) checkedInboxAuthorize(authorize func(context.Context, 
 		} else if intent.Source != nil {
 			sourceID = intent.Source.SourceID
 		}
-		if intent.ReceiptID != "" {
+		if id, ok := inboxcontrol.ReceiptAuthorityID(ctx); ok {
+			var err error
+			receipt, err = a.store.GetInboxReceipt(ctx, id)
+			if err != nil {
+				return inboxcontrol.ErrInternal
+			}
+		} else if intent.ReceiptID != "" {
 			var err error
 			receipt, err = a.store.GetInboxReceipt(ctx, intent.ReceiptID)
 			if err != nil {
