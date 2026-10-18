@@ -22,12 +22,65 @@ type identityStoredReceipt struct {
 
 	AuthorityFingerprint string                    `json:"authority_fingerprint"`
 	Scope                []identityReceiptResource `json:"scope"`
+	Coverage             identityReceiptCoverage   `json:"coverage,omitempty"`
+}
+
+// identityReceiptCoverage preserves the membership evidence admitted by the
+// committed operation. A successful unlink can remove that binding from the
+// live archive even though the same principal still needs to recover its
+// receipt.
+type identityReceiptCoverage struct {
+	Members             []int64                      `json:"members,omitempty"`
+	Bindings            []IdentityBindingEvidence    `json:"bindings,omitempty"`
+	SourceContributions []IdentitySourceContribution `json:"source_contributions,omitempty"`
 }
 
 type identityReceiptResource struct {
 	Kind        string `json:"kind"`
 	ID          int64  `json:"id"`
 	Fingerprint string `json:"fingerprint"`
+}
+
+func identityReceiptCoverageFor(snapshots ...*IdentitySnapshot) identityReceiptCoverage {
+	coverage := identityReceiptCoverage{}
+	for _, snapshot := range snapshots {
+		if snapshot == nil {
+			continue
+		}
+		coverage.Members = append(coverage.Members, snapshot.Members...)
+		coverage.Bindings = append(coverage.Bindings, snapshot.Bindings...)
+		coverage.SourceContributions = append(coverage.SourceContributions, snapshot.SourceContributions...)
+	}
+	coverage.Members = canonicalIdentityIDs(coverage.Members)
+	slices.SortFunc(coverage.Bindings, func(a, b IdentityBindingEvidence) int {
+		if n := cmp.Compare(a.ParticipantID, b.ParticipantID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.PersonID, b.PersonID)
+	})
+	coverage.Bindings = slices.Compact(coverage.Bindings)
+	slices.SortFunc(coverage.SourceContributions, func(a, b IdentitySourceContribution) int {
+		if n := cmp.Compare(a.ParticipantID, b.ParticipantID); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.SourceID, b.SourceID)
+	})
+	coverage.SourceContributions = slices.Compact(coverage.SourceContributions)
+	return coverage
+}
+
+func mergeIdentityReceiptCoverage(snapshot *IdentitySnapshot, coverage identityReceiptCoverage) {
+	snapshot.Members = canonicalIdentityIDs(append(snapshot.Members, coverage.Members...))
+	snapshot.Bindings = append(snapshot.Bindings, coverage.Bindings...)
+	snapshot.SourceContributions = append(snapshot.SourceContributions, coverage.SourceContributions...)
+	merged := identityReceiptCoverageFor(snapshot)
+	snapshot.Members = merged.Members
+	snapshot.Bindings = merged.Bindings
+	snapshot.SourceContributions = merged.SourceContributions
+}
+
+func identityReceiptCoverageFromSnapshot(snapshot *IdentitySnapshot) identityReceiptCoverage {
+	return identityReceiptCoverageFor(snapshot)
 }
 
 func identityReceiptScopeFor(snapshots ...*IdentitySnapshot) ([]identityReceiptResource, error) {
@@ -80,7 +133,12 @@ func identityReceiptScopeFor(snapshots ...*IdentitySnapshot) ([]identityReceiptR
 // identityReceiptScopeTx resolves the originally admitted resource IDs in the
 // caller's native snapshot. Current UID, source ownership and book/account
 // identities must still equal their saved digests. Revision changes are allowed.
-func (s *Store) identityReceiptScopeTx(ctx context.Context, tx *loggedTx, expected []identityReceiptResource) (*IdentitySnapshot, error) {
+func (s *Store) identityReceiptScopeTx(
+	ctx context.Context,
+	tx *loggedTx,
+	expected []identityReceiptResource,
+	coverage identityReceiptCoverage,
+) (*IdentitySnapshot, error) {
 	snapshot := &IdentitySnapshot{}
 	var people, books, sources []int64
 	for _, resource := range expected {
@@ -110,6 +168,7 @@ func (s *Store) identityReceiptScopeTx(ctx context.Context, tx *loggedTx, expect
 	if err := identitySnapshotSourceIDsTx(ctx, tx, snapshot, canonicalIdentityIDs(sources)); err != nil {
 		return nil, err
 	}
+	mergeIdentityReceiptCoverage(snapshot, coverage)
 	actual, err := identityReceiptScopeFor(snapshot)
 	if err != nil {
 		return nil, err
@@ -142,7 +201,7 @@ func (s *Store) IdentityOperationReceiptAuthorizedContext(ctx context.Context, p
 		if stored.AuthorityFingerprint != authority {
 			return ErrIdentityOperationReceiptDenied
 		}
-		original, err := s.identityReceiptScopeTx(ctx, tx, stored.Scope)
+		original, err := s.identityReceiptScopeTx(ctx, tx, stored.Scope, stored.Coverage)
 		if err != nil {
 			return err
 		}
@@ -156,6 +215,7 @@ func (s *Store) IdentityOperationReceiptAuthorizedContext(ctx context.Context, p
 			}
 			return err
 		}
+		mergeIdentityReceiptCoverage(current, identityReceiptCoverageFromSnapshot(original))
 		return authorize(ctx, current)
 	})
 	if err != nil {

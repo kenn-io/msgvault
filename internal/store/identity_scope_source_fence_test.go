@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -53,7 +54,8 @@ func observeIdentitySupportWriter(t *testing.T, st *Store, write func() error) {
 			WHERE l.pid = ? AND l.granted AND l.mode IN ('RowExclusiveLock', 'RowShareLock')
 			AND c.relname IN ('sources', 'carddav_accounts', 'carddav_address_books',
 			'carddav_resources', 'carddav_publications', 'carddav_conflicts', 'persons', 'sync_runs',
-			'messages', 'message_recipients', 'participant_identifiers', 'participant_contact_observations')`, writerPID).Scan(&priorLocks))
+			'messages', 'message_recipients', 'conversations', 'conversation_participants',
+			'reactions', 'reaction_source_events', 'participant_identifiers', 'participant_contact_observations')`, writerPID).Scan(&priorLocks))
 		assert.Zero(t, priorLocks, "identity fence must precede source/account/book/person row locks and writes")
 		var advisoryLocks int
 		require.NoError(t, st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pg_locks
@@ -69,6 +71,81 @@ func observeIdentitySupportWriter(t *testing.T, st *Store, write func() error) {
 		}
 	}
 	require.NoError(t, writeErr)
+}
+
+func TestIdentityScopeConversationRosterAndReactionWritersSerialize(t *testing.T) {
+	if !IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("requires PostgreSQL to observe independent transaction row locks")
+	}
+
+	st := newPGStoreInternal(t, os.Getenv("MSGVAULT_TEST_DB"))
+	require.True(t, st.IsPostgreSQL())
+	for _, operation := range []string{
+		"ensure roster", "replace roster", "upsert reaction", "upsert reaction with source event",
+		"replace reactions", "delete reaction source event",
+	} {
+		t.Run(operation, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			identifier := strings.ReplaceAll(operation, " ", "-")
+			source, err := st.GetOrCreateSource("slack", identifier+"@example.test")
+			requirements.NoError(err)
+			conversationID, err := st.EnsureConversation(source.ID, "synthetic-identity-fence-thread", "Synthetic Identity Fence")
+			requirements.NoError(err)
+			member, err := st.EnsureParticipant(identifier+"-member@example.test", "Synthetic Member", "example.test")
+			requirements.NoError(err)
+			sender, err := st.EnsureParticipant(identifier+"-sender@example.test", "Synthetic Sender", "example.test")
+			requirements.NoError(err)
+			messageID, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conversationID,
+				SourceMessageID: "synthetic-identity-fence-message", MessageType: "chat",
+				SenderID: sql.NullInt64{Int64: sender, Valid: true}})
+			requirements.NoError(err)
+
+			var deleted bool
+			writer := func() error {
+				switch operation {
+				case "ensure roster":
+					return st.EnsureConversationParticipantContext(t.Context(), conversationID, member, "member")
+				case "replace roster":
+					return st.ReplaceConversationParticipantsContext(t.Context(), conversationID,
+						[]ConversationParticipantRef{{ParticipantID: member, Role: "member"}})
+				case "upsert reaction":
+					return st.UpsertReaction(messageID, member, "emoji", "synthetic-wave", time.Now().UTC())
+				case "upsert reaction with source event":
+					return st.UpsertReactionWithSourceID(messageID, member, "emoji", "synthetic-heart", "synthetic-reaction-event", time.Now().UTC())
+				case "replace reactions":
+					return st.ReplaceReactionsContext(t.Context(), messageID,
+						[]ReactionRef{{ParticipantID: member, Type: "emoji", Value: "synthetic-check", CreatedAt: time.Now().UTC()}})
+				case "delete reaction source event":
+					var err error
+					deleted, err = st.DeleteReactionBySourceID(source.ID, conversationID, "synthetic-delete-event")
+					return err
+				default:
+					return fmt.Errorf("unknown identity evidence writer %q", operation)
+				}
+			}
+			if operation == "delete reaction source event" {
+				requirements.NoError(st.UpsertReactionWithSourceID(messageID, member, "emoji", "synthetic-delete", "synthetic-delete-event", time.Now().UTC()))
+			}
+			observeIdentitySupportWriter(t, st, writer)
+			var count int
+			switch operation {
+			case "ensure roster", "replace roster":
+				requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, conversationID, member).Scan(&count))
+				assertions.Equal(1, count)
+			case "upsert reaction", "replace reactions":
+				requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE message_id = ? AND participant_id = ?`, messageID, member).Scan(&count))
+				assertions.Equal(1, count)
+			case "upsert reaction with source event":
+				requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reaction_source_events WHERE source_id = ? AND source_reaction_id = ?`, source.ID, "synthetic-reaction-event").Scan(&count))
+				assertions.Equal(1, count)
+			case "delete reaction source event":
+				assertions.True(deleted)
+				requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_value = 'synthetic-delete'`, messageID, member).Scan(&count))
+				assertions.Zero(count)
+			}
+		})
+	}
 }
 
 func TestIdentityScopeBoundNativeWritersSerialize(t *testing.T) {

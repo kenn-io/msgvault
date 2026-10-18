@@ -388,11 +388,15 @@ func (s *Store) identitySnapshotSourcesTx(ctx context.Context, tx *loggedTx, x *
 	ph, args := sortedIDPlaceholders(x.Members)
 	allArgs := append(slices.Clone(args), args...)
 	allArgs = append(allArgs, args...)
+	allArgs = append(allArgs, args...)
+	allArgs = append(allArgs, args...)
 	// Hidden and source-deleted occurrences remain archive ownership evidence.
 	// Neither identifier strings nor source_ref text can assign an account.
 	var sourceIDs []int64
 	if err := identityReadRows(ctx, tx, `SELECT sender_id AS participant_id,source_id FROM messages WHERE sender_id IN (`+ph+`)
 		UNION SELECT r.participant_id,m.source_id FROM message_recipients r JOIN messages m ON m.id=r.message_id WHERE r.participant_id IN (`+ph+`)
+		UNION SELECT cp.participant_id,c.source_id FROM conversation_participants cp JOIN conversations c ON c.id=cp.conversation_id WHERE cp.participant_id IN (`+ph+`)
+		UNION SELECT r.participant_id,m.source_id FROM reactions r JOIN messages m ON m.id=r.message_id WHERE r.participant_id IN (`+ph+`)
 		UNION SELECT participant_id,source_id FROM participant_contact_observations WHERE participant_id IN (`+ph+`) AND source_id IS NOT NULL
 		ORDER BY participant_id,source_id`, allArgs, func(rows *loggedRows) error {
 		var c IdentitySourceContribution

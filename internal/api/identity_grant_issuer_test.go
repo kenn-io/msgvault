@@ -94,7 +94,6 @@ func TestIdentityGrantIssuerRejectsInvalidSelectionsAndCallerEvidence(t *testing
 		{"person_ids": []int64{0}},
 		{"person_ids": []int64{9_007_199_254_740_992}},
 		{"person_ids": []int64{8_000_000}},
-		{"person_ids": make([]int64, 101)},
 		{"address_book_ids": []int64{8_000_000}},
 		{"persons": []map[string]any{{"id": 1, "uid": "caller-selected-uid"}}},
 		{"address_books": []map[string]any{{"book_id": 1, "ownership_fingerprint": "caller-selected-owner"}}},

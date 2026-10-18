@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -151,6 +152,15 @@ func (s *Server) handleIdentityOperationApply(w http.ResponseWriter, r *http.Req
 		s.writeIdentityOperationError(w, errIdentityOperationDenied)
 		return
 	}
+	if err := (identitycontrol.PreviewRequest{Operation: request.Operation, Target: request.Target}).Validate(); err != nil {
+		s.writeIdentityOperationError(w, err)
+		return
+	}
+	if strings.TrimSpace(request.IdempotencyKey) == "" || len(request.IdempotencyKey) > 256 || len(request.ExpectedFingerprint) != 64 {
+		s.writeIdentityOperationError(w, identitycontrol.ErrInvalidRequest)
+		return
+	}
+	request.Target = request.Target.Canonical(request.Operation)
 	authority, err := identityOperationAuthority(auth)
 	if err != nil {
 		s.writeIdentityOperationError(w, err)
@@ -167,6 +177,26 @@ func (s *Server) handleIdentityOperationApply(w http.ResponseWriter, r *http.Req
 			return errIdentityOperationDenied
 		}
 		return authorizeIdentityOperationSnapshot(current, snapshot, action)
+	}
+	// A committed exact retry may have removed the only live person binding for
+	// its participant. Check it through the receipt scope first so the stored
+	// original coverage can authorize recovery before the fresh-operation
+	// admission below. This path is read-only and still rechecks current grants
+	// and any newly affected resources.
+	replay, replayErr := backend.IdentityOperationReceiptAuthorizedContext(
+		r.Context(), principal, request.IdempotencyKey, authority, authorize,
+	)
+	if replayErr == nil {
+		if replay.Operation != request.Operation || replay.Target != request.Target || replay.BeforeFingerprint != request.ExpectedFingerprint {
+			s.writeIdentityOperationError(w, store.ErrIdentityOperationIdempotency)
+			return
+		}
+		writeJSON(w, http.StatusOK, identityOperationApplyResponse{IdentityReceipt: *replay, CacheState: "unknown"})
+		return
+	}
+	if !errors.Is(replayErr, store.ErrIdentityOperationReceiptNotFound) {
+		s.writeIdentityOperationError(w, replayErr)
+		return
 	}
 	// Denied callers never wait for or observe the daemon's write gate. This
 	// read-only admission is repeated under Store's identity fence below.

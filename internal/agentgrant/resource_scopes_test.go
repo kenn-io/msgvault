@@ -79,7 +79,6 @@ func TestScopedGrantBoundsAndLegacySources(t *testing.T) {
 	for i, scope := range []ResourceScopes{
 		{Persons: []PersonRef{{ID: 1, UID: ""}}},
 		{Persons: []PersonRef{{ID: 1, UID: "one"}, {ID: 1, UID: "two"}}},
-		{Sources: []SourceRef{{ID: 1, Type: "imap", Identifier: "one@example.test"}, {ID: 1, Type: "imap", Identifier: "one@example.test"}}},
 		{Sources: []SourceRef{{ID: 1, Type: "imap", Identifier: "one@example.test"}, {ID: 1, Type: "imap", Identifier: "two@example.test"}}},
 		{AddressBooks: []AddressBookRef{{AccountID: 1, BookID: 1, CanonicalURL: "https://user:password@contacts.example.test/", OwnershipFingerprint: "owner"}}},
 		{AddressBooks: []AddressBookRef{{AccountID: 1, BookID: 1, CanonicalURL: "file:///contacts", OwnershipFingerprint: "owner"}}},

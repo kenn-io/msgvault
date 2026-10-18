@@ -87,3 +87,50 @@ func TestPersonMergeAuthorizationIncludesNativeAffectedOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestPersonMergeAuthorizationExcludesUnchangedSurvivorRelationshipCounterpart(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	survivorID := mustPromotedPerson(t, st, "merge-survivor-only@example.test", "Synthetic Survivor").ID
+	absorbedID := mustPromotedPerson(t, st, "merge-absorbed-only@example.test", "Synthetic Absorbed").ID
+	counterpart := mustPromotedPerson(t, st, "merge-survivor-counterpart@example.test", "Synthetic Counterpart")
+	edge, err := st.AddPersonRelationshipContext(t.Context(), store.PersonRelationshipInput{
+		SourcePersonID: survivorID, TargetPersonID: counterpart.ID, TypeSlug: "friend",
+		Source: store.ProvenanceUser, Actor: "synthetic-owner",
+	})
+	requirements.NoError(err)
+	survivor, err := st.GetPerson(survivorID)
+	requirements.NoError(err)
+	absorbed, err := st.GetPerson(absorbedID)
+	requirements.NoError(err)
+	beforeCounterpart, err := st.GetPerson(counterpart.ID)
+	requirements.NoError(err)
+	request := store.PersonMergeRequest{
+		SurvivorID: survivorID, AbsorbedID: absorbedID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "synthetic-survivor-only-relationship", Actor: "agent:synthetic-merge-grant",
+	}
+	called := false
+	merged, err := st.MergePersonsAuthorizedContext(t.Context(), request, func(_ context.Context, selection *store.IdentityGrantSelection) error {
+		called = true
+		ids := make([]int64, len(selection.Persons))
+		for i, person := range selection.Persons {
+			ids[i] = person.ID
+		}
+		assertions.ElementsMatch([]int64{survivorID, absorbedID}, ids)
+		return nil
+	})
+	requirements.NoError(err)
+	assertions.True(called)
+	assertions.Equal(survivorID, merged.Person.ID)
+
+	afterCounterpart, err := st.GetPerson(counterpart.ID)
+	requirements.NoError(err)
+	assertions.Equal(*beforeCounterpart, *afterCounterpart, "a survivor-only relationship counterpart remains unchanged")
+	relationships, err := st.ListPersonRelationshipsContext(t.Context(), survivorID, store.PersonRelationshipListOptions{})
+	requirements.NoError(err)
+	requirements.Len(relationships, 1)
+	assertions.Equal(edge.ID, relationships[0].Relationship.ID)
+	assertions.Equal(counterpart.ID, relationships[0].CounterpartPersonID)
+}

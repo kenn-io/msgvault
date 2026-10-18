@@ -181,3 +181,27 @@ func TestIssueAgentTokenExpiryRefusesOldDaemon(t *testing.T) {
 	assert.Contains(err.Error(), "requires daemon API schema 3.9.0")
 	assert.Zero(posts)
 }
+
+func TestIssueScopedAgentTokenRefusesContactScopeOnSchema314(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	postCount := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.14.0"}`))
+	})
+	mux.HandleFunc("/api/v1/agent-tokens", func(w http.ResponseWriter, _ *http.Request) {
+		postCount++
+		w.WriteHeader(http.StatusCreated)
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	client, err := New(Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = client.IssueScopedAgentToken(t.Context(), "Synthetic person grant", []string{"person.read"}, nil, []int64{7}, nil, nil, time.Time{})
+	requirements.Error(err)
+	assertions.Contains(err.Error(), "contact grant selection requires daemon API schema 3.15.0 or newer")
+	assertions.Zero(postCount, "an older daemon must not receive a contact-scoped grant request")
+}

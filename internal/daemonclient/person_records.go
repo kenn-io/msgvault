@@ -9,7 +9,7 @@ import (
 )
 
 // ContactScopesMinAPISchemaVersion adds native delegated person operations.
-const ContactScopesMinAPISchemaVersion = "3.14.0"
+const ContactScopesMinAPISchemaVersion = "3.15.0"
 
 type PersonEditContext struct {
 	Person generated.Person `json:"person"`

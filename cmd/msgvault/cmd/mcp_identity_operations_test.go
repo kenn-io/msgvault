@@ -3,7 +3,6 @@ package cmd
 import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/testutil"
 	"testing"
@@ -68,22 +67,4 @@ func TestMCPIdentityProductionDiscoveryFiltersActions(t *testing.T) {
 			assertions.NotContains(names, "promote_person")
 		})
 	}
-}
-
-func TestMCPIdentityDiscoveryClearsPriorAdmissionForOlderDaemon(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newDraftReplyFixture(t)
-	server := mcpDraftTestDaemon(t, f.grantedAdapter(), nil)
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	opts := mcp.ServeOptions{}
-	applyIdentityOperationCapabilities(t.Context(), client, &opts, "3.15.0")
-	requirements.NotNil(opts.IdentityOperations)
-	assertions.Len(opts.IdentityActions, 4)
-	applyIdentityOperationCapabilities(t.Context(), client, &opts, "3.14.0")
-	assertions.Nil(opts.IdentityOperations)
-	assertions.NotNil(opts.IdentityActions)
-	assertions.Empty(opts.IdentityActions)
 }

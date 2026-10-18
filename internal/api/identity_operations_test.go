@@ -88,6 +88,11 @@ func TestNativeIdentityOperationsOwnerPreviewApplyAndReadback(t *testing.T) {
 	requirements.Equal(http.StatusOK, read.Code, "%s", read.Body.String())
 	requirements.NoError(json.Unmarshal(read.Body.Bytes(), &saved))
 	assertions.Equal(receipt, saved)
+	changedRequest := map[string]any{"operation": identitycontrol.OperationGraphUnlink, "target": intent.Target,
+		"expected_fingerprint": preview.Snapshot.Fingerprint, "preview_token": preview.Token, "idempotency_key": "synthetic-owner-link"}
+	mismatch := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/apply", agentTokenTestAPIKey, false, changedRequest)
+	assertions.Equal(http.StatusConflict, mismatch.Code, "an idempotency key cannot replay a different operation")
+	assertions.NotContains(mismatch.Body.String(), receipt.ID)
 }
 
 func TestNativeIdentityOperationsDelegatedScopeAndCurrentRevocation(t *testing.T) {
@@ -245,6 +250,137 @@ func TestNativeIdentityOperationsRechecksNewSourceOccurrenceAtApply(t *testing.T
 	current, err := st.IdentityOperationPreviewContext(t.Context(), intent.Operation, intent.Target)
 	requirements.NoError(err)
 	assertions.Empty(current.Links, "out-of-grant occurrence must prevent the mutation")
+}
+
+func TestNativeIdentityOperationsRejectsUngrantedRosterAndReactionSources(t *testing.T) {
+	for _, evidence := range []string{"roster-only", "reaction-only"} {
+		for _, phase := range []string{"preview", "apply"} {
+			t.Run(evidence+"-"+phase, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+
+				st := testutil.NewTestStore(t)
+				selected, err := st.GetOrCreateSource("gmail", "synthetic-selected-"+evidence+"-"+phase+"@example.test")
+				requirements.NoError(err)
+				other, err := st.GetOrCreateSource("slack", "synthetic-ungranted-"+evidence+"-"+phase)
+				requirements.NoError(err)
+				a, err := st.EnsureParticipant("synthetic-first-"+evidence+"-"+phase+"@example.test", "Synthetic First", "example.test")
+				requirements.NoError(err)
+				b, err := st.EnsureParticipant("synthetic-second-"+evidence+"-"+phase+"@example.test", "Synthetic Second", "example.test")
+				requirements.NoError(err)
+				selectedThread, err := st.EnsureConversation(selected.ID, "synthetic-selected-thread", "Synthetic Thread")
+				requirements.NoError(err)
+				for i, member := range []int64{a, b} {
+					_, err = st.UpsertMessage(&store.Message{SourceID: selected.ID, ConversationID: selectedThread,
+						SourceMessageID: []string{"synthetic-first", "synthetic-second"}[i], MessageType: "email",
+						SenderID: sql.NullInt64{Int64: member, Valid: true}})
+					requirements.NoError(err)
+				}
+				otherThread, err := st.EnsureConversation(other.ID, "synthetic-ungranted-thread", "Synthetic Thread")
+				requirements.NoError(err)
+				var reactionMessageID int64
+				if evidence == "reaction-only" {
+					outsider, err := st.EnsureParticipant("synthetic-outsider-"+phase+"@example.test", "Synthetic Outsider", "example.test")
+					requirements.NoError(err)
+					reactionMessageID, err = st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: otherThread,
+						SourceMessageID: "synthetic-ungranted-message", MessageType: "chat",
+						SenderID: sql.NullInt64{Int64: outsider, Valid: true}})
+					requirements.NoError(err)
+				}
+
+				srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true}}, st, nil, testLogger())
+				id, secret, _, err := srv.agentGrants.Issue("Synthetic selected source", []agentgrant.Permission{
+					agentgrant.PermissionIdentityRead, agentgrant.PermissionIdentityLink,
+				}, []agentgrant.SourceRef{{ID: selected.ID, Type: selected.SourceType, Identifier: selected.Identifier}}, time.Time{})
+				requirements.NoError(err)
+				intent := identitycontrol.PreviewRequest{Operation: identitycontrol.OperationGraphLink,
+					Target: identitycontrol.IdentityTarget{ParticipantID: a, OtherParticipantID: b}}
+				var preview struct {
+					Snapshot store.IdentitySnapshot `json:"snapshot"`
+					Token    string                 `json:"preview_token"`
+				}
+				if phase == "apply" {
+					response := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/preview", secret, true, intent)
+					requirements.Equal(http.StatusOK, response.Code, "%s", response.Body.String())
+					requirements.NoError(json.Unmarshal(response.Body.Bytes(), &preview))
+				}
+
+				switch evidence {
+				case "roster-only":
+					requirements.NoError(st.EnsureConversationParticipant(otherThread, a, "member"))
+				case "reaction-only":
+					requirements.NoError(st.UpsertReaction(reactionMessageID, a, "emoji", "synthetic-wave", time.Now().UTC()))
+				}
+				if phase == "preview" {
+					response := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/preview", secret, true, intent)
+					assertions.Equal(http.StatusForbidden, response.Code, "%s", response.Body.String())
+					assertions.NotContains(response.Body.String(), "synthetic-ungranted")
+					return
+				}
+
+				idempotencyKey := "synthetic-ungranted-" + evidence
+				applied := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/apply", secret, true,
+					map[string]any{"operation": intent.Operation, "target": intent.Target,
+						"expected_fingerprint": preview.Snapshot.Fingerprint, "preview_token": preview.Token,
+						"idempotency_key": idempotencyKey})
+				assertions.Equal(http.StatusForbidden, applied.Code, "%s", applied.Body.String())
+				_, err = st.IdentityOperationReceiptContext(t.Context(), id, idempotencyKey)
+				requirements.ErrorIs(err, store.ErrIdentityOperationReceiptNotFound)
+				current, err := st.IdentityOperationPreviewContext(t.Context(), intent.Operation, intent.Target)
+				requirements.NoError(err)
+				assertions.Empty(current.Links, "ungranted source evidence must prevent the identity mutation")
+			})
+		}
+	}
+}
+
+func TestNativeIdentityPersonUnlinkReceiptRecoversAfterManualDetach(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	st := testutil.NewTestStore(t)
+	participantID, err := st.EnsureParticipant("synthetic-manual-contact@example.test", "Synthetic Manual Contact", "example.test")
+	requirements.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(participantID)
+	requirements.NoError(err)
+
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: agentTokenTestAPIKey, AgentAccess: true}}, st, nil, testLogger())
+	_, secret, _, err := srv.agentGrants.IssueScoped("Synthetic person unlink grant",
+		[]agentgrant.Permission{agentgrant.PermissionIdentityRead, agentgrant.PermissionIdentityUnlink},
+		agentgrant.ResourceScopes{Persons: []agentgrant.PersonRef{{ID: person.ID, UID: person.VCardUID}}}, time.Time{})
+	requirements.NoError(err)
+
+	intent := identitycontrol.PreviewRequest{Operation: identitycontrol.OperationPersonUnlink,
+		Target: identitycontrol.IdentityTarget{ParticipantID: participantID, PersonID: person.ID}}
+	previewResponse := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/preview", secret, true, intent)
+	requirements.Equal(http.StatusOK, previewResponse.Code, previewResponse.Body.String())
+	var preview identityOperationPreviewResponse
+	requirements.NoError(json.Unmarshal(previewResponse.Body.Bytes(), &preview))
+	requirements.NotNil(preview.Snapshot)
+	requirements.NotEmpty(preview.PreviewToken)
+	assertions.Empty(preview.Snapshot.SourceContributions, "the manually curated participant has no source-backed occurrences")
+	body := identityOperationApplyRequest{Operation: intent.Operation, Target: intent.Target,
+		ExpectedFingerprint: preview.Snapshot.Fingerprint, PreviewToken: preview.PreviewToken, IdempotencyKey: "synthetic-person-unlink-recovery"}
+	applyResponse := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/apply", secret, true, body)
+	requirements.Equal(http.StatusOK, applyResponse.Code, applyResponse.Body.String())
+	var committed store.IdentityReceipt
+	requirements.NoError(json.Unmarshal(applyResponse.Body.Bytes(), &committed))
+	assertions.True(committed.Changed)
+	current, err := st.IdentityOperationPreviewContext(t.Context(), intent.Operation, intent.Target)
+	requirements.NoError(err)
+	assertions.Empty(current.Bindings, "the participant is detached before receipt recovery")
+
+	readResponse := identityNativeRequest(t, srv, http.MethodGet,
+		"/api/v1/identity/operations/receipt?idempotency_key="+body.IdempotencyKey, secret, true, nil)
+	requirements.Equal(http.StatusOK, readResponse.Code, readResponse.Body.String())
+	var recovered store.IdentityReceipt
+	requirements.NoError(json.Unmarshal(readResponse.Body.Bytes(), &recovered))
+	assertions.Equal(committed, recovered)
+
+	replayResponse := identityNativeRequest(t, srv, http.MethodPost, "/api/v1/identity/operations/apply", secret, true, body)
+	requirements.Equal(http.StatusOK, replayResponse.Code, replayResponse.Body.String())
+	requirements.NoError(json.Unmarshal(replayResponse.Body.Bytes(), &recovered))
+	assertions.Equal(committed, recovered)
 }
 
 // Only the external cache refresher fails; every identity and receipt operation

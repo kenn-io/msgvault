@@ -134,29 +134,33 @@ func (s *Store) applyIdentityOperationContext(ctx context.Context, request Ident
 		if err != nil {
 			return err
 		}
-		if authorize != nil {
-			if err = authorize(ctx, before); err != nil {
-				return err
-			}
-		}
 		var existingHash, encoded string
 		err = tx.QueryRowContext(ctx, `SELECT request_hash,receipt_json FROM identity_operation_receipts WHERE principal=? AND idempotency_key=?`, request.Principal, request.IdempotencyKey).Scan(&existingHash, &encoded)
 		if err == nil {
-			if existingHash != requestHash {
-				return ErrIdentityOperationIdempotency
-			}
-			receipt = new(IdentityReceipt)
 			var stored identityStoredReceipt
 			if err = json.Unmarshal([]byte(encoded), &stored); err != nil {
 				return fmt.Errorf("decode identity receipt: %w", err)
 			}
+			if existingHash != requestHash {
+				if authorize != nil {
+					if err := authorize(ctx, before); err != nil {
+						return err
+					}
+				}
+				return ErrIdentityOperationIdempotency
+			}
+			receipt = new(IdentityReceipt)
 			*receipt = stored.IdentityReceipt
 			if authorize != nil {
-				original, err := s.identityReceiptScopeTx(ctx, tx, stored.Scope)
+				original, err := s.identityReceiptScopeTx(ctx, tx, stored.Scope, stored.Coverage)
 				if err != nil {
 					return err
 				}
 				if err := authorize(ctx, original); err != nil {
+					return err
+				}
+				mergeIdentityReceiptCoverage(before, identityReceiptCoverageFromSnapshot(original))
+				if err := authorize(ctx, before); err != nil {
 					return err
 				}
 			}
@@ -166,6 +170,11 @@ func (s *Store) applyIdentityOperationContext(ctx context.Context, request Ident
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("lookup identity receipt: %w", err)
+		}
+		if authorize != nil {
+			if err := authorize(ctx, before); err != nil {
+				return err
+			}
 		}
 		if verifyPreview != nil {
 			if err := verifyPreview(ctx, before); err != nil {
@@ -213,7 +222,10 @@ func (s *Store) applyIdentityOperationContext(ctx context.Context, request Ident
 		if err != nil {
 			return err
 		}
-		encoded, err := json.Marshal(identityStoredReceipt{IdentityReceipt: *receipt, AuthorityFingerprint: request.AuthorityFingerprint, Scope: scope})
+		encoded, err := json.Marshal(identityStoredReceipt{
+			IdentityReceipt: *receipt, AuthorityFingerprint: request.AuthorityFingerprint,
+			Scope: scope, Coverage: identityReceiptCoverageFor(before, snapshot),
+		})
 		if err != nil {
 			return err
 		}
