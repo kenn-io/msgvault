@@ -6062,7 +6062,17 @@ func (o *GetEmailFamilyRequestOptions) GetPathParams() (map[string]any, error) {
 
 // GetQuery returns the query params as a map.
 func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
-	return runtime.AsMap[any](o.Query)
+	query, err := runtime.AsMap[any](o.Query)
+	if err != nil {
+		return nil, err
+	}
+	if o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {
+		if query == nil {
+			query = make(map[string]any, 1)
+		}
+		query["source_id"] = ""
+	}
+	return query, nil
 }
 
 // GetBody returns the payload in any type that can be marshalled to JSON by the client.

@@ -89,6 +89,29 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	assert.Equal(got, again)
 }
 
+func TestRewriteEmailFamilyQueryOptionsPreservesEmptySourceSelection(t *testing.T) {
+	assertions := assert.New(t)
+	source := `func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+`
+
+	got, err := RewriteEmailFamilyQueryOptions([]byte(source))
+	require.NoError(t, err)
+	assertions.Contains(string(got), "o.Query.SourceID != nil && len(o.Query.SourceID) == 0")
+	assertions.Contains(string(got), `query["source_id"] = ""`)
+
+	again, err := RewriteEmailFamilyQueryOptions(got)
+	require.NoError(t, err)
+	assertions.Equal(got, again, "rewrite should be idempotent")
+}
+
+func TestRewriteEmailFamilyQueryOptionsRejectsChangedShape(t *testing.T) {
+	_, err := RewriteEmailFamilyQueryOptions([]byte("package generated\n"))
+
+	require.ErrorContains(t, err, "generated GetEmailFamilyRequestOptions.GetQuery shape changed")
+}
+
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
 	_, err := RewriteGeneratedValidators([]byte("package generated\n"))
 

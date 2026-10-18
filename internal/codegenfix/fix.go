@@ -54,6 +54,43 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 	return source, nil
 }
 
+// RewriteEmailFamilyQueryOptions preserves the distinction between an omitted
+// source selection and an explicitly empty one in the generated client. The
+// generated JSON round trip drops empty slices because their fields use
+// omitempty; the runtime represents the explicit empty selection as
+// source_id=.
+func RewriteEmailFamilyQueryOptions(source []byte) ([]byte, error) {
+	signature := []byte("func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {")
+	if bytes.Count(source, signature) != 1 {
+		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery shape changed")
+	}
+	start := bytes.Index(source, signature)
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery boundary changed")
+	}
+	end := start + endOffset
+	method := source[start:end]
+	const rewritten = "\tquery, err := runtime.AsMap[any](o.Query)\n" +
+		"\tif err != nil {\n\t\treturn nil, err\n\t}\n" +
+		"\tif o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {\n" +
+		"\t\tif query == nil {\n\t\t\tquery = make(map[string]any, 1)\n\t\t}\n" +
+		"\t\tquery[\"source_id\"] = \"\"\n\t}\n" +
+		"\treturn query, nil"
+	if bytes.Count(method, []byte(rewritten)) == 1 {
+		return source, nil
+	}
+	original := []byte("\treturn runtime.AsMap[any](o.Query)")
+	if bytes.Count(method, original) != 1 {
+		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery body changed")
+	}
+	method = bytes.Replace(method, original, []byte(rewritten), 1)
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	result = append(result, source[end:]...)
+	return result, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 
