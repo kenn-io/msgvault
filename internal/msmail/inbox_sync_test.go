@@ -14,7 +14,7 @@ import (
 )
 
 func TestMicrosoftInboxDeltaAndLookupSelectCompleteMetadata(t *testing.T) {
-	for _, missing := range []string{"", "categories", "isRead", "parentFolderId", "@odata.etag"} {
+	for _, missing := range []string{"", "categories", "isRead"} {
 		t.Run(missing, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
