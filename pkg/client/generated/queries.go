@@ -596,6 +596,19 @@ type ListChangedMessagesQuery struct {
 	Limit *int64 `json:"limit,omitempty"`
 }
 
+type ListEmailFamilyDecisionsQuery struct {
+	// MessageID Live archived message ID
+	MessageID *int64 `json:"message_id,omitempty"`
+
+	// SourceID Narrow the source set
+	SourceID []int64 `json:"source_id,omitempty"`
+}
+
+type GetEmailFamilyDecisionQuery struct {
+	// SourceID Narrow the source set
+	SourceID []int64 `json:"source_id,omitempty"`
+}
+
 type FilterMessagesQuery struct {
 	// AccountScopes JSON list of account scopes that intersect, for structured clients
 	AccountScopes *string `json:"account_scopes,omitempty"`

@@ -4249,3 +4249,25 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Local, reversible decisions preserve original request identity after cascades.
+CREATE TABLE IF NOT EXISTS email_family_decisions (
+ id BIGSERIAL PRIMARY KEY,
+ request_key TEXT NOT NULL UNIQUE CHECK (request_key ~ '^[0-9a-f]{32}$'),
+ kind TEXT NOT NULL CHECK (kind IN ('link','handled')),
+ state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','undone')),
+ revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+ request_sha256 TEXT NOT NULL CHECK (length(request_sha256) = 64),
+ expected_member_count INTEGER NOT NULL CHECK (expected_member_count BETWEEN 1 AND 100),
+ actor_kind TEXT NOT NULL CHECK (actor_kind IN ('owner','cli','mcp','agent')),
+ actor_ref TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ undone_at TIMESTAMPTZ,
+ CHECK ((state = 'active' AND undone_at IS NULL) OR (state = 'undone' AND undone_at IS NOT NULL))
+);
+CREATE TABLE IF NOT EXISTS email_family_decision_members (
+ decision_id BIGINT NOT NULL REFERENCES email_family_decisions(id) ON DELETE CASCADE,
+ message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ PRIMARY KEY (decision_id,message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_email_family_decision_members_message ON email_family_decision_members(message_id,decision_id);

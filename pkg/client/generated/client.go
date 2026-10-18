@@ -651,6 +651,26 @@ type ClientInterface interface {
 	ListChangedMessages(ctx context.Context, options *ListChangedMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChangedMessagesResponse, error)
 	ListChangedMessagesWithResponse(ctx context.Context, options *ListChangedMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListChangedMessagesResp, error)
 
+	// ListEmailFamilyDecisions Read the latest 20 local decisions for one live copy
+	ListEmailFamilyDecisions(ctx context.Context, options *ListEmailFamilyDecisionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailFamilyDecisionsResponse, error)
+	ListEmailFamilyDecisionsWithResponse(ctx context.Context, options *ListEmailFamilyDecisionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailFamilyDecisionsResp, error)
+
+	// ApplyEmailFamilyDecision Apply a reversible local email family decision
+	ApplyEmailFamilyDecision(ctx context.Context, options *ApplyEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyEmailFamilyDecisionResponse, error)
+	ApplyEmailFamilyDecisionWithResponse(ctx context.Context, options *ApplyEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyEmailFamilyDecisionResp, error)
+
+	// PreviewEmailFamilyDecision Preview local links or exact-copy handling without saving
+	PreviewEmailFamilyDecision(ctx context.Context, options *PreviewEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewEmailFamilyDecisionResponse, error)
+	PreviewEmailFamilyDecisionWithResponse(ctx context.Context, options *PreviewEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewEmailFamilyDecisionResp, error)
+
+	// GetEmailFamilyDecision Read a local decision and its current surviving copy union
+	GetEmailFamilyDecision(ctx context.Context, options *GetEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyDecisionResponse, error)
+	GetEmailFamilyDecisionWithResponse(ctx context.Context, options *GetEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyDecisionResp, error)
+
+	// UndoEmailFamilyDecision Undo one local family decision with revision checks
+	UndoEmailFamilyDecision(ctx context.Context, options *UndoEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoEmailFamilyDecisionResponse, error)
+	UndoEmailFamilyDecisionWithResponse(ctx context.Context, options *UndoEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoEmailFamilyDecisionResp, error)
+
 	// FilterMessages List filtered messages
 	FilterMessages(ctx context.Context, options *FilterMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FilterMessagesResponse, error)
 	FilterMessagesWithResponse(ctx context.Context, options *FilterMessagesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FilterMessagesResp, error)
@@ -10749,6 +10769,324 @@ func (c *Client) ListChangedMessages(ctx context.Context, options *ListChangedMe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/changes")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListEmailFamilyDecisions Read the latest 20 local decisions for one live copy
+func (c *Client) ListEmailFamilyDecisions(ctx context.Context, options *ListEmailFamilyDecisionsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListEmailFamilyDecisionsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/messages/family/decisions",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListEmailFamilyDecisionsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListEmailFamilyDecisionsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListEmailFamilyDecisionsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListEmailFamilyDecisionsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListEmailFamilyDecisionsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/family/decisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ApplyEmailFamilyDecision Apply a reversible local email family decision
+func (c *Client) ApplyEmailFamilyDecision(ctx context.Context, options *ApplyEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ApplyEmailFamilyDecisionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/family/decisions",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ApplyEmailFamilyDecisionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ApplyEmailFamilyDecisionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ApplyEmailFamilyDecisionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ApplyEmailFamilyDecisionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ApplyEmailFamilyDecisionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/family/decisions")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PreviewEmailFamilyDecision Preview local links or exact-copy handling without saving
+func (c *Client) PreviewEmailFamilyDecision(ctx context.Context, options *PreviewEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PreviewEmailFamilyDecisionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/family/decisions/preview",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PreviewEmailFamilyDecisionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PreviewEmailFamilyDecisionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PreviewEmailFamilyDecisionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PreviewEmailFamilyDecisionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PreviewEmailFamilyDecisionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/family/decisions/preview")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetEmailFamilyDecision Read a local decision and its current surviving copy union
+func (c *Client) GetEmailFamilyDecision(ctx context.Context, options *GetEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyDecisionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/messages/family/decisions/{id}",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailFamilyDecisionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetEmailFamilyDecisionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetEmailFamilyDecisionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetEmailFamilyDecisionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetEmailFamilyDecisionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/family/decisions/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UndoEmailFamilyDecision Undo one local family decision with revision checks
+func (c *Client) UndoEmailFamilyDecision(ctx context.Context, options *UndoEmailFamilyDecisionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UndoEmailFamilyDecisionResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/messages/family/decisions/{id}/undo",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*UndoEmailFamilyDecisionResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(UndoEmailFamilyDecisionErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "UndoEmailFamilyDecisionErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(UndoEmailFamilyDecisionResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "UndoEmailFamilyDecisionResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/family/decisions/{id}/undo")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

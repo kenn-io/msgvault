@@ -1171,7 +1171,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withAttributionTxContext(context.Background(), attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
@@ -1198,6 +1198,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := s.retargetEmailFamilyDecisions(context.Background(), tx, newID, legacyID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,

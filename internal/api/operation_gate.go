@@ -425,9 +425,11 @@ var operationGateExemptPaths = map[string]bool{
 // while a long archive operation holds the gate. Kata evidence preparation
 // only reads message bodies and extracted document text. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
+// Email family previews read snapshots without taking the gate.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
+	"/api/v1/messages/family/decisions/preview",
 	"/api/v1/saved-views/{id}/run",
 	remoteImagePath,
 	cardDAVAccountTestPath,
@@ -479,6 +481,25 @@ func readOnlyPostRouteRequest(r *http.Request) bool {
 		}
 	})
 	_, pattern := readOnlyPostRouteMux.Handler(r)
+	return pattern != ""
+}
+
+// These handlers authorize and parse their requests before acquiring the
+// operation gate themselves. Match dynamic paths through ServeMux, just as
+// the router does, so an undo does not acquire the same gate twice.
+var handlerGatedPostRouteMux = sync.OnceValue(func() *http.ServeMux {
+	mux := http.NewServeMux()
+	for _, pattern := range []string{
+		"/api/v1/messages/family/decisions",
+		"/api/v1/messages/family/decisions/{id}/undo",
+	} {
+		mux.Handle("POST "+pattern, http.NotFoundHandler())
+	}
+	return mux
+})
+
+func handlerGatedPostRouteRequest(r *http.Request) bool {
+	_, pattern := handlerGatedPostRouteMux().Handler(r)
 	return pattern != ""
 }
 
@@ -541,7 +562,7 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	if operationGateExemptPaths[r.URL.Path] || strings.HasPrefix(r.URL.Path, agentTokensPath+"/") {
 		return false, "", nil
 	}
-	if readOnlyPostRouteRequest(r) {
+	if readOnlyPostRouteRequest(r) || handlerGatedPostRouteRequest(r) {
 		return false, "", nil
 	}
 	if genericSyncTriggerRequest(r) {

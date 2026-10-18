@@ -2625,6 +2625,7 @@ stored MIME before they are read; other read or write errors stop the command.
 Hidden duplicate copies are excluded. The last-sync time describes account
 freshness, not conversation completeness.
 
+
 ---
 
 ## export-attachment
@@ -4355,12 +4356,47 @@ msgvault family show 42 --source-id 1,3 --json
 copy's account, identifiers, dates, labels, extraction outcome and handling
 facts, plus a revision for the current evidence.
 
-Handling is `handled` only with positive Sent evidence from a confirmed sender
+Automatic handling is `handled` only with positive Sent evidence from a confirmed sender
 to an external recipient and later direct reply or attached-original evidence.
 `actionable` means received items remain outstanding. `unknown` preserves missing
 or incomplete evidence. Shared subjects, quoted text and References alone never
 prove that an email was answered. Families stop at 500 copies or 5,000 identifier
 lookups; a truncated family remains `unknown`.
+
+Local decisions let you connect copies without MIME links or confirm that
+specific copies need no further action. Preview is the default:
+
+```bash
+msgvault family link 42 78 --request-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+msgvault family link 42 78 --apply --request-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --family-revision <before_revision>
+msgvault family mark-handled 42 --apply
+msgvault family history 42
+msgvault family undo 7 --preview
+msgvault family undo 7 --revision 1 --family-revision <current_family_revision>
+```
+
+`--apply` saves a local decision and prints its request key to stderr. Keep the
+key and original target IDs for retries. `--family-revision` applies the exact
+preview you reviewed; without it, the command obtains a fresh preview before
+saving. The apply response includes the saved decision and current family.
+Use `family undo <decision-id> --preview` to read the current decision and surviving
+family revisions, even after copies are deleted. It does not undo the decision.
+A stale family or decision revision fails and requires a new preview.
+A retry with the same key and original targets returns the saved decision,
+even after undo. Reuse the original revision for such retries when selected
+original copies have since been deduplicated or removed.
+
+Links select 2–100 live copies. Handled decisions select 1–100 exact copies;
+they do not mark unselected duplicates. No decision changes a provider or
+synthesizes reply evidence. Truncated families cannot be changed. History lists
+the latest 20 decisions for one live copy. Deduplication retargets decisions to
+the survivor; undoing deduplication does not move them back.
+
+The MCP decision tools `preview_email_family_decision`,
+`apply_email_family_decision`, `list_email_family_decisions` and
+`undo_email_family_decision` require writes to be enabled. Apply and undo also
+require explicit client confirmation. Untrusted archived text cannot authorize
+these actions.
 
 Older archives derive identifiers during sync, import or
 [`repair-derived`](#repair-derived). Family reads do not fetch or repair raw mail.

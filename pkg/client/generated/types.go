@@ -4093,15 +4093,23 @@ func (d DurationTotals) Validate() error {
 }
 
 type EmailFamily struct {
-	AnchorMessageID int64               `json:"anchor_message_id"`
-	Handling        Handling            `json:"handling"`
-	Members         []EmailFamilyMember `json:"members" validate:"required"`
-	Revision        string              `json:"revision" validate:"required"`
-	Truncated       bool                `json:"truncated"`
+	AnchorMessageID int64                 `json:"anchor_message_id"`
+	Decisions       []EmailFamilyDecision `json:"decisions" validate:"required"`
+	Handling        Handling              `json:"handling"`
+	Members         []EmailFamilyMember   `json:"members" validate:"required"`
+	Revision        string                `json:"revision" validate:"required"`
+	Truncated       bool                  `json:"truncated"`
 }
 
 func (e EmailFamily) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range e.Decisions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Decisions[%d]", i), err)
+			}
+		}
+	}
 	if v, ok := any(e.Handling).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Handling", err)
@@ -4121,6 +4129,93 @@ func (e EmailFamily) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type EmailFamilyDecision struct {
+	ActorKind           string     `json:"actor_kind" validate:"required"`
+	ActorRef            string     `json:"actor_ref" validate:"required"`
+	CreatedAt           time.Time  `json:"created_at" validate:"required"`
+	ExpectedMemberCount int64      `json:"expected_member_count"`
+	ID                  int64      `json:"id"`
+	Kind                string     `json:"kind" validate:"required"`
+	MessageIds          []int64    `json:"message_ids" validate:"required"`
+	RequestKey          string     `json:"request_key" validate:"required"`
+	RequestSha256       string     `json:"request_sha256" validate:"required"`
+	Revision            int64      `json:"revision"`
+	State               string     `json:"state" validate:"required"`
+	UndoneAt            *time.Time `json:"undone_at,omitempty"`
+}
+
+func (e EmailFamilyDecision) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmailFamilyDecisionInput struct {
+	ActorKind              string  `json:"actor_kind" validate:"required"`
+	ActorRef               string  `json:"actor_ref" validate:"required"`
+	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
+	Kind                   string  `json:"kind" validate:"required"`
+	MessageIds             []int64 `json:"message_ids" validate:"required"`
+	RequestKey             string  `json:"request_key" validate:"required"`
+	SourceIds              []int64 `json:"source_ids,omitempty"`
+}
+
+func (e EmailFamilyDecisionInput) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmailFamilyDecisionPreview struct {
+	BeforeRevision string      `json:"before_revision" validate:"required"`
+	Family         EmailFamily `json:"family"`
+}
+
+func (e EmailFamilyDecisionPreview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.BeforeRevision, "required"); err != nil {
+		errors = errors.Append("BeforeRevision", err)
+	}
+	if v, ok := any(e.Family).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Family", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailFamilyDecisionResult struct {
+	Decision EmailFamilyDecision `json:"decision"`
+	Family   EmailFamily         `json:"family"`
+}
+
+func (e EmailFamilyDecisionResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if v, ok := any(e.Family).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Family", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailFamilyDecisionUndo struct {
+	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
+	ExpectedRevision       int64   `json:"expected_revision"`
+	SourceIds              []int64 `json:"source_ids,omitempty"`
+}
+
+func (e EmailFamilyDecisionUndo) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
 }
 
 type EmailFamilyEnvelope struct {

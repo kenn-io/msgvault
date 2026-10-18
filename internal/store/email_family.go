@@ -52,11 +52,12 @@ type EmailFamilyEnvelope struct {
 }
 
 type EmailFamily struct {
-	AnchorMessageID int64                `json:"anchor_message_id"`
-	Members         []EmailFamilyMember  `json:"members"`
-	Handling        emailfamily.Handling `json:"handling"`
-	Truncated       bool                 `json:"truncated"`
-	Revision        string               `json:"revision"`
+	AnchorMessageID int64                 `json:"anchor_message_id"`
+	Members         []EmailFamilyMember   `json:"members"`
+	Handling        emailfamily.Handling  `json:"handling"`
+	Truncated       bool                  `json:"truncated"`
+	Revision        string                `json:"revision"`
+	Decisions       []EmailFamilyDecision `json:"decisions"`
 }
 
 func emailFamilyScope(ctx context.Context, ids []int64) context.Context {
@@ -88,8 +89,26 @@ func (s *Store) EmailFamilyContext(ctx context.Context, id int64, options EmailF
 }
 
 func (s *Store) emailFamilySnapshot(ctx context.Context, id int64) (*EmailFamily, error) {
-	result := &EmailFamily{AnchorMessageID: id, Members: []EmailFamilyMember{}}
-	pending := []int64{id}
+	return s.emailFamilySnapshotIDs(ctx, []int64{id}, nil)
+}
+
+func (s *Store) emailFamilySnapshotIDs(ctx context.Context, ids []int64, projected *EmailFamilyDecision) (*EmailFamily, error) {
+	if err := s.authorizeEmailFamilyEndpoints(ctx, ids, true); err != nil {
+		return nil, err
+	}
+	result := &EmailFamily{AnchorMessageID: ids[0], Members: []EmailFamilyMember{}, Decisions: []EmailFamilyDecision{}}
+	pending := slices.Clone(ids)
+	decisionSeen := map[int64]bool{}
+	handled := map[int64]bool{}
+	edgeCount := 0
+	if projected != nil {
+		result.Decisions = append(result.Decisions, *projected)
+		if projected.Kind == "handled" {
+			for _, id := range projected.MessageIDs {
+				handled[id] = true
+			}
+		}
+	}
 	seen := map[int64]bool{}
 	keys := map[string]bool{}
 	scope, args := sourceScopeClause(ctx, "m.source_id")
@@ -104,7 +123,7 @@ func (s *Store) emailFamilySnapshot(ctx context.Context, id int64) (*EmailFamily
 			break
 		}
 		member, err := s.emailFamilyMember(ctx, current, scope, args)
-		if errors.Is(err, ErrNotFound) && current != id {
+		if errors.Is(err, ErrNotFound) && !slices.Contains(ids, current) {
 			continue
 		}
 		if err != nil {
@@ -185,6 +204,43 @@ func (s *Store) emailFamilySnapshot(ctx context.Context, id int64) (*EmailFamily
 				result.Truncated = true
 			}
 		}
+		var decisions []EmailFamilyDecision
+		var count int
+		var truncated bool
+		if edgeCount <= emailFamilyDecisionEdgeLimit {
+			decisions, count, truncated, err = s.emailFamilyEdges(ctx, current, decisionSeen, emailFamilyDecisionEdgeLimit-edgeCount)
+		}
+		if err != nil {
+			return nil, err
+		}
+		edgeCount += count
+		if truncated {
+			result.Truncated = true
+		}
+		for _, decision := range decisions {
+			decisionSeen[decision.ID] = true
+			if decision.Kind == "link" && (len(decision.MessageIDs) != decision.ExpectedMemberCount || len(decision.MessageIDs) < 2) {
+				continue
+			}
+			if err := s.authorizeEmailFamilyEndpoints(ctx, decision.MessageIDs, true); decision.Kind == "link" && errors.Is(err, ErrNotFound) {
+				continue
+			} else if err != nil && !errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+			result.Decisions = append(result.Decisions, decision)
+			if decision.Kind == "link" && len(decision.MessageIDs) >= 2 {
+				for _, next := range decision.MessageIDs {
+					if !seen[next] {
+						pending = append(pending, next)
+					}
+				}
+			}
+			if decision.Kind == "handled" {
+				for _, next := range decision.MessageIDs {
+					handled[next] = true
+				}
+			}
+		}
 		// Bound the pending work as well as the final population, keeping its lowest IDs.
 		slices.Sort(pending)
 		pending = slices.Compact(pending)
@@ -217,6 +273,7 @@ func (s *Store) emailFamilySnapshot(ctx context.Context, id int64) (*EmailFamily
 	activities := make([]emailfamily.Activity, 0, len(result.Members))
 	for i := range result.Members {
 		attributeEmailFamily(&result.Members[i], identities)
+		result.Members[i].LocalHandled = handled[result.Members[i].MessageID]
 		activities = append(activities, result.Members[i].Activity)
 	}
 	result.Handling = emailfamily.Evaluate(activities)
@@ -224,12 +281,26 @@ func (s *Store) emailFamilySnapshot(ctx context.Context, id int64) (*EmailFamily
 		result.Handling.State = "unknown"
 		result.Handling.Reasons = append(result.Handling.Reasons, "family_truncated")
 	}
+	for i := range result.Decisions {
+		// Handled batches do not add their unrelated endpoints to this family.
+		if result.Decisions[i].Kind == "handled" {
+			visible := []int64{}
+			for _, id := range result.Decisions[i].MessageIDs {
+				if seen[id] {
+					visible = append(visible, id)
+				}
+			}
+			result.Decisions[i].MessageIDs = visible
+		}
+	}
+	slices.SortFunc(result.Decisions, func(a, b EmailFamilyDecision) int { return compareInt64(a.ID, b.ID) })
 	// Include every input, not wall-clock time or unrelated archive state.
 	canonical, err := json.Marshal(struct {
 		Members    []EmailFamilyMember
 		Identities map[int64][]string
 		Truncated  bool
-	}{result.Members, identities, result.Truncated}, json.Deterministic(true))
+		Decisions  []EmailFamilyDecision
+	}{result.Members, identities, result.Truncated, result.Decisions}, json.Deterministic(true))
 	if err != nil {
 		return nil, err
 	}

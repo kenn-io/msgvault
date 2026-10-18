@@ -4524,6 +4524,10 @@ components:
         anchor_message_id:
           format: int64
           type: integer
+        decisions:
+          items:
+            $ref: "#/components/schemas/EmailFamilyDecision"
+          type: array
         handling:
           $ref: "#/components/schemas/Handling"
         members:
@@ -4540,6 +4544,125 @@ components:
         - handling
         - truncated
         - revision
+        - decisions
+      type: object
+    EmailFamilyDecision:
+      additionalProperties: true
+      properties:
+        actor_kind:
+          type: string
+        actor_ref:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        expected_member_count:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        request_key:
+          type: string
+        request_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        undone_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - request_key
+        - kind
+        - state
+        - revision
+        - request_sha256
+        - expected_member_count
+        - actor_kind
+        - actor_ref
+        - created_at
+        - message_ids
+      type: object
+    EmailFamilyDecisionInput:
+      additionalProperties: false
+      properties:
+        actor_kind:
+          type: string
+        actor_ref:
+          type: string
+        expected_family_revision:
+          type: string
+        kind:
+          type: string
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        request_key:
+          type: string
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - request_key
+        - kind
+        - message_ids
+        - expected_family_revision
+        - actor_kind
+        - actor_ref
+      type: object
+    EmailFamilyDecisionPreview:
+      additionalProperties: true
+      properties:
+        before_revision:
+          type: string
+        family:
+          $ref: "#/components/schemas/EmailFamily"
+      required:
+        - before_revision
+        - family
+      type: object
+    EmailFamilyDecisionResult:
+      additionalProperties: true
+      properties:
+        decision:
+          $ref: "#/components/schemas/EmailFamilyDecision"
+        family:
+          $ref: "#/components/schemas/EmailFamily"
+      required:
+        - decision
+        - family
+      type: object
+    EmailFamilyDecisionUndo:
+      additionalProperties: false
+      properties:
+        expected_family_revision:
+          type: string
+        expected_revision:
+          format: int64
+          type: integer
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - expected_revision
+        - expected_family_revision
       type: object
     EmailFamilyEnvelope:
       additionalProperties: true
@@ -16711,7 +16834,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.24.0
+  version: 3.25.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24293,6 +24416,337 @@ paths:
       security:
         - apiKey: []
       summary: List messages whose content changed since a cursor
+      tags:
+        - API
+  /api/v1/messages/family/decisions:
+    get:
+      operationId: listEmailFamilyDecisions
+      parameters:
+        - description: Live archived message ID
+          in: query
+          name: message_id
+          schema:
+            format: int64
+            type: integer
+        - description: Narrow the source set
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/EmailFamilyDecision"
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read the latest 20 local decisions for one live copy
+      tags:
+        - API
+    post:
+      operationId: applyEmailFamilyDecision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply a reversible local email family decision
+      tags:
+        - API
+  /api/v1/messages/family/decisions/preview:
+    post:
+      operationId: previewEmailFamilyDecision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionPreview"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview local links or exact-copy handling without saving
+      tags:
+        - API
+  /api/v1/messages/family/decisions/{id}:
+    get:
+      operationId: getEmailFamilyDecision
+      parameters:
+        - description: Decision ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Narrow the source set
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a local decision and its current surviving copy union
+      tags:
+        - API
+  /api/v1/messages/family/decisions/{id}/undo:
+    post:
+      operationId: undoEmailFamilyDecision
+      parameters:
+        - description: Decision ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionUndo"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Undo one local family decision with revision checks
       tags:
         - API
   /api/v1/messages/filter:

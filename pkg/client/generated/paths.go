@@ -325,6 +325,16 @@ func (l LinkKataEvidencePath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
+type GetEmailFamilyDecisionPath struct {
+	// ID Decision ID
+	ID int64 `json:"id"`
+}
+
+type UndoEmailFamilyDecisionPath struct {
+	// ID Decision ID
+	ID int64 `json:"id"`
+}
+
 type GetMessagePath struct {
 	// ID Message ID
 	ID int64 `json:"id"`
