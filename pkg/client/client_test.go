@@ -1057,7 +1057,7 @@ func TestGetEmailFamilyPreservesEmptySourceSelection(t *testing.T) {
 
 			if tc.wantPresent {
 				assertions.Contains(gotQuery, "source_id", "an explicitly empty selection must be sent")
-				assertions.Equal("", gotQuery.Get("source_id"), "empty selection query value")
+				assertions.Empty(gotQuery.Get("source_id"), "empty selection query value")
 			} else {
 				assertions.NotContains(gotQuery, "source_id", "nil selection must stay omitted")
 			}

@@ -62,12 +62,12 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 func RewriteEmailFamilyQueryOptions(source []byte) ([]byte, error) {
 	signature := []byte("func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {")
 	if bytes.Count(source, signature) != 1 {
-		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery shape changed")
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery shape changed")
 	}
 	start := bytes.Index(source, signature)
 	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
 	if endOffset < 0 {
-		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery boundary changed")
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery boundary changed")
 	}
 	end := start + endOffset
 	method := source[start:end]
@@ -82,7 +82,7 @@ func RewriteEmailFamilyQueryOptions(source []byte) ([]byte, error) {
 	}
 	original := []byte("\treturn runtime.AsMap[any](o.Query)")
 	if bytes.Count(method, original) != 1 {
-		return nil, fmt.Errorf("generated GetEmailFamilyRequestOptions.GetQuery body changed")
+		return nil, errors.New("generated GetEmailFamilyRequestOptions.GetQuery body changed")
 	}
 	method = bytes.Replace(method, original, []byte(rewritten), 1)
 	result := append([]byte(nil), source[:start]...)
