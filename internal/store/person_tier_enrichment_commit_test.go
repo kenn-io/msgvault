@@ -2,11 +2,12 @@ package store_test
 
 import (
 	"bytes"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/personenrichment"
-	"testing"
-	"time"
 )
 
 // A manual result must remain applicable even when scheduled enrichment is

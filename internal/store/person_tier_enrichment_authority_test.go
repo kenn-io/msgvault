@@ -1,12 +1,13 @@
 package store_test
 
 import (
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/store"
-	"testing"
-	"time"
 )
 
 func TestTierEnrichmentScheduledPublicationAuthority(t *testing.T) {
@@ -167,6 +168,56 @@ func TestTierEnrichmentManualRunKindDoesNotAuthorizeAnotherTarget(t *testing.T) 
 			})
 		}
 	}
+}
+
+func TestTierEnrichmentOptOutRestoresManualTriggerForResumedAttempt(t *testing.T) {
+	f := newTierEnrichmentFixture(t)
+	run, _, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profile.Fingerprint, "manual-coalesced-opt-out", f.now)
+	require.NoError(t, err)
+
+	lease := f.claim(t, run.ID, "manual-worker")
+	start := tierEnrichmentAttemptStart(&f, run.ID, "a")
+	start.Trigger = lease.Trigger
+	attempt, _, err := f.store.BeginAttempt(t.Context(), lease.Token, start)
+	require.NoError(t, err)
+	require.NoError(t, f.store.AuthorizeAttemptDispatch(t.Context(), attempt.Token))
+	require.NoError(t, f.store.RecordProviderStarted(t.Context(), attempt.Token, personenrichment.Attempt{
+		State: personenrichment.AttemptPending, JobID: "manual-job", StartedAt: f.now,
+		AdapterVersion: "adapter", SchemaVersion: "schema",
+		ProgramFingerprint: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}))
+
+	require.NoError(t, f.store.EnqueuePersonEnrichmentContext(t.Context(), store.EnrichmentTriggerInput{
+		PersonID: f.person.ID, ProfileFingerprint: f.profile.Fingerprint,
+		Kind: personenrichment.TriggerTracked, Generation: "scheduled-after-manual", DueAt: f.now,
+	}))
+	coalesced := f.work(t)
+	require.Len(t, coalesced, 1)
+	assert.True(t, coalesced[0].HasFreshTrigger)
+	assert.Equal(t, "scheduled-after-manual", coalesced[0].TriggerGeneration)
+
+	require.NoError(t, f.store.SchedulePoll(t.Context(), attempt.Token, personenrichment.Result{
+		State: personenrichment.ResultPending, JobID: "manual-job", PollAfter: time.Minute,
+		AdapterVersion: "adapter", SchemaVersion: "schema",
+	}))
+	require.NoError(t, f.store.SetPersonTierOptOutContext(
+		t.Context(), f.person.ID, "enrichment", true, "owner", "pause scheduled enrichment"))
+
+	work := f.work(t)
+	require.Len(t, work, 1)
+	assert.Equal(t, int64(16), work[0].TriggerMask)
+	assert.Equal(t, lease.Trigger.Generation, work[0].TriggerGeneration)
+	assert.False(t, work[0].HasFreshTrigger)
+	require.NotNil(t, work[0].ActiveAttemptID)
+	assert.Equal(t, attempt.ID, *work[0].ActiveAttemptID)
+
+	f.setNow(f.now.Add(time.Minute))
+	resumed := f.claim(t, run.ID, "manual-worker-after-restart")
+	require.NotNil(t, resumed.ActiveAttempt)
+	assert.Equal(t, lease.Trigger, resumed.Trigger)
+	assert.Equal(t, resumed.Trigger, resumed.ActiveAttempt.Trigger)
+	require.NoError(t, f.store.AuthorizeAttemptPoll(t.Context(), resumed.Token))
 }
 
 func TestTierEnrichmentManualWorkRemainsClaimableAfterBudgetDeferral(t *testing.T) {

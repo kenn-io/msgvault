@@ -2,12 +2,13 @@ package store_test
 
 import (
 	"context"
+	"testing"
+	"time"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/personenrichment"
 	"go.kenn.io/msgvault/internal/store"
-	"testing"
-	"time"
 )
 
 func TestTierEnrichmentParticipantRepairStillInvalidatesIneligiblePeople(t *testing.T) {
