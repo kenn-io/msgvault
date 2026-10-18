@@ -242,7 +242,7 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 		assertions.Equal(inboxcontrol.CapabilitySupported, capability.Status)
 	}
 	assertions.Equal(1, posts)
-	assertions.Equal(1, gates)
+	assertions.Equal(2, gates, "the mutation and receipt reconciliation acquire gates; capability reads do not")
 }
 
 func TestDaemonInboxCapabilitiesAllowReadonlyGmailCredential(t *testing.T) {

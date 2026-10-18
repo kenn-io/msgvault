@@ -99,14 +99,14 @@ func TestInboxCLIArchiveDefaultsPreviewAndPreservesUnknownReceipt(t *testing.T) 
 func TestInboxCLIRejectsInvalidInputBeforeHTTPControl(t *testing.T) {
 	const validTarget = `"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}`
 	validStateRequest := "{" + validTarget + "}"
-	validMoveRequest := `{"operation":"move",` + validTarget + `,"origin_folder":{"id":"INBOX"},"destination":{"id":"Archive"}}`
+	validSetReadRequest := `{"operation":"set-read",` + validTarget + `}`
 	oversizedRequest := validStateRequest + strings.Repeat(" ", maxInboxCLIRequest-len(validStateRequest)+1)
 	for _, tc := range []struct {
 		name, input string
 		args        []string
 	}{
 		{"unknown member", `{"surprise":true,` + validTarget + `}`, []string{"get-state", "--request", "-"}},
-		{"operation override", validMoveRequest, []string{"archive", "--request", "-"}},
+		{"operation override", validSetReadRequest, []string{"archive", "--request", "-"}},
 		{"oversize", oversizedRequest, []string{"get-state", "--request", "-"}},
 		{"unsigned apply", `{"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}}`, []string{"archive", "--request", "-", "--apply"}},
 		{"apply read", `{"receipt_id":"r1"}`, []string{"receipt-get", "--request", "-", "--apply"}},
