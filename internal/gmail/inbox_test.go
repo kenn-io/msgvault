@@ -111,6 +111,13 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 			requirements.NoError(err)
 			projected, err := provider.Preview(context.Background(), request, before)
 			requirements.NoError(err)
+			var wantFolders []inboxcontrol.Folder
+			for _, folder := range before.FolderCatalog() {
+				if slices.Contains(projected.Tags, folder.ID) {
+					wantFolders = append(wantFolders, folder)
+				}
+			}
+			assertions.ElementsMatch(wantFolders, projected.Folders)
 			assertions.Equal(0, posts)
 			_, err = provider.Dispatch(context.Background(), request, before)
 			requirements.NoError(err)

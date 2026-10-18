@@ -163,6 +163,17 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 				return invalidSourceMerge("sources with active drafts or unresolved provider operations cannot be merged")
 			}
 		}
+		var unresolvedInboxReceipt bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM inbox_operation_receipts
+			WHERE source_id = ? AND source_removed_at IS NULL
+			  AND status IN ('prepared', 'dispatching', 'unknown', 'partial', 'reconcile-only')
+		)`, req.FromSourceID).Scan(&unresolvedInboxReceipt); err != nil {
+			return fmt.Errorf("check Inbox receipts before merge: %w", err)
+		}
+		if unresolvedInboxReceipt {
+			return invalidSourceMerge("sources with active drafts or unresolved provider operations cannot be merged")
+		}
 		plan, err := buildSourceMergePlan(ctx, tx, req.FromSourceID, req.IntoSourceID, &result)
 		if err != nil {
 			return fmt.Errorf("plan source merge: %w", err)

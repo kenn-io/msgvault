@@ -85,11 +85,7 @@ func (p *InboxProvider) Observe(ctx context.Context, request inboxcontrol.Reques
 			return inboxcontrol.State{}, err
 		}
 		folderCatalog = slices.Clone(catalog)
-		for _, folder := range catalog {
-			if slices.Contains(labels, folder.ID) {
-				assigned = append(assigned, folder)
-			}
-		}
+		assigned = foldersForTags(labels, catalog)
 	}
 	inbox := slices.Contains(labels, "INBOX")
 	read := !slices.Contains(labels, "UNREAD")
@@ -157,11 +153,22 @@ func (p *InboxProvider) Preview(ctx context.Context, request inboxcontrol.Reques
 	}
 	projected := before
 	projected.Tags = emailtags.Project(before.Tags, change, false)
+	projected.Folders = foldersForTags(projected.Tags, before.FolderCatalog())
 	inbox := slices.Contains(projected.Tags, "INBOX")
 	read := !slices.Contains(projected.Tags, "UNREAD")
 	projected.Inbox = &inbox
 	projected.Read = &read
 	return projected, nil
+}
+
+func foldersForTags(tags []string, catalog []inboxcontrol.Folder) []inboxcontrol.Folder {
+	var folders []inboxcontrol.Folder
+	for _, folder := range catalog {
+		if slices.Contains(tags, folder.ID) {
+			folders = append(folders, folder)
+		}
+	}
+	return folders
 }
 
 func (p *InboxProvider) Dispatch(ctx context.Context, request inboxcontrol.Request, before inboxcontrol.State) (inboxcontrol.DispatchResult, error) {

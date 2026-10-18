@@ -3,9 +3,10 @@ package cmd
 import (
 	"net/http"
 	"strings"
+	"sync/atomic"
+	"testing"
 
 	"go.kenn.io/msgvault/internal/inboxcontrol"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -15,12 +16,18 @@ func TestInboxMCPWiringRequiresLiveContract(t *testing.T) {
 	assertions := assert.New(t)
 
 	for _, delegated := range []bool{false, true} {
+		var healthRequests atomic.Int32
+		var discoveryRequests atomic.Int32
 		client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/v1/health":
+				healthRequests.Add(1)
 				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
 			case "/api/v1/agent-tokens/self":
 				_, _ = w.Write([]byte(`{"id":"synthetic-inbox-grant","permissions":["inbox.read","inbox.archive"],"sources":[{"id":1,"source_type":"gmail","identifier":"owner@example.test"}]}`))
+			case "/api/v1/mcp/capabilities":
+				discoveryRequests.Add(1)
+				http.NotFound(w, r)
 			default:
 				http.NotFound(w, r)
 			}
@@ -35,6 +42,8 @@ func TestInboxMCPWiringRequiresLiveContract(t *testing.T) {
 			assertions.Nil(opts.Inbox)
 			assertions.Empty(opts.InboxOperations)
 		}
+		assertions.Equal(int32(1), healthRequests.Load(), "reuse the authenticated health schema probe")
+		assertions.Equal(int32(1), discoveryRequests.Load(), "discover Inbox operations once")
 	}
 }
 
