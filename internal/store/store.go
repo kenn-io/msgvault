@@ -1868,6 +1868,17 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
 
+	if err := s.runOnceMigration(
+		ctx, migrationLoopProjectionTriggers, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.dialect.EnsureLoopProjectionTriggers(boundQuerier{ctx: ctx, q: tx})
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("ensure loop projection triggers: %w", err)
+	}
+
 	// Gmail exposes archived chat transcripts as MIME messages carrying its
 	// system CHAT label. Older syncs stored every Gmail payload as email, which
 	// made the archive present these transcripts as separate email items. Run
