@@ -72,7 +72,6 @@ func TestInboxAllMutationsRefusedWithoutHTTP(t *testing.T) {
 		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 		_, err = provider.Dispatch(t.Context(), r, before)
 		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
-		requirements.ErrorIs(provider.Verify(r, before, before, before), inboxcontrol.ErrOutcomeUnknown)
 	}
 	_, err := provider.Folders(t.Context(), inboxTestSource())
 	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)

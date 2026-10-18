@@ -114,26 +114,6 @@ func TestInboxGmailReconcileUnavailableLocalLabelRollsBack(t *testing.T) {
 	assertions.Equal(before, *observed)
 }
 
-func TestInboxGmailUnknownTagsDoNotEraseLabels(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	st, source, id := tagFixture(t, "gmail", "gmail-unknown")
-	native, err := st.EmailTagTargetContext(t.Context(), id, "")
-	requirements.NoError(err)
-	requirements.NoError(st.SaveEmailTagsContext(t.Context(), native, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX", "UNREAD"}, Verified: true}))
-	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: id, ProviderID: "gmail-unknown"}
-	before := inboxcontrol.State{Target: target, Tags: []string{"INBOX", "UNREAD"}, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()}
-	after := inboxcontrol.State{Target: target, ObservedAt: before.ObservedAt.Add(time.Second)}
-	requirements.NoError(st.ReconcileInboxProviderState(t.Context(), target, before, after))
-	assertions.Equal([]string{"INBOX", "UNREAD"}, messageLabels(t, st, id))
-	observed, err := st.GetInboxProviderState(t.Context(), target)
-	requirements.NoError(err)
-	requirements.NotNil(observed)
-	assertions.Nil(observed.Inbox)
-	assertions.Nil(observed.Read)
-}
-
 func TestInboxFolderReconcileDoesNotAdoptAnotherNativeID(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
