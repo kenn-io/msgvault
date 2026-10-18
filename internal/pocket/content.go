@@ -99,6 +99,9 @@ func Normalize(rec Recording) (meetingcontent.Content, error) {
 			if item.Status != "completed" {
 				continue
 			}
+			if item.UpdatedAt == "" {
+				updated = created
+			}
 			if selected == nil || updated.After(selectedUpdated) || updated.Equal(selectedUpdated) && !created.Before(selectedCreated) {
 				selected = &item
 				selectedUpdated = updated

@@ -81,6 +81,19 @@ func TestPocketContentSelectsLatestCompletedSummary(t *testing.T) {
 	assert.Equal(t, "- Latest", content.Summary.Text)
 }
 
+func TestPocketContentUsesCreatedAtWhenUpdatedAtIsMissing(t *testing.T) {
+	rec, err := DecodeRecording([]byte(`{"id":"r","summarizations":{
+		"a-newer":{"processingStatus":"completed","createdAt":"2026-09-03T10:00:00Z","v2":{"summary":{"markdown":"Latest"},"actionItems":{"actionItems":[{"title":"Latest action","status":"TODO"}]}}},
+		"b-older":{"processingStatus":"completed","updatedAt":"2026-09-02T10:00:00Z","createdAt":"2026-09-01T10:00:00Z","v2":{"summary":{"markdown":"Older"},"actionItems":{"actionItems":[{"title":"Older action","status":"TODO"}]}}}
+	}}`))
+	require.NoError(t, err)
+	content, err := Normalize(rec)
+	require.NoError(t, err)
+	assert.Equal(t, "Latest", content.Summary.Text)
+	require.Len(t, content.Actions, 1)
+	assert.Equal(t, "Latest action", content.Actions[0].Title)
+}
+
 func FuzzPocketTranscriptOffsets(f *testing.F) {
 	for _, n := range []float64{0, math.Copysign(0, -1), 1.25, -1, math.MaxFloat64, math.Inf(1), math.NaN()} {
 		f.Add(n)
