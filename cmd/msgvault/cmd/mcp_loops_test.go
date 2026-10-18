@@ -136,3 +136,45 @@ func TestMCPLoopWriteFlagIsScopedToRootInvocation(t *testing.T) {
 	requirements.NoError(execute())
 	assertions.False(choices[len(choices)-1])
 }
+
+func TestMCPLoopTrackingUsesDaemonProject(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+		status           int
+	}{
+		{"remote project", `{"settings":[{"key":"integrations.kata.default_project","value":{"string":"remote-project"}}]}`, "remote-project", http.StatusOK},
+		{"missing project", `{"settings":[]}`, "", http.StatusOK},
+		{"restart pending", `{"pending_restart":true,"settings":[{"key":"integrations.kata.default_project","value":{"string":"remote-project"}}]}`, "", http.StatusOK},
+		{"settings unavailable", `{"error":"unavailable"}`, "", http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.NewDefaultConfig()
+			cfg.Integrations.Kata.DefaultProject = "local-project"
+			state := testInvocationWithConfig(cfg)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.26.0"})
+				case "/api/v1/mcp/capabilities":
+					_ = json.NewEncoder(w).Encode(apiprotocol.MCPCapabilities{Version: 1, Routes: loopMCPRouteDescriptors()})
+				case "/api/v1/settings":
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts := daemonMCPServeOptions(t.Context(), client, state)
+			assert.NotNil(t, opts.Loops)
+			require.NotNil(t, opts.KataProject)
+			project, err := opts.KataProject(t.Context())
+			assert.Equal(t, tc.want, project)
+			if tc.want == "" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

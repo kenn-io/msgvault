@@ -5,6 +5,8 @@
 export interface LoopEvidence {
   conversation_id: number;
   coverage_gap?: boolean;
+  kata_closed_ref?: string;
+  kata_reopen_blocked?: string;
   message_id: number;
   occurred_at: string;
   owner_note?: string;

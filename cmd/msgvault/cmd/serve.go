@@ -542,7 +542,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		sched, s, cfg.Activity, logger); err != nil {
 		return fmt.Errorf("schedule activity projection: %w", err)
 	}
-	loopRuntime, err := newLoopRuntime(ctx, sched, operationGate, s, cfg)
+	kataIssueOperations := api.NewKataIssueOperations(cfg, s, logger)
+	loopRuntime, err := newLoopRuntime(ctx, sched, operationGate, s, cfg, kataIssueOperations)
 	if err != nil {
 		return fmt.Errorf("configure open loops: %w", err)
 	}
@@ -892,10 +893,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and start API server
 	var apiServer *api.Server
 	apiOpts := api.ServerOptions{
-		Config:         cfg,
-		Store:          storeAdapter,
-		SavedViewStore: s,
-		Engine:         engine,
+		Config:              cfg,
+		Store:               storeAdapter,
+		SavedViewStore:      s,
+		KataIssueOperations: kataIssueOperations,
+		Engine:              engine,
 		SQLQueryRunner: func(requestCtx context.Context, sql string, fresh bool) (*query.QueryResult, *api.CacheBuildAccepted, error) {
 			if apiServer == nil {
 				return nil, nil, errors.New("daemon API server unavailable")

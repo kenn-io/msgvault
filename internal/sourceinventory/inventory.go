@@ -245,7 +245,7 @@ func configuration(cfg *config.Config) []configuredSource {
 }
 
 func staticSource(kind string) bool {
-	return slices.Contains([]string{"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "facebook_messenger", "imazing_csv", "slackdump", "synctech-sms"}, kind)
+	return slices.Contains([]string{"apple-mail", "apple_messages", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "facebook_messenger", "imazing_csv", "slackdump", "synctech-sms", "whatsapp"}, kind)
 }
 
 func syncCommand(item Item) string {

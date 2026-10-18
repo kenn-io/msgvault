@@ -31,19 +31,23 @@ type Counterparty struct {
 // Evidence contains archived references and optional extracted quote spans.
 // List/detail surfaces never include a whole message body.
 type Evidence struct {
-	MessageID      int64     `json:"message_id"`
-	ConversationID int64     `json:"conversation_id"`
-	OccurredAt     time.Time `json:"occurred_at"`
-	Subject        string    `json:"subject"`
-	Quote          string    `json:"quote,omitempty"`
-	QuoteStartRune int       `json:"quote_start_rune,omitempty"`
-	QuoteEndRune   int       `json:"quote_end_rune,omitempty"`
-	TruncatedRun   bool      `json:"truncated_run,omitempty"`
-	CoverageGap    bool      `json:"coverage_gap,omitempty"`
-	OwnerNote      string    `json:"owner_note,omitempty"`
+	KataClosedRef     string    `json:"kata_closed_ref,omitempty"`
+	KataReopenBlocked string    `json:"kata_reopen_blocked,omitempty"`
+	MessageID         int64     `json:"message_id"`
+	ConversationID    int64     `json:"conversation_id"`
+	OccurredAt        time.Time `json:"occurred_at"`
+	Subject           string    `json:"subject"`
+	Quote             string    `json:"quote,omitempty"`
+	QuoteStartRune    int       `json:"quote_start_rune,omitempty"`
+	QuoteEndRune      int       `json:"quote_end_rune,omitempty"`
+	TruncatedRun      bool      `json:"truncated_run,omitempty"`
+	CoverageGap       bool      `json:"coverage_gap,omitempty"`
+	OwnerNote         string    `json:"owner_note,omitempty"`
 }
 
 type Loop struct {
+	ClosedBy              *string      `json:"closed_by"`
+	Kata                  *LoopKata    `json:"kata"`
 	ID                    int64        `json:"id"`
 	TurnKey               string       `json:"turn_key"`
 	Cycle                 int64        `json:"cycle"`

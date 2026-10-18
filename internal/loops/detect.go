@@ -12,10 +12,16 @@ import (
 // settlement. Unread owner text counts as an answer, never as a new question.
 func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Thresholds, supp Suppressions) Verdict {
 	v := Verdict{}
+	closeLoop := func(id int64, reason string) {
+		if !slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == id }) {
+			v.Close = append(v.Close, CloseDecision{ID: id, Reason: reason, At: now})
+		}
+		v.CoverageGaps = slices.DeleteFunc(v.CoverageGaps, func(gap int64) bool { return gap == id })
+	}
 	closeKept := func(kind, reason string) {
 		for _, l := range live {
 			if (kind == "" || l.Kind == kind) && (l.Kind == ReplyOwed || l.Kind == AwaitingReply) && !slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == l.ID }) {
-				v.Close = append(v.Close, CloseDecision{ID: l.ID, Reason: reason, At: now})
+				closeLoop(l.ID, reason)
 			}
 		}
 	}
@@ -38,10 +44,24 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	}
 	t := traversal{limit: cfg.RunMessageLimit, bodies: make(map[int64]bodyResult)}
 	turns := t.trailing(view)
-	// Extend at most once even when several live anchors fall outside the
-	// normal window. Continue using the same body cache and global budget.
 	settlementView := view
 	extended := false
+	if view.WindowTruncated && len(turns) <= 1 && view.Extend != nil {
+		var err error
+		settlementView, err = view.Extend()
+		extended = true
+		if err != nil {
+			v.Err = fmt.Errorf("extend loop conversation: %w", err)
+			return v
+		}
+		settlementView.AnchorExists = view.AnchorExists
+		settlementView.BodyText = view.BodyText
+		view = settlementView
+		turns = t.trailing(view)
+	}
+	windowIncomplete := view.WindowTruncated && len(turns) <= 1
+	// Extend at most once even when several live anchors fall outside the
+	// normal window. Continue using the same body cache and global budget.
 	for _, l := range live {
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
@@ -69,9 +89,34 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
 	}
+	if windowIncomplete {
+		// The newest bounded window ends inside one substantive turn. Without
+		// its preceding boundary, older owner participation and eligibility
+		// evidence are unknown, so keep existing decisions until coverage grows.
+		if len(turns) > 0 {
+			trailing := turns[0]
+			last := trailing.messages[len(trailing.messages)-1]
+			counterparty := last.Sender
+			kind := ReplyOwed
+			if trailing.direction == Outbound {
+				kind = AwaitingReply
+				counterparty, _ = outboundCounterparty(view, turns, last)
+			}
+			if suppressed(counterparty, supp) {
+				closeKept(kind, "muted")
+			}
+		}
+		keepUncertain("")
+		return v
+	}
 	if len(turns) == 0 {
 		// Neutral messages in the recent window cannot overturn settlement's
 		// proof that an older obligation is still unanswered.
+		for _, loop := range live {
+			if (loop.Kind == ReplyOwed || loop.Kind == AwaitingReply) && suppressed(loop.Counterparty, supp) {
+				closeLoop(loop.ID, "muted")
+			}
+		}
 		keepUncertain("")
 		return v
 	}
@@ -111,9 +156,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			return v
 		}
 		if bulk && !ownerWrote {
-			// The normal window does not prove that the owner never wrote.
-			// Keep an established loop until bounded history can resolve it.
-			keepUncertain(kind)
+			if settlementView.WindowTruncated {
+				// The bounded window cannot prove that the owner never wrote.
+				keepUncertain(kind)
+				return v
+			}
+			closeKept(kind, "withdrawn")
 			return v
 		}
 	} else {
@@ -131,36 +179,13 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				anchor = &copy
 			}
 		}
-		var candidates []LoopParticipant
-		if view.ConversationType == "direct_chat" || view.ConversationType == "group_chat" {
-			for _, p := range view.Participants {
-				if !p.IsOwner {
-					candidates = append(candidates, p)
-				}
-			}
-		} else {
-			for _, r := range last.Recipients {
-				if r.Type == "to" && !r.IsOwner {
-					candidates = append(candidates, r.LoopParticipant)
-				}
-			}
-		}
-		counts := make(map[int64]int)
-		for _, turn := range turns {
-			for _, m := range turn.messages {
-				counts[m.Sender.ID]++
-			}
-		}
-		for _, p := range candidates {
-			if counterparty.ID == 0 || counts[p.ID] > counts[counterparty.ID] || (counts[p.ID] == counts[counterparty.ID] && p.ID < counterparty.ID) {
-				counterparty = p
-			}
-		}
+		var hasCounterparty bool
+		counterparty, hasCounterparty = outboundCounterparty(view, turns, last)
 		if suppressed(counterparty, supp) {
 			closeKept(kind, "muted")
 			return v
 		}
-		if len(candidates) == 0 {
+		if !hasCounterparty {
 			closeKept(kind, "withdrawn")
 			return v
 		}
@@ -200,6 +225,39 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}
 	return v
+}
+
+func outboundCounterparty(view ConversationView, turns []turn, last LoopMessage) (LoopParticipant, bool) {
+	var candidates []LoopParticipant
+	if view.ConversationType == "direct_chat" || view.ConversationType == "group_chat" {
+		for _, participant := range view.Participants {
+			if !participant.IsOwner {
+				candidates = append(candidates, participant)
+			}
+		}
+	} else {
+		for _, recipient := range last.Recipients {
+			if recipient.Type == "to" && !recipient.IsOwner {
+				candidates = append(candidates, recipient.LoopParticipant)
+			}
+		}
+	}
+	if len(candidates) == 0 {
+		return LoopParticipant{}, false
+	}
+	counts := make(map[int64]int)
+	for _, currentTurn := range turns {
+		for _, message := range currentTurn.messages {
+			counts[message.Sender.ID]++
+		}
+	}
+	var counterparty LoopParticipant
+	for _, candidate := range candidates {
+		if counterparty.ID == 0 || counts[candidate.ID] > counts[counterparty.ID] || (counts[candidate.ID] == counts[counterparty.ID] && candidate.ID < counterparty.ID) {
+			counterparty = candidate
+		}
+	}
+	return counterparty, true
 }
 
 func nonOwnerCount(participants []LoopParticipant) int {

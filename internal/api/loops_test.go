@@ -62,6 +62,7 @@ func newLoopHTTPFixtureWithOperationGate(t *testing.T, operationGate api.Operati
 	message := f.CreateMessage("open-loop-api-anchor")
 	fixture := &loopHTTPFixture{store: f.Store, personID: person.ID, sourceID: f.Source.ID, projection: &now}
 	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
 	cfg.Server.APIKey = "loops-test-owner-key"
 	cfg.Server.AgentAccess = true
 	cfg.Accounts = []config.AccountSchedule{{Email: f.Source.Identifier, Enabled: false}}
@@ -194,6 +195,29 @@ func TestLoopHTTPRunnerTriggersBypassOperationGate(t *testing.T) {
 	assertions.Equal(1, gate.beginCalls)
 }
 
+func TestLoopFreshnessIncludesAccountRegisteredAfterServiceCreation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newLoopHTTPFixture(t)
+	created := loopHTTPRequest(t, f.server, http.MethodPost, "/api/v1/accounts", `{"email":"new@example.test","schedule":"0 * * * *"}`, "")
+	requirements.Equal(http.StatusCreated, created.Code, created.Body.String())
+
+	response := loopHTTPRequest(t, f.server, http.MethodGet, "/api/v1/loops/waiting?allow_stale=true", "", "")
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var waiting loops.WaitingResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &waiting))
+	assertions.True(waiting.Freshness.Stale, "a registered account without an archive source or successful sync must block freshness")
+	found := false
+	for _, source := range waiting.Freshness.Sources {
+		if source.Identifier == "new@example.test" {
+			found = true
+			assertions.Equal("scheduled", source.Scheduling)
+			assertions.Equal("never", source.Outcome)
+		}
+	}
+	assertions.True(found, "freshness should include the newly registered account")
+}
+
 func TestLoopHTTPFreshnessRefusalAndValidation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -238,6 +262,8 @@ func TestLoopHTTPDelegatedDeniedAndUnwiredUnavailable(t *testing.T) {
 		{http.MethodDelete, "/api/v1/loops/suppressions/1", ""},
 		{http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/snooze", f.loopID), `{}`},
 		{http.MethodDelete, fmt.Sprintf("/api/v1/loops/%d/snooze", f.loopID), ""},
+		{http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/kata", f.loopID), `{}`},
+		{http.MethodDelete, fmt.Sprintf("/api/v1/loops/%d/kata", f.loopID), ""},
 	} {
 		response := loopHTTPRequest(t, f.server, route.method, route.path, route.body, secret)
 		assertions.Equal(http.StatusForbidden, response.Code, "%s %s: %s", route.method, route.path, response.Body.String())
@@ -334,6 +360,7 @@ func TestLoopHTTPNullableObjectSchemas(t *testing.T) {
 	// Huma's actual schema, including primitive pointers it does not infer.
 	for name, wireType := range map[string]reflect.Type{
 		"Loop":                reflect.TypeFor[loops.Loop](),
+		"LoopKata":            reflect.TypeFor[loops.LoopKata](),
 		"LoopCounterparty":    reflect.TypeFor[loops.Counterparty](),
 		"LoopSuppression":     reflect.TypeFor[loops.Suppression](),
 		"LoopDerivationState": reflect.TypeFor[store.LoopDerivationState](),
@@ -348,7 +375,11 @@ func TestLoopHTTPNullableObjectSchemas(t *testing.T) {
 			propertyName, _, _ := strings.Cut(tag, ",")
 			property := schemas[name].Properties[propertyName]
 			requirements.NotNil(property, name+"."+propertyName)
-			assertions.True(property.Nullable, name+"."+propertyName+" must accept explicit null")
+			nullable := property.Nullable
+			for _, variant := range property.OneOf {
+				nullable = nullable || variant.Type == "null"
+			}
+			assertions.True(nullable, name+"."+propertyName+" must accept explicit null")
 		}
 	}
 }
@@ -399,4 +430,15 @@ func TestLoopGeneratedDTOValuesRoundTrip(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoopHTTPTrackingUnavailableAndUntrackMissing(t *testing.T) {
+	f := newLoopHTTPFixture(t)
+	path := fmt.Sprintf("/api/v1/loops/%d/kata", f.loopID)
+	response := loopHTTPRequest(t, f.server, http.MethodPost, path, `{}`, "")
+	assert.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "kata_unavailable")
+	response = loopHTTPRequest(t, f.server, http.MethodDelete, path, "", "")
+	assert.Equal(t, http.StatusNotFound, response.Code, response.Body.String())
+	assert.Contains(t, response.Body.String(), "loop_not_found")
 }

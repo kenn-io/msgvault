@@ -175,7 +175,7 @@ func TestLoopsCLIActionsUseDaemonState(t *testing.T) {
 		minimumFuture := before.UTC().Truncate(time.Millisecond)
 		assertions.False(detail.Loop.SnoozedUntil.Before(minimumFuture))
 		if until == "2h" {
-			// SQLite persists loop timestamps at millisecond precision.
+			// SQLite stores loop timestamps at the dialect's millisecond precision.
 			minimum := before.Add(2 * time.Hour).UTC().Truncate(time.Millisecond)
 			assertions.False(detail.Loop.SnoozedUntil.Before(minimum))
 			assertions.False(detail.Loop.SnoozedUntil.After(time.Now().Add(2 * time.Hour)))
@@ -253,6 +253,31 @@ func TestLoopsCLIRejectsInvalidInputBeforeDaemon(t *testing.T) {
 	}
 }
 
+func TestLoopsCLITrackRejectsConflictingFlagsBeforeDaemon(t *testing.T) {
+	for _, args := range [][]string{{"track", "12", "--issue", "example#ab12", "--title", "Override"}, {"track", "12", "--issue", "example#ab12", "--list", "agenda"}} {
+		_, _, err := executeLoopCLI(t.Context(), args...)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--issue cannot be combined")
+	}
+}
+
+func TestLoopsCLITrackChecksDaemonVersion(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.25.0"}`))
+			return
+		}
+		requests.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	ctx := configureRemoteDaemonForTest(t, server.URL)
+	_, _, err := executeLoopCLI(ctx, "track", "12")
+	require.ErrorContains(t, err, "3.26.0")
+	assert.Zero(t, requests.Load())
+}
+
 // The root supports repeated execution in one process. Owner choices must be
 // scoped to one invocation even when parsing or argument validation fails.
 func TestLoopsCLIRepeatedRootExecutionResetsOwnerChoices(t *testing.T) {
@@ -321,4 +346,91 @@ func TestLoopsCLIRepeatedRootExecutionResetsOwnerChoices(t *testing.T) {
 	assertions.Empty(items[0].Note)
 	requirements.Error(execute("snooze", id, "--until", "invalid"))
 	requirements.ErrorContains(execute("snooze", id), "required flag")
+}
+
+// This fake is the daemon HTTP boundary: output must retain fields from the
+// daemon receipt, including cached status when live Kata is unavailable.
+func TestLoopsCLITrackOutputAndCachedViews(t *testing.T) {
+	checked := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	item := loops.Loop{ID: 12, Kind: loops.ReplyOwed, Summary: "Review draft", Status: "closed", ClosedBy: new("system"), Evidence: []loops.Evidence{}, Counterparty: loops.Counterparty{DisplayName: "Example Person"}, Kata: &loops.LoopKata{QualifiedRef: "example#ab12", Title: "Review draft", Status: "closed", CheckedAt: &checked, ClosedLoopAt: &checked, LastError: "Kata offline"}}
+	detail := loops.DetailResponse{Loop: item, Freshness: freshness.Report{StaleReasons: []string{}, Warnings: []string{}, Sources: []freshness.SourceFreshness{}, Projections: map[string]*freshness.ProjectionFreshness{}}}
+	result := loops.TrackResponse{DetailResponse: detail, Issue: loops.KataIssue{QualifiedRef: "example#ab12", Title: "Review draft", Status: "closed"}, Replayed: true, Note: "Evidence window used"}
+	var tracked loops.TrackRequest
+	var untracked atomic.Bool
+	var conflict atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.26.0"})
+		case "/api/v1/loops/12/kata":
+			if r.Method == http.MethodDelete {
+				untracked.Store(true)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&tracked)) {
+				return
+			}
+			if conflict.Load() {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": "loop_already_tracked", "message": "Already tracked", "kata": item.Kata})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(result)
+		case "/api/v1/loops/12":
+			_ = json.NewEncoder(w).Encode(result.DetailResponse)
+		case "/api/v1/loops":
+			_ = json.NewEncoder(w).Encode(loops.ListResponse{Items: []loops.Loop{item}})
+		case "/api/v1/loops/waiting":
+			_ = json.NewEncoder(w).Encode(loops.WaitingResponse{Groups: []loops.WaitingGroup{{Counterparty: item.Counterparty, Loops: []loops.Loop{item}, LoopCount: 1}}})
+		case "/api/v1/loops/status":
+			_ = json.NewEncoder(w).Encode(loops.StatusResponse{State: store.LoopDerivationState{KataLastRunAt: &checked, KataLastSuccessAt: &checked, KataLastError: "Kata offline"}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	ctx := configureRemoteDaemonForTest(t, server.URL)
+	out, stderr, err := executeLoopCLI(ctx, "track", "12", "--title", "Review draft", "--list", "agenda")
+	require.NoError(t, err)
+	assert.Contains(t, out, "example#ab12\tclosed\tReview draft (already tracked)")
+	assert.Contains(t, out, "Loop 12")
+	assert.Contains(t, stderr, "Evidence window used")
+	assert.Equal(t, loops.TrackRequest{Title: "Review draft", List: "agenda"}, tracked)
+	out, _, err = executeLoopCLI(ctx, "track", "12", "--json")
+	require.NoError(t, err)
+	var receipt loops.TrackResponse
+	require.NoError(t, json.Unmarshal([]byte(out), &receipt))
+	assert.Equal(t, result, receipt)
+	for _, command := range []string{"show", "list", "waiting"} {
+		args := []string{command}
+		if command == "show" {
+			args = append(args, "12")
+		}
+		out, _, err = executeLoopCLI(ctx, args...)
+		require.NoError(t, err)
+		assert.Contains(t, out, "example#ab12")
+		assert.Contains(t, out, "closed")
+		if command == "show" {
+			assert.Contains(t, out, "Closed by: system (Kata example#ab12 closed)")
+			assert.Contains(t, out, "checked 2026-10-17T10:00:00Z")
+			assert.Contains(t, out, "Kata offline")
+		} else {
+			assert.Contains(t, out, "KATA")
+		}
+	}
+	out, _, err = executeLoopCLI(ctx, "status")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Kata last run: 2026-10-17T10:00:00Z")
+	assert.Contains(t, out, "Kata last success:")
+	assert.Contains(t, out, "Kata last error: Kata offline")
+	conflict.Store(true)
+	out, stderr, err = executeLoopCLI(ctx, "track", "12", "--issue", "example#zz99")
+	require.Error(t, err)
+	assert.Contains(t, stderr+out+err.Error(), "example#ab12")
+	out, _, err = executeLoopCLI(ctx, "untrack", "12")
+	require.NoError(t, err)
+	assert.True(t, untracked.Load())
+	assert.Contains(t, out, "Untracked loop 12")
 }

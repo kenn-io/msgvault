@@ -96,3 +96,38 @@ func TestRunnerScheduledUsesAsyncSchedulerAndPreservesRebuild(t *testing.T) {
 		assertions.Equal(int32(1), rebuilds.Load())
 	})
 }
+
+func TestRunnerManualAfterRunKeepsGateAndDaemonContext(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		gateHeld := false
+		ran := make(chan struct{})
+		var deriveCtx context.Context
+		var deriveErr, afterRunErr error
+		runner, err := NewRunner(RunnerOptions{Context: ctx,
+			BeginWork: func(context.Context, string) (func(), bool) {
+				gateHeld = true
+				return func() { gateHeld = false }, true
+			},
+			Rebuild: func(context.Context) error { return nil },
+			Run:     func(ctx context.Context) error { deriveCtx = ctx; return nil },
+			AfterRun: func(ctx context.Context) {
+				assert.True(t, gateHeld)
+				deriveErr = deriveCtx.Err()
+				afterRunErr = ctx.Err()
+				_, deadline := ctx.Deadline()
+				assert.False(t, deadline, "bridge uses daemon lifetime after derivation budget")
+				close(ran)
+			},
+		})
+		require.NoError(t, err)
+		_, err = runner.Start(false)
+		require.NoError(t, err)
+		<-ran
+		synctest.Wait()
+		require.ErrorIs(t, deriveErr, context.Canceled)
+		require.NoError(t, afterRunErr)
+		assert.False(t, gateHeld)
+	})
+}

@@ -51,13 +51,19 @@ func (t *traversal) substantive(v ConversationView, i int) bool {
 		if !metadataSubstantive(previous) {
 			continue
 		}
-		if previous.Direction == Inbound {
+		switch previous.Direction {
+		case Observed:
+			continue
+		case Inbound:
 			question := t.body(v, previous.ID)
-			return !question.ok || !asksQuestion(question.text)
-		}
-		priorBody := t.body(v, previous.ID)
-		if !priorBody.ok || !isAcknowledgementOnly(priorBody.text) {
-			return true
+			if !question.ok || asksQuestion(question.text) {
+				return false
+			}
+		case Outbound:
+			priorBody := t.body(v, previous.ID)
+			if !priorBody.ok || !isAcknowledgementOnly(priorBody.text) {
+				return true
+			}
 		}
 	}
 	return true

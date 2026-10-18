@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func newPersonSplitFixture(t *testing.T) personSplitFixture {
 }
 
 func newPersonSplitFixtureWithAbsorbedSetup(
-	t *testing.T, setup func(*store.Store, *store.Person),
+	t *testing.T, setup func(*store.Store, *store.Person, *store.Person),
 ) personSplitFixture {
 	t.Helper()
 	require := require.New(t)
@@ -64,7 +65,7 @@ func newPersonSplitFixtureWithAbsorbedSetup(
 	})
 	require.NoError(err)
 	if setup != nil {
-		setup(st, absorbed)
+		setup(st, survivor, absorbed)
 	}
 	survivor, err = st.GetPersonContext(ctx, survivor.ID)
 	require.NoError(err)
@@ -89,7 +90,7 @@ func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
-	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, _, absorbed *store.Person) {
 		for _, event := range []struct {
 			pinned bool
 			actor  string
@@ -152,6 +153,65 @@ func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T
 	assert.Equal("post-merge-pin-test", sourcePins[0].Actor)
 	require.NotNil(sourcePins[0].EventID)
 	assert.Equal(postMergeEventID, *sourcePins[0].EventID)
+}
+
+func TestSplitPersonMergeRestoresLoopSuppressions(t *testing.T) {
+	for _, survivorAlreadyMuted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("survivor_already_muted_%t", survivorAlreadyMuted), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+			f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, survivor, absorbed *store.Person) {
+				if survivorAlreadyMuted {
+					_, err := st.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+						TargetKind: "person", PersonID: &survivor.ID, Note: "survivor mute",
+					}, now)
+					require.NoError(err)
+				}
+				_, err := st.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+					TargetKind: "person", PersonID: &absorbed.ID, Note: "absorbed mute",
+				}, now)
+				require.NoError(err)
+			})
+
+			var mergedCount int
+			var mergedNote string
+			err := f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*), MAX(note)
+				FROM loop_suppressions WHERE target_kind = 'person' AND person_id = ?`), f.survivor.ID).
+				Scan(&mergedCount, &mergedNote)
+			require.NoError(err)
+			require.Equal(1, mergedCount)
+			if survivorAlreadyMuted {
+				assert.Equal("survivor mute", mergedNote)
+			} else {
+				assert.Equal("absorbed mute", mergedNote)
+			}
+
+			result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+				SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
+				ParticipantIDs:         f.absorbedParticipants,
+				ExpectedSourceRevision: f.survivor.Revision,
+				IdempotencyKey:         "split-loop-suppression", Actor: "test",
+			})
+			require.NoError(err)
+			assert.True(result.ExactReversal)
+			var absorbedNote string
+			err = f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT note FROM loop_suppressions
+				WHERE target_kind = 'person' AND person_id = ?`), result.NewPerson.ID).Scan(&absorbedNote)
+			require.NoError(err)
+			assert.Equal("absorbed mute", absorbedNote)
+			var sourceCount int
+			err = f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*) FROM loop_suppressions
+				WHERE target_kind = 'person' AND person_id = ?`), result.SourcePerson.ID).Scan(&sourceCount)
+			require.NoError(err)
+			if survivorAlreadyMuted {
+				assert.Equal(1, sourceCount)
+			} else {
+				assert.Zero(sourceCount)
+			}
+		})
+	}
 }
 
 func TestSplitPersonMerge_ExactReversal(t *testing.T) {

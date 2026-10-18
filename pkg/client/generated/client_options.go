@@ -5899,6 +5899,103 @@ func (o *CloseOpenLoopRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// UntrackOpenLoopRequestOptions is the options needed to make a request to UntrackOpenLoop.
+type UntrackOpenLoopRequestOptions struct {
+	PathParams *UntrackOpenLoopPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *UntrackOpenLoopRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UntrackOpenLoopRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *UntrackOpenLoopRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UntrackOpenLoopRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *UntrackOpenLoopRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// TrackOpenLoopRequestOptions is the options needed to make a request to TrackOpenLoop.
+type TrackOpenLoopRequestOptions struct {
+	PathParams *TrackOpenLoopPath
+	Body       *TrackOpenLoopBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *TrackOpenLoopRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *TrackOpenLoopRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *TrackOpenLoopRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *TrackOpenLoopRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *TrackOpenLoopRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // UnsnoozeOpenLoopRequestOptions is the options needed to make a request to UnsnoozeOpenLoop.
 type UnsnoozeOpenLoopRequestOptions struct {
 	PathParams *UnsnoozeOpenLoopPath

@@ -289,6 +289,8 @@ import type {
   LoopSuppressionListResponse,
   LoopSuppressionRequest,
   LoopSuppressionResult,
+  LoopTrackRequest,
+  LoopTrackResponse,
   LoopWaitingResponse,
   MCPCapabilities,
   Manifest,
@@ -473,6 +475,7 @@ import type {
   ThreadPage,
   TokenUploadRequest,
   TotalStatsResponse,
+  TrackOpenLoopPathParameters,
   TriggerSyncParams,
   TriggerSyncPathParameters,
   TriggerSyncResponse,
@@ -480,6 +483,7 @@ import type {
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
   UnsnoozeOpenLoopPathParameters,
+  UntrackOpenLoopPathParameters,
   UpdateCardDAVBookRolesPathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
@@ -2317,6 +2321,39 @@ export const closeOpenLoop = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: closeOpenLoopRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Remove a loop's local Kata link
+ */
+export const untrackOpenLoop = (
+  { id }: UntrackOpenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(id))}/kata`,
+      method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary Track a loop in Kata with quoted archive evidence
+ */
+export const trackOpenLoop = (
+  { id }: TrackOpenLoopPathParameters,
+  loopTrackRequest: LoopTrackRequest,
+  options?: SecondParameter<typeof orvalFetch<LoopTrackResponse>>,
+) => {
+  return orvalFetch<LoopTrackResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(id))}/kata`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: loopTrackRequest,
     },
     options,
   );

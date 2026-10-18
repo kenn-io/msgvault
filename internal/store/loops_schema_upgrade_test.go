@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -25,7 +26,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	}
 	before := columns()
 	// Reset the prior completion marker and remove only the new objects.
-	for _, table := range []string{"open_loops", "loop_suppressions", "loop_conversation_queue", "message_automation_signals", "loop_derivation_state"} {
+	for _, table := range []string{"loop_kata_links", "open_loops", "loop_suppressions", "loop_conversation_queue", "message_automation_signals", "loop_derivation_state"} {
 		loopExec(t, s, "DROP TABLE "+table)
 	}
 	loopExec(t, s, "DELETE FROM applied_migrations WHERE name='loop_projection_triggers_v1'")
@@ -34,7 +35,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	assertions.Equal(before, columns())
 	version, err := s.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(11, version)
+	assertions.Equal(store.SchemaVersion, version)
 	held := insertSchemaLoop(t, f, "held", "reply_owed", "turn_state")
 	done := insertSchemaLoop(t, f, "done", "awaiting_reply", "turn_state")
 	loopExec(t, s, "UPDATE open_loops SET snoozed_until=?,agenda_state='created',fulfilment_suggested_at=CURRENT_TIMESTAMP WHERE id=?", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), held)
@@ -78,4 +79,30 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	loopExec(t, s, "UPDATE messages SET source_is_from_me=TRUE WHERE id=?", mid)
 	assertions.Equal(int64(2), queueRevision(t, s, f.ConvID))
 	assertions.Equal(1, loopCount(t, s, "loop_derivation_state"))
+}
+
+func TestLoopKataSchemaUpgradeAndRetry(t *testing.T) {
+	f := storetest.New(t)
+	s := f.Store
+	id := insertSchemaLoop(t, f, "prior-version-loop", "reply_owed", "turn_state")
+	loopExec(t, s, "DROP TABLE loop_kata_links")
+	for _, column := range []string{"kata_last_run_at", "kata_last_success_at", "kata_last_error"} {
+		loopExec(t, s, "ALTER TABLE loop_derivation_state DROP COLUMN "+column)
+	}
+	loopExec(t, s, "UPDATE archive_metadata SET value='11' WHERE key='schema_version'")
+	require.NoError(t, s.InitSchemaContext(t.Context()))
+	require.NoError(t, s.InitSchemaContext(t.Context()))
+	link := insertKataTestLink(t, f, id, time.Now().UTC())
+	assert.NotEmpty(t, link.LinkToken)
+	// Retry a partially completed upgrade: one column exists while two are missing.
+	loopExec(t, s, "ALTER TABLE loop_derivation_state DROP COLUMN kata_last_success_at")
+	loopExec(t, s, "ALTER TABLE loop_derivation_state DROP COLUMN kata_last_error")
+	loopExec(t, s, "UPDATE archive_metadata SET value='11' WHERE key='schema_version'")
+	require.NoError(t, s.InitSchemaContext(t.Context()))
+	got, err := s.GetLoopKataLinkContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.Equal(t, link.LinkToken, got.LinkToken)
+	state, err := s.LoopDerivationStateContext(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, state.KataLastError)
 }

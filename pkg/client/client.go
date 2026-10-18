@@ -386,6 +386,29 @@ func (c *Client) CreatePerson(
 	return nil, fmt.Errorf("create person: %w", err)
 }
 
+// TrackOpenLoop accepts both documented success statuses. Tracking a new
+// issue returns 201 and replaying an existing link returns 200.
+func (c *Client) TrackOpenLoop(
+	ctx context.Context,
+	options *generated.TrackOpenLoopRequestOptions,
+	reqEditors ...runtime.RequestEditorFn,
+) (*generated.TrackOpenLoopResponseJSON, error) {
+	resp, err := c.TrackOpenLoopWithResponse(ctx, options, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	if resp.JSON201 != nil {
+		return resp.JSON201, nil
+	}
+	if resp.JSON200 != nil {
+		return resp.JSON200, nil
+	}
+	err = runtime.NewClientAPIError(
+		fmt.Errorf("unexpected status code: %d", resp.StatusCode),
+		runtime.WithStatusCode(resp.StatusCode))
+	return nil, fmt.Errorf("track open loop: %w", err)
+}
+
 type httpClientDoer struct {
 	client *http.Client
 }

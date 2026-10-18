@@ -21,6 +21,8 @@ type RunnerOptions struct {
 	BeginWork      func(context.Context, string) (func(), bool)
 	StartScheduled func() (scheduler.JobDisposition, error)
 	OnError        func(error)
+	// AfterRun runs only for manual passes, under the gate with daemon lifetime.
+	AfterRun func(context.Context)
 }
 
 // Runner coalesces manual work and rebuild intent. The scheduler supplies its
@@ -106,6 +108,9 @@ func (r *Runner) runManual() {
 		ctx, cancel := context.WithTimeout(r.opts.Context, 2*time.Minute)
 		err := r.run(ctx, rebuild)
 		cancel()
+		if r.opts.AfterRun != nil {
+			r.opts.AfterRun(r.opts.Context)
+		}
 		done()
 		if err != nil && !errors.Is(err, context.Canceled) {
 			if r.opts.OnError != nil {

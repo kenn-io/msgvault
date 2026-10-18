@@ -13,6 +13,7 @@ var (
 )
 
 type OpenLoop struct {
+	Kata                                                             *LoopKataLink
 	ID                                                               int64
 	TurnKey                                                          string
 	Cycle                                                            int64
@@ -64,6 +65,7 @@ type LoopConversation struct {
 	Participants                 []LoopParticipant
 	LastMessageAt                time.Time
 	Messages                     []LoopMessage
+	WindowTruncated              bool
 }
 type LoopListFilter struct {
 	Kind, Status       string

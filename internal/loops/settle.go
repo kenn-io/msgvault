@@ -31,12 +31,15 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	}
 	// Corrected automation or ownership metadata can disqualify the anchor
 	// itself. Neutral messages after an eligible anchor do not.
-	if !metadataSubstantive(v.Messages[anchor]) || v.Messages[anchor].Direction != side {
+	anchorMessage := v.Messages[anchor]
+	large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
+	if !metadataSubstantive(anchorMessage) || anchorMessage.Direction != side ||
+		live.Kind == ReplyOwed && !addressedToOwner(anchorMessage, v.ConversationType, large) {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil
 	}
-	if live.Kind == ReplyOwed {
-		large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
-		if !addressedToOwner(v.Messages[anchor], v.ConversationType, large) {
+	if live.Kind == AwaitingReply {
+		body := t.body(v, anchorMessage.ID)
+		if body.ok && !asksQuestion(body.text) {
 			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil
 		}
 	}

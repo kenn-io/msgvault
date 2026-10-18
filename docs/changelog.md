@@ -8,6 +8,13 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Open loops can track Kata issues](usage/open-loops.md#track-a-loop-in-kata).
+  Track creates an issue with archived evidence or links an existing one; CLI,
+  MCP and the Directory card show its status. The bridge comments when a reply
+  settles the turn and marks the loop done when its issue closes. It never
+  closes Kata issues. This adds archive schema 12 and API schema 3.26.0 on top
+  of the Open Loops schema 11 upgrade.
+
 - [Open loops](usage/open-loops.md) track unanswered email and chat turns with
   24h/72h grace periods, retained history, completion, snooze and mute controls.
   Owner CLI, HTTP, MCP and the Directory card share freshness reports; the

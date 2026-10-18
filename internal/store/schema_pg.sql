@@ -4322,6 +4322,9 @@ CREATE TABLE IF NOT EXISTS loop_derivation_state (
     last_run_at                 TIMESTAMPTZ,
     last_success_at             TIMESTAMPTZ,
     last_error                  TEXT NOT NULL DEFAULT '',
+    kata_last_run_at TIMESTAMPTZ,
+    kata_last_success_at TIMESTAMPTZ,
+    kata_last_error TEXT NOT NULL DEFAULT '',
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 INSERT INTO loop_derivation_state (singleton) VALUES (1) ON CONFLICT DO NOTHING;
@@ -4350,3 +4353,26 @@ CREATE TABLE IF NOT EXISTS message_automation_signals (
     parser_version    BIGINT NOT NULL,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- One durable issue installation per loop; tokens invalidate in-flight reads after relinking.
+CREATE TABLE IF NOT EXISTS loop_kata_links (
+    loop_id BIGINT PRIMARY KEY REFERENCES open_loops(id) ON DELETE CASCADE,
+    link_token TEXT NOT NULL,
+    issue_uid TEXT NOT NULL,
+    issue_ref TEXT NOT NULL,
+    issue_title TEXT NOT NULL DEFAULT '',
+    issue_status TEXT NOT NULL DEFAULT '',
+    issue_web_url TEXT NOT NULL DEFAULT '',
+    linked_via TEXT NOT NULL CHECK (linked_via IN ('created', 'existing', 'commitments')),
+    linked_at TIMESTAMPTZ NOT NULL,
+    checked_at TIMESTAMPTZ,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at TIMESTAMPTZ,
+    last_error TEXT NOT NULL DEFAULT '',
+    closed_notified_at TIMESTAMPTZ,
+    bridge_closed_loop_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_loop_kata_links_issue ON loop_kata_links(issue_uid);
+CREATE INDEX IF NOT EXISTS idx_loop_kata_links_due ON loop_kata_links(next_attempt_at);

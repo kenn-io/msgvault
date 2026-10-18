@@ -3,6 +3,7 @@
  */
 import type { LoopCounterparty } from "./loopCounterparty";
 import type { LoopEvidence } from "./loopEvidence";
+import type { LoopKata } from "./loopKata";
 
 export interface Loop {
   age_seconds: number;
@@ -12,6 +13,8 @@ export interface Loop {
   channel: string;
   /** @nullable */
   closed_at: string | null;
+  /** @nullable */
+  closed_by: string | null;
   /** @nullable */
   closed_message_id: number | null;
   /** @nullable */
@@ -24,6 +27,7 @@ export interface Loop {
   due_at: string | null;
   evidence: LoopEvidence[];
   id: number;
+  kata: LoopKata | null;
   kind: string;
   last_activity_at: string;
   /** @nullable */

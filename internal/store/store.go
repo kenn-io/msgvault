@@ -1471,6 +1471,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
+	if err := s.ensureLoopKataStateColumns(ctx); err != nil {
+		return fmt.Errorf("ensure loop Kata state columns: %w", err)
+	}
 	if !s.IsPostgreSQL() {
 		if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: s.db}); err != nil {
 			return err

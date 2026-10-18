@@ -138,6 +138,23 @@ func TestLoopStateRescanHoldsProgressAndRechecksActualEpoch(t *testing.T) {
 	assertions.Nil(state.AppliedThrough)
 }
 
+func TestLoopRescanIncludesRecentSentMessageWhenConversationTimestampIsNull(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	message := f.CreateMessage("recent-null-conversation-time")
+	loopExec(t, f.Store, "UPDATE messages SET sent_at=? WHERE id=?", loopTestStamp(f.Store, now), message)
+	loopExec(t, f.Store, "UPDATE conversations SET last_message_at=NULL WHERE id=?", f.ConvID)
+	epoch, err := f.Store.CurrentLoopEpochContext(t.Context(), 1, "test")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.BeginLoopRescanContext(t.Context(), epoch, "config", nil, now))
+
+	count, err := f.Store.EnqueueLoopRescanContext(t.Context(), epoch, now.Add(-time.Hour), 10, now)
+	requirements.NoError(err)
+	assertions.Equal(1, count)
+}
+
 func TestLoopStateRescanIncludesRecentMessageWithoutConversationTimestamp(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

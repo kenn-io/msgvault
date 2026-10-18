@@ -376,7 +376,8 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.25.0 adds owner-only Open Loops reads, manual runs, rebuilds and actions,
 // with typed stale responses and runtime capability discovery.
-const APISchemaVersion = "3.25.0"
+// 3.26.0 adds tracked Kata receipts and owner-only loop tracking actions.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -757,10 +758,11 @@ func hardenLoopSchemas(doc *huma.OpenAPI, client bool) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	for schemaName, names := range map[string][]string{
-		"Loop":                {"anchor_message_id", "last_activity_message_id", "due_at", "snoozed_until", "closed_at", "closed_reason", "closed_message_id"},
+		"Loop":                {"anchor_message_id", "last_activity_message_id", "due_at", "snoozed_until", "closed_at", "closed_reason", "closed_by", "closed_message_id"},
 		"LoopCounterparty":    {"person_id"},
+		"LoopKata":            {"checked_at", "next_attempt_at", "closed_notified_at", "closed_loop_at"},
 		"LoopSuppression":     {"participant_id", "person_id", "conversation_id"},
-		"LoopDerivationState": {"feed_cursor_at", "feed_frontier", "applied_through", "rescan_started_at", "last_reconcile_at", "last_run_at", "last_success_at"},
+		"LoopDerivationState": {"feed_cursor_at", "feed_frontier", "applied_through", "rescan_started_at", "last_reconcile_at", "last_run_at", "last_success_at", "kata_last_run_at", "kata_last_success_at"},
 		"SourceFreshness":     {"source_id", "last_successful_sync_at", "age_seconds"},
 		"ProjectionFreshness": {"computed_at", "age_seconds"},
 	} {
@@ -794,7 +796,9 @@ func hardenLoopSchemas(doc *huma.OpenAPI, client bool) {
 		for schemaName, names := range map[string][]string{
 			"Loop": {"summary"}, "LoopCounterparty": {"display_name"},
 			"LoopEvidence": {"subject"}, "LoopSuppression": {"note"},
-			"LoopDerivationState": {"config_fingerprint", "rescan_reason", "rescan_epoch", "last_error"},
+			"LoopDerivationState": {"config_fingerprint", "rescan_reason", "rescan_epoch", "last_error", "kata_last_error"},
+			"LoopKataIssue":       {"revision"},
+			"LoopKata":            {"title", "status"},
 			"SourceFreshness":     {"sync_command"},
 		} {
 			schema := schemas[schemaName]
@@ -810,6 +814,15 @@ func hardenLoopSchemas(doc *huma.OpenAPI, client bool) {
 		}
 	}
 	var properties []*huma.Schema
+	if loop := schemas["Loop"]; loop != nil {
+		if property := loop.Properties["kata"]; property != nil {
+			properties = append(properties, property)
+			if client {
+				loop.Required = slices.DeleteFunc(loop.Required, func(name string) bool { return name == "kata" })
+				nullableSchemaProperty(loop, "kata")
+			}
+		}
+	}
 	if result := schemas["LoopSuppressionResult"]; result != nil {
 		if property := result.Properties["suppression"]; property != nil {
 			properties = append(properties, property)

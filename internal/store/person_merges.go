@@ -887,6 +887,9 @@ func (s *Store) moveCorePersonProfileTx(
 	if err := s.reconcilePersonTrackingTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
 	}
+	if err := s.reconcilePersonLoopSuppressionTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
 	if err := s.reconcilePersonBriefEnrollmentTx(
 		ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
@@ -935,6 +938,42 @@ func (s *Store) moveCorePersonProfileTx(
 		return fmt.Errorf("move absorbed vCard resources: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) reconcilePersonLoopSuppressionTx(
+	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
+) error {
+	var absorbedSuppressionID int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM loop_suppressions
+		WHERE target_kind = 'person' AND person_id = ?`, absorbedID).Scan(&absorbedSuppressionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect absorbed person loop suppression: %w", err)
+	}
+	var survivorSuppressionID int64
+	err = tx.QueryRowContext(ctx, `SELECT id FROM loop_suppressions
+		WHERE target_kind = 'person' AND person_id = ?`, survivorID).Scan(&survivorSuppressionID)
+	if err == nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, absorbedSuppressionID); err != nil {
+			return fmt.Errorf("deduplicate absorbed person loop suppression: %w", err)
+		}
+		return s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, "loop_suppressions", absorbedSuppressionID,
+			personMergeActionDeduplicated, &survivorSuppressionID,
+		)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("inspect survivor person loop suppression: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET person_id = ? WHERE id = ?`, survivorID, absorbedSuppressionID); err != nil {
+		return fmt.Errorf("move absorbed person loop suppression: %w", err)
+	}
+	return s.setPersonMergeRowDispositionTx(
+		ctx, tx, mergeID, "loop_suppressions", absorbedSuppressionID,
+		"moved", &absorbedSuppressionID,
+	)
 }
 
 func (s *Store) reconcilePersonTrackingTx(

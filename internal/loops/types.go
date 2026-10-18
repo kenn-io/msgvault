@@ -65,6 +65,7 @@ type ConversationView struct {
 	Participants                 []LoopParticipant
 	LastMessageAt                time.Time
 	Messages                     []LoopMessage
+	WindowTruncated              bool
 	BodyText                     func(messageID int64) (string, error)
 	AnchorExists                 func(messageID int64) (bool, error)
 	Extend                       func() (ConversationView, error)
@@ -74,6 +75,7 @@ type LiveLoop struct {
 	ID              int64
 	Kind            string
 	AnchorMessageID int64
+	Counterparty    LoopParticipant
 }
 
 type Suppressions struct {
@@ -87,7 +89,7 @@ type Spec struct {
 	OwedSinceAt, OpensAt  time.Time
 	TurnMessageIDs        []int64
 	// PreviousTurnKnown proves a substantive opposite boundary inside this
-	// window. Without it, older terminal history must retain authority.
+	// window.
 	PreviousTurnKnown bool
 	TruncatedRun      bool
 }

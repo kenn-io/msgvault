@@ -12,6 +12,9 @@ import (
 // flags a prepared/running scan; RescanStartedAt becomes nonnil with its first
 // committed enumeration slice, independently of the legal cursor ID zero.
 type LoopDerivationState struct {
+	KataLastRunAt                *time.Time `json:"kata_last_run_at"`
+	KataLastSuccessAt            *time.Time `json:"kata_last_success_at"`
+	KataLastError                string     `json:"kata_last_error"`
 	Singleton                    int        `json:"singleton"`
 	FeedCursorAt                 *time.Time `json:"feed_cursor_at"`
 	FeedCursorMessageID          int64      `json:"feed_cursor_message_id"`
@@ -63,8 +66,10 @@ func (s *Store) LoopDerivationStateContext(ctx context.Context) (LoopDerivationS
 }
 func readLoopState(ctx context.Context, q contextRowQuerier) (LoopDerivationState, error) {
 	var out LoopDerivationState
-	var cursor, frontier, applied, started, reconciled, run, success, updated nullableTimestamp
-	err := q.QueryRowContext(ctx, `SELECT singleton,feed_cursor_at,feed_cursor_message_id,feed_frontier,applied_through,identity_revision,account_identity_revision,ruleset_version,config_fingerprint,rescan_reason,rescan_epoch,rescan_last_conversation_id,rescan_started_at,last_reconcile_at,signals_backfill_complete,signals_backfill_last_message_id,last_run_at,last_success_at,last_error,updated_at,(SELECT COUNT(*) FROM loop_conversation_queue WHERE revision>processed_revision) FROM loop_derivation_state WHERE singleton=1`).Scan(&out.Singleton, &cursor, &out.FeedCursorMessageID, &frontier, &applied, &out.IdentityRevision, &out.AccountIdentityRevision, &out.RulesetVersion, &out.ConfigFingerprint, &out.RescanReason, &out.RescanEpoch, &out.RescanLastConversationID, &started, &reconciled, &out.SignalsBackfillComplete, &out.SignalsBackfillLastMessageID, &run, &success, &out.LastError, &updated, &out.QueueDepth)
+	var cursor, frontier, applied, started, reconciled, run, success, updated, kataRun, kataSuccess nullableTimestamp
+	err := q.QueryRowContext(ctx, `SELECT kata_last_run_at,kata_last_success_at,kata_last_error,singleton,feed_cursor_at,feed_cursor_message_id,feed_frontier,applied_through,identity_revision,account_identity_revision,ruleset_version,config_fingerprint,rescan_reason,rescan_epoch,rescan_last_conversation_id,rescan_started_at,last_reconcile_at,signals_backfill_complete,signals_backfill_last_message_id,last_run_at,last_success_at,last_error,updated_at,(SELECT COUNT(*) FROM loop_conversation_queue WHERE revision>processed_revision) FROM loop_derivation_state WHERE singleton=1`).Scan(&kataRun, &kataSuccess, &out.KataLastError, &out.Singleton, &cursor, &out.FeedCursorMessageID, &frontier, &applied, &out.IdentityRevision, &out.AccountIdentityRevision, &out.RulesetVersion, &out.ConfigFingerprint, &out.RescanReason, &out.RescanEpoch, &out.RescanLastConversationID, &started, &reconciled, &out.SignalsBackfillComplete, &out.SignalsBackfillLastMessageID, &run, &success, &out.LastError, &updated, &out.QueueDepth)
+	out.KataLastRunAt = optionalTimestamp(kataRun)
+	out.KataLastSuccessAt = optionalTimestamp(kataSuccess)
 	out.FeedCursorAt = optionalTimestamp(cursor)
 	out.FeedFrontier = optionalTimestamp(frontier)
 	out.AppliedThrough = optionalTimestamp(applied)

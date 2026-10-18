@@ -283,3 +283,20 @@ func TestChatwootInventoryMatchesAccountScope(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotSourcesAreStatic(t *testing.T) {
+	for _, kind := range []string{"whatsapp", "apple_messages"} {
+		t.Run(kind, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource(kind, "synthetic-snapshot")
+			requirements.NoError(err)
+			items, err := Build(t.Context(), config.NewDefaultConfig(), st)
+			requirements.NoError(err)
+			requirements.Len(items, 1)
+			assertions.Equal("static", items[0].Scheduling)
+			assertions.Empty(items[0].SyncCommand)
+		})
+	}
+}

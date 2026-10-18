@@ -174,6 +174,42 @@ func TestLoopSuppressionsDryRunCloseAndUnmuteMembership(t *testing.T) {
 	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM loop_conversation_queue WHERE conversation_id IN (?,?) AND revision>processed_revision"), f.ConvID, noHistory).Scan(&queued))
 	assertions.Equal(2, queued)
 }
+
+func TestLoopParticipantSuppressionsSurviveParticipantMerge(t *testing.T) {
+	for _, survivorAlreadyMuted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("survivor_already_muted_%t", survivorAlreadyMuted), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := storetest.New(t)
+			now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+			absorbed := f.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
+			survivor := f.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
+			_, err := f.Store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+				TargetKind: "participant", ParticipantID: &absorbed, Note: "absorbed mute",
+			}, now)
+			requirements.NoError(err)
+			if survivorAlreadyMuted {
+				_, err = f.Store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+					TargetKind: "participant", ParticipantID: &survivor, Note: "survivor mute",
+				}, now)
+				requirements.NoError(err)
+			}
+
+			requirements.NoError(f.Store.MergeParticipantsContext(t.Context(), absorbed, survivor))
+			suppressions, err := f.Store.LoadLoopSuppressionsContext(t.Context())
+			requirements.NoError(err)
+			requirements.Len(suppressions, 1)
+			requirements.NotNil(suppressions[0].ParticipantID)
+			assertions.Equal(survivor, *suppressions[0].ParticipantID)
+			if survivorAlreadyMuted {
+				assertions.Equal("survivor mute\nabsorbed mute", suppressions[0].Note)
+			} else {
+				assertions.Equal("absorbed mute", suppressions[0].Note)
+			}
+		})
+	}
+}
+
 func TestLoopPersonMuteUsesCurrentParticipantMembership(t *testing.T) {
 	for _, linked := range []bool{true, false} {
 		t.Run(fmt.Sprintf("linked_%t", linked), func(t *testing.T) {
@@ -367,6 +403,49 @@ func TestLoopTerminalHistoryCollisionWithdrawsLive(t *testing.T) {
 	assertions.Equal("closed", got.Status)
 	requirements.NotNil(got.ClosedReason)
 	assertions.Equal("withdrawn", *got.ClosedReason)
+}
+
+func TestLoopApplyRefreshesSameAnchorClockAndPreservesRetainedEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	ids := f.CreateMessages(3)
+	open := loopOpen(t, f, ids[0], ids[0], now)
+	applyLoop(t, f, open, now)
+	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	liveID := rows[0].ID
+
+	corrected := loopOpen(t, f, ids[0], ids[1], now)
+	corrected.OwedSinceAt = now.Add(-12 * time.Hour)
+	corrected.OpensAt = now.Add(12 * time.Hour)
+	applyLoop(t, f, corrected, now)
+	got, err := f.Store.GetOpenLoopContext(t.Context(), liveID)
+	requirements.NoError(err)
+	assertions.Equal("held", got.Status)
+	assertions.Equal(now.Add(-12*time.Hour), got.OwedSinceAt.UTC())
+	assertions.Equal(now.Add(12*time.Hour), got.OpensAt.UTC())
+	assertions.Equal(ids[0], *got.AnchorMessageID)
+
+	newSource, err := f.Store.GetOrCreateSource("gmail", "secondary@example.test")
+	requirements.NoError(err)
+	nudge := loopOpen(t, f, ids[1], ids[2], now)
+	nudge.SourceID = newSource.ID
+	nudge.OwedSinceAt = now.Add(-11 * time.Hour)
+	nudge.OpensAt = now.Add(13 * time.Hour)
+	nudge.TurnMessageIDs = []int64{ids[0], ids[1], ids[2]}
+	applyLoop(t, f, nudge, now)
+	got, err = f.Store.GetOpenLoopContext(t.Context(), liveID)
+	requirements.NoError(err)
+	assertions.Equal(newSource.ID, got.SourceID)
+	assertions.Equal("held", got.Status)
+	assertions.Equal(now.Add(-12*time.Hour), got.OwedSinceAt.UTC())
+	assertions.Equal(now.Add(12*time.Hour), got.OpensAt.UTC())
+	assertions.Equal(ids[0], *got.AnchorMessageID)
+	assertions.Equal(ids[2], *got.LastActivityMessageID)
+	assertions.JSONEq(string(open.EvidenceJSON), string(got.EvidenceJSON))
 }
 
 func TestLoopApplyMissingCloseReturnsNotFound(t *testing.T) {

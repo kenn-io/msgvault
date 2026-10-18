@@ -186,7 +186,7 @@ func ensureHelpLayout(root *cobra.Command) {
 	root.AddGroup(
 		&cobra.Group{ID: helpGroupRead, Title: "Search and read:"},
 		&cobra.Group{ID: helpGroupExport, Title: "Export:"},
-		&cobra.Group{ID: helpGroupPeople, Title: "People, organizations, and identity:"},
+		&cobra.Group{ID: helpGroupPeople, Title: "People, organizations and follow-ups:"},
 		&cobra.Group{ID: helpGroupSources, Title: "Add and sync sources:"},
 		&cobra.Group{ID: helpGroupImport, Title: "Import local exports:"},
 		&cobra.Group{ID: helpGroupWrite, Title: "Drafts, calendar, and Kata (write to providers):"},

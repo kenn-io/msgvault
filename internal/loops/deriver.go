@@ -145,7 +145,20 @@ func (d *Deriver) drain(ctx context.Context, now time.Time, result *RunResult) e
 				withdrawn = append(withdrawn, store.LoopCloseDecision{ID: row.ID, Reason: "withdrawn", At: now})
 				continue
 			}
-			live = append(live, LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID})
+			counterparty := LoopParticipant{}
+			if row.CounterpartyParticipantID != nil {
+				counterparty.ID = *row.CounterpartyParticipantID
+			}
+			if row.CounterpartyPersonID != nil {
+				counterparty.PersonID = *row.CounterpartyPersonID
+			}
+			for _, participant := range view.Participants {
+				if participant.ID == counterparty.ID {
+					counterparty = participant
+					break
+				}
+			}
+			live = append(live, LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID, Counterparty: counterparty})
 		}
 		verdict := Detect(view, live, now, thresholds, supp)
 		if verdict.Err != nil {
@@ -168,7 +181,7 @@ func (d *Deriver) loadView(ctx context.Context, id int64, limit int) (Conversati
 	if err != nil {
 		return ConversationView{}, err
 	}
-	view := ConversationView{ConversationID: row.ConversationID, SourceID: row.SourceID, SourceType: row.SourceType, ConversationType: row.ConversationType, LastMessageAt: row.LastMessageAt}
+	view := ConversationView{ConversationID: row.ConversationID, SourceID: row.SourceID, SourceType: row.SourceType, ConversationType: row.ConversationType, LastMessageAt: row.LastMessageAt, WindowTruncated: row.WindowTruncated}
 	for _, p := range row.Participants {
 		view.Participants = append(view.Participants, detectorParticipant(p))
 	}

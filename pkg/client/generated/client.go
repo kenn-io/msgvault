@@ -659,6 +659,14 @@ type ClientInterface interface {
 	CloseOpenLoop(ctx context.Context, options *CloseOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseOpenLoopResponse, error)
 	CloseOpenLoopWithResponse(ctx context.Context, options *CloseOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseOpenLoopResp, error)
 
+	// UntrackOpenLoop Remove a loop's local Kata link
+	UntrackOpenLoop(ctx context.Context, options *UntrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error)
+	UntrackOpenLoopWithResponse(ctx context.Context, options *UntrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UntrackOpenLoopResp, error)
+
+	// TrackOpenLoop Track a loop in Kata with quoted archive evidence
+	TrackOpenLoop(ctx context.Context, options *TrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrackOpenLoopResponseJSON, error)
+	TrackOpenLoopWithResponse(ctx context.Context, options *TrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrackOpenLoopResp, error)
+
 	// UnsnoozeOpenLoop Remove a loop's snooze
 	UnsnoozeOpenLoop(ctx context.Context, options *UnsnoozeOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnsnoozeOpenLoopResponse, error)
 	UnsnoozeOpenLoopWithResponse(ctx context.Context, options *UnsnoozeOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*UnsnoozeOpenLoopResp, error)
@@ -10905,6 +10913,118 @@ func (c *Client) CloseOpenLoop(ctx context.Context, options *CloseOpenLoopReques
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/{id}/done")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UntrackOpenLoop Remove a loop's local Kata link
+func (c *Client) UntrackOpenLoop(ctx context.Context, options *UntrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*struct{}, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/loops/{id}/kata",
+		Method:     "DELETE",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*struct{}, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 204 {
+			target := new(UntrackOpenLoopErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "UntrackOpenLoopErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		return nil, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/{id}/kata")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// TrackOpenLoop Track a loop in Kata with quoted archive evidence
+func (c *Client) TrackOpenLoop(ctx context.Context, options *TrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrackOpenLoopResponseJSON, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/loops/{id}/kata",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*TrackOpenLoopResponseJSON, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 201 {
+			target := new(TrackOpenLoopErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "TrackOpenLoopErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(TrackOpenLoopResponseJSON)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "TrackOpenLoopResponseJSON",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/loops/{id}/kata")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

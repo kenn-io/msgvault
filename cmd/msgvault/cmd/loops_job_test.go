@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -11,9 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+type deadlineLoopKataOperations struct {
+	api.KataIssueOperations
+
+	deadlines chan time.Time
+}
+
+func (o *deadlineLoopKataOperations) Connect(ctx context.Context) (loops.KataIssues, error) {
+	deadline, ok := ctx.Deadline()
+	if ok {
+		o.deadlines <- deadline
+	}
+	return nil, errors.New("test Kata connector has no issue client")
+}
 
 func TestLoopRuntimeDisabledHasNoCapabilities(t *testing.T) {
 	assertions := assert.New(t)
@@ -206,4 +222,49 @@ func TestLoopScheduledRunnerYieldsToQueuedJob(t *testing.T) {
 		}
 		<-started
 	})
+}
+
+func TestLoopRuntimeSchedulesIndependentKataBridge(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Integrations.Kata.Enabled = true
+	sched := scheduler.New(nil)
+	defer func() { <-sched.Stop().Done() }()
+	runtime, err := newLoopRuntime(t.Context(), sched, api.NewSerialOperationGate(), st, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+	jobs := sched.JobStatus()
+	var names []string
+	for _, job := range jobs {
+		names = append(names, job.Name)
+	}
+	assert.ElementsMatch(t, []string{"open-loops", "open-loops-kata"}, names)
+}
+
+func TestLoopRuntimeManualBridgeUsesBoundedContext(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Loops.Schedule = ""
+	cfg.Integrations.Kata.Enabled = true
+	gate := api.NewSerialOperationGate()
+	operations := &deadlineLoopKataOperations{deadlines: make(chan time.Time, 1)}
+	runtime, err := newLoopRuntime(t.Context(), nil, gate, st, cfg, operations)
+	require.NoError(err)
+	require.NotNil(runtime)
+	disposition, err := runtime.runner.Start(true)
+	require.NoError(err)
+	assert.Equal(scheduler.JobStarted, disposition)
+	var deadline time.Time
+	select {
+	case deadline = <-operations.deadlines:
+	case <-time.After(30 * time.Second):
+		require.FailNow("manual Kata bridge did not connect")
+	}
+	// The bridge reserves 15 seconds from its parent deadline for state writes.
+	assert.InDelta((time.Minute - 15*time.Second).Seconds(), time.Until(deadline).Seconds(), 5)
+	done, ok := gate.BeginWorkContext(t.Context())
+	require.True(ok)
+	done()
 }

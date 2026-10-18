@@ -39,6 +39,9 @@ msgvault loops waiting --top 10
 msgvault loops waiting --allow-stale --as-of 2026-10-17T12:00:00Z --json
 msgvault loops list --kind awaiting_reply --status open --person 7 --limit 50
 msgvault loops show 12 --json
+msgvault loops track 12 --title "Send the revised proposal"
+msgvault loops track 13 --issue msgvault#ab12
+msgvault loops untrack 13
 msgvault loops done 12 --note "Handled elsewhere"
 msgvault loops snooze 12 --until 48h
 msgvault loops unsnooze 12
@@ -57,6 +60,8 @@ msgvault loops rebuild
 | `waiting` | `--top` 1..50, default 10; `--json`, `--allow-stale`, `--as-of` RFC3339 |
 | `list` | `--kind`, `--status` open/held/closed/all (default open), `--person`, `--source-id`, `--include-snoozed`, `--limit` 1..200 (default 50), `--cursor`, `--json` |
 | `show` | One loop ID; `--json` includes evidence references and freshness |
+| `track` | One open loop ID; `--issue` existing ref, or optional `--title` (at most 512 characters), `--list`; `--json`; requires API schema 3.26.0 |
+| `untrack` | Remove the local issue link; preserve the issue and its evidence in Kata |
 | `done` | One loop ID; optional `--note`; completing a closed loop fails |
 | `snooze` | One loop ID; required future `--until` as YYYY-MM-DD (local midnight), RFC3339 or duration |
 | `unsnooze` | One loop ID; remove its snooze |
@@ -71,6 +76,13 @@ orders people by their oldest unanswered turn. A stale archive returns exit
 status 2 and the typed `loops_stale` JSON envelope. `--allow-stale` keeps the
 warning and returns the ranking. List, show and status remain readable with
 warnings on stderr. Refresh commands in the freshness report name each source.
+
+Lists and waiting include a `KATA` column with the cached ref and status. Show
+includes `closed_by`, issue status and last check; JSON carries the complete
+`kata` cache and retry diagnostics. Track prints the issue, a replay marker when
+already tracked, and loop detail; notes go to stderr. Status includes the Kata
+bridge last run, last success and last error. See [tracking a loop](usage/open-loops.md#track-a-loop-in-kata)
+for default titles, evidence and bridge behavior.
 
 ## meetings
 

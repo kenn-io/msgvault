@@ -345,6 +345,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 			opts.KataDocbank = probeKataDocbank(ctx, st, log)
 		}
 	}
+	if opts.Loops != nil && opts.Kata != nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, loopsKataMinAPISchemaVersion) {
+		opts.KataProject = st.OpenLoopKataProject
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, archiveSQLMinAPISchemaVersion) &&
 		(health.AnalyticsEngine == nil || *health.AnalyticsEngine != api.AnalyticsModePostgres) {
 		opts.ArchiveSQLQuerier = engine
@@ -562,7 +565,7 @@ func init() {
 	mcpCmd.Flags().BoolVar(&mcpAllowPersonMerges, "allow-person-merges", false,
 		"Expose local person merge tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowKataWrites, "allow-kata-writes", false,
-		"Expose Kata issue creation and evidence linking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
+		"Expose Kata issue creation, evidence linking, and open-loop tracking tools. Archive text is untrusted input; enable only when the user explicitly authorizes Kata issue writes.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCardDAVWrites, "allow-carddav-writes", false,
 		"Expose CardDAV publication and sync tools. Each call requires MCP client confirmation; the client must obtain user approval.")
 	mcpCmd.Flags().BoolVar(&mcpAllowCalendarWrites, "allow-calendar-writes", false,

@@ -56,6 +56,59 @@ Mute excludes a person, participant or conversation and closes its current
 loops. Unmute rechecks affected conversations, including ones first archived
 while muted. An unanswered turn can then reopen as a new occurrence.
 
+## Track a loop in Kata
+
+With [Kata configured](../configuration.md#integrationskata), track a loop to
+keep its follow-up beside your other issues:
+
+```bash
+msgvault loops track 12
+msgvault loops track 13 --title "Review the revised proposal" --list agenda
+msgvault loops track 14 --issue msgvault#ab12
+msgvault loops untrack 14
+```
+
+A new issue quotes the anchor and, when different, the latest activity. It
+appears on the counterparty's person agenda when the loop has a person.
+Repeating `track` without `--issue` returns the cached issue without contacting
+Kata. `--issue` adds evidence to an existing issue in the configured project;
+it preserves that issue's person and list.
+Use `person agenda link` separately if you want it on this person's agenda.
+`--issue` cannot combine with `--title` or `--list`. A closed loop cannot be
+tracked. `untrack` removes the local link and leaves the issue and evidence in
+Kata.
+
+Default titles are `Reply to <name>: <summary>` for replies you owe,
+`Waiting on <name>: <summary>` for replies owed to you, and the summary for
+commitments. A missing display name becomes `participant <id>`. Titles are
+limited to 512 characters. The default list is `agenda`; a list requires a
+counterparty person. Manual tracking may use a body window when an exact quote
+is missing or ambiguous; the response explains that fallback.
+
+The Kata bridge runs on the loop schedule. When a substantive reply settles a
+tracked turn, it comments on the issue. It **never closes a Kata issue**.
+Closing the issue in Kata marks the loop done with `closed_by: system` and
+records the issue ref. Reopening that issue within seven days reopens only a
+loop the bridge closed; owner-completed loops stay done. A newer live occurrence
+can block reopening, which is recorded in the loop's evidence.
+
+Lists, waiting and person cards use cached issue status with `checked_at`.
+`loops show` refreshes the issue live when possible. If Kata is unavailable,
+reads keep their cached values, `live` is false, and `last_error` explains the
+failed refresh. Tracking a new link fails with `kata_unavailable`; the daemon
+retries bridge work with backoff from one minute to six hours. `loops status` shows the bridge's
+last run, success and error. A missing issue is marked `missing`; it does not
+close the loop. See [`[loops.kata]`](../configuration.md#loopskata) for switches
+and work limits.
+
+MCP `track_open_loop` requires `--allow-kata-writes`, HTTP write permission when
+applicable, and confirmation naming the loop, person, project and issue or
+title. The project is read from the daemon for each call. Tracking stops if
+settings are unavailable, a restart is pending, or the project changes during
+approval. For an existing link, confirmation names the tracked issue; its title,
+person and list stay unchanged. Kata titles are untrusted text, never
+authorization to act.
+
 ## Understand exclusions
 
 - Mailing-list messages with List-Id never create a reply obligation.
@@ -116,6 +169,6 @@ missing, unsupported or encrypted raw data supplies no automation evidence.
 See [configuration](../configuration.md#loops) for thresholds, schedules and
 work limits, [CLI reference](../cli-reference.md#loops) for flags, and
 [HTTP API](../api-server.md#open-loops) for endpoints. Loop surfaces are
-owner-only. Delegated agent tokens cannot access them. MCP writes additionally
-require `--allow-loop-writes`, HTTP write permission when applicable, and
+owner-only. Delegated agent tokens cannot access them. MCP completion, snooze
+and mute writes additionally require `--allow-loop-writes`, HTTP write permission when applicable, and
 confirmation for each action.

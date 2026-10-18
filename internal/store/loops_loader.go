@@ -49,7 +49,11 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 		if last.Valid {
 			out.LastMessageAt = last.Time
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT id,source_id,conversation_id,message_type,sent_at,received_at,internal_date,COALESCE(source_is_from_me,FALSE),deleted_at,deleted_from_source_at,sender_id,COALESCE(subject,''),COALESCE(snippet,''),COALESCE(list_id,'') FROM messages WHERE conversation_id=? ORDER BY COALESCE(sent_at,received_at,internal_date) DESC,id DESC LIMIT ?`, conversationID, limit)
+		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.source_id,m.conversation_id,m.message_type,m.sent_at,m.received_at,m.internal_date,COALESCE(m.source_is_from_me,FALSE),m.deleted_at,m.deleted_from_source_at,m.sender_id,COALESCE(m.subject,''),COALESCE(m.snippet,''),COALESCE(m.list_id,'')
+			FROM messages m JOIN sources src ON src.id=m.source_id
+			WHERE m.conversation_id=? AND NOT `+draftEvidenceSQL("m", "src")+`
+			ORDER BY CASE WHEN COALESCE(m.sent_at,m.received_at,m.internal_date) IS NULL THEN 1 ELSE 0 END,
+				COALESCE(m.sent_at,m.received_at,m.internal_date) DESC,m.id DESC LIMIT ?`, conversationID, limit+1)
 		if err != nil {
 			return err
 		}
@@ -84,6 +88,12 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 		_ = rows.Close()
 		if err != nil {
 			return err
+		}
+		out.WindowTruncated = len(out.Messages) > limit
+		if out.WindowTruncated {
+			out.Messages = out.Messages[:limit]
+			candidates = candidates[:limit]
+			senderIDs = senderIDs[:limit]
 		}
 		candidates, err = s.attachActivityCounterpartsQueryerContext(ctx, tx, candidates)
 		if err != nil {
@@ -133,8 +143,22 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 				out.Messages[i].Recipients = append(out.Messages[i].Recipients, LoopRecipient{LoopParticipant: p, RecipientType: cp.RecipientType})
 			}
 		}
-		// Membership is current members plus senders seen; recipients remain on their messages.
-		rows, err = tx.QueryContext(ctx, `SELECT p.id FROM participants p WHERE EXISTS(SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=? AND cp.participant_id=p.id AND cp.left_at IS NULL) OR EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=? AND m.sender_id=p.id) ORDER BY p.id`, conversationID, conversationID)
+		if len(out.Messages) > 0 {
+			latest := out.Messages[0].OccurredAt
+			if latest.After(out.LastMessageAt) || out.LastMessageAt.IsZero() {
+				out.LastMessageAt = latest
+			}
+		}
+		// Chat membership is current members plus senders. Email threads may
+		// have no conversation_participants rows, so include their message
+		// recipients as eligibility evidence without changing chat rosters.
+		membership := `EXISTS(SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=? AND cp.participant_id=p.id AND cp.left_at IS NULL) OR EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=? AND m.sender_id=p.id)`
+		membershipArgs := []any{conversationID, conversationID}
+		if loopEmailSource(out.SourceType) {
+			membership += ` OR EXISTS(SELECT 1 FROM messages m JOIN message_recipients mr ON mr.message_id=m.id WHERE m.conversation_id=? AND mr.participant_id=p.id)`
+			membershipArgs = append(membershipArgs, conversationID)
+		}
+		rows, err = tx.QueryContext(ctx, `SELECT p.id FROM participants p WHERE `+membership+` ORDER BY p.id`, membershipArgs...)
 		if err != nil {
 			return err
 		}
@@ -204,4 +228,13 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 		return LoopConversation{}, fmt.Errorf("load loop conversation: %w", err)
 	}
 	return out, nil
+}
+
+func loopEmailSource(sourceType string) bool {
+	switch sourceType {
+	case "gmail", sourceTypeIMAP, "o365", "msmail", "hey", "apple-mail", "mbox", "pst", "eml", "maildir", "google-groups":
+		return true
+	default:
+		return false
+	}
 }

@@ -288,3 +288,48 @@ func TestLoopSchemaRecipientEnvelopeRebuild(t *testing.T) {
 	loopExec(t, s, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", mid, pid)
 	assert.Equal(t, int64(1), queueRevision(t, s, f.ConvID))
 }
+
+func TestLoopSchemaQueueObservedRevisionAcknowledgement(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	s := f.Store
+	mid := f.CreateMessage("queue-cas")
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	loopExec(t, s, "INSERT INTO loop_conversation_queue(conversation_id,revision,feed_bound,epoch,reason) VALUES(?,3,?,'rescan-epoch','rescan')", f.ConvID, old)
+	observed := queueRevision(t, s, f.ConvID)
+	// An enqueue interleaves after loading the revision and before acknowledgment.
+	loopExec(t, s, "UPDATE messages SET source_is_from_me=TRUE WHERE id=?", mid)
+	acknowledge := func(revision int64) {
+		requirements.NoError(s.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+			ConversationID: f.ConvID, ObservedRevision: revision,
+			Epoch: "rescan-epoch", Now: old.Add(time.Hour),
+		}))
+	}
+	acknowledge(observed)
+	var revision, processed int64
+	var bound sql.NullTime
+	var epoch string
+	read := func() {
+		require.NoError(t, s.DB().QueryRow(s.Rebind("SELECT revision,processed_revision,feed_bound,epoch FROM loop_conversation_queue WHERE conversation_id=?"), f.ConvID).Scan(&revision, &processed, &bound, &epoch))
+	}
+	read()
+	assertions.Equal(int64(5), revision)
+	assertions.Equal(int64(3), processed)
+	requirements.True(bound.Valid)
+	assertions.True(old.Equal(bound.Time))
+	assertions.Equal("rescan-epoch", epoch)
+	acknowledge(revision)
+	read()
+	assertions.Equal(revision, processed)
+	assertions.False(bound.Valid)
+	assertions.Empty(epoch)
+	frontier := old.Add(time.Hour)
+	loopExec(t, s, "UPDATE loop_derivation_state SET feed_frontier=?", frontier)
+	loopExec(t, s, "UPDATE messages SET identity_is_from_me=TRUE WHERE id=?", mid)
+	read()
+	assertions.Equal(int64(7), revision)
+	assertions.Equal(int64(5), processed)
+	requirements.True(bound.Valid)
+	assertions.True(frontier.Equal(bound.Time))
+}

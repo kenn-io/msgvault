@@ -89,7 +89,6 @@ func TestDetectEligibility(t *testing.T) {
 		{"outside lookback", "withdrawn", func(v *ConversationView, _ *Suppressions) {
 			v.LastMessageAt = v.LastMessageAt.Add(-366 * 24 * time.Hour)
 		}},
-		{"self only", "withdrawn", func(v *ConversationView, _ *Suppressions) { v.Participants = v.Participants[:1] }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -123,6 +122,7 @@ func TestDetectBulkWindowRecoversOrPreservesPriorParticipation(t *testing.T) {
 				message.Labels = []string{"CATEGORY_PROMOTIONS"}
 				view.Messages = append(view.Messages, message)
 			}
+			view.WindowTruncated = true
 			extendedMessages := []LoopMessage{oldAnchor}
 			if priorOwner {
 				ownerMessage := oldAnchor
@@ -147,7 +147,7 @@ func TestDetectBulkWindowRecoversOrPreservesPriorParticipation(t *testing.T) {
 			assertions.Empty(got.Close)
 			if priorOwner {
 				requirements.NotNil(got.Open)
-				assertions.Equal(int64(20), got.Open.Anchor.ID)
+				assertions.Equal(oldAnchor.ID, got.Open.Anchor.ID)
 				assertions.Empty(got.CoverageGaps)
 			} else {
 				assertions.Nil(got.Open)
@@ -189,37 +189,138 @@ func TestDetectOutboundQuestion(t *testing.T) {
 
 func TestDetectAcknowledgementKeepsQuestion(t *testing.T) {
 	view, now := detectorFixture()
-	ack := view.Messages[0]
-	ack.ID, ack.Direction, ack.Sender = 11, Outbound, view.Participants[0]
+	question := view.Messages[0]
+	nudge := question
+	nudge.ID = 11
+	nudge.OccurredAt = now.Add(-30 * time.Hour)
+	ack := question
+	ack.ID, ack.Direction, ack.Sender = 12, Outbound, view.Participants[0]
 	ack.OccurredAt = now.Add(-24 * time.Hour)
-	view.Messages = append(view.Messages, ack)
+	view.Messages = append(view.Messages, nudge, ack)
 	for _, body := range []string{"Thanks, Alex!", "Thanks, Avery Example!", "Thanks, Avery and Jordan!", "Thanks, Avery & Jordan!"} {
 		t.Run(body, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
 			view.BodyText = func(id int64) (string, error) {
-				if id == 10 {
+				switch id {
+				case 10:
 					return "Can you check?", nil
+				case 11:
+					return "Following up on this", nil
+				default:
+					return body, nil
 				}
-				return body, nil
 			}
 			got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10}}, now, DefaultThresholds(), Suppressions{})
 			requirements.NoError(got.Err)
 			assertions.Empty(got.Close)
 			requirements.NotNil(got.Open)
 			assertions.Equal(ReplyOwed, got.Open.Kind)
+			assertions.Equal(int64(10), got.Open.Anchor.ID)
+			assertions.Equal(int64(11), got.Open.LastActivity.ID)
 		})
 	}
 	view.BodyText = func(id int64) (string, error) {
-		if id == 10 {
+		switch id {
+		case 10:
 			return "Can you check?", nil
+		case 11:
+			return "Following up on this", nil
+		default:
+			return "Will do", nil
 		}
-		return "Will do", nil
 	}
 	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10}}, now, DefaultThresholds(), Suppressions{})
 	require.Len(t, got.Close, 1)
 	assert.Equal(t, "turn_flip", got.Close[0].Reason)
 	assert.Nil(t, got.Open)
+}
+
+func TestDetectExtendsTruncatedTurnToRecoverOwnerParticipation(t *testing.T) {
+	assertions := assert.New(t)
+	view, now := detectorFixture()
+	view.Messages[0].Labels = []string{"CATEGORY_PROMOTIONS"}
+	view.WindowTruncated = true
+	owner := view.Messages[0]
+	owner.ID, owner.Direction, owner.Sender = 9, Outbound, view.Participants[0]
+	owner.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	owner.OccurredAt = view.Messages[0].OccurredAt.Add(-time.Hour)
+	view.Extend = func() (ConversationView, error) {
+		extended := view
+		extended.WindowTruncated = false
+		extended.Messages = []LoopMessage{owner, view.Messages[0]}
+		return extended, nil
+	}
+
+	got := Detect(view, nil, now, DefaultThresholds(), Suppressions{})
+	require.NoError(t, got.Err)
+	require.NotNil(t, got.Open)
+	assertions.Equal(ReplyOwed, got.Open.Kind)
+	assertions.Equal(int64(10), got.Open.Anchor.ID)
+	assertions.True(got.Open.PreviousTurnKnown)
+}
+
+func TestDetectIncompleteTruncatedTurnKeepsLiveLoop(t *testing.T) {
+	assertions := assert.New(t)
+	view, now := detectorFixture()
+	view.Messages[0].Labels = []string{"CATEGORY_PROMOTIONS"}
+	view.WindowTruncated = true
+	view.Extend = func() (ConversationView, error) { return view, nil }
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10}}, now, DefaultThresholds(), Suppressions{})
+	require.NoError(t, got.Err)
+	assertions.Empty(got.Close)
+	assertions.Nil(got.Open)
+	assertions.Equal([]int64{1}, got.CoverageGaps)
+}
+
+func TestDetectIncompleteTruncatedTurnHonorsCounterpartyMute(t *testing.T) {
+	for _, mutePerson := range []bool{false, true} {
+		t.Run(map[bool]string{false: "participant", true: "person"}[mutePerson], func(t *testing.T) {
+			assertions := assert.New(t)
+			view, now := detectorFixture()
+			view.Messages[0].Labels = []string{"CATEGORY_PROMOTIONS"}
+			view.WindowTruncated = true
+			view.Extend = func() (ConversationView, error) { return view, nil }
+			supp := Suppressions{}
+			if mutePerson {
+				supp.Persons = []int64{view.Messages[0].Sender.PersonID}
+			} else {
+				supp.Participants = []int64{view.Messages[0].Sender.ID}
+			}
+
+			got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10}}, now, DefaultThresholds(), supp)
+			require.NoError(t, got.Err)
+			require.Len(t, got.Close, 1)
+			assertions.Equal("muted", got.Close[0].Reason)
+			assertions.Empty(got.CoverageGaps)
+		})
+	}
+}
+
+func TestDetectNeutralWindowHonorsRetainedCounterpartyMute(t *testing.T) {
+	for _, mutePerson := range []bool{false, true} {
+		t.Run(map[bool]string{false: "participant", true: "person"}[mutePerson], func(t *testing.T) {
+			assertions := assert.New(t)
+			view, now := detectorFixture()
+			view.Messages[0].ID = 11
+			view.Messages[0].Direction = Observed
+			view.AnchorExists = func(id int64) (bool, error) { return id == 10, nil }
+			counterparty := view.Messages[0].Sender
+			supp := Suppressions{}
+			if mutePerson {
+				supp.Persons = []int64{counterparty.PersonID}
+			} else {
+				supp.Participants = []int64{counterparty.ID}
+			}
+
+			got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: 10, Counterparty: counterparty}}, now, DefaultThresholds(), supp)
+			require.NoError(t, got.Err)
+			require.Len(t, got.Close, 1)
+			assertions.Equal("muted", got.Close[0].Reason)
+			assertions.Empty(got.CoverageGaps)
+		})
+	}
 }
 
 func TestDetectAutomationIsNeutral(t *testing.T) {

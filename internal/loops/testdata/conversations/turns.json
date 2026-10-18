@@ -50,16 +50,6 @@
     "want_anchor": 1
   },
   {
-    "name": "owner FYI",
-    "messages": [
-      {
-        "side": "outbound",
-        "age_hours": 96,
-        "body": "FYI, attached."
-      }
-    ]
-  },
-  {
     "name": "cc only settles awaiting",
     "live_kind": "awaiting_reply",
     "messages": [

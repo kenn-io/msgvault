@@ -71,7 +71,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 			}
 		}
 		for _, id := range apply.Verdict.CoverageGaps {
-			loop, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=? AND l.conversation_id=? AND l.status<>'closed'", id, apply.ConversationID))
+			loop, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=? AND l.conversation_id=? AND l.status<>'closed'", id, apply.ConversationID))
 			if errors.Is(err, ErrLoopNotFound) {
 				continue
 			}
@@ -97,7 +97,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 }
 
 func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open LoopOpenDecision, now time.Time) error {
-	history, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.conversation_id=? AND l.kind=? AND l.detector='turn_state' ORDER BY l.created_at DESC,l.id DESC", open.ConversationID, open.Kind)
+	history, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.conversation_id=? AND l.kind=? AND l.detector='turn_state' ORDER BY l.created_at DESC,l.id DESC", open.ConversationID, open.Kind)
 	if err != nil {
 		return err
 	}
@@ -118,8 +118,8 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 	}
 	// A done anchor that fell beyond the bounded same-side window stays authoritative.
 	blocked := latest != nil && loopTerminal(*latest) || !open.PreviousTurnKnown && terminalOutside && live == nil
-	var muted bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions WHERE conversation_id=? OR participant_id=? OR person_id=? OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, open.ConversationID, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.CounterpartyParticipantID).Scan(&muted); err != nil {
+	muted, err := loopSuppressionAppliesTx(ctx, tx, open.ConversationID, open.CounterpartyParticipantID, open.CounterpartyPersonID)
+	if err != nil {
 		return err
 	}
 	if blocked || muted {
@@ -139,6 +139,7 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 	if live != nil {
 		// Only a late earlier message may replace an existing anchor. A newer nudge preserves the original clock.
 		rewrite := live.AnchorMessageID == nil || (live.AnchorMessageID != nil && *live.AnchorMessageID != open.AnchorMessageID && (open.OwedSinceAt.Before(live.OwedSinceAt) || (open.OwedSinceAt.Equal(live.OwedSinceAt) && open.AnchorMessageID < *live.AnchorMessageID)))
+		evidenceJSON := string(open.EvidenceJSON)
 		if rewrite {
 			var cycle int64
 			if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(cycle),0)+1 FROM open_loops WHERE turn_key=?", open.TurnKey).Scan(&cycle); err != nil {
@@ -147,15 +148,19 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 			if _, err := tx.ExecContext(ctx, "UPDATE open_loops SET turn_key=?,cycle=?,anchor_message_id=?,owed_since_at=?,opens_at=? WHERE id=? AND status<>'closed'", open.TurnKey, cycle, open.AnchorMessageID, s.dialect.TimestampParam(open.OwedSinceAt), s.dialect.TimestampParam(open.OpensAt), live.ID); err != nil {
 				return err
 			}
-		} else {
-			// Recompute thresholds from the preserved oldest unanswered anchor.
-			open.OpensAt = live.OwedSinceAt.Add(open.OpensAt.Sub(open.OwedSinceAt))
-			status = "open"
-			if now.Before(open.OpensAt) {
-				status = "held"
-			}
+		} else if live.AnchorMessageID != nil && *live.AnchorMessageID != open.AnchorMessageID {
+			// A newer nudge does not reset the oldest unanswered clock or replace
+			// evidence that is tied to the retained anchor.
+			delay := open.OpensAt.Sub(open.OwedSinceAt)
+			open.OwedSinceAt = live.OwedSinceAt
+			open.OpensAt = live.OwedSinceAt.Add(delay)
+			evidenceJSON = string(live.EvidenceJSON)
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE open_loops SET status=?,last_activity_message_id=?,last_activity_at=?,summary=?,counterparty_participant_id=?,counterparty_person_id=?,owner_address=?,opens_at=?,evidence_json=?,ruleset_version=?,updated_at=? WHERE id=? AND status<>'closed'`, status, open.LastActivityMessageID, s.dialect.TimestampParam(open.LastActivityAt), open.Summary, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.OwnerAddress, s.dialect.TimestampParam(open.OpensAt), string(open.EvidenceJSON), open.RulesetVersion, s.dialect.TimestampParam(now), live.ID)
+		status = "open"
+		if now.Before(open.OpensAt) {
+			status = "held"
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE open_loops SET source_id=?,status=?,owed_since_at=?,last_activity_message_id=?,last_activity_at=?,summary=?,counterparty_participant_id=?,counterparty_person_id=?,owner_address=?,opens_at=?,evidence_json=?,ruleset_version=?,updated_at=? WHERE id=? AND status<>'closed'`, open.SourceID, status, s.dialect.TimestampParam(open.OwedSinceAt), open.LastActivityMessageID, s.dialect.TimestampParam(open.LastActivityAt), open.Summary, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.OwnerAddress, s.dialect.TimestampParam(open.OpensAt), evidenceJSON, open.RulesetVersion, s.dialect.TimestampParam(now), live.ID)
 		return err
 	}
 	var cycle int64

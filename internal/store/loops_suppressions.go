@@ -50,6 +50,48 @@ func validateLoopSuppression(request LoopSuppressionRequest) error {
 	}
 	return nil
 }
+
+func rebindParticipantLoopSuppressionTx(ctx context.Context, tx *loggedTx, oldID, newID int64) error {
+	var oldSuppressionID int64
+	var oldNote string
+	err := tx.QueryRowContext(ctx, `SELECT id, note FROM loop_suppressions
+		WHERE target_kind = 'participant' AND participant_id = ?`, oldID).Scan(&oldSuppressionID, &oldNote)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect absorbed participant loop suppression: %w", err)
+	}
+	var newSuppressionID int64
+	var newNote string
+	err = tx.QueryRowContext(ctx, `SELECT id, note FROM loop_suppressions
+		WHERE target_kind = 'participant' AND participant_id = ?`, newID).Scan(&newSuppressionID, &newNote)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET participant_id = ? WHERE id = ?`, newID, oldSuppressionID); err != nil {
+			return fmt.Errorf("move absorbed participant loop suppression: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect survivor participant loop suppression: %w", err)
+	}
+	switch {
+	case oldNote == "" || oldNote == newNote:
+		// The surviving note already carries the useful text.
+	case newNote == "":
+		newNote = oldNote
+	default:
+		newNote += "\n" + oldNote
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ? WHERE id = ?`, newNote, newSuppressionID); err != nil {
+		return fmt.Errorf("preserve merged participant loop suppression notes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, oldSuppressionID); err != nil {
+		return fmt.Errorf("deduplicate absorbed participant loop suppression: %w", err)
+	}
+	return nil
+}
+
 func loopSuppressionPredicate(request LoopSuppressionRequest) (string, []any) {
 	switch request.TargetKind {
 	case "participant":
@@ -60,6 +102,14 @@ func loopSuppressionPredicate(request LoopSuppressionRequest) (string, []any) {
 	default:
 		return "conversation_id=?", []any{request.ConversationID}
 	}
+}
+
+func loopSuppressionAppliesTx(ctx context.Context, tx *loggedTx, conversationID int64, participantID, personID *int64) (bool, error) {
+	var muted bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions
+		WHERE conversation_id=? OR participant_id=? OR person_id=?
+		OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, conversationID, participantID, personID, participantID).Scan(&muted)
+	return muted, err
 }
 
 // suppressionConversationIDs includes native membership even before any loop has been derived.

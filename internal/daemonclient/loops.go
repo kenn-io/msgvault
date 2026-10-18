@@ -191,3 +191,48 @@ func (c *Client) ListPersonOpenLoops(ctx context.Context, personID int64, limit 
 }
 
 var _ loops.Reader = (*Client)(nil)
+
+// LoopAlreadyTrackedError keeps the winning link when concurrent tracking
+// chooses another issue, so callers can show its qualified reference.
+type LoopAlreadyTrackedError struct {
+	Kata loops.LoopKata
+}
+
+func (e *LoopAlreadyTrackedError) Error() string {
+	return "loop_already_tracked: open loop is tracked in " + e.Kata.QualifiedRef
+}
+
+func (e *LoopAlreadyTrackedError) Unwrap() error { return loops.ErrLoopAlreadyTracked }
+
+func loopTrackErrorBody(status int, body []byte) error {
+	var conflict struct {
+		Error string          `json:"error"`
+		Kata  *loops.LoopKata `json:"kata"`
+	}
+	if status == http.StatusConflict && json.Unmarshal(body, &conflict) == nil && conflict.Error == "loop_already_tracked" && conflict.Kata != nil {
+		return &LoopAlreadyTrackedError{Kata: *conflict.Kata}
+	}
+	return handleErrorBody(status, body)
+}
+
+func (c *Client) TrackOpenLoop(ctx context.Context, id int64, request loops.TrackRequest) (loops.TrackResponse, error) {
+	response, err := generatedResponse(c, func(api *apiclient.Client) (*generated.TrackOpenLoopResp, error) {
+		return api.TrackOpenLoopWithResponse(ctx, &generated.TrackOpenLoopRequestOptions{
+			PathParams: &generated.TrackOpenLoopPath{ID: id},
+			Body:       &generated.TrackOpenLoopBody{IssueRef: optionalString(request.IssueRef), Title: optionalString(request.Title), List: optionalString(request.List)},
+		})
+	}, func(response any, err error) error {
+		return responseError(response, err, []int{http.StatusOK, http.StatusCreated}, loopTrackErrorBody)
+	})
+	if err != nil {
+		return loops.TrackResponse{}, err
+	}
+	return decodeLoopResponse[loops.TrackResponse](response.Body)
+}
+
+func (c *Client) UntrackOpenLoop(ctx context.Context, id int64) error {
+	_, err := APIResponseWithStatuses(c, []int{http.StatusNoContent}, func(api *apiclient.Client) (*generated.UntrackOpenLoopResp, error) {
+		return api.UntrackOpenLoopWithResponse(ctx, &generated.UntrackOpenLoopRequestOptions{PathParams: &generated.UntrackOpenLoopPath{ID: id}})
+	})
+	return err
+}

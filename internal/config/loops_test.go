@@ -52,6 +52,10 @@ func TestLoopsConfigLoadAndManualSchedule(t *testing.T) {
 }
 
 func TestLoopsConfigValidation(t *testing.T) {
+	wantFields := map[string]string{
+		"conversation message limit too large":          "conversation_message_limit",
+		"extended conversation message limit too large": "conversation_message_limit",
+	}
 	for _, tt := range []struct {
 		name   string
 		change func(*LoopsConfig)
@@ -69,12 +73,18 @@ func TestLoopsConfigValidation(t *testing.T) {
 		{"zero backfill batch", func(c *LoopsConfig) { c.SignalsBackfillBatch = 0 }},
 		{"body limit exceeds conversation", func(c *LoopsConfig) { c.RunMessageLimit = c.ConversationMessageLimit + 1 }},
 		{"extended limit below normal", func(c *LoopsConfig) { c.ConversationMessageLimitExtended = c.ConversationMessageLimit - 1 }},
+		{"conversation message limit too large", func(c *LoopsConfig) { c.ConversationMessageLimit = looplimits.MaxConversationMessageLimit + 1 }},
+		{"extended conversation message limit too large", func(c *LoopsConfig) { c.ConversationMessageLimitExtended = looplimits.MaxConversationMessageLimit + 1 }},
 		{"six cron fields", func(c *LoopsConfig) { c.Schedule = "* * * * * *" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c := NewDefaultConfig().Loops
 			tt.change(&c)
-			require.ErrorContains(t, c.Validate(), "[loops]")
+			err := c.Validate()
+			require.ErrorContains(t, err, "[loops]")
+			if field := wantFields[tt.name]; field != "" {
+				require.ErrorContains(t, err, field)
+			}
 		})
 	}
 }
@@ -86,23 +96,18 @@ func TestLoopsConfigRejectsExplicitZero(t *testing.T) {
 	require.ErrorContains(t, err, "reply_owed_after")
 }
 
-func TestLoopsConfigRejectsConversationLimitsAboveLoaderMaximum(t *testing.T) {
-	for _, tt := range []struct {
-		name   string
-		change func(*LoopsConfig)
-	}{
-		{"normal limit", func(c *LoopsConfig) {
-			c.ConversationMessageLimit = looplimits.MaxConversationMessageLimit + 1
-			c.ConversationMessageLimitExtended = looplimits.MaxConversationMessageLimit + 1
-		}},
-		{"extended limit", func(c *LoopsConfig) {
-			c.ConversationMessageLimitExtended = looplimits.MaxConversationMessageLimit + 1
-		}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultLoopsConfig()
-			tt.change(&cfg)
-			require.ErrorContains(t, cfg.Validate(), "conversation_message_limit")
-		})
+func TestLoopsKataDefaultsAndOverrides(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[loops.kata]\ncomment_on_close = false\nclose_on_issue_closed = false\nreopen_window = \"24h\"\nbatch = 3\n"), 0600))
+	loaded, err := Load(path, "")
+	require.NoError(t, err)
+	assert.False(t, loaded.Loops.Kata.CommentOnClose)
+	assert.False(t, loaded.Loops.Kata.CloseOnIssueClosed)
+	assert.Equal(t, 24*time.Hour, loaded.Loops.Kata.ReopenWindow)
+	assert.Equal(t, 3, loaded.Loops.Kata.Batch)
+	for _, change := range []func(*LoopsConfig){func(c *LoopsConfig) { c.Kata.Batch = 0 }, func(c *LoopsConfig) { c.Kata.ReopenWindow = 0 }} {
+		c := DefaultLoopsConfig()
+		change(&c)
+		require.ErrorContains(t, c.Validate(), "[loops.kata]")
 	}
 }
