@@ -1594,6 +1594,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
+	automationSignals *store.MessageAutomationSignals
 	metadata          *sql.NullString
 	message           *store.Message
 	threadID          string
@@ -1789,7 +1790,9 @@ func (s *Syncer) prepareMessage(
 		metadata = &sql.NullString{String: string(encoded), Valid: true}
 	}
 
+	automationSignals := store.AutomationSignalsFromMIME(parsed.AutomationSignals())
 	return &messageData{
+		automationSignals: &automationSignals,
 		metadata:          metadata,
 		message:           msg,
 		threadID:          threadID,
@@ -1845,13 +1848,14 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 
 	// Persist atomically
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
-		Message:    data.message,
-		Metadata:   data.metadata,
-		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:    data.rawMIME,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		AutomationSignals: data.automationSignals,
+		Message:           data.message,
+		Metadata:          data.metadata,
+		BodyText:          sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:          sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:           data.rawMIME,
+		Recipients:        recipientSets,
+		LabelIDs:          labelIDs,
 	})
 	if err != nil {
 		return 0, err

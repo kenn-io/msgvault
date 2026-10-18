@@ -68,6 +68,345 @@ func emailMergeFixtureMessage(
 	return messageID
 }
 
+func mergeFixtureLoop(t *testing.T, st *store.Store, sourceID, conversationID, anchorID int64, kind string, now time.Time) int64 {
+	t.Helper()
+	require := require.New(t)
+	decision := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:%s:%d", conversationID, kind, anchorID),
+		Kind:    kind, Channel: "chat", ConversationID: conversationID, SourceID: sourceID,
+		AnchorMessageID: anchorID, LastActivityMessageID: anchorID,
+		OwedSinceAt: now.Add(-72 * time.Hour), LastActivityAt: now, OpensAt: now.Add(-24 * time.Hour),
+		EvidenceJSON:   []byte(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8}]`, anchorID, conversationID)),
+		RulesetVersion: 1, TurnMessageIDs: []int64{anchorID}, PreviousTurnKnown: true,
+	}
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: conversationID, Now: now, Verdict: store.LoopVerdict{Open: &decision},
+	}))
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND source_id=? AND kind=? AND anchor_message_id=? AND status<>'closed'`), conversationID, sourceID, kind, anchorID).Scan(&id))
+	return id
+}
+
+func TestMergeSourcesTransfersLoopConversationState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-example")
+	require.NoError(err)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	historyMessage, historyConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-1", "historical loop", 1)
+	sourceMessage, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-2", "source live loop", 2)
+	targetMessage, targetConversation := mergeFixtureMessage(t, st, into.ID, "shared", "live-1", "destination live loop", 3)
+	_, muteSourceConversation := mergeFixtureMessage(t, st, from.ID, "muted", "history-3", "muted source loop", 4)
+	muteTargetMessage, muteTargetConversation := mergeFixtureMessage(t, st, into.ID, "muted", "live-2", "muted destination loop", 5)
+	require.NotEqual(historyConversation, targetConversation)
+	require.NotEqual(muteSourceConversation, muteTargetConversation)
+
+	historyID := mergeFixtureLoop(t, st, from.ID, historyConversation, historyMessage, "reply_owed", now)
+	_, err = st.CloseLoopContext(t.Context(), historyID, "handled", now.Add(time.Minute))
+	require.NoError(err)
+	sourceID := mergeFixtureLoop(t, st, from.ID, sourceConversation, sourceMessage, "awaiting_reply", now)
+	targetID := mergeFixtureLoop(t, st, into.ID, targetConversation, targetMessage, "awaiting_reply", now)
+	snoozeUntil := now.Add(48 * time.Hour)
+	_, err = st.SnoozeLoopContext(t.Context(), sourceID, snoozeUntil, now)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE open_loops SET agenda_state='dismissed' WHERE id=?"), sourceID)
+	require.NoError(err)
+
+	muteTargetLoopID := mergeFixtureLoop(t, st, into.ID, muteTargetConversation, muteTargetMessage, "reply_owed", now)
+	muteRequest := store.LoopSuppressionRequest{TargetKind: "conversation", ConversationID: &muteSourceConversation}
+	muteResult, err := st.CreateLoopSuppressionContext(t.Context(), muteRequest, now)
+	require.NoError(err)
+	require.NotNil(muteResult.Suppression)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+
+	history, err := st.GetOpenLoopContext(t.Context(), historyID)
+	require.NoError(err)
+	require.NotNil(history.ClosedReason)
+	assert.Equal(targetConversation, history.ConversationID)
+	assert.Equal(into.ID, history.SourceID)
+	assert.Equal("closed", history.Status)
+	assert.Equal("done", *history.ClosedReason)
+
+	source, err := st.GetOpenLoopContext(t.Context(), sourceID)
+	require.NoError(err)
+	require.NotNil(source.ClosedReason)
+	assert.Equal(targetConversation, source.ConversationID)
+	assert.Equal(into.ID, source.SourceID)
+	assert.Equal("closed", source.Status)
+	assert.Equal("withdrawn", *source.ClosedReason)
+	require.NotNil(source.SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*source.SnoozedUntil))
+	assert.Equal("dismissed", source.AgendaState)
+
+	target, err := st.GetOpenLoopContext(t.Context(), targetID)
+	require.NoError(err)
+	require.NotNil(target.SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*target.SnoozedUntil), "the collision survivor keeps the later snooze")
+	assert.Equal("dismissed", target.AgendaState, "the collision survivor keeps the user's dismissal")
+	live, err := st.ListLiveConversationLoopsContext(t.Context(), targetConversation)
+	require.NoError(err)
+	require.Len(live, 1)
+	assert.Equal(targetID, live[0].ID)
+
+	muteTarget, err := st.GetOpenLoopContext(t.Context(), muteTargetLoopID)
+	require.NoError(err)
+	require.NotNil(muteTarget.ClosedReason)
+	require.NotNil(muteTarget.ClosedBy)
+	assert.Equal(muteTargetConversation, muteTarget.ConversationID)
+	assert.Equal("closed", muteTarget.Status)
+	assert.Equal("muted", *muteTarget.ClosedReason)
+	assert.Equal("user", *muteTarget.ClosedBy)
+	var destinationMuteCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), muteTargetConversation).Scan(&destinationMuteCount))
+	assert.Equal(1, destinationMuteCount, "the conversation mute follows the merge mapping")
+	var sourceMuteCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), muteSourceConversation).Scan(&sourceMuteCount))
+	assert.Zero(sourceMuteCount, "the retired conversation no longer owns the mute")
+	var movedMuteID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), muteTargetConversation).Scan(&movedMuteID))
+	assert.Equal(muteResult.Suppression.ID, movedMuteID, "moving a mute preserves the ID used to unmute it")
+	require.NoError(st.DeleteLoopSuppressionContext(t.Context(), movedMuteID, 24*time.Hour, now.Add(time.Hour)))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), muteTargetConversation).Scan(&destinationMuteCount))
+	assert.Zero(destinationMuteCount, "the moved mute ID still un-mutes the destination")
+}
+
+func TestMergeSourcesRemapsDuplicateLoopAnchorsAndEvidence(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-example")
+	require.NoError(err)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	hiddenMessage, hiddenConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-1", "same obligation", 1)
+	survivorMessage, survivorConversation := mergeFixtureMessage(t, st, into.ID, "shared", "live-1", "same obligation", 1)
+	loopID := mergeFixtureLoop(t, st, from.ID, hiddenConversation, hiddenMessage, "awaiting_reply", now)
+	snoozeUntil := now.Add(48 * time.Hour)
+	_, err = st.SnoozeLoopContext(t.Context(), loopID, snoozeUntil, now)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind("UPDATE open_loops SET agenda_state='dismissed' WHERE id=?"), loopID)
+	require.NoError(err)
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden)
+
+	loop, err := st.GetOpenLoopContext(t.Context(), loopID)
+	require.NoError(err)
+	assert.Equal(survivorConversation, loop.ConversationID)
+	assert.Equal(into.ID, loop.SourceID)
+	assert.Equal("turn:"+strconv.FormatInt(survivorConversation, 10)+":awaiting_reply:"+strconv.FormatInt(survivorMessage, 10), loop.TurnKey)
+	require.NotNil(loop.AnchorMessageID)
+	assert.Equal(survivorMessage, *loop.AnchorMessageID)
+	require.NotNil(loop.LastActivityMessageID)
+	assert.Equal(survivorMessage, *loop.LastActivityMessageID)
+	assert.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8}]`, survivorMessage, survivorConversation), string(loop.EvidenceJSON))
+	require.NotNil(loop.SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*loop.SnoozedUntil))
+	assert.Equal("dismissed", loop.AgendaState)
+
+	decision := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:awaiting_reply:%d", survivorConversation, survivorMessage),
+		Kind:    "awaiting_reply", Channel: "chat", ConversationID: survivorConversation, SourceID: into.ID,
+		AnchorMessageID: survivorMessage, LastActivityMessageID: survivorMessage,
+		OwedSinceAt: now.Add(-72 * time.Hour), LastActivityAt: now.Add(time.Hour), OpensAt: now.Add(-24 * time.Hour),
+		EvidenceJSON:   []byte(fmt.Sprintf(`[{"message_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8}]`, survivorMessage)),
+		RulesetVersion: 1, TurnMessageIDs: []int64{survivorMessage}, PreviousTurnKnown: true,
+	}
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: survivorConversation, Now: now.Add(time.Hour), Verdict: store.LoopVerdict{Open: &decision},
+	}))
+	live, err := st.ListLiveConversationLoopsContext(t.Context(), survivorConversation)
+	require.NoError(err)
+	require.Len(live, 1)
+	assert.Equal(loopID, live[0].ID, "reconciliation updates the existing loop after its anchor moves")
+	require.NotNil(live[0].SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*live[0].SnoozedUntil))
+	assert.Equal("dismissed", live[0].AgendaState)
+}
+
+func TestMergeSourcesRetainsTerminalHistoryForDuplicateLoopAnchor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-example")
+	require.NoError(err)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	hiddenMessage, hiddenConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-1", "handled obligation", 1)
+	survivorMessage, survivorConversation := mergeFixtureMessage(t, st, into.ID, "shared", "live-1", "handled obligation", 1)
+	loopID := mergeFixtureLoop(t, st, from.ID, hiddenConversation, hiddenMessage, "reply_owed", now)
+	closedAt := now.Add(time.Minute)
+	_, err = st.CloseLoopContext(t.Context(), loopID, "done", closedAt)
+	require.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	loop, err := st.GetOpenLoopContext(t.Context(), loopID)
+	require.NoError(err)
+	assert.Equal("turn:"+strconv.FormatInt(survivorConversation, 10)+":reply_owed:"+strconv.FormatInt(survivorMessage, 10), loop.TurnKey)
+	require.NotNil(loop.AnchorMessageID)
+	assert.Equal(survivorMessage, *loop.AnchorMessageID)
+	require.NotNil(loop.ClosedAt)
+	assert.True(closedAt.Equal(*loop.ClosedAt))
+	require.NotNil(loop.ClosedReason)
+	assert.Equal("done", *loop.ClosedReason)
+
+	decision := store.LoopOpenDecision{
+		TurnKey: fmt.Sprintf("turn:%d:reply_owed:%d", survivorConversation, survivorMessage),
+		Kind:    "reply_owed", Channel: "chat", ConversationID: survivorConversation, SourceID: into.ID,
+		AnchorMessageID: survivorMessage, LastActivityMessageID: survivorMessage,
+		OwedSinceAt: now.Add(-72 * time.Hour), LastActivityAt: now.Add(time.Hour), OpensAt: now.Add(-24 * time.Hour),
+		EvidenceJSON:   []byte(fmt.Sprintf(`[{"message_id":%d,"quote":"question","quote_start_rune":0,"quote_end_rune":8}]`, survivorMessage)),
+		RulesetVersion: 1, TurnMessageIDs: []int64{survivorMessage}, PreviousTurnKnown: true,
+	}
+	require.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: survivorConversation, Now: now.Add(time.Hour), Verdict: store.LoopVerdict{Open: &decision},
+	}))
+	live, err := st.ListLiveConversationLoopsContext(t.Context(), survivorConversation)
+	require.NoError(err)
+	assert.Empty(live, "a terminal row on the surviving anchor prevents a duplicate obligation")
+	var historyCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE conversation_id=? AND turn_key=?`), survivorConversation, decision.TurnKey).Scan(&historyCount))
+	assert.Equal(1, historyCount)
+}
+
+func TestMergeSourcesTransfersLoopStateForDuplicateEmailAnchorsWithUnchangedConversationIDs(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err)
+	recipients := []string{"recipient@example.test"}
+	survivorMessage := emailMergeFixtureMessage(t, st, into.ID, "live-message", recipients, true)
+	hiddenMessage := emailMergeFixtureMessage(t, st, from.ID, "history-message", recipients, true)
+	uniqueAnchorMessage := emailMergeFixtureMessage(t, st, from.ID, "unique-anchor-message", []string{"other@example.test"}, true)
+	for _, messageID := range []int64{survivorMessage, hiddenMessage} {
+		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id = ? WHERE id = ?`), "<shared@example.test>", messageID)
+		require.NoError(err)
+	}
+	var survivorConversation, hiddenConversation int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), survivorMessage).Scan(&survivorConversation))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id = ?`), hiddenMessage).Scan(&hiddenConversation))
+	assert.NotEqual(survivorConversation, hiddenConversation)
+
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	sourceLiveID := mergeFixtureLoop(t, st, from.ID, hiddenConversation, hiddenMessage, "awaiting_reply", now)
+	targetLiveID := mergeFixtureLoop(t, st, into.ID, survivorConversation, survivorMessage, "awaiting_reply", now)
+	sourceClosedID := mergeFixtureLoop(t, st, from.ID, hiddenConversation, hiddenMessage, "reply_owed", now)
+	closedAt := now.Add(time.Minute)
+	_, err = st.CloseLoopContext(t.Context(), sourceClosedID, "done", closedAt)
+	require.NoError(err)
+
+	uniqueAnchorLoopID := mergeFixtureLoop(t, st, from.ID, hiddenConversation, uniqueAnchorMessage, "reply_owed", now)
+	uniqueSnoozeUntil := now.Add(24 * time.Hour)
+	_, err = st.SnoozeLoopContext(t.Context(), uniqueAnchorLoopID, uniqueSnoozeUntil, now)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET last_activity_message_id = ? WHERE id = ?`), hiddenMessage, uniqueAnchorLoopID)
+	require.NoError(err)
+	snoozeUntil := now.Add(48 * time.Hour)
+	_, err = st.SnoozeLoopContext(t.Context(), sourceLiveID, snoozeUntil, now)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET agenda_state = 'dismissed' WHERE id = ?`), sourceLiveID)
+	require.NoError(err)
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden)
+
+	sourceLive, err := st.GetOpenLoopContext(t.Context(), sourceLiveID)
+	require.NoError(err)
+	assert.Equal("closed", sourceLive.Status)
+	assert.Equal(survivorConversation, sourceLive.ConversationID)
+	require.NotNil(sourceLive.AnchorMessageID)
+	assert.Equal(survivorMessage, *sourceLive.AnchorMessageID)
+	require.NotNil(sourceLive.ClosedReason)
+	assert.Equal("withdrawn", *sourceLive.ClosedReason)
+	require.NotNil(sourceLive.SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*sourceLive.SnoozedUntil))
+	assert.Equal("dismissed", sourceLive.AgendaState)
+
+	uniqueAnchorLoop, err := st.GetOpenLoopContext(t.Context(), uniqueAnchorLoopID)
+	require.NoError(err)
+	assert.Equal("open", uniqueAnchorLoop.Status)
+	assert.Equal(hiddenConversation, uniqueAnchorLoop.ConversationID)
+	require.NotNil(uniqueAnchorLoop.AnchorMessageID)
+	assert.Equal(uniqueAnchorMessage, *uniqueAnchorLoop.AnchorMessageID)
+	require.NotNil(uniqueAnchorLoop.LastActivityMessageID)
+	assert.Equal(survivorMessage, *uniqueAnchorLoop.LastActivityMessageID)
+	require.NotNil(uniqueAnchorLoop.SnoozedUntil)
+	assert.True(uniqueSnoozeUntil.Equal(*uniqueAnchorLoop.SnoozedUntil))
+
+	targetLive, err := st.GetOpenLoopContext(t.Context(), targetLiveID)
+	require.NoError(err)
+	require.NotNil(targetLive.SnoozedUntil)
+	assert.True(snoozeUntil.Equal(*targetLive.SnoozedUntil))
+	assert.Equal("dismissed", targetLive.AgendaState)
+
+	sourceClosed, err := st.GetOpenLoopContext(t.Context(), sourceClosedID)
+	require.NoError(err)
+	assert.Equal("closed", sourceClosed.Status)
+	assert.Equal(survivorConversation, sourceClosed.ConversationID)
+	require.NotNil(sourceClosed.AnchorMessageID)
+	assert.Equal(survivorMessage, *sourceClosed.AnchorMessageID)
+	require.NotNil(sourceClosed.ClosedAt)
+	assert.True(closedAt.Equal(*sourceClosed.ClosedAt))
+	require.NotNil(sourceClosed.ClosedReason)
+	assert.Equal("done", *sourceClosed.ClosedReason)
+	assert.JSONEq(
+		fmt.Sprintf(`[ {"message_id": %d, "conversation_id": %d, "quote": "question", "quote_start_rune": 0, "quote_end_rune": 8 } ]`, survivorMessage, survivorConversation),
+		string(sourceClosed.EvidenceJSON),
+	)
+}
+
+func TestMergeSourcesConsolidatesDestinationConversationSuppressions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-example")
+	require.NoError(err)
+	_, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-1", "source conversation", 1)
+	_, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared", "live-1", "destination conversation", 2)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	sourceMute, err := st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{TargetKind: "conversation", ConversationID: &sourceConversation, Note: "source note"}, now)
+	require.NoError(err)
+	destinationMute, err := st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{TargetKind: "conversation", ConversationID: &destinationConversation, Note: "destination note"}, now.Add(time.Minute))
+	require.NoError(err)
+	require.NotNil(sourceMute.Suppression)
+	require.NotNil(destinationMute.Suppression)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	var sourceCount, destinationCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), sourceConversation).Scan(&sourceCount))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), destinationConversation).Scan(&destinationCount))
+	assert.Zero(sourceCount)
+	assert.Equal(1, destinationCount)
+	var retainedID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), destinationConversation).Scan(&retainedID))
+	assert.Equal(destinationMute.Suppression.ID, retainedID, "the destination mute ID remains a valid unmute handle")
+	assert.NotEqual(sourceMute.Suppression.ID, retainedID)
+	var retainedNote string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT note FROM loop_suppressions WHERE id=?`), retainedID).Scan(&retainedNote))
+	assert.Equal("destination note\nsource note", retainedNote)
+	require.NoError(st.DeleteLoopSuppressionContext(t.Context(), retainedID, 24*time.Hour, now.Add(time.Hour)))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), destinationConversation).Scan(&destinationCount))
+	assert.Zero(destinationCount)
+}
+
 func TestMergeSourcesEmailFingerprintRequiresMatchingCompleteRecipients(t *testing.T) {
 	tests := []struct {
 		name            string
