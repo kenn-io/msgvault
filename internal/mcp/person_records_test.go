@@ -71,6 +71,30 @@ func personAttributeResponseSession(t *testing.T, preview *atomic.Value, writes 
 	return session
 }
 
+func TestDecodePersonRecordArgsAcceptsTimestampAttribute(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	args, err := decodePersonRecordArgs(toolRequest{argumentsJSON: []byte(`{"person_id":7,"etag":"r1","attribute_slug":"last_seen_at","expected_value_id":0,"value":{"type":"timestamp","timestamp":"2026-06-15T10:30:00Z"}}`)}, true)
+	requirements.NoError(err)
+	requirements.NotNil(args.Value)
+	requirements.NotNil(args.Value.Timestamp)
+	assertions.Equal(time.Date(2026, 6, 15, 10, 30, 0, 0, time.UTC), *args.Value.Timestamp)
+}
+
+func TestDecodePersonRecordArgsAcceptsProfileEnvelopeTimestamps(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	args, err := decodePersonRecordArgs(toolRequest{argumentsJSON: []byte(`{"person_id":7,"etag":"r1","patch":{"dates":{"add":[{"date_kind":"birthday","date":{"year":1985,"month":4,"day":12},"original_value":"1985-04-12","envelope":{"source":"manual","active_from":"2026-01-01T00:00:00Z","active_until":"2026-12-31T23:59:59Z"}}]}}}`)}, true)
+	requirements.NoError(err)
+	requirements.NotNil(args.Patch)
+	requirements.NotNil(args.Patch.Dates)
+	requirements.Len(args.Patch.Dates.Add, 1)
+	requirements.NotNil(args.Patch.Dates.Add[0].Envelope.ActiveFrom)
+	requirements.NotNil(args.Patch.Dates.Add[0].Envelope.ActiveUntil)
+	assertions.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), *args.Patch.Dates.Add[0].Envelope.ActiveFrom)
+	assertions.Equal(time.Date(2026, 12, 31, 23, 59, 59, 0, time.UTC), *args.Patch.Dates.Add[0].Envelope.ActiveUntil)
+}
+
 func TestPersonAttributePreviewMustBeDryRun(t *testing.T) {
 	for _, tool := range []string{"set_person_attribute", "clear_person_attribute"} {
 		for _, body := range []string{"null", `{}`, `{"dry_run":false}`, `{"dry_run":"true"}`, `{"dry_run":`} {

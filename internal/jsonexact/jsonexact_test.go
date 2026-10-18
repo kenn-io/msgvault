@@ -1,7 +1,9 @@
 package jsonexact_test
 
 import (
+	"encoding/json/v2"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,10 @@ type duplicateEnvelope struct {
 
 type duplicateNested struct {
 	Value string `json:"value"`
+}
+
+type timestampEnvelope struct {
+	Timestamp *time.Time `json:"timestamp"`
 }
 
 func TestValidateRejectsDuplicateMembersRecursively(t *testing.T) {
@@ -42,4 +48,16 @@ func TestValidateAcceptsUniqueMembersRecursively(t *testing.T) {
 		duplicateEnvelope{},
 	)
 	require.NoError(t, err)
+}
+
+func FuzzValidateTreatsTimeAsScalar(f *testing.F) {
+	f.Add("2026-01-02T03:04:05Z")
+	f.Add("not a timestamp")
+	f.Fuzz(func(t *testing.T, timestamp string) {
+		data, err := json.Marshal(struct {
+			Timestamp string `json:"timestamp"`
+		}{Timestamp: timestamp})
+		require.NoError(t, err)
+		require.NoError(t, jsonexact.Validate(data, timestampEnvelope{}))
+	})
 }

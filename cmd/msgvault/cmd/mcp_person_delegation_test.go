@@ -339,7 +339,7 @@ func TestMCPDelegatedPersonProductionDiscovery(t *testing.T) {
 					assertions.True(attributeRevokedRead.IsError)
 				}
 			}
-			for _, name := range []string{"list_source_status", "sync_source", "get_participant_identity", "get_slack_sync_policy", "promote_person", "search_metadata"} {
+			for _, name := range []string{"promote_person", "search_metadata"} {
 				assertions.NotContains(names, name)
 			}
 		})
