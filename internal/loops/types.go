@@ -95,6 +95,7 @@ type Spec struct {
 	// PreviousTurnKnown proves a substantive opposite boundary inside this
 	// window. Without it, older terminal history must retain authority.
 	PreviousTurnKnown bool
+	PreviousTurnAt    time.Time
 	// TruncatedRun marks body-limited or unreadable evidence in the trailing run.
 	TruncatedRun bool
 }

@@ -153,6 +153,74 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonNotFound)
 }
 
+func TestPersonMergeTransfersLoopDecisionsAndSplitRestoresThem(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	f := storetest.New(t)
+	survivorParticipant := f.EnsureParticipant("loop-survivor@example.test", "Survivor", "example.test")
+	absorbedParticipant := f.EnsureParticipant("loop-absorbed@example.test", "Absorbed", "example.test")
+	survivor, created, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+	require.NoError(err)
+	require.True(created)
+	absorbed, created, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+	require.NoError(err)
+	require.True(created)
+
+	loopID := insertSchemaLoop(t, f, "merge-loop-owner-state", "reply_owed", "turn_state")
+	snoozedUntil := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	loopExec(t, f.Store, `UPDATE open_loops SET counterparty_person_id=?, summary='owner summary',
+		snoozed_until=?, agenda_state='created' WHERE id=?`, absorbed.ID, snoozedUntil, loopID)
+	for _, suppression := range []struct {
+		personID int64
+		note     string
+	}{{survivor.ID, "survivor note"}, {absorbed.ID, "absorbed note"}} {
+		_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO loop_suppressions(target_kind,person_id,note)
+			VALUES(?,?,?)`), string(store.AttributeObjectPerson), suppression.personID, suppression.note)
+		require.NoError(err)
+	}
+
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "merge-loop-owner-decisions", Actor: "test",
+	})
+	require.NoError(err)
+	var counterpart sql.NullInt64
+	var summary, agendaState string
+	var gotSnoozed sql.NullTime
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT counterparty_person_id,summary,snoozed_until,agenda_state
+		FROM open_loops WHERE id=?`), loopID).Scan(&counterpart, &summary, &gotSnoozed, &agendaState))
+	require.True(counterpart.Valid)
+	assert.Equal(survivor.ID, counterpart.Int64)
+	assert.Equal("owner summary", summary)
+	assert.Equal(snoozedUntil, gotSnoozed.Time)
+	assert.Equal("created", agendaState)
+	var suppressionCount int
+	var mergedNote string
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT COUNT(*), MAX(note) FROM loop_suppressions
+		WHERE target_kind=? AND person_id=?`), string(store.AttributeObjectPerson), survivor.ID).Scan(&suppressionCount, &mergedNote))
+	assert.Equal(1, suppressionCount)
+	assert.Equal("survivor note\nabsorbed note", mergedNote)
+
+	split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: []int64{absorbedParticipant}, ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey: "split-loop-owner-decisions", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT counterparty_person_id FROM open_loops WHERE id=?`), loopID).Scan(&counterpart))
+	require.True(counterpart.Valid)
+	assert.Equal(split.NewPerson.ID, counterpart.Int64)
+	var survivorNote, absorbedNote string
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT note FROM loop_suppressions
+		WHERE target_kind=? AND person_id=?`), string(store.AttributeObjectPerson), split.SourcePerson.ID).Scan(&survivorNote))
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT note FROM loop_suppressions
+		WHERE target_kind=? AND person_id=?`), string(store.AttributeObjectPerson), split.NewPerson.ID).Scan(&absorbedNote))
+	assert.Equal("survivor note", survivorNote)
+	assert.Equal("absorbed note", absorbedNote)
+}
+
 func TestMergePersons_CardDAVState(t *testing.T) {
 	t.Run("resource binding follows exact split", func(t *testing.T) {
 		require := require.New(t)

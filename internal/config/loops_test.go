@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -10,30 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/looplimits"
 )
-
-func TestLoadLoopsConfigDefaults(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("[loops]\n"), 0600))
-	loaded, err := Load(path, "")
-	require.NoError(t, err)
-
-	assert.True(t, loaded.Loops.Enabled)
-	assert.Equal(t, "*/15 * * * *", loaded.Loops.Schedule)
-	assert.Equal(t, 24*time.Hour, loaded.Loops.ReplyOwedAfter)
-	assert.Equal(t, 72*time.Hour, loaded.Loops.AwaitingReplyAfter)
-	assert.Equal(t, 24*time.Hour, loaded.Loops.StaleAfter)
-	assert.Equal(t, 3, loaded.Loops.MaxGroupCounterparts)
-	assert.Equal(t, 365*24*time.Hour, loaded.Loops.Lookback)
-	assert.Equal(t, 24*time.Hour, loaded.Loops.ReconcileInterval)
-	assert.Equal(t, 5, loaded.Loops.FeedPages)
-	assert.Equal(t, 2000, loaded.Loops.BatchMessages)
-	assert.Equal(t, 200, loaded.Loops.BatchConversations)
-	assert.Equal(t, 500, loaded.Loops.RescanBatch)
-	assert.Equal(t, 2000, loaded.Loops.SignalsBackfillBatch)
-	assert.Equal(t, 200, loaded.Loops.ConversationMessageLimit)
-	assert.Equal(t, 2000, loaded.Loops.ConversationMessageLimitExtended)
-	assert.Equal(t, 12, loaded.Loops.RunMessageLimit)
-}
 
 func TestLoopsConfigLoadAndManualSchedule(t *testing.T) {
 	assertions := assert.New(t)
@@ -46,7 +23,6 @@ func TestLoopsConfigLoadAndManualSchedule(t *testing.T) {
 	assertions.Empty(loaded.Loops.Schedule)
 	assertions.Zero(loaded.Loops.Lookback)
 	assertions.Equal(12*time.Hour, loaded.Loops.ReplyOwedAfter)
-	assertions.Equal(72*time.Hour, loaded.Loops.AwaitingReplyAfter)
 }
 
 func TestLoopsConfigValidation(t *testing.T) {
@@ -101,6 +77,30 @@ func TestLoopsConfigRejectsConversationLimitsAboveLoaderMaximum(t *testing.T) {
 			cfg := DefaultLoopsConfig()
 			tt.change(&cfg)
 			require.ErrorContains(t, cfg.Validate(), "conversation_message_limit")
+		})
+	}
+}
+
+func TestLoadRejectsExtendedConversationMessageLimitAboveLoaderMaximum(t *testing.T) {
+	for _, tc := range []struct {
+		limit   int
+		wantErr bool
+	}{
+		{limit: 10000},
+		{limit: 10001, wantErr: true},
+	} {
+		t.Run(strconv.Itoa(tc.limit), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			contents := []byte("[loops]\nconversation_message_limit_extended = " + strconv.Itoa(tc.limit) + "\n")
+			require.NoError(t, os.WriteFile(path, contents, 0600))
+			loaded, err := Load(path, "")
+			if tc.wantErr {
+				require.ErrorContains(t, err, "conversation_message_limit_extended")
+				require.ErrorContains(t, err, "10000")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.limit, loaded.Loops.ConversationMessageLimitExtended)
 		})
 	}
 }

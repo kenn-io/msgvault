@@ -92,6 +92,7 @@ type LoopOpenDecision struct {
 	RulesetVersion                                                   int
 	TurnMessageIDs                                                   []int64
 	PreviousTurnKnown                                                bool
+	PreviousTurnAt                                                   time.Time
 }
 type LoopVerdict struct {
 	Close        []LoopCloseDecision

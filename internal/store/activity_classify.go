@@ -37,7 +37,7 @@ func ClassifyActivityCandidate(
 
 	owningSenderIndex := -1
 	for index, counterpart := range counterparts {
-		if counterpart.RecipientType == "from" && counterpart.IsOwner {
+		if counterpart.RecipientType == meetingSenderRole && counterpart.IsOwner {
 			owningSenderIndex = index
 			break
 		}
@@ -104,7 +104,7 @@ func ClassifyActivityCandidate(
 		if ownerLinked(counterpart) || counterpart.PersonID == nil {
 			continue
 		}
-		isSender := counterpart.RecipientType == "from"
+		isSender := counterpart.RecipientType == meetingSenderRole
 		result.Persons = append(result.Persons, ActivityEventPerson{
 			PersonID: *counterpart.PersonID,
 			Role:     classifiedActivityRole(counterpart.RecipientType, isSender, meeting),
@@ -165,7 +165,7 @@ func activityChannelFor(conversationType string, meeting bool) ActivityChannel {
 
 func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != "from" && counterpart.IsOwner {
+		if counterpart.RecipientType != meetingSenderRole && counterpart.IsOwner {
 			return true
 		}
 	}
@@ -174,7 +174,7 @@ func activityOwnerAmongNonSenders(counterparts []ActivityCounterpart) bool {
 
 func firstActivityNonSenderOwnerAddress(counterparts []ActivityCounterpart) string {
 	for _, counterpart := range counterparts {
-		if counterpart.RecipientType != "from" && counterpart.IsOwner {
+		if counterpart.RecipientType != meetingSenderRole && counterpart.IsOwner {
 			return counterpart.OwnerAddress
 		}
 	}

@@ -209,7 +209,7 @@ func (s *Store) readPersonNetworkLayerSources(
 	organizations := make([]int64, 0)
 	for _, node := range frontier {
 		switch node.Kind {
-		case "person":
+		case string(AttributeObjectPerson):
 			people = append(people, node.EntityID)
 		case "organization":
 			organizations = append(organizations, node.EntityID)
@@ -299,7 +299,7 @@ func (s *Store) personNetworkLayerSourcesQuery(
 	if len(organizations) > 0 {
 		addCTE("frontier_organizations", organizations)
 		branches = append(branches,
-			`SELECT 'employment', employment.id, 'person', employment.person_id, `+personLabel("person")+`
+			`SELECT 'employment', employment.id, 'person', employment.person_id, `+personLabel(string(AttributeObjectPerson))+`
 			 FROM frontier_organizations frontier
 			 CROSS JOIN employments employment
 			 JOIN persons person ON person.id = employment.person_id
@@ -421,18 +421,18 @@ func (s *Store) hydratePersonNetworkRelationships(
 			edge: NetworkEdge{
 				ID:                   personNetworkEdgeID("relationship", id),
 				Kind:                 "relationship",
-				SourceNodeID:         personNetworkNodeID("person", sourceID),
-				TargetNodeID:         personNetworkNodeID("person", targetID),
+				SourceNodeID:         personNetworkNodeID(string(AttributeObjectPerson), sourceID),
+				TargetNodeID:         personNetworkNodeID(string(AttributeObjectPerson), targetID),
 				RelationshipTypeSlug: &relationshipSlug,
 				Label:                label,
 				StartDate:            personNetworkDateFromColumns(startYear, startMonth, startDay),
 				EndDate:              personNetworkDateFromColumns(endYear, endMonth, endDay),
 			},
 			sourceNode: NetworkNode{
-				ID: personNetworkNodeID("person", sourceID), Kind: "person", EntityID: sourceID, Label: sourceLabel,
+				ID: personNetworkNodeID(string(AttributeObjectPerson), sourceID), Kind: string(AttributeObjectPerson), EntityID: sourceID, Label: sourceLabel,
 			},
 			targetNode: NetworkNode{
-				ID: personNetworkNodeID("person", targetID), Kind: "person", EntityID: targetID, Label: targetLabel,
+				ID: personNetworkNodeID(string(AttributeObjectPerson), targetID), Kind: string(AttributeObjectPerson), EntityID: targetID, Label: targetLabel,
 			},
 		}
 	}
@@ -484,14 +484,14 @@ func (s *Store) hydratePersonNetworkEmployments(
 			edge: NetworkEdge{
 				ID:           personNetworkEdgeID("employment", id),
 				Kind:         "employment",
-				SourceNodeID: personNetworkNodeID("person", personID),
+				SourceNodeID: personNetworkNodeID(string(AttributeObjectPerson), personID),
 				TargetNodeID: personNetworkNodeID("organization", organizationID),
 				Label:        edgeLabel,
 				StartDate:    personNetworkDateFromColumns(startYear, startMonth, startDay),
 				EndDate:      personNetworkDateFromColumns(endYear, endMonth, endDay),
 			},
 			sourceNode: NetworkNode{
-				ID: personNetworkNodeID("person", personID), Kind: "person", EntityID: personID, Label: personLabel,
+				ID: personNetworkNodeID(string(AttributeObjectPerson), personID), Kind: string(AttributeObjectPerson), EntityID: personID, Label: personLabel,
 			},
 			targetNode: NetworkNode{
 				ID: personNetworkNodeID("organization", organizationID), Kind: "organization", EntityID: organizationID, Label: organizationLabel,
@@ -549,7 +549,7 @@ func (s *Store) personNetworkPersonNode(ctx context.Context, personID int64, hop
 	if displayName.Valid && displayName.String != "" {
 		label = displayName.String
 	}
-	return NetworkNode{ID: personNetworkNodeID("person", id), Kind: "person", EntityID: id, Label: label, Hop: hop}, nil
+	return NetworkNode{ID: personNetworkNodeID(string(AttributeObjectPerson), id), Kind: string(AttributeObjectPerson), EntityID: id, Label: label, Hop: hop}, nil
 }
 
 func personNetworkNodeID(kind string, entityID int64) string {

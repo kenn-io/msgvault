@@ -167,10 +167,10 @@ func (s *Store) PersistIMAPRelocationWithParticipantsContext(
 
 func validateIMAPRelocationRecipients(recipients []RecipientSet) error {
 	required := map[string]int{
-		"from": 0,
-		"to":   0,
-		"cc":   0,
-		"bcc":  0,
+		meetingSenderRole: 0,
+		"to":              0,
+		"cc":              0,
+		"bcc":             0,
 	}
 	for _, recipient := range recipients {
 		count, ok := required[recipient.Type]
@@ -179,7 +179,7 @@ func validateIMAPRelocationRecipients(recipients []RecipientSet) error {
 		}
 		required[recipient.Type] = count + 1
 	}
-	for _, role := range []string{"from", "to", "cc", "bcc"} {
+	for _, role := range []string{meetingSenderRole, "to", "cc", "bcc"} {
 		if required[role] != 1 {
 			return fmt.Errorf(
 				"IMAP relocation snapshot requires exactly one %s recipient set, got %d",

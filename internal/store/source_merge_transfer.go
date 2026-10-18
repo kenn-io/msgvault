@@ -71,6 +71,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
+	if err := s.transferSourceMergeLoopState(ctx, tx, into, plan.conversations); err != nil {
+		return fmt.Errorf("transfer source merge loop state: %w", err)
+	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
 	// before archive labels lose provider IDs; Drafts takes precedence.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
@@ -243,6 +246,131 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return err
 	}
 	return s.bumpDerivedDataRevision(tx)
+}
+
+func (s *Store) transferSourceMergeLoopState(
+	ctx context.Context,
+	tx *loggedTx,
+	destinationSourceID int64,
+	conversations []mergeConversation,
+) error {
+	for _, conversation := range conversations {
+		if conversation.id != conversation.destination {
+			if err := s.transferSourceMergeConversationSuppression(ctx, tx, conversation.id, conversation.destination); err != nil {
+				return fmt.Errorf("transfer conversation mute %d to %d: %w", conversation.id, conversation.destination, err)
+			}
+			if err := s.resolveSourceMergeLiveLoopCollision(ctx, tx, conversation.id, conversation.destination); err != nil {
+				return fmt.Errorf("resolve live loops for conversations %d and %d: %w", conversation.id, conversation.destination, err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id = ?, source_id = ? WHERE conversation_id = ?`,
+			conversation.destination, destinationSourceID, conversation.id); err != nil {
+			return fmt.Errorf("transfer loops for conversation %d to %d: %w", conversation.id, conversation.destination, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) transferSourceMergeConversationSuppression(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceConversationID, destinationConversationID int64,
+) error {
+	var absorbed struct {
+		id        int64
+		note      string
+		createdAt time.Time
+	}
+	err := tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+		WHERE target_kind = 'conversation' AND conversation_id = ?`, sourceConversationID).
+		Scan(&absorbed.id, &absorbed.note, &absorbed.createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var survivor struct {
+		id        int64
+		note      string
+		createdAt time.Time
+	}
+	err = tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+		WHERE target_kind = 'conversation' AND conversation_id = ?`, destinationConversationID).
+		Scan(&survivor.id, &survivor.note, &survivor.createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id = ? WHERE id = ?`, destinationConversationID, absorbed.id)
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	createdAt := survivor.createdAt
+	if absorbed.createdAt.Before(createdAt) {
+		createdAt = absorbed.createdAt
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ?, created_at = ? WHERE id = ?`,
+		mergeLoopSuppressionNotes(survivor.note, absorbed.note), s.dialect.TimestampParam(createdAt), survivor.id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, absorbed.id); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) resolveSourceMergeLiveLoopCollision(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceConversationID, destinationConversationID int64,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, kind, last_activity_at FROM open_loops
+		WHERE conversation_id = ? AND detector = 'turn_state' AND status <> 'closed' ORDER BY id`, sourceConversationID)
+	if err != nil {
+		return err
+	}
+	type liveLoop struct {
+		id             int64
+		kind           string
+		lastActivityAt time.Time
+	}
+	var sourceLoops []liveLoop
+	for rows.Next() {
+		var loop liveLoop
+		if err := rows.Scan(&loop.id, &loop.kind, &loop.lastActivityAt); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		sourceLoops = append(sourceLoops, loop)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, sourceLoop := range sourceLoops {
+		var destinationLoopID int64
+		var destinationLastActivityAt time.Time
+		err := tx.QueryRowContext(ctx, `SELECT id, last_activity_at FROM open_loops
+			WHERE conversation_id = ? AND kind = ? AND detector = 'turn_state' AND status <> 'closed'
+			ORDER BY last_activity_at DESC, id LIMIT 1`, destinationConversationID, sourceLoop.kind).
+			Scan(&destinationLoopID, &destinationLastActivityAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		retiredID := sourceLoop.id
+		if sourceLoop.lastActivityAt.After(destinationLastActivityAt) {
+			retiredID = destinationLoopID
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status = 'closed',
+			closed_at = `+s.dialect.Now()+`, closed_reason = 'withdrawn', closed_by = 'system',
+			closed_message_id = NULL, updated_at = `+s.dialect.Now()+`
+			WHERE id = ? AND status <> 'closed'`, retiredID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Copy only occurrences not already represented on the survivor. Compare

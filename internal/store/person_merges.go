@@ -429,6 +429,9 @@ func (s *Store) mergePersonsOnce(
 			 WHERE survivor_person_id = ?`, survivor.ID, absorbed.ID); err != nil {
 			return fmt.Errorf("retarget prior person merge candidates: %w", err)
 		}
+		if err := s.reconcilePersonLoopDecisionsTx(ctx, tx, mergeID, survivor.ID, absorbed.ID); err != nil {
+			return err
+		}
 		if err := s.rebasePriorPersonMergeReferenceBaselinesTx(
 			ctx, tx, mergeID, absorbed.ID, survivor.ID,
 		); err != nil {
@@ -491,6 +494,81 @@ func (s *Store) mergePersonsOnce(
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *Store) reconcilePersonLoopDecisionsTx(
+	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
+) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops
+		SET counterparty_person_id = ? WHERE counterparty_person_id = ?`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("transfer absorbed open-loop owner decisions: %w", err)
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+		WHERE target_kind = ? AND person_id = ? ORDER BY id`, string(AttributeObjectPerson), absorbedID)
+	if err != nil {
+		return fmt.Errorf("load absorbed person loop suppressions: %w", err)
+	}
+	type suppression struct {
+		id        int64
+		note      string
+		createdAt time.Time
+	}
+	var absorbed []suppression
+	for rows.Next() {
+		var row suppression
+		if err := rows.Scan(&row.id, &row.note, &row.createdAt); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan absorbed person loop suppression: %w", err)
+		}
+		absorbed = append(absorbed, row)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("iterate absorbed person loop suppressions: %w", err)
+	}
+	for _, row := range absorbed {
+		var survivor suppression
+		err := tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+			WHERE target_kind = ? AND person_id = ?`, string(AttributeObjectPerson), survivorID).
+			Scan(&survivor.id, &survivor.note, &survivor.createdAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET person_id = ? WHERE id = ?`, survivorID, row.id); err != nil {
+				return fmt.Errorf("transfer absorbed person loop suppression: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load survivor person loop suppression: %w", err)
+		}
+		createdAt := survivor.createdAt
+		if row.createdAt.Before(createdAt) {
+			createdAt = row.createdAt
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ?, created_at = ? WHERE id = ?`,
+			mergeLoopSuppressionNotes(survivor.note, row.note), s.dialect.TimestampParam(createdAt), survivor.id); err != nil {
+			return fmt.Errorf("preserve merged person loop suppression note: %w", err)
+		}
+		if err := s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, "loop_suppressions", row.id, "deleted_snapshot", nil,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, row.id); err != nil {
+			return fmt.Errorf("deduplicate absorbed person loop suppression: %w", err)
+		}
+	}
+	return nil
+}
+
+func mergeLoopSuppressionNotes(survivorNote, absorbedNote string) string {
+	switch {
+	case absorbedNote == "" || absorbedNote == survivorNote:
+		return survivorNote
+	case survivorNote == "":
+		return absorbedNote
+	default:
+		return survivorNote + "\n" + absorbedNote
+	}
 }
 
 func (s *Store) markAbsorbedPersonFactPinEventsDeletedTx(
@@ -2108,13 +2186,13 @@ func (s *Store) reconcilePersonDailyNotesTx(
 	}
 	for _, entryID := range entryIDs {
 		originalKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, absorbedID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, absorbedID,
 		)
 		if err != nil {
 			return err
 		}
 		currentKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, survivorID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, survivorID,
 		)
 		if err != nil {
 			return err

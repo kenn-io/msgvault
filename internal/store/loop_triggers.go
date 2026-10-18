@@ -38,19 +38,55 @@ func (d *SQLiteDialect) EnsureLoopProjectionTriggers(q querier) error {
 				fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON message_%s FOR EACH ROW BEGIN %s END", name, strings.ToUpper(event), association, body.String()))
 		}
 	}
+	messageUpdateColumns := []string{"conversation_id"}
+	messageUpdateConditions := []string{"OLD.conversation_id IS NOT NEW.conversation_id"}
+	for _, column := range []string{"source_is_from_me", "identity_is_from_me"} {
+		var present int
+		if err := q.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name=?", column).Scan(&present); err != nil {
+			return fmt.Errorf("inspect message ownership column %s: %w", column, err)
+		}
+		if present == 0 {
+			continue
+		}
+		messageUpdateColumns = append(messageUpdateColumns, column)
+		messageUpdateConditions = append(messageUpdateConditions, fmt.Sprintf("OLD.%s IS NOT NEW.%s", column, column))
+	}
 	reason := "CASE WHEN OLD.conversation_id IS NOT NEW.conversation_id THEN 'moved' ELSE 'ownership' END"
 	body := loopSQLiteEnqueue("conversations", "id", "id=OLD.conversation_id", reason) + loopSQLiteEnqueue("conversations", "id", "id=NEW.conversation_id", reason)
-	statements = append(statements, "DROP TRIGGER IF EXISTS trg_loop_queue_messages_move", `CREATE TRIGGER trg_loop_queue_messages_move
- AFTER UPDATE OF conversation_id, source_is_from_me, identity_is_from_me ON messages FOR EACH ROW
- WHEN OLD.conversation_id IS NOT NEW.conversation_id
-   OR OLD.source_is_from_me IS NOT NEW.source_is_from_me
-   OR OLD.identity_is_from_me IS NOT NEW.identity_is_from_me
- BEGIN `+body+` END`)
+	statements = append(statements, "DROP TRIGGER IF EXISTS trg_loop_queue_messages_move",
+		fmt.Sprintf(`CREATE TRIGGER trg_loop_queue_messages_move
+ AFTER UPDATE OF %s ON messages FOR EACH ROW
+ WHEN %s
+ BEGIN %s END`, strings.Join(messageUpdateColumns, ", "), strings.Join(messageUpdateConditions, "\n   OR "), body))
+	statements = append(statements,
+		"DROP TRIGGER IF EXISTS trg_loop_queue_conversation_type_update",
+		`CREATE TRIGGER trg_loop_queue_conversation_type_update
+ AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+ WHEN OLD.conversation_type IS NOT NEW.conversation_type
+ BEGIN `+loopSQLiteEnqueue("conversations", "id", "id=NEW.id", "'conversation_type'")+` END`,
+	)
+	for _, event := range []string{"insert", "update", "delete"} {
+		name := "trg_loop_queue_conversation_participants_" + event
+		var body strings.Builder
+		if event != "insert" {
+			body.WriteString(loopSQLiteEnqueue("conversations", "id", "id=OLD.conversation_id", "'membership'"))
+		}
+		if event != "delete" {
+			body.WriteString(loopSQLiteEnqueue("conversations", "id", "id=NEW.conversation_id", "'membership'"))
+		}
+		statement := fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON conversation_participants FOR EACH ROW BEGIN %s END", name, strings.ToUpper(event), body.String())
+		if event == "update" {
+			statement = fmt.Sprintf(`CREATE TRIGGER %s AFTER UPDATE OF conversation_id, participant_id, role, left_at ON conversation_participants FOR EACH ROW
+ WHEN OLD.conversation_id IS NOT NEW.conversation_id OR OLD.participant_id IS NOT NEW.participant_id OR OLD.role IS NOT NEW.role OR OLD.left_at IS NOT NEW.left_at
+ BEGIN %s END`, name, body.String())
+		}
+		statements = append(statements, "DROP TRIGGER IF EXISTS "+name, statement)
+	}
 	return execLoopTriggerStatements(q, statements)
 }
 
 // EnsureLoopProjectionTriggers installs the same guarded invalidation contract
-// on PostgreSQL. Only the three ownership/thread columns can fire the message
+// on PostgreSQL. Only ownership/thread changes can fire the message
 // trigger; bookkeeping updates do not add projection work.
 func (d *PostgreSQLDialect) EnsureLoopProjectionTriggers(q querier) error {
 	statements := []string{
@@ -96,11 +132,39 @@ func (d *PostgreSQLDialect) EnsureLoopProjectionTriggers(q querier) error {
    $$ LANGUAGE plpgsql`,
 		`DROP TRIGGER IF EXISTS trg_loop_queue_messages_move ON messages`,
 		`CREATE TRIGGER trg_loop_queue_messages_move
-   AFTER UPDATE OF conversation_id, source_is_from_me, identity_is_from_me ON messages FOR EACH ROW
+	   AFTER UPDATE OF conversation_id, source_is_from_me, identity_is_from_me ON messages FOR EACH ROW
    WHEN (OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
-      OR OLD.source_is_from_me IS DISTINCT FROM NEW.source_is_from_me
-      OR OLD.identity_is_from_me IS DISTINCT FROM NEW.identity_is_from_me)
-   EXECUTE FUNCTION queue_loop_messages_move()`)
+	      OR OLD.source_is_from_me IS DISTINCT FROM NEW.source_is_from_me
+	      OR OLD.identity_is_from_me IS DISTINCT FROM NEW.identity_is_from_me)
+   EXECUTE FUNCTION queue_loop_messages_move()`,
+		`CREATE OR REPLACE FUNCTION queue_loop_conversation_type() RETURNS trigger AS $$
+   BEGIN
+    IF OLD.conversation_type IS DISTINCT FROM NEW.conversation_type THEN
+     PERFORM enqueue_loop_conversation(NEW.id,'conversation_type');
+    END IF;
+    RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_loop_queue_conversation_type_update ON conversations`,
+		`CREATE TRIGGER trg_loop_queue_conversation_type_update
+   AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
+   EXECUTE FUNCTION queue_loop_conversation_type()`,
+		`CREATE OR REPLACE FUNCTION queue_loop_conversation_participant() RETURNS trigger AS $$
+   BEGIN
+    IF TG_OP <> 'INSERT' THEN
+     PERFORM enqueue_loop_conversation(OLD.conversation_id,'membership');
+    END IF;
+    IF TG_OP <> 'DELETE' THEN
+     PERFORM enqueue_loop_conversation(NEW.conversation_id,'membership');
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_loop_queue_conversation_participants ON conversation_participants`,
+		`CREATE TRIGGER trg_loop_queue_conversation_participants
+   AFTER INSERT OR UPDATE OR DELETE ON conversation_participants FOR EACH ROW
+   EXECUTE FUNCTION queue_loop_conversation_participant()`)
 	return execLoopTriggerStatements(q, statements)
 }
 

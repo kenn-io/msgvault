@@ -54,7 +54,9 @@ func (t *traversal) substantive(v ConversationView, i int) bool {
 		if previous.Direction == Inbound {
 			question := t.body(v, previous.ID)
 			if !question.ok {
-				return true
+				// Unknown prior text could contain the question this owner
+				// acknowledgement responds to. Keep the acknowledgement neutral.
+				return false
 			}
 			if asksQuestion(question.text) {
 				return false

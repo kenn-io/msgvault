@@ -35,7 +35,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 		return fmt.Errorf("%w: conversation, observed revision and time required", ErrInvalidLoop)
 	}
 	if open := apply.Verdict.Open; open != nil {
-		if open.ConversationID != apply.ConversationID || open.SourceID <= 0 || open.TurnKey == "" || !slices.Contains([]string{"reply_owed", "awaiting_reply"}, open.Kind) || !slices.Contains([]string{"email", "chat"}, open.Channel) || open.OwedSinceAt.IsZero() || open.OpensAt.IsZero() || open.LastActivityAt.IsZero() || open.RulesetVersion < 1 || !open.EvidenceJSON.IsValid() || utf8.RuneCountInString(open.Summary) > 200 {
+		if open.ConversationID != apply.ConversationID || open.SourceID <= 0 || open.TurnKey == "" || !slices.Contains([]string{"reply_owed", "awaiting_reply"}, open.Kind) || !slices.Contains([]string{"email", "chat"}, open.Channel) || open.OwedSinceAt.IsZero() || open.OpensAt.IsZero() || open.LastActivityAt.IsZero() || open.RulesetVersion < 1 || !jsontext.Value(open.EvidenceJSON).IsValid() || utf8.RuneCountInString(open.Summary) > 200 {
 			return fmt.Errorf("%w: invalid open decision", ErrInvalidLoop)
 		}
 	}
@@ -114,14 +114,17 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 			latest = row
 		}
 		if !sameTurn && row.Status == "closed" && loopTerminal(*row) {
-			terminalOutside = true
+			boundaryAfterTerminal := !open.PreviousTurnAt.IsZero() && open.PreviousTurnAt.After(row.LastActivityAt)
+			if !open.PreviousTurnKnown || !boundaryAfterTerminal {
+				terminalOutside = true
+			}
 		}
 	}
 	// A done anchor outside the bounded window blocks new loops unless the live
 	// row itself proves that the current turn already has an occurrence.
 	liveInTurn := live != nil && live.AnchorMessageID != nil &&
 		(slices.Contains(open.TurnMessageIDs, *live.AnchorMessageID) || *live.AnchorMessageID == open.AnchorMessageID)
-	blocked := (latest != nil && loopTerminal(*latest)) ||
+	blocked := (latest != nil && loopTerminal(*latest)) || (terminalOutside && live == nil) ||
 		(!open.PreviousTurnKnown && terminalOutside && !liveInTurn)
 	var muted bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions WHERE conversation_id=? OR participant_id=? OR person_id=? OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, open.ConversationID, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.CounterpartyParticipantID).Scan(&muted); err != nil {

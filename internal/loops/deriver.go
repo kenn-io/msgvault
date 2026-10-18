@@ -145,7 +145,14 @@ func (d *Deriver) drain(ctx context.Context, now time.Time, result *RunResult) e
 				withdrawn = append(withdrawn, store.LoopCloseDecision{ID: row.ID, Reason: "withdrawn", At: now})
 				continue
 			}
-			live = append(live, LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID})
+			loop := LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID}
+			if row.CounterpartyParticipantID != nil {
+				loop.CounterpartyParticipantID = *row.CounterpartyParticipantID
+			}
+			if row.CounterpartyPersonID != nil {
+				loop.CounterpartyPersonID = *row.CounterpartyPersonID
+			}
+			live = append(live, loop)
 		}
 		verdict := Detect(view, live, now, thresholds, supp)
 		if verdict.Err != nil {
@@ -223,7 +230,7 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 	if view.ConversationType == "direct_chat" || view.ConversationType == "group_chat" {
 		channel = "chat"
 	}
-	open := &store.LoopOpenDecision{TurnKey: fmt.Sprintf("turn:%d:%s:%d", view.ConversationID, spec.Kind, spec.Anchor.ID), Kind: spec.Kind, Status: spec.Status, Channel: channel, OwnerAddress: spec.Anchor.OwnerAddress, Summary: spec.Summary, ConversationID: view.ConversationID, SourceID: view.SourceID, AnchorMessageID: spec.Anchor.ID, LastActivityMessageID: spec.LastActivity.ID, OwedSinceAt: spec.OwedSinceAt, LastActivityAt: spec.LastActivity.OccurredAt, OpensAt: spec.OpensAt, EvidenceJSON: evidence, RulesetVersion: RulesetVersion, TurnMessageIDs: spec.TurnMessageIDs, PreviousTurnKnown: spec.PreviousTurnKnown}
+	open := &store.LoopOpenDecision{TurnKey: fmt.Sprintf("turn:%d:%s:%d", view.ConversationID, spec.Kind, spec.Anchor.ID), Kind: spec.Kind, Status: spec.Status, Channel: channel, OwnerAddress: spec.Anchor.OwnerAddress, Summary: spec.Summary, ConversationID: view.ConversationID, SourceID: view.SourceID, AnchorMessageID: spec.Anchor.ID, LastActivityMessageID: spec.LastActivity.ID, OwedSinceAt: spec.OwedSinceAt, LastActivityAt: spec.LastActivity.OccurredAt, OpensAt: spec.OpensAt, EvidenceJSON: evidence, RulesetVersion: RulesetVersion, TurnMessageIDs: spec.TurnMessageIDs, PreviousTurnKnown: spec.PreviousTurnKnown, PreviousTurnAt: spec.PreviousTurnAt}
 	if spec.Counterparty.ID != 0 {
 		id := spec.Counterparty.ID
 		open.CounterpartyParticipantID = &id

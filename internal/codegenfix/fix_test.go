@@ -89,6 +89,33 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	assert.Equal(got, again)
 }
 
+func TestRewriteCreateLoopSuppressionClientAcceptsBothSuccessStatuses(t *testing.T) {
+	fixture := `package generated
+func (c *Client) AnotherMethod() error {
+	if resp.StatusCode != 201 { return nil }
+	return nil
+}
+func (c *Client) CreateLoopSuppression(ctx context.Context, options *CreateLoopSuppressionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CreateLoopSuppressionResponseJSON, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateLoopSuppressionResponseJSON, error) {
+		if resp.StatusCode != 201 {
+			return nil, nil
+		}
+		return nil, nil
+	}
+	return responseParser(ctx, nil)
+}
+`
+
+	got, err := RewriteCreateLoopSuppressionClient([]byte(fixture))
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "if resp.StatusCode != 200 && resp.StatusCode != 201 {")
+	assert.Contains(t, string(got), "func (c *Client) AnotherMethod() error {\n\tif resp.StatusCode != 201 {")
+
+	again, err := RewriteCreateLoopSuppressionClient(got)
+	require.NoError(t, err)
+	assert.Equal(t, got, again)
+}
+
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
 	_, err := RewriteGeneratedValidators([]byte("package generated\n"))
 

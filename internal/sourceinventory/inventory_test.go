@@ -220,6 +220,31 @@ func TestHistoryOnlyBeeperSourceIsStatic(t *testing.T) {
 	assertions.Empty(items[0].SyncCommand)
 }
 
+func TestExcludedBeeperAccountIsDisabledInFreshnessInventory(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "excluded-account")
+	requirements.NoError(err)
+	cfg := config.NewDefaultConfig()
+	cfg.Beeper.Enabled = true
+	cfg.Beeper.Schedule = "*/15 * * * *"
+	cfg.Beeper.ExcludeAccounts = []string{"excluded-account"}
+
+	items, err := Build(t.Context(), cfg, st)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal(source.ID, *items[0].SourceID)
+	assertions.Equal("disabled", items[0].Scheduling)
+	assertions.Empty(items[0].SyncCommand)
+
+	report, err := freshness.Build(t.Context(), freshness.Inputs{
+		Sources: items, Now: time.Now().UTC().Add(48 * time.Hour), StaleAfter: 24 * time.Hour,
+	})
+	requirements.NoError(err)
+	assertions.False(report.Stale, "excluded accounts must not block freshness-ranked views")
+}
+
 func TestImportOnlyChatSourcesAreStatic(t *testing.T) {
 	for _, sourceType := range []string{"whatsapp", "apple_messages", "google_messages", "imessage"} {
 		t.Run(sourceType, func(t *testing.T) {

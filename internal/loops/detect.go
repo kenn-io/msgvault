@@ -50,6 +50,11 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	settlementView := view
 	extended := false
 	settledTurnFlip := false
+	type settledLoop struct {
+		loop   LiveLoop
+		anchor LoopMessage
+	}
+	retained := make(map[string]settledLoop)
 	for _, l := range live {
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
@@ -71,7 +76,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settlementView.AnchorExists = view.AnchorExists
 			settlementView.BodyText = view.BodyText
 		}
-		closed, gap, err := t.settle(settlementView, l, now, cfg)
+		closed, gap, anchor, err := t.settle(settlementView, l, now, cfg)
 		if err != nil {
 			v.Err = err
 			return v
@@ -82,6 +87,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		if gap {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
+		} else if anchor != nil {
+			retained[l.Kind] = settledLoop{loop: l, anchor: *anchor}
 		}
 	}
 	if extended && (len(turns) > 0 || settledTurnFlip) {
@@ -121,6 +128,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	kind, threshold := ReplyOwed, cfg.ReplyOwedAfter
 	var uncertain bool
 	if trailing.direction == Inbound {
+		if settled, ok := retained[ReplyOwed]; ok {
+			anchorCopy := settled.anchor
+			anchor = &anchorCopy
+		}
 		ownerWrote := len(turns) > 1 && turns[1].direction == Outbound
 		bulk := false
 		list := false
@@ -142,6 +153,17 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				counterparty = candidateCounterparty
 			}
 		}
+		if anchor != nil && counterparty.ID == 0 {
+			if settled, ok := retained[ReplyOwed]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
+				counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
+			} else {
+				counterparty = anchor.Sender
+			}
+		}
+		if anchor != nil && suppressed(counterparty, supp) {
+			closeKept(kind, "muted")
+			return v
+		}
 		liveAnchorInTurn := slices.ContainsFunc(live, func(l LiveLoop) bool {
 			return l.Kind == ReplyOwed &&
 				!slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == l.ID }) &&
@@ -154,6 +176,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 	} else {
 		kind, threshold = AwaitingReply, cfg.AwaitingReplyAfter
+		if settled, ok := retained[kind]; ok {
+			anchorCopy := settled.anchor
+			anchor = &anchorCopy
+		}
 		if large {
 			closeKept(kind, "withdrawn")
 			return v
@@ -170,6 +196,30 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				anchor = &candidate
 				counterparty = candidateCounterparty
 			}
+		}
+		if anchor != nil && counterparty.ID == 0 {
+			if settled, ok := retained[kind]; ok && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
+				for _, participant := range settlementView.Participants {
+					if participant.ID == settled.loop.CounterpartyParticipantID {
+						counterparty = participant
+						break
+					}
+				}
+				if counterparty.ID == 0 {
+					counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
+				}
+			} else {
+				candidate, ok := obligationCounterparty(settlementView, kind, *anchor)
+				if !ok {
+					closeKept(kind, "withdrawn")
+					return v
+				}
+				counterparty = candidate
+			}
+		}
+		if anchor != nil && suppressed(counterparty, supp) {
+			closeKept(kind, "muted")
+			return v
 		}
 		if uncertain {
 			// A budget limit or failed read cannot disprove a live question.
@@ -202,8 +252,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	if !now.Before(opensAt) {
 		status = "open"
 	}
+	previousTurnAt := time.Time{}
+	if len(turns) > 1 && len(turns[1].messages) > 0 {
+		previousTurnAt = turns[1].messages[len(turns[1].messages)-1].OccurredAt
+	}
 	v.Open = &Spec{Kind: kind, Status: status, Summary: summary, Anchor: *anchor, LastActivity: last, Counterparty: counterparty,
-		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain, PreviousTurnKnown: len(turns) > 1}
+		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain, PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt}
 	for _, m := range trailing.messages {
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}

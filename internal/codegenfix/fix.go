@@ -7,6 +7,35 @@ import (
 	"regexp"
 )
 
+// RewriteCreateLoopSuppressionClient accepts the 200 dry-run response as well
+// as the 201 persisted-suppression response in the generated convenience
+// method. The generated WithResponse method already models both statuses.
+func RewriteCreateLoopSuppressionClient(source []byte) ([]byte, error) {
+	const methodName = "CreateLoopSuppression"
+	start := bytes.Index(source, []byte("func (c *Client) "+methodName+"("))
+	if start < 0 {
+		return nil, fmt.Errorf("generated %s method shape changed", methodName)
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, fmt.Errorf("generated %s method shape changed", methodName)
+	}
+	end := start + endOffset
+	method := source[start:end]
+	generatedSuccessCheck := []byte("if resp.StatusCode != 201 {")
+	fixedSuccessCheck := []byte("if resp.StatusCode != 200 && resp.StatusCode != 201 {")
+	switch {
+	case bytes.Count(method, generatedSuccessCheck) == 1 && bytes.Count(method, fixedSuccessCheck) == 0:
+		method = bytes.Replace(method, generatedSuccessCheck, fixedSuccessCheck, 1)
+	case bytes.Count(method, generatedSuccessCheck) == 0 && bytes.Count(method, fixedSuccessCheck) == 1:
+	default:
+		return nil, fmt.Errorf("generated %s success response shape changed", methodName)
+	}
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	return append(result, source[end:]...), nil
+}
+
 // RewriteRunQueryClient preserves the simple generated SQL query methods' 200
 // response type when the endpoint also declares a 202 accepted-build body.
 // The WithResponse methods still expose both statuses to callers that need

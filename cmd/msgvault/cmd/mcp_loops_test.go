@@ -57,9 +57,12 @@ func TestMCPLoopsDiscoveryUsesActualDaemonRoutes(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/v1/health":
-					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
+					assert.NoError(t, json.NewEncoder(w).Encode(struct {
+						Status           string `json:"status"`
+						APISchemaVersion string `json:"api_schema_version"`
+					}{Status: "ok", APISchemaVersion: "3.0.0"}))
 				case "/api/v1/mcp/capabilities":
-					_ = json.NewEncoder(w).Encode(apiprotocol.MCPCapabilities{Version: 1, Routes: tc.routes})
+					assert.NoError(t, json.NewEncoder(w).Encode(apiprotocol.MCPCapabilities{Version: 1, Routes: tc.routes}))
 				default:
 					http.NotFound(w, r)
 				}
@@ -82,11 +85,16 @@ func TestMCPLoopWriteFlagIsScopedToRootInvocation(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
+			assertions.NoError(json.NewEncoder(w).Encode(struct {
+				Status           string `json:"status"`
+				APISchemaVersion string `json:"api_schema_version"`
+			}{Status: "ok", APISchemaVersion: api.APISchemaVersion}))
 		case "/api/v1/mcp/capabilities":
-			_ = json.NewEncoder(w).Encode(apiprotocol.MCPCapabilities{Version: 1, Routes: loopMCPRouteDescriptors()})
+			assertions.NoError(json.NewEncoder(w).Encode(apiprotocol.MCPCapabilities{Version: 1, Routes: loopMCPRouteDescriptors()}))
 		case "/api/session":
-			_ = json.NewEncoder(w).Encode(map[string]any{"auth_mode": "owner"})
+			assertions.NoError(json.NewEncoder(w).Encode(struct {
+				AuthMode string `json:"auth_mode"`
+			}{AuthMode: "owner"}))
 		default:
 			http.NotFound(w, r)
 		}

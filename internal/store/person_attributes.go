@@ -74,7 +74,7 @@ var personAttributeValueColumns = personAttributeOwner.columns()
 // personAttributeOwner checks existence only on set: a supersede on a missing
 // person reports the missing value instead.
 var personAttributeOwner = attributeOwner{
-	objectType: AttributeObjectPerson, noun: "person",
+	objectType: AttributeObjectPerson, noun: string(AttributeObjectPerson),
 	table: "person_attribute_values", column: personMergePersonIDColumn, stampCreatedAt: true,
 	lockOwner: func(ctx context.Context, _ *Store, tx *loggedTx, personID int64, set bool) error {
 		if !set {

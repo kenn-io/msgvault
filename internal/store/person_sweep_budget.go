@@ -151,7 +151,7 @@ func (s *Store) StartPersonSweepAttempt(
 		query := `SELECT mode, status, program_fingerprint, catalog_fingerprint,
 		                 provider_fingerprint FROM person_sweep_runs WHERE id = ?`
 		if s.IsPostgreSQL() {
-			query += " FOR UPDATE"
+			query += s.dialect.SelectForUpdate()
 		} else if _, lockErr := tx.ExecContext(ctx,
 			`UPDATE person_sweep_runs SET id = id WHERE id = ?`, input.RunID); lockErr != nil {
 			return fmt.Errorf("lock person sweep run: %w", lockErr)
@@ -328,7 +328,7 @@ func (s *Store) lockPersonSweepBudgetAttempt(
 	query := `SELECT run_id, person_id, lease_fence, provider_fingerprint, status, failure_class
 	          FROM person_sweep_attempts WHERE id = ?`
 	if s.IsPostgreSQL() {
-		query += " FOR UPDATE"
+		query += s.dialect.SelectForUpdate()
 	}
 	var attempt personSweepBudgetAttempt
 	if err := tx.QueryRowContext(ctx, query, attemptID).Scan(&attempt.runID,
@@ -379,7 +379,7 @@ func (s *Store) lockPersonSweepDailyUsage(
 	                 actual_output_tokens, actual_cost_micro_usd
 	          FROM person_sweep_daily_usage WHERE utc_day = ?`
 	if s.IsPostgreSQL() {
-		query += " FOR UPDATE"
+		query += s.dialect.SelectForUpdate()
 	}
 	var usage personSweepDailyUsage
 	err := tx.QueryRowContext(ctx, query, day).Scan(&usage.reserved.Requests,

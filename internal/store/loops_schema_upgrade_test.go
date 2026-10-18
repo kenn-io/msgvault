@@ -18,9 +18,10 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	columns := func() []string {
 		rows, err := s.DB().Query("SELECT * FROM messages LIMIT 0")
 		require.NoError(t, err)
-		defer rows.Close()
+		defer func() { require.NoError(t, rows.Close()) }()
 		cols, err := rows.Columns()
 		require.NoError(t, err)
+		require.NoError(t, rows.Err())
 		return cols
 	}
 	before := columns()

@@ -10626,7 +10626,7 @@ func (c *Client) CreateLoopSuppression(ctx context.Context, options *CreateLoopS
 
 	responseParser := func(ctx context.Context, resp *runtime.Response) (*CreateLoopSuppressionResponseJSON, error) {
 		bodyBytes := resp.Content
-		if resp.StatusCode != 201 {
+		if resp.StatusCode != 200 && resp.StatusCode != 201 {
 			target := new(CreateLoopSuppressionErrorResponse)
 			// Handle empty error response body gracefully - skip unmarshal if no content
 			if len(bodyBytes) > 0 {

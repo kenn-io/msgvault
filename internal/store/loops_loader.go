@@ -15,7 +15,10 @@ import (
 // an anchor deleted or moved out of the conversation being reconciled.
 func (s *Store) LoopConversationAnchorExistsContext(ctx context.Context, conversationID, messageID int64) (bool, error) {
 	var live bool
-	err := s.db.QueryRowContext(ctx, "SELECT deleted_at IS NULL AND deleted_from_source_at IS NULL FROM messages WHERE id=? AND conversation_id=?", messageID, conversationID).Scan(&live)
+	err := s.db.QueryRowContext(ctx, `SELECT messages.deleted_at IS NULL AND messages.deleted_from_source_at IS NULL
+		AND NOT (`+draftEvidenceSQL("messages", "sources")+`)
+		FROM messages JOIN sources ON sources.id=messages.source_id
+		WHERE messages.id=? AND messages.conversation_id=?`, messageID, conversationID).Scan(&live)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -40,7 +43,8 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		var last nullableTimestamp
 		err := tx.QueryRowContext(ctx, `SELECT c.id,c.source_id,s.source_type,c.conversation_type,
-COALESCE((SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m WHERE m.conversation_id=c.id),c.last_message_at)
+(SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m JOIN sources src ON src.id=m.source_id
+WHERE m.conversation_id=c.id AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+draftEvidenceSQL("m", "src")+`))
 FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversationID).Scan(&out.ConversationID, &out.SourceID, &out.SourceType, &out.ConversationType, &last)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrLoopNotFound
@@ -51,7 +55,9 @@ FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversat
 		if last.Valid {
 			out.LastMessageAt = last.Time
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.source_id,m.conversation_id,m.message_type,m.sent_at,m.received_at,m.internal_date,COALESCE(m.source_is_from_me,FALSE),m.deleted_at,m.deleted_from_source_at,m.sender_id,COALESCE(m.subject,''),COALESCE(m.snippet,''),COALESCE(m.list_id,''),`+draftEvidenceSQL("m", "src")+` FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.conversation_id=? ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id DESC LIMIT ?`, conversationID, limit)
+		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.source_id,m.conversation_id,m.message_type,m.sent_at,m.received_at,m.internal_date,COALESCE(m.source_is_from_me,FALSE),m.deleted_at,m.deleted_from_source_at,m.sender_id,COALESCE(m.subject,''),COALESCE(m.snippet,''),COALESCE(m.list_id,''),`+draftEvidenceSQL("m", "src")+` FROM messages m JOIN sources src ON src.id=m.source_id
+WHERE m.conversation_id=? AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+draftEvidenceSQL("m", "src")+`)
+ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id DESC LIMIT ?`, conversationID, limit)
 		if err != nil {
 			return err
 		}
