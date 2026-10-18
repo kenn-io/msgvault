@@ -2,6 +2,7 @@ package inboxcontrol
 
 import (
 	"context"
+	"errors"
 
 	"go.kenn.io/msgvault/internal/emailtags"
 )
@@ -26,11 +27,11 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 	for i, item := range proposal.Items {
 		targets[i] = *item.Request.Target
 		if err := s.authorize(ctx, principal, item.Request); err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		intentHash, err := triageItemIntentHash(item)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		receipt, err := s.Ledger.LookupInboxReceipt(ctx, principal.ID, proposal.Source.SourceID, item.Request.IdempotencyKey)
 		if err != nil {
@@ -42,7 +43,7 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		}
 		result, err := s.replay(ctx, receipt, intentHash, principal)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		results[i] = *result
 		if err := triageReceiptOutcome(receipt.Status); err != nil && replayError == nil {
@@ -58,7 +59,7 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		return results, nil
 	}
 	if err := VerifyTriageProposal(s.Key, proposal, principal, s.now()); err != nil {
-		return results, err
+		return triageResultsOnError(results, err)
 	}
 	store, ok := s.Ledger.(TriageSnapshotStore)
 	evidence, hasEvidence := s.Ledger.(TriageEvidenceStore)
@@ -67,14 +68,14 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 	}
 	done, err := s.acquire(ctx, proposal.Source.SourceID, gate)
 	if err != nil {
-		return results, err
+		return triageResultsOnError(results, err)
 	}
 	defer done()
 	// Receipt claims may have completed while waiting for the source lease. Re-read
 	// every key inside that lease before validating the original archive revision.
 	for i, item := range proposal.Items {
 		if err := s.authorize(ctx, principal, item.Request); err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		receipt, err := s.Ledger.LookupInboxReceipt(ctx, principal.ID, proposal.Source.SourceID, item.Request.IdempotencyKey)
 		if err != nil {
@@ -85,11 +86,11 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		}
 		hash, err := triageItemIntentHash(item)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		result, err := s.replay(ctx, receipt, hash, principal)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		results[i] = *result
 		if err := triageReceiptOutcome(receipt.Status); err != nil && replayError == nil {
@@ -108,7 +109,7 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 	}
 	baseline, err := store.InboxTriageSnapshot(ctx, proposal.Source, targets)
 	if err != nil {
-		return results, safePreflightError(err)
+		return triageResultsOnError(results, safePreflightError(err))
 	}
 	if baseline == nil || baseline.Source != proposal.Source || len(baseline.Candidates) != len(targets) || baseline.MappingRevision != proposal.MappingRevision || baseline.ArchiveRevision != proposal.ArchiveRevision || baseline.IncomingWatermark != proposal.IncomingWatermark {
 		return results, ErrPlanChanged
@@ -158,28 +159,28 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		}
 		inner.beforeClaim = guard
 		if err := guard(ctx, item.Request); err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 
 		request := item.Request
 		hash, err := triageItemIntentHash(item)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		stateHash, err := planFingerprint(*request.Expected, item.Projected)
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		request.PreviewToken, err = SignPreview(s.Key, PreviewClaims{PrincipalID: principal.ID, IntentHash: hash, StateHash: stateHash, IssuedAt: proposal.IssuedAt, ExpiresAt: proposal.ExpiresAt})
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		result, err := inner.Control(ctx, request, principal, heldGate)
 		if result != nil {
 			results[i] = *result
 		}
 		if err != nil {
-			return results, err
+			return triageResultsOnError(results, err)
 		}
 		if result == nil || result.Receipt == nil || result.After == nil || result.Receipt.Status != StatusVerified {
 			return results, ErrOutcomeUnknown
@@ -190,7 +191,7 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		// excluded by the source lease throughout the batch.
 		current, err := store.InboxTriageSnapshot(ctx, proposal.Source, targets)
 		if err != nil {
-			return results, safePreflightError(err)
+			return triageResultsOnError(results, safePreflightError(err))
 		}
 		if current == nil || current.Source != baseline.Source || current.MappingRevision != baseline.MappingRevision || current.IncomingWatermark != baseline.IncomingWatermark || len(current.Candidates) != len(targets) {
 			return results, ErrPlanChanged
@@ -212,6 +213,13 @@ func (s *Service) ApplyTriage(ctx context.Context, proposal TriageProposal, prin
 		baseline = current
 	}
 	return results, nil
+}
+
+func triageResultsOnError(results []Result, err error) ([]Result, error) {
+	if errors.Is(err, ErrDenied) {
+		return nil, err
+	}
+	return results, err
 }
 
 func triageItemIntentHash(item TriageProposalItem) (string, error) {

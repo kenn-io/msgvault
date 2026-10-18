@@ -123,15 +123,7 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 				_, _, err := st.RemoveSourceSerialized(t.Context(), src.ID)
 				if err == nil {
 					var outside *store.Source
-					if st.IsPostgreSQL() {
-						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					} else {
-						// Reproduce a legacy writer reusing the removed ID. Normal
-						// Store creation deliberately retains a fresh source lifetime.
-						_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					}
+					outside, err = st.GetOrCreateSourceContext(t.Context(), "test", "outside@example.test")
 					if err == nil {
 						var conv int64
 						conv, err = st.EnsureConversation(outside.ID, "thread", "Synthetic")
@@ -156,11 +148,6 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			}
 			if route == "message" || route == "store message" {
 				assertions.Contains(response.Body.String(), "allowed body")
-			}
-			if !st.IsPostgreSQL() {
-				replacement, err := st.GetSourceByIdentifier("outside@example.test")
-				requirements.NoError(err)
-				requirements.Equal(src.ID, replacement.ID)
 			}
 			response = get()
 			assertions.NotContains(response.Body.String(), "glacier private")

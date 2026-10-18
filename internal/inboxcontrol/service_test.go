@@ -375,6 +375,52 @@ func TestInboxControlLostResponseNeverRetriesAndSanitizesError(t *testing.T) {
 	assertions.Equal(1, f.provider.dispatches)
 }
 
+func TestInboxControlReauthorizesAfterDispatchBeforeReturningResults(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		dispatchErr error
+		wantStatus  inboxcontrol.Status
+	}{
+		{name: "verified dispatch", wantStatus: inboxcontrol.StatusVerified},
+		{name: "unknown dispatch", dispatchErr: errors.New("fixture lost dispatch response"), wantStatus: inboxcontrol.StatusUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newControlFixture(t)
+			r := f.execution(t)
+			originalAuthorize := f.service.Authorize
+			var reauthorizedIntent inboxcontrol.Request
+			var reauthorizedReceiptID string
+			f.service.Authorize = func(ctx context.Context, principal inboxcontrol.Principal, request inboxcontrol.Request) error {
+				if f.denied {
+					reauthorizedIntent = request
+					reauthorizedReceiptID, _ = inboxcontrol.ReceiptAuthorityID(ctx)
+				}
+				return originalAuthorize(ctx, principal, request)
+			}
+			f.provider.dispatch = func(context.Context) error {
+				f.denied = true
+				return tc.dispatchErr
+			}
+
+			result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+			require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+			assert.Nil(t, result)
+			stored, err := f.archive.Store.LookupInboxReceipt(t.Context(), f.principal.ID, r.Target.SourceID, r.IdempotencyKey)
+			require.NoError(t, err)
+			require.NotNil(t, stored)
+			assert.Equal(t, tc.wantStatus, stored.Status)
+			assert.Equal(t, stored.ID, reauthorizedReceiptID)
+			assert.Equal(t, inboxcontrol.OpArchive, reauthorizedIntent.Operation)
+			assert.Equal(t, *r.Target, *reauthorizedIntent.Target)
+			assert.True(t, reauthorizedIntent.DryRun)
+			assert.Nil(t, reauthorizedIntent.Expected)
+			assert.Empty(t, reauthorizedIntent.PreviewToken)
+			assert.Empty(t, reauthorizedIntent.IdempotencyKey)
+			assert.Equal(t, 1, f.provider.dispatches)
+		})
+	}
+}
+
 func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

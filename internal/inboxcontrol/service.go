@@ -283,9 +283,13 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		return s.replay(ctx, receipt, intentHash, principal)
 	}
 	if err := s.Ledger.MarkInboxDispatching(ctx, receipt.ID); err != nil {
-		return &Result{Receipt: receipt}, ErrInternal
+		return s.authorizeReceiptResult(ctx, receipt, principal, &Result{Receipt: receipt}, ErrInternal)
 	}
 	result := &Result{Before: &before, Projected: &projected, Receipt: receipt}
+	finish := func(status Status, after *State, code string, outcome error) (*Result, error) {
+		settled, finishErr := s.finishDetached(ctx, result, status, after, code, outcome)
+		return s.authorizeReceiptResult(ctx, receipt, principal, settled, finishErr)
+	}
 	dispatchRequest := request
 	if imapMoveRequest(request) && len(projected.Folders) == 1 {
 		destination := projected.Folders[0]
@@ -296,7 +300,7 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	var mapping *State
 	if dispatch.Folder != nil {
 		if dispatch.Target != nil || request.Operation != OpCreateFolder || request.Source == nil || request.Destination == nil || !validIdentity(dispatch.Folder.ID) || !validIdentity(dispatch.Folder.Name) || dispatch.Folder.Name != request.Destination.Name || dispatch.Folder.ParentID != request.Destination.ParentID {
-			return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-unverified", ErrOutcomeUnknown)
+			return finish(StatusUnknown, nil, "mapping-unverified", ErrOutcomeUnknown)
 		}
 		folder := *dispatch.Folder
 		readRequest.ResolvedFolder = &folder
@@ -304,7 +308,7 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	}
 	if dispatch.Target != nil {
 		if !validDispatchMapping(request, before, projected, *dispatch.Target) {
-			return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-unverified", ErrOutcomeUnknown)
+			return finish(StatusUnknown, nil, "mapping-unverified", ErrOutcomeUnknown)
 		}
 		// Preserve the dispatch response independently of provider readback.
 		mapping = &State{Target: *dispatch.Target, ObservedAt: s.now()}
@@ -312,21 +316,21 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		if imapMoveRequest(request) {
 			mappingLedger, ok := s.Ledger.(ReceiptMappingLedger)
 			if !ok {
-				return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
+				return finish(StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
 			}
 			mappingCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			err := mappingLedger.RecordInboxReceiptMapping(mappingCtx, receipt.ID, *mapping)
 			cancel()
 			if err != nil {
-				return s.finishDetached(ctx, result, StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
+				return finish(StatusUnknown, nil, "mapping-persist-failed", ErrOutcomeUnknown)
 			}
 		}
 	}
 	if dispatchErr != nil {
 		if errors.Is(dispatchErr, ErrNoWrite) && mapping == nil {
-			return s.finishDetached(ctx, result, StatusFailed, nil, "provider-rejected", ErrNoWrite)
+			return finish(StatusFailed, nil, "provider-rejected", ErrNoWrite)
 		}
-		return s.finishDetached(ctx, result, StatusUnknown, mapping, "dispatch-unverified", ErrOutcomeUnknown)
+		return finish(StatusUnknown, mapping, "dispatch-unverified", ErrOutcomeUnknown)
 	}
 	after, err := provider.Observe(ctx, readRequest)
 	if err != nil || !observationMatchesRequest(after, readRequest) {
@@ -335,13 +339,13 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 		if dispatch.Target != nil {
 			mapping = &State{Target: *dispatch.Target, ObservedAt: s.now()}
 		}
-		return s.finishDetached(ctx, result, StatusUnknown, mapping, "readback-unverified", ErrOutcomeUnknown)
+		return finish(StatusUnknown, mapping, "readback-unverified", ErrOutcomeUnknown)
 	}
 	if err := provider.Verify(readRequest, before, projected, after); err != nil {
-		return s.finishDetached(ctx, result, StatusUnknown, &after, "delta-unverified", ErrOutcomeUnknown)
+		return finish(StatusUnknown, &after, "delta-unverified", ErrOutcomeUnknown)
 	}
 	if err := verifyMovedSource(ctx, provider, before, after); err != nil {
-		return s.finishDetached(ctx, result, StatusUnknown, &after, "source-unverified", ErrOutcomeUnknown)
+		return finish(StatusUnknown, &after, "source-unverified", ErrOutcomeUnknown)
 	}
 	result.After = &after
 	// Local reconciliation and durable receipt settlement have independent
@@ -353,9 +357,9 @@ func (s *Service) execute(ctx context.Context, request Request, principal Princi
 	completion, cancel := context.WithTimeout(context.WithoutCancel(completionBase), 5*time.Second)
 	defer cancel()
 	if s.ReconcileState == nil || s.ReconcileState(completion, before, after) != nil {
-		return s.finishDetached(ctx, result, StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
+		return finish(StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
 	}
-	return s.finishDetached(ctx, result, StatusVerified, &after, "", nil)
+	return finish(StatusVerified, &after, "", nil)
 }
 
 func (s *Service) finishDetached(ctx context.Context, result *Result, status Status, after *State, code string, outcome error) (*Result, error) {
@@ -378,6 +382,19 @@ func (s *Service) finish(ctx context.Context, result *Result, status Status, aft
 		return result, ErrOutcomeUnknown
 	}
 	result.Receipt = stored
+	return result, outcome
+}
+
+func (s *Service) authorizeReceiptResult(ctx context.Context, receipt *Receipt, principal Principal, result *Result, outcome error) (*Result, error) {
+	if result != nil && result.Receipt != nil {
+		receipt = result.Receipt
+	}
+	if receipt == nil {
+		return result, outcome
+	}
+	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
+		return nil, err
+	}
 	return result, outcome
 }
 
@@ -432,14 +449,7 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 		return nil, err
 	}
 	authorizeResult := func(result *Result, outcome error) (*Result, error) {
-		authorizedReceipt := receipt
-		if result != nil && result.Receipt != nil {
-			authorizedReceipt = result.Receipt
-		}
-		if err := s.authorize(receiptAuthorityContext(ctx, authorizedReceipt), principal, authorizedReceipt.Intent); err != nil {
-			return nil, err
-		}
-		return result, outcome
+		return s.authorizeReceiptResult(ctx, receipt, principal, result, outcome)
 	}
 	read := receipt.Intent
 	if receipt.Projected == nil {

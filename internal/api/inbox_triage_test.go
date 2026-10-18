@@ -223,6 +223,27 @@ func TestInboxTriageHTTPPreviewApplyAndReceiptReplay(t *testing.T) {
 	assertions.Equal(int64(2), f.writes.Load())
 }
 
+func TestInboxTriageHTTPRevocationDuringBatchSuppressesResults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newTriageHTTPFixture(t, 2)
+	id, secret := f.grant(t, []agentgrant.Permission{agentgrant.PermissionInboxRead, agentgrant.PermissionInboxTag}, []agentgrant.SourceRef{{ID: f.source.SourceID, Type: "gmail", Identifier: f.source.SourceIdentifier}})
+	response := f.call(t, "/api/v1/inbox/triage/preview", f.input, "", secret)
+	requirements.Equal(http.StatusOK, response.Code)
+	var proposal inboxcontrol.TriageProposal
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &proposal))
+	f.onWrite = func() { f.srv.agentGrants.Revoke(id) }
+
+	response = f.call(t, "/api/v1/inbox/triage/apply", proposal, "", secret)
+	requirements.Equal(http.StatusForbidden, response.Code)
+	var failure InboxTriageError
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &failure))
+	assertions.Equal("inbox_denied", failure.Error)
+	assertions.Empty(failure.Results, "revoked authority suppresses receipts accumulated earlier in the batch")
+	assertions.Equal(int64(1), f.writes.Load())
+}
+
 func TestInboxTriageHTTPPreviewRejectsOversizedProposal(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
