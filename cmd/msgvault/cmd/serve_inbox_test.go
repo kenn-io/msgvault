@@ -112,6 +112,23 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 
 	a, target := inboxGmailFixture(t)
 	a.config = &config.Config{OAuth: config.OAuthConfig{ServiceAccountKey: "synthetic-service-account"}}
+	cacheRefreshes := 0
+	cacheRefreshSourceMatches := true
+	cacheRefreshSawReleasedSource := true
+	a.draftCacheRefresh = func(ctx context.Context, sourceIdentifier string) error {
+		cacheRefreshes++
+		cacheRefreshSourceMatches = cacheRefreshSourceMatches && sourceIdentifier == target.SourceIdentifier
+		execution, err := a.store.AcquireInboxExecutionContext(ctx, target.SourceID)
+		if err != nil {
+			cacheRefreshSawReleasedSource = false
+			return err
+		}
+		if err := execution.Release(); err != nil {
+			cacheRefreshSawReleasedSource = false
+			return err
+		}
+		return errors.New("synthetic best-effort refresh failure")
+	}
 	labels := []string{"INBOX", "UNREAD", "STARRED"}
 	native, err := a.store.EmailTagTargetContext(t.Context(), target.ItemID, "")
 	requirements.NoError(err)
@@ -188,6 +205,9 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	assertions.Equal(1, posts)
 	assertions.Equal(1, gates)
 	assertions.Equal(1, releases)
+	assertions.Equal(1, cacheRefreshes)
+	assertions.True(cacheRefreshSourceMatches)
+	assertions.True(cacheRefreshSawReleasedSource, "the cache refresh must run after source ownership is released")
 	observation, err := a.store.GetInboxProviderState(t.Context(), target)
 	requirements.NoError(err)
 	requirements.NotNil(observation)
@@ -196,6 +216,23 @@ func TestDaemonInboxGmailNativeSignedExecution(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(result.Receipt.ID, replay.Receipt.ID)
 	assertions.Equal(1, posts)
+	assertions.Equal(1, cacheRefreshes, "replaying a verified receipt does not queue another cache refresh")
+
+	pending := *result.Receipt
+	pending.ID, pending.PrincipalID, pending.IdempotencyKey = "native-reconcile-cache", principal.ID, "native-reconcile-cache-key"
+	pending.Status, pending.After, pending.DispatchedAt, pending.FinishedAt, pending.FailureCode = inboxcontrol.StatusPrepared, nil, nil, nil, ""
+	_, claimed, err := a.store.PrepareInboxReceipt(t.Context(), pending)
+	requirements.NoError(err)
+	requirements.True(claimed)
+	requirements.NoError(a.store.MarkInboxDispatching(t.Context(), pending.ID))
+	requirements.NoError(a.store.FinishInboxReceipt(t.Context(), pending.ID, inboxcontrol.StatusUnknown, nil, "synthetic-dispatch-outcome"))
+	reconciled, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: pending.ID}, principal, authorize, gate)
+	requirements.NoError(err, "a best-effort cache refresh failure must not change a successful reconciliation")
+	requirements.NotNil(reconciled.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, reconciled.Receipt.Status)
+	assertions.Equal(2, cacheRefreshes, "receipt reconciliation must queue a cache refresh")
+	assertions.True(cacheRefreshSourceMatches)
+	assertions.True(cacheRefreshSawReleasedSource, "receipt refresh must run after source ownership is released")
 
 	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
 	capabilities, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, principal, authorize, gate)

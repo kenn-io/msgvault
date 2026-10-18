@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,13 +97,17 @@ func TestInboxCLIArchiveDefaultsPreviewAndPreservesUnknownReceipt(t *testing.T) 
 	}
 }
 func TestInboxCLIRejectsInvalidInputBeforeHTTPControl(t *testing.T) {
+	const validTarget = `"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}`
+	validStateRequest := "{" + validTarget + "}"
+	validMoveRequest := `{"operation":"move",` + validTarget + `,"origin_folder":{"id":"INBOX"},"destination":{"id":"Archive"}}`
+	oversizedRequest := validStateRequest + strings.Repeat(" ", maxInboxCLIRequest-len(validStateRequest)+1)
 	for _, tc := range []struct {
 		name, input string
 		args        []string
 	}{
-		{"unknown member", `{"surprise":true}`, []string{"get-state", "--request", "-"}},
-		{"operation override", `{"operation":"move"}`, []string{"archive", "--request", "-"}},
-		{"oversize", string(bytes.Repeat([]byte(" "), (1<<20)+1)), []string{"get-state", "--request", "-"}},
+		{"unknown member", `{"surprise":true,` + validTarget + `}`, []string{"get-state", "--request", "-"}},
+		{"operation override", validMoveRequest, []string{"archive", "--request", "-"}},
+		{"oversize", oversizedRequest, []string{"get-state", "--request", "-"}},
 		{"unsigned apply", `{"target":{"source_id":1,"source_type":"gmail","source_identifier":"reader@example.com","account_id":"reader@example.com","scope":"message","item_id":2,"provider_id":"m2"}}`, []string{"archive", "--request", "-", "--apply"}},
 		{"apply read", `{"receipt_id":"r1"}`, []string{"receipt-get", "--request", "-", "--apply"}},
 	} {
@@ -114,7 +119,7 @@ func TestInboxCLIRejectsInvalidInputBeforeHTTPControl(t *testing.T) {
 			command.SetIn(bytes.NewBufferString(tc.input))
 			command.SetOut(io.Discard)
 			command.SetErr(io.Discard)
-			require.Error(t, command.Execute())
+			require.ErrorIs(t, command.Execute(), inboxcontrol.ErrInvalid)
 			assert.Empty(t, backend.requests)
 		})
 	}

@@ -117,12 +117,20 @@ func TestInboxExecutionReleasesFenceAfterCompletedSyncCleanupError(t *testing.T)
 	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "cleanup@example.test")
 	requirements.NoError(err)
+	fence, err := st.acquireInboxRemovalFence(t.Context(), source.ID)
+	requirements.NoError(err)
+	_, err = st.acquireInboxRemovalFence(t.Context(), source.ID)
+	requirements.ErrorIs(err, ErrSyncAlreadyActive, "the real removal fence must be held")
 	cleanupErr := errors.New("synthetic completed cleanup diagnostic")
 	lock := &failingSyncExecutionLock{released: true, err: cleanupErr}
 	st.syncExecutionLocks.bySource[source.ID] = lock
-	fence := &failingSyncExecutionLock{released: true}
 	execution := &InboxExecution{execution: &SyncExecution{store: st, sourceID: source.ID, lock: lock}, fence: fence}
 	requirements.ErrorIs(execution.Release(), cleanupErr)
 	requirements.Nil(execution.fence, "ended sync ownership must not strand the independent removal fence")
 	requirements.NoError(execution.Release())
+	nextFence, err := st.acquireInboxRemovalFence(t.Context(), source.ID)
+	requirements.NoError(err, "completed sync cleanup error must not strand the removal fence")
+	released, err := nextFence.release()
+	requirements.NoError(err)
+	requirements.True(released)
 }

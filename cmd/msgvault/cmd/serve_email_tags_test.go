@@ -55,23 +55,31 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	mid, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "gmail-1", MessageType: "email"})
 	require.NoError(err)
 	tags := []string{"INBOX", "UNREAD"}
-	writes, refreshes := 0, 0
+	mutationAttempts, refreshes := 0, 0
+	expectingPreview := false
 	client := &daemonTagGmailClient{MockAPI: gmail.NewMockAPI()}
 	client.tags = func(ctx context.Context, id string, change *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
 		assert.Equal("gmail-1", id)
 		result := &emailtags.MessageTagResult{Provider: "gmail", Tags: append([]string{}, tags...), Before: append([]string{}, tags...), AvailableTags: []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}}}
-		if change != nil {
-			result.DryRun = change.DryRun
-			if change.DryRun {
-				result.Tags = []string{"INBOX", "UNREAD"}
-				return result, nil
-			}
-			if len(tags) == 2 {
-				writes++
-				tags = append(tags, "Label_next")
-				result.Tags = append([]string{}, tags...)
-			}
+		if change == nil {
+			assert.False(expectingPreview, "a preview must forward its delta to Gmail")
+			result.Verified = true
+			return result, nil
 		}
+		result.DryRun = change.DryRun
+		if change.DryRun {
+			assert.True(change.DryRun)
+			assert.Equal([]string{"Label_next"}, change.Remove)
+			assert.Empty(change.Add)
+			result.Tags = []string{"INBOX", "UNREAD"}
+			return result, nil
+		}
+		assert.False(change.DryRun)
+		assert.Equal([]string{"Label_next"}, change.Add)
+		assert.Empty(change.Remove)
+		mutationAttempts++
+		tags = append(tags, "Label_next")
+		result.Tags = append([]string{}, tags...)
 		result.Verified = true
 		return result, nil
 	}
@@ -87,7 +95,7 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	msg, err := st.GetMessage(mid)
 	require.NoError(err)
 	assert.ElementsMatch([]string{"INBOX", "UNREAD", "Next"}, msg.Labels)
-	assert.Equal(1, writes)
+	assert.Equal(1, mutationAttempts)
 	assert.Equal(1, refreshes)
 	// Source execution ownership must reject provider writes during a sync.
 	execution, err := st.AcquireSyncExecutionContext(ctx, source.ID)
@@ -96,14 +104,16 @@ func TestDaemonMessageTagsGmailReconciles(t *testing.T) {
 	var active *emailtags.MessageTagError
 	require.ErrorAs(err, &active)
 	assert.Equal("sync_active", active.Code)
-	assert.Equal(1, writes)
+	assert.Equal(1, mutationAttempts)
 	// Reads and previews write nothing, so they work during a sync.
 	read, err := a.MessageTags(ctx, mid, nil, "", nil)
 	require.NoError(err)
 	assert.True(read.Verified)
+	expectingPreview = true
 	_, err = a.MessageTags(ctx, mid, &emailtags.MessageTagChange{Remove: []string{"Label_next"}, DryRun: true}, "", nil)
+	expectingPreview = false
 	require.NoError(err)
-	assert.Equal(1, writes)
+	assert.Equal(1, mutationAttempts)
 	require.NoError(execution.Release())
 	client.tags = func(context.Context, string, *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
 		result := &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX", "Label_other"}, Before: append([]string{}, tags...)}
@@ -261,8 +271,12 @@ func TestDaemonMessageTagsReadonlyGrantDoesNotWrite(t *testing.T) {
 	connects := 0
 	a := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler), emailTagClientFactory: func(context.Context, *store.Source) (gmail.API, error) {
 		connects++
-		return &daemonTagGmailClient{MockAPI: gmail.NewMockAPI(), tags: func(context.Context, string, *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
-			return &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"Label_next"}, DryRun: true}, nil
+		return &daemonTagGmailClient{MockAPI: gmail.NewMockAPI(), tags: func(_ context.Context, _ string, change *emailtags.MessageTagChange) (*emailtags.MessageTagResult, error) {
+			require.NotNil(change)
+			assert.True(change.DryRun)
+			assert.Equal([]string{"Label_next"}, change.Add)
+			assert.Empty(change.Remove)
+			return &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"Label_next"}, DryRun: change.DryRun}, nil
 		}}, nil
 	}}
 	_, err = a.MessageTags(t.Context(), mid, &emailtags.MessageTagChange{Add: []string{"Label_next"}}, "", nil)

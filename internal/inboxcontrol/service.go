@@ -355,8 +355,20 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 		return nil, err
 	}
 	defer done()
-	if err := s.authorize(ctx, principal, receipt.Intent); err != nil {
+	current, err := s.Ledger.GetInboxReceipt(ctx, request.ReceiptID)
+	if err != nil {
+		return nil, ErrInternal
+	}
+	if current == nil {
+		return nil, ErrDenied
+	}
+	result, err = s.replay(ctx, current, current.IntentHash, principal)
+	if err != nil {
 		return nil, err
+	}
+	receipt = current
+	if receipt.Status == StatusVerified || receipt.Status == StatusFailed {
+		return result, nil
 	}
 	read := receipt.Intent
 	if receipt.Projected == nil {
