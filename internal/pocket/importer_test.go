@@ -317,6 +317,45 @@ func TestPocketImportAfterFilterUsesReconciledStartedAt(t *testing.T) {
 	assertions.Equal("Roadmap decision", content.Summary.Text)
 }
 
+func TestPocketImportAfterFilterRecoversDatesFromDetailsAndArchive(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	existing := strings.Replace(recordingFixture, `"recording_at":"2026-09-01T10:00:00Z"`, `"recording_at":"2026-09-06T10:00:00Z"`, 1)
+	imp, st, src := testArchive(t, testRecording(t, existing))
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	existingID, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	src.read = nil
+	src.records = []Recording{
+		testRecording(t, `{"id":"rec-a","title":"Updated listing title","transcript":[]}`),
+		testRecording(t, `{"id":"rec-b","title":"New listing title","transcript":[]}`),
+	}
+	src.details = map[string]Recording{
+		"rec-a": testRecording(t, `{"id":"rec-a","transcript":[],"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"Updated archived summary"}}}}}`),
+		"rec-b": testRecording(t, `{"id":"rec-b","recording_at":"2026-09-07T10:00:00Z","transcript":[],"summarizations":{"new":{"processingStatus":"completed","updatedAt":"2026-09-10T10:00:00Z","v2":{"summary":{"markdown":"New detail summary"}}}}}`),
+	}
+	opts := archiveOptions()
+	opts.StartedAfter = time.Date(2026, time.September, 5, 0, 0, 0, 0, time.UTC)
+	updated, err := imp.Import(t.Context(), opts)
+	requirements.NoError(err)
+	assertions.Equal(int64(2), updated.MeetingsProcessed)
+	assertions.Equal(int64(1), updated.MeetingsAdded)
+	assertions.Equal(int64(1), updated.MeetingsUpdated)
+	assertions.ElementsMatch([]string{"rec-a", "rec-b"}, src.read)
+
+	archived, err := st.GetMessageContext(t.Context(), existingID)
+	requirements.NoError(err)
+	assertions.True(time.Date(2026, time.September, 6, 10, 0, 0, 0, time.UTC).Equal(archived.SentAt))
+	_, existingContent := archivedContent(t, st, first.SourceID, "rec-a")
+	assertions.Equal("Updated archived summary", existingContent.Summary.Text)
+	newID, newContent := archivedContent(t, st, first.SourceID, "rec-b")
+	requirements.NotZero(newID)
+	assertions.Equal("New detail summary", newContent.Summary.Text)
+	newMessage, err := st.GetMessageContext(t.Context(), newID)
+	requirements.NoError(err)
+	assertions.True(time.Date(2026, time.September, 7, 10, 0, 0, 0, time.UTC).Equal(newMessage.SentAt))
+}
+
 func TestPocketImportRejectsOtherAccountBeforeWrites(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

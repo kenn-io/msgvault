@@ -282,9 +282,6 @@ func (i *Importer) Import(ctx context.Context, opts ImportOptions) (summary *Imp
 	archiver := meetingarchive.New(scoped)
 	var failures []error
 	for _, metadata := range records {
-		if !opts.StartedAfter.IsZero() && (metadata.StartedAt.IsZero() || metadata.StartedAt.Before(opts.StartedAfter)) {
-			continue
-		}
 		if opts.Limit > 0 && summary.MeetingsProcessed >= int64(opts.Limit) {
 			break
 		}
