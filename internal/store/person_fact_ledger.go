@@ -805,6 +805,10 @@ func (s *Store) listPersonFactDecisionsTx(
 		query += ` AND r.target_kind = ? AND r.target_key = ? AND r.target_revision = ?`
 		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
 	}
+	if filter.ProjectionTransitionsOnly {
+		query += ` AND d.action = ? AND d.projection_kind IS NOT NULL`
+		args = append(args, personfacts.DecisionApplied)
+	}
 	query += ` ORDER BY d.id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := tx.QueryContext(ctx, query, args...)

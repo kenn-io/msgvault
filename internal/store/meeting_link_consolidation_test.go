@@ -69,6 +69,41 @@ func TestDecisionConsolidationNewerEquivalentSplitWins(t *testing.T) {
 	assertions.Zero(linkCount)
 }
 
+func TestMergeDuplicatesPreservesMeetingDecisionsAndUndo(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, duplicate := projectionFixture(t, st, "dedup-decision-duplicate", "plaud_json", `{}`)
+	_, survivor := projectionFixture(t, st, "dedup-decision-survivor", "plaud_json", `{}`)
+	targetA, _ := calendarLinkFixture(t, st, "primary@example.com", singleLinkRaw("dedup-a", "", "2027-03-14T10:00:00Z", "2027-03-14T11:00:00Z"))
+	targetB, _ := calendarLinkFixture(t, st, "primary@example.com", singleLinkRaw("dedup-b", "", "2027-03-15T10:00:00Z", "2027-03-15T11:00:00Z"))
+	refA, refB := fmt.Sprintf("evt:%d", targetA), fmt.Sprintf("evt:%d", targetB)
+	earlier := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	later := earlier.Add(time.Hour)
+	for _, decision := range []struct {
+		member int64
+		ref    string
+		kind   string
+		at     time.Time
+	}{
+		{survivor, refA, "split", earlier},
+		{duplicate, refA, "link", later},
+		{survivor, refB, "link", earlier},
+		{duplicate, refB, "split", later},
+	} {
+		_, err := st.db.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_ref,target_logical,decision,created_at) VALUES (?, ?, '', ?, ?)`, decision.member, decision.ref, decision.kind, decision.at)
+		requirements.NoError(err)
+	}
+
+	_, err := st.MergeDuplicates(survivor, []int64{duplicate}, "meeting-decision-dedup")
+	requirements.NoError(err)
+	assertions.Equal([]OccurrenceRef{{MessageID: targetA}}, linkTargets(memberLinks(t, st, OwnerScope(), survivor)))
+
+	restored, err := st.UndoDedup("meeting-decision-dedup")
+	requirements.NoError(err)
+	assertions.Equal(int64(1), restored)
+	assertions.Equal([]OccurrenceRef{{MessageID: targetA}}, linkTargets(memberLinks(t, st, OwnerScope(), duplicate)))
+}
+
 func TestDecisionConsolidationRepointsTargetAndPreservesKey(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

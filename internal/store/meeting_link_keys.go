@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-const meetingLinkKeyVersion = 2
+const meetingLinkKeyVersion = 3
 
 type meetingLinkKey struct {
 	Kind, Value, Base, InstanceKey string
@@ -55,7 +55,14 @@ func deriveMeetingLinkKeys(format string, raw, metadata []byte) []meetingLinkKey
 	case format == "circleback_json" || platform == "circleback":
 		kind = "join_key"
 		meeting := nested("meeting")
-		value = calevent.JoinKey(first(str(meta, "meeting_url"), str(meta, "join_url"), str(meeting, "url"), str(meeting, "meetingUrl"), str(meeting, "joinUrl"), str(meeting, "meeting_url"), str(fields, "meeting_url"), str(fields, "join_url")))
+		for _, candidate := range []string{
+			str(meta, "join_url"), str(meeting, "joinUrl"), str(meeting, "join_url"), str(fields, "join_url"),
+			str(meta, "meeting_url"), str(meeting, "url"), str(meeting, "meetingUrl"), str(meeting, "meeting_url"), str(fields, "meeting_url"),
+		} {
+			if value = calevent.JoinKey(candidate); value != "" {
+				break
+			}
+		}
 		scheduleCandidates = []string{
 			str(meta, "scheduled_start"), str(meeting, "scheduled_start"), str(meta, "start"),
 			str(meeting, "startTime"), str(meeting, "date"), str(fields, "startTime"), str(fields, "date"), str(fields, "scheduled_start"),

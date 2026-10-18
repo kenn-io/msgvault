@@ -95,6 +95,23 @@ func TestLegacyCirclebackAndGranolaKeysBackfill(t *testing.T) {
 	assertions.Equal([]string{"google_event_id:series_20270314"}, linkKeyValues(t, st, id))
 }
 
+func TestCirclebackJoinURLFallbackRebuildsExistingProjection(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := projectionFixture(t, st, "circleback-join-url-fallback", "circleback_json", `{}`)
+	require.NoError(t, st.SetMessageMetadata(id, sql.NullString{String: `{"platform":"circleback","meeting_url":"https://app.circleback.ai/meetings/123","join_url":"https://meet.google.com/abc-defg-hij","scheduled_start":"2027-03-14T10:00:00Z"}`, Valid: true}))
+
+	// Simulate an existing version-2 archive after the version-3 decoder has
+	// been added, so InitSchema must rebuild the old projection from metadata.
+	_, err := st.db.Exec(`DELETE FROM meeting_link_keys WHERE message_id = ?`, id)
+	require.NoError(t, err)
+	_, err = st.db.Exec(`UPDATE meeting_link_key_state SET key_version = 2 WHERE message_id = ?`, id)
+	require.NoError(t, err)
+	_, err = st.db.Exec(`UPDATE applied_migrations SET version = 2 WHERE name = ?`, migrationMeetingLinkKeysV1)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()))
+	assert.Equal(t, []string{"join_key:meet:abc-defg-hij"}, linkKeyValues(t, st, id))
+}
+
 func TestCirclebackKeyProjectionUpgradeUsesFirstParseableSchedule(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -118,8 +135,8 @@ func TestCirclebackKeyProjectionUpgradeUsesFirstParseableSchedule(t *testing.T) 
 	var keyVersion, migrationVersion int
 	requirements.NoError(st.db.QueryRow(`SELECT key_version FROM meeting_link_key_state WHERE message_id = ?`, id).Scan(&keyVersion))
 	requirements.NoError(st.db.QueryRow(`SELECT version FROM applied_migrations WHERE name = ?`, migrationMeetingLinkKeysV1).Scan(&migrationVersion))
-	assertions.Equal(2, keyVersion)
-	assertions.Equal(2, migrationVersion)
+	assertions.Equal(3, keyVersion)
+	assertions.Equal(3, migrationVersion)
 	version, err := st.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
 	assertions.Equal(SchemaVersion, version)

@@ -108,9 +108,10 @@ type ClaimFilter struct {
 }
 
 type DecisionFilter struct {
-	Target *TargetRef
-	Limit  int
-	Offset int
+	Target                    *TargetRef
+	ProjectionTransitionsOnly bool
+	Limit                     int
+	Offset                    int
 }
 
 type ProjectionRef struct {

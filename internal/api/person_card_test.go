@@ -300,6 +300,31 @@ func TestPersonCardFactUsesProjectionTransitionTimeAndSkipsUnchangedSupport(t *t
 	assertions.Equal(personFactAPINow, in.Facts[0].ChangedAt)
 }
 
+func TestPersonCardFactFiltersNonTransitionsBeforeDecisionLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, id, target, "fact-page-transition", `"chat"`)
+	firstPage, err := st.ListPersonFactDecisionsContext(t.Context(), id, personfacts.DecisionFilter{Limit: 100})
+	requirements.NoError(err)
+	requirements.Len(firstPage, 1)
+	requirements.NotNil(firstPage[0].Projection)
+
+	for i := range 51 {
+		applyPersonFactAPIGenerationWithRelation(t, st, id, target,
+			fmt.Sprintf("fact-page-unchanged-%02d", i), `"chat"`,
+			personfacts.RelationSupport, 900, personFactAPINow.Add(time.Duration(i+1)*time.Minute))
+	}
+
+	now := personFactAPINow.Add(60 * 24 * time.Hour)
+	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true}}
+	srv.personCardFacts(t.Context(), id, &in, personcard.Options{AsOf: now})
+	requirements.Len(in.Facts, 1, "a transition remains visible after newer unchanged decisions")
+	assertions.Equal(firstPage[0].ID, in.Facts[0].ID)
+	assertions.Equal(personFactAPINow, in.Facts[0].ChangedAt)
+}
+
 func TestPersonCardFactRendersRetiredRelation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

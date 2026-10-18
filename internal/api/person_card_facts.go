@@ -56,7 +56,10 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 		}
 		in.Facts = append(in.Facts, personcard.FactChange{ID: v.ID, User: true, ChangedAt: v.CreatedAt, Label: definition.Label, Text: text})
 	}
-	decisions, err := b.ListPersonFactDecisionsContext(ctx, id, personfacts.DecisionFilter{Limit: 50})
+	decisions, err := b.ListPersonFactDecisionsContext(ctx, id, personfacts.DecisionFilter{
+		ProjectionTransitionsOnly: true,
+		Limit:                     50,
+	})
 	if err != nil {
 		s.personCardGap(in, "facts_unavailable", err)
 		return

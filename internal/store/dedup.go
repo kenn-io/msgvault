@@ -522,8 +522,12 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
-		if err := s.lockMeetingEvidenceWith(ctx, tx, survivorID); err != nil {
-			return fmt.Errorf("lock dedup survivor evidence: %w", err)
+		meetingEvidenceIDs := append([]int64{survivorID}, duplicateIDs...)
+		sort.Slice(meetingEvidenceIDs, func(i, j int) bool { return meetingEvidenceIDs[i] < meetingEvidenceIDs[j] })
+		for _, id := range meetingEvidenceIDs {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return fmt.Errorf("lock dedup meeting evidence for message %d: %w", id, err)
+			}
 		}
 		preserved, err := duplicateMergePreservesHistory(ctx, tx, survivorID, duplicateIDs)
 		if err != nil {
@@ -533,6 +537,9 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
+			if err := s.mergeMeetingLinkDecisionsForDedupWith(ctx, tx, dupID, survivorID); err != nil {
+				return fmt.Errorf("merge meeting decisions from duplicate %d: %w", dupID, err)
+			}
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {
 				return fmt.Errorf("union labels from %d: %w", dupID, err)

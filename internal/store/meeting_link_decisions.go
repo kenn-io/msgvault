@@ -52,6 +52,16 @@ func backfillMeetingLinkDecisionTargets(ctx context.Context, tx *loggedTx) error
 // UTC timestamps are written by the decision API; the later decision wins a
 // collision rather than being lost through the member's hard-delete cascade.
 func (s *Store) repointMeetingLinkDecisionsWith(ctx context.Context, tx *loggedTx, legacyID, survivorID int64) error {
+	return s.mergeMeetingLinkDecisionsWith(ctx, tx, legacyID, survivorID, false)
+}
+
+// Dedup soft-deletes its source rows, so keep their original decisions for
+// UndoDedup while copying the newest effective state onto the survivor.
+func (s *Store) mergeMeetingLinkDecisionsForDedupWith(ctx context.Context, tx *loggedTx, duplicateID, survivorID int64) error {
+	return s.mergeMeetingLinkDecisionsWith(ctx, tx, duplicateID, survivorID, true)
+}
+
+func (s *Store) mergeMeetingLinkDecisionsWith(ctx context.Context, tx *loggedTx, legacyID, survivorID int64, preserveSource bool) error {
 	if err := s.lockMeetingEvidenceWith(ctx, tx, legacyID); err != nil {
 		return fmt.Errorf("lock consolidated meeting member: %w", err)
 	}
@@ -100,13 +110,18 @@ func (s *Store) repointMeetingLinkDecisionsWith(ctx context.Context, tx *loggedT
 				targetID = sql.NullInt64{Int64: survivorID, Valid: true}
 			}
 		}
-		if _, err := q.Exec(`DELETE FROM meeting_link_decisions WHERE member_message_id = ? AND target_ref = ?`, d.member, d.ref); err != nil {
-			return fmt.Errorf("remove consolidated decision: %w", err)
+		if !preserveSource {
+			if _, err := q.Exec(`DELETE FROM meeting_link_decisions WHERE member_message_id = ? AND target_ref = ?`, d.member, d.ref); err != nil {
+				return fmt.Errorf("remove consolidated decision: %w", err)
+			}
 		}
 		_, err = q.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_message_id,target_ref,target_logical,decision,created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(member_message_id,target_ref) DO UPDATE SET target_message_id = excluded.target_message_id,target_logical = excluded.target_logical,decision = excluded.decision,created_at = excluded.created_at WHERE meeting_link_decisions.created_at < excluded.created_at`, member, targetID, ref, d.logical, d.kind, d.created.UTC())
 		if err != nil {
-			return fmt.Errorf("repoint meeting decision: %w", err)
+			return fmt.Errorf("merge meeting decision: %w", err)
 		}
+	}
+	if preserveSource {
+		return nil
 	}
 	// Consolidation can combine decisions recorded on different transcript
 	// rows. Keep a newer logical split authoritative even when its target ref
