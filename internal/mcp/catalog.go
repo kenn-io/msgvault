@@ -869,7 +869,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 func stageDeletionDefinition(_ *handlers) toolDefinition {
 	return writeDefinition(
 		ToolStageDeletion,
-		"Stage messages for deletion. Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
+		"Stage every eligible match in the selected search mode, or refuse without saving a batch. Queries search metadata first. Text queries retry full text only when no eligible metadata matches remain, or search full text immediately with |. Metadata selections can omit body-only matches. At most 100000 messages per call; narrow larger selections with before:/after: or account. Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:   accountProperty(),
 			toolArgQuery:     stringSchema("Gmail-style search query (e.g. 'from:linkedin subject:job alert'). Cannot be combined with structured filters."),

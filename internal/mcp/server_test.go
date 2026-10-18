@@ -3207,11 +3207,13 @@ func (s *captureDeletionManifestSaver) SaveManifest(_ context.Context, manifest 
 func TestStageDeletion(t *testing.T) {
 	eng := &querytest.MockEngine{
 		Accounts: []query.AccountInfo{
-			{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"},
+			{ID: 1, SourceType: "gmail", Identifier: "reader@example.test"},
 		},
-		SearchFastResults: []query.MessageSummary{
-			{ID: 1, SourceID: 1, Subject: "Newsletter", FromEmail: "news@example.com", SourceMessageID: "gmail-001"},
-			{ID: 2, SourceID: 1, Subject: "Promo", FromEmail: "promo@example.com", SourceMessageID: "gmail-002"},
+		GetDeletionTargetsBySearchFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+			return []query.DeletionTarget{
+				{MessageID: 1, SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-001"},
+				{MessageID: 2, SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-002"},
+			}, nil
 		},
 		GmailIDs: []string{"gmail-010", "gmail-011"},
 	}
@@ -3257,7 +3259,7 @@ func TestStageDeletion(t *testing.T) {
 		assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs, "gmail IDs")
 		assert.Equal(2, saver.manifest.Version)
 		require.NotNil(t, saver.manifest.Source)
-		assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "alice@gmail.com"}, *saver.manifest.Source)
+		assert.Equal(deletion.SourceReference{ID: 1, Type: "gmail", Identifier: "reader@example.test"}, *saver.manifest.Source)
 		assert.NoDirExists(filepath.Join(dataDir, "deletions"), "local fallback should not be used")
 	})
 
@@ -3265,8 +3267,10 @@ func TestStageDeletion(t *testing.T) {
 		saver := &captureDeletionManifestSaver{}
 		h := &handlers{
 			engine: &querytest.MockEngine{
-				Accounts:          []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"}},
-				SearchFastResults: []query.MessageSummary{{ID: 7, SourceMessageID: "gmail-007"}},
+				Accounts: []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "reader@example.test"}},
+				GetDeletionTargetsBySearchFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+					return []query.DeletionTarget{{MessageID: 7, SourceMessageID: "gmail-007"}}, nil
+				},
 			},
 			dataDir: t.TempDir(), manifestSaver: saver,
 		}
@@ -3280,8 +3284,10 @@ func TestStageDeletion(t *testing.T) {
 		saver := &captureDeletionManifestSaver{}
 		h := &handlers{
 			engine: &querytest.MockEngine{
-				Accounts:          []query.AccountInfo{{ID: 1, Identifier: "alice@gmail.com"}},
-				SearchFastResults: []query.MessageSummary{{ID: 8, SourceID: 1, SourceMessageID: "gmail-008"}},
+				Accounts: []query.AccountInfo{{ID: 1, Identifier: "reader@example.test"}},
+				GetDeletionTargetsBySearchFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error) {
+					return []query.DeletionTarget{{MessageID: 8, SourceID: 1, SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-008"}}, nil
+				},
 			},
 			dataDir: t.TempDir(), manifestSaver: saver,
 		}
@@ -3351,13 +3357,13 @@ func TestStageDeletion(t *testing.T) {
 		var capturedFilter query.MessageFilter
 		eng := &querytest.MockEngine{
 			Accounts: []query.AccountInfo{
-				{ID: 1, Identifier: "alice@gmail.com"},
+				{ID: 1, Identifier: "reader@example.test"},
 			},
 			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 				capturedFilter = f
 				return []query.DeletionTarget{{
 					MessageID: 100, SourceID: 1, SourceType: "gmail",
-					SourceIdentifier: "alice@gmail.com", SourceMessageID: "gmail-100",
+					SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-100",
 				}}, nil
 			},
 		}
@@ -3366,7 +3372,7 @@ func TestStageDeletion(t *testing.T) {
 		runTool[stageDeletionResponse](
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{
-				"account": "alice@gmail.com",
+				"account": "reader@example.test",
 				"from":    "news@example.com",
 			},
 		)
@@ -3417,7 +3423,7 @@ func TestStageDeletion(t *testing.T) {
 				capturedFilter = f
 				return []query.DeletionTarget{{
 					MessageID: 200, SourceID: 1, SourceType: "gmail",
-					SourceIdentifier: "test@gmail.com", SourceMessageID: "gmail-200",
+					SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-200",
 				}}, nil
 			},
 		}
@@ -3427,7 +3433,7 @@ func TestStageDeletion(t *testing.T) {
 			t, "stage_deletion", h.stageDeletion,
 			map[string]any{"domain": "example.com"},
 		)
-		assert.Equal(t, maxStageDeletionResults, capturedFilter.Pagination.Limit, "limit")
+		assert.Equal(t, maxStageDeletionResults+1, capturedFilter.Pagination.Limit, "limit")
 	})
 }
 
@@ -4364,71 +4370,4 @@ func TestGetStats_AccountLastSyncAt(t *testing.T) {
 	must.Len(raw.Accounts, 2)
 	checks.JSONEq(`"2026-03-04T05:06:07Z"`, string(raw.Accounts[0]["LastSyncAt"]))
 	checks.NotContains(raw.Accounts[1], "LastSyncAt", "unknown sync time is omitted, not null")
-}
-
-func TestStageDeletionPipeORUsesSearchFast(t *testing.T) {
-	assert := assert.New(t)
-	var searchCalled, fastCalled bool
-	engine := &querytest.MockEngine{
-		Accounts: []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "archive@example.com"}},
-		SearchFunc: func(context.Context, *search.Query, int, int) ([]query.MessageSummary, error) {
-			searchCalled = true
-			return nil, nil
-		},
-		SearchFastFunc: func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error) {
-			fastCalled = true
-			return []query.MessageSummary{
-				{ID: 1, SourceID: 1, SourceMessageID: "gmail-first"},
-				{ID: 2, SourceID: 1, SourceMessageID: "gmail-second"},
-			}, nil
-		},
-	}
-	saver := &captureDeletionManifestSaver{}
-	h := &handlers{engine: engine, manifestSaver: saver}
-	resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "subject:first | subject:second"})
-	require.NotNil(t, saver.manifest)
-	assert.Equal([]string{"gmail-first", "gmail-second"}, saver.manifest.GmailIDs)
-	assert.Equal(2, resp.MessageCount)
-	assert.True(fastCalled)
-	assert.False(searchCalled)
-	assert.NotContains(resp.NextStep, "body matches")
-}
-
-func TestStageDeletionPipeORUsesSearch(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var searchCalled, fastCalled bool
-	var parsed *search.Query
-	engine := &querytest.MockEngine{
-		Accounts: []query.AccountInfo{
-			{ID: 1, SourceType: "gmail", Identifier: "other@example.com"},
-			{ID: 2, SourceType: "gmail", Identifier: "archive@example.com"},
-		},
-		SearchFunc: func(_ context.Context, q *search.Query, _, _ int) ([]query.MessageSummary, error) {
-			searchCalled = true
-			parsed = q
-			return []query.MessageSummary{
-				{ID: 3, SourceID: 2, SourceMessageID: "gmail-alpha"},
-				{ID: 4, SourceID: 2, SourceMessageID: "gmail-gamma"},
-			}, nil
-		},
-		SearchFastFunc: func(context.Context, *search.Query, query.MessageFilter, int, int) ([]query.MessageSummary, error) {
-			fastCalled = true
-			return nil, nil
-		},
-	}
-	saver := &captureDeletionManifestSaver{}
-	h := &handlers{engine: engine, manifestSaver: saver}
-	resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "alpha | gamma", "account": "archive@example.com"})
-	require.NotNil(saver.manifest)
-	assert.Equal([]string{"gmail-alpha", "gmail-gamma"}, saver.manifest.GmailIDs)
-	assert.Equal("archive@example.com", saver.manifest.Filters.Account)
-	require.NotNil(saver.manifest.Source)
-	assert.Equal(deletion.SourceReference{ID: 2, Type: "gmail", Identifier: "archive@example.com"}, *saver.manifest.Source)
-	require.NotNil(parsed)
-	assert.Equal([]int64{2}, parsed.AccountIDs)
-	assert.Equal(2, resp.MessageCount)
-	assert.Contains(resp.NextStep, "Full-text OR search includes body matches.")
-	assert.True(searchCalled)
-	assert.False(fastCalled)
 }

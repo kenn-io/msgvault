@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-17"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -344,7 +344,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `create_saved_view` | Create a persistent Saved View. Write-class. | `name` (string, required), `canonical_state` (object, required), `schema_version` (int, required; use `2` for new definitions; schema `1` retains literal-pipe meaning), `description` (string) |
 | `update_saved_view` | Patch supplied Saved View fields using optimistic revision checking. Write-class. | `id` (int, required), `revision` (int, required), at least one of `name`, `description`, `canonical_state`, `schema_version` |
 | `delete_saved_view` | Delete a Saved View definition, not archive messages. Write-class and destructive. | `id` (int, required), `revision` (int, required) |
-| `stage_deletion` | Stage messages for deletion (creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
+| `stage_deletion` | Stage every eligible match in the chosen search mode or refuse (unreleased; creates manifest only) | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
@@ -741,7 +741,20 @@ provenance are user-authored; MCP writes use `enrichment` provenance.
 ## Staged Deletion via MCP
 
 When enabled for the transport, `stage_deletion` lets an AI assistant help you
-plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once. Results are capped at 100,000 messages per call.
+plan archive cleanup. It accepts either a Gmail-style query string or structured filters (sender, domain, label, date range), but not both at once.
+
+In unreleased builds, `stage_deletion` stages every eligible match in the selected
+search mode, up to 100000 messages per call. Queries search metadata first. Those
+with text terms retry with full text only when no eligible metadata matches remain. A text query
+with `|` searches full text immediately. A successful metadata selection can
+therefore omit messages that match only in the body.
+
+It refuses larger selections or queries it cannot size safely. Narrow
+those selections with `before:`, `after:`, or `account`, then stage each part.
+Sizing can conservatively include rows that cannot be deleted. The saved batch
+excludes messages already deleted at the source, archive-only history, and sources
+that cannot delete messages. Query staging requires a daemon that supports exact
+deletion-target search; it never falls back to a capped search page.
 
 When called, `stage_deletion` creates a pending deletion manifest through the selected daemon. With a remote server configured, the manifest is saved on that remote host; otherwise it is saved by the local daemon. It does **not** delete anything. To execute the deletion, you must run `msgvault delete-staged` from the CLI. See [Deleting Email](/docs/usage/deletion/) for the full workflow.
 
