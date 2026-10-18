@@ -511,7 +511,8 @@ func (s *Store) ReleaseWork(
 				}
 			}
 			return updateEnrichmentWorkLeaseTx(ctx, tx, token,
-				`due_at = ?, run_id = NULL, lease_owner = NULL, lease_until = NULL`,
+				`due_at = ?, run_id = CASE WHEN `+personEnrichmentExactManualTargetSQL("person_enrichment_work")+
+					` THEN run_id ELSE NULL END, lease_owner = NULL, lease_until = NULL`,
 				release.NextActionAt.UTC())
 		case "retry":
 			if release.NextActionAt == nil || !release.NextActionAt.After(s.personEnrichmentTime()) {
