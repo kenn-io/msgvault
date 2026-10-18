@@ -211,6 +211,14 @@ export function isValidSourceID(value: string | undefined): value is string {
   return Number.isSafeInteger(parsed) && parsed > 0;
 }
 
+// Filter IDs are strings with the store's positive int64 contract. Metadata
+// endpoints use JSON numbers and still require isValidSourceID's safe integers.
+export function isValidFilterID(value: string | undefined): value is string {
+  if (value === undefined || !/^\+?\d+$/.test(value)) return false;
+  const id = BigInt(value);
+  return id > 0n && id <= 9223372036854775807n;
+}
+
 export interface ExploreResult {
   rows: EntryRow[];
   totalCount?: number;

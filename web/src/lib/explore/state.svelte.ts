@@ -24,7 +24,7 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS, isValidSourceID } from './models';
+import { DEFAULT_EXPLORE_COLUMNS, isValidFilterID } from './models';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
@@ -240,15 +240,15 @@ function filters(value: unknown): ExploreFilter[] {
   const sourceValue = sourceFilters.length === 1 && sourceFilters[0]?.values.length === 1
     ? sourceFilters[0].values[0]
     : undefined;
-  const sourceID = isValidSourceID(sourceValue) ? sourceValue : undefined;
+  const sourceID = isValidFilterID(sourceValue) ? sourceValue : undefined;
   const identityFilters = copied.filter((filter) => filter.dimension === 'identity');
   const identity = identityFilters.length === 1 ? identityFilters[0] : undefined;
   const validIdentity = identity !== undefined &&
     sourceID !== undefined &&
     identity.values.length === 3 &&
-    identity.values[0] === sourceID &&
+    isValidFilterID(identity.values[0]) && BigInt(identity.values[0]) === BigInt(sourceID) &&
     identity.values[1] !== '' &&
-    (identity.values[2] === 'any' || identity.values[2] === 'sender' || identity.values[2] === 'recipient');
+    (identity.values[2] === '' || identity.values[2] === 'any' || identity.values[2] === 'sender' || identity.values[2] === 'recipient');
   return copied.filter((filter) => filter.dimension !== 'identity' || validIdentity);
 }
 

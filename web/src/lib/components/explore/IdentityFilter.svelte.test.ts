@@ -19,6 +19,34 @@ function catalog(identities: string[] = ['primary@example.test', 'shop@example.t
 }
 
 describe('IdentityFilter', () => {
+  it.each([
+    ['+14', '014', ''],
+    ['14', '+14', 'recipient'],
+    ['9007199254740993', '+09007199254740993', 'sender'],
+    ['9223372036854775807', '09223372036854775807', 'any']
+  ])('keeps restored source %s and identity %s selected', async (source, identitySource, direction) => {
+    const onChange = vi.fn<(filters: ExploreFilter[]) => void>();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
+    render(IdentityFilter, {
+      client: createAPIClient(fetchFn),
+      filters: [
+        { dimension: 'source', values: [source] },
+        { dimension: 'identity', values: [identitySource, 'shop@example.test', direction] }
+      ],
+      onChange
+    });
+
+    const identity = await screen.findByRole('combobox', { name: /^Identity: shop@example\.test/ });
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    expect(onChange).not.toHaveBeenCalled();
+    if (!Number.isSafeInteger(Number(source))) {
+      // The catalog endpoint takes a JSON-number ID; never request a rounded source.
+      expect(fetchFn).not.toHaveBeenCalled();
+      await chooseSelectOption(identity, 'Any confirmed identity');
+      expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'source', values: [source] }]);
+    }
+  });
+
   it('appears only for exactly one source and does not create source or account options', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
     const rendered = render(IdentityFilter, {

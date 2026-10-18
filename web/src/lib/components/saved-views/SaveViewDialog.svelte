@@ -34,11 +34,20 @@
     saving = true;
     error = '';
     try {
+      const canonicalState = canonicalSavedViewState(exploreState);
+      canonicalState.filters = canonicalState.filters?.map((filter) => {
+        if (filter.field !== 'identity' || filter.values[2] !== '') return filter;
+        // Explore treats an empty identity direction as "any", but Saved View
+        // validation rejects empty filter values.
+        const values = [...filter.values];
+        values[2] = 'any';
+        return { ...filter, values };
+      });
       const { data, error: responseError } = await generatedCreateSavedView(
         {
           name: name.trim(),
           ...(description.trim() ? { description: description.trim() } : {}),
-          canonical_state: canonicalSavedViewState(exploreState),
+          canonical_state: canonicalState,
           schema_version: CURRENT_SCHEMA_VERSION,
         },
         client,

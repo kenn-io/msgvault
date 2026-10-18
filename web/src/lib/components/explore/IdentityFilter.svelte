@@ -4,7 +4,7 @@
   import { onDestroy } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, IdentityDirection, SourceIdentityResponse } from '../../explore/models';
-  import { isValidSourceID } from '../../explore/models';
+  import { isValidFilterID } from '../../explore/models';
   let {
     client,
     filters,
@@ -39,7 +39,7 @@
     const currentFilters = filters;
     const currentSourceID = singleSourceID(currentFilters);
     const identity = currentFilters.find((filter) => filter.dimension === 'identity');
-    if (identity && (currentSourceID === undefined || identity.values[0] !== currentSourceID)) {
+    if (identity && validIdentityFilter(currentFilters, currentSourceID) === undefined) {
       onChange(withoutIdentity(currentFilters));
     }
   });
@@ -55,6 +55,13 @@
       return;
     }
     const numericSourceID = Number(requestedSourceID);
+    // The catalog client takes a JSON-number ID. Keep the restored filter
+    // usable without requesting a different source through a rounded number.
+    if (!Number.isSafeInteger(numericSourceID)) {
+      loading = false;
+      error = 'Unable to load confirmed identities.';
+      return;
+    }
     const generation = requestGeneration;
     const controller = new AbortController();
     requestController = controller;
@@ -87,16 +94,19 @@
     requestController?.abort();
   });
   function singleSourceID(currentFilters: ExploreFilter[]): string | undefined {
-    const source = currentFilters.find((filter) => filter.dimension === 'source');
+    const sources = currentFilters.filter((filter) => filter.dimension === 'source');
+    const source = sources.length === 1 ? sources[0] : undefined;
     const value = source?.values.length === 1 ? source.values[0] : undefined;
-    return isValidSourceID(value) ? value : undefined;
+    return isValidFilterID(value) ? value : undefined;
   }
   function validIdentityFilter(
     currentFilters: ExploreFilter[],
     currentSourceID: string | undefined,
   ): ExploreFilter | undefined {
     const identity = currentFilters.find((filter) => filter.dimension === 'identity');
-    return identity?.values.length === 3 && identity.values[0] === currentSourceID ? identity : undefined;
+    return identity?.values.length === 3 &&
+      currentSourceID !== undefined && isValidFilterID(identity.values[0]) &&
+      BigInt(identity.values[0]) === BigInt(currentSourceID) ? identity : undefined;
   }
   function identityDirection(value: string | undefined): IdentityDirection {
     return value === 'sender' || value === 'recipient' ? value : 'any';
