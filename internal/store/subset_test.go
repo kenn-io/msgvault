@@ -1868,17 +1868,19 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive predates both triggers that name source_is_from_me.
-	// The upgrade below reinstalls them through their migrations.
+	// A pre-attribution archive predates the triggers that name attribution
+	// columns. The upgrade below reinstalls them through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
 		DROP TRIGGER trg_cache_message_facts_update;
+		DROP TRIGGER trg_loop_queue_messages_move;
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_attribution_provenance_v3',
 		               'activity_projection_triggers_v4',
-		               'cache_message_source_attribution');
+		               'cache_message_source_attribution',
+		               'loop_projection_triggers_v1');
 	`)
 	require.NoError(err, "simulate pre-attribution schema")
 	require.NoError(st.InitSchema(), "upgrade source schema")
@@ -3835,8 +3837,9 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require.NoError(err, "open source db")
 
 	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update;
-		DROP TRIGGER trg_cache_message_facts_update`)
-	require.NoError(err, "drop triggers that name source_is_from_me")
+		DROP TRIGGER trg_cache_message_facts_update;
+		DROP TRIGGER trg_loop_queue_messages_move`)
+	require.NoError(err, "drop triggers that name attribution columns")
 
 	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
 		_, err = db.Exec(
@@ -3995,7 +3998,8 @@ func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
 
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
-	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
+	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move;
+		ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN Identity_Is_From_Me BOOLEAN`)
 	require.NoError(err, "add messages.Identity_Is_From_Me")
@@ -4046,7 +4050,8 @@ func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
 
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
-	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
+	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move;
+		ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN "İdentity_is_from_me" TEXT`)
 	require.NoError(err, "add messages.İdentity_is_from_me")

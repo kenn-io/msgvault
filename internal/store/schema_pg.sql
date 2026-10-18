@@ -4226,3 +4226,128 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+
+-- Open Loops: durable obligations, suppression decisions and projection progress.
+CREATE TABLE IF NOT EXISTS open_loops (
+    id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    turn_key                    TEXT NOT NULL,      -- stable turn identity, see below
+    cycle                       BIGINT NOT NULL DEFAULT 1 CHECK (cycle >= 1),
+    conversation_id             BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    source_id                   BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    kind                        TEXT NOT NULL CHECK (kind IN (
+                                    'reply_owed', 'awaiting_reply',
+                                    'commitment_owed_by_me', 'commitment_owed_to_me')),
+    detector                    TEXT NOT NULL CHECK (detector IN ('turn_state', 'commitment_extraction')),
+    status                      TEXT NOT NULL CHECK (status IN ('held', 'open', 'closed')),
+    channel                     TEXT NOT NULL CHECK (channel IN ('email', 'chat')),
+    owner_address               TEXT NOT NULL DEFAULT '',
+    counterparty_participant_id BIGINT REFERENCES participants(id) ON DELETE SET NULL,
+    counterparty_person_id      BIGINT REFERENCES persons(id) ON DELETE SET NULL,
+    anchor_message_id           BIGINT REFERENCES messages(id) ON DELETE SET NULL,  -- the message that started the obligation
+    owed_since_at               TIMESTAMPTZ NOT NULL,
+    last_activity_message_id    BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+    last_activity_at            TIMESTAMPTZ NOT NULL,
+    opens_at                    TIMESTAMPTZ NOT NULL,      -- owed_since_at + threshold (commitments: = owed_since_at)
+    due_at                      TIMESTAMPTZ,               -- PR B
+    snoozed_until               TIMESTAMPTZ,
+    summary                     TEXT NOT NULL DEFAULT '',   -- <= 200 runes, no age text
+    evidence_json               JSONB NOT NULL,          -- [{"message_id":..,"conversation_id":..,"occurred_at":"..","quote":"..","quote_start_rune":n,"quote_end_rune":n,"truncated_run":bool}]
+    ruleset_version             BIGINT NOT NULL,
+    fact_claim_id               BIGINT REFERENCES person_fact_claims(id) ON DELETE SET NULL, -- PR B
+    agenda_state                TEXT NOT NULL DEFAULT 'none' CHECK (agenda_state IN ('none','suggested','created','dismissed')), -- PR B
+    fulfilment_suggested_at     TIMESTAMPTZ,               -- PR B
+    closed_at                   TIMESTAMPTZ,
+    -- jev_not_expected is reserved for the optional reply-expectation scorer.
+    closed_reason               TEXT CHECK (closed_reason IN (
+                                    'turn_flip', 'done', 'muted', 'withdrawn', 'fulfilled', 'expired', 'jev_not_expected')),
+    closed_by                   TEXT CHECK (closed_by IN ('system', 'user')),
+    closed_message_id           BIGINT REFERENCES messages(id) ON DELETE SET NULL, -- the reply that flipped the turn
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((status = 'closed') = (closed_at IS NOT NULL)),
+    CHECK ((closed_at IS NULL) = (closed_reason IS NULL)),
+    CHECK ((closed_at IS NULL) = (closed_by IS NULL)),
+    UNIQUE (turn_key, cycle)
+);
+-- at most one live turn-state loop per conversation and kind; commitments are exempt
+CREATE UNIQUE INDEX IF NOT EXISTS idx_open_loops_live_turn_state
+    ON open_loops(conversation_id, kind) WHERE status <> 'closed' AND detector = 'turn_state';
+-- at most one live row per turn
+CREATE UNIQUE INDEX IF NOT EXISTS idx_open_loops_live_turn_key
+    ON open_loops(turn_key) WHERE status <> 'closed';
+CREATE INDEX IF NOT EXISTS idx_open_loops_status_kind_age ON open_loops(status, kind, owed_since_at);
+CREATE INDEX IF NOT EXISTS idx_open_loops_person_status ON open_loops(counterparty_person_id, status);
+CREATE INDEX IF NOT EXISTS idx_open_loops_participant_status ON open_loops(counterparty_participant_id, status);
+CREATE INDEX IF NOT EXISTS idx_open_loops_conversation ON open_loops(conversation_id, status);
+CREATE INDEX IF NOT EXISTS idx_open_loops_anchor ON open_loops(anchor_message_id);
+CREATE INDEX IF NOT EXISTS idx_open_loops_last_activity ON open_loops(last_activity_message_id);
+CREATE INDEX IF NOT EXISTS idx_open_loops_opens_at ON open_loops(opens_at) WHERE status = 'held';
+CREATE INDEX IF NOT EXISTS idx_open_loops_snoozed ON open_loops(snoozed_until) WHERE snoozed_until IS NOT NULL;
+
+
+CREATE TABLE IF NOT EXISTS loop_suppressions (
+    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    target_kind     TEXT NOT NULL CHECK (target_kind IN ('participant', 'person', 'conversation')),
+    participant_id  BIGINT REFERENCES participants(id) ON DELETE CASCADE,
+    person_id       BIGINT REFERENCES persons(id) ON DELETE CASCADE,
+    conversation_id BIGINT REFERENCES conversations(id) ON DELETE CASCADE,
+    note            TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((target_kind = 'participant') = (participant_id IS NOT NULL)),
+    CHECK ((target_kind = 'person') = (person_id IS NOT NULL)),
+    CHECK ((target_kind = 'conversation') = (conversation_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_loop_suppressions_participant ON loop_suppressions(participant_id) WHERE participant_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_loop_suppressions_person ON loop_suppressions(person_id) WHERE person_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_loop_suppressions_conversation ON loop_suppressions(conversation_id) WHERE conversation_id IS NOT NULL;
+
+
+CREATE TABLE IF NOT EXISTS loop_derivation_state (
+    singleton                   BIGINT PRIMARY KEY CHECK (singleton = 1),
+    feed_cursor_at              TIMESTAMPTZ,            -- consumed row cursor: content_changed_at of the last row read
+    feed_cursor_message_id      BIGINT NOT NULL DEFAULT 0,
+    feed_frontier               TIMESTAMPTZ,            -- every row stamped <= this instant has been read (see the pass)
+    applied_through             TIMESTAMPTZ,            -- every change <= this instant is reflected in open_loops
+    identity_revision           BIGINT NOT NULL DEFAULT 0,      -- epoch the loops are certified for
+    account_identity_revision   BIGINT NOT NULL DEFAULT 0,
+    ruleset_version             BIGINT NOT NULL DEFAULT 0,
+    config_fingerprint          TEXT NOT NULL DEFAULT '',   -- sha256 of thresholds, group limit, lookback
+    rescan_reason               TEXT NOT NULL DEFAULT '',   -- '', 'identity', 'ruleset', 'config', 'rebuild', 'reconcile'
+    rescan_epoch                TEXT NOT NULL DEFAULT '',   -- target epoch of the running scan: "<identity_rev>:<account_rev>:<ruleset>:<config_fp>"
+    rescan_last_conversation_id BIGINT NOT NULL DEFAULT 0, -- resumable rescan cursor; 0 = not running
+    rescan_started_at           TIMESTAMPTZ,
+    last_reconcile_at           TIMESTAMPTZ,
+    signals_backfill_complete   BOOLEAN NOT NULL DEFAULT FALSE,
+    signals_backfill_last_message_id BIGINT NOT NULL DEFAULT 0,
+    last_run_at                 TIMESTAMPTZ,
+    last_success_at             TIMESTAMPTZ,
+    last_error                  TEXT NOT NULL DEFAULT '',
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO loop_derivation_state (singleton) VALUES (1) ON CONFLICT DO NOTHING;
+
+
+CREATE TABLE IF NOT EXISTS loop_conversation_queue (
+    conversation_id    BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    revision           BIGINT NOT NULL DEFAULT 1 CHECK (revision >= 1),
+    processed_revision BIGINT NOT NULL DEFAULT 0 CHECK (processed_revision >= 0 AND processed_revision <= revision),
+    feed_bound         TIMESTAMPTZ,                  -- feed_frontier at enqueue time, for every reason; cleared on ack
+    epoch              TEXT NOT NULL DEFAULT '',  -- rescan_epoch for reason 'rescan', else ''
+    reason             TEXT NOT NULL DEFAULT '',  -- 'changed','labels','recipients','moved','ownership','signals','unmute','rescan'
+    queued_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_loop_conversation_queue_pending
+    ON loop_conversation_queue(queued_at) WHERE revision > processed_revision;
+
+
+CREATE TABLE IF NOT EXISTS message_automation_signals (
+    message_id        BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    auto_submitted    BOOLEAN NOT NULL DEFAULT FALSE,  -- RFC 3834 value other than "no"
+    precedence_bulk   BOOLEAN NOT NULL DEFAULT FALSE,  -- Precedence: bulk|list|junk
+    list_unsubscribe  BOOLEAN NOT NULL DEFAULT FALSE,
+    calendar_part     BOOLEAN NOT NULL DEFAULT FALSE,  -- a text/calendar part anywhere in the MIME tree
+    reply_to_noreply  BOOLEAN NOT NULL DEFAULT FALSE,  -- Reply-To matches the no-reply pattern
+    parser_version    BIGINT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
