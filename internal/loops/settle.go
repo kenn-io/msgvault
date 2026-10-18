@@ -43,41 +43,44 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	if !metadataSubstantive(anchorMessage) || anchorMessage.Direction != side {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
-	if live.Kind == ReplyOwed && (anchorMessage.ListID != "" || isBulkMessage(anchorMessage)) {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
-	}
-	if _, ok := obligationCounterparty(v, live.Kind, v.Messages[anchor]); !ok {
-		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
-	}
-	// List mail cannot create a reply obligation, even when corrected metadata
-	// arrives after the anchor has fallen outside the recent detection window.
-	if live.Kind == ReplyOwed && v.Messages[anchor].ListID != "" {
+	ineligibleReplyAnchor := live.Kind == ReplyOwed && (anchorMessage.ListID != "" || isBulkMessage(anchorMessage))
+	if _, ok := obligationCounterparty(v, live.Kind, anchorMessage); !ok {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
 	anchorUnreadable := false
 	switch live.Kind {
 	case ReplyOwed:
 		large := v.ConversationType == "group_chat" && nonOwnerCount(v.Participants) > cfg.MaxGroupCounterparts
-		if !addressedToOwner(v.Messages[anchor], v.ConversationType, large) {
+		if !addressedToOwner(anchorMessage, v.ConversationType, large) {
 			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 		}
 	case AwaitingReply:
-		body := t.body(v, v.Messages[anchor].ID)
+		body := t.body(v, anchorMessage.ID)
 		if !body.ok {
 			// The shared budget may have been consumed by newer messages. Keep
 			// checking for a conclusive opposing turn before treating this pass as
 			// uncertain; a later inbound answer still settles the live obligation.
 			anchorUnreadable = true
-		} else if !asksQuestion(body.text) || !hasAwaitingReplyCounterparty(v, v.Messages[anchor]) {
+		} else if !asksQuestion(body.text) || !hasAwaitingReplyCounterparty(v, anchorMessage) {
 			return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 		}
 	}
+	laterSameSideActivity := false
 	for i := anchor + 1; i < len(v.Messages); i++ {
 		m := v.Messages[i]
-		if m.Direction == side || !t.substantive(v, i) {
+		if m.Direction == side {
+			if ineligibleReplyAnchor && !laterSameSideActivity {
+				laterSameSideActivity = t.substantive(v, i)
+			}
+			continue
+		}
+		if !t.substantive(v, i) {
 			continue
 		}
 		return &CloseDecision{ID: live.ID, Reason: "turn_flip", At: m.OccurredAt, MessageID: m.ID}, false, nil, nil
+	}
+	if ineligibleReplyAnchor && !laterSameSideActivity {
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
 	if anchorUnreadable {
 		return nil, true, &v.Messages[anchor], nil
