@@ -950,6 +950,89 @@ func (g GetPersonMessagingRoutesQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
+type FindPeopleWhoKnowQuery struct {
+	// Q Topic containing free text
+	Q string `json:"q" validate:"required"`
+
+	// Limit Bounded ranking parameter
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=50"`
+
+	// Evidence Bounded ranking parameter
+	Evidence *int64 `json:"evidence,omitempty" validate:"omitempty,gte=0,lte=10"`
+
+	// Candidates Bounded ranking parameter
+	Candidates *int64 `json:"candidates,omitempty" validate:"omitempty,gte=50,lte=1000"`
+
+	// HalfLifeDays Bounded ranking parameter
+	HalfLifeDays    *int64   `json:"half_life_days,omitempty" validate:"omitempty,gte=0,lte=3650"`
+	MinScore        *float64 `json:"min_score,omitempty"`
+	MinProfileScore *float64 `json:"min_profile_score,omitempty" validate:"omitempty,gte=0,lte=1"`
+
+	// IncludeOwner Optional ranking output
+	IncludeOwner *bool `json:"include_owner,omitempty"`
+
+	// IncludeUnsaved Optional ranking output
+	IncludeUnsaved *bool `json:"include_unsaved,omitempty"`
+
+	// IncludeOrganizations Optional ranking output
+	IncludeOrganizations *bool `json:"include_organizations,omitempty"`
+
+	// Excerpts Optional ranking output
+	Excerpts *bool `json:"excerpts,omitempty"`
+
+	// After YYYY-MM-DD or RFC3339; after inclusive, before exclusive for timestamps
+	After *string `json:"after,omitempty"`
+
+	// Before YYYY-MM-DD or RFC3339; after inclusive, before exclusive for timestamps
+	Before *string `json:"before,omitempty"`
+
+	// Tiebreak Metric used after rounded score
+	Tiebreak *FindPeopleWhoKnowQueryTiebreak `json:"tiebreak,omitempty"`
+}
+
+func (f FindPeopleWhoKnowQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Q, "required"); err != nil {
+		errors = errors.Append("Q", err)
+	}
+	if f.Limit != nil {
+		if err := typesValidator.Var(f.Limit, "omitempty,gte=1,lte=50"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if f.Evidence != nil {
+		if err := typesValidator.Var(f.Evidence, "omitempty,gte=0,lte=10"); err != nil {
+			errors = errors.Append("Evidence", err)
+		}
+	}
+	if f.Candidates != nil {
+		if err := typesValidator.Var(f.Candidates, "omitempty,gte=50,lte=1000"); err != nil {
+			errors = errors.Append("Candidates", err)
+		}
+	}
+	if f.HalfLifeDays != nil {
+		if err := typesValidator.Var(f.HalfLifeDays, "omitempty,gte=0,lte=3650"); err != nil {
+			errors = errors.Append("HalfLifeDays", err)
+		}
+	}
+	if f.MinProfileScore != nil {
+		if err := typesValidator.Var(f.MinProfileScore, "omitempty,gte=0,lte=1"); err != nil {
+			errors = errors.Append("MinProfileScore", err)
+		}
+	}
+	if f.Tiebreak != nil {
+		if v, ok := any(f.Tiebreak).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Tiebreak", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListPersonAttributesQuery struct {
 	// History Include superseded values
 	History *bool `json:"history,omitempty"`

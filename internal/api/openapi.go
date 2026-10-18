@@ -374,13 +374,15 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds bounded, cited topic-knowledge rankings through people/who-knows.
+const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
+	nullablePublicObjectRefs(doc, "WhoKnowsEvidence", "excerpt")
 	hardenEmbeddingStatusSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -390,6 +392,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
+	hardenWhoKnowsClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -1605,5 +1608,40 @@ func nullableSchemaProperty(schema *huma.Schema, propertyName string) {
 	property.Extensions["x-omitempty"] = false
 	property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 		"validate": "omitempty",
+	}
+}
+
+// hardenWhoKnowsClientSchemas preserves null numeric values and excerpts in
+// generated Go clients, following the embedding-status response convention.
+func hardenWhoKnowsClientSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for schemaName, names := range map[string][]string{
+		"WhoKnowsEvidence":         {"vector_score", "excerpt"},
+		"WhoKnowsExcerpt":          {"char_offset", "line"},
+		"WhoKnowsBreakdown":        {"profile_score"},
+		"WhoKnowsUnsavedBreakdown": {"profile_score"},
+		"WhoKnowsTieValue":         {"temperature"},
+		"WhoKnowsRetrieval":        {"top_vector_score"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, name := range names {
+			property := schema.Properties[name]
+			if property == nil {
+				continue
+			}
+			if property.Ref != "" {
+				property.AllOf = []*huma.Schema{{Ref: property.Ref}}
+				property.Ref = ""
+				property.Type = "object"
+			}
+			property.Nullable = true
+			schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
+			nullableSchemaProperty(schema, name)
+		}
 	}
 }

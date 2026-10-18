@@ -58,6 +58,7 @@ const (
 	ToolSearchDocuments           = "search_document_attachments"
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
+	ToolFindWhoKnows              = "find_who_knows"
 	ToolListDirectoryPeople       = "list_directory_people"
 	ToolGetPersonNotes            = "get_person_notes"
 	ToolGetPersonProfile          = "get_person_profile"
@@ -127,6 +128,7 @@ type ServeOptions struct {
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
 	DirectoryBackend       peoplebrowser.DirectoryLister
+	WhoKnowsBackend        whoKnowsBackend
 	PersonAgendaBackend    PersonAgendaBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
@@ -381,6 +383,7 @@ func newMCPServerWithPolicy(
 		personFileSearcher:   opts.PersonFileSearcher,
 		peopleBackend:        opts.PeopleBackend,
 		directoryBackend:     opts.DirectoryBackend,
+		whoKnowsBackend:      opts.WhoKnowsBackend,
 		hybridEngine:         opts.HybridEngine,
 		vectorCfg:            opts.VectorCfg,
 		backend:              opts.Backend,

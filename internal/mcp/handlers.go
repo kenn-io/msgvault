@@ -147,6 +147,7 @@ type handlers struct {
 	personFileSearcher   PersonFileSearcher
 	peopleBackend        peoplebrowser.Backend
 	directoryBackend     peoplebrowser.DirectoryLister
+	whoKnowsBackend      whoKnowsBackend
 	savedViews           savedview.Service
 	meetings             MeetingBackend
 	calendar             CalendarBackend

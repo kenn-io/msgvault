@@ -133,6 +133,7 @@ import type {
   FilteredMessagesResponse,
   FindContactCandidatesParams,
   FindKataIssuesParams,
+  FindPeopleWhoKnowParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -468,6 +469,7 @@ import type {
   VerifyCLIParams,
   VisualBuildRequest,
   VisualRetryRequest,
+  WhoKnowsResponse,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -2839,6 +2841,19 @@ export const searchPeople = (
       headers: { "Content-Type": "application/json" },
       data: personSearchRequest,
     },
+    options,
+  );
+};
+/**
+ * Owner-only, read-only ranking by authored message evidence with cited messages and an explainable score breakdown.
+ * @summary Find people with archived topical evidence
+ */
+export const findPeopleWhoKnow = (
+  params: FindPeopleWhoKnowParams,
+  options?: SecondParameter<typeof orvalFetch<WhoKnowsResponse>>,
+) => {
+  return orvalFetch<WhoKnowsResponse>(
+    { url: `/api/v1/people/who-knows`, method: "GET", params },
     options,
   );
 };
