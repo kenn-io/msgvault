@@ -15610,7 +15610,7 @@ type WhoKnowsEvidence struct {
 	SenderAuthenticated bool             `json:"sender_authenticated"`
 	SentAt              *time.Time       `json:"sent_at" validate:"omitempty"`
 	Snippet             string           `json:"snippet" validate:"omitempty"`
-	SourceMessageID     string           `json:"source_message_id" validate:"required"`
+	SourceMessageID     string           `json:"source_message_id" validate:"omitempty"`
 	Subject             string           `json:"subject" validate:"omitempty"`
 	VectorScore         *float64         `json:"vector_score" validate:"omitempty"`
 	Weight              float64          `json:"weight"`
@@ -15633,9 +15633,6 @@ func (w WhoKnowsEvidence) Validate() error {
 	}
 	if err := typesValidator.Var(w.Role, "required"); err != nil {
 		errors = errors.Append("Role", err)
-	}
-	if err := typesValidator.Var(w.SourceMessageID, "required"); err != nil {
-		errors = errors.Append("SourceMessageID", err)
 	}
 	if len(errors) == 0 {
 		return nil

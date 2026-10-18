@@ -16464,6 +16464,9 @@ components:
           x-omitempty: false
         source_message_id:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         subject:
           type: string
           x-oapi-codegen-extra-tags:

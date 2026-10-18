@@ -138,6 +138,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"PersonMessagingRoutesPage", "AliasReason", "p"},
 		{"WhoKnowsEvidence", "Snippet", "w"},
 		{"WhoKnowsEvidence", "Subject", "w"},
+		{"WhoKnowsEvidence", "SourceMessageID", "w"},
 		{"WhoKnowsRanked", "DisplayName", "w"},
 		{"WhoKnowsRetrieval", "Accelerator", "w"},
 		{"WhoKnowsUnsavedCandidate", "DisplayName", "w"},

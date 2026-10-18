@@ -25,7 +25,7 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 		MessageType:     "email",
 		Role:            "from",
 		Snippet:         "",
-		SourceMessageID: "message-1",
+		SourceMessageID: "", // Archived messages may lack a provider ID.
 		Subject:         "",
 	}
 	breakdown := generated.WhoKnowsBreakdown{
@@ -146,6 +146,8 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 	assert.Nil(contactState["oldest_computed_at"])
 	assert.Contains(evidenceFields, "sent_at")
 	assert.Nil(evidenceFields["sent_at"])
+	assert.Contains(evidenceFields, "source_message_id")
+	assert.Empty(evidenceFields["source_message_id"])
 	assert.Contains(evidenceFields, "vector_score")
 	assert.Nil(evidenceFields["vector_score"])
 	assert.Contains(evidenceFields, "subject")

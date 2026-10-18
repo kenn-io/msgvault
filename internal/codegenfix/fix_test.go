@@ -73,6 +73,7 @@ func TestRewriteGeneratedValidatorsAllowsEmptyWhoKnowsMetadata(t *testing.T) {
 	assertions.NotContains(string(got), `typesValidator.Var(w.DisplayName, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(w.EmailAddress, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(w.Accelerator, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.SourceMessageID, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -181,6 +182,7 @@ func (e Evidence) Validate() error {
 type WhoKnowsEvidence struct {
 	Snippet string
 	Subject string
+	SourceMessageID string
 }
 func (w WhoKnowsEvidence) Validate() error {
 	var errors runtime.ValidationErrors
@@ -189,6 +191,9 @@ func (w WhoKnowsEvidence) Validate() error {
 	}
 	if err := typesValidator.Var(w.Subject, "required"); err != nil {
 		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(w.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
 	}
 	return errors
 }

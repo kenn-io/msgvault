@@ -1660,7 +1660,7 @@ func hardenWhoKnowsClientSchemas(doc *huma.OpenAPI) {
 		}
 	}
 	for schemaName, names := range map[string][]string{
-		"WhoKnowsEvidence":         {"snippet", "subject"},
+		"WhoKnowsEvidence":         {"snippet", "source_message_id", "subject"},
 		"WhoKnowsExcerpt":          {"snippet"},
 		"WhoKnowsMessageCoverage":  {"coverage_sampled_at"},
 		"WhoKnowsOrganization":     {"title"},
