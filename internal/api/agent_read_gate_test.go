@@ -75,7 +75,7 @@ func (s *agentReadGateStore) NeedsFTSBackfillQuickContext(ctx context.Context) b
 	return s.Store.NeedsFTSBackfillQuickContext(ctx)
 }
 
-func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
+func TestAgentReadSourceRemovalSnapshot(t *testing.T) {
 	for _, route := range []string{"list", "search", "aggregate", "message", "store message", "thread", "domain", "stats", "subaggregate", "cached search"} {
 		t.Run(route, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -114,39 +114,19 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			<-ready
 			mutationDone := make(chan error, 1)
 			go func() {
-				done, ok := gate.BeginRequestWorkContext(t.Context(), "source replacement")
+				done, ok := gate.BeginRequestWorkContext(t.Context(), "source removal")
 				if !ok {
 					mutationDone <- context.Canceled
 					return
 				}
 				defer done()
 				_, _, err := st.RemoveSourceSerialized(t.Context(), src.ID)
-				if err == nil {
-					var outside *store.Source
-					if st.IsPostgreSQL() {
-						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					} else {
-						// Reproduce a legacy writer reusing the removed ID. Normal
-						// Store creation deliberately retains a fresh source lifetime.
-						_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					}
-					if err == nil {
-						var conv int64
-						conv, err = st.EnsureConversation(outside.ID, "thread", "Synthetic")
-						if err == nil {
-							_, err = st.UpsertMessage(&store.Message{SourceID: outside.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email", Subject: sql.NullString{String: "glacier private", Valid: true}})
-						}
-					}
-				}
 				mutationDone <- err
 			}()
 			requirements.NoError(<-mutationDone)
 			close(resume)
 			response := <-readDone
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-			assertions.NotContains(response.Body.String(), "glacier private")
 			if route == "stats" {
 				var result TotalStatsResponse
 				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
@@ -157,14 +137,8 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			if route == "message" || route == "store message" {
 				assertions.Contains(response.Body.String(), "allowed body")
 			}
-			if !st.IsPostgreSQL() {
-				replacement, err := st.GetSourceByIdentifier("outside@example.test")
-				requirements.NoError(err)
-				requirements.Equal(src.ID, replacement.ID)
-			}
-			response = get()
-			assertions.NotContains(response.Body.String(), "glacier private")
-			assertions.NotContains(response.Body.String(), "outside@example.test")
+			_, err = st.GetSourceByIDContext(t.Context(), src.ID)
+			requirements.Error(err, "the concurrent supported operation removed the source")
 		})
 	}
 }

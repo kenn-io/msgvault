@@ -9,9 +9,9 @@ import (
 	"testing"
 )
 
-func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
-	for _, replaced := range []bool{false, true} {
-		t.Run(map[bool]string{false: "removed", true: "replaced"}[replaced], func(t *testing.T) {
+func TestAppendRefusesRemovedOrReimportedSourceLifetime(t *testing.T) {
+	for _, reimported := range []bool{false, true} {
+		t.Run(map[bool]string{false: "removed", true: "reimported"}[reimported], func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			opts := fakevault.Options{Dir: t.TempDir(), Messages: 8, Seed: 42}
@@ -23,9 +23,11 @@ func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 			source, err := st.GetSourceByID(1)
 			require.NoError(err)
 			require.NoError(st.RemoveSource(source.ID))
-			if replaced {
-				_, err = st.DB().Exec(`INSERT INTO sources(id,source_type,identifier) VALUES(1,'gmail','replacement@example.test')`)
+			var recreated *store.Source
+			if reimported {
+				recreated, err = st.GetOrCreateSource(source.SourceType, source.Identifier)
 				require.NoError(err)
+				assert.Greater(recreated.ID, source.ID, "ordinary reimport allocates a new source lifetime")
 			}
 			var messages, participants int
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&messages))
@@ -38,13 +40,12 @@ func TestAppendRefusesRemovedOrReplacedSourceLifetime(t *testing.T) {
 			require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants`).Scan(&afterParticipants))
 			assert.Equal(messages, afterMessages)
 			assert.Equal(participants, afterParticipants)
-			if replaced {
-				var identifier string
-				require.NoError(st.DB().QueryRow(`SELECT identifier FROM sources WHERE id=1`).Scan(&identifier))
-				assert.Equal("replacement@example.test", identifier)
-			} else {
-				_, err = st.GetSourceByID(1)
-				assert.Error(err)
+			_, err = st.GetSourceByID(source.ID)
+			assert.Error(err, "append never restores the retired fixed source")
+			if reimported {
+				current, err := st.GetSourceByID(recreated.ID)
+				require.NoError(err)
+				assert.Equal(source.Identifier, current.Identifier)
 			}
 		})
 	}

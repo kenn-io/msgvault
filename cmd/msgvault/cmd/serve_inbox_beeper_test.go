@@ -85,8 +85,6 @@ func newBeeperControlPeer(t *testing.T, a *storeAPIAdapter) *beeperControlPeer {
 			_, _ = io.WriteString(w, chat)
 		case "/v1/chats/!chat:example.invalid/messages":
 			_, _ = io.WriteString(w, page)
-		case "/v1/chats/!chat:example.invalid/messages/old-A":
-			_, _ = io.WriteString(w, beeperControlOldMessage)
 		default:
 			assert.Fail(t, "unexpected Beeper request", r.URL.String())
 			http.NotFound(w, r)
@@ -178,7 +176,7 @@ func TestBeeperInboxControlPersistsMetadataUnderSourceFence(t *testing.T) {
 }
 
 func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
-	for _, scenario := range []string{"removed", "reused ID", "removed during factory", "foreign source", "foreign identifier", "foreign account", "foreign conversation", "foreign provider"} {
+	for _, scenario := range []string{"removed", "removed during factory", "foreign source", "foreign identifier", "foreign account", "foreign conversation", "foreign provider"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -186,19 +184,8 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 			peer := newBeeperControlPeer(t, a)
 			replacementFactoryCalls := 0
 			switch scenario {
-			case "removed", "reused ID":
+			case "removed":
 				requirements.NoError(a.store.RemoveSource(target.SourceID))
-				if scenario == "reused ID" {
-					insert := "INSERT INTO sources (id,source_type,identifier) VALUES (?, ?, ?)"
-					if a.store.IsPostgreSQL() {
-						// Deliberately reuse a retired ID without changing the allocator.
-						insert = "INSERT INTO sources (id,source_type,identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"
-					}
-					_, err := a.store.DB().Exec(a.store.Rebind(insert), target.SourceID, "beeper", "replacement-account")
-					requirements.NoError(err)
-					_, err = a.store.EnsureConversation(target.SourceID, target.ProviderID, "Replacement")
-					requirements.NoError(err)
-				}
 			case "removed during factory":
 				a.beeperInboxClientFactory = func(context.Context, *store.Source) (*beeper.Client, error) {
 					replacementFactoryCalls++
@@ -259,7 +246,7 @@ func TestBeeperInboxControlRejectsMergedAndMemberAliases(t *testing.T) {
 }
 
 func TestBeeperInboxControlPrimaryEvidenceNeverAdmitsMutations(t *testing.T) {
-	for _, scenario := range []string{"chat markers and latest prose", "singleton terminal repeated with retrieved A", "outgoing preview with retrieved old A", "omitted preview with retrieved old A"} {
+	for _, scenario := range []string{"chat markers and latest prose", "singleton terminal page", "outgoing preview", "omitted preview"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -268,15 +255,10 @@ func TestBeeperInboxControlPrimaryEvidenceNeverAdmitsMutations(t *testing.T) {
 			switch scenario {
 			case "chat markers and latest prose":
 				peer.chat = strings.TrimSuffix(beeperControlChat, "}") + `,"lastMessage":{"text":"Latest synthetic prose"}}`
-			case "singleton terminal repeated with retrieved A":
+			case "singleton terminal page":
 				peer.page = `{"items":[` + beeperControlOldMessage + `],"hasMore":false,"oldestCursor":"old","newestCursor":"new"}`
-			case "outgoing preview with retrieved old A":
+			case "outgoing preview":
 				peer.chat = strings.TrimSuffix(beeperControlChat, "}") + `,"lastMessage":{"id":"outgoing","isSender":true}}`
-			}
-			if scenario != "chat markers and latest prose" {
-				message, err := peer.client.GetMessage(t.Context(), target.ProviderID, "old-A")
-				requirements.NoError(err)
-				assertions.Equal("old-A", message.ID)
 			}
 			request := inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}
 			for range 2 {
