@@ -127,7 +127,7 @@ func TestWhoKnowsGeneratedClientValidatesNullableAndEmptyValues(t *testing.T) {
 	assert.Contains(unsavedCandidate, "display_name")
 	assert.Empty(unsavedCandidate["display_name"])
 	assert.Contains(unsavedCandidate, "email_address")
-	assert.Equal("", unsavedCandidate["email_address"])
+	assert.Empty(unsavedCandidate["email_address"])
 	unsavedBreakdown, ok := unsavedCandidate["breakdown"].(map[string]any)
 	require.True(ok)
 	retrieval, ok := encoded["retrieval"].(map[string]any)
