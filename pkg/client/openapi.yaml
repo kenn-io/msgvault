@@ -11346,6 +11346,650 @@ components:
       required:
         - versions
       type: object
+    PersonCard:
+      nullable: true
+      properties:
+        brief:
+          $ref: "#/components/schemas/PersonCardBrief"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        coverage:
+          $ref: "#/components/schemas/PersonCardCoverage"
+        excluded:
+          items:
+            type: string
+          type: array
+        items:
+          items:
+            $ref: "#/components/schemas/PersonCardItem"
+          type: array
+        items_dropped_by_rank:
+          format: int64
+          type: integer
+        last_interaction:
+          $ref: "#/components/schemas/PersonCardLastInteraction"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        meetings:
+          $ref: "#/components/schemas/PersonCardMeetings"
+        person:
+          $ref: "#/components/schemas/PersonCardPerson"
+      required:
+        - person
+        - last_interaction
+        - items
+        - items_dropped_by_rank
+        - coverage
+        - meetings
+        - brief
+        - excluded
+      type: object
+    PersonCardActionCoverage:
+      properties:
+        available:
+          format: int64
+          type: integer
+        meeting_count:
+          format: int64
+          type: integer
+        partial:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+        unavailable:
+          format: int64
+          type: integer
+        unsupported:
+          format: int64
+          type: integer
+      required:
+        - meeting_count
+        - available
+        - partial
+        - unsupported
+        - unavailable
+        - truncated
+      type: object
+    PersonCardBrief:
+      nullable: true
+      properties:
+        citations:
+          items:
+            type: string
+          type: array
+        citations_count:
+          format: int64
+          type: integer
+        citations_more:
+          type: boolean
+        content_trust:
+          type: string
+        evidence:
+          items:
+            type: string
+          type: array
+        evidence_more:
+          type: boolean
+        generated_at:
+          format: date-time
+          type: string
+        untrusted_text:
+          $ref: "#/components/schemas/PersonCardBriefText"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - generated_at
+        - content_trust
+        - untrusted_text
+        - citations
+        - evidence
+        - citations_count
+      type: object
+    PersonCardBriefText:
+      nullable: true
+      properties:
+        text:
+          type: string
+        text_more:
+          type: boolean
+      required:
+        - text
+      type: object
+    PersonCardCandidate:
+      properties:
+        content_trust:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        untrusted_text:
+          $ref: "#/components/schemas/PersonCardCandidateText"
+      required:
+        - person_id
+        - untrusted_text
+        - content_trust
+      type: object
+    PersonCardCandidateText:
+      properties:
+        display_name:
+          type: string
+        display_name_more:
+          type: boolean
+      required:
+        - display_name
+      type: object
+    PersonCardCite:
+      properties:
+        at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        evidence_ref:
+          type: string
+        kind:
+          type: string
+        ref:
+          type: string
+        web_url:
+          type: string
+      required:
+        - kind
+        - ref
+        - web_url
+        - at
+      type: object
+    PersonCardCoverage:
+      properties:
+        actions:
+          $ref: "#/components/schemas/PersonCardActionCoverage"
+        agenda_truncated:
+          type: boolean
+        loops_invalid_evidence:
+          format: int64
+          type: integer
+        loops_truncated:
+          type: boolean
+        meetings_truncated:
+          type: boolean
+      required:
+        - actions
+        - agenda_truncated
+        - loops_truncated
+        - loops_invalid_evidence
+        - meetings_truncated
+      type: object
+    PersonCardFreshnessBlock:
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        collected_at:
+          format: date-time
+          type: string
+        projections:
+          additionalProperties:
+            $ref: "#/components/schemas/ProjectionFreshness"
+          type: object
+        sources:
+          items:
+            $ref: "#/components/schemas/PersonCardSourceFreshness"
+          type: array
+        sources_omitted:
+          format: int64
+          type: integer
+        stale:
+          type: boolean
+        stale_after_seconds:
+          format: int64
+          type: integer
+        stale_reasons:
+          items:
+            type: string
+          type: array
+        warnings:
+          items:
+            type: string
+          type: array
+        warnings_more:
+          type: boolean
+      required:
+        - sources
+        - collected_at
+        - sources_omitted
+        - as_of
+        - stale_after_seconds
+        - stale
+        - stale_reasons
+        - warnings
+        - projections
+      type: object
+    PersonCardItem:
+      properties:
+        assignee_class:
+          type: string
+        cite:
+          $ref: "#/components/schemas/PersonCardCite"
+        content_trust:
+          type: string
+        date:
+          type: string
+        date_role:
+          type: string
+        id:
+          type: string
+        kind:
+          type: string
+        overdue:
+          type: boolean
+        rank:
+          format: int64
+          type: integer
+        stale:
+          type: boolean
+        subkind:
+          type: string
+        untrusted_text:
+          $ref: "#/components/schemas/PersonCardItemText"
+      required:
+        - id
+        - kind
+        - rank
+        - date
+        - date_role
+        - overdue
+        - stale
+        - content_trust
+        - untrusted_text
+        - cite
+      type: object
+    PersonCardItemText:
+      properties:
+        assignee:
+          type: string
+        assignee_more:
+          type: boolean
+        label:
+          type: string
+        label_more:
+          type: boolean
+        list:
+          type: string
+        list_more:
+          type: boolean
+        status_label:
+          type: string
+        text:
+          type: string
+        text_more:
+          type: boolean
+        web_url:
+          type: string
+        web_url_more:
+          type: boolean
+      required:
+        - text
+      type: object
+    PersonCardLastInteraction:
+      nullable: true
+      properties:
+        at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        cadence_due_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        cadence_overdue_at_as_of:
+          type: boolean
+        cadence_status:
+          type: string
+        channel:
+          type: string
+        direction:
+          type: string
+        interaction_count:
+          format: int64
+          type: integer
+        last_inbound_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_outbound_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        projection_computed_at:
+          format: date-time
+          type: string
+        projection_stale:
+          type: boolean
+        ref:
+          type: string
+        web_url:
+          type: string
+      required:
+        - at
+        - channel
+        - direction
+        - ref
+        - web_url
+        - last_inbound_at
+        - last_outbound_at
+        - interaction_count
+        - cadence_status
+        - cadence_due_at
+        - cadence_overdue_at_as_of
+        - projection_computed_at
+        - projection_stale
+      type: object
+    PersonCardMeetingText:
+      properties:
+        title:
+          type: string
+        title_more:
+          type: boolean
+      required:
+        - title
+      type: object
+    PersonCardMeetings:
+      properties:
+        count:
+          format: int64
+          type: integer
+        count_by_basis:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        last_invited_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_met_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        recent:
+          items:
+            $ref: "#/components/schemas/PersonCardRecentMeeting"
+          type: array
+        recent_more:
+          type: boolean
+        window_days:
+          format: int64
+          type: integer
+      required:
+        - window_days
+        - count
+        - count_by_basis
+        - last_met_at
+        - last_invited_at
+        - recent
+      type: object
+    PersonCardOmitted:
+      properties:
+        brief:
+          type: boolean
+        items:
+          format: int64
+          type: integer
+        meetings:
+          format: int64
+          type: integer
+        sources:
+          format: int64
+          type: integer
+      required:
+        - brief
+        - items
+        - meetings
+        - sources
+      type: object
+    PersonCardPerson:
+      properties:
+        categories_more:
+          type: boolean
+        content_trust:
+          type: string
+        emails:
+          items:
+            type: string
+          type: array
+        emails_more:
+          type: boolean
+        inferred_channel:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        primary_channel:
+          type: string
+        tracked:
+          type: boolean
+        untrusted_text:
+          $ref: "#/components/schemas/PersonCardPersonText"
+        vcard_uid:
+          type: string
+        vcard_uid_more:
+          type: boolean
+      required:
+        - person_id
+        - vcard_uid
+        - tracked
+        - emails
+        - primary_channel
+        - inferred_channel
+        - content_trust
+        - untrusted_text
+      type: object
+    PersonCardPersonText:
+      properties:
+        categories:
+          items:
+            type: string
+          type: array
+        display_name:
+          type: string
+        display_name_more:
+          type: boolean
+        organization_name:
+          type: string
+        organization_name_more:
+          type: boolean
+        title:
+          type: string
+        title_more:
+          type: boolean
+      required:
+        - display_name
+        - organization_name
+        - title
+        - categories
+      type: object
+    PersonCardRecentMeeting:
+      properties:
+        basis:
+          type: string
+        content_trust:
+          type: string
+        ref:
+          type: string
+        start:
+          format: date-time
+          type: string
+        untrusted_text:
+          $ref: "#/components/schemas/PersonCardMeetingText"
+      required:
+        - ref
+        - start
+        - basis
+        - content_trust
+        - untrusted_text
+      type: object
+    PersonCardResult:
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        candidates:
+          items:
+            $ref: "#/components/schemas/PersonCardCandidate"
+          type: array
+        candidates_more:
+          type: boolean
+        card:
+          $ref: "#/components/schemas/PersonCard"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        collected_at:
+          format: date-time
+          type: string
+        content:
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        content_bytes:
+          format: int64
+          type: integer
+        format:
+          type: string
+        freshness:
+          $ref: "#/components/schemas/PersonCardFreshnessBlock"
+        gaps:
+          items:
+            type: string
+          type: array
+        omitted:
+          $ref: "#/components/schemas/PersonCardOmitted"
+        participant_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ref:
+          type: string
+        schema_version:
+          format: int64
+          type: integer
+        status:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - schema_version
+        - status
+        - ref
+        - as_of
+        - collected_at
+        - format
+        - card
+        - content
+        - content_bytes
+        - truncated
+        - omitted
+        - freshness
+        - gaps
+        - participant_id
+        - candidates
+      type: object
+    PersonCardSourceFreshness:
+      properties:
+        age_seconds:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        can_sync:
+          type: boolean
+        identifier:
+          type: string
+        identifier_more:
+          type: boolean
+        last_successful_sync_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        last_sync_errors:
+          format: int64
+          type: integer
+        outcome:
+          type: string
+        reason:
+          type: string
+        scheduling:
+          type: string
+        source_id:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        source_type:
+          type: string
+        stale:
+          type: boolean
+        sync_command:
+          type: string
+        sync_unavailable_reason:
+          type: string
+      required:
+        - can_sync
+        - sync_unavailable_reason
+        - source_id
+        - source_type
+        - identifier
+        - scheduling
+        - last_successful_sync_at
+        - last_sync_errors
+        - outcome
+        - age_seconds
+        - stale
+        - sync_command
+      type: object
     PersonCategory:
       properties:
         envelope:
@@ -13657,6 +14301,40 @@ components:
       required:
         - done
         - total
+      type: object
+    ProjectionFreshness:
+      nullable: true
+      properties:
+        age_seconds:
+          format: int64
+          nullable: true
+          type: integer
+          x-go-type: "*int64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        backfill_complete:
+          type: boolean
+        computed_at:
+          format: date-time
+          nullable: true
+          type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        extra:
+          additionalProperties:
+            x-go-type: any
+          type: object
+        last_success_at:
+          format: date-time
+          type: string
+        stale:
+          type: boolean
+      required:
+        - computed_at
+        - age_seconds
+        - stale
       type: object
     ProjectionRef:
       properties:
@@ -16818,7 +17496,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.25.0
+  version: 3.26.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -30210,6 +30888,98 @@ paths:
       security:
         - apiKey: []
       summary: Replace a person's tracking state
+      tags:
+        - API
+  /api/v1/people/{ref}/card:
+    get:
+      description: Read-only current profile projection with dated citations, gaps and freshness. as_of is an evaluation time, not a historical snapshot.
+      operationId: getPersonCard
+      parameters:
+        - description: Numeric person ID, person:<id>, participant:<id>, or email:<address>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - description: RFC3339 evaluation time; defaults to collection time
+          in: query
+          name: as_of
+          schema:
+            type: string
+        - description: Ranked items (default 3, range 1–10)
+          in: query
+          name: max_items
+          schema:
+            format: int64
+            type: integer
+        - description: Content byte budget (default 16384, range 2048–65536)
+          in: query
+          name: max_bytes
+          schema:
+            format: int64
+            type: integer
+        - description: json (default) or markdown; both return a JSON envelope
+          in: query
+          name: format
+          schema:
+            type: string
+        - description: Optional internal or external Markdown label
+          in: query
+          name: affiliation
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonCardResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Prepare a bounded person card (owner only)
       tags:
         - API
   /api/v1/people/{ref}/meetings:

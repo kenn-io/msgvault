@@ -254,6 +254,24 @@ func resolveLinkOccurrence(ctx context.Context, r rowReader, scope SourceScope, 
 	return readLinkOccurrence(ctx, r, scope, ref, budget, false)
 }
 
+type linkOccurrenceCache map[string]linkOccurrence
+
+func (cache linkOccurrenceCache) resolve(ctx context.Context, r rowReader, scope SourceScope, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
+	key := FormatOccurrenceRef(ref)
+	if target, ok := cache[key]; ok {
+		return target, nil
+	}
+	target, err := resolveLinkOccurrence(ctx, r, scope, ref, budget)
+	if err != nil {
+		return linkOccurrence{}, err
+	}
+	if cache != nil {
+		cache[key] = target
+		cache[FormatOccurrenceRef(target.Ref)] = target
+	}
+	return target, nil
+}
+
 // Suggestions exclude cancellation before expansion. Exact links and user
 // decisions can still refer to cancelled historical occurrences.
 func readLinkOccurrence(ctx context.Context, r rowReader, scope SourceScope, ref OccurrenceRef, budget *int, hideCancelled bool) (linkOccurrence, error) {
@@ -663,11 +681,16 @@ func membersForOccurrence(ctx context.Context, r rowReader, scope SourceScope, o
 	if err != nil {
 		return nil, err
 	}
+	return membersForResolvedOccurrence(ctx, r, scope, target, budget)
+}
+
+func membersForResolvedOccurrence(ctx context.Context, r rowReader, scope SourceScope, target linkOccurrence, budget *int) ([]EffectiveLink, error) {
 	e := target.Row.Event
 	ids := map[int64]bool{}
 	clause, scopeArgs := linkScopeSQL(scope)
 	// Direct exception IDs are candidates alongside master IDs and parsed bases.
 	var related []CalendarEventRow
+	var err error
 	if e.Kind == meetingLinkSeriesKind {
 		var broad bool
 		related, broad, err = linkOccurrenceExceptionRows(ctx, r, scope, target.Row, target.Original)

@@ -240,6 +240,22 @@ func TestPersonMeetingsRecurrenceBudgetIsExplicit(t *testing.T) {
 	assertions.Empty(items)
 }
 
+func TestPersonMeetingsLongRunningWeeklySeriesFitsRequestBudget(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarLinkFixture(t, st, "calendar@example.com", `{"id":"old-weekly","iCalUID":"old-weekly@example.org","start":{"dateTime":"2020-03-01T10:00:00Z"},"end":{"dateTime":"2020-03-01T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY"],"attendees":[{"email":"guest@example.com"}]}`)
+	q := PersonMeetingsQuery{
+		Emails: []string{"guest@example.com"},
+		From:   time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
+		To:     time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC),
+		Limit:  100,
+	}
+	items, _, err := st.ListPersonMeetingsContext(t.Context(), OwnerScope(), q)
+	requirements.NoError(err)
+	assertions.Len(items, 53)
+}
+
 func TestPersonMeetingsIgnoresProvenUnrelatedUnsupportedSeries(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -270,6 +286,14 @@ func TestPersonMeetingsConflictingTargetsKeepMessageIdentity(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("msg:%d", note), items[0].Ref)
 	assertions.Equal(time.Date(2027, 3, 16, 10, 0, 0, 0, time.UTC), items[0].Start)
 	assertions.Nil(items[0].Occurrence)
+	record, err := st.GetMeetingRecordContext(t.Context(), OwnerScope(), items[0].Ref)
+	requirements.NoError(err)
+	assertions.Equal(items[0].Ref, record.Ref)
+	assertions.Nil(record.Occurrence)
+	requirements.Len(record.Items, 1)
+	assertions.Equal(note, record.Items[0].MessageID)
+	requirements.NotNil(record.Items[0].Content)
+	assertions.Equal("Evidence", record.Items[0].Content.Meetings[0].Content.Transcript.Text)
 }
 
 func TestPersonMeetingsOccurrenceReadUsesSharedBudget(t *testing.T) {

@@ -79,7 +79,9 @@ func normalizePersonMeetingsQuery(scope SourceScope, q PersonMeetingsQuery, now 
 		IDs      []int64
 		Emails   []string
 		From, To time.Time
-	}{scope, q.ParticipantIDs, q.Emails, q.From, q.To})
+		// Omit false to retain the fingerprints of existing ascending cursors.
+		NewestFirst bool `json:",omitempty,omitzero"`
+	}{scope, q.ParticipantIDs, q.Emails, q.From, q.To, q.NewestFirst})
 	if err != nil {
 		return q, cursor, "", err
 	}

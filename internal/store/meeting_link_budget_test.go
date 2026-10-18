@@ -20,8 +20,8 @@ func TestLinkBudgetReservesBoundedRecurrenceWork(t *testing.T) {
 	budget := 100
 	allowance, err := reserveLinkRecurrence(context.Background(), set, start.AddDate(0, 0, 8), &budget)
 	requirements.NoError(err)
-	assertions.Equal(12, allowance)
-	assertions.Equal(88, budget)
+	assertions.Equal(4, allowance)
+	assertions.Equal(96, budget)
 	_, err = calrecur.Expand(context.Background(), set, time.Hour, 0, nil, start, start.AddDate(0, 0, 8), allowance)
 	assertions.NoError(err)
 }
@@ -66,4 +66,40 @@ func TestLinkBudgetAllowsMovedExceptionOfFinishedMaster(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(occurrences, 1)
 	assertions.Equal(moved, occurrences[0].Start)
+}
+
+func TestLinkBudgetUsesWeeklyCandidateFrequency(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	start := time.Date(2020, 3, 1, 10, 0, 0, 0, time.UTC)
+	set, err := calrecur.ParseSet(start, false, "", time.UTC, []string{"RRULE:FREQ=WEEKLY"})
+	requirements.NoError(err)
+	budget := calrecur.RequestReadBudget
+	allowance, err := reserveLinkRecurrence(context.Background(), set, time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC), &budget)
+	requirements.NoError(err)
+	assertions.Less(allowance, 500)
+	assertions.Greater(budget, calrecur.RequestReadBudget-500)
+}
+
+func TestLinkBudgetYearlyCandidateBoundSpansMultipleYears(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	start := time.Date(2020, 1, 1, 10, 0, 0, 0, time.UTC)
+	set, err := calrecur.ParseSet(start, false, "", time.UTC, []string{
+		"RRULE:FREQ=YEARLY;BYMONTH=1,2,3,4,5,6,7,8,9,10,11,12;BYMONTHDAY=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31;COUNT=400",
+	})
+	requirements.NoError(err)
+	budget := calrecur.RequestReadBudget
+	allowance, err := reserveLinkRecurrence(context.Background(), set, time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), &budget)
+	requirements.NoError(err)
+	assertions.GreaterOrEqual(allowance, 400)
+	count := 0
+	err = calrecur.Iter(context.Background(), set, time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), allowance, func(calrecur.Instance) bool {
+		count++
+		return true
+	})
+	requirements.NoError(err)
+	assertions.Equal(400, count)
 }

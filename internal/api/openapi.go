@@ -378,12 +378,14 @@ import (
 // and /api/v1/calendar/events/{ref}.
 // 3.25.0 adds meeting records, person meeting history, link suggestions,
 // and owner-only meeting link decisions.
-const APISchemaVersion = "3.25.0"
+// 3.26.0 adds owner-only, bounded person cards for meeting and reply preparation.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
+	hardenPersonCardSchemas(doc, false)
 	hardenSourceStatusPublicSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
@@ -393,6 +395,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
+	hardenPersonCardSchemas(doc, true)
 	hardenSourceStatusClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
@@ -1496,6 +1499,11 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	// Without the override, empty-schema map values generate struct{}, which cannot carry surface="web".
 	if telemetry := schemas["TelemetryEventRequest"]; telemetry != nil && telemetry.Properties["properties"] != nil {
 		if values, ok := telemetry.Properties["properties"].AdditionalProperties.(*huma.Schema); ok {
+			setCodegenGoType(values, "any")
+		}
+	}
+	if projection := schemas["ProjectionFreshness"]; projection != nil && projection.Properties["extra"] != nil {
+		if values, ok := projection.Properties["extra"].AdditionalProperties.(*huma.Schema); ok {
 			setCodegenGoType(values, "any")
 		}
 	}

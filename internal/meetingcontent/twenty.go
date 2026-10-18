@@ -51,6 +51,7 @@ func decodeTwenty(fields map[string]jsontext.Value) Content {
 			// Calendar names remain display evidence even without an address.
 			// Only a valid handle can create an archive identity relationship.
 			if participant, ok := participantFromPerson(personWire{Name: person.Name, Email: twentyEmail(person.Handle)}, role); ok {
+				participant.Provenance = "invited"
 				c.SourceParticipants = append(c.SourceParticipants, participant)
 			}
 		}

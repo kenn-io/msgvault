@@ -9,6 +9,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestRewriteRequiredStringFieldPointerPreservesRequiredPresence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := []byte("type PersonCardPerson struct {\n\tPrimaryChannel string `json:\"primary_channel\" validate:\"required\"`\n}\n")
+	got, err := rewriteRequiredStringFieldPointer(fixture, "PersonCardPerson", "PrimaryChannel")
+	requirements.NoError(err)
+	assertions.Contains(string(got), "PrimaryChannel *string `json:\"primary_channel\" validate:\"required\"`")
+
+	again, err := rewriteRequiredStringFieldPointer(got, "PersonCardPerson", "PrimaryChannel")
+	requirements.NoError(err)
+	assertions.Equal(got, again)
+}
+
+func TestRewriteRequiredTimeFieldPointerPreservesRequiredPresence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := []byte("type PersonCardLastInteraction struct {\n\tProjectionComputedAt time.Time `json:\"projection_computed_at\" validate:\"required\"`\n}\n")
+	got, err := rewriteRequiredTimeFieldPointer(fixture, "PersonCardLastInteraction", "ProjectionComputedAt")
+	requirements.NoError(err)
+	assertions.Contains(string(got), "ProjectionComputedAt *time.Time `json:\"projection_computed_at\" validate:\"required\"`")
+
+	again, err := rewriteRequiredTimeFieldPointer(got, "PersonCardLastInteraction", "ProjectionComputedAt")
+	requirements.NoError(err)
+	assertions.Equal(got, again)
+}
+
 func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions := assert.New(t)
 	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))

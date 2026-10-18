@@ -2913,6 +2913,20 @@ type SetPersonTrackingErrorResponseJSON = ErrorResponse
 
 type SetPersonTrackingErrorResponseJSON503 = ErrorResponse
 
+type GetPersonCardResponse = PersonCardResult
+
+type GetPersonCardErrorResponse = ErrorResponse
+
+type GetPersonCardErrorResponseJSON = ErrorResponse
+
+type GetPersonCardErrorResponseJSON403 = ErrorResponse
+
+type GetPersonCardErrorResponseJSON404 = ErrorResponse
+
+type GetPersonCardErrorResponseJSON500 = ErrorResponse
+
+type GetPersonCardErrorResponseJSON503 = ErrorResponse
+
 type ListPersonMeetingsResponse = PersonMeetingsResponse
 
 type ListPersonMeetingsErrorResponse = ErrorResponse
@@ -6383,6 +6397,19 @@ type SetPersonTrackingResp struct {
 	JSON400      *SetPersonTrackingErrorResponse
 	JSON404      *SetPersonTrackingErrorResponseJSON
 	JSON503      *SetPersonTrackingErrorResponseJSON503
+}
+
+type GetPersonCardResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetPersonCardResponse
+	JSON400      *GetPersonCardErrorResponse
+	JSON401      *GetPersonCardErrorResponseJSON
+	JSON403      *GetPersonCardErrorResponseJSON403
+	JSON404      *GetPersonCardErrorResponseJSON404
+	JSON500      *GetPersonCardErrorResponseJSON500
+	JSON503      *GetPersonCardErrorResponseJSON503
 }
 
 type ListPersonMeetingsResp struct {

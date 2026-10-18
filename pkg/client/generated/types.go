@@ -10702,6 +10702,598 @@ func (p PersonBriefVersionsResponse) Validate() error {
 	return errors
 }
 
+type PersonCard struct {
+	Brief              *PersonCardBrief           `json:"brief"`
+	Coverage           PersonCardCoverage         `json:"coverage"`
+	Excluded           []string                   `json:"excluded" validate:"required"`
+	Items              []PersonCardItem           `json:"items" validate:"required"`
+	ItemsDroppedByRank int64                      `json:"items_dropped_by_rank"`
+	LastInteraction    *PersonCardLastInteraction `json:"last_interaction"`
+	Meetings           PersonCardMeetings         `json:"meetings"`
+	Person             PersonCardPerson           `json:"person"`
+}
+
+func (p PersonCard) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.Brief != nil {
+		if v, ok := any(p.Brief).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Brief", err)
+			}
+		}
+	}
+	if v, ok := any(p.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	if err := typesValidator.Var(p.Excluded, "required"); err != nil {
+		errors = errors.Append("Excluded", err)
+	}
+	for i, item := range p.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if p.LastInteraction != nil {
+		if v, ok := any(p.LastInteraction).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("LastInteraction", err)
+			}
+		}
+	}
+	if v, ok := any(p.Meetings).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Meetings", err)
+		}
+	}
+	if v, ok := any(p.Person).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Person", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardActionCoverage struct {
+	Available    int64 `json:"available"`
+	MeetingCount int64 `json:"meeting_count"`
+	Partial      int64 `json:"partial"`
+	Truncated    bool  `json:"truncated"`
+	Unavailable  int64 `json:"unavailable"`
+	Unsupported  int64 `json:"unsupported"`
+}
+
+type PersonCardBrief struct {
+	Citations      []string             `json:"citations" validate:"required"`
+	CitationsCount int64                `json:"citations_count"`
+	CitationsMore  *bool                `json:"citations_more,omitempty"`
+	ContentTrust   string               `json:"content_trust" validate:"required"`
+	Evidence       []string             `json:"evidence" validate:"required"`
+	EvidenceMore   *bool                `json:"evidence_more,omitempty"`
+	GeneratedAt    time.Time            `json:"generated_at" validate:"required"`
+	UntrustedText  *PersonCardBriefText `json:"untrusted_text"`
+	Version        int64                `json:"version"`
+}
+
+func (p PersonCardBrief) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Citations, "required"); err != nil {
+		errors = errors.Append("Citations", err)
+	}
+	if err := typesValidator.Var(p.ContentTrust, "required"); err != nil {
+		errors = errors.Append("ContentTrust", err)
+	}
+	if err := typesValidator.Var(p.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	if err := typesValidator.Var(p.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	if p.UntrustedText != nil {
+		if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UntrustedText", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardBriefText struct {
+	Text     *string `json:"text" validate:"required"`
+	TextMore *bool   `json:"text_more,omitempty"`
+}
+
+func (p PersonCardBriefText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardCandidate struct {
+	ContentTrust  string                  `json:"content_trust" validate:"required"`
+	PersonID      int64                   `json:"person_id"`
+	UntrustedText PersonCardCandidateText `json:"untrusted_text"`
+}
+
+func (p PersonCardCandidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ContentTrust, "required"); err != nil {
+		errors = errors.Append("ContentTrust", err)
+	}
+	if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardCandidateText struct {
+	DisplayName     *string `json:"display_name" validate:"required"`
+	DisplayNameMore *bool   `json:"display_name_more,omitempty"`
+}
+
+func (p PersonCardCandidateText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardCite struct {
+	At          *time.Time `json:"at" validate:"omitempty"`
+	EvidenceRef *string    `json:"evidence_ref,omitzero"`
+	Kind        string     `json:"kind" validate:"required"`
+	Ref         string     `json:"ref" validate:"required"`
+	WebURL      *string    `json:"web_url" validate:"required"`
+}
+
+func (p PersonCardCite) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardCoverage struct {
+	Actions              PersonCardActionCoverage `json:"actions"`
+	AgendaTruncated      bool                     `json:"agenda_truncated"`
+	LoopsInvalidEvidence int64                    `json:"loops_invalid_evidence"`
+	LoopsTruncated       bool                     `json:"loops_truncated"`
+	MeetingsTruncated    bool                     `json:"meetings_truncated"`
+}
+
+func (p PersonCardCoverage) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Actions).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Actions", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardFreshnessBlock struct {
+	AsOf              time.Time                       `json:"as_of" validate:"required"`
+	CollectedAt       time.Time                       `json:"collected_at" validate:"required"`
+	Projections       map[string]*ProjectionFreshness `json:"projections"`
+	Sources           []PersonCardSourceFreshness     `json:"sources" validate:"required"`
+	SourcesOmitted    int64                           `json:"sources_omitted"`
+	Stale             bool                            `json:"stale"`
+	StaleAfterSeconds int64                           `json:"stale_after_seconds"`
+	StaleReasons      []string                        `json:"stale_reasons" validate:"required"`
+	Warnings          []string                        `json:"warnings" validate:"required"`
+	WarningsMore      *bool                           `json:"warnings_more,omitempty"`
+}
+
+func (p PersonCardFreshnessBlock) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if err := typesValidator.Var(p.CollectedAt, "required"); err != nil {
+		errors = errors.Append("CollectedAt", err)
+	}
+	for k, v := range p.Projections {
+		if v == nil {
+			continue
+		}
+		if validator, ok := any(v).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Projections[%s]", k), err)
+			}
+		}
+	}
+	for i, item := range p.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.StaleReasons, "required"); err != nil {
+		errors = errors.Append("StaleReasons", err)
+	}
+	if err := typesValidator.Var(p.Warnings, "required"); err != nil {
+		errors = errors.Append("Warnings", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardItem struct {
+	AssigneeClass *string            `json:"assignee_class,omitzero"`
+	Cite          PersonCardCite     `json:"cite"`
+	ContentTrust  string             `json:"content_trust" validate:"required"`
+	Date          string             `json:"date" validate:"required"`
+	DateRole      string             `json:"date_role" validate:"required"`
+	ID            string             `json:"id" validate:"required"`
+	Kind          string             `json:"kind" validate:"required"`
+	Overdue       bool               `json:"overdue"`
+	Rank          int64              `json:"rank"`
+	Stale         bool               `json:"stale"`
+	Subkind       *string            `json:"subkind,omitzero"`
+	UntrustedText PersonCardItemText `json:"untrusted_text"`
+}
+
+func (p PersonCardItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Cite).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cite", err)
+		}
+	}
+	if err := typesValidator.Var(p.ContentTrust, "required"); err != nil {
+		errors = errors.Append("ContentTrust", err)
+	}
+	if err := typesValidator.Var(p.Date, "required"); err != nil {
+		errors = errors.Append("Date", err)
+	}
+	if err := typesValidator.Var(p.DateRole, "required"); err != nil {
+		errors = errors.Append("DateRole", err)
+	}
+	if err := typesValidator.Var(p.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(p.Kind, "required"); err != nil {
+		errors = errors.Append("Kind", err)
+	}
+	if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardItemText struct {
+	Assignee     *string `json:"assignee,omitzero"`
+	AssigneeMore *bool   `json:"assignee_more,omitempty"`
+	Label        *string `json:"label,omitzero"`
+	LabelMore    *bool   `json:"label_more,omitempty"`
+	List         *string `json:"list,omitzero"`
+	ListMore     *bool   `json:"list_more,omitempty"`
+	StatusLabel  *string `json:"status_label,omitzero"`
+	Text         *string `json:"text" validate:"required"`
+	TextMore     *bool   `json:"text_more,omitempty"`
+	WebURL       *string `json:"web_url,omitzero"`
+	WebURLMore   *bool   `json:"web_url_more,omitempty"`
+}
+
+func (p PersonCardItemText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardLastInteraction struct {
+	At                   *time.Time `json:"at" validate:"omitempty"`
+	CadenceDueAt         *time.Time `json:"cadence_due_at" validate:"omitempty"`
+	CadenceOverdueAtAsOf bool       `json:"cadence_overdue_at_as_of"`
+	CadenceStatus        string     `json:"cadence_status" validate:"required"`
+	Channel              *string    `json:"channel" validate:"required"`
+	Direction            string     `json:"direction" validate:"required"`
+	InteractionCount     int64      `json:"interaction_count"`
+	LastInboundAt        *time.Time `json:"last_inbound_at" validate:"omitempty"`
+	LastOutboundAt       *time.Time `json:"last_outbound_at" validate:"omitempty"`
+	ProjectionComputedAt *time.Time `json:"projection_computed_at" validate:"required"`
+	ProjectionStale      bool       `json:"projection_stale"`
+	Ref                  *string    `json:"ref" validate:"required"`
+	WebURL               *string    `json:"web_url" validate:"required"`
+}
+
+func (p PersonCardLastInteraction) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardMeetingText struct {
+	Title     *string `json:"title" validate:"required"`
+	TitleMore *bool   `json:"title_more,omitempty"`
+}
+
+func (p PersonCardMeetingText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardMeetings struct {
+	Count         int64                     `json:"count"`
+	CountByBasis  map[string]int64          `json:"count_by_basis"`
+	LastInvitedAt *time.Time                `json:"last_invited_at" validate:"omitempty"`
+	LastMetAt     *time.Time                `json:"last_met_at" validate:"omitempty"`
+	Recent        []PersonCardRecentMeeting `json:"recent" validate:"required"`
+	RecentMore    *bool                     `json:"recent_more,omitempty"`
+	WindowDays    int64                     `json:"window_days"`
+}
+
+func (p PersonCardMeetings) Validate() error {
+	var errors runtime.ValidationErrors
+	if p.LastInvitedAt != nil {
+		if err := typesValidator.Var(p.LastInvitedAt, "required"); err != nil {
+			errors = errors.Append("LastInvitedAt", err)
+		}
+	}
+	if p.LastMetAt != nil {
+		if err := typesValidator.Var(p.LastMetAt, "required"); err != nil {
+			errors = errors.Append("LastMetAt", err)
+		}
+	}
+	for i, item := range p.Recent {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Recent[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardOmitted struct {
+	Brief    bool  `json:"brief"`
+	Items    int64 `json:"items"`
+	Meetings int64 `json:"meetings"`
+	Sources  int64 `json:"sources"`
+}
+
+type PersonCardPerson struct {
+	CategoriesMore  *bool                `json:"categories_more,omitempty"`
+	ContentTrust    string               `json:"content_trust" validate:"required"`
+	Emails          []string             `json:"emails" validate:"required"`
+	EmailsMore      *bool                `json:"emails_more,omitempty"`
+	InferredChannel *string              `json:"inferred_channel" validate:"required"`
+	PersonID        int64                `json:"person_id"`
+	PrimaryChannel  *string              `json:"primary_channel" validate:"required"`
+	Tracked         bool                 `json:"tracked"`
+	UntrustedText   PersonCardPersonText `json:"untrusted_text"`
+	VcardUID        *string              `json:"vcard_uid" validate:"required"`
+	VcardUIDMore    *bool                `json:"vcard_uid_more,omitempty"`
+}
+
+func (p PersonCardPerson) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.ContentTrust, "required"); err != nil {
+		errors = errors.Append("ContentTrust", err)
+	}
+	if err := typesValidator.Var(p.Emails, "required"); err != nil {
+		errors = errors.Append("Emails", err)
+	}
+	if err := typesValidator.Var(p.InferredChannel, "required"); err != nil {
+		errors = errors.Append("InferredChannel", err)
+	}
+	if err := typesValidator.Var(p.PrimaryChannel, "required"); err != nil {
+		errors = errors.Append("PrimaryChannel", err)
+	}
+	if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if err := typesValidator.Var(p.VcardUID, "required"); err != nil {
+		errors = errors.Append("VcardUID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardPersonText struct {
+	Categories           []string `json:"categories" validate:"required"`
+	DisplayName          *string  `json:"display_name" validate:"required"`
+	DisplayNameMore      *bool    `json:"display_name_more,omitempty"`
+	OrganizationName     *string  `json:"organization_name" validate:"required"`
+	OrganizationNameMore *bool    `json:"organization_name_more,omitempty"`
+	Title                *string  `json:"title" validate:"required"`
+	TitleMore            *bool    `json:"title_more,omitempty"`
+}
+
+func (p PersonCardPersonText) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonCardRecentMeeting struct {
+	Basis         string                `json:"basis" validate:"required"`
+	ContentTrust  string                `json:"content_trust" validate:"required"`
+	Ref           string                `json:"ref" validate:"required"`
+	Start         time.Time             `json:"start" validate:"required"`
+	UntrustedText PersonCardMeetingText `json:"untrusted_text"`
+}
+
+func (p PersonCardRecentMeeting) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Basis, "required"); err != nil {
+		errors = errors.Append("Basis", err)
+	}
+	if err := typesValidator.Var(p.ContentTrust, "required"); err != nil {
+		errors = errors.Append("ContentTrust", err)
+	}
+	if err := typesValidator.Var(p.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if err := typesValidator.Var(p.Start, "required"); err != nil {
+		errors = errors.Append("Start", err)
+	}
+	if v, ok := any(p.UntrustedText).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UntrustedText", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardResult struct {
+	AsOf           time.Time                `json:"as_of" validate:"required"`
+	Candidates     []PersonCardCandidate    `json:"candidates" validate:"required"`
+	CandidatesMore *bool                    `json:"candidates_more,omitempty"`
+	Card           *PersonCard              `json:"card"`
+	CollectedAt    time.Time                `json:"collected_at" validate:"required"`
+	Content        *string                  `json:"content" validate:"omitempty"`
+	ContentBytes   int64                    `json:"content_bytes"`
+	Format         string                   `json:"format" validate:"required"`
+	Freshness      PersonCardFreshnessBlock `json:"freshness"`
+	Gaps           []string                 `json:"gaps" validate:"required"`
+	Omitted        PersonCardOmitted        `json:"omitted"`
+	ParticipantID  *int64                   `json:"participant_id" validate:"omitempty"`
+	Ref            string                   `json:"ref" validate:"required"`
+	SchemaVersion  int64                    `json:"schema_version"`
+	Status         string                   `json:"status" validate:"required"`
+	Truncated      bool                     `json:"truncated"`
+}
+
+func (p PersonCardResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	for i, item := range p.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if p.Card != nil {
+		if v, ok := any(p.Card).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Card", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.CollectedAt, "required"); err != nil {
+		errors = errors.Append("CollectedAt", err)
+	}
+	if p.Content != nil {
+		if err := typesValidator.Var(p.Content, "required"); err != nil {
+			errors = errors.Append("Content", err)
+		}
+	}
+	if err := typesValidator.Var(p.Format, "required"); err != nil {
+		errors = errors.Append("Format", err)
+	}
+	if v, ok := any(p.Freshness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Freshness", err)
+		}
+	}
+	if err := typesValidator.Var(p.Gaps, "required"); err != nil {
+		errors = errors.Append("Gaps", err)
+	}
+	if v, ok := any(p.Omitted).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Omitted", err)
+		}
+	}
+	if v, ok := any(p.ParticipantID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ParticipantID", err)
+		}
+	}
+	if err := typesValidator.Var(p.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonCardSourceFreshness struct {
+	AgeSeconds            *int64     `json:"age_seconds" validate:"omitempty"`
+	CanSync               bool       `json:"can_sync"`
+	Identifier            string     `json:"identifier" validate:"required"`
+	IdentifierMore        *bool      `json:"identifier_more,omitempty"`
+	LastSuccessfulSyncAt  *time.Time `json:"last_successful_sync_at" validate:"omitempty"`
+	LastSyncErrors        int64      `json:"last_sync_errors"`
+	Outcome               string     `json:"outcome" validate:"required"`
+	Reason                *string    `json:"reason,omitzero"`
+	Scheduling            string     `json:"scheduling" validate:"required"`
+	SourceID              *int64     `json:"source_id" validate:"omitempty"`
+	SourceType            string     `json:"source_type" validate:"required"`
+	Stale                 bool       `json:"stale"`
+	SyncCommand           *string    `json:"sync_command" validate:"required"`
+	SyncUnavailableReason *string    `json:"sync_unavailable_reason" validate:"required"`
+}
+
+func (p PersonCardSourceFreshness) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.AgeSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AgeSeconds", err)
+		}
+	}
+	if err := typesValidator.Var(p.Identifier, "required"); err != nil {
+		errors = errors.Append("Identifier", err)
+	}
+	if p.LastSuccessfulSyncAt != nil {
+		if err := typesValidator.Var(p.LastSuccessfulSyncAt, "required"); err != nil {
+			errors = errors.Append("LastSuccessfulSyncAt", err)
+		}
+	}
+	if err := typesValidator.Var(p.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(p.Scheduling, "required"); err != nil {
+		errors = errors.Append("Scheduling", err)
+	}
+	if v, ok := any(p.SourceID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("SourceID", err)
+		}
+	}
+	if err := typesValidator.Var(p.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if err := typesValidator.Var(p.SyncCommand, "required"); err != nil {
+		errors = errors.Append("SyncCommand", err)
+	}
+	if err := typesValidator.Var(p.SyncUnavailableReason, "required"); err != nil {
+		errors = errors.Append("SyncUnavailableReason", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonCategory struct {
 	Envelope        ValueEnvelope `json:"envelope"`
 	NormalizedValue string        `json:"normalized_value" validate:"required"`
@@ -13175,6 +13767,33 @@ type PingInfo struct {
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
+}
+
+type ProjectionFreshness struct {
+	AgeSeconds       *int64         `json:"age_seconds" validate:"omitempty"`
+	BackfillComplete *bool          `json:"backfill_complete,omitempty"`
+	ComputedAt       *time.Time     `json:"computed_at" validate:"omitempty"`
+	Extra            map[string]any `json:"extra,omitempty"`
+	LastSuccessAt    *time.Time     `json:"last_success_at,omitempty"`
+	Stale            bool           `json:"stale"`
+}
+
+func (p ProjectionFreshness) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.AgeSeconds).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("AgeSeconds", err)
+		}
+	}
+	if p.ComputedAt != nil {
+		if err := typesValidator.Var(p.ComputedAt, "required"); err != nil {
+			errors = errors.Append("ComputedAt", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ProjectionRef struct {

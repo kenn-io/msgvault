@@ -1141,6 +1141,23 @@ type ListPersonRelationshipsQuery struct {
 	IncludeEnded *bool `json:"include_ended,omitempty"`
 }
 
+type GetPersonCardQuery struct {
+	// AsOf RFC3339 evaluation time; defaults to collection time
+	AsOf *string `json:"as_of,omitempty"`
+
+	// MaxItems Ranked items (default 3, range 1–10)
+	MaxItems *int64 `json:"max_items,omitempty"`
+
+	// MaxBytes Content byte budget (default 16384, range 2048–65536)
+	MaxBytes *int64 `json:"max_bytes,omitempty"`
+
+	// Format json (default) or markdown; both return a JSON envelope
+	Format *string `json:"format,omitempty"`
+
+	// Affiliation Optional internal or external Markdown label
+	Affiliation *string `json:"affiliation,omitempty"`
+}
+
 type ListPersonMeetingsQuery struct {
 	// From Inclusive RFC3339 start; default 365 days before to
 	From *string `json:"from,omitempty"`

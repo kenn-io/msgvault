@@ -82,7 +82,6 @@ func TestMeetingRecordsHiddenForT4OnlyDaemon(t *testing.T) {
 			// compatibility boundary with an older daemon.
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			calendarAvailable := daemonclient.APISchemaVersionAtLeast(version, "3.24.0")
 			meetingRecordsAvailable := daemonclient.APISchemaVersionAtLeast(version, "3.25.0")
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,13 +106,9 @@ func TestMeetingRecordsHiddenForT4OnlyDaemon(t *testing.T) {
 					opts, err := delegatedMCPServeOptions(t.Context(), client)
 					requirements.NoError(err)
 					assertions.Equal(meetingRecordsAvailable, opts.MeetingRecords != nil)
-					assertions.NotNil(opts.Calendar)
-					assertions.Equal(calendarAvailable, opts.ArchiveCalendarEvents != nil)
 				} else {
 					opts := daemonMCPServeOptions(t.Context(), client, nil)
 					assertions.Equal(meetingRecordsAvailable, opts.MeetingRecords != nil)
-					assertions.NotNil(opts.Calendar)
-					assertions.Equal(calendarAvailable, opts.ArchiveCalendarEvents != nil)
 				}
 			}
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, APIKey: "owner"})

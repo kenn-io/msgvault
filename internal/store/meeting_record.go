@@ -100,6 +100,7 @@ func (s *Store) GetMeetingRecordContext(ctx context.Context, scope SourceScope, 
 	defer release()
 	r := s.snapshotReader(ctx)
 	budget := calrecur.RequestReadBudget
+	resolvedTargets := make(linkOccurrenceCache)
 	kind, parsed, member, err := ParseMeetingRef(ref)
 	if err != nil {
 		return MeetingRecord{}, err
@@ -120,8 +121,29 @@ func (s *Store) GetMeetingRecordContext(ctx context.Context, scope SourceScope, 
 			return MeetingRecord{}, meetingRecordError(err)
 		}
 		if len(links) > 0 {
-			parsed = links[0].Target
-			kind = calendarEventRefKind
+			// Keep the standalone message identity when its links disagree.
+			logical := ""
+			conflict := false
+			var target linkOccurrence
+			for _, link := range links {
+				candidate, err := resolvedTargets.resolve(ctx, r, scope, link.Target, &budget)
+				if err != nil {
+					return MeetingRecord{}, meetingRecordError(err)
+				}
+				candidateLogical := occurrenceLogical(candidate)
+				if logical != "" && logical != candidateLogical {
+					conflict = true
+					break
+				}
+				if logical == "" || FormatOccurrenceRef(candidate.Ref) < FormatOccurrenceRef(target.Ref) {
+					target = candidate
+				}
+				logical = candidateLogical
+			}
+			if !conflict {
+				parsed = target.Ref
+				kind = calendarEventRefKind
+			}
 		}
 	}
 	if kind == calendarEventRefKind {
@@ -131,11 +153,11 @@ func (s *Store) GetMeetingRecordContext(ctx context.Context, scope SourceScope, 
 		}
 		occurrence = &value
 		_, canonical, _, _ := ParseMeetingRef(value.Ref)
-		target, err = resolveLinkOccurrence(ctx, r, scope, canonical, &budget)
+		target, err = resolvedTargets.resolve(ctx, r, scope, canonical, &budget)
 		if err != nil {
 			return MeetingRecord{}, meetingRecordError(err)
 		}
-		links, err = meetingRecordMembers(ctx, r, scope, target, &budget)
+		links, err = meetingRecordMembers(ctx, r, scope, target, &budget, resolvedTargets)
 		if err != nil {
 			return MeetingRecord{}, meetingRecordError(err)
 		}
@@ -220,7 +242,7 @@ func (s *Store) GetMeetingRecordContext(ctx context.Context, scope SourceScope, 
 	return record, nil
 }
 
-func meetingRecordMembers(ctx context.Context, r rowReader, scope SourceScope, target linkOccurrence, budget *int) ([]EffectiveLink, error) {
+func meetingRecordMembers(ctx context.Context, r rowReader, scope SourceScope, target linkOccurrence, budget *int, resolvedTargets linkOccurrenceCache) ([]EffectiveLink, error) {
 	copies := []linkOccurrence{target}
 	if target.Row.Event.ICalUID != "" {
 		predicate, args := meetingRecordCopyPredicate(target)
@@ -243,7 +265,7 @@ func meetingRecordMembers(ctx context.Context, r rowReader, scope SourceScope, t
 			if row.Event.Kind == "series" && ref.Key == "" {
 				continue
 			}
-			other, err := resolveLinkOccurrence(ctx, r, scope, ref, budget)
+			other, err := resolvedTargets.resolve(ctx, r, scope, ref, budget)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
 			}
@@ -259,7 +281,7 @@ func meetingRecordMembers(ctx context.Context, r rowReader, scope SourceScope, t
 	}
 	byID := map[int64]EffectiveLink{}
 	for _, copy := range copies {
-		links, err := membersForOccurrence(ctx, r, scope, copy.Ref, budget)
+		links, err := membersForResolvedOccurrence(ctx, r, scope, copy, budget)
 		if err != nil {
 			return nil, err
 		}

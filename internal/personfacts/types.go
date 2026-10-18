@@ -86,8 +86,10 @@ type TargetRef struct {
 
 type EvidenceFilter struct {
 	Target *TargetRef
-	Limit  int
-	Offset int
+	// AnyRevision includes the target's history across catalog revisions.
+	AnyRevision bool
+	Limit       int
+	Offset      int
 }
 
 type EvidenceStatusFilter struct {
@@ -99,8 +101,10 @@ type EvidenceStatusFilter struct {
 
 type ClaimFilter struct {
 	Target *TargetRef
-	Limit  int
-	Offset int
+	// AnyRevision includes the target's history across catalog revisions.
+	AnyRevision bool
+	Limit       int
+	Offset      int
 }
 
 type DecisionFilter struct {

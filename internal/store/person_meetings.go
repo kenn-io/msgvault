@@ -27,6 +27,9 @@ type PersonMeetingsQuery struct {
 	From, To       time.Time
 	Limit          int
 	Cursor         string
+	// NewestFirst selects recent history for bounded person cards. The default
+	// preserves the ascending person-meetings API order.
+	NewestFirst bool
 }
 
 func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope, q PersonMeetingsQuery) ([]MeetingRecordSummary, string, error) {
@@ -47,12 +50,13 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 	budget := calrecur.RequestReadBudget
 	byLogical := map[string]MeetingRecordSummary{}
 	targets := map[string]linkOccurrence{}
+	resolvedTargets := make(linkOccurrenceCache)
 	addOccurrence := func(o CalendarOccurrence) error {
 		_, ref, _, err := ParseMeetingRef(o.Ref)
 		if err != nil {
 			return err
 		}
-		target, err := resolveLinkOccurrence(ctx, r, scope, ref, &budget)
+		target, err := resolvedTargets.resolve(ctx, r, scope, ref, &budget)
 		if err != nil {
 			return meetingRecordError(err)
 		}
@@ -110,7 +114,7 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 		var target linkOccurrence
 		conflict := false
 		for _, link := range links {
-			o, err := resolveLinkOccurrence(ctx, r, scope, link.Target, &budget)
+			o, err := resolvedTargets.resolve(ctx, r, scope, link.Target, &budget)
 			if err != nil {
 				return nil, "", meetingRecordError(err)
 			}
@@ -155,7 +159,7 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 	}
 	for logical, summary := range byLogical {
 		if target, ok := targets[logical]; ok {
-			members, err := meetingRecordMembers(ctx, r, scope, target, &budget)
+			members, err := meetingRecordMembers(ctx, r, scope, target, &budget, resolvedTargets)
 			if err != nil {
 				return nil, "", err
 			}
@@ -169,12 +173,18 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 	}
 	slices.SortFunc(results, func(a, b MeetingRecordSummary) int {
 		if c := a.Start.Compare(b.Start); c != 0 {
+			if q.NewestFirst {
+				return -c
+			}
 			return c
 		}
 		return strings.Compare(a.Ref, b.Ref)
 	})
 	if q.Cursor != "" {
 		results = slices.DeleteFunc(results, func(o MeetingRecordSummary) bool {
+			if q.NewestFirst {
+				return o.Start.After(cursor.Start) || (o.Start.Equal(cursor.Start) && o.Ref <= cursor.Ref)
+			}
 			return o.Start.Before(cursor.Start) || (o.Start.Equal(cursor.Start) && o.Ref <= cursor.Ref)
 		})
 	}

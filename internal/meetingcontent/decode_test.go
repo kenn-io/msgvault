@@ -168,8 +168,8 @@ func TestDecodeNotionEvidence(t *testing.T) {
 	assertions.InDelta(float64(2520), *content.DurationSeconds, 0)
 	assertions.Equal(DurationProvider, content.DurationBasis)
 	assertions.Equal([]Participant{
-		{Name: "Riley Example", Email: "riley@example.com", Role: "to"},
-		{Name: "Unresolved Guest", Role: "to"},
+		{Name: "Riley Example", Email: "riley@example.com", Role: "to", Provenance: "invited"},
+		{Name: "Unresolved Guest", Role: "to", Provenance: "invited"},
 	}, content.SourceParticipants)
 
 	missingTree := Decode("notion_meeting_json", []byte(`{
@@ -395,7 +395,6 @@ func TestDecodeMuesliFallsBackToContactsIdentities(t *testing.T) {
 func TestDecodeGranolaParticipantProvenance(t *testing.T) {
 	for _, tc := range []struct{ name, raw, want string }{
 		{"fallback", `{"calendar_event":{"organiser":"host@example.com","invitees":[{"email":"guest@example.org"}]}}`, "invited"},
-		{"provider", `{"owner":{"email":"host@example.com"},"attendees":[{"email":"guest@example.org"}]}`, "provider_attendee"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)

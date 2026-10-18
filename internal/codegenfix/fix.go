@@ -230,5 +230,5 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	default:
 		return nil, errors.New("generated MeetingRef.OccurredAt shape changed")
 	}
-	return result, nil
+	return RewritePersonCardNulls(result)
 }

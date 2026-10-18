@@ -795,6 +795,15 @@ type SetPersonTrackingPath struct {
 	ID int64 `json:"id"`
 }
 
+type GetPersonCardPath struct {
+	// Ref Numeric person ID, person:<id>, participant:<id>, or email:<address>
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (g GetPersonCardPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type ListPersonMeetingsPath struct {
 	// Ref Numeric person ID, person:<id>, or participant:<id>
 	Ref string `json:"ref" validate:"required"`

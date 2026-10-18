@@ -215,6 +215,52 @@ func TestParticipantsProvenanceGranolaInviteeFallback(t *testing.T) {
 	assertions.Equal("invited@example.com", record.Participants[0].Email)
 }
 
+func TestMeetingRecordMarksCalendarRosterParticipantsInvited(t *testing.T) {
+	for _, tc := range []struct {
+		name, rawFormat, raw string
+		wantInvited          string
+		wantSpeakers         []string
+	}{
+		{
+			name:         "Twenty",
+			rawFormat:    "twenty_json",
+			raw:          `{"schema_version":1,"recording":{"transcript":[{"participant":{"name":"Transcript Speaker"},"words":[{"text":"Hello"}]}]},"participants":[{"handle":"guest@example.com","displayName":"Guest Example"}]}`,
+			wantInvited:  "guest@example.com",
+			wantSpeakers: []string{"Transcript Speaker"},
+		},
+		{
+			name:        "Notion",
+			rawFormat:   "notion_meeting_json",
+			raw:         `{"schema_version":1,"discovery":{"meeting_notes":{"calendar_event":{"attendees":["guest-id"]}}},"attendee_labels":["Guest Example"],"canonical":{"transcript":"Spoken notes"}}`,
+			wantInvited: "Guest Example",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, note := projectionFixture(t, st, "invitee-"+tc.name, tc.rawFormat, tc.raw)
+			record, err := st.GetMeetingRecordContext(t.Context(), OwnerScope(), fmt.Sprintf("msg:%d", note))
+			requirements.NoError(err)
+			var invited, speakers []string
+			for _, participant := range record.Participants {
+				if participant.Provenance == "invited" {
+					identity := participant.Email
+					if identity == "" {
+						identity = participant.Name
+					}
+					invited = append(invited, identity)
+				}
+				if participant.Provenance == "transcript_speaker" {
+					speakers = append(speakers, participant.Name)
+				}
+			}
+			assertions.Equal([]string{tc.wantInvited}, invited)
+			assertions.Equal(tc.wantSpeakers, speakers)
+		})
+	}
+}
+
 func TestRecordingsAsAttachments(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

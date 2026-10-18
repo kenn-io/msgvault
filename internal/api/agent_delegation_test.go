@@ -360,6 +360,9 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 				assertions.NotContains(w.Body.String(), "outside@example.test", op.OperationID)
 			} else if allowed[op.OperationID] {
 				assertions.NotEqual(http.StatusUnauthorized, w.Code, op.OperationID)
+			} else if op.OperationID == "getPersonCard" {
+				assertions.Equal(http.StatusForbidden, w.Code, op.OperationID)
+				denied++
 			} else {
 				assertions.Equal(http.StatusUnauthorized, w.Code, op.OperationID)
 				denied++
