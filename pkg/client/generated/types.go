@@ -4092,6 +4092,149 @@ func (d DurationTotals) Validate() error {
 	return errors
 }
 
+type EmailFamily struct {
+	AnchorMessageID int64               `json:"anchor_message_id"`
+	Handling        Handling            `json:"handling"`
+	Members         []EmailFamilyMember `json:"members" validate:"required"`
+	Revision        string              `json:"revision" validate:"required"`
+	Truncated       bool                `json:"truncated"`
+}
+
+func (e EmailFamily) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(e.Handling).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Handling", err)
+		}
+	}
+	for i, item := range e.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Revision, "required"); err != nil {
+		errors = errors.Append("Revision", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailFamilyEnvelope struct {
+	Address string `json:"address" validate:"required"`
+	Kind    string `json:"kind" validate:"required"`
+}
+
+func (e EmailFamilyEnvelope) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type EmailFamilyMember struct {
+	AccountAddress        string                `json:"account_address" validate:"required"`
+	AccountPath           string                `json:"account_path" validate:"required"`
+	AttributionComplete   bool                  `json:"attribution_complete"`
+	ConfirmedSourceSender bool                  `json:"confirmed_source_sender"`
+	ConversationID        int64                 `json:"conversation_id"`
+	Draft                 bool                  `json:"draft"`
+	Envelopes             []EmailFamilyEnvelope `json:"envelopes" validate:"required"`
+	EvidenceKinds         []string              `json:"evidence_kinds" validate:"required"`
+	ExternalRecipient     bool                  `json:"external_recipient"`
+	Incoming              bool                  `json:"incoming"`
+	InternalDate          *time.Time            `json:"internal_date,omitempty"`
+	Labels                []string              `json:"labels" validate:"required"`
+	Linkage               EmailLinkage          `json:"linkage"`
+	LocalHandled          bool                  `json:"local_handled"`
+	MessageID             int64                 `json:"message_id"`
+	OccurredAt            time.Time             `json:"occurred_at" validate:"required"`
+	PositiveSent          bool                  `json:"positive_sent"`
+	ProviderThreadID      string                `json:"provider_thread_id" validate:"required"`
+	RawSha256             string                `json:"raw_sha256" validate:"required"`
+	ReceivedAt            *time.Time            `json:"received_at,omitempty"`
+	SentAt                *time.Time            `json:"sent_at,omitempty"`
+	Snippet               string                `json:"snippet" validate:"required"`
+	SourceID              int64                 `json:"source_id"`
+	SourceIdentifier      string                `json:"source_identifier" validate:"required"`
+	SourceMessageID       string                `json:"source_message_id" validate:"required"`
+	SourceType            string                `json:"source_type" validate:"required"`
+	Subject               string                `json:"subject" validate:"required"`
+	UnavailableReasons    []string              `json:"unavailable_reasons" validate:"required"`
+}
+
+func (e EmailFamilyMember) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.AccountAddress, "required"); err != nil {
+		errors = errors.Append("AccountAddress", err)
+	}
+	if err := typesValidator.Var(e.AccountPath, "required"); err != nil {
+		errors = errors.Append("AccountPath", err)
+	}
+	for i, item := range e.Envelopes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Envelopes[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.EvidenceKinds, "required"); err != nil {
+		errors = errors.Append("EvidenceKinds", err)
+	}
+	if err := typesValidator.Var(e.Labels, "required"); err != nil {
+		errors = errors.Append("Labels", err)
+	}
+	if v, ok := any(e.Linkage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Linkage", err)
+		}
+	}
+	if err := typesValidator.Var(e.OccurredAt, "required"); err != nil {
+		errors = errors.Append("OccurredAt", err)
+	}
+	if err := typesValidator.Var(e.ProviderThreadID, "required"); err != nil {
+		errors = errors.Append("ProviderThreadID", err)
+	}
+	if err := typesValidator.Var(e.RawSha256, "required"); err != nil {
+		errors = errors.Append("RawSha256", err)
+	}
+	if err := typesValidator.Var(e.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(e.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(e.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	if err := typesValidator.Var(e.SourceType, "required"); err != nil {
+		errors = errors.Append("SourceType", err)
+	}
+	if err := typesValidator.Var(e.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(e.UnavailableReasons, "required"); err != nil {
+		errors = errors.Append("UnavailableReasons", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailLinkage struct {
+	AttachedOriginals []string `json:"attached_originals,omitempty"`
+	MessageID         *string  `json:"message_id,omitzero"`
+	Outcome           string   `json:"outcome" validate:"required"`
+	References        []string `json:"references,omitempty"`
+	Replies           []string `json:"replies,omitempty"`
+	Version           int64    `json:"version"`
+}
+
+func (e EmailLinkage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type EmbeddingBatch struct {
 	Attempted      int64                 `json:"attempted"`
 	Chars          int64                 `json:"chars"`
@@ -5884,6 +6027,17 @@ func (g GmailIDsResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Handling struct {
+	OutboundEvidenceIds []int64  `json:"outbound_evidence_ids" validate:"required"`
+	OutstandingEventIds []int64  `json:"outstanding_event_ids" validate:"required"`
+	Reasons             []string `json:"reasons" validate:"required"`
+	State               string   `json:"state" validate:"required"`
+}
+
+func (h Handling) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(h))
 }
 
 type HealthResponse struct {

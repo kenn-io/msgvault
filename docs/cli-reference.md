@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [family](#family), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -4339,6 +4339,34 @@ msgvault docbank attachments backfill
 `--json` for structured output. `backfill` restarts discovery and retries failed
 uploads. It requires attachment upload consent and a running attachment mirror
 job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+
+## family
+
+Show the archived email copies connected to one message by explicit MIME
+identifiers or a Gmail thread within the same source. Every visible copy stays
+separate. The command reads through the daemon and never changes provider state.
+
+```bash
+msgvault family show 42
+msgvault family show 42 --source-id 1,3 --json
+```
+
+`--source-id` narrows the sources included in the family. JSON includes each
+copy's account, identifiers, dates, labels, extraction outcome and handling
+facts, plus a revision for the current evidence.
+
+Handling is `handled` only with positive Sent evidence from a confirmed sender
+to an external recipient and later direct reply or attached-original evidence.
+`actionable` means received items remain outstanding. `unknown` preserves missing
+or incomplete evidence. Shared subjects, quoted text and References alone never
+prove that an email was answered. Families stop at 500 copies or 5,000 identifier
+lookups; a truncated family remains `unknown`.
+
+Older archives derive identifiers during sync, import or
+[`repair-derived`](#repair-derived). Family reads do not fetch or repair raw mail.
+The owner-only MCP tool `get_email_family` accepts `message_id` and optional
+`source_ids` with the same behavior. An explicit empty MCP source list excludes
+all sources. Restricted agent grants do not provide this capability.
 
 ## show-message
 

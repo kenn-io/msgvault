@@ -663,6 +663,10 @@ type ClientInterface interface {
 	GetMessage(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResponse, error)
 	GetMessageWithResponse(ctx context.Context, options *GetMessageRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageResp, error)
 
+	// GetEmailFamily Read related archived email copies and explicit handling evidence
+	GetEmailFamily(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResponse, error)
+	GetEmailFamilyWithResponse(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResp, error)
+
 	// GetMessageInlinePart Get an inline MIME part
 	GetMessageInlinePart(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResponse, error)
 	GetMessageInlinePartWithResponse(ctx context.Context, options *GetMessageInlinePartRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMessageInlinePartResp, error)
@@ -10934,6 +10938,69 @@ func (c *Client) GetMessage(ctx context.Context, options *GetMessageRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetEmailFamily Read related archived email copies and explicit handling evidence
+func (c *Client) GetEmailFamily(ctx context.Context, options *GetEmailFamilyRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmailFamilyResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/messages/{id}/family",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetEmailFamilyResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetEmailFamilyErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetEmailFamilyErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetEmailFamilyResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetEmailFamilyResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/messages/{id}/family")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -130,6 +130,7 @@ type ServeOptions struct {
 	PersonAgendaBackend    PersonAgendaBackend
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
+	EmailFamilyBackend     EmailFamilyBackend
 	// KataLookup enables issue lookup and context reads.
 	KataLookup  bool
 	KataDocbank bool
@@ -396,6 +397,7 @@ func newMCPServerWithPolicy(
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
+		emailFamilyBackend:   opts.EmailFamilyBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
