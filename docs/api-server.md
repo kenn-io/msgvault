@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,15 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.25.0 adds owner-only Open Loop reads at `GET /api/v1/loops`,
+`GET /api/v1/loops/waiting`, `GET /api/v1/loops/{id}`, `GET /api/v1/loops/status`,
+and `GET /api/v1/people/{id}/loops`. Owners can mark a loop done, snooze or
+unsnooze it, and list, create, or remove suppressions. A stale waiting ranking
+returns HTTP 409 with typed freshness details; set `allow_stale=true` to inspect
+it. `POST /api/v1/loops/run` and `/api/v1/loops/rebuild` queue bounded background
+work. `GET /api/v1/mcp/capabilities` advertises loop operations only while the
+feature is enabled.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
