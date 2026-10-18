@@ -16518,6 +16518,800 @@ components:
       required:
         - text
       type: object
+    WhoKnowsBreakdown:
+      additionalProperties: true
+      properties:
+        affinity:
+          format: double
+          type: number
+        ask_me_about_matches:
+          items:
+            type: string
+          type: array
+        authored_messages:
+          format: int64
+          type: integer
+        breadth:
+          format: double
+          type: number
+        channels_authored:
+          items:
+            type: string
+          type: array
+        declared:
+          format: double
+          type: number
+        depth:
+          format: double
+          type: number
+        evidence:
+          format: double
+          type: number
+        evidence_total:
+          format: int64
+          type: integer
+        latest_authored_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        omitted_contribution:
+          format: double
+          type: number
+        org_match:
+          format: double
+          type: number
+        organization_matches:
+          items:
+            type: string
+          type: array
+        profile_score:
+          format: double
+          type:
+            - number
+            - "null"
+        profile_search:
+          type: string
+        profile_sim:
+          format: double
+          type: number
+        raw_authored:
+          format: double
+          type: number
+        raw_received:
+          format: double
+          type: number
+        received_messages:
+          format: int64
+          type: integer
+        shown_contribution:
+          format: double
+          type: number
+        threads_authored:
+          format: int64
+          type: integer
+      required:
+        - evidence
+        - depth
+        - raw_authored
+        - raw_received
+        - breadth
+        - declared
+        - affinity
+        - profile_search
+        - profile_score
+        - profile_sim
+        - org_match
+        - authored_messages
+        - received_messages
+        - evidence_total
+        - shown_contribution
+        - omitted_contribution
+        - threads_authored
+        - channels_authored
+        - latest_authored_at
+        - ask_me_about_matches
+        - organization_matches
+      type: object
+    WhoKnowsContactCoverage:
+      additionalProperties: true
+      properties:
+        dirty:
+          format: int64
+          type: integer
+        missing:
+          format: int64
+          type: integer
+        oldest_computed_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        outdated:
+          format: int64
+          type: integer
+        ranked_people:
+          format: int64
+          type: integer
+      required:
+        - ranked_people
+        - missing
+        - dirty
+        - outdated
+        - oldest_computed_at
+      type: object
+    WhoKnowsCoverage:
+      additionalProperties: true
+      properties:
+        contact_state:
+          $ref: "#/components/schemas/WhoKnowsContactCoverage"
+        generation:
+          $ref: "#/components/schemas/WhoKnowsGeneration"
+        messages:
+          $ref: "#/components/schemas/WhoKnowsMessageCoverage"
+        people_index:
+          $ref: "#/components/schemas/WhoKnowsPeopleCoverage"
+        scope:
+          $ref: "#/components/schemas/WhoKnowsScope"
+        stale:
+          type: boolean
+        stale_reasons:
+          items:
+            type: string
+          type: array
+      required:
+        - generation
+        - scope
+        - messages
+        - people_index
+        - contact_state
+        - stale
+        - stale_reasons
+      type: object
+    WhoKnowsEvidence:
+      additionalProperties: true
+      properties:
+        contribution:
+          format: double
+          type: number
+        conversation_id:
+          format: int64
+          type: integer
+        excerpt:
+          oneOf:
+            - $ref: "#/components/schemas/WhoKnowsExcerpt"
+            - type: "null"
+        excerpt_error:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        message_id:
+          format: int64
+          type: integer
+        message_type:
+          type: string
+        recency:
+          format: double
+          type: number
+        relevance:
+          format: double
+          type: number
+        role:
+          type: string
+        sender_authenticated:
+          type: boolean
+        sent_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        snippet:
+          type: string
+        source_message_id:
+          type: string
+        subject:
+          type: string
+        vector_score:
+          format: double
+          type:
+            - number
+            - "null"
+        weight:
+          format: double
+          type: number
+      required:
+        - message_id
+        - source_message_id
+        - conversation_id
+        - message_type
+        - role
+        - sent_at
+        - relevance
+        - vector_score
+        - recency
+        - weight
+        - contribution
+        - subject
+        - snippet
+        - flags
+        - sender_authenticated
+        - excerpt
+        - excerpt_error
+      type: object
+    WhoKnowsExcerpt:
+      additionalProperties: true
+      properties:
+        char_offset:
+          format: int64
+          type:
+            - integer
+            - "null"
+        line:
+          format: int64
+          type:
+            - integer
+            - "null"
+        score:
+          format: double
+          type: number
+        snippet:
+          type: string
+      required:
+        - snippet
+        - char_offset
+        - line
+        - score
+      type: object
+    WhoKnowsExcluded:
+      additionalProperties: true
+      properties:
+        automated_senders:
+          format: int64
+          type: integer
+        large_rooms:
+          format: int64
+          type: integer
+        message_types:
+          format: int64
+          type: integer
+        owner_messages:
+          format: int64
+          type: integer
+        owner_people:
+          format: int64
+          type: integer
+        unresolved_messages:
+          format: int64
+          type: integer
+      required:
+        - message_types
+        - owner_messages
+        - owner_people
+        - automated_senders
+        - large_rooms
+        - unresolved_messages
+      type: object
+    WhoKnowsGeneration:
+      additionalProperties: true
+      properties:
+        dimension:
+          format: int64
+          type: integer
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        model:
+          type: string
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - model
+        - fingerprint
+        - dimension
+      type: object
+    WhoKnowsMessageCoverage:
+      additionalProperties: true
+      properties:
+        coverage_sampled_at:
+          format: date-time
+          type: string
+        current:
+          format: int64
+          type: integer
+        eligible:
+          format: int64
+          type: integer
+        pending:
+          format: int64
+          type: integer
+      required:
+        - eligible
+        - current
+        - pending
+        - coverage_sampled_at
+      type: object
+    WhoKnowsOrganization:
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        title:
+          type: string
+      required:
+        - organization_id
+        - name
+        - title
+      type: object
+    WhoKnowsOrganizationGroup:
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+        organization_id:
+          format: int64
+          type: integer
+        people:
+          items:
+            format: int64
+            type: integer
+          type: array
+        score:
+          format: double
+          type: number
+      required:
+        - organization_id
+        - name
+        - score
+        - people
+      type: object
+    WhoKnowsParams:
+      additionalProperties: true
+      properties:
+        after:
+          format: date-time
+          type:
+            - string
+            - "null"
+        automated_patterns:
+          items:
+            type: string
+          type: array
+        before:
+          format: date-time
+          type:
+            - string
+            - "null"
+        candidates:
+          format: int64
+          type: integer
+        evidence:
+          format: int64
+          type: integer
+        excluded_message_types:
+          items:
+            type: string
+          type: array
+        half_life_days:
+          format: int64
+          type: integer
+        include_organizations:
+          type: boolean
+        include_owner:
+          type: boolean
+        include_unsaved:
+          type: boolean
+        limit:
+          format: int64
+          type: integer
+        max_candidate_people:
+          format: int64
+          type: integer
+        max_roster_edges:
+          format: int64
+          type: integer
+        min_profile_score:
+          format: double
+          type: number
+        min_score:
+          format: double
+          type: number
+        tiebreak:
+          type: string
+        weights:
+          additionalProperties:
+            format: double
+            type: number
+          type: object
+      required:
+        - limit
+        - evidence
+        - candidates
+        - half_life_days
+        - min_score
+        - min_profile_score
+        - include_owner
+        - include_unsaved
+        - include_organizations
+        - tiebreak
+        - after
+        - before
+        - weights
+        - automated_patterns
+        - excluded_message_types
+        - max_roster_edges
+        - max_candidate_people
+      type: object
+    WhoKnowsPeopleCoverage:
+      additionalProperties: true
+      properties:
+        complete:
+          type: boolean
+        consented:
+          type: boolean
+        enabled:
+          type: boolean
+      required:
+        - enabled
+        - consented
+        - complete
+      type: object
+    WhoKnowsRanked:
+      additionalProperties: true
+      properties:
+        breakdown:
+          $ref: "#/components/schemas/WhoKnowsBreakdown"
+        display_name:
+          type: string
+        email_address:
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/WhoKnowsEvidence"
+          type: array
+        flags:
+          items:
+            type: string
+          type: array
+        organizations:
+          items:
+            $ref: "#/components/schemas/WhoKnowsOrganization"
+          type: array
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        promote_hint:
+          type: string
+        rank:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+        tiebreak:
+          $ref: "#/components/schemas/WhoKnowsTieValue"
+        vcard_uid:
+          type: string
+      required:
+        - rank
+        - display_name
+        - score
+        - flags
+        - breakdown
+        - evidence
+        - organizations
+        - tiebreak
+      type: object
+    WhoKnowsResponse:
+      additionalProperties: true
+      properties:
+        coverage:
+          $ref: "#/components/schemas/WhoKnowsCoverage"
+        excluded:
+          $ref: "#/components/schemas/WhoKnowsExcluded"
+        generated_at:
+          format: date-time
+          type: string
+        limits_applied:
+          items:
+            type: string
+          type: array
+        organizations:
+          items:
+            $ref: "#/components/schemas/WhoKnowsOrganizationGroup"
+          type: array
+        params:
+          $ref: "#/components/schemas/WhoKnowsParams"
+        people:
+          items:
+            $ref: "#/components/schemas/WhoKnowsRanked"
+          type: array
+        reason:
+          type:
+            - string
+            - "null"
+        retrieval:
+          $ref: "#/components/schemas/WhoKnowsRetrieval"
+        tiebreak:
+          $ref: "#/components/schemas/WhoKnowsTiebreak"
+        topic:
+          type: string
+        unsaved_candidates:
+          items:
+            $ref: "#/components/schemas/WhoKnowsUnsavedCandidate"
+          type: array
+      required:
+        - topic
+        - generated_at
+        - reason
+        - params
+        - limits_applied
+        - people
+        - unsaved_candidates
+        - excluded
+        - coverage
+        - retrieval
+        - tiebreak
+      type: object
+    WhoKnowsRetrieval:
+      additionalProperties: true
+      properties:
+        accelerator:
+          type: string
+        candidates_after_filters:
+          format: int64
+          type: integer
+        candidates_effective:
+          format: int64
+          type: integer
+        candidates_requested:
+          format: int64
+          type: integer
+        generation:
+          $ref: "#/components/schemas/WhoKnowsGeneration"
+        mode:
+          type: string
+        pool_saturated:
+          type: boolean
+        timings:
+          $ref: "#/components/schemas/WhoKnowsTimings"
+        took_ms:
+          format: double
+          type: number
+        top_vector_score:
+          format: double
+          type:
+            - number
+            - "null"
+        underfilled:
+          type: boolean
+      required:
+        - mode
+        - candidates_requested
+        - candidates_effective
+        - candidates_after_filters
+        - pool_saturated
+        - underfilled
+        - top_vector_score
+        - generation
+        - accelerator
+        - took_ms
+        - timings
+      type: object
+    WhoKnowsScope:
+      additionalProperties: true
+      properties:
+        accounts:
+          items:
+            format: int64
+            type: integer
+          type: array
+        message_types:
+          items:
+            type: string
+          type: array
+      required:
+        - message_types
+        - accounts
+      type: object
+    WhoKnowsTieValue:
+      additionalProperties: true
+      properties:
+        last_contact_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        temperature:
+          format: int64
+          type:
+            - integer
+            - "null"
+      required:
+        - temperature
+        - last_contact_at
+      type: object
+    WhoKnowsTiebreak:
+      additionalProperties: true
+      properties:
+        applied:
+          type: string
+        requested:
+          type: string
+      required:
+        - requested
+        - applied
+      type: object
+    WhoKnowsTimings:
+      additionalProperties: true
+      properties:
+        attribution_ms:
+          format: double
+          type: number
+        declared_ms:
+          format: double
+          type: number
+        hydration_ms:
+          format: double
+          type: number
+        profile_embedding_ms:
+          format: double
+          type: number
+        profile_ms:
+          format: double
+          type: number
+        query_embedding_ms:
+          format: double
+          type: number
+        retrieval_ms:
+          format: double
+          type: number
+        tiebreak_ms:
+          format: double
+          type: number
+      required:
+        - query_embedding_ms
+        - retrieval_ms
+        - attribution_ms
+        - declared_ms
+        - profile_ms
+        - profile_embedding_ms
+        - tiebreak_ms
+        - hydration_ms
+      type: object
+    WhoKnowsUnsavedBreakdown:
+      additionalProperties: true
+      properties:
+        ask_me_about_matches:
+          items:
+            type: string
+          type: array
+        authored_messages:
+          format: int64
+          type: integer
+        breadth:
+          format: double
+          type: number
+        channels_authored:
+          items:
+            type: string
+          type: array
+        depth:
+          format: double
+          type: number
+        evidence:
+          format: double
+          type: number
+        evidence_total:
+          format: int64
+          type: integer
+        latest_authored_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        omitted_contribution:
+          format: double
+          type: number
+        org_match:
+          format: double
+          type: number
+        organization_matches:
+          items:
+            type: string
+          type: array
+        profile_score:
+          format: double
+          type:
+            - number
+            - "null"
+        profile_search:
+          type: string
+        profile_sim:
+          format: double
+          type: number
+        raw_authored:
+          format: double
+          type: number
+        raw_received:
+          format: double
+          type: number
+        received_messages:
+          format: int64
+          type: integer
+        shown_contribution:
+          format: double
+          type: number
+        threads_authored:
+          format: int64
+          type: integer
+      required:
+        - evidence
+        - depth
+        - raw_authored
+        - raw_received
+        - breadth
+        - profile_search
+        - profile_score
+        - profile_sim
+        - org_match
+        - authored_messages
+        - received_messages
+        - evidence_total
+        - shown_contribution
+        - omitted_contribution
+        - threads_authored
+        - channels_authored
+        - latest_authored_at
+        - ask_me_about_matches
+        - organization_matches
+      type: object
+    WhoKnowsUnsavedCandidate:
+      additionalProperties: true
+      properties:
+        breakdown:
+          $ref: "#/components/schemas/WhoKnowsUnsavedBreakdown"
+        display_name:
+          type: string
+        email_address:
+          type: string
+        evidence:
+          items:
+            $ref: "#/components/schemas/WhoKnowsEvidence"
+          type: array
+        flags:
+          items:
+            type: string
+          type: array
+        participant_id:
+          format: int64
+          type: integer
+        promote_hint:
+          type: string
+        score:
+          format: double
+          type: number
+      required:
+        - participant_id
+        - display_name
+        - email_address
+        - score
+        - flags
+        - breakdown
+        - evidence
+        - promote_hint
+      type: object
   securitySchemes:
     apiKey:
       in: header
@@ -16525,7 +17319,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -26727,6 +27521,141 @@ paths:
       security:
         - apiKey: []
       summary: Search durable people semantically
+      tags:
+        - API
+  /api/v1/people/who-knows:
+    get:
+      description: Owner-only, read-only ranking by authored message evidence with cited messages and an explainable score breakdown.
+      operationId: findPeopleWhoKnow
+      parameters:
+        - description: Topic containing free text
+          in: query
+          name: q
+          required: true
+          schema:
+            type: string
+        - description: Bounded ranking parameter
+          in: query
+          name: limit
+          schema:
+            default: 10
+            format: int64
+            maximum: 50
+            minimum: 1
+            type: integer
+        - description: Bounded ranking parameter
+          in: query
+          name: evidence
+          schema:
+            default: 3
+            format: int64
+            maximum: 10
+            minimum: 0
+            type: integer
+        - description: Bounded ranking parameter
+          in: query
+          name: candidates
+          schema:
+            default: 200
+            format: int64
+            maximum: 1000
+            minimum: 50
+            type: integer
+        - description: Bounded ranking parameter
+          in: query
+          name: half_life_days
+          schema:
+            default: 180
+            format: int64
+            maximum: 3650
+            minimum: 0
+            type: integer
+        - in: query
+          name: min_score
+          schema:
+            default: 0
+            format: double
+            type: number
+        - in: query
+          name: min_profile_score
+          schema:
+            default: 0.5
+            format: double
+            maximum: 1
+            minimum: 0
+            type: number
+        - description: Optional ranking output
+          in: query
+          name: include_owner
+          schema:
+            default: false
+            type: boolean
+        - description: Optional ranking output
+          in: query
+          name: include_unsaved
+          schema:
+            default: true
+            type: boolean
+        - description: Optional ranking output
+          in: query
+          name: include_organizations
+          schema:
+            default: true
+            type: boolean
+        - description: Optional ranking output
+          in: query
+          name: excerpts
+          schema:
+            default: false
+            type: boolean
+        - description: YYYY-MM-DD or RFC3339; after inclusive, before exclusive for timestamps
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: YYYY-MM-DD or RFC3339; after inclusive, before exclusive for timestamps
+          in: query
+          name: before
+          schema:
+            type: string
+        - description: Metric used after rounded score
+          in: query
+          name: tiebreak
+          schema:
+            default: temperature
+            enum:
+              - temperature
+              - last_contact
+              - none
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoKnowsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find people with archived topical evidence
       tags:
         - API
   /api/v1/people/{id}:

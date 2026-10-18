@@ -136,6 +136,11 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"MessagingRoute", "NetworkLabel", "m"},
 		{"MessagingRoute", "ProviderChatID", "m"},
 		{"PersonMessagingRoutesPage", "AliasReason", "p"},
+		{"WhoKnowsEvidence", "Snippet", "w"},
+		{"WhoKnowsEvidence", "Subject", "w"},
+		{"WhoKnowsRanked", "DisplayName", "w"},
+		{"WhoKnowsUnsavedCandidate", "DisplayName", "w"},
+		{"WhoKnowsUnsavedCandidate", "EmailAddress", "w"},
 	} {
 		typeName, field, receiver := target[0], target[1], target[2]
 		shapeErr := fmt.Errorf("generated %s.%s validator shape changed", typeName, field)
