@@ -4,6 +4,8 @@
 import type { MCPRouteDescriptor } from "./mCPRouteDescriptor";
 
 export interface MCPCapabilities {
+  delegated: boolean;
+  inbox_operations: string[];
   routes: MCPRouteDescriptor[];
   version: number;
   [key: string]: unknown;
