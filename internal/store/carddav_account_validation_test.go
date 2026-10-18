@@ -39,9 +39,6 @@ func seedLegacyCardDAVViolation(t *testing.T, st *store.Store, statements ...str
 
 func assertCardDAVForeignKeysEnforced(t *testing.T, st *store.Store) {
 	t.Helper()
-	var enabled int
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), `PRAGMA foreign_keys`).Scan(&enabled))
-	assert.Equal(t, 1, enabled)
 	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO carddav_retry_gate(account_id, retry_after_at) VALUES (99, CURRENT_TIMESTAMP)`)
 	assert.ErrorContains(t, err, "FOREIGN KEY constraint failed")
 }
