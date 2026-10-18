@@ -206,7 +206,7 @@ func syncPocketSources(
 			onSummary(src, sum)
 		}
 		if err != nil {
-			errs = append(errs, fmt.Errorf("Pocket source %q: %w", src.Identifier, err))
+			errs = append(errs, fmt.Errorf("pocket source %q: %w", src.Identifier, err))
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if !errors.Is(err, ctxErr) {

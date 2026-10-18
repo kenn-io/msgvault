@@ -83,8 +83,8 @@ func TestSyncPocketSourcesCollectsErrorsAndContinues(t *testing.T) {
 	requirements.ErrorIs(err, importErr)
 	assertions.Equal([]string{"missing-key", "broken-recording", "healthy"}, calls)
 	assertions.Equal([]string{"broken-recording", "healthy"}, summaries)
-	assertions.Contains(err.Error(), `Pocket source "missing-key"`)
-	assertions.Contains(err.Error(), `Pocket source "broken-recording"`)
+	assertions.Contains(err.Error(), `pocket source "missing-key"`)
+	assertions.Contains(err.Error(), `pocket source "broken-recording"`)
 }
 
 func TestSyncPocketSourcesStopsOnCancellation(t *testing.T) {
