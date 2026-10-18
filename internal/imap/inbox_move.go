@@ -161,6 +161,11 @@ func (p *InboxProvider) archiveFolder(ctx context.Context) (inboxcontrol.Folder,
 		if name == "" || strings.EqualFold(name, "INBOX") {
 			return inboxcontrol.ErrUnavailable
 		}
+		// Moving outside the effective folder filter would hide the message
+		// from every future sync.
+		if !p.client.mailboxIncludedLocked(name) {
+			return inboxcontrol.ErrUnavailable
+		}
 		status, err := conn.Status(name, &imapapi.StatusOptions{UIDValidity: true}).Wait()
 		if err != nil || status == nil || status.Mailbox != name || status.UIDValidity == 0 {
 			return inboxcontrol.ErrUnavailable

@@ -205,7 +205,9 @@ and mailbox generations. `move` requires an exact destination. `unarchive`
 requires that destination to be `INBOX`. Both require the server's `MOVE` and
 `UIDPLUS` extensions. `archive` also needs a configured archive mailbox or one
 selectable mailbox advertised by the server as `\Archive`; a folder named
-"Archive" alone is insufficient. A verified move keeps the archived item ID
+"Archive" alone is insufficient. The archive mailbox must be included in the
+account's effective sync folder selection; otherwise, archive is unavailable.
+A verified move keeps the archived item ID
 and returns its new mailbox, UIDVALIDITY, and UID in the receipt. Use that new
 target for later actions.
 

@@ -397,7 +397,7 @@ as a destination. `origin_folder` applies only to Gmail label moves.
 | `set-read`, `set-unread` | Add or remove `\Seen`; preserve local archive read state |
 | `tags` | Edit mailbox-advertised keywords; preserve unrelated flags |
 | `move` | Move the exact copy into `destination.id` at its observed `uidvalidity` |
-| `archive` | Move to a configured archive mailbox or the server's unique selectable `\Archive` mailbox |
+| `archive` | Move to a configured archive mailbox or the server's unique selectable `\Archive` mailbox; unavailable if excluded from the effective sync folder selection |
 | `unarchive` | Move into an explicitly supplied `INBOX` destination |
 | `create-folder` | Create `destination.name` and retain its independently observed native mailbox generation |
 
