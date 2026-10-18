@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/importer"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"

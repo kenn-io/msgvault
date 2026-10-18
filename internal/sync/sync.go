@@ -1940,14 +1940,14 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	messageID, err := persistenceStore.PersistMessage(&store.MessagePersistData{
 		GmailInboxObservation: data.gmailInboxObservation,
 		PreserveLabels:        data.gmailInboxObservation != nil && data.gmailInboxObservation.Tags == nil,
-		NativeScopes: nativeScopes,
-		Message:      data.message,
-		Metadata:     data.metadata,
-		BodyText:     sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:     sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:      data.rawMIME,
-		Recipients:   recipientSets,
-		LabelIDs:     labelIDs,
+		NativeScopes:          nativeScopes,
+		Message:               data.message,
+		Metadata:              data.metadata,
+		BodyText:              sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:              sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:               data.rawMIME,
+		Recipients:            recipientSets,
+		LabelIDs:              labelIDs,
 	})
 	if err != nil {
 		return 0, err
