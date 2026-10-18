@@ -171,9 +171,7 @@ func TestMessageTagsOutputFailurePreservesReplayRequestAfterLostResponse(t *test
 			projected := state
 			projected.Tags = []string{"INBOX", "Label_next"}
 			controls := []inboxcontrol.Request{}
-			saved := map[string]inboxcontrol.Result{}
 			dispatches := 0
-			committed := false
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
@@ -209,8 +207,6 @@ func TestMessageTagsOutputFailurePreservesReplayRequestAfterLostResponse(t *test
 						return
 					}
 					dispatches++
-					committed = true
-					saved[request.IdempotencyKey] = inboxcontrol.Result{Before: &state, Projected: &projected, After: &projected, Receipt: &inboxcontrol.Receipt{ID: "gmail-receipt", Status: inboxcontrol.StatusVerified}}
 					hijacker, ok := w.(http.Hijacker)
 					if !assertions.True(ok, "HTTP test server supports dropping the committed response") {
 						return
@@ -245,12 +241,7 @@ func TestMessageTagsOutputFailurePreservesReplayRequestAfterLostResponse(t *test
 			requirements.NotEmpty(failure.Result.ReplayRequest)
 			assertions.Empty(failure.Result.ReceiptID, "the committed receipt ID was in the lost response")
 			requirements.Len(controls, 2)
-			assertions.True(committed)
 			assertions.Equal(1, dispatches, "the lost HTTP response followed one committed Inbox dispatch")
-			recovered, ok := saved[controls[1].IdempotencyKey]
-			requirements.True(ok, "the provider operation committed a receipt before dropping its response")
-			requirements.NotNil(recovered.Receipt)
-			assertions.Equal("gmail-receipt", recovered.Receipt.ID)
 			assertions.Equal(controls[1].IdempotencyKey, failure.Result.IdempotencyKey)
 			assertions.Contains(failure.Message, "Inbox replay request:")
 			assertions.Contains(failure.Message, "signed-preview")

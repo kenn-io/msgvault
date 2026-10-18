@@ -211,26 +211,34 @@ func TestInboxIMAPServiceRecoversMappedProviderTombstone(t *testing.T) {
 	f := newInboxNativeServiceFixture(t)
 	request := f.plannedMove(t)
 	reconcile := f.service.ReconcileState
-	f.service.ReconcileState = func(ctx context.Context, before, after inboxcontrol.State) error {
-		// Simulate a sync after remote MOVE but before interrupted local
-		// reconciliation: origin is gone, destination has not been imported.
-		err := f.store.ApplyIMAPMailboxDeltas(f.native.source.SourceID, []store.IMAPMailboxDelta{
-			{Mailbox: "INBOX", Reset: true, State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: f.native.target.UIDValidity, UIDNext: 2}},
-			{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: f.native.destination.UIDValidity, UIDNext: 3}},
-		})
-		if err != nil {
-			return err
-		}
-		return reconcile(ctx, before, after)
+	f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+		return inboxcontrol.ErrInternal
 	}
 	result, err := f.service.Control(t.Context(), request, f.principal, f.gate)
-	requirements.NoError(err)
-	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+	requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+	requirements.NotNil(result)
+	assertions.Equal(inboxcontrol.StatusReconcileOnly, result.Receipt.Status)
+	requirements.NotNil(result.Receipt.After)
+	assertions.Equal("Archive", result.Receipt.After.Target.Mailbox)
 	assertions.Equal(int64(1), f.native.moves.Load())
+	// Control has returned and released its source lease. A later sync can now
+	// remove the origin membership before receipt recovery runs.
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.native.source.SourceID, []store.IMAPMailboxDelta{
+		{Mailbox: "INBOX", Reset: true, State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: f.native.target.UIDValidity, UIDNext: 2}},
+		{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: f.native.destination.UIDValidity, UIDNext: 3}},
+	}))
+	var tombstones int
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=? AND deleted_from_source_at IS NOT NULL`), f.native.target.ItemID).Scan(&tombstones))
+	assertions.Equal(1, tombstones)
+	f.service.ReconcileState = reconcile
+	recovered, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: result.Receipt.ID}, f.principal, f.gate)
+	requirements.NoError(err)
+	assertions.Equal(result.Receipt.ID, recovered.Receipt.ID)
+	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status)
+	assertions.Equal(int64(1), f.native.moves.Load(), "receipt recovery never redispatches MOVE")
 	var memberships int
 	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE source_id=? AND mailbox='Archive' AND message_id=?`), f.native.source.SourceID, f.native.target.ItemID).Scan(&memberships))
 	assertions.Equal(1, memberships)
-	var tombstones int
 	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT COUNT(*) FROM messages WHERE id=? AND deleted_from_source_at IS NOT NULL`), f.native.target.ItemID).Scan(&tombstones))
 	assertions.Zero(tombstones)
 }
