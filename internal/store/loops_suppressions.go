@@ -190,3 +190,50 @@ func (s *Store) DeleteLoopSuppressionContext(ctx context.Context, id int64, look
 		})
 	})
 }
+
+func (s *Store) mergeParticipantLoopStateTx(ctx context.Context, tx *loggedTx, absorbedID, survivorID int64) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET counterparty_participant_id = ? WHERE counterparty_participant_id = ?`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("repoint loop counterpart: %w", err)
+	}
+
+	type suppression struct {
+		id        int64
+		note      string
+		createdAt time.Time
+	}
+	var absorbed suppression
+	err := tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+		WHERE target_kind = 'participant' AND participant_id = ?`, absorbedID).
+		Scan(&absorbed.id, &absorbed.note, &absorbed.createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load absorbed loop suppression: %w", err)
+	}
+	var survivor suppression
+	err = tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+		WHERE target_kind = 'participant' AND participant_id = ?`, survivorID).
+		Scan(&survivor.id, &survivor.note, &survivor.createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET participant_id = ? WHERE id = ?`, survivorID, absorbed.id); err != nil {
+			return fmt.Errorf("repoint absorbed loop suppression: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load survivor loop suppression: %w", err)
+	}
+	createdAt := survivor.createdAt
+	if absorbed.createdAt.Before(createdAt) {
+		createdAt = absorbed.createdAt
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ?, created_at = ? WHERE id = ?`,
+		mergeLoopSuppressionNotes(survivor.note, absorbed.note), s.dialect.TimestampParam(createdAt), survivor.id); err != nil {
+		return fmt.Errorf("merge loop suppression notes: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, absorbed.id); err != nil {
+		return fmt.Errorf("delete absorbed loop suppression: %w", err)
+	}
+	return nil
+}

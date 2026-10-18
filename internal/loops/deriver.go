@@ -230,7 +230,7 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 	if view.ConversationType == "direct_chat" || view.ConversationType == "group_chat" {
 		channel = "chat"
 	}
-	open := &store.LoopOpenDecision{TurnKey: fmt.Sprintf("turn:%d:%s:%d", view.ConversationID, spec.Kind, spec.Anchor.ID), Kind: spec.Kind, Status: spec.Status, Channel: channel, OwnerAddress: spec.Anchor.OwnerAddress, Summary: spec.Summary, ConversationID: view.ConversationID, SourceID: view.SourceID, AnchorMessageID: spec.Anchor.ID, LastActivityMessageID: spec.LastActivity.ID, OwedSinceAt: spec.OwedSinceAt, LastActivityAt: spec.LastActivity.OccurredAt, OpensAt: spec.OpensAt, EvidenceJSON: evidence, RulesetVersion: RulesetVersion, TurnMessageIDs: spec.TurnMessageIDs, PreviousTurnKnown: spec.PreviousTurnKnown, PreviousTurnAt: spec.PreviousTurnAt}
+	open := &store.LoopOpenDecision{TurnKey: fmt.Sprintf("turn:%d:%s:%d", view.ConversationID, spec.Kind, spec.Anchor.ID), Kind: spec.Kind, Status: spec.Status, Channel: channel, OwnerAddress: spec.Anchor.OwnerAddress, Summary: spec.Summary, ConversationID: view.ConversationID, SourceID: view.SourceID, AnchorMessageID: spec.Anchor.ID, LastActivityMessageID: spec.LastActivity.ID, OwedSinceAt: spec.OwedSinceAt, LastActivityAt: spec.LastActivity.OccurredAt, OpensAt: spec.OpensAt, EvidenceJSON: evidence, RulesetVersion: RulesetVersion, TurnMessageIDs: spec.TurnMessageIDs, PreviousTurnKnown: spec.PreviousTurnKnown, PreviousTurnAt: spec.PreviousTurnAt, PreviousTurnMessageID: spec.PreviousTurnMessageID}
 	if spec.Counterparty.ID != 0 {
 		id := spec.Counterparty.ID
 		open.CounterpartyParticipantID = &id

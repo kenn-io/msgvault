@@ -2,6 +2,7 @@ package loops
 
 import (
 	"regexp"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/mime"
 )
@@ -26,4 +27,11 @@ func metadataSubstantive(m LoopMessage) bool {
 	return m.Sender.Email != "" || m.Sender.Phone != "" ||
 		(!chatBot.MatchString(m.Sender.DisplayName) && !camelCaseBot.MatchString(m.Sender.DisplayName) &&
 			!chatBot.MatchString(m.Sender.CanonicalID) && !camelCaseBot.MatchString(m.Sender.CanonicalID))
+}
+
+func isBulkMessage(m LoopMessage) bool {
+	if slices.Contains(m.Labels, "CATEGORY_PROMOTIONS") || slices.Contains(m.Labels, "CATEGORY_SOCIAL") || slices.Contains(m.Labels, "CATEGORY_FORUMS") {
+		return true
+	}
+	return m.Signals != nil && (m.Signals.PrecedenceBulk || m.Signals.ListUnsubscribe)
 }

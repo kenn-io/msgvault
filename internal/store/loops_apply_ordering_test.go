@@ -33,6 +33,7 @@ func TestLoopApplyUsesMessageOrderForTerminalBoundary(t *testing.T) {
 	newerTurn := loopOpenChronology(t, f, ids[3], ids[3], boundaryAt.Add(time.Hour), boundaryAt.Add(time.Hour))
 	newerTurn.PreviousTurnKnown = true
 	newerTurn.PreviousTurnAt = boundaryAt
+	newerTurn.PreviousTurnMessageID = ids[2]
 	applyLoop(t, f, newerTurn, base)
 
 	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)

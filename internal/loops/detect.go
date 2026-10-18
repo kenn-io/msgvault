@@ -176,12 +176,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		list := false
 		for _, m := range trailing.messages {
 			list = list || m.ListID != ""
-			bulk = bulk || slices.ContainsFunc(m.Labels, func(label string) bool {
-				return label == "CATEGORY_PROMOTIONS" || label == "CATEGORY_SOCIAL" || label == "CATEGORY_FORUMS"
-			})
-			if m.Signals != nil {
-				bulk = bulk || m.Signals.PrecedenceBulk || m.Signals.ListUnsubscribe
-			}
+			bulk = bulk || isBulkMessage(m)
 			if addressedToOwner(m, settlementView.ConversationType, large) &&
 				(anchor == nil || messageBefore(m, *anchor)) {
 				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
@@ -312,11 +307,15 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		status = "open"
 	}
 	previousTurnAt := time.Time{}
+	previousTurnMessageID := int64(0)
 	if len(turns) > 1 && len(turns[1].messages) > 0 {
-		previousTurnAt = turns[1].messages[len(turns[1].messages)-1].OccurredAt
+		previousTurn := turns[1].messages[len(turns[1].messages)-1]
+		previousTurnAt = previousTurn.OccurredAt
+		previousTurnMessageID = previousTurn.ID
 	}
 	v.Open = &Spec{Kind: kind, Status: status, Summary: summary, Anchor: *anchor, LastActivity: last, Counterparty: counterparty,
-		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain, PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt}
+		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain,
+		PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt, PreviousTurnMessageID: previousTurnMessageID}
 	for _, m := range trailing.messages {
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}

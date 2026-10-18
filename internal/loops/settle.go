@@ -39,7 +39,11 @@ func (t *traversal) settle(v ConversationView, live LiveLoop, now time.Time, cfg
 	}
 	// Corrected automation or ownership metadata can disqualify the anchor
 	// itself. Neutral messages after an eligible anchor do not.
-	if !metadataSubstantive(v.Messages[anchor]) || v.Messages[anchor].Direction != side {
+	anchorMessage := v.Messages[anchor]
+	if !metadataSubstantive(anchorMessage) || anchorMessage.Direction != side {
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
+	}
+	if live.Kind == ReplyOwed && (anchorMessage.ListID != "" || isBulkMessage(anchorMessage)) {
 		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, nil, nil
 	}
 	if _, ok := obligationCounterparty(v, live.Kind, v.Messages[anchor]); !ok {

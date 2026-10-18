@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -53,5 +52,5 @@ func TestMergeParticipantsPreservesLoopMuteAndCounterpart(t *testing.T) {
 	requirements.NotNil(suppressions[0].ParticipantID)
 	assertions.Equal(survivor, *suppressions[0].ParticipantID)
 	assertions.Equal("survivor mute\nabsorbed mute", suppressions[0].Note)
-	assertions.True(absorbedCreatedAt.Equal(suppressions[0].CreatedAt), fmt.Sprintf("earliest mute time should survive: got %s", suppressions[0].CreatedAt))
+	assertions.Equal(absorbedCreatedAt, suppressions[0].CreatedAt)
 }

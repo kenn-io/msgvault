@@ -114,7 +114,7 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 			latest = row
 		}
 		if !sameTurn && row.Status == "closed" && loopTerminal(*row) {
-			boundaryAfterTerminal := !open.PreviousTurnAt.IsZero() && open.PreviousTurnAt.After(row.LastActivityAt)
+			boundaryAfterTerminal := previousTurnAfterLoopActivity(open, row)
 			if !open.PreviousTurnKnown || !boundaryAfterTerminal {
 				terminalOutside = true
 			}
@@ -179,6 +179,16 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO open_loops(turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owner_address,counterparty_participant_id,counterparty_person_id,anchor_message_id,owed_since_at,last_activity_message_id,last_activity_at,opens_at,summary,evidence_json,ruleset_version,created_at,updated_at) VALUES(?,?,?,?,?,'turn_state',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, open.TurnKey, cycle, open.ConversationID, open.SourceID, open.Kind, status, open.Channel, open.OwnerAddress, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.AnchorMessageID, s.dialect.TimestampParam(open.OwedSinceAt), open.LastActivityMessageID, s.dialect.TimestampParam(open.LastActivityAt), s.dialect.TimestampParam(open.OpensAt), open.Summary, string(open.EvidenceJSON), open.RulesetVersion, s.dialect.TimestampParam(now), s.dialect.TimestampParam(now))
 	return err
+}
+
+func previousTurnAfterLoopActivity(open LoopOpenDecision, terminal *OpenLoop) bool {
+	if open.PreviousTurnAt.After(terminal.LastActivityAt) {
+		return true
+	}
+	if !open.PreviousTurnAt.Equal(terminal.LastActivityAt) || open.PreviousTurnMessageID <= 0 || terminal.LastActivityMessageID == nil {
+		return false
+	}
+	return open.PreviousTurnMessageID > *terminal.LastActivityMessageID
 }
 
 func loopEvidenceMetadata(raw []byte, key string, value any) ([]byte, error) {

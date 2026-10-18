@@ -4868,6 +4868,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_participants SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
 		}
+		if err := s.mergeParticipantLoopStateTx(ctx, tx, oldID, newID); err != nil {
+			return err
+		}
 		// Identifier values are globally unique, so a plain repoint suffices.
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
