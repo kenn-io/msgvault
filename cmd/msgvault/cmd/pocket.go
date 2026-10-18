@@ -165,32 +165,57 @@ The daemon reads API keys from the configured environment variables.`, Args: cob
 		defer func() {
 			err = finishPocketImport(ctx, total, err, func(context.Context) error { return rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state) })
 		}()
-		for _, src := range sources {
-			if err = ctx.Err(); err != nil {
-				return err
-			}
-			opts.AccountEmail, err = src.EffectiveAccountEmail()
+		return syncPocketSources(ctx, sources, func(ctx context.Context, src config.PocketSource) (*pocket.ImportSummary, error) {
+			email, err := src.EffectiveAccountEmail()
 			if err != nil {
-				return err
+				return nil, err
 			}
-			opts.Identifier = src.Identifier
-			client, e := pocketClient(src)
-			if e != nil {
-				return e
+			client, err := pocketClient(src)
+			if err != nil {
+				return nil, err
 			}
-			sum, e := pocket.NewImporter(st, client).Import(ctx, opts)
+			sourceOpts := opts
+			sourceOpts.AccountEmail = email
+			sourceOpts.Identifier = src.Identifier
+			return pocket.NewImporter(st, client).Import(ctx, sourceOpts)
+		}, func(src config.PocketSource, sum *pocket.ImportSummary) {
 			if sum != nil {
 				total.MeetingsAdded += sum.MeetingsAdded
 				total.MeetingsUpdated += sum.MeetingsUpdated
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pocket %s: %d processed, %d added, %d updated, %d errors\n", src.Identifier, sum.MeetingsProcessed, sum.MeetingsAdded, sum.MeetingsUpdated, sum.Errors)
 			}
-			if e != nil {
-				return e
-			}
-		}
-		return nil
+		})
 	}
 	return cmd
+}
+
+func syncPocketSources(
+	ctx context.Context,
+	sources []config.PocketSource,
+	run func(context.Context, config.PocketSource) (*pocket.ImportSummary, error),
+	onSummary func(config.PocketSource, *pocket.ImportSummary),
+) error {
+	var errs []error
+	for _, src := range sources {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		sum, err := run(ctx, src)
+		if sum != nil && onSummary != nil {
+			onSummary(src, sum)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("Pocket source %q: %w", src.Identifier, err))
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			if !errors.Is(err, ctxErr) {
+				errs = append(errs, ctxErr)
+			}
+			break
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func finishPocketImport(ctx context.Context, sum *pocket.ImportSummary, importErr error, refresh func(context.Context) error) error {

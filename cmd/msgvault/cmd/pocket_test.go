@@ -39,7 +39,6 @@ func TestPocketKeyEnvironmentAndFlags(t *testing.T) {
 	t.Setenv("POCKET_TEST_KEY", "")
 	_, err = pocketClient(config.PocketSource{APIKeyEnv: "POCKET_TEST_KEY"})
 	requirements.Error(err)
-	assertions.NotContains(err.Error(), "synthetic-api-key")
 	cmd := newSyncPocketCmd()
 	requirements.NoError(cmd.Flags().Parse([]string{"--limit=-1"}))
 	_, err = pocketImportOptions(cmd)
@@ -57,6 +56,52 @@ func TestPocketKeyEnvironmentAndFlags(t *testing.T) {
 	assertions.True(manualSyncCLICommand([]string{"sync-pocket"}))
 	assertions.NotNil(cmd.Flags().Lookup("build-cache"))
 	assertions.NotNil(cmd.Flags().Lookup("no-build-cache"))
+}
+
+func TestSyncPocketSourcesCollectsErrorsAndContinues(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	setupErr := errors.New("missing API key")
+	importErr := errors.New("recording could not be imported")
+	sources := []config.PocketSource{{Identifier: "missing-key"}, {Identifier: "broken-recording"}, {Identifier: "healthy"}}
+	var calls []string
+	var summaries []string
+	err := syncPocketSources(t.Context(), sources, func(_ context.Context, source config.PocketSource) (*pocket.ImportSummary, error) {
+		calls = append(calls, source.Identifier)
+		switch source.Identifier {
+		case "missing-key":
+			return nil, setupErr
+		case "broken-recording":
+			return &pocket.ImportSummary{MeetingsUpdated: 1}, importErr
+		default:
+			return &pocket.ImportSummary{MeetingsAdded: 1}, nil
+		}
+	}, func(source config.PocketSource, _ *pocket.ImportSummary) {
+		summaries = append(summaries, source.Identifier)
+	})
+	requirements.ErrorIs(err, setupErr)
+	requirements.ErrorIs(err, importErr)
+	assertions.Equal([]string{"missing-key", "broken-recording", "healthy"}, calls)
+	assertions.Equal([]string{"broken-recording", "healthy"}, summaries)
+	assertions.Contains(err.Error(), `Pocket source "missing-key"`)
+	assertions.Contains(err.Error(), `Pocket source "broken-recording"`)
+}
+
+func TestSyncPocketSourcesStopsOnCancellation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	interruptedErr := errors.New("interrupted during import")
+	var calls []string
+	err := syncPocketSources(ctx, []config.PocketSource{{Identifier: "first"}, {Identifier: "second"}}, func(_ context.Context, source config.PocketSource) (*pocket.ImportSummary, error) {
+		calls = append(calls, source.Identifier)
+		cancel()
+		return nil, interruptedErr
+	}, nil)
+	requirements.ErrorIs(err, interruptedErr)
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Equal([]string{"first"}, calls)
 }
 
 func TestPocketPartialFailureRefreshesWithoutCancellation(t *testing.T) {

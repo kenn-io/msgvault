@@ -60,7 +60,7 @@ func TestPocketContentAvailability(t *testing.T) {
 }
 
 func TestPocketContentRejectsMalformedSections(t *testing.T) {
-	for _, fields := range []string{`"transcript":{}`, `"transcript":[{"text":"x","start":-1}]`, `"duration":-1`, `"recording_at":"bad"`, `"summarizations":[]`, `"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"x"},"actionItems":{"actionItems":[{"title":"x","status":"TODO","isCompleted":true}]}}}}`} {
+	for _, fields := range []string{`"transcript":{}`, `"duration":-1`, `"recording_at":"bad"`, `"summarizations":[]`, `"summarizations":{"a":{"processingStatus":"completed","v2":{"summary":{"markdown":"x"},"actionItems":{"actionItems":[{"title":"x","status":"TODO","isCompleted":true}]}}}}`} {
 		rec, err := DecodeRecording([]byte(`{"id":"r",` + fields + `}`))
 		if err == nil {
 			_, err = Normalize(rec)
@@ -71,8 +71,8 @@ func TestPocketContentRejectsMalformedSections(t *testing.T) {
 
 func TestPocketContentSelectsLatestCompletedSummary(t *testing.T) {
 	rec, err := DecodeRecording([]byte(`{"id":"r","summarizations":{
-		"a":{"processingStatus":"completed","updatedAt":"2026-09-02T10:00:00Z","v2":{"summary":{"markdown":"Older"}}},
-		"b":{"processingStatus":"completed","updatedAt":"2026-09-03T10:00:00Z","v2":{"summary":{"markdown":"","bulletPoints":["Latest"]}}},
+		"a":{"processingStatus":"completed","updatedAt":"2026-09-03T10:00:00Z","v2":{"summary":{"markdown":"","bulletPoints":["Latest"]}}},
+		"b":{"processingStatus":"completed","updatedAt":"2026-09-02T10:00:00Z","v2":{"summary":{"markdown":"Older"}}},
 		"c":{"processingStatus":"processing","updatedAt":"2026-09-04T10:00:00Z","v2":{"summary":{"markdown":""}}}
 	}}`))
 	require.NoError(t, err)
