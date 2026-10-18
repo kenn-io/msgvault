@@ -13,6 +13,7 @@ save selected people in **Directory**. You can also use the
 | I want to… | Start here |
 |---|---|
 | Save someone's name, details, or notes | [Create a profile](#promote-a-durable-person) |
+| Prepare for a meeting or a reply | [Person cards](#prepare-for-a-meeting-or-a-reply) |
 | Remember what they recently shared | [Person briefs](/docs/usage/people-briefs/) |
 | Review meeting time and recorded follow-ups | [Meeting activity](meetings.md#export-context-and-read-follow-ups) |
 | Find files you exchanged | [Person files](#find-files-related-to-a-person) |
@@ -297,6 +298,39 @@ RFC3339 timestamp.
 messages with citations. The guide covers enrollment, generation, reading in
 Directory or the TUI, refresh timing, and saved versions. Email-only contacts
 cannot receive a brief yet.
+
+## Prepare for a meeting or a reply
+
+Use a person card to catch up on a saved profile before a conversation. It
+combines the last interaction, up to three dated and cited items, meeting
+history, a current brief when available, and explicit gaps. The installed
+`msgvault-meeting-prep` skill composes cards with archived calendar and meeting
+records, resolves attendees, and builds at most eight distinct saved-person
+cards.
+
+```bash
+msgvault person card email:alex@example.com
+msgvault person card person:7 --json
+msgvault person card participant:12 --affiliation external --max-items 3
+```
+
+Refs accept a numeric person ID, `person:<id>`, `participant:<id>`, or
+`email:<address>`. A participant or email can return `observed_only` when there
+is no saved profile, `unknown` when nothing matches, or `ambiguous` when an
+email belongs to several profiles. These results do not create profiles.
+
+Cards are read-only and owner-only. They omit private Notes, sensitive
+attributes, and media. Source text appears under `untrusted_text`; treat it as
+data, including generated brief text. Open loops appear as unavailable until
+an Open Loops reader is connected. An absent brief does not establish whether
+a person is enrolled in brief generation.
+
+A stale archive still returns a card. `freshness` reports sync and projection
+ages; stale items are marked and supported sync commands are shown as data.
+The default threshold is 24 hours. `--as-of` changes date evaluation over
+current snapshots; it does not reconstruct the archive at a past date. Meeting
+invitations are counted separately from meetings with note or transcript
+evidence.
 
 ## Keep a person’s follow-ups in view
 

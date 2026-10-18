@@ -339,6 +339,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
 		opts.ContactRoutesBackend = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personCardsMinAPISchemaVersion) {
+		opts.PersonCards = st
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st
 	}

@@ -54,6 +54,7 @@ type catalogCapabilities struct {
 	archiveCalendarEvents bool
 	meetingRecords        bool
 	personAgenda          bool
+	personCards           bool
 	kata                  bool
 	kataLookup            bool
 	kataDocbank           bool
@@ -144,6 +145,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		meetings:              opts.Meetings != nil,
 		archiveCalendarEvents: opts.ArchiveCalendarEvents != nil,
 		personAgenda:          opts.PersonAgendaBackend != nil,
+		personCards:           opts.PersonCards != nil && !opts.DelegatedOnly,
 		kata:                  opts.Kata != nil,
 		kataLookup:            opts.Kata != nil && opts.KataLookup,
 		kataDocbank:           opts.Kata != nil && opts.KataDocbank,
@@ -245,6 +247,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getPersonAgendaDefinition(),
 		findContactCandidatesDefinition(),
 		getPersonMessagingRoutesDefinition(),
+		getPersonCardDefinition(),
 		getSavedViewDefinition(nil),
 		getStatsDefinition(nil),
 		listMessagesDefinition(nil),
