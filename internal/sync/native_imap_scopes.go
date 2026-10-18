@@ -64,10 +64,9 @@ func (s *Syncer) observeNativeIMAPMailboxInventory(ctx context.Context, sourceID
 	if err := s.store.ObserveNativeMessageScopes(ctx, inventory); err != nil {
 		return err
 	}
-	s.nativeIMAPSourceReference = resource.Reference
-	s.nativeIMAPAuthority = &nativeIMAPAuthorityState{sourceID: sourceID, sourceReference: resource.Reference, identity: source.Identifier, epochs: map[string]uint32{}, pins: map[string]store.NativeMessageScopeIdentity{}}
+	authority := &nativeIMAPAuthorityState{sourceID: sourceID, sourceReference: resource.Reference, identity: source.Identifier, epochs: map[string]uint32{}, pins: map[string]store.NativeMessageScopeIdentity{}}
 	for _, scope := range scopes {
-		s.nativeIMAPAuthority.epochs[scope.Mailbox] = scope.UIDValidity
+		authority.epochs[scope.Mailbox] = scope.UIDValidity
 		pin, found, err := s.store.LookupNativeMessageScope(ctx, sourceID, resource.Reference, "imap_mailbox", scope.Mailbox)
 		if err != nil {
 			return err
@@ -75,8 +74,12 @@ func (s *Syncer) observeNativeIMAPMailboxInventory(ctx context.Context, sourceID
 		if !found || !pin.Present {
 			return errors.New("native_mailbox_unavailable")
 		}
-		s.nativeIMAPAuthority.pins[scope.Mailbox] = pin.Identity
+		authority.pins[scope.Mailbox] = pin.Identity
 	}
+	// Attach mailbox membership authority only after the complete inventory has
+	// been observed and every returned mailbox lifetime has been pinned.
+	s.nativeIMAPAuthority = authority
+	s.nativeIMAPSourceReference = resource.Reference
 	return nil
 }
 
@@ -131,8 +134,7 @@ func (s *Syncer) nativeIMAPProfileWithPermission(ctx context.Context, source *st
 		}
 		return s.client.GetProfile(ctx)
 	}
-	s.nativeIMAPSourceReference = resource.Reference
-	s.nativeIMAPAuthority = &nativeIMAPAuthorityState{sourceID: source.ID, sourceReference: resource.Reference, identity: source.Identifier, epochs: map[string]uint32{}, pins: map[string]store.NativeMessageScopeIdentity{}}
+	s.nativeIMAPPermission = &nativeIMAPPermissionObserver{sourceID: source.ID, sourceReference: resource.Reference, identity: source.Identifier}
 	profile, err := s.client.GetProfile(ctx)
 	if err != nil {
 		revoked := false
@@ -151,8 +153,8 @@ func (s *Syncer) nativeIMAPProfileWithPermission(ctx context.Context, source *st
 }
 
 func (s *Syncer) nativeIMAPPermissionFailure(ctx context.Context, cause error) error {
-	state := s.nativeIMAPAuthority
-	if cause == nil || state == nil {
+	observer := s.nativeIMAPPermission
+	if cause == nil || observer == nil {
 		return cause
 	}
 	denied := false
@@ -165,10 +167,15 @@ func (s *Syncer) nativeIMAPPermissionFailure(ctx context.Context, cause error) e
 	if !denied {
 		return cause
 	}
-	state.mu.Lock()
-	observation := store.NativeSourcePermission{SourceID: state.sourceID, SourceReference: state.sourceReference, SourceType: sourceTypeIMAP, NativeIdentity: state.identity, Known: true}
-	state.mu.Unlock()
+	observation := store.NativeSourcePermission{SourceID: observer.sourceID, SourceReference: observer.sourceReference, SourceType: sourceTypeIMAP, NativeIdentity: observer.identity, Known: true}
 	return errors.Join(cause, s.store.ObserveNativeSourcePermission(ctx, observation))
+}
+
+// The permission observer pins a source lifetime for revocation reporting. It
+// does not grant membership in any mailbox.
+type nativeIMAPPermissionObserver struct {
+	sourceID                  int64
+	sourceReference, identity string
 }
 
 // Per-run state serializes snapshots of native SELECT evidence before applying

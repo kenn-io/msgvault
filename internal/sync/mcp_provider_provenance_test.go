@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"errors"
 	"net"
 	"strconv"
@@ -20,6 +21,33 @@ import (
 type grantedGmailProvenanceAPI struct{ *gmail.MockAPI }
 
 func (grantedGmailProvenanceAPI) NativeMessageReadPermission() (bool, bool) { return true, true }
+
+type refreshingGmailGrantAPI struct {
+	*gmail.MockAPI
+
+	messageRead bool
+	narrowAfter string
+}
+
+func (a *refreshingGmailGrantAPI) NativeMessageReadPermission() (bool, bool) {
+	return a.messageRead, true
+}
+
+func (a *refreshingGmailGrantAPI) ListLabels(ctx context.Context) ([]*gmail.Label, error) {
+	labels, err := a.MockAPI.ListLabels(ctx)
+	if err == nil && a.narrowAfter == "labels" {
+		a.messageRead = false
+	}
+	return labels, err
+}
+
+func (a *refreshingGmailGrantAPI) ListHistory(ctx context.Context, historyID uint64, pageToken string) (*gmail.HistoryResponse, error) {
+	response, err := a.MockAPI.ListHistory(ctx, historyID, pageToken)
+	if err == nil && a.narrowAfter == "history" {
+		a.messageRead = false
+	}
+	return response, err
+}
 
 func enableProviderEvents(t *testing.T, env *TestEnv, sourceType string) {
 	t.Helper()
@@ -41,6 +69,56 @@ func providerEventCount(t *testing.T, env *TestEnv) int {
 	var count int
 	require.NoError(env.Store.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family = 'msgvault.message_archived'`).Scan(&count))
 	return count
+}
+
+func TestMCPProviderGmailRefreshNarrowsMessageReadPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		refreshEndpoint string
+		finalHistoryID  uint64
+		wantHistoryCall int
+	}{
+		{name: "idle labels refresh", refreshEndpoint: "labels", finalHistoryID: 1000},
+		{name: "history refresh", refreshEndpoint: "history", finalHistoryID: 1001, wantHistoryCall: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			env := newTestEnv(t)
+			source := env.CreateSourceWithHistory(t, "1000")
+			api := &refreshingGmailGrantAPI{MockAPI: env.Mock, messageRead: true}
+			scoped := *env.Syncer
+			scoped.client = api
+			env.Syncer = &scoped
+
+			_, err := env.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{
+				Enabled:   true,
+				Principal: "synthetic-owner",
+				Capabilities: []store.MCPEventCapability{{
+					Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"},
+				}},
+			})
+			require.NoError(err)
+
+			_, err = env.Syncer.Incremental(env.Context, source)
+			require.NoError(err, "initial granted sync")
+			allowed, err := env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
+			require.NoError(err)
+			require.True(allowed, "initial sync stores the current message-read grant")
+
+			api.narrowAfter = tc.refreshEndpoint
+			env.SetHistory(tc.finalHistoryID)
+			summary, err := env.Syncer.Incremental(env.Context, source)
+			require.NoError(err, "a successful refresh-capable request may still complete the archive sync")
+			require.NotNil(summary)
+			assert.Equal(tc.finalHistoryID, summary.FinalHistoryID)
+			assert.Len(env.Mock.HistoryCalls, tc.wantHistoryCall)
+
+			allowed, err = env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
+			require.NoError(err)
+			assert.False(allowed, "a successful request that narrows the saved grant must revoke stored Events authority")
+		})
+	}
 }
 
 func TestMCPProviderGmailFullMutedIncrementalLive(t *testing.T) {
