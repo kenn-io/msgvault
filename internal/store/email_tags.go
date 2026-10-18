@@ -12,7 +12,6 @@ import (
 
 const (
 	sourceTypeGmail = "gmail"
-	sourceTypeIMAP  = "imap"
 )
 
 // EmailTagTarget binds one archived message to its exact provider identity.

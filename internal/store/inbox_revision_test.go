@@ -16,7 +16,7 @@ func TestInboxConsumerUpgradesPopulatedPredecessor(t *testing.T) {
 	requirements := require.New(t)
 
 	f, receipt := inboxReceiptFixture(t)
-	requirements.Equal(5, store.SchemaVersion)
+	requirements.Greater(store.SchemaVersion, 4, "Inbox consumer upgrade must advance the published recording schema")
 	archiveUID, err := f.Store.ArchiveUIDContext(t.Context())
 	requirements.NoError(err)
 	const destination = "native-upgrade"
@@ -86,7 +86,7 @@ func TestInboxConsumerRetriesInterruptedUpgrade(t *testing.T) {
 	requirements.NoError(f.Store.ValidateSchemaContext(t.Context()))
 	version, err = f.Store.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(5, version)
+	assertions.Equal(store.SchemaVersion, version)
 	_, claimed, err := f.Store.PrepareInboxReceipt(t.Context(), receipt)
 	requirements.NoError(err)
 	assertions.True(claimed)

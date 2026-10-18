@@ -49,7 +49,7 @@ func TestGmailClientFactoriesPreserveNativeSavedGrant(t *testing.T) {
 			}{
 				{"on_demand", func() (gmail.API, error) { return buildAPIClient(ctx, source, getManager, nil) }},
 				{"scheduled", func() (gmail.API, error) {
-					client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, getManager, invocationFromContext(ctx))
+					client, _, err := newDaemonGmailClient(ctx, source.Identifier, source, getManager, invocationFromContext(ctx), tc.scopes)
 					return client, err
 				}},
 			} {

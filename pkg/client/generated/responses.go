@@ -1555,6 +1555,28 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type ControlInboxResponse = InboxResult
+
+type ControlInboxErrorResponse = InboxControlError
+
+type ControlInboxErrorResponseJSON = InboxControlError
+
+type ControlInboxErrorResponseJSON403 = InboxControlError
+
+type ControlInboxErrorResponseJSON409 = InboxControlError
+
+type ControlInboxErrorResponseJSON413 = InboxControlError
+
+type ControlInboxErrorResponseJSON415 = InboxControlError
+
+type ControlInboxErrorResponseJSON500 = InboxControlError
+
+type ControlInboxErrorResponseJSON501 = InboxControlError
+
+type ControlInboxErrorResponseJSON502 = InboxControlError
+
+type ControlInboxErrorResponseJSON503 = InboxControlError
+
 type PrepareKataEvidenceResponse = KataEvidencePrepareResponse
 
 type PrepareKataEvidenceErrorResponse = ErrorResponse
@@ -1640,6 +1662,10 @@ type GetTaskIntegrationStatusErrorResponse = ErrorResponse
 type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
+
+type GetMCPCapabilitiesResponse = MCPCapabilities
+
+type GetMCPCapabilitiesErrorResponse = ErrorResponse
 
 type ListMCPCalendarSourcesResponse []CalendarSource
 
@@ -1795,7 +1821,7 @@ type ListMessageRecordingsResponse = MessageRecordingsResponse
 
 type ListMessageRecordingsErrorResponse = ErrorResponse
 
-type GetMessageTagsResponse = MessageTagResult
+type GetMessageTagsResponse = MessageTagResponse
 
 type GetMessageTagsErrorResponse = MessageTagError
 
@@ -4928,6 +4954,23 @@ type GetImportJobResp struct {
 	JSON404      *GetImportJobErrorResponseJSON
 }
 
+type ControlInboxResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlInboxResponse
+	JSON400      *ControlInboxErrorResponse
+	JSON401      *ControlInboxErrorResponseJSON
+	JSON403      *ControlInboxErrorResponseJSON403
+	JSON409      *ControlInboxErrorResponseJSON409
+	JSON413      *ControlInboxErrorResponseJSON413
+	JSON415      *ControlInboxErrorResponseJSON415
+	JSON500      *ControlInboxErrorResponseJSON500
+	JSON501      *ControlInboxErrorResponseJSON501
+	JSON502      *ControlInboxErrorResponseJSON502
+	JSON503      *ControlInboxErrorResponseJSON503
+}
+
 type PrepareKataEvidenceResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5019,6 +5062,13 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type GetMCPCapabilitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPCapabilitiesResponse
 }
 
 type ListMCPCalendarSourcesResp struct {

@@ -1777,21 +1777,21 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
-	store                   *store.Store
-	config                  *config.Config
-	options                 invocationOptions
+	store                     *store.Store
+	config                    *config.Config
+	options                   invocationOptions
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
-	mcpEventsCapture        bool
-	mcpEventsCaptureConfig  *store.MCPEventsConfig
-	logger                  *slog.Logger
-	draftPolicy             []config.IMAPDraftSource
-	draftClientFactory      func(context.Context, *store.Source) (*imaplib.Client, error)
-	gmailDraftPolicy        []config.GmailDraftSource
-	beeperDraftPolicy       []config.GmailDraftSource
-	gmailDraftClientFactory func(context.Context, *store.Source) (gmail.DraftAPI, error)
-	calendarClientFactory   func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
-	inboxKey                []byte
+	mcpEventsCapture          bool
+	mcpEventsCaptureConfig    *store.MCPEventsConfig
+	logger                    *slog.Logger
+	draftPolicy               []config.IMAPDraftSource
+	draftClientFactory        func(context.Context, *store.Source) (*imaplib.Client, error)
+	gmailDraftPolicy          []config.GmailDraftSource
+	beeperDraftPolicy         []config.GmailDraftSource
+	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
+	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
+	inboxKey                  []byte
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
 	draftCacheRefresh     func(context.Context, string) error
