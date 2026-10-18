@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -26,6 +27,7 @@ type keywordTestSession struct {
 	readOnlyPermanent []imapapi.Flag
 	omitPermanent     bool
 	rejectRemove      bool
+	retainSeen        bool
 	omitFlags         bool
 	selectModes       chan<- bool
 	stores            *atomic.Int64
@@ -59,6 +61,9 @@ func (s *keywordTestSession) Store(w *imapserver.FetchWriter, set imapapi.NumSet
 	}
 	if s.rejectRemove && flags.Op == imapapi.StoreFlagsDel {
 		return errors.New("synthetic remove rejection")
+	}
+	if s.retainSeen && flags.Op == imapapi.StoreFlagsDel && slices.Contains(flags.Flags, imapapi.FlagSeen) {
+		return nil
 	}
 	if err := s.Session.Store(w, set, flags, opts); err != nil {
 		return fmt.Errorf("store test keyword flags: %w", err)

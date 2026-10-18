@@ -383,6 +383,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, false)
+	hardenMessageTagReplayRequestSchemas(doc)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	return doc
@@ -392,10 +393,25 @@ func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
+	hardenMessageTagReplayRequestSchemas(doc)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
 	return doc
+}
+
+func hardenMessageTagReplayRequestSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	for _, name := range []string{"MessageTagResponse", "MessageTagResult"} {
+		if schema := schemas[name]; schema != nil {
+			if _, ok := schema.Properties["replay_request"]; ok {
+				schema.Properties["replay_request"] = &huma.Schema{Ref: "#/components/schemas/InboxRequest"}
+			}
+		}
+	}
 }
 
 func hardenOperationSchemas(doc *huma.OpenAPI) {

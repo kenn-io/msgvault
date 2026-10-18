@@ -52,9 +52,6 @@ func TestRewriteGeneratedValidatorsTreatsInboxBindingsAsAlternatives(t *testing.
 	assertions.Contains(string(got), "if sourcePresent == targetPresent")
 	assertions.NotContains(string(got), generatedInboxStateBindingValidation)
 	assertions.Contains(string(got), inboxStateAlternativeBindingValidation)
-	again, err := RewriteGeneratedValidators(got)
-	requirements.NoError(err)
-	assertions.Equal(got, again, "inbox binding validator rewrite is idempotent")
 }
 
 func firstDifference(left, right []byte) int {

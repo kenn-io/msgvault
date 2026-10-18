@@ -7972,23 +7972,24 @@ func (s MessageTagError) Error() string {
 }
 
 type MessageTagResponse struct {
-	AvailableTags     []MessageTag `json:"available_tags" validate:"required"`
-	Before            []string     `json:"before" validate:"required"`
-	CanCreateKeywords *bool        `json:"can_create_keywords,omitempty"`
-	DryRun            bool         `json:"dry_run"`
-	Flags             []string     `json:"flags,omitempty"`
-	IdempotencyKey    *string      `json:"idempotency_key,omitzero"`
-	Mailbox           *string      `json:"mailbox,omitzero"`
-	MessageID         int64        `json:"message_id"`
-	Provider          string       `json:"provider" validate:"required"`
-	ReceiptID         *string      `json:"receipt_id,omitzero"`
-	ReceiptStatus     *string      `json:"receipt_status,omitzero"`
-	SourceID          int64        `json:"source_id"`
-	Tags              []string     `json:"tags" validate:"required"`
-	Target            *InboxTarget `json:"target,omitempty"`
-	UID               *int64       `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Uidvalidity       *int64       `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Verified          bool         `json:"verified"`
+	AvailableTags     []MessageTag  `json:"available_tags" validate:"required"`
+	Before            []string      `json:"before" validate:"required"`
+	CanCreateKeywords *bool         `json:"can_create_keywords,omitempty"`
+	DryRun            bool          `json:"dry_run"`
+	Flags             []string      `json:"flags,omitempty"`
+	IdempotencyKey    *string       `json:"idempotency_key,omitzero"`
+	Mailbox           *string       `json:"mailbox,omitzero"`
+	MessageID         int64         `json:"message_id"`
+	Provider          string        `json:"provider" validate:"required"`
+	ReceiptID         *string       `json:"receipt_id,omitzero"`
+	ReceiptStatus     *string       `json:"receipt_status,omitzero"`
+	ReplayRequest     *InboxRequest `json:"replay_request,omitempty"`
+	SourceID          int64         `json:"source_id"`
+	Tags              []string      `json:"tags" validate:"required"`
+	Target            *InboxTarget  `json:"target,omitempty"`
+	UID               *int64        `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64        `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool          `json:"verified"`
 }
 
 func (m MessageTagResponse) Validate() error {
@@ -8005,6 +8006,13 @@ func (m MessageTagResponse) Validate() error {
 	}
 	if err := typesValidator.Var(m.Provider, "required"); err != nil {
 		errors = errors.Append("Provider", err)
+	}
+	if m.ReplayRequest != nil {
+		if v, ok := any(m.ReplayRequest).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReplayRequest", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.Tags, "required"); err != nil {
 		errors = errors.Append("Tags", err)
@@ -8033,22 +8041,23 @@ func (m MessageTagResponse) Validate() error {
 }
 
 type MessageTagResult struct {
-	AvailableTags     []MessageTag `json:"available_tags" validate:"required"`
-	Before            []string     `json:"before" validate:"required"`
-	CanCreateKeywords *bool        `json:"can_create_keywords,omitempty"`
-	DryRun            bool         `json:"dry_run"`
-	Flags             []string     `json:"flags,omitempty"`
-	IdempotencyKey    *string      `json:"idempotency_key,omitzero"`
-	Mailbox           *string      `json:"mailbox,omitzero"`
-	MessageID         int64        `json:"message_id"`
-	Provider          string       `json:"provider" validate:"required"`
-	ReceiptID         *string      `json:"receipt_id,omitzero"`
-	ReceiptStatus     *string      `json:"receipt_status,omitzero"`
-	SourceID          int64        `json:"source_id"`
-	Tags              []string     `json:"tags" validate:"required"`
-	UID               *int64       `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Uidvalidity       *int64       `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Verified          bool         `json:"verified"`
+	AvailableTags     []MessageTag  `json:"available_tags" validate:"required"`
+	Before            []string      `json:"before" validate:"required"`
+	CanCreateKeywords *bool         `json:"can_create_keywords,omitempty"`
+	DryRun            bool          `json:"dry_run"`
+	Flags             []string      `json:"flags,omitempty"`
+	IdempotencyKey    *string       `json:"idempotency_key,omitzero"`
+	Mailbox           *string       `json:"mailbox,omitzero"`
+	MessageID         int64         `json:"message_id"`
+	Provider          string        `json:"provider" validate:"required"`
+	ReceiptID         *string       `json:"receipt_id,omitzero"`
+	ReceiptStatus     *string       `json:"receipt_status,omitzero"`
+	ReplayRequest     *InboxRequest `json:"replay_request,omitempty"`
+	SourceID          int64         `json:"source_id"`
+	Tags              []string      `json:"tags" validate:"required"`
+	UID               *int64        `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64        `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool          `json:"verified"`
 }
 
 func (m MessageTagResult) Validate() error {
@@ -8065,6 +8074,13 @@ func (m MessageTagResult) Validate() error {
 	}
 	if err := typesValidator.Var(m.Provider, "required"); err != nil {
 		errors = errors.Append("Provider", err)
+	}
+	if m.ReplayRequest != nil {
+		if v, ok := any(m.ReplayRequest).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReplayRequest", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.Tags, "required"); err != nil {
 		errors = errors.Append("Tags", err)

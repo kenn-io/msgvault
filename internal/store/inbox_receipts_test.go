@@ -197,7 +197,7 @@ func TestInboxLedgerRecoveryWaitsForActiveDispatcherOwnership(t *testing.T) {
 	select {
 	case err := <-recovered:
 		requirements.FailNow("receipt recovery returned before source ownership was available", err)
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the held source lock keeps receipt recovery waiting
 	}
 	got, err := f.Store.GetInboxReceipt(t.Context(), receipt.ID)
 	requirements.NoError(err)

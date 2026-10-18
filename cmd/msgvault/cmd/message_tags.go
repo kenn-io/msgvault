@@ -103,6 +103,12 @@ Use --dry-run with an edit to preview it without writing.`,
 						return outputFailure(fmt.Errorf("write tag operation key: %w", writeErr))
 					}
 				}
+				if err != nil && len(result.ReplayRequest) > 0 {
+					line := append([]byte("Inbox replay request: "), result.ReplayRequest...)
+					if writeErr := writeInboxCLIOutputLine(cmd, line); writeErr != nil {
+						return outputFailure(fmt.Errorf("write tag replay request: %w", writeErr))
+					}
+				}
 				if input == nil {
 					for _, tag := range result.AvailableTags {
 						if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", textutil.SanitizeTerminal(tag.ID), textutil.SanitizeTerminal(tag.Name)); writeErr != nil {

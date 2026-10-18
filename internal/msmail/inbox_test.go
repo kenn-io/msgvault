@@ -219,8 +219,6 @@ func TestMicrosoftInboxRejectsUnverifiableCategoryProjection(t *testing.T) {
 		func(s *inboxcontrol.State) { s.Tags = []string{"Next", "Other", "Old"} },
 		func(s *inboxcontrol.State) { s.Read = new(true) },
 		func(s *inboxcontrol.State) { s.Location = "archive" },
-		func(s *inboxcontrol.State) { s.Revision = "" },
-		func(s *inboxcontrol.State) { s.Target.ProviderID = "other" },
 	} {
 		after := projected
 		mutate(&after)

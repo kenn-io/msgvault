@@ -211,7 +211,7 @@ func TestInboxObservationBoundsAndRedirect(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err = provider.Observe(ctx, inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
-	assertions.ErrorIs(err, inboxcontrol.ErrUnavailable)
+	requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
 	assertions.Empty(peer.calls(), "caller cancellation must prevent provider requests")
 }
 

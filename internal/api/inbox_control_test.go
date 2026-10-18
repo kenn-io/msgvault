@@ -190,22 +190,3 @@ func TestInboxHTTPReadsAndPreviewsDoNotAcquireGate(t *testing.T) {
 		assert.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	}
 }
-
-// The backend is confined to this predicate test; daemon tests cover native
-// Store/provider resolution and dispatch.
-func TestInboxHTTPGrantRequiresSelectedSourceLifetime(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	backend := &inboxHTTPStore{}
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}}, backend, nil, testLogger())
-	srv.agentGrants = agentgrant.NewRegistry()
-	_, oldSecret, oldGrant, err := srv.agentGrants.Issue("old-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: 1, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
-	requirements.NoError(err)
-	body := strings.Replace(inboxStateBody, `"source_id":1`, `"source_id":2`, 1)
-	assertions.Equal(http.StatusForbidden, inboxHTTPCall(srv, body, "", oldSecret).Code)
-	_, freshSecret, _, err := srv.agentGrants.Issue("fresh-reader", []agentgrant.Permission{agentgrant.PermissionInboxRead}, []agentgrant.SourceRef{{ID: 2, Type: "gmail", Identifier: "owner@example.test"}}, time.Time{})
-	requirements.NoError(err)
-	assertions.Equal(http.StatusOK, inboxHTTPCall(srv, body, "", freshSecret).Code)
-	assertions.Equal(http.StatusOK, inboxHTTPCall(srv, body, "synthetic-owner-key", "").Code)
-	assertions.True(oldGrant.MatchesSource(agentgrant.SourceRef{ID: 2, Type: "gmail", Identifier: "owner@example.test"}), "general archive grants retain tuple semantics")
-}

@@ -8480,6 +8480,8 @@ components:
           type: string
         receipt_status:
           type: string
+        replay_request:
+          $ref: "#/components/schemas/InboxRequest"
         source_id:
           format: int64
           type: integer
@@ -8543,6 +8545,8 @@ components:
           type: string
         receipt_status:
           type: string
+        replay_request:
+          $ref: "#/components/schemas/InboxRequest"
         source_id:
           format: int64
           type: integer

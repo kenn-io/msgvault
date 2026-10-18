@@ -14,11 +14,12 @@ import (
 )
 
 type cliTagsBackend struct {
-	calls   int
-	id      int64
-	change  *emailtags.MessageTagChange
-	mailbox string
-	fail    bool
+	calls         int
+	id            int64
+	change        *emailtags.MessageTagChange
+	mailbox       string
+	fail          bool
+	replayRequest []byte
 }
 
 func (b *cliTagsBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
@@ -30,6 +31,7 @@ func (b *cliTagsBackend) MessageTags(ctx context.Context, id int64, change *emai
 	b.change = change
 	b.mailbox = mailbox
 	result := &emailtags.MessageTagResult{MessageID: id, Provider: "imap", Tags: []string{"Next"}, DryRun: change != nil && change.DryRun, Verified: change == nil || !change.DryRun}
+	result.ReplayRequest = b.replayRequest
 	if b.fail {
 		return result, emailtags.Failure("remote_unknown", "Read tags before retrying", result, nil)
 	}
@@ -107,6 +109,20 @@ func TestInboxMessageTagsCommandPrintsReceipt(t *testing.T) {
 	command.SetArgs([]string{"7", "--add", "Next"})
 	require.NoError(t, command.Execute())
 	assert.Contains(t, output.String(), "Inbox receipt: receipt-fixture (verified)")
+}
+
+func TestMessageTagsCommandPrintsReplayRequestAfterUnknownOutcome(t *testing.T) {
+	replayRequest := `{"operation":"tags","idempotency_key":"tags-key","preview_token":"signed-preview"}`
+	backend := &cliTagsBackend{fail: true, replayRequest: []byte(replayRequest)}
+	command := newMessageTagsCommand(backend)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"7", "--add", "Next"})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.Contains(t, output.String(), "Inbox replay request:")
+	assert.Contains(t, output.String(), replayRequest)
 }
 
 type inboxTagOutputWriter struct{}

@@ -184,6 +184,7 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 			assertions := assert.New(t)
 			a, target := beeperInboxFixture(t)
 			peer := newBeeperControlPeer(t, a)
+			replacementFactoryCalls := 0
 			switch scenario {
 			case "removed", "reused ID":
 				requirements.NoError(a.store.RemoveSource(target.SourceID))
@@ -200,6 +201,7 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 				}
 			case "removed during factory":
 				a.beeperInboxClientFactory = func(context.Context, *store.Source) (*beeper.Client, error) {
+					replacementFactoryCalls++
 					requirements.NoError(a.store.RemoveSource(target.SourceID))
 					return peer.client, nil
 				}
@@ -221,6 +223,11 @@ func TestBeeperInboxControlIdentityAndLifetimeNegatives(t *testing.T) {
 				want = inboxcontrol.ErrUnavailable
 			}
 			requirements.ErrorIs(err, want)
+			if scenario == "removed during factory" {
+				assertions.Equal(1, replacementFactoryCalls, "the source is removed by the replacement factory")
+			} else {
+				assertions.Zero(replacementFactoryCalls)
+			}
 			calls, factories := peer.snapshot()
 			assertions.Empty(calls)
 			assertions.Zero(factories)
