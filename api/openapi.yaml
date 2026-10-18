@@ -602,6 +602,26 @@ components:
         - score
         - rank
       type: object
+    Attendee:
+      additionalProperties: true
+      properties:
+        DisplayName:
+          type: string
+        Email:
+          type: string
+        IsCopySelf:
+          type: boolean
+        RSVP:
+          type: string
+        Role:
+          type: string
+      required:
+        - Email
+        - DisplayName
+        - Role
+        - RSVP
+        - IsCopySelf
+      type: object
     AttributeChoice:
       additionalProperties: false
       properties:
@@ -1330,6 +1350,92 @@ components:
           type: string
       required:
         - start
+      type: object
+    CalendarOccurrence:
+      additionalProperties: true
+      properties:
+        all_day:
+          type: boolean
+        attendees:
+          items:
+            $ref: "#/components/schemas/Attendee"
+          type: array
+        bounds_known:
+          type: boolean
+        cancelled:
+          type: boolean
+        deleted_from_source:
+          type: boolean
+        end:
+          format: date-time
+          type: string
+        end_date:
+          type: string
+        ical_uid:
+          type: string
+        join_url:
+          type: string
+        location:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        organizer_email:
+          type: string
+        original:
+          $ref: "#/components/schemas/Identity"
+        ref:
+          type: string
+        series_message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        start:
+          format: date-time
+          type: string
+        start_date:
+          type: string
+        status:
+          type: string
+        subject:
+          type: string
+      required:
+        - ref
+        - message_id
+        - series_message_id
+        - source_id
+        - subject
+        - original
+        - start
+        - end
+        - bounds_known
+        - all_day
+        - status
+        - cancelled
+        - deleted_from_source
+        - attendees
+      type: object
+    CalendarOccurrencePage:
+      additionalProperties: true
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CalendarOccurrence"
+          type: array
+        next_cursor:
+          type: string
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/UnexpandableSeries"
+          type: array
+        unexpandable_more:
+          type: boolean
+      required:
+        - items
+        - unexpandable
+        - unexpandable_more
       type: object
     CalendarPlannedWrite:
       additionalProperties: true
@@ -3013,6 +3119,42 @@ components:
         - cadence_status
         - stale
         - computed_at
+      type: object
+    Content:
+      additionalProperties: true
+      properties:
+        action_coverage:
+          type: string
+        action_reason:
+          type: string
+        actions:
+          items:
+            $ref: "#/components/schemas/Action"
+          type: array
+        duration_basis:
+          type: string
+        duration_seconds:
+          format: double
+          type:
+            - number
+            - "null"
+        notes:
+          $ref: "#/components/schemas/Section"
+        source_participants:
+          items:
+            $ref: "#/components/schemas/Participant"
+          type: array
+        summary:
+          $ref: "#/components/schemas/Section"
+        transcript:
+          $ref: "#/components/schemas/Transcript"
+      required:
+        - summary
+        - notes
+        - transcript
+        - actions
+        - action_coverage
+        - duration_seconds
       type: object
     ContextPassage:
       additionalProperties: true
@@ -4974,6 +5116,22 @@ components:
       required:
         - end_date
       type: object
+    Entry:
+      additionalProperties: true
+      properties:
+        content:
+          $ref: "#/components/schemas/Content"
+        meeting:
+          $ref: "#/components/schemas/MeetingRef"
+        participants:
+          items:
+            $ref: "#/components/schemas/Participant"
+          type: array
+      required:
+        - meeting
+        - participants
+        - content
+      type: object
     EntryRow:
       additionalProperties: true
       properties:
@@ -6588,6 +6746,21 @@ components:
         - retrieval_ms
         - hydration_ms
       type: object
+    Identity:
+      additionalProperties: true
+      properties:
+        AllDay:
+          type: boolean
+        Date:
+          type: string
+        Instant:
+          format: date-time
+          type: string
+      required:
+        - Instant
+        - Date
+        - AllDay
+      type: object
     IdentityConfirmationOutcome:
       additionalProperties: true
       properties:
@@ -7628,6 +7801,20 @@ components:
         selection:
           $ref: "#/components/schemas/ExploreSelection"
       type: object
+    MeetingEventDetail:
+      additionalProperties: true
+      properties:
+        description:
+          type: string
+        description_truncated:
+          type: boolean
+        location:
+          type: string
+      required:
+        - location
+        - description
+        - description_truncated
+      type: object
     MeetingExploreScope:
       additionalProperties: false
       properties:
@@ -7677,6 +7864,59 @@ components:
         - message_id
         - source_message_id
       type: object
+    MeetingItem:
+      additionalProperties: true
+      properties:
+        basis:
+          type: string
+        content:
+          $ref: "#/components/schemas/Packet"
+        content_omitted:
+          type: boolean
+        deleted_from_source:
+          type: boolean
+        follow_up:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        origin:
+          type: string
+        recordings:
+          items:
+            $ref: "#/components/schemas/MeetingRecording"
+          type: array
+        sent_at:
+          format: date-time
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        title:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - title
+        - sent_at
+        - basis
+        - origin
+        - content_omitted
+        - deleted_from_source
+        - recordings
+        - follow_up
+      type: object
+    MeetingLinkRequest:
+      additionalProperties: false
+      properties:
+        message_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+      required:
+        - message_id
+      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -7689,6 +7929,23 @@ components:
           $ref: "#/components/schemas/MeetingExploreScope"
         scope:
           $ref: "#/components/schemas/MeetingScopeRequest"
+      type: object
+    MeetingParticipant:
+      additionalProperties: true
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        phone:
+          type: string
+        provenance:
+          type: string
+      required:
+        - provenance
       type: object
     MeetingPerson:
       additionalProperties: false
@@ -7721,6 +7978,111 @@ components:
           description: International phone number starting with + or 00; normalized to E.164
           maxLength: 64
           type: string
+      type: object
+    MeetingPrevious:
+      additionalProperties: true
+      properties:
+        item:
+          $ref: "#/components/schemas/MeetingItem"
+        open_actions:
+          items:
+            $ref: "#/components/schemas/ActionRow"
+          type: array
+        ref:
+          type: string
+        start:
+          format: date-time
+          type: string
+      required:
+        - ref
+        - start
+        - item
+        - open_actions
+      type: object
+    MeetingRecord:
+      additionalProperties: true
+      properties:
+        action_items:
+          items:
+            $ref: "#/components/schemas/ActionRow"
+          type: array
+        event_detail:
+          $ref: "#/components/schemas/MeetingEventDetail"
+        invited:
+          items:
+            $ref: "#/components/schemas/Attendee"
+          type: array
+        items:
+          items:
+            $ref: "#/components/schemas/MeetingItem"
+          type: array
+        occurrence:
+          $ref: "#/components/schemas/CalendarOccurrence"
+        owner_rsvp:
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/MeetingParticipant"
+          type: array
+        previous:
+          $ref: "#/components/schemas/MeetingPrevious"
+        ref:
+          type: string
+        rooms:
+          items:
+            $ref: "#/components/schemas/Attendee"
+          type: array
+      required:
+        - ref
+        - invited
+        - rooms
+        - participants
+        - owner_rsvp
+        - items
+        - action_items
+      type: object
+    MeetingRecordSummary:
+      additionalProperties: true
+      properties:
+        has_transcript:
+          type: boolean
+        item_count:
+          format: int64
+          type: integer
+        occurrence:
+          $ref: "#/components/schemas/CalendarOccurrence"
+        ref:
+          type: string
+        start:
+          format: date-time
+          type: string
+        title:
+          type: string
+      required:
+        - ref
+        - start
+        - title
+        - item_count
+        - has_transcript
+      type: object
+    MeetingRecording:
+      additionalProperties: true
+      properties:
+        attachment_id:
+          format: int64
+          type: integer
+        duration_seconds:
+          format: double
+          type: number
+        mime_type:
+          type: string
+        size:
+          format: int64
+          type: integer
+      required:
+        - attachment_id
+        - mime_type
+        - size
       type: object
     MeetingRef:
       additionalProperties: true
@@ -7833,6 +8195,35 @@ components:
           maxItems: 100
           minItems: 1
           type: array
+      type: object
+    MeetingSuggestion:
+      additionalProperties: true
+      properties:
+        member_message_id:
+          format: int64
+          type: integer
+        overlap_minutes:
+          format: int64
+          type: integer
+        reasons:
+          items:
+            type: string
+          type: array
+        ref:
+          type: string
+        shared_attendees:
+          format: int64
+          type: integer
+        title_tokens:
+          format: int64
+          type: integer
+      required:
+        - ref
+        - member_message_id
+        - overlap_minutes
+        - shared_attendees
+        - title_tokens
+        - reasons
       type: object
     MergeOrganizationBody:
       additionalProperties: false
@@ -10022,6 +10413,43 @@ components:
         - limit
         - offset
       type: object
+    Packet:
+      additionalProperties: true
+      properties:
+        archive_uid:
+          type: string
+        meetings:
+          items:
+            $ref: "#/components/schemas/Entry"
+          type: array
+        omitted_message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        requested_message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        schema_version:
+          format: int64
+          type: integer
+        truncated:
+          type: boolean
+        truncations:
+          items:
+            $ref: "#/components/schemas/Truncation"
+          type: array
+      required:
+        - schema_version
+        - archive_uid
+        - requested_message_ids
+        - meetings
+        - omitted_message_ids
+        - truncated
+        - truncations
+      type: object
     PacketResult:
       additionalProperties: true
       properties:
@@ -10062,6 +10490,25 @@ components:
         year:
           format: int64
           type: integer
+      type: object
+    Participant:
+      additionalProperties: true
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        phone:
+          type: string
+        provenance:
+          type: string
+        role:
+          type: string
+      required:
+        - role
       type: object
     ParticipantCompletionHTTPRequest:
       additionalProperties: false
@@ -12475,6 +12922,18 @@ components:
             type: integer
           type: array
       type: object
+    PersonMeetingsResponse:
+      additionalProperties: true
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/MeetingRecordSummary"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - items
+      type: object
     PersonMerge:
       additionalProperties: true
       properties:
@@ -14506,6 +14965,37 @@ components:
       required:
         - action
       type: object
+    Section:
+      additionalProperties: true
+      properties:
+        reason:
+          type: string
+        state:
+          type: string
+        text:
+          type: string
+      required:
+        - state
+      type: object
+    Segment:
+      additionalProperties: true
+      properties:
+        ended_at:
+          format: date-time
+          type: string
+        offset_seconds:
+          format: double
+          type: number
+        speaker:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        text:
+          type: string
+      required:
+        - text
+      type: object
     Selector:
       additionalProperties: false
       properties:
@@ -16191,6 +16681,22 @@ components:
         - label_count
         - account_count
       type: object
+    Transcript:
+      additionalProperties: true
+      properties:
+        reason:
+          type: string
+        segments:
+          items:
+            $ref: "#/components/schemas/Segment"
+          type: array
+        state:
+          type: string
+        text:
+          type: string
+      required:
+        - state
+      type: object
     TranscriptSegment:
       additionalProperties: false
       properties:
@@ -16218,6 +16724,44 @@ components:
       required:
         - status
         - message
+      type: object
+    Truncation:
+      additionalProperties: true
+      properties:
+        included_bytes:
+          format: int64
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        omitted_items:
+          format: int64
+          type: integer
+        original_bytes:
+          format: int64
+          type: integer
+        section:
+          type: string
+      required:
+        - message_id
+        - section
+        - original_bytes
+        - included_bytes
+      type: object
+    UnexpandableSeries:
+      additionalProperties: true
+      properties:
+        reason:
+          enum:
+            - budget
+            - recurrence_error
+            - unsupported
+          type: string
+        ref:
+          type: string
+      required:
+        - ref
+        - reason
       type: object
     UpdateRequest:
       additionalProperties: false
@@ -16525,7 +17069,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.25.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -17551,6 +18095,175 @@ paths:
       security:
         - apiKey: []
       summary: Control a live calendar event or query availability
+      tags:
+        - Calendar
+  /api/v1/calendar/events:
+    get:
+      operationId: listCalendarEvents
+      parameters:
+        - description: Inclusive RFC3339 window start
+          in: query
+          name: from
+          required: true
+          schema:
+            type: string
+        - description: Exclusive RFC3339 window end; window at most 400 days
+          in: query
+          name: to
+          required: true
+          schema:
+            type: string
+        - description: Comma-separated source IDs narrowing the admitted scope
+          in: query
+          name: source_ids
+          schema:
+            type: string
+        - description: Exact effective attendee email
+          in: query
+          name: attendee
+          schema:
+            type: string
+        - description: Include cancelled occurrences
+          in: query
+          name: include_cancelled
+          schema:
+            type: boolean
+        - description: Maximum occurrences (default 100, maximum 500)
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Opaque next_cursor from the same query
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarOccurrencePage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List archived calendar occurrences
+      tags:
+        - Calendar
+  /api/v1/calendar/events/{ref}:
+    get:
+      operationId: getCalendarEvent
+      parameters:
+        - description: Occurrence ref returned by listCalendarEvents
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarOccurrence"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read one archived calendar occurrence
       tags:
         - Calendar
   /api/v1/carddav/account:
@@ -24012,6 +24725,309 @@ paths:
       summary: Get archived meeting duration metrics
       tags:
         - Meetings
+  /api/v1/meetings/{ref}:
+    get:
+      operationId: getMeeting
+      parameters:
+        - description: evt:<id>[@<original-key>] or msg:<id>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a meeting record
+      tags:
+        - Meetings
+  /api/v1/meetings/{ref}/links:
+    post:
+      operationId: linkMeeting
+      parameters:
+        - description: evt:<id>[@<original-key>] or msg:<id>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeetingLinkRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Link an archived note to an occurrence (owner only)
+      tags:
+        - Meetings
+  /api/v1/meetings/{ref}/links/{message_id}:
+    delete:
+      operationId: unlinkMeeting
+      parameters:
+        - description: evt:<id>[@<original-key>] or msg:<id>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: message_id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Split an archived note from an occurrence (owner only)
+      tags:
+        - Meetings
+  /api/v1/meetings/{ref}/suggestions:
+    get:
+      operationId: suggestMeetingLinks
+      parameters:
+        - description: evt:<id>[@<original-key>] or msg:<id>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - description: Maximum returned items
+          in: query
+          name: limit
+          schema:
+            default: 10
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/MeetingSuggestion"
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Suggest archive meeting links
+      tags:
+        - Meetings
   /api/v1/messages:
     get:
       operationId: listMessages
@@ -29425,6 +30441,106 @@ paths:
       summary: Replace a person's tracking state
       tags:
         - API
+  /api/v1/people/{ref}/meetings:
+    get:
+      operationId: listPersonMeetings
+      parameters:
+        - description: Numeric person ID, person:<id>, or participant:<id>
+          in: path
+          name: ref
+          required: true
+          schema:
+            type: string
+        - description: Inclusive RFC3339 start; default 365 days before to
+          in: query
+          name: from
+          schema:
+            type: string
+        - description: Exclusive RFC3339 end; default now
+          in: query
+          name: to
+          schema:
+            type: string
+        - description: Maximum returned items
+          in: query
+          name: limit
+          schema:
+            default: 100
+            format: int64
+            maximum: 500
+            minimum: 1
+            type: integer
+        - description: Opaque continuation cursor from the same query
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonMeetingsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a person's archived meetings
+      tags:
+        - Meetings
   /api/v1/person-fact-targets:
     get:
       operationId: listPersonFactTargets

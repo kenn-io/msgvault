@@ -2937,6 +2937,24 @@ func (t TelemetryEventResponseStatus) Validate() error {
 	}
 }
 
+type UnexpandableSeriesReason string
+
+const (
+	RecurrenceError                UnexpandableSeriesReason = "recurrence_error"
+	UnexpandableSeriesReasonBudget UnexpandableSeriesReason = "budget"
+	Unsupported                    UnexpandableSeriesReason = "unsupported"
+)
+
+// Validate checks if the UnexpandableSeriesReason value is valid
+func (u UnexpandableSeriesReason) Validate() error {
+	switch u {
+	case RecurrenceError, UnexpandableSeriesReasonBudget, Unsupported:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid UnexpandableSeriesReason value, got: %v", u))
+	}
+}
+
 type ListOperationRunsQueryKind string
 
 const (

@@ -29,6 +29,8 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
 	assertions.NotContains(string(got), "typesValidator.Var(e.Excerpt")
 	assertions.Contains(string(got), "JSON jsontext.Value")
+	assertions.Contains(string(got), "OccurredAt       *time.Time `json:\"occurred_at\"`")
+	assertions.NotContains(string(got), `json:"occurred_at,omitempty" validate:"required"`)
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))
@@ -62,6 +64,21 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+}
+
+func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	requirements.NoError(err)
+	for _, check := range []string{
+		`typesValidator.Var(m.Description, "required")`,
+		`typesValidator.Var(m.Location, "required")`,
+		`typesValidator.Var(m.Basis, "required")`,
+		`typesValidator.Var(m.Origin, "required")`,
+		`typesValidator.Var(m.OwnerRsvp, "required")`,
+	} {
+		assertions.NotContains(string(got), check)
+	}
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -173,7 +190,11 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
-` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+func (c CalendarOccurrencePage) Validate() error {
+	var errors runtime.ValidationErrors
+}
+` + requiredStringPointerValidatorFixture("CalendarOccurrence", "c", "Subject", "Status", "Start", "End") +
+		pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("FileSuggestionRow", "f", "MimeType") +
 		requiredStringPointerValidatorFixture("PersonFileSuggestionRow", "p", "MimeType") +
@@ -185,7 +206,27 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() +
+		meetingResponseEmptyStringValidatorFixture() + meetingRefNullableOccurredAtFixture()
+}
+
+func meetingRefNullableOccurredAtFixture() string {
+	return "type MeetingRef struct {\n\tOccurredAt       *time.Time `json:\"occurred_at,omitempty\" validate:\"required\"`\n}\n" +
+		"func (m MeetingRef) Validate() error { return runtime.ConvertValidatorError(typesValidator.Struct(m)) }\n"
+}
+
+func meetingResponseEmptyStringValidatorFixture() string {
+	return "type MeetingEventDetail struct {\n\tDescription string\n\tLocation string\n}\n" +
+		"func (m MeetingEventDetail) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(m.Description, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Description\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.Location, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Location\", err)\n\t}\n\treturn errors\n}\n" +
+		"type MeetingItem struct {\n\tBasis string\n\tOrigin string\n}\n" +
+		"func (m MeetingItem) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(m.Basis, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Basis\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.Origin, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Origin\", err)\n\t}\n\treturn errors\n}\n" +
+		"type MeetingRecord struct {\n\tOwnerRsvp string\n}\n" +
+		"func (m MeetingRecord) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(m.OwnerRsvp, \"required\"); err != nil {\n\t\terrors = errors.Append(\"OwnerRsvp\", err)\n\t}\n\treturn errors\n}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -196,6 +196,13 @@ Schema 3.18.0 adds optional `related_message_id` to message detail,
 conversation windows, and `show-message --json`. It links a
 [Chatwoot](guides/chatwoot.md) call and its meeting. Other messages and
 unavailable counterparts omit it.
+Schema 3.24.0 adds archived calendar occurrence reads at
+`GET /api/v1/calendar/events` and `GET /api/v1/calendar/events/{ref}`.
+See [archived calendar reads](usage/calendar.md#read-archived-occurrences-unreleased).
+Schema 3.25.0 adds `GET /api/v1/meetings/{ref}`,
+`GET /api/v1/people/{ref}/meetings`, `GET /api/v1/meetings/{ref}/suggestions`,
+and owner-only meeting link and unlink operations. See
+[meeting records](usage/calendar.md#read-a-meeting-record-unreleased).
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -2218,6 +2225,10 @@ for the user workflow and coverage meanings.
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+| `GET /api/v1/meetings/{ref}` | Read a meeting record and its permitted note evidence |
+| `GET /api/v1/people/{ref}/meetings` | List archived meetings for a saved person or participant |
+| `GET /api/v1/meetings/{ref}/suggestions` | Suggest archive links without changing them |
+| `POST /api/v1/meetings/{ref}/links` and `DELETE /api/v1/meetings/{ref}/links/{message_id}` | Owner-only link and unlink decisions |
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

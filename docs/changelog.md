@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -13,6 +13,8 @@ All notable changes to msgvault, grouped by release.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
 - [Chatwoot](guides/chatwoot.md) archives shared inboxes, files, source transcripts, and linked call meetings. API schema 3.18.0 adds optional `related_message_id`, which links a Chatwoot call message and its meeting.
 - Optional [attachment mirror](configuration.md#mirror-stored-attachments-to-docbank-unreleased) copies stored attachments to a Docbank folder. Files retained after source deletion are included. Duplicate bytes share one delivery across sources. Temporary errors retry automatically; backfill retries failed files. Status reports progress and failure reasons. Attachment and message details in the CLI, HTTP API and MCP show delivery receipts; list and search views omit them. The attachment mirror requires archive schema version 8 and HTTP API schema 3.21.0.
+- Read [archived calendar occurrences](usage/calendar.md#read-archived-occurrences-unreleased) with `calendar events` / `calendar event`, HTTP and MCP. Delegated reads use `message.read`; queries exceeding the work limits return `query_too_broad`. API schema 3.24.0 adds the HTTP routes.
+- Read [meeting records](usage/calendar.md#read-a-meeting-record-unreleased) and person meeting history through the CLI, HTTP API and MCP. Owners can review link suggestions and change archive links; delegated reads still require `message.read`. API schema 3.25.0 adds the routes.
 
 - Remote edits update source-owned values on published CardDAV imports while preserving unrelated local values. Edits that would overwrite another owner create a conflict.
 - [Everything search](web-ui.md#recording-matches) shows recording transcript matches for plain-word Full text queries and supports one Person filter. API schema 3.11.0 adds `participant_id` to media search, `GET /media/search/status`, source filename, title and date to media search results and optional `conversation_title` to message detail.

@@ -149,6 +149,36 @@ type ControlCalendarErrorResponseJSON502 = ErrorResponse
 
 type ControlCalendarErrorResponseJSON503 = ErrorResponse
 
+type ListCalendarEventsResponse = CalendarOccurrencePage
+
+type ListCalendarEventsErrorResponse = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON403 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON422 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON500 = ErrorResponse
+
+type ListCalendarEventsErrorResponseJSON503 = ErrorResponse
+
+type GetCalendarEventResponse = CalendarOccurrence
+
+type GetCalendarEventErrorResponse = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON403 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON404 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON422 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON500 = ErrorResponse
+
+type GetCalendarEventErrorResponseJSON503 = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -1769,6 +1799,70 @@ type GetMeetingMetricsErrorResponseJSON500 = ErrorResponse
 
 type GetMeetingMetricsErrorResponseJSON503 = ErrorResponse
 
+type GetMeetingResponse = MeetingRecord
+
+type GetMeetingErrorResponse = ErrorResponse
+
+type GetMeetingErrorResponseJSON = ErrorResponse
+
+type GetMeetingErrorResponseJSON403 = ErrorResponse
+
+type GetMeetingErrorResponseJSON404 = ErrorResponse
+
+type GetMeetingErrorResponseJSON422 = ErrorResponse
+
+type GetMeetingErrorResponseJSON500 = ErrorResponse
+
+type GetMeetingErrorResponseJSON503 = ErrorResponse
+
+type LinkMeetingResponse = MeetingRecord
+
+type LinkMeetingErrorResponse = ErrorResponse
+
+type LinkMeetingErrorResponseJSON = ErrorResponse
+
+type LinkMeetingErrorResponseJSON403 = ErrorResponse
+
+type LinkMeetingErrorResponseJSON404 = ErrorResponse
+
+type LinkMeetingErrorResponseJSON422 = ErrorResponse
+
+type LinkMeetingErrorResponseJSON500 = ErrorResponse
+
+type LinkMeetingErrorResponseJSON503 = ErrorResponse
+
+type UnlinkMeetingResponse = MeetingRecord
+
+type UnlinkMeetingErrorResponse = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON403 = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON404 = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON422 = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON500 = ErrorResponse
+
+type UnlinkMeetingErrorResponseJSON503 = ErrorResponse
+
+type SuggestMeetingLinksResponse []MeetingSuggestion
+
+type SuggestMeetingLinksErrorResponse = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON403 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON404 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON422 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON500 = ErrorResponse
+
+type SuggestMeetingLinksErrorResponseJSON503 = ErrorResponse
+
 type ListMessagesResponse = MessageListResponse
 
 type ListMessagesErrorResponse = ErrorResponse
@@ -2819,6 +2913,24 @@ type SetPersonTrackingErrorResponseJSON = ErrorResponse
 
 type SetPersonTrackingErrorResponseJSON503 = ErrorResponse
 
+type ListPersonMeetingsResponse = PersonMeetingsResponse
+
+type ListPersonMeetingsErrorResponse = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON403 = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON404 = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON409 = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON422 = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON500 = ErrorResponse
+
+type ListPersonMeetingsErrorResponseJSON503 = ErrorResponse
+
 type ListPersonFactTargetsResponse = Catalog
 
 type ListPersonFactTargetsErrorResponse = ErrorResponse
@@ -3825,6 +3937,33 @@ type ControlCalendarResp struct {
 	JSON500      *ControlCalendarErrorResponseJSON500
 	JSON502      *ControlCalendarErrorResponseJSON502
 	JSON503      *ControlCalendarErrorResponseJSON503
+}
+
+type ListCalendarEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCalendarEventsResponse
+	JSON400      *ListCalendarEventsErrorResponse
+	JSON401      *ListCalendarEventsErrorResponseJSON
+	JSON403      *ListCalendarEventsErrorResponseJSON403
+	JSON422      *ListCalendarEventsErrorResponseJSON422
+	JSON500      *ListCalendarEventsErrorResponseJSON500
+	JSON503      *ListCalendarEventsErrorResponseJSON503
+}
+
+type GetCalendarEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCalendarEventResponse
+	JSON400      *GetCalendarEventErrorResponse
+	JSON401      *GetCalendarEventErrorResponseJSON
+	JSON403      *GetCalendarEventErrorResponseJSON403
+	JSON404      *GetCalendarEventErrorResponseJSON404
+	JSON422      *GetCalendarEventErrorResponseJSON422
+	JSON500      *GetCalendarEventErrorResponseJSON500
+	JSON503      *GetCalendarEventErrorResponseJSON503
 }
 
 type SaveCardDAVAccountResp503Headers struct {
@@ -5205,6 +5344,62 @@ type GetMeetingMetricsResp struct {
 	JSON503      *GetMeetingMetricsErrorResponseJSON503
 }
 
+type GetMeetingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMeetingResponse
+	JSON400      *GetMeetingErrorResponse
+	JSON401      *GetMeetingErrorResponseJSON
+	JSON403      *GetMeetingErrorResponseJSON403
+	JSON404      *GetMeetingErrorResponseJSON404
+	JSON422      *GetMeetingErrorResponseJSON422
+	JSON500      *GetMeetingErrorResponseJSON500
+	JSON503      *GetMeetingErrorResponseJSON503
+}
+
+type LinkMeetingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *LinkMeetingResponse
+	JSON400      *LinkMeetingErrorResponse
+	JSON401      *LinkMeetingErrorResponseJSON
+	JSON403      *LinkMeetingErrorResponseJSON403
+	JSON404      *LinkMeetingErrorResponseJSON404
+	JSON422      *LinkMeetingErrorResponseJSON422
+	JSON500      *LinkMeetingErrorResponseJSON500
+	JSON503      *LinkMeetingErrorResponseJSON503
+}
+
+type UnlinkMeetingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnlinkMeetingResponse
+	JSON400      *UnlinkMeetingErrorResponse
+	JSON401      *UnlinkMeetingErrorResponseJSON
+	JSON403      *UnlinkMeetingErrorResponseJSON403
+	JSON404      *UnlinkMeetingErrorResponseJSON404
+	JSON422      *UnlinkMeetingErrorResponseJSON422
+	JSON500      *UnlinkMeetingErrorResponseJSON500
+	JSON503      *UnlinkMeetingErrorResponseJSON503
+}
+
+type SuggestMeetingLinksResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SuggestMeetingLinksResponse
+	JSON400      *SuggestMeetingLinksErrorResponse
+	JSON401      *SuggestMeetingLinksErrorResponseJSON
+	JSON403      *SuggestMeetingLinksErrorResponseJSON403
+	JSON404      *SuggestMeetingLinksErrorResponseJSON404
+	JSON422      *SuggestMeetingLinksErrorResponseJSON422
+	JSON500      *SuggestMeetingLinksErrorResponseJSON500
+	JSON503      *SuggestMeetingLinksErrorResponseJSON503
+}
+
 type ListMessagesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -6188,6 +6383,21 @@ type SetPersonTrackingResp struct {
 	JSON400      *SetPersonTrackingErrorResponse
 	JSON404      *SetPersonTrackingErrorResponseJSON
 	JSON503      *SetPersonTrackingErrorResponseJSON503
+}
+
+type ListPersonMeetingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListPersonMeetingsResponse
+	JSON400      *ListPersonMeetingsErrorResponse
+	JSON401      *ListPersonMeetingsErrorResponseJSON
+	JSON403      *ListPersonMeetingsErrorResponseJSON403
+	JSON404      *ListPersonMeetingsErrorResponseJSON404
+	JSON409      *ListPersonMeetingsErrorResponseJSON409
+	JSON422      *ListPersonMeetingsErrorResponseJSON422
+	JSON500      *ListPersonMeetingsErrorResponseJSON500
+	JSON503      *ListPersonMeetingsErrorResponseJSON503
 }
 
 type ListPersonFactTargetsResp struct {
