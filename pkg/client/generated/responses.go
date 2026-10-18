@@ -1479,6 +1479,66 @@ type ReviewRejectIdentityMatchCandidateErrorResponseJSON409 = ErrorResponse
 
 type ReviewRejectIdentityMatchCandidateErrorResponseJSON503 = ErrorResponse
 
+type ApplyIdentityOperationResponse = IdentityOperationApplyResponse
+
+type ApplyIdentityOperationErrorResponse = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON403 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON404 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON409 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON413 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON415 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON500 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON501 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON503 = ErrorResponse
+
+type ApplyIdentityOperationErrorResponseJSON504 = ErrorResponse
+
+type PreviewIdentityOperationResponse = IdentityOperationPreviewResponse
+
+type PreviewIdentityOperationErrorResponse = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON403 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON404 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON413 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON415 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON500 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON501 = ErrorResponse
+
+type PreviewIdentityOperationErrorResponseJSON503 = ErrorResponse
+
+type GetIdentityOperationReceiptResponse = IdentityReceipt
+
+type GetIdentityOperationReceiptErrorResponse = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON403 = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON404 = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON500 = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON501 = ErrorResponse
+
+type GetIdentityOperationReceiptErrorResponseJSON503 = ErrorResponse
+
 type PersonMatchScoringConsentResponse = PersonMatchConsentDecisionResponse
 
 type PersonMatchScoringConsentErrorResponse = ErrorResponse
@@ -1640,6 +1700,10 @@ type GetTaskIntegrationStatusErrorResponse = ErrorResponse
 type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
+
+type GetMCPCapabilitiesResponse = MCPCapabilities
+
+type GetMCPCapabilitiesErrorResponse = ErrorResponse
 
 type SearchMediaResponse = MediaSearchResponse
 
@@ -4809,6 +4873,54 @@ type ReviewRejectIdentityMatchCandidateResp struct {
 	JSON503      *ReviewRejectIdentityMatchCandidateErrorResponseJSON503
 }
 
+type ApplyIdentityOperationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ApplyIdentityOperationResponse
+	JSON400      *ApplyIdentityOperationErrorResponse
+	JSON401      *ApplyIdentityOperationErrorResponseJSON
+	JSON403      *ApplyIdentityOperationErrorResponseJSON403
+	JSON404      *ApplyIdentityOperationErrorResponseJSON404
+	JSON409      *ApplyIdentityOperationErrorResponseJSON409
+	JSON413      *ApplyIdentityOperationErrorResponseJSON413
+	JSON415      *ApplyIdentityOperationErrorResponseJSON415
+	JSON500      *ApplyIdentityOperationErrorResponseJSON500
+	JSON501      *ApplyIdentityOperationErrorResponseJSON501
+	JSON503      *ApplyIdentityOperationErrorResponseJSON503
+	JSON504      *ApplyIdentityOperationErrorResponseJSON504
+}
+
+type PreviewIdentityOperationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewIdentityOperationResponse
+	JSON400      *PreviewIdentityOperationErrorResponse
+	JSON401      *PreviewIdentityOperationErrorResponseJSON
+	JSON403      *PreviewIdentityOperationErrorResponseJSON403
+	JSON404      *PreviewIdentityOperationErrorResponseJSON404
+	JSON413      *PreviewIdentityOperationErrorResponseJSON413
+	JSON415      *PreviewIdentityOperationErrorResponseJSON415
+	JSON500      *PreviewIdentityOperationErrorResponseJSON500
+	JSON501      *PreviewIdentityOperationErrorResponseJSON501
+	JSON503      *PreviewIdentityOperationErrorResponseJSON503
+}
+
+type GetIdentityOperationReceiptResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetIdentityOperationReceiptResponse
+	JSON400      *GetIdentityOperationReceiptErrorResponse
+	JSON401      *GetIdentityOperationReceiptErrorResponseJSON
+	JSON403      *GetIdentityOperationReceiptErrorResponseJSON403
+	JSON404      *GetIdentityOperationReceiptErrorResponseJSON404
+	JSON500      *GetIdentityOperationReceiptErrorResponseJSON500
+	JSON501      *GetIdentityOperationReceiptErrorResponseJSON501
+	JSON503      *GetIdentityOperationReceiptErrorResponseJSON503
+}
+
 type PersonMatchScoringConsentResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -4995,6 +5107,13 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type GetMCPCapabilitiesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPCapabilitiesResponse
 }
 
 type SearchMediaResp struct {

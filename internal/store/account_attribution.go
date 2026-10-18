@@ -264,6 +264,38 @@ func (s *Store) withMessageAttributionTxContext(
 	return s.withAttributionTxContext(ctx, lock, fn)
 }
 
+// conversationSourceIDContext reads a conversation's source before a
+// transaction opens. conversations.source_id never changes after insert. A
+// missing conversation yields 0 so the caller can report its normal write
+// error from inside the transaction.
+func (s *Store) conversationSourceIDContext(ctx context.Context, conversationID int64) (int64, error) {
+	var sourceID int64
+	err := s.db.QueryRowContext(ctx, `SELECT source_id FROM conversations WHERE id = ?`, conversationID).Scan(&sourceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read conversation %d source: %w", conversationID, err)
+	}
+	return sourceID, nil
+}
+
+// withConversationAttributionTxContext opens a shared attribution transaction
+// that locks conversationID's source before changing source-owned membership.
+func (s *Store) withConversationAttributionTxContext(
+	ctx context.Context, conversationID int64, fn func(*loggedTx) error,
+) error {
+	sourceID, err := s.conversationSourceIDContext(ctx, conversationID)
+	if err != nil {
+		return err
+	}
+	lock := attributionLock{}
+	if sourceID != 0 {
+		lock.Sources = []int64{sourceID}
+	}
+	return s.withAttributionTxContext(ctx, lock, fn)
+}
+
 func sentFolderLabelSQL(l string) string {
 	return l + ".system_role = 'sent'"
 }

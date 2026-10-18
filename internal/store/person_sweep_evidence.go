@@ -377,9 +377,6 @@ func resolvePersonSweepScope(ctx context.Context, s *Store, personID int64) (per
 	if err != nil {
 		return personscope.Scope{}, fmt.Errorf("resolve durable person %d: %w", personID, err)
 	}
-	if len(person.ParticipantIDs) == 0 {
-		return personscope.Scope{}, errors.New("person has no resolved identities")
-	}
 	return personscope.Scope{ParticipantIDs: slices.Clone(person.ParticipantIDs),
 		Directions:                    []personscope.Direction{personscope.FromPerson, personscope.ToPerson, personscope.Group},
 		IncludeUnclassifiedRosterRows: true}, nil

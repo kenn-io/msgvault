@@ -22,7 +22,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/emailattribution"
 	"go.kenn.io/msgvault/internal/mime"
-	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
@@ -4801,8 +4800,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		}
 		if personID != 0 {
 			if err := s.publishPersonIdentityScopeChangesTx(
-				ctx, tx, []int64{personID},
-				peoplesweep.EvidenceEffectIdentityReassigned); err != nil {
+				ctx, tx, []int64{personID}); err != nil {
 				return err
 			}
 			if personRevisionBumped {
@@ -5686,18 +5684,15 @@ func (s *Store) EnsureConversationParticipant(conversationID, participantID int6
 
 // EnsureConversationParticipantContext honors cancellation during EnsureConversationParticipant.
 func (s *Store) EnsureConversationParticipantContext(ctx context.Context, conversationID, participantID int64, role string) error {
-	write := func(q querier) error {
+	return s.withConversationAttributionTxContext(ctx, conversationID, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.requireSyncConversationSourceTx(q, conversationID); err != nil {
 			return err
 		}
 		_, err := q.Exec(s.dialect.InsertOrIgnore(fmt.Sprintf(`INSERT OR IGNORE INTO conversation_participants (conversation_id, participant_id, role, joined_at)
 			VALUES (?, ?, ?, %s)`, s.dialect.Now())), conversationID, participantID, role)
 		return err
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	})
 }
 
 // ConversationParticipantRef identifies one current member of a conversation.
@@ -5733,7 +5728,7 @@ func (s *Store) ReplaceConversationParticipants(conversationID int64, participan
 
 // ReplaceConversationParticipantsContext honors cancellation during ReplaceConversationParticipants.
 func (s *Store) ReplaceConversationParticipantsContext(ctx context.Context, conversationID int64, participants []ConversationParticipantRef) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationAttributionTxContext(ctx, conversationID, func(tx *loggedTx) error {
 		if err := s.requireSyncConversationSourceTx(boundQuerier{ctx: ctx, q: tx}, conversationID); err != nil {
 			return err
 		}
@@ -5847,24 +5842,22 @@ func consolidateConversationParticipantJournal(tx querier, dialect Dialect, conv
 
 // UpsertReaction inserts or ignores a reaction.
 func (s *Store) UpsertReaction(messageID, participantID int64, reactionType, reactionValue string, createdAt time.Time) error {
-	write := func(q querier) error {
+	return s.withMessageAttributionTxContext(context.Background(), messageID, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: context.Background(), q: tx}
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
 		_, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
 			VALUES (?, ?, ?, ?, ?)`), messageID, participantID, reactionType, reactionValue, createdAt)
 		return err
-	}
-	if s.syncGeneration != nil {
-		return s.withTx(func(tx *loggedTx) error { return write(tx) })
-	}
-	return write(s.db)
+	})
 }
 
 // UpsertReactionWithSourceID inserts a reaction and records the provider event
 // that produced it, so a later provider redaction can remove it by event ID.
 func (s *Store) UpsertReactionWithSourceID(messageID, participantID int64, reactionType, reactionValue, sourceReactionID string, createdAt time.Time) error {
-	write := func(q querier) error {
+	return s.withMessageAttributionTxContext(context.Background(), messageID, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: context.Background(), q: tx}
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
@@ -5882,15 +5875,25 @@ func (s *Store) UpsertReactionWithSourceID(messageID, participantID int64, react
 			  AND r.reaction_type = ? AND r.reaction_value = ?`),
 			sourceReactionID, messageID, participantID, reactionType, reactionValue)
 		return err
-	}
-	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	})
 }
 
 // DeleteReactionBySourceID forgets one provider reaction event in a
 // conversation and removes the visible reaction once no event backs it.
 func (s *Store) DeleteReactionBySourceID(sourceID, conversationID int64, sourceReactionID string) (bool, error) {
 	deleted := false
-	err := s.withSyncSourceWriteContext(context.Background(), sourceID, func(q querier) error {
+	if err := s.requireSyncSource(sourceID); err != nil {
+		return false, err
+	}
+	err := s.withAttributionTxContext(context.Background(), attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		if s.syncGeneration != nil {
+			// Preserve the sync source-existence check from
+			// withSyncSourceWriteContext after acquiring the identity fence.
+			if err := lockSyncSourceTx(context.Background(), tx, sourceID); err != nil {
+				return err
+			}
+		}
+		q := boundQuerier{ctx: context.Background(), q: tx}
 		var reactionID int64
 		err := q.QueryRow(`SELECT rse.reaction_id FROM reaction_source_events rse
 			JOIN reactions r ON r.id = rse.reaction_id
@@ -5971,7 +5974,11 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
 			return err
 		}
@@ -5979,7 +5986,7 @@ func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, re
 			if r.ParticipantID == 0 {
 				continue
 			}
-			if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+			if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
 				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, r.CreatedAt); err != nil {
 				return err
 			}

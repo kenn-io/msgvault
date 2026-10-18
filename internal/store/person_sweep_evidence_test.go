@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -63,6 +64,144 @@ func TestLoadPersonSweepWindowUsesExactDurableScope(t *testing.T) {
 		checks.Equal(f.alicePersonID, item.PersonID)
 	}
 	checks.Contains(sweepMessageIDs(window.Seeds), aliceMessage)
+}
+
+func applyPersonSweepIdentityOperation(
+	t *testing.T,
+	st *store.Store,
+	operation identitycontrol.Operation,
+	target identitycontrol.IdentityTarget,
+	key string,
+) *store.IdentityReceipt {
+	t.Helper()
+	preview, err := st.IdentityOperationPreviewContext(t.Context(), operation, target)
+	require.NoError(t, err)
+	receipt, err := st.ApplyIdentityOperationContext(t.Context(), store.IdentityOperationRequest{
+		Principal: "synthetic-person-sweep", IdempotencyKey: key,
+		Operation: operation, Target: target, ExpectedFingerprint: preview.Fingerprint,
+	}, nil)
+	require.NoError(t, err)
+	return receipt
+}
+
+func TestPersonBindingLinkPreservesUnchangedTrackedEvidence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	retainedMessage := f.insertMessage(t, "retained-binding", "email", f.aliceID, time.Now().UTC())
+	addedParticipant, err := f.store.EnsureParticipant("new-binding@example.test", "New Binding", "example.test")
+	requirements.NoError(err)
+	addedMessage := f.insertMessage(t, "new-binding", "email", addedParticipant, time.Now().UTC())
+	addSweepBody(t, f, retainedMessage, "Previously supported synthetic evidence")
+	addSweepBody(t, f, addedMessage, "New participant synthetic evidence")
+
+	beforeWindow, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+		PersonID: f.alicePersonID, Lane: peoplesweep.SourceConversationText,
+		ThroughSequence: latestPersonSweepSequence(t, f.store), Limit: 10,
+	})
+	requirements.NoError(err)
+	retainedSeed := sweepItem(t, beforeWindow.Seeds, retainedMessage)
+	retainedInput := sweepEvidenceInput(t, retainedSeed)
+	retainedKey, err := personfacts.EvidenceKey(retainedInput)
+	requirements.NoError(err)
+	persistSweepEvidence(t, f.store, retainedKey, retainedInput)
+	before := latestPersonSweepSequence(t, f.store)
+
+	receipt := applyPersonSweepIdentityOperation(t, f.store, identitycontrol.OperationPersonLink,
+		identitycontrol.IdentityTarget{ParticipantID: addedParticipant, PersonID: f.alicePersonID},
+		"synthetic-person-sweep-link")
+	assertions.True(receipt.Changed)
+	changes := personSweepChangesAfter(t, f.store, f.alicePersonID, before)
+	requirements.Len(changes, 1)
+	assertions.Equal(addedMessage, changes[0].MessageID)
+	assertions.Equal(peoplesweep.EvidenceEffectScopeRelinked, changes[0].EvidenceEffect)
+	statuses, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, changes)
+	requirements.NoError(err)
+	assertions.Empty(statuses, "linking another participant must not withdraw evidence on an unchanged binding")
+}
+
+func TestPersonUnlinkLastBindingLoadsConversationTombstone(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	messageID := f.insertMessage(t, "last-binding-conversation", "email", f.aliceID, time.Now().UTC())
+	addSweepBody(t, f, messageID, "Previously supported conversation evidence")
+	beforeWindow, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+		PersonID: f.alicePersonID, Lane: peoplesweep.SourceConversationText,
+		ThroughSequence: latestPersonSweepSequence(t, f.store), Limit: 10,
+	})
+	requirements.NoError(err)
+	input := sweepEvidenceInput(t, sweepItem(t, beforeWindow.Seeds, messageID))
+	key, err := personfacts.EvidenceKey(input)
+	requirements.NoError(err)
+	persistSweepEvidence(t, f.store, key, input)
+	before := latestPersonSweepSequence(t, f.store)
+
+	receipt := applyPersonSweepIdentityOperation(t, f.store, identitycontrol.OperationPersonUnlink,
+		identitycontrol.IdentityTarget{ParticipantID: f.aliceID, PersonID: f.alicePersonID},
+		"synthetic-person-sweep-unlink-last")
+	assertions.True(receipt.Changed)
+	window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+		PersonID: f.alicePersonID, Lane: peoplesweep.SourceConversationText,
+		AfterSequence: before, ThroughSequence: latestPersonSweepSequence(t, f.store), Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(window.Changes, 1)
+	assertions.Equal(peoplesweep.EvidenceEffectScopeUnlinked, window.Changes[0].EvidenceEffect)
+	requirements.Len(window.Seeds, 1)
+	assertions.True(window.Seeds[0].Tombstone)
+	assertions.Equal(key, window.Seeds[0].EvidenceKey)
+	assertions.Empty(window.Seeds[0].Excerpt)
+
+	live, err := f.store.SearchPersonSweepMessages(t.Context(), peoplesweep.ContextRequest{
+		PersonID: f.alicePersonID, CandidateMessageIDs: []int64{messageID}, Limit: 10,
+	})
+	requirements.NoError(err)
+	assertions.Empty(live, "an empty durable scope must not admit new live conversation evidence")
+}
+
+func TestPersonUnlinkLastBindingLoadsDocumentTombstone(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, personID := newPersonSweepDocumentFixture(t)
+	_, err := f.Store.SetPersonTrackingContext(t.Context(), personID, true)
+	requirements.NoError(err)
+	seeds, err := f.Store.SearchPersonSweepDocuments(t.Context(), peoplesweep.DocumentContextRequest{
+		PersonID: personID, Query: "synthetic", Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(seeds, 1)
+	input := sweepEvidenceInput(t, seeds[0])
+	key, err := personfacts.EvidenceKey(input)
+	requirements.NoError(err)
+	persistSweepEvidence(t, f.Store, key, input)
+	person, err := f.Store.GetPerson(personID)
+	requirements.NoError(err)
+	requirements.Len(person.ParticipantIDs, 1)
+	participantID := person.ParticipantIDs[0]
+	before := latestPersonSweepSequence(t, f.Store)
+
+	receipt := applyPersonSweepIdentityOperation(t, f.Store, identitycontrol.OperationPersonUnlink,
+		identitycontrol.IdentityTarget{ParticipantID: participantID, PersonID: personID},
+		"synthetic-person-sweep-unlink-document-last")
+	assertions.True(receipt.Changed)
+	window, err := f.Store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
+		PersonID: personID, Lane: peoplesweep.SourceDocumentText,
+		AfterSequence: before, ThroughSequence: latestPersonSweepSequence(t, f.Store), Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(window.Changes, 1)
+	assertions.Equal(peoplesweep.EvidenceEffectScopeUnlinked, window.Changes[0].EvidenceEffect)
+	requirements.Len(window.Seeds, 1)
+	assertions.True(window.Seeds[0].Tombstone)
+	assertions.Equal(key, window.Seeds[0].EvidenceKey)
+	assertions.Empty(window.Seeds[0].Excerpt)
+
+	live, err := f.Store.SearchPersonSweepDocuments(t.Context(), peoplesweep.DocumentContextRequest{
+		PersonID: personID, Query: "synthetic", Limit: 10,
+	})
+	requirements.NoError(err)
+	assertions.Empty(live, "an empty durable scope must not admit new live document evidence")
 }
 
 func TestPersonSweepDurableScopeMatchesResolver(t *testing.T) {

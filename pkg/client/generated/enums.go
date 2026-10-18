@@ -982,6 +982,43 @@ func (i IdentityMatchRejectResponseCacheState) Validate() error {
 	}
 }
 
+type IdentityOperationApplyRequestOperation string
+
+const (
+	GraphLink    IdentityOperationApplyRequestOperation = "graph-link"
+	GraphUnlink  IdentityOperationApplyRequestOperation = "graph-unlink"
+	PersonLink   IdentityOperationApplyRequestOperation = "person-link"
+	PersonUnlink IdentityOperationApplyRequestOperation = "person-unlink"
+)
+
+// Validate checks if the IdentityOperationApplyRequestOperation value is valid
+func (i IdentityOperationApplyRequestOperation) Validate() error {
+	switch i {
+	case GraphLink, GraphUnlink, PersonLink, PersonUnlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityOperationApplyRequestOperation value, got: %v", i))
+	}
+}
+
+type IdentityOperationApplyResponseCacheState string
+
+const (
+	IdentityOperationApplyResponseCacheStateReady IdentityOperationApplyResponseCacheState = "ready"
+	IdentityOperationApplyResponseCacheStateStale IdentityOperationApplyResponseCacheState = "stale"
+	Unknown                                       IdentityOperationApplyResponseCacheState = "unknown"
+)
+
+// Validate checks if the IdentityOperationApplyResponseCacheState value is valid
+func (i IdentityOperationApplyResponseCacheState) Validate() error {
+	switch i {
+	case IdentityOperationApplyResponseCacheStateReady, IdentityOperationApplyResponseCacheStateStale, Unknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid IdentityOperationApplyResponseCacheState value, got: %v", i))
+	}
+}
+
 type IdentitySearchSortDirection string
 
 const (
@@ -2163,6 +2200,25 @@ func (p PersonSplitResultCacheState) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonSplitResultCacheState value, got: %v", p))
+	}
+}
+
+type PreviewRequestOperation string
+
+const (
+	PreviewRequestOperationGraphLink    PreviewRequestOperation = "graph-link"
+	PreviewRequestOperationGraphUnlink  PreviewRequestOperation = "graph-unlink"
+	PreviewRequestOperationPersonLink   PreviewRequestOperation = "person-link"
+	PreviewRequestOperationPersonUnlink PreviewRequestOperation = "person-unlink"
+)
+
+// Validate checks if the PreviewRequestOperation value is valid
+func (p PreviewRequestOperation) Validate() error {
+	switch p {
+	case PreviewRequestOperationGraphLink, PreviewRequestOperationGraphUnlink, PreviewRequestOperationPersonLink, PreviewRequestOperationPersonUnlink:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PreviewRequestOperation value, got: %v", p))
 	}
 }
 

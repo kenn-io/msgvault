@@ -210,6 +210,7 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, calendarControlMinAPISchemaVersion) {
 		opts.Calendar = st
 	}
+	applyIdentityOperationCapabilities(ctx, st, &opts, schemaVersion)
 	return opts, nil
 }
 
@@ -332,6 +333,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	if capabilityErr == nil {
+		applyIdentityOperationCapabilities(ctx, st, &opts, schemaVersion)
+	}
 	return opts
 }
 

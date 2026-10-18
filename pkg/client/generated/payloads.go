@@ -109,6 +109,10 @@ type ReviewAcceptIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
 type ReviewRejectIdentityMatchCandidateBody = DecideIdentityMatchReviewedRequest
 
+type ApplyIdentityOperationBody = IdentityOperationApplyRequest
+
+type PreviewIdentityOperationBody = PreviewRequest
+
 type PersonMatchScoringConsentBody = PersonMatchConsentDecisionRequest
 
 type PersonMatchScoringRevokeBody = PersonMatchConsentDecisionRequest

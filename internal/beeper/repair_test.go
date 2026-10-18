@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/documentindex"
+	"go.kenn.io/msgvault/internal/identitycontrol"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -241,6 +242,83 @@ func TestRepairSourceResumesFromLastSuccessfulRowAfterFailure(t *testing.T) {
 	require.NoError(err)
 	assert.JSONEq(`{"no_default_identity":true}`, source.SyncConfig.String,
 		"completed repair clears only its checkpoint and preserves the ownership opt-out")
+}
+
+func TestIdentityOperationReceiptSurvivesBeeperRepairCheckpointCompletion(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite trigger injects a row-level repair failure")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newFakeBeeper(t)
+	f.addChat(shareAndHTMLChat())
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	requirements.NoError(err)
+	sourceID := beeperSourceID(t, st)
+	requirements.NoError(st.UpdateSourceSyncConfig(sourceID, `{"no_default_identity":true}`))
+
+	rows, err := st.DB().Query(st.Rebind(
+		`SELECT id FROM messages WHERE source_id = ? ORDER BY id`), sourceID)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+	var messageIDs []int64
+	for rows.Next() {
+		var messageID int64
+		requirements.NoError(rows.Scan(&messageID))
+		messageIDs = append(messageIDs, messageID)
+	}
+	requirements.NoError(rows.Err())
+	requirements.NoError(rows.Close())
+	requirements.Len(messageIDs, 3)
+	failID := messageIDs[1]
+	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_middle_identity_receipt_repair
+		BEFORE UPDATE OF snippet ON messages
+		WHEN OLD.id = %d
+		BEGIN SELECT RAISE(ABORT, 'injected row failure'); END`, failID))
+	requirements.NoError(err)
+
+	summary, err := imp.RepairSource(t.Context(), sourceID, nil)
+	requirements.NoError(err)
+	assertions.Equal(int64(1), summary.Errors)
+
+	var participantID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT sender_id FROM messages WHERE source_id = ? AND sender_id IS NOT NULL ORDER BY id LIMIT 1`),
+		sourceID).Scan(&participantID))
+	otherParticipantID, err := st.EnsureParticipant("repair-target@example.test", "Synthetic Repair Target", "example.test")
+	requirements.NoError(err)
+	target := identitycontrol.IdentityTarget{ParticipantID: participantID, OtherParticipantID: otherParticipantID}
+	preview, err := st.IdentityOperationPreviewContext(t.Context(), identitycontrol.OperationGraphLink, target)
+	requirements.NoError(err)
+	request := store.IdentityOperationRequest{
+		AuthorityFingerprint: strings.Repeat("b", 64),
+		Principal:            "synthetic-beeper-repair",
+		IdempotencyKey:       "synthetic-beeper-repair-receipt",
+		Operation:            identitycontrol.OperationGraphLink,
+		Target:               target,
+		ExpectedFingerprint:  preview.Fingerprint,
+	}
+	allow := func(context.Context, *store.IdentitySnapshot) error { return nil }
+	committed, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, allow, allow)
+	requirements.NoError(err)
+
+	_, err = st.DB().Exec(`DROP TRIGGER fail_middle_identity_receipt_repair`)
+	requirements.NoError(err)
+	summary, err = imp.RepairSource(t.Context(), sourceID, nil)
+	requirements.NoError(err)
+	assertions.Zero(summary.Errors)
+	source, err := st.GetSourceByID(sourceID)
+	requirements.NoError(err)
+	assertions.JSONEq(`{"no_default_identity":true}`, source.SyncConfig.String)
+
+	recovered, err := st.IdentityOperationReceiptAuthorizedContext(t.Context(), request.Principal,
+		request.IdempotencyKey, request.AuthorityFingerprint, allow)
+	requirements.NoError(err, "completing the resumed repair only clears transient checkpoint fields")
+	assertions.Equal(committed, recovered)
+	replayed, err := st.ApplyIdentityOperationWithPreviewContext(t.Context(), request, allow, allow)
+	requirements.NoError(err, "an exact retry remains recoverable after checkpoint completion")
+	assertions.Equal(committed, replayed)
 }
 
 func TestRepairArchiveRefreshesSnippetAndFTSWhenBodyIsCurrent(t *testing.T) {

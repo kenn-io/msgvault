@@ -122,6 +122,9 @@ func confirmedCallTool(t *testing.T, opts ServeOptions, name string, arguments m
 	t.Cleanup(func() { assert.NoError(t, clientSession.Close()) })
 	result, err := clientSession.CallTool(ctx, &sdkmcp.CallToolParams{Name: name, Arguments: arguments})
 	require.NoError(t, err)
+	if len(inspectPrompt) > 0 {
+		require.True(t, result.NeedsInput(), "a call with prompt assertions must require confirmation before execution")
+	}
 	if result.NeedsInput() {
 		require.NotEmpty(t, result.RequestState)
 		prompt, ok := result.InputRequests["confirm"].(*sdkmcp.ElicitParams)

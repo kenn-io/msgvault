@@ -212,7 +212,7 @@ func TestIssueScopedAgentTokenContactSchemaBoundary(t *testing.T) {
 
 			client, err := New(Config{URL: server.URL, APIKey: "synthetic-owner", AllowInsecure: true})
 			requirements.NoError(err)
-			defer client.Close()
+			t.Cleanup(func() { assertions.NoError(client.Close()) })
 
 			result, err := client.IssueScopedAgentToken(t.Context(), "synthetic contact grant", []string{"person.read"}, nil, []int64{1}, nil, nil, time.Time{})
 			if tt.wantPost {
@@ -223,7 +223,7 @@ func TestIssueScopedAgentTokenContactSchemaBoundary(t *testing.T) {
 				return
 			}
 			requirements.Error(err)
-			assertions.ErrorContains(err, "contact grant selection requires daemon API schema 3.15.0 or newer")
+			requirements.ErrorContains(err, "contact grant selection requires daemon API schema 3.15.0 or newer")
 			assertions.Nil(result)
 			assertions.Zero(postCount)
 		})

@@ -6060,6 +6060,77 @@ components:
         - retrieval_ms
         - hydration_ms
       type: object
+    IdentityAccountEvidence:
+      additionalProperties: true
+      properties:
+        connection_generation:
+          format: int64
+          type: integer
+        discovery_revision:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        ownership_fingerprint:
+          type: string
+      required:
+        - id
+        - connection_generation
+        - discovery_revision
+        - ownership_fingerprint
+      type: object
+    IdentityBindingEvidence:
+      additionalProperties: true
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - person_id
+      type: object
+    IdentityBookEvidence:
+      additionalProperties: true
+      properties:
+        account_id:
+          format: int64
+          type: integer
+        canonical_url:
+          type: string
+        id:
+          format: int64
+          type: integer
+        sync_revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - account_id
+        - sync_revision
+        - canonical_url
+      type: object
+    IdentityCandidateEvidence:
+      additionalProperties: true
+      properties:
+        application_pending:
+          type: boolean
+        fingerprint:
+          type: string
+        id:
+          format: int64
+          type: integer
+        state:
+          type: string
+      required:
+        - id
+        - state
+        - application_pending
+        - fingerprint
+      type: object
     IdentityConfirmationOutcome:
       additionalProperties: true
       properties:
@@ -6075,6 +6146,67 @@ components:
         - identifier
         - added
         - signals
+      type: object
+    IdentityConflictEvidence:
+      additionalProperties: true
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        mapping_revision:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        review_revision:
+          format: int64
+          type: integer
+      required:
+        - id
+        - person_id
+        - book_id
+        - mapping_revision
+        - review_revision
+      type: object
+    IdentityLineageEvidence:
+      additionalProperties: true
+      properties:
+        current_person_id:
+          format: int64
+          type: integer
+        merge_id:
+          format: int64
+          type: integer
+        origin_side:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - merge_id
+        - participant_id
+        - origin_side
+        - current_person_id
+      type: object
+    IdentityLinkEvidence:
+      additionalProperties: true
+      properties:
+        candidate_id:
+          format: int64
+          type: integer
+        other_participant_id:
+          format: int64
+          type: integer
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - other_participant_id
       type: object
     IdentityLinkRequest:
       additionalProperties: false
@@ -6345,6 +6477,268 @@ components:
         - source_id
         - is_conservative
       type: object
+    IdentityOperationApplyRequest:
+      additionalProperties: false
+      properties:
+        expected_fingerprint:
+          type: string
+        idempotency_key:
+          type: string
+        operation:
+          enum:
+            - graph-link
+            - graph-unlink
+            - person-link
+            - person-unlink
+          type: string
+        preview_token:
+          type: string
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+        - expected_fingerprint
+        - preview_token
+        - idempotency_key
+      type: object
+    IdentityOperationApplyResponse:
+      additionalProperties: true
+      properties:
+        after_fingerprint:
+          type: string
+        after_revision:
+          format: int64
+          type: integer
+        before_fingerprint:
+          type: string
+        before_revision:
+          format: int64
+          type: integer
+        cache_state:
+          enum:
+            - ready
+            - stale
+            - unknown
+          type: string
+        changed:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        edge:
+          $ref: "#/components/schemas/IdentityReceiptEdgeChange"
+        id:
+          type: string
+        operation:
+          type: string
+        participants:
+          items:
+            format: int64
+            type: integer
+          type: array
+        persons:
+          items:
+            format: int64
+            type: integer
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - cache_state
+        - id
+        - operation
+        - target
+        - before_fingerprint
+        - after_fingerprint
+        - before_revision
+        - after_revision
+        - changed
+        - participants
+        - persons
+        - created_at
+      type: object
+    IdentityOperationPreviewResponse:
+      additionalProperties: true
+      properties:
+        expires_at:
+          format: date-time
+          type: string
+        preview_token:
+          type: string
+        snapshot:
+          $ref: "#/components/schemas/IdentitySnapshot"
+      required:
+        - snapshot
+        - preview_token
+        - expires_at
+      type: object
+    IdentityParticipantEvidence:
+      additionalProperties: true
+      properties:
+        display_name:
+          type: string
+        email:
+          type: string
+        id:
+          format: int64
+          type: integer
+        identifier_fingerprint:
+          type: string
+        observation_fingerprint:
+          type: string
+        phone:
+          type: string
+      required:
+        - id
+        - display_name
+        - email
+        - phone
+        - identifier_fingerprint
+        - observation_fingerprint
+      type: object
+    IdentityPersonEvidence:
+      additionalProperties: true
+      properties:
+        id:
+          format: int64
+          type: integer
+        projection_revision:
+          format: int64
+          type: integer
+        revision:
+          format: int64
+          type: integer
+        uid:
+          type: string
+      required:
+        - id
+        - uid
+        - revision
+        - projection_revision
+      type: object
+    IdentityPublicationEvidence:
+      additionalProperties: true
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        desired:
+          type: boolean
+        href:
+          type: string
+        mutation_revision:
+          format: int64
+          type: integer
+        pending_operation:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - book_id
+        - mutation_revision
+        - desired
+        - pending_operation
+        - href
+      type: object
+    IdentityReceipt:
+      additionalProperties: true
+      properties:
+        after_fingerprint:
+          type: string
+        after_revision:
+          format: int64
+          type: integer
+        before_fingerprint:
+          type: string
+        before_revision:
+          format: int64
+          type: integer
+        changed:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        edge:
+          $ref: "#/components/schemas/IdentityReceiptEdgeChange"
+        id:
+          type: string
+        operation:
+          type: string
+        participants:
+          items:
+            format: int64
+            type: integer
+          type: array
+        persons:
+          items:
+            format: int64
+            type: integer
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - id
+        - operation
+        - target
+        - before_fingerprint
+        - after_fingerprint
+        - before_revision
+        - after_revision
+        - changed
+        - participants
+        - persons
+        - created_at
+      type: object
+    IdentityReceiptEdgeChange:
+      additionalProperties: true
+      properties:
+        after_candidate_id:
+          format: int64
+          type: integer
+        after_present:
+          type: boolean
+        before_candidate_id:
+          format: int64
+          type: integer
+        before_present:
+          type: boolean
+      required:
+        - before_present
+        - after_present
+      type: object
+    IdentityResourceEvidence:
+      additionalProperties: true
+      properties:
+        book_id:
+          format: int64
+          type: integer
+        etag:
+          type: string
+        governance:
+          type: string
+        href:
+          type: string
+        id:
+          format: int64
+          type: integer
+        mapping_revision:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - id
+        - person_id
+        - book_id
+        - mapping_revision
+        - href
+        - etag
+        - governance
+      type: object
     IdentitySearchHTTPRequest:
       additionalProperties: false
       properties:
@@ -6382,6 +6776,176 @@ components:
       required:
         - field
         - direction
+      type: object
+    IdentitySnapshot:
+      additionalProperties: true
+      properties:
+        accounts:
+          items:
+            $ref: "#/components/schemas/IdentityAccountEvidence"
+          type: array
+        active_merge_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        bindings:
+          items:
+            $ref: "#/components/schemas/IdentityBindingEvidence"
+          type: array
+        blockers:
+          items:
+            type: string
+          type: array
+        books:
+          items:
+            $ref: "#/components/schemas/IdentityBookEvidence"
+          type: array
+        candidates:
+          items:
+            $ref: "#/components/schemas/IdentityCandidateEvidence"
+          type: array
+        component_members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        conflicts:
+          items:
+            $ref: "#/components/schemas/IdentityConflictEvidence"
+          type: array
+        fingerprint:
+          type: string
+        identity_revision:
+          format: int64
+          type: integer
+        lineages:
+          items:
+            $ref: "#/components/schemas/IdentityLineageEvidence"
+          type: array
+        links:
+          items:
+            $ref: "#/components/schemas/IdentityLinkEvidence"
+          type: array
+        manual_confirm_candidate_id:
+          format: int64
+          type: integer
+        members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        noop:
+          type: boolean
+        operation:
+          type: string
+        other_component_members:
+          items:
+            format: int64
+            type: integer
+          type: array
+        participants:
+          items:
+            $ref: "#/components/schemas/IdentityParticipantEvidence"
+          type: array
+        persons:
+          items:
+            $ref: "#/components/schemas/IdentityPersonEvidence"
+          type: array
+        publications:
+          items:
+            $ref: "#/components/schemas/IdentityPublicationEvidence"
+          type: array
+        resources:
+          items:
+            $ref: "#/components/schemas/IdentityResourceEvidence"
+          type: array
+        source_contributions:
+          items:
+            $ref: "#/components/schemas/IdentitySourceContribution"
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/IdentitySourceEvidence"
+          type: array
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+        - identity_revision
+        - component_members
+        - other_component_members
+        - members
+        - participants
+        - persons
+        - bindings
+        - links
+        - candidates
+        - sources
+        - source_contributions
+        - accounts
+        - books
+        - resources
+        - conflicts
+        - publications
+        - lineages
+        - active_merge_ids
+        - blockers
+        - noop
+        - fingerprint
+      type: object
+    IdentitySourceContribution:
+      additionalProperties: true
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - source_id
+      type: object
+    IdentitySourceEvidence:
+      additionalProperties: true
+      properties:
+        id:
+          format: int64
+          type: integer
+        identifier:
+          type: string
+        ownership_fingerprint:
+          type: string
+        type:
+          type: string
+      required:
+        - id
+        - type
+        - identifier
+        - ownership_fingerprint
+      type: object
+    IdentityTarget:
+      additionalProperties: false
+      properties:
+        other_participant_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+        participant_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+        person_id:
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+          type: integer
+      required:
+        - participant_id
       type: object
     ImportEntry:
       additionalProperties: false
@@ -6690,6 +7254,52 @@ components:
           type: array
       required:
         - manifests
+      type: object
+    MCPCapabilities:
+      additionalProperties: true
+      properties:
+        delegated:
+          type: boolean
+        identity_operations:
+          items:
+            type: string
+          type: array
+        routes:
+          items:
+            $ref: "#/components/schemas/MCPRouteDescriptor"
+          type: array
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - delegated
+        - routes
+        - identity_operations
+      type: object
+    MCPRouteDescriptor:
+      additionalProperties: true
+      properties:
+        method:
+          type: string
+        operation_id:
+          type: string
+        path:
+          type: string
+        query_parameters:
+          items:
+            type: string
+          type: array
+        request_properties:
+          items:
+            type: string
+          type: array
+      required:
+        - operation_id
+        - method
+        - path
+        - query_parameters
+        - request_properties
       type: object
     Manifest:
       additionalProperties: false
@@ -12372,6 +12982,22 @@ components:
       required:
         - ok
       type: object
+    PreviewRequest:
+      additionalProperties: false
+      properties:
+        operation:
+          enum:
+            - graph-link
+            - graph-unlink
+            - person-link
+            - person-unlink
+          type: string
+        target:
+          $ref: "#/components/schemas/IdentityTarget"
+      required:
+        - operation
+        - target
+      type: object
     Progress:
       additionalProperties: true
       properties:
@@ -15454,7 +16080,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.15.0
+  version: 3.16.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -21482,6 +22108,259 @@ paths:
       summary: Review and reject an identity match candidate
       tags:
         - API
+  /api/v1/identity/operations/apply:
+    post:
+      operationId: applyIdentityOperation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityOperationApplyRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityOperationApplyResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply one signed identity preview or recover its exact committed retry
+      tags:
+        - API
+  /api/v1/identity/operations/preview:
+    post:
+      operationId: previewIdentityOperation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityOperationPreviewResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview one explicit identity operation without mutation
+      tags:
+        - API
+  /api/v1/identity/operations/receipt:
+    get:
+      operationId: getIdentityOperationReceipt
+      parameters:
+        - description: Exact key for this principal
+          in: query
+          name: idempotency_key
+          schema:
+            type: string
+        - description: Exact receipt ID; owner only
+          in: query
+          name: receipt_id
+          schema:
+            type: string
+        - description: Exact prior principal for owner recovery
+          in: query
+          name: principal
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityReceipt"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read one committed identity outcome without replaying its mutation
+      tags:
+        - API
   /api/v1/identity/scoring/consent:
     post:
       operationId: personMatchScoringConsent
@@ -22345,6 +23224,27 @@ paths:
       security:
         - apiKey: []
       summary: Test task integration discovery, authentication, capabilities, and project
+      tags:
+        - API
+  /api/v1/mcp/capabilities:
+    get:
+      operationId: getMCPCapabilities
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MCPCapabilities"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Describe admitted native identity MCP operations
       tags:
         - API
   /api/v1/media/search:
