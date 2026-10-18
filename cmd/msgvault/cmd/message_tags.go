@@ -64,6 +64,9 @@ Use --dry-run with an edit to preview it without writing.`,
 					} else if result != nil && result.IdempotencyKey != "" {
 						message += "; Inbox operation key: " + textutil.SanitizeTerminal(result.IdempotencyKey)
 					}
+					if result != nil && len(result.ReplayRequest) > 0 {
+						message += "; Inbox replay request: " + textutil.SanitizeTerminal(string(result.ReplayRequest))
+					}
 					return emailtags.Failure("remote_unknown", message, result, cause)
 				}
 				return cause

@@ -3,14 +3,17 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 type cliTagsBackend struct {
@@ -101,6 +104,7 @@ func (b *cliInboxTagsBackend) MessageTags(ctx context.Context, id int64, change 
 	result.ReceiptID, result.ReceiptStatus, result.IdempotencyKey = "receipt-fixture", "verified", "tags-fixture"
 	return result, err
 }
+
 func TestInboxMessageTagsCommandPrintsReceipt(t *testing.T) {
 	command := newMessageTagsCommand(&cliInboxTagsBackend{})
 	var output bytes.Buffer
@@ -152,6 +156,108 @@ func TestInboxMessageTagsOutputFailureNamesRecoverableReceipt(t *testing.T) {
 			requirements.NotNil(failure.Result)
 			assertions.Equal("receipt-fixture", failure.Result.ReceiptID)
 			assertions.Equal(1, backend.calls)
+		})
+	}
+}
+
+func TestMessageTagsOutputFailurePreservesReplayRequestAfterLostResponse(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			target := inboxcontrol.Target{SourceID: 2, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "native-7"}
+			read, inbox := false, true
+			state := inboxcontrol.State{Target: target, Tags: []string{"INBOX"}, Read: &read, Inbox: &inbox, Location: "INBOX", Revision: "gmail-revision-1", ObservedAt: time.Now().UTC()}
+			projected := state
+			projected.Tags = []string{"INBOX", "Label_next"}
+			controls := []inboxcontrol.Request{}
+			saved := map[string]inboxcontrol.Result{}
+			dispatches := 0
+			committed := false
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+				case "/api/v1/mcp/capabilities":
+					_, _ = w.Write([]byte(inboxMCPTestDescriptor))
+				case "/api/v1/messages/7/tags":
+					if r.Method == http.MethodPost {
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"error":"inbox_preview_required","message":"Use signed control"}`))
+						return
+					}
+					data, err := json.Marshal(map[string]any{"message_id": 7, "source_id": 2, "provider": "gmail", "tags": state.Tags, "before": state.Tags, "available_tags": []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}}, "verified": true, "target": target})
+					if !assertions.NoError(err) {
+						return
+					}
+					_, _ = w.Write(data)
+				case "/api/v1/inbox/control":
+					var request inboxcontrol.Request
+					body, err := io.ReadAll(r.Body)
+					if !assertions.NoError(err) || !assertions.NoError(json.Unmarshal(body, &request)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					controls = append(controls, request)
+					if request.DryRun {
+						data, err := json.Marshal(inboxcontrol.Result{Before: &state, Projected: &projected, PreviewToken: "signed-preview"})
+						if !assertions.NoError(err) {
+							return
+						}
+						_, _ = w.Write(data)
+						return
+					}
+					dispatches++
+					committed = true
+					saved[request.IdempotencyKey] = inboxcontrol.Result{Before: &state, Projected: &projected, After: &projected, Receipt: &inboxcontrol.Receipt{ID: "gmail-receipt", Status: inboxcontrol.StatusVerified}}
+					hijacker, ok := w.(http.Hijacker)
+					if !assertions.True(ok, "HTTP test server supports dropping the committed response") {
+						return
+					}
+					conn, _, err := hijacker.Hijack()
+					if !assertions.NoError(err) {
+						return
+					}
+					_ = conn.Close()
+				default:
+					assertions.Fail("unexpected request", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			})
+			t.Cleanup(func() { assertions.NoError(client.Close()) })
+			command := newMessageTagsCommand(client)
+			var stderr bytes.Buffer
+			command.SetOut(inboxTagOutputWriter{})
+			command.SetErr(&stderr)
+			command.SilenceUsage = true
+			args := []string{"7", "--add", "Next"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			command.SetArgs(args)
+			err := command.Execute()
+			requirements.Error(err)
+			failure, ok := errors.AsType[*emailtags.MessageTagError](err)
+			requirements.True(ok)
+			requirements.NotNil(failure.Result)
+			requirements.NotEmpty(failure.Result.IdempotencyKey)
+			requirements.NotEmpty(failure.Result.ReplayRequest)
+			assertions.Empty(failure.Result.ReceiptID, "the committed receipt ID was in the lost response")
+			requirements.Len(controls, 2)
+			assertions.True(committed)
+			assertions.Equal(1, dispatches, "the lost HTTP response followed one committed Inbox dispatch")
+			recovered, ok := saved[controls[1].IdempotencyKey]
+			requirements.True(ok, "the provider operation committed a receipt before dropping its response")
+			requirements.NotNil(recovered.Receipt)
+			assertions.Equal("gmail-receipt", recovered.Receipt.ID)
+			assertions.Equal(controls[1].IdempotencyKey, failure.Result.IdempotencyKey)
+			assertions.Contains(failure.Message, "Inbox replay request:")
+			assertions.Contains(failure.Message, "signed-preview")
+			assertions.Contains(stderr.String(), "signed-preview", "the user must be able to recover the operation after stdout fails")
+			var replay inboxcontrol.Request
+			requirements.NoError(json.Unmarshal(failure.Result.ReplayRequest, &replay))
+			assertions.Equal(controls[1], replay)
 		})
 	}
 }

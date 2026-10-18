@@ -133,9 +133,11 @@ func TestInboxIMAPFoldersNativeEpoch(t *testing.T) {
 }
 
 func TestInboxIMAPSetUnreadReturnsUnknownWhenProviderRetainsSeen(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	var stores atomic.Int64
 	client, id := newKeywordTestClientFor(t, keywordTestSession{permanent: []imapapi.Flag{imapapi.FlagSeen}, retainSeen: true, stores: &stores})
-	require.NoError(t, client.withConn(t.Context(), func(conn *imapclient.Client) error {
+	requirements.NoError(client.withConn(t.Context(), func(conn *imapclient.Client) error {
 		_, err := conn.Store(imapapi.UIDSetNum(1), &imapapi.StoreFlags{Op: imapapi.StoreFlagsAdd, Flags: []imapapi.Flag{imapapi.FlagSeen}}, nil).Collect()
 		if err != nil {
 			return fmt.Errorf("seed retained Seen flag: %w", err)
@@ -147,22 +149,22 @@ func TestInboxIMAPSetUnreadReturnsUnknownWhenProviderRetainsSeen(t *testing.T) {
 	provider := NewInboxProvider(client, source)
 	request := inboxcontrol.Request{Operation: inboxcontrol.OpSetUnread, Target: &target, DryRun: true}
 	before, err := provider.Observe(t.Context(), request)
-	require.NoError(t, err)
-	require.NotNil(t, before.Read)
-	require.True(t, *before.Read)
+	requirements.NoError(err)
+	requirements.NotNil(before.Read)
+	requirements.True(*before.Read)
 	projected, err := provider.Preview(t.Context(), request, before)
-	require.NoError(t, err)
-	require.NotNil(t, projected.Read)
-	require.False(t, *projected.Read)
+	requirements.NoError(err)
+	requirements.NotNil(projected.Read)
+	requirements.False(*projected.Read)
 	request.DryRun = false
 	_, err = provider.Dispatch(t.Context(), request, before)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	after, err := provider.Observe(t.Context(), request)
-	require.NoError(t, err)
-	require.NotNil(t, after.Read)
-	assert.True(t, *after.Read, "the fake provider retained the Seen flag")
-	assert.ErrorIs(t, provider.Verify(request, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
-	assert.Equal(t, int64(1), stores.Load(), "dispatch attempted one write; readback did not write")
+	requirements.NoError(err)
+	requirements.NotNil(after.Read)
+	assertions.True(*after.Read, "the fake provider retained the Seen flag")
+	requirements.ErrorIs(provider.Verify(request, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
+	assertions.Equal(int64(1), stores.Load(), "dispatch attempted one write; readback did not write")
 }
 
 func TestInboxIMAPVerifyRejectsMissingPlanEvidence(t *testing.T) {
