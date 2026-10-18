@@ -438,10 +438,17 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: |
-          go test -timeout 60m -tags "fts5 sqlite_vec" `
+          $output = go test -v -timeout 60m -tags "fts5 sqlite_vec" `
             ./internal/api `
             ./internal/importer `
-            ./scripts
+            ./scripts 2>&1
+          $status = $LASTEXITCODE
+          if ($status -ne 0) {
+            $output | ForEach-Object { "$_" }
+          } else {
+            $output | Where-Object { "$_" -match '^\s*--- (PASS|SKIP): |^(ok\s|FAIL\s|\?\s)' } | ForEach-Object { "$_" }
+          }
+          exit $status
 
   test-windows-sharded:
     name: test-windows-sharded (${{ matrix.name }})
