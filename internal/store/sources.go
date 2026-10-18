@@ -905,7 +905,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 func retractUnsupportedGeneratedNameEvidenceContext(ctx context.Context, query sourceIdentityQuery, exec sourceIdentityExec) error {
 	rows, err := query(ctx, `SELECT e.id, COALESCE(e.detail,''),
         COALESCE(name_left.display_name,''), COALESCE(name_right.display_name,''),
-        (`+fullParticipantNameWhere("c.left_id", "name_left.display_name")+` AND `+fullParticipantNameWhere("c.right_id", "name_right.display_name")+`)
+        (`+FullParticipantNameWhere("c.left_id", "name_left.display_name")+` AND `+FullParticipantNameWhere("c.right_id", "name_right.display_name")+`)
         FROM identity_match_evidence e
         JOIN identity_match_candidates c ON c.id=e.candidate_id
         LEFT JOIN participants name_left ON name_left.id=c.left_id

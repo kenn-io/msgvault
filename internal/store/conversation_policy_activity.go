@@ -56,8 +56,10 @@ func (s *Store) conversationLastActivityWith(ctx context.Context, q accountIdent
 			// These room/roster failures preserve already attributed self IDs.
 			// Account, chat, network and unknown proof failures never do.
 			selfProofIntact := e.Failure == "" || e.Failure == "membership_fetch_failed" || e.Failure == "source_messages_deleted"
-			if len(route.Reasons) == 0 && selfProofIntact && !e.Truncated && !e.Merged && !e.ObservedAt.IsZero() && !e.ObservedAt.After(now.Add(time.Minute)) &&
-				ValidatePersonMessagingRouteQuery(PersonMessagingRouteQuery{PersonUID: "activity", Network: e.Network}) == nil && e.Network != "" && len(e.SelfParticipantIDs) <= maxRouteEvidenceIDs {
+			selfProofBounded := len(e.SelfParticipantIDs) <= maxRouteEvidenceIDs &&
+				(e.SelfParticipantIDsComplete || !e.Truncated || len(e.SelfParticipantIDs) < maxRouteEvidenceIDs)
+			if len(route.Reasons) == 0 && selfProofIntact && selfProofBounded && !e.Merged && !e.ObservedAt.IsZero() && !e.ObservedAt.After(now.Add(time.Minute)) &&
+				ValidatePersonMessagingRouteQuery(PersonMessagingRouteQuery{PersonUID: "activity", Network: e.Network}) == nil && e.Network != "" {
 				for _, self := range e.SelfParticipantIDs {
 					if self > 0 {
 						selfIDs = append(selfIDs, self)

@@ -14,6 +14,7 @@ import (
 // Sync calls it with incomplete evidence before roster writes, then with the
 // exact completed roster afterward. Discovery never calls this write method.
 func (s *Store) SetConversationMessagingRouteEvidence(ctx context.Context, conversationID int64, e MessagingRouteEvidence) error {
+	e.SelfParticipantIDsComplete = len(e.SelfParticipantIDs) <= maxRouteEvidenceIDs
 	for _, ids := range []*[]int64{&e.ParticipantIDs, &e.SelfParticipantIDs} {
 		*ids = slices.Clone(*ids)
 		slices.Sort(*ids)

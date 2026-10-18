@@ -2118,9 +2118,9 @@ func (s *Store) LoadRequestInput(
 		}
 	}
 	participantRows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, CASE WHEN `+fullParticipantNameWhere("p.id", "p.display_name")+` THEN p.display_name END,
- CASE WHEN `+fullParticipantValueWhere("p.id", "'email'", "p.email_address")+` THEN p.email_address END,
- CASE WHEN `+fullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+` THEN p.phone_number END, p.created_at
+		SELECT p.id, CASE WHEN `+FullParticipantNameWhere("p.id", "p.display_name")+` THEN p.display_name END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'email'", "p.email_address")+` THEN p.email_address END,
+ CASE WHEN `+FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")+` THEN p.phone_number END, p.created_at
 		FROM person_participants pp
 		JOIN participants p ON p.id = pp.participant_id
 		WHERE pp.person_id = ? ORDER BY p.id`, person.ID)

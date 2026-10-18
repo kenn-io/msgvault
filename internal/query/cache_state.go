@@ -44,7 +44,10 @@ import (
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
 // Version 33 retains conversation tiers and fences live policy publications.
-const CacheSchemaVersion = 33
+// Version 34 filters exported participant identity values by Full-room or
+// independent support, so older publications must be rebuilt to remove values
+// that were only available from Cold rooms.
+const CacheSchemaVersion = 34
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

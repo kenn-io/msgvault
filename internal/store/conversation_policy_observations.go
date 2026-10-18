@@ -228,7 +228,7 @@ func (s *Store) checkIdentityMatchEvidenceAdmissionTx(ctx context.Context, tx *l
 		return s.checkObservationCandidateInputTx(ctx, tx, IdentityMatchCandidateInput{ObservationID: admission.ObservationID, Basis: IdentityMatchServiceScopeUsername, NormalizedValue: candidate.NormalizedValue}, candidate.LeftID, candidate.RightID, serviceID)
 	case "display_name":
 		var leftName, rightName string
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(a.display_name,''),COALESCE(b.display_name,''), (`+fullParticipantNameWhere("a.id", "a.display_name")+` AND `+fullParticipantNameWhere("b.id", "b.display_name")+`) FROM participants a JOIN participants b ON TRUE WHERE a.id=? AND b.id=?`, candidate.LeftID, candidate.RightID).Scan(&leftName, &rightName, &eligible); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(a.display_name,''),COALESCE(b.display_name,''), (`+FullParticipantNameWhere("a.id", "a.display_name")+` AND `+FullParticipantNameWhere("b.id", "b.display_name")+`) FROM participants a JOIN participants b ON TRUE WHERE a.id=? AND b.id=?`, candidate.LeftID, candidate.RightID).Scan(&leftName, &rightName, &eligible); err != nil {
 			return err
 		}
 		if !eligible || leftName == "" || !strings.EqualFold(leftName, rightName) || !strings.EqualFold(leftName, detail) {
@@ -299,13 +299,27 @@ func participantChatProvenanceWhere(id string) string {
 	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id JOIN sources policy_source ON policy_source.id=policy_room.source_id WHERE policy_member.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation JOIN sources policy_source ON policy_source.id=policy_observation.source_id WHERE policy_observation.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM messages policy_message JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_source.source_type IN ('beeper','slack','slackdump','discord','teams') AND (policy_message.sender_id=` + id + ` OR EXISTS(SELECT 1 FROM message_recipients policy_recipient WHERE policy_recipient.message_id=policy_message.id AND policy_recipient.participant_id=` + id + `))))`
 }
 
-func fullParticipantValueWhere(id, kind, value string) string {
+// FullParticipantValueWhere returns the SQL predicate for using one exact
+// participant email or phone value. Chat-derived values need support in a
+// Full room or independent curated evidence; an eligible room membership alone
+// cannot authorize another value on a merged participant row.
+func FullParticipantValueWhere(id, kind, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(SELECT 1 FROM participant_contact_observations value_observation WHERE value_observation.participant_id=` + id + ` AND value_observation.address_kind=` + kind + ` AND value_observation.normalized_value=LOWER(` + value + `) AND value_observation.active_until IS NULL AND value_observation.superseded_at IS NULL AND ` + FullObservationWhere("value_observation") + `) OR EXISTS(SELECT 1 FROM person_participants value_person JOIN person_contact_points value_contact ON value_contact.person_id=value_person.person_id WHERE value_person.participant_id=` + id + ` AND value_contact.address_kind=` + kind + ` AND value_contact.normalized_value=LOWER(` + value + `) AND value_contact.source IN ('user','carddav_import','vcard_import') AND value_contact.active_until IS NULL AND value_contact.superseded_at IS NULL) OR (` + kind + `='email' AND EXISTS(SELECT 1 FROM message_recipients value_recipient JOIN messages value_message ON value_message.id=value_recipient.message_id WHERE value_recipient.participant_id=` + id + ` AND LOWER(value_recipient.email_address)=LOWER(` + value + `) AND ` + LiveMessagesWhere("value_message", true) + ` AND ` + FullMessageWhere("value_message") + `)))`
 }
 
 // Identifier classification is persisted by the existing provider normalizers.
 // Equal opaque provider IDs alone do not identify a namespace or an account.
 func (s *Store) fullParticipantIdentifierWhere(alias string) string {
+	return fullParticipantIdentifierWhere(alias, s.IsPostgreSQL())
+}
+
+// FullParticipantIdentifierWhereSQLite returns the SQL predicate used by
+// participant identity projections sourced from a SQLite archive.
+func FullParticipantIdentifierWhereSQLite(alias string) string {
+	return fullParticipantIdentifierWhere(alias, false)
+}
+
+func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	const observation = "identifier_observation"
 	const source = "identifier_source"
 	classification := observation + `.service_id IS NOT DISTINCT FROM ` + alias + `.service_id
@@ -318,7 +332,7 @@ func (s *Store) fullParticipantIdentifierWhere(alias string) string {
 	prefix := `('beeper:' || ` + source + `.identifier || ':')`
 	user := `SUBSTR(` + observation + `.source_ref,LENGTH(` + prefix + `)+1)`
 	byteLength := func(value string) string {
-		if s.IsPostgreSQL() {
+		if postgres {
 			return `OCTET_LENGTH(` + value + `)`
 		}
 		return `LENGTH(CAST(` + value + ` AS BLOB))`
@@ -344,7 +358,10 @@ func (s *Store) fullParticipantIdentifierWhere(alias string) string {
 // Shared raw names need exact-value evidence in a live Full envelope.
 // A sender/roster ID alone cannot attest to the name stored on its shared row.
 // Independent curated profile names are read separately from this fallback.
-func fullParticipantNameWhere(id, value string) string {
+// FullParticipantNameWhere returns the SQL predicate for using one exact raw
+// participant display name. Chat-derived names require a matching display
+// value on a live Full message; a shared participant row is not enough.
+func FullParticipantNameWhere(id, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
  SELECT 1 FROM message_recipients name_recipient JOIN messages name_message ON name_message.id=name_recipient.message_id
  WHERE name_recipient.participant_id=` + id + ` AND name_recipient.display_name=` + value + `

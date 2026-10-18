@@ -321,6 +321,53 @@ func TestConversationPolicyTransitionMissingStateEligibility(t *testing.T) {
 	}
 }
 
+func TestConversationPolicyExpiryIncludesConfiguredUnsupportedOverride(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("gmail", "override@example.test")
+	requirements.NoError(err)
+	settings := conversationpolicy.DefaultSettings()
+	settings.Overrides = []conversationpolicy.Override{{
+		SourceType: "gmail", SourceIdentifier: "override@example.test",
+		ConversationID: "managed-thread", Tier: conversationpolicy.Cold,
+	}}
+	_, err = s.ConfigureConversationPolicy(t.Context(), settings, time.Now())
+	requirements.NoError(err)
+	managed, err := s.EnsureConversation(source.ID, "managed-thread", "Managed thread")
+	requirements.NoError(err)
+	unmanaged, err := s.EnsureConversation(source.ID, "ordinary-thread", "Ordinary thread")
+	requirements.NoError(err)
+	_, err = s.ExpireConversationPolicy(t.Context(), time.Now())
+	requirements.NoError(err)
+	rows, err := s.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	var managedTier conversationpolicy.Tier
+	var unmanagedTier conversationpolicy.Tier
+	for _, row := range rows {
+		switch row.ConversationID {
+		case managed:
+			managedTier = row.EffectiveTier
+		case unmanaged:
+			unmanagedTier = row.EffectiveTier
+		}
+	}
+	assertions.Equal(conversationpolicy.Cold, managedTier)
+	assertions.Equal(conversationpolicy.Full, unmanagedTier)
+	var unmanagedPolicyRows int
+	requirements.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT COUNT(*) FROM conversation_policy WHERE conversation_id=?`), unmanaged).Scan(&unmanagedPolicyRows))
+	assertions.Zero(unmanagedPolicyRows, "ordinary email threads do not get periodic policy rows")
+
+	settings.Overrides = nil
+	_, err = s.ConfigureConversationPolicy(t.Context(), settings, time.Now())
+	requirements.NoError(err)
+	var removedOverrideTier string
+	requirements.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT effective_tier FROM conversation_policy WHERE conversation_id=?`), managed).Scan(&removedOverrideTier))
+	assertions.Equal(string(conversationpolicy.Full), removedOverrideTier,
+		"removing an explicit config override restores the default tier")
+}
+
 func TestConversationPolicyBootstrapAttributionDrift(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

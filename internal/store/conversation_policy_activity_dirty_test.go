@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -144,6 +145,46 @@ func TestConversationPolicyActivityBeeperSelfProof(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestConversationPolicyActivityUsesSelfProofWithTruncatedRoster(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("beeper", "large-room-account")
+	requirements.NoError(err)
+	room, err := s.EnsureConversationWithType(source.ID, "large-room", "group_chat", "Large room")
+	requirements.NoError(err)
+	participants := make([]int64, 101)
+	for index := range participants {
+		address := fmt.Sprintf("member-%03d@example.test", index)
+		name := fmt.Sprintf("Member %03d", index)
+		participants[index], err = s.EnsureParticipant(address, name, "example.test")
+		requirements.NoError(err)
+		requirements.NoError(s.EnsureConversationParticipant(room, participants[index], "member"))
+	}
+	mentionedAt := activityNow.Add(-time.Hour)
+	messageID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: room, SourceMessageID: "recent-self-mention",
+		MessageType: "beeper", SentAt: sql.NullTime{Time: mentionedAt, Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.ReplaceMessageRecipientsContext(t.Context(), messageID, "mention", []int64{participants[0]}, []string{"Member 000"}))
+	_, err = s.ConfigureConversationPolicy(t.Context(), conversationpolicy.DefaultSettings(), activityNow)
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationMessagingRouteEvidence(t.Context(), room, store.MessagingRouteEvidence{
+		ChatID: "large-room", AccountID: "large-room-account", Network: "whatsapp", ProviderType: "group",
+		ObservedAt: activityNow.Add(-time.Minute), MembershipComplete: true,
+		ParticipantIDs: participants, SelfParticipantIDs: []int64{participants[0]},
+	}))
+	_, err = s.ExpireConversationPolicy(t.Context(), activityNow)
+	requirements.NoError(err)
+	rows, err := s.ListConversationPolicies(t.Context())
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Equal(conversationpolicy.Full, rows[0].EffectiveTier,
+		"a bounded self-identity proof survives truncation of the general room roster")
 }
 
 func TestConversationPolicyActivityDirtyFailureIsRetryable(t *testing.T) {

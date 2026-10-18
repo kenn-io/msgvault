@@ -161,7 +161,7 @@ func (s *Store) ParticipantDisplayNamesContext(
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, display_name FROM participants
 		WHERE id IN (%s) AND display_name IS NOT NULL AND display_name != ''
-        AND `+fullParticipantNameWhere("participants.id", "participants.display_name")+`
+        AND `+FullParticipantNameWhere("participants.id", "participants.display_name")+`
 	`, placeholders), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read participant display names: %w", err)

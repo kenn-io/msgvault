@@ -296,17 +296,16 @@ func writeReadinessState(t *testing.T, dir string, state CacheSyncState) {
 	require.NoError(t, os.WriteFile(CacheStatePath(dir), data, 0o600))
 }
 
-func TestCacheSchemaVersion26RequiresRebuild(t *testing.T) {
+func TestPreviousCacheSchemaVersionRequiresRebuild(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	dir := completeReadinessCache(t)
 	state, err := ReadCacheSyncState(dir)
 	requirements.NoError(err)
-	state.SchemaVersion = 26
+	state.SchemaVersion = CacheSchemaVersion - 1
 	data, err := json.Marshal(state)
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(CacheStatePath(dir), data, 0o600))
-	requirements.NoError(os.RemoveAll(filepath.Join(dir, datasetPersonDisplayNames)))
 	readiness, err := InspectCacheReadiness(dir)
 	requirements.NoError(err)
 	assertions.Equal(CacheStaleSchema, readiness)

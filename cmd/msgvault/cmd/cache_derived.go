@@ -170,12 +170,16 @@ func refreshDerivedDatasetsOnly(
 	datasets := []string{
 		"conversation_policy", "sources",
 		tableMessages,
+		"message_recipients",
 		tableConversations,
 		tableConversationParticipants,
 		"account_identities",
 		tableParticipants,
 		tableParticipantIdentifiers,
 		"persons", "person_participants",
+		"person_contact_points", "participant_contact_observations",
+		"participant_contact_observation_conversations", "communication_services",
+		cacheExportParticipants, cacheExportParticipantIdentifiers,
 	}
 	var relatedChangeSeq int64
 	var relatedKinds relatedChangeKinds

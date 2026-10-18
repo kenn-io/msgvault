@@ -446,13 +446,12 @@ func (s SourceSnapshot) Conversation(ctx context.Context, id int64) (AssemblyCon
 	}
 	query := s.state.rebind(fmt.Sprintf(`
 		SELECT cp.participant_id, COALESCE(cp.role, ''),
-		       COALESCE(NULLIF(TRIM(p.display_name), ''),
-		                NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
-		ORDER BY cp.participant_id`, participantRevision))
+		ORDER BY cp.participant_id`, participantDisplaySQL("p"), participantRevision))
 	rows, err := s.state.tx.QueryContext(ctx, query, id)
 	if err != nil {
 		return AssemblyConversation{}, false, fmt.Errorf("read embedding conversation participants %d: %w", id, err)
@@ -477,6 +476,13 @@ func (s SourceSnapshot) Conversation(ctx context.Context, id int64) (AssemblyCon
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func participantDisplaySQL(alias string) string {
+	name := `CASE WHEN ` + store.FullParticipantNameWhere(alias+`.id`, alias+`.display_name`) + ` THEN ` + alias + `.display_name END`
+	email := `CASE WHEN ` + store.FullParticipantValueWhere(alias+`.id`, `'email'`, alias+`.email_address`) + ` THEN ` + alias + `.email_address END`
+	phone := `CASE WHEN ` + store.FullParticipantValueWhere(alias+`.id`, `'phone'`, alias+`.phone_number`) + ` THEN ` + alias + `.phone_number END`
+	return `COALESCE(NULLIF(TRIM(` + name + `), ''), NULLIF(` + email + `, ''), NULLIF(` + phone + `, ''), '')`
 }
 
 func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
@@ -527,15 +533,14 @@ func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 		       COALESCE(m.subject, ''), %s, %s,
 		       m.sent_at, m.received_at, m.internal_date,
 		       m.sender_id,
-		       COALESCE(NULLIF(TRIM(sender.display_name), ''),
-		                NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ''),
+		       %s,
 		       %s, COALESCE(c.title, ''), %s
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN participants sender ON sender.id = m.sender_id
 		WHERE %s AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
-		  AND m.deleted_from_source_at IS NULL`, bodyText, bodyHTML, s.lastModified, bodyTruncated, predicate)
+		  AND m.deleted_from_source_at IS NULL`, bodyText, bodyHTML, participantDisplaySQL("sender"), s.lastModified, bodyTruncated, predicate)
 }
 
 func scanAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessage, error) {

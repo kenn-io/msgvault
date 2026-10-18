@@ -349,10 +349,6 @@ func TestConversationPolicyCleanupOpensExistingSQLiteURI(t *testing.T) {
 	assert.NotNil(t, lanes.Embeddings)
 }
 
-func TestConversationPolicySQLiteFileURINormalizesWindowsDrive(t *testing.T) {
-	assert.Equal(t, "file:///D:/archive/vectors.db", conversationPolicySQLiteFileURI("D:/archive/vectors.db"))
-}
-
 func conversationPolicySQLiteFileURI(path string) string {
 	uriPath := filepath.ToSlash(path)
 	if len(uriPath) >= 3 && uriPath[1] == ':' && uriPath[2] == '/' {

@@ -29,9 +29,9 @@ func (s *Store) personMatchPairSummariesContext(ctx context.Context, q identityM
 		Left:  personmatch.PairEndpoint{Kind: "participant", Identifiers: []personmatch.PairIdentifier{}},
 		Right: personmatch.PairEndpoint{Kind: "participant", Identifiers: []personmatch.PairIdentifier{}},
 	}
-	rows, err := q.QueryContext(ctx, `SELECT id, CASE WHEN `+fullParticipantNameWhere("participants.id", "participants.display_name")+` THEN display_name END,
- CASE WHEN `+fullParticipantValueWhere("participants.id", "'email'", "participants.email_address")+` THEN email_address END,
- CASE WHEN `+fullParticipantValueWhere("participants.id", "'phone'", "participants.phone_number")+` THEN phone_number END
+	rows, err := q.QueryContext(ctx, `SELECT id, CASE WHEN `+FullParticipantNameWhere("participants.id", "participants.display_name")+` THEN display_name END,
+ CASE WHEN `+FullParticipantValueWhere("participants.id", "'email'", "participants.email_address")+` THEN email_address END,
+ CASE WHEN `+FullParticipantValueWhere("participants.id", "'phone'", "participants.phone_number")+` THEN phone_number END
  FROM participants WHERE id IN (?, ?)`, leftID, rightID)
 	if err != nil {
 		return result, fmt.Errorf("read person match pair: %w", err)
