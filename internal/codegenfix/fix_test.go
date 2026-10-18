@@ -42,6 +42,21 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	}
 }
 
+func TestRewriteGeneratedValidatorsTreatsInboxBindingsAsAlternatives(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	requirements.NoError(err)
+	assertions.Contains(string(got), "sourcePresent := i.Source != (InboxSourceIdentity{})")
+	assertions.Contains(string(got), "targetPresent := i.Target != (InboxTarget{})")
+	assertions.Contains(string(got), "if sourcePresent == targetPresent")
+	assertions.NotContains(string(got), generatedInboxStateBindingValidation)
+	assertions.Contains(string(got), inboxStateAlternativeBindingValidation)
+	again, err := RewriteGeneratedValidators(got)
+	requirements.NoError(err)
+	assertions.Equal(got, again, "inbox binding validator rewrite is idempotent")
+}
+
 func firstDifference(left, right []byte) int {
 	for i := range min(len(left), len(right)) {
 		if left[i] != right[i] {
@@ -150,6 +165,7 @@ func generatedValidatorFixture() string {
 	return `type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
+
 type ExploreCacheUnavailableResponse struct {
 	RecoveryAction string ` + "`json:\"recovery_action\" validate:\"omitempty\"`" + `
 }
@@ -185,7 +201,34 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + inboxStateValidatorFixture()
+}
+
+func inboxStateValidatorFixture() string {
+	return `type InboxSourceIdentity struct{}
+type InboxTarget struct{}
+type InboxState struct {
+	Source InboxSourceIdentity
+	Target InboxTarget
+}
+func (i InboxState) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+`
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

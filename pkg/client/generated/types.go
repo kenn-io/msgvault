@@ -6879,14 +6879,21 @@ func (i InboxState) Validate() error {
 			}
 		}
 	}
-	if v, ok := any(i.Source).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Source", err)
+	sourcePresent := i.Source != (InboxSourceIdentity{})
+	targetPresent := i.Target != (InboxTarget{})
+	if sourcePresent == targetPresent {
+		errors = errors.Append("Source/Target", fmt.Errorf("exactly one of Source or Target must be populated"))
+	} else if sourcePresent {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
 		}
-	}
-	if v, ok := any(i.Target).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Target", err)
+	} else {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

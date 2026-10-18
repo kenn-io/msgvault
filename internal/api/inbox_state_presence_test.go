@@ -4,6 +4,7 @@ import (
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -41,9 +42,12 @@ func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 		requirements.NoError(err)
 		var sdk generated.InboxState
 		requirements.NoError(jsonv1.Unmarshal(responseJSON, &sdk))
+		requirements.NoError(sdk.Validate())
 		assertions.Equal(values, sdk.Tags)
 		assertions.Equal(values, sdk.Flags)
-		requestJSON, err := jsonv1.Marshal(generated.InboxRequest{Operation: "set-read", Expected: &sdk})
+		sdkRequest := generated.InboxRequest{Operation: "set-read", Expected: &sdk}
+		requirements.NoError(sdkRequest.Validate())
+		requestJSON, err := jsonv1.Marshal(sdkRequest)
 		requirements.NoError(err)
 		var request inboxcontrol.Request
 		requirements.NoError(json.Unmarshal(requestJSON, &request))
@@ -56,4 +60,43 @@ func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 		requirements.NoError(err)
 		assertions.Equal(wantHash, gotHash, "SDK expected-state transport must retain the signed preflight evidence")
 	}
+}
+
+func TestInboxStateGeneratedSDKValidatesMessageAndSourceAlternatives(t *testing.T) {
+	requirements := require.New(t)
+	observedAt := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
+	messageState := generated.InboxState{
+		ObservedAt: observedAt,
+		Target: generated.InboxTarget{
+			SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test",
+			AccountID: "owner@example.test", Scope: "message", ItemID: 2, ProviderID: "synthetic-message",
+		},
+	}
+	sourceState := generated.InboxState{
+		ObservedAt: observedAt,
+		Source: generated.InboxSourceIdentity{
+			SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test",
+		},
+	}
+	for _, tc := range []struct {
+		name   string
+		result generated.InboxResult
+	}{
+		{name: "message preview", result: generated.InboxResult{Before: &messageState, Projected: &messageState}},
+		{name: "message execution", result: generated.InboxResult{After: &messageState}},
+		{name: "source-only folder preview", result: generated.InboxResult{Before: &sourceState, Projected: &sourceState}},
+		{name: "source-only folder execution", result: generated.InboxResult{After: &sourceState}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := jsonv1.Marshal(tc.result)
+			requirements.NoError(err)
+			var decoded generated.InboxResult
+			requirements.NoError(jsonv1.Unmarshal(encoded, &decoded))
+			requirements.NoError(decoded.Validate())
+		})
+	}
+	requirements.Error((generated.InboxState{ObservedAt: observedAt}).Validate(), "an Inbox state requires one active binding")
+	bothBindings := messageState
+	bothBindings.Source = sourceState.Source
+	requirements.Error(bothBindings.Validate(), "message and source bindings are alternatives")
 }

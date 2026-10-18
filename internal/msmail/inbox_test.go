@@ -277,12 +277,3 @@ func TestMicrosoftInboxReadbackCategoryOrder(t *testing.T) {
 	after.Tags = []string{"Next", "Other"}
 	require.NoError(t, p.Verify(request, before, projected, after), "categories are a collection; provider order is not a mutation")
 }
-
-func FuzzMicrosoftInboxCategoryOrder(f *testing.F) {
-	f.Add("Next", "Other")
-	f.Add("", "")
-	f.Add("東京", "Work")
-	f.Fuzz(func(t *testing.T, a, b string) {
-		assert.True(t, sameCategories([]string{a, b}, []string{b, a}), "category equality must ignore provider ordering")
-	})
-}

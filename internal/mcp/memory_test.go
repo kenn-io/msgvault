@@ -57,6 +57,10 @@ func TestMCPMemoryChild(t *testing.T) {
 		listed := peer.call(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`)
 		require.Nil(listed.Error)
 		names := task3ToolNames(t, listed)
+		for _, definition := range stableInboxDefinitions {
+			require.Contains(names, definition.name)
+		}
+		require.Contains(names, ToolUpdateMessageTags)
 		require.Contains(names, ToolDraftReply)
 		require.Contains(names, ToolGetIdentityScoringStatus)
 		t.Logf("tools=%d", len(names))
@@ -73,6 +77,8 @@ func TestMCPMemoryChild(t *testing.T) {
 // daemon serves every capability. Building and listing the catalog never calls
 // a backend, so empty implementations suffice.
 func daemonProxyMemoryOptions() ServeOptions {
+	inboxOperations := append(slices.Sorted(maps.Keys(stableInboxDefinitions)), inboxcontrol.OpTags)
+	slices.Sort(inboxOperations)
 	return ServeOptions{
 		EmbeddingStatus:      struct{ EmbeddingStatusReader }{},
 		Engine:               &querytest.MockEngine{},
@@ -100,7 +106,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		PersonCardDAV:        struct{ PersonCardDAVBackend }{},
 		IdentityScoring:      struct{ IdentityScoringBackend }{},
 		Inbox:                struct{ InboxBackend }{},
-		InboxOperations:      []inboxcontrol.Operation{inboxcontrol.OpTags},
+		InboxOperations:      inboxOperations,
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),
 	}
