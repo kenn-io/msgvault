@@ -2095,19 +2095,19 @@ func normalizedMeetingAccountEmail(value string) (string, bool) {
 // be omitted in the common one-account case.
 func (c *Config) applyMeetingSourceDefaults() {
 	if len(c.Omi) == 1 && c.Omi[0].Identifier == "" {
-		c.Omi[0].Identifier = "default"
+		c.Omi[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.Plaud) == 1 && c.Plaud[0].Identifier == "" {
-		c.Plaud[0].Identifier = "default"
+		c.Plaud[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.Twenty) == 1 && c.Twenty[0].Identifier == "" {
-		c.Twenty[0].Identifier = "default"
+		c.Twenty[0].Identifier = DefaultCardDAVConnection
 	}
 	for i := range c.Pocket {
 		c.Pocket[i].Identifier = strings.TrimSpace(c.Pocket[i].Identifier)
 	}
 	if len(c.Pocket) == 1 && c.Pocket[0].Identifier == "" {
-		c.Pocket[0].Identifier = "default"
+		c.Pocket[0].Identifier = DefaultCardDAVConnection
 	}
 	for i := range c.Pocket {
 		if c.Pocket[i].APIKeyEnv == "" {
@@ -2115,19 +2115,19 @@ func (c *Config) applyMeetingSourceDefaults() {
 		}
 	}
 	if len(c.Granola) == 1 && c.Granola[0].Identifier == "" {
-		c.Granola[0].Identifier = "default"
+		c.Granola[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.Circleback) == 1 && c.Circleback[0].Identifier == "" {
-		c.Circleback[0].Identifier = "default"
+		c.Circleback[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
-		c.NotionMeetings[0].Identifier = "default"
+		c.NotionMeetings[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
-		c.Muesli[0].Identifier = "default"
+		c.Muesli[0].Identifier = DefaultCardDAVConnection
 	}
 	if len(c.Twilio) == 1 && c.Twilio[0].Identifier == "" {
-		c.Twilio[0].Identifier = "default"
+		c.Twilio[0].Identifier = DefaultCardDAVConnection
 	}
 }
 

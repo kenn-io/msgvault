@@ -34,11 +34,11 @@ Commands start or reuse a local daemon, or use [remote].url from config.toml.
 
 Start here:
   msgvault list-accounts --json
-  msgvault search 'from:alice@example.com newer_than:30d' --json
-  # "id" feeds the commands below
+  msgvault search 'from:alice@example.com' --json
+  # Use the message ID below
   msgvault show-message <id> --json
   msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
+  msgvault export-messages --start <RFC3339> --end <RFC3339>
   msgvault list-senders -n 20 --json
   msgvault stats
   msgvault person --help
@@ -47,8 +47,8 @@ Start here:
 
 Output and exit status:
   --json prints JSON on stdout (export-messages prints JSON Lines). Progress and
-  logs go to stderr; --log-level=warn quiets routine logs. Exit 0 success, 1 error,
-  130 interrupted. 'msgvault quickstart' has a longer agent guide.`,
+  logs go to stderr; --log-level=warn quiets them. Exit 0 success, 1 error, 130
+  interrupted.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			inv := prepareInvocation(cmd)
 			if inv == nil {

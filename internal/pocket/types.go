@@ -26,20 +26,22 @@ type Account struct {
 	UserID string `json:"userId"`
 }
 
+type RecordingOwner struct {
+	Email  string `json:"email"`
+	UserID string `json:"user_id"`
+	Name   string `json:"display_name"`
+}
+
 type Recording struct {
-	ID         string   `json:"id"`
-	Title      string   `json:"title"`
-	RecordedAt string   `json:"recording_at"`
-	CreatedAt  string   `json:"created_at"`
-	UpdatedAt  string   `json:"updated_at"`
-	Duration   *float64 `json:"duration"`
-	Owner      *struct {
-		Email  string `json:"email"`
-		UserID string `json:"user_id"`
-		Name   string `json:"display_name"`
-	} `json:"recorded_by"`
-	StartedAt time.Time      `json:"-"`
-	Raw       jsontext.Value `json:"-"`
+	ID         string          `json:"id"`
+	Title      string          `json:"title"`
+	RecordedAt string          `json:"recording_at"`
+	CreatedAt  string          `json:"created_at"`
+	UpdatedAt  string          `json:"updated_at"`
+	Duration   *float64        `json:"duration"`
+	Owner      *RecordingOwner `json:"recorded_by"`
+	StartedAt  time.Time       `json:"-"`
+	Raw        jsontext.Value  `json:"-"`
 }
 
 type Page struct {

@@ -81,28 +81,6 @@ func TestPocketContentSelectsLatestCompletedSummary(t *testing.T) {
 	assert.Equal(t, "- Latest", content.Summary.Text)
 }
 
-func TestPocketTranscriptOffsetBoundaries(t *testing.T) {
-	for _, tt := range []struct {
-		name, value string
-		valid       bool
-	}{
-		{"zero", "0", true}, {"negative", "-1", false},
-		{"largest finite", "1.7976931348623157e308", true}, {"not a number", "NaN", false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			rec, err := DecodeRecording([]byte(`{"id":"r","transcript":[{"text":"x","start":` + tt.value + `}]}`))
-			if err == nil {
-				_, err = Normalize(rec)
-			}
-			if tt.valid {
-				require.NoError(t, err)
-			} else {
-				require.Error(t, err)
-			}
-		})
-	}
-}
-
 func FuzzPocketTranscriptOffsets(f *testing.F) {
 	for _, n := range []float64{0, math.Copysign(0, -1), 1.25, -1, math.MaxFloat64, math.Inf(1), math.NaN()} {
 		f.Add(n)

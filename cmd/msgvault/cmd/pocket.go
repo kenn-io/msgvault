@@ -46,7 +46,10 @@ func pocketClient(src config.PocketSource) (*pocket.Client, error) {
 }
 
 func newAddPocketCmd() *cobra.Command {
-	return &cobra.Command{Use: "add-pocket [identifier]", Short: "Verify and register a personal Pocket account", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	return &cobra.Command{Use: "add-pocket [identifier]", Short: "Verify and register a personal Pocket account", Long: `Validate the API key of a [[pocket]] entry in config.toml and register it
+as a meeting source. The identifier may be omitted when exactly one
+[[pocket]] entry exists. The daemon reads the key from api_key_env
+(default POCKET_API_KEY); the live account email must match account_email.`, Example: "  msgvault add-pocket personal", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
@@ -129,6 +132,8 @@ Limited and failed runs preserve that order. Processing sections retain prior
 content; successful explicit empty sections clear it. Source deletions do not
 remove archived meetings. --full repairs projections and invalid sync state.
 The daemon reads API keys from the configured environment variables.`, Args: cobra.MaximumNArgs(1)}
+	cmd.Example = `  msgvault sync-pocket personal --limit 10
+  msgvault sync-pocket personal --full --after 2026-01-01`
 	cmd.Flags().Int("limit", 0, "maximum recordings fetched in this run (0 = unlimited)")
 	cmd.Flags().String("after", "", "include meetings on or after this UTC date (YYYY-MM-DD; implies --full)")
 	cmd.Flags().Bool("full", false, "repair projections and invalid state while preserving valid attempt order")

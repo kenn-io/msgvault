@@ -199,13 +199,105 @@ func TestPocketImportFillsPartialDetailFromListMetadata(t *testing.T) {
 	assertions.InDelta(120.0, *content.DurationSeconds, 0)
 }
 
+func TestPocketImportPreservesOwnerWhenLaterRecordingOmitsIt(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	original := strings.Replace(recordingFixture, `"user_id":"user-a"`, `"user_id":"user-a","display_name":"Organizer One"`, 1)
+	imp, st, src := testArchive(t, testRecording(t, original))
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	before, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal("owner@example.com", before.FromEmail)
+	assertions.Equal("Organizer One", before.FromName)
+	beforeIsFromMe, err := st.GetMessageIsFromMe(id)
+	requirements.NoError(err)
+	assertions.True(beforeIsFromMe)
+	beforeRecipients := make(map[string][]store.MessageRecipient)
+	for _, recipientType := range []string{"from", "to", "cc", "bcc"} {
+		beforeRecipients[recipientType], err = st.GetMessageRecipientsContext(t.Context(), id, recipientType)
+		requirements.NoError(err)
+	}
+	requirements.Len(beforeRecipients["from"], 1)
+	assertions.Equal("owner@example.com", beforeRecipients["from"][0].EmailAddress)
+	assertions.Equal("Organizer One", beforeRecipients["from"][0].DisplayName)
+
+	src.records[0] = testRecording(t, `{"id":"rec-a","recording_at":"2026-09-01T10:00:00Z"}`)
+	updated, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	assertions.Equal(int64(1), updated.MeetingsUpdated)
+	afterID, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	assertions.Equal(id, afterID)
+	after, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal(before.FromEmail, after.FromEmail)
+	assertions.Equal(before.FromName, after.FromName)
+	afterIsFromMe, err := st.GetMessageIsFromMe(id)
+	requirements.NoError(err)
+	assertions.Equal(beforeIsFromMe, afterIsFromMe)
+	for _, recipientType := range []string{"from", "to", "cc", "bcc"} {
+		afterRecipients, recipientErr := st.GetMessageRecipientsContext(t.Context(), id, recipientType)
+		requirements.NoError(recipientErr)
+		assertions.Equal(beforeRecipients[recipientType], afterRecipients)
+	}
+}
+
+func TestPocketImportUpdatesOrganizerFromListingWhenDetailOmitsIt(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	listing := testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer One"},"transcript":[]}`)
+	imp, st, src := testArchive(t, listing)
+	src.details = map[string]Recording{"rec-a": testRecording(t, `{"id":"rec-a","transcript":[]}`)}
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	initial, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal("Organizer One", initial.FromName)
+
+	src.records[0] = testRecording(t, `{"id":"rec-a","title":"Planning","recording_at":"2026-09-01T10:00:00Z","duration":60,"recorded_by":{"email":"owner@example.com","user_id":"user-a","display_name":"Organizer Two"},"transcript":[]}`)
+	updated, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	assertions.Equal(int64(1), updated.MeetingsUpdated)
+	current, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.Equal("Organizer Two", current.FromName)
+	fromRecipients, err := st.GetMessageRecipientsContext(t.Context(), id, "from")
+	requirements.NoError(err)
+	requirements.Len(fromRecipients, 1)
+	assertions.Equal("Organizer Two", fromRecipients[0].DisplayName)
+}
+
+func TestPocketImportPreservesRecordingDateWhenLaterResponseHasOnlyCreationDate(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	imp, st, src := testArchive(t, testRecording(t, recordingFixture))
+	first, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	id, _ := archivedContent(t, st, first.SourceID, "rec-a")
+	initial, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	wantStartedAt := time.Date(2026, time.September, 1, 10, 0, 0, 0, time.UTC)
+	assertions.True(wantStartedAt.Equal(initial.SentAt))
+
+	src.records[0] = testRecording(t, `{"id":"rec-a","created_at":"2026-09-10T10:00:00Z","transcript":[]}`)
+	updated, err := imp.Import(t.Context(), archiveOptions())
+	requirements.NoError(err)
+	assertions.Equal(int64(1), updated.MeetingsUpdated)
+	current, err := st.GetMessageContext(t.Context(), id)
+	requirements.NoError(err)
+	assertions.True(wantStartedAt.Equal(current.SentAt))
+}
+
 func TestPocketImportRejectsOtherAccountBeforeWrites(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	imp, st, src := testArchive(t, testRecording(t, recordingFixture))
 	src.account.UserID = "user-b"
+	src.records[0] = testRecording(t, strings.Replace(recordingFixture, `"user_id":"user-a"`, `"user_id":"user-b"`, 1))
 	_, err := imp.Import(t.Context(), archiveOptions())
-	requirements.Error(err)
+	requirements.ErrorContains(err, "pocket source identity does not match the authenticated account")
 	sources, err := st.ListSources(SourceType)
 	requirements.NoError(err)
 	requirements.Len(sources, 1)
@@ -305,9 +397,24 @@ func TestPocketEvidenceBudget(t *testing.T) {
 }
 
 func TestPocketEvidenceRejectsUnknownVersion(t *testing.T) {
-	raw, _ := json.Marshal(map[string]any{"schema_version": 2, "content": map[string]any{"summary": map[string]any{"state": "available", "text": "Wrong version"}}})
-	content := meetingcontent.Decode("pocket_json", raw, nil)
-	assert.Equal(t, meetingcontent.StateUnavailable, content.Summary.State)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	rec := testRecording(t, `{"id":"rec-a","transcript":[]}`)
+	content, err := Normalize(rec)
+	requirements.NoError(err)
+	snapshot, err := makeSnapshot(1, Account{Email: "owner@example.com", UserID: "user-a"}, rec, content)
+	requirements.NoError(err)
+	decoded := meetingcontent.Decode("pocket_json", snapshot.Raw, nil)
+	assertions.Equal(meetingcontent.StateEmpty, decoded.Transcript.State)
+
+	var stored evidence
+	requirements.NoError(json.Unmarshal(snapshot.Raw, &stored))
+	stored.Version = 2
+	futureVersion, err := json.Marshal(stored, json.Deterministic(true))
+	requirements.NoError(err)
+	future := meetingcontent.Decode("pocket_json", futureVersion, nil)
+	assertions.Equal(meetingcontent.StateUnavailable, future.Summary.State)
+	assertions.Equal("invalid_raw", future.Summary.Reason)
 }
 
 func TestPocketImportCancellationAndStateRepair(t *testing.T) {

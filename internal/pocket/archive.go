@@ -13,11 +13,13 @@ import (
 )
 
 type evidence struct {
-	Version   int                    `json:"schema_version"`
-	Recording jsontext.Value         `json:"recording"`
-	Content   meetingcontent.Content `json:"content"`
-	Title     string                 `json:"title"`
-	StartedAt time.Time              `json:"started_at"`
+	Version    int                    `json:"schema_version"`
+	Recording  jsontext.Value         `json:"recording"`
+	Content    meetingcontent.Content `json:"content"`
+	Title      string                 `json:"title"`
+	StartedAt  time.Time              `json:"started_at"`
+	RecordedAt string                 `json:"recorded_at,omitempty"`
+	Owner      *RecordingOwner        `json:"owner,omitempty"`
 }
 
 func buildSnapshot(st *store.Store, sourceID int64, account Account, rec Recording) (meetingarchive.Snapshot, error) {
@@ -41,6 +43,27 @@ func buildSnapshot(st *store.Store, sourceID int64, account Account, rec Recordi
 		decoded := meetingcontent.Decode("pocket_json", raw, nil)
 		if decoded.Summary.Reason == "invalid_raw" {
 			return meetingarchive.Snapshot{}, errors.New("invalid archived Pocket content")
+		}
+		var previousRecording Recording
+		_ = json.Unmarshal(previous.Recording, &previousRecording)
+		previousOwner := previous.Owner
+		if previousOwner == nil {
+			previousOwner = previousRecording.Owner
+		}
+		rec.Owner = mergeRecordingOwner(rec.Owner, previousOwner)
+		previousRecordedAt := previous.RecordedAt
+		if previousRecordedAt == "" {
+			previousRecordedAt = previousRecording.RecordedAt
+		}
+		if rec.RecordedAt == "" {
+			if previousRecordedAt != "" {
+				rec.RecordedAt = previousRecordedAt
+			}
+			if !previous.StartedAt.IsZero() {
+				rec.StartedAt = previous.StartedAt
+			} else if previousRecordedAt != "" {
+				rec.StartedAt, _ = time.Parse(time.RFC3339Nano, previousRecordedAt)
+			}
 		}
 		if content.Summary.State == meetingcontent.StateUnavailable {
 			content.Summary = previous.Content.Summary
@@ -68,12 +91,36 @@ func buildSnapshot(st *store.Store, sourceID int64, account Account, rec Recordi
 	return makeSnapshot(sourceID, account, rec, content)
 }
 
+func mergeRecordingOwner(current, previous *RecordingOwner) *RecordingOwner {
+	if current == nil {
+		if previous == nil {
+			return nil
+		}
+		merged := *previous
+		return &merged
+	}
+	merged := *current
+	if previous == nil {
+		return &merged
+	}
+	if strings.TrimSpace(merged.Email) == "" {
+		merged.Email = previous.Email
+	}
+	if strings.TrimSpace(merged.UserID) == "" {
+		merged.UserID = previous.UserID
+	}
+	if strings.TrimSpace(merged.Name) == "" {
+		merged.Name = previous.Name
+	}
+	return &merged
+}
+
 func makeSnapshot(sourceID int64, account Account, rec Recording, content meetingcontent.Content) (meetingarchive.Snapshot, error) {
 	title := strings.TrimSpace(rec.Title)
 	if title == "" {
 		title = "Pocket recording"
 	}
-	raw, err := json.Marshal(evidence{Version: 1, Recording: rec.Raw, Content: content, Title: title, StartedAt: rec.StartedAt}, json.Deterministic(true))
+	raw, err := json.Marshal(evidence{Version: 1, Recording: rec.Raw, Content: content, Title: title, StartedAt: rec.StartedAt, RecordedAt: rec.RecordedAt, Owner: rec.Owner}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
