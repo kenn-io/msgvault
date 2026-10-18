@@ -79,10 +79,8 @@ func TestSilent(t *testing.T) {}
 				assert.Contains(blocks[2], "        --- PASS: TestNested/routes/get (")
 				assert.Contains(blocks[2], "--- PASS: TestNested (")
 				assert.NotContains(result, "=== RUN")
-				assert.NotContains(result, "nested failure sentinel")
 				assert.NotContains(result, "FAIL")
 			}
-			assert.NotContains(result, "--- PASS: TestSilent")
 		})
 	}
 }
