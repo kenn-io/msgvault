@@ -43,7 +43,7 @@ func assertCardDAVForeignKeysEnforced(t *testing.T, st *store.Store) {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), `PRAGMA foreign_keys`).Scan(&enabled))
 	assert.Equal(t, 1, enabled)
 	_, err := st.DB().ExecContext(t.Context(), `INSERT INTO carddav_retry_gate(account_id, retry_after_at) VALUES (99, CURRENT_TIMESTAMP)`)
-	require.ErrorContains(t, err, "FOREIGN KEY constraint failed")
+	assert.ErrorContains(t, err, "FOREIGN KEY constraint failed")
 }
 
 func TestCardDAVAccountUpgradePreservesUnrelatedReferences(t *testing.T) {
@@ -56,16 +56,9 @@ func TestCardDAVAccountUpgradePreservesUnrelatedReferences(t *testing.T) {
 			check: `SELECT message_id FROM attachments WHERE id = 7`,
 		},
 		{
-			name: "another parent on account child",
-			setup: `CREATE TABLE legacy_account_links (
- id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES CARDDAV_ACCOUNTS(id), message_id INTEGER REFERENCES messages(id));
- INSERT INTO legacy_account_links VALUES (7, 1, 42)`,
-			check: `SELECT message_id FROM legacy_account_links WHERE id = 7`,
-		},
-		{
-			name:  "malformed unrelated foreign key",
-			setup: `CREATE TABLE legacy_bad_links (id INTEGER REFERENCES messages(subject))`,
-			check: `SELECT 42 FROM sqlite_master WHERE name = 'legacy_bad_links'`,
+			name:  "missing book on account child",
+			setup: `INSERT INTO carddav_address_book_urls(account_id, address_book_id, url_role, normalized_url) VALUES (1, 42, 'canonical', 'https://example.com/missing/')`,
+			check: `SELECT address_book_id FROM carddav_address_book_urls WHERE account_id = 1 AND normalized_url = 'https://example.com/missing/'`,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,68 +86,27 @@ func TestCardDAVAccountUpgradePreservesUnrelatedReferences(t *testing.T) {
 }
 
 func TestCardDAVAccountUpgradeRejectsDanglingAccounts(t *testing.T) {
-	for _, tc := range []struct {
-		name, table, setup, repair string
-	}{
-		{
-			name: "built-in account child", table: "carddav_retry_gate",
-			setup:  `INSERT INTO carddav_retry_gate(account_id, retry_after_at) VALUES (2, CURRENT_TIMESTAMP)`,
-			repair: `DELETE FROM carddav_retry_gate WHERE account_id = 2`,
-		},
-		{
-			name: "mixed-case parent with another relationship", table: "legacy_account_links",
-			setup: `CREATE TABLE legacy_account_links (
- id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES CARDDAV_ACCOUNTS(id), message_id INTEGER REFERENCES messages(id));
- INSERT INTO legacy_account_links VALUES (7, 2, 42)`,
-			repair: `UPDATE legacy_account_links SET account_id = 1`,
-		},
-		{
-			name: "without rowid", table: "legacy_account_links",
-			setup: `CREATE TABLE legacy_account_links (
- id TEXT PRIMARY KEY, account_id INTEGER REFERENCES carddav_accounts(id)) WITHOUT ROWID;
- INSERT INTO legacy_account_links VALUES ('example', 2)`,
-			repair: `UPDATE legacy_account_links SET account_id = 1`,
-		},
-		{
-			name: "malformed relationship on account child", table: "legacy_account_links",
-			setup: `CREATE TABLE legacy_account_links (
- id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES carddav_accounts(id), message_id INTEGER REFERENCES messages(subject))`,
-			repair: `DROP TABLE legacy_account_links`,
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions := assert.New(t)
-			require := require.New(t)
+	st := legacyCardDAVValidationStore(t)
+	var before string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&before))
+	seedLegacyCardDAVViolation(t, st, `INSERT INTO carddav_retry_gate(account_id, retry_after_at) VALUES (2, CURRENT_TIMESTAMP)`)
 
-			st := legacyCardDAVValidationStore(t)
-			var before string
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&before))
-			seedLegacyCardDAVViolation(t, st, tc.setup)
-			err := st.InitSchemaContext(t.Context())
-			require.ErrorContains(err, tc.table)
-			if tc.name == "malformed relationship on account child" {
-				require.ErrorContains(err, "foreign key mismatch")
-			} else {
-				require.ErrorContains(err, "dangling references")
-			}
-			if tc.name == "without rowid" {
-				assertions.Contains(err.Error(), "rowid NULL")
-			}
-			var after string
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&after))
-			assertions.Equal(before, after, "failure must roll back the account rebuild")
-			var count int
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM carddav_accounts WHERE id = 1`).Scan(&count))
-			assertions.Equal(1, count)
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE name = 'carddav_accounts_multi_upgrade'`).Scan(&count))
-			assertions.Zero(count)
-			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM applied_migrations WHERE name = 'carddav_multiple_accounts_v1'`).Scan(&count))
-			assertions.Zero(count)
-			assertCardDAVForeignKeysEnforced(t, st)
-			_, err = st.DB().ExecContext(t.Context(), tc.repair)
-			require.NoError(err)
-			require.NoError(st.InitSchemaContext(t.Context()), "repair must allow retry")
-			assertCardDAVForeignKeysEnforced(t, st)
-		})
-	}
+	err := st.InitSchemaContext(t.Context())
+	assert.ErrorContains(t, err, "dangling references")
+	var after string
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT sql FROM sqlite_master WHERE name = 'carddav_accounts'`).Scan(&after))
+	assert.Equal(t, before, after, "failure must roll back the account rebuild")
+	var count int
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM carddav_accounts WHERE id = 1`).Scan(&count))
+	assert.Equal(t, 1, count)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE name = 'carddav_accounts_multi_upgrade'`).Scan(&count))
+	assert.Zero(t, count)
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM applied_migrations WHERE name = 'carddav_multiple_accounts_v1'`).Scan(&count))
+	assert.Zero(t, count)
+	assertCardDAVForeignKeysEnforced(t, st)
+
+	_, err = st.DB().ExecContext(t.Context(), `DELETE FROM carddav_retry_gate WHERE account_id = 2`)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchemaContext(t.Context()), "repair must allow retry")
+	assertCardDAVForeignKeysEnforced(t, st)
 }

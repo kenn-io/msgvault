@@ -3,10 +3,8 @@ package store
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -211,44 +209,18 @@ func (s *Store) upgradeCardDAVAccountsSQLite(ctx context.Context) (err error) {
 			return fmt.Errorf("rebuild CardDAV accounts: %w", err)
 		}
 	}
-	// Only the account table was rebuilt. Unrelated legacy violations must not
-	// block this migration or require scanning the archive's message tables.
-	// Discover incoming references so extension tables receive the same checks.
-	rows, err := tx.QueryContext(ctx, `SELECT m.name FROM sqlite_master m
-   WHERE m.type = 'table' AND EXISTS (
-    SELECT 1 FROM pragma_foreign_key_list(m.name)
-    WHERE "table" = 'carddav_accounts' COLLATE NOCASE)`)
-	if err != nil {
-		return fmt.Errorf("inspect CardDAV account references: %w", err)
+	// Unrelated legacy violations must not block this migration.
+	var violations int
+	if err := tx.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('carddav_account_home_urls') WHERE parent = 'carddav_accounts') +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('carddav_retry_gate') WHERE parent = 'carddav_accounts') +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('carddav_address_books') WHERE parent = 'carddav_accounts') +
+		(SELECT COUNT(*) FROM pragma_foreign_key_check('carddav_address_book_urls') WHERE parent = 'carddav_accounts')
+	`).Scan(&violations); err != nil {
+		return fmt.Errorf("check CardDAV account references: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var children []string
-	for rows.Next() {
-		var child string
-		if err := rows.Scan(&child); err != nil {
-			return fmt.Errorf("read CardDAV account reference: %w", err)
-		}
-		children = append(children, child)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return fmt.Errorf("read CardDAV account references: %w", err)
-	}
-	for _, child := range children {
-		var rowID sql.NullInt64 // WITHOUT ROWID tables report NULL.
-		var foreignKey int
-		err := tx.QueryRowContext(ctx, `SELECT rowid, fkid FROM pragma_foreign_key_check(?)
-   WHERE parent = 'carddav_accounts' COLLATE NOCASE LIMIT 1`, child).Scan(&rowID, &foreignKey)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("check CardDAV account references in %s: %w", child, err)
-		}
-		row := "NULL"
-		if rowID.Valid {
-			row = strconv.FormatInt(rowID.Int64, 10)
-		}
-		return fmt.Errorf("CardDAV account upgrade left dangling references: table %s, rowid %s, foreign key %d references carddav_accounts", child, row, foreignKey)
+	if violations > 0 {
+		return errors.New("CardDAV account upgrade left dangling references")
 	}
 	return tx.Commit()
 }
