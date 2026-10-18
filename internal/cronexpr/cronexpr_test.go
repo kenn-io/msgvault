@@ -9,6 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// These tests pin the run times docs/configuration.md#cron-schedules
+// promises. The shared corpus only records which schedules parse; these
+// fail if a go-cron upgrade changes when a schedule runs.
+
 func TestParserReadsSevenAsSunday(t *testing.T) {
 	// 2026-10-19 is a Monday.
 	monday := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC)

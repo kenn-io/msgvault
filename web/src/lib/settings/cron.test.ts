@@ -143,6 +143,13 @@ describe('describeCron', () => {
     ['*/30 22-2 * * *', 'Every 30 minutes from 22:00 to 02:59'],
     ['50-5/10 * * * *', 'At :00 and :50 past every hour'],
     ['0 4 * nov-feb *', 'At 04:00 every day November to February'],
+    // The daemon reads an endpoint past the end of the field as the start
+    // of the next lap, so these match what it runs.
+    ['*/30 24-2 * * *', 'Every 30 minutes from 00:00 to 02:59'],
+    ['0 4 * 13-2 *', 'At 04:00 every day January to February'],
+    ['0 4 * * 8-1', 'At 04:00 Sunday to Monday'],
+    ['0 4 28-0 * *', 'At 04:00 on the 28th, 29th, 30th, and 31st of the month'],
+    ['70-5 * * * *', 'Never runs'],
     ['CRON_TZ=America/New_York 0 3 * * *', 'At 03:00 every day, America/New York time'],
     ['TZ=UTC */15 * * * *', 'Every 15 minutes, UTC time'],
   ])('describes %s as %s', (expression, description) => {

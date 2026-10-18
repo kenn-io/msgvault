@@ -280,6 +280,8 @@ export function describeCron(expression: string): string {
 
 /** Describes parsed fields; a zone adds ", Europe/Berlin time" at the end. */
 export function describeFields(fields: CronField[], zone?: string): string {
+  // The daemon accepts a wrapped range such as 70-5 that picks no values.
+  if (fields.some((field) => values(field).length === 0)) return 'Never runs';
   const [minute, hour, day, month, weekday] = fields;
   const time = describeTime(minute, hour);
   const days = describeDays(day, month, weekday);
@@ -337,8 +339,10 @@ function describeHourWindow(hour: CronField): string {
   if (step) return `every ${ordinalStep(step)} hour`;
   if (hour.terms.length === 1) {
     const term = hour.terms[0];
-    if (term.step === 1 && term.start !== term.end) return `from ${pad(term.start)}:00 to ${pad(term.end)}:59`;
-    if (term.step === 1) return `during the ${pad(term.start)}:00 hour`;
+    const start = position(hour.name, term.start);
+    const end = position(hour.name, term.end);
+    if (term.step === 1 && start !== end) return `from ${pad(start)}:00 to ${pad(end)}:59`;
+    if (term.step === 1) return `during the ${pad(start)}:00 hour`;
   }
   return `during hours ${describeGeneric(hour)}`;
 }
@@ -374,9 +378,9 @@ function describeWeekday(weekday: CronField): string {
   if (weekday.terms.length === 1) {
     const term = weekday.terms[0];
     if (term.step === 1 && term.start === 1 && term.end === 5) return 'on weekdays';
-    if (term.step === 1 && term.start !== term.end) {
-      return `${WEEKDAYS[term.start % 7]} to ${WEEKDAYS[term.end % 7]}`;
-    }
+    const start = position(weekday.name, term.start);
+    const end = position(weekday.name, term.end);
+    if (term.step === 1 && start !== end) return `${WEEKDAYS[start]} to ${WEEKDAYS[end]}`;
   }
   const list = values(weekday);
   if (list.length === 1) return `on ${WEEKDAYS[list[0]]}s`;
@@ -390,7 +394,9 @@ function describeMonth(month: CronField): string {
   if (step) return `every ${ordinalStep(step)} month`;
   if (month.terms.length === 1) {
     const term = month.terms[0];
-    if (term.step === 1 && term.start !== term.end) return `${MONTHS[term.start - 1]} to ${MONTHS[term.end - 1]}`;
+    const start = position(month.name, term.start);
+    const end = position(month.name, term.end);
+    if (term.step === 1 && start !== end) return `${MONTHS[start - 1]} to ${MONTHS[end - 1]}`;
   }
   const list = values(month);
   if (list.length <= 4) return `in ${joinWords(list.map((m) => MONTHS[m - 1]))}`;
@@ -407,18 +413,33 @@ function describeGeneric(field: CronField): string {
 }
 
 function values(field: CronField): number[] {
-  const spec = CRON_FIELDS.find((candidate) => candidate.name === field.name);
-  if (!spec) return [];
+  const spec = specFor(field.name);
   const span = spec.max - spec.min + 1;
   const set = new Set<number>();
   for (const term of field.terms) {
     const last = term.start > term.end ? term.end + span : term.end;
-    for (let value = term.start; value <= last; value += term.step) {
-      const wrapped = value > spec.max ? value - span : value;
-      set.add(field.name === 'weekday' ? wrapped % 7 : wrapped);
-    }
+    for (let value = term.start; value <= last; value += term.step) set.add(position(field.name, value));
   }
   return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * Where a range endpoint lands in its field. The daemon wraps a range whose
+ * start comes after its end into the next lap of the field, so 60 in the
+ * minute field is minute 0 and 0 in the day field is the 31st. Weekday 7 is
+ * Sunday.
+ */
+function position(name: CronFieldName, value: number): number {
+  const spec = specFor(name);
+  const span = spec.max - spec.min + 1;
+  const wrapped = value > spec.max ? value - span : value < spec.min ? value + span : value;
+  return name === 'weekday' ? wrapped % 7 : wrapped;
+}
+
+function specFor(name: CronFieldName): CronFieldSpec {
+  const spec = CRON_FIELDS.find((candidate) => candidate.name === name);
+  if (!spec) throw new Error(`unknown cron field ${name}`);
+  return spec;
 }
 
 function ordinalStep(step: number): string {
