@@ -738,12 +738,28 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	child.Stdout = writer
 	var stderr bytes.Buffer
 	child.Stderr = &stderr
+	graph.mu.Lock()
+	beforeCLIWrites := graph.writes
+	graph.mu.Unlock()
 	requirements.NoError(child.Run(), stderr.String())
+	graph.mu.Lock()
+	assertions.Equal(beforeCLIWrites+1, graph.writes, "the CLI must commit one Graph write before receipt recovery")
+	graph.mu.Unlock()
+	storedReceipt, err := adapter.store.LookupInboxReceipt(t.Context(), cliGrant.ID, target.SourceID, request.IdempotencyKey)
+	requirements.NoError(err)
+	requirements.NotNil(storedReceipt)
+	assertions.Equal(inboxcontrol.StatusVerified, storedReceipt.Status)
+	assertions.Equal(request.IdempotencyKey, storedReceipt.IdempotencyKey)
+	requirements.NotNil(storedReceipt.After)
 	recovered, err := cliClient.ControlInbox(t.Context(), request)
 	requirements.NoError(err)
 	requirements.NotNil(recovered.Receipt)
+	assertions.Equal(storedReceipt.ID, recovered.Receipt.ID, "replay must return the receipt committed by the CLI child")
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status)
 	assertions.Equal(request.IdempotencyKey, recovered.Receipt.IdempotencyKey)
+	graph.mu.Lock()
+	assertions.Equal(beforeCLIWrites+1, graph.writes, "recovery by the original key does not repeat the CLI write")
+	graph.mu.Unlock()
 	requirements.NoError(cliOwner.RevokeAgentToken(t.Context(), cliGrant.ID))
 	beforeFactory := graph.factory.Load()
 	_, err = cliClient.ControlInbox(t.Context(), request)

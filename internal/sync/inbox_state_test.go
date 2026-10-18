@@ -100,6 +100,78 @@ func TestInboxGmailSyncRecordsAndRefreshesProviderState(t *testing.T) {
 	assertions.Len(env.Mock.GetMessageCalls, bodyCalls)
 }
 
+func TestFullSyncRetriesWhenGmailObservationPersistenceFails(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	env := newTestEnv(t)
+	source := env.CreateSource(t)
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "INBOX", Name: "INBOX", Type: "system"},
+		{ID: "UNREAD", Name: "UNREAD", Type: "system"},
+		{ID: "STARRED", Name: "Starred", Type: "system"},
+	}
+	env.Mock.Profile.MessagesTotal = 1
+	env.Mock.Profile.HistoryID = 123
+	env.Mock.AddMessage("sync-observation-retry", testMIME(), []string{"INBOX", "UNREAD"})
+	env.Mock.Messages["sync-observation-retry"].HistoryID = 123
+	client := &inboxSyncMetadataAPI{MockAPI: env.Mock}
+	env.Syncer = New(client, env.Store, nil)
+	runFullSync(t, env)
+
+	initialSource, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	assertions.Equal("123", initialSource.SyncCursor.String)
+	archived, err := env.Store.SourceMessageMetadata(source.ID)
+	requirements.NoError(err)
+	row, ok := archived["sync-observation-retry"]
+	requirements.True(ok)
+	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: row.ID, ProviderID: "sync-observation-retry"}
+
+	env.Mock.Messages["sync-observation-retry"].LabelIDs = []string{"STARRED"}
+	env.Mock.Messages["sync-observation-retry"].HistoryID = 456
+	env.Mock.Profile.HistoryID = 456
+	env.SetOptions(t, func(options *Options) { options.NoResume = true })
+	env.Syncer = New(client, env.Store, env.Syncer.opts)
+	_, err = env.Store.DB().Exec(`
+		CREATE TRIGGER fail_gmail_inbox_observation
+		BEFORE UPDATE ON inbox_provider_states
+		FOR EACH ROW BEGIN
+			SELECT RAISE(ABORT, 'synthetic inbox observation write failure');
+		END
+	`)
+	requirements.NoError(err)
+	t.Cleanup(func() {
+		_, _ = env.Store.DB().Exec("DROP TRIGGER IF EXISTS fail_gmail_inbox_observation")
+	})
+
+	failedSummary, err := env.Syncer.Full(env.Context, source.Identifier)
+
+	requirements.ErrorContains(err, "synthetic inbox observation write failure")
+	assertions.Nil(failedSummary)
+	unchangedSource, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	assertions.Equal("123", unchangedSource.SyncCursor.String, "failed metadata persistence must leave the handoff cursor retryable")
+	unchangedState, err := env.Store.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(unchangedState)
+	assertions.Equal("123", unchangedState.Revision)
+	assertions.ElementsMatch([]string{"INBOX", "UNREAD"}, unchangedState.Tags)
+
+	_, err = env.Store.DB().Exec("DROP TRIGGER fail_gmail_inbox_observation")
+	requirements.NoError(err)
+	runFullSync(t, env)
+
+	recoveredSource, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	assertions.Equal("456", recoveredSource.SyncCursor.String)
+	recoveredState, err := env.Store.GetInboxProviderState(t.Context(), target)
+	requirements.NoError(err)
+	requirements.NotNil(recoveredState)
+	assertions.Equal("456", recoveredState.Revision)
+	assertions.Equal([]string{"STARRED"}, recoveredState.Tags)
+}
+
 func TestInboxGmailSyncMissingWatermarkRemainsUnknown(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
