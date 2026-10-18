@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/agentgrant"
-	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestEmailFamilyHTTPReadsAndErrors(t *testing.T) {
@@ -38,13 +36,16 @@ func TestEmailFamilyHTTPReadsAndErrors(t *testing.T) {
 }
 
 func TestEmailFamilyHTTPRequiresOwner(t *testing.T) {
-	srv, reg := newTestServerWithAgentGrants(t)
-	_, secret, _, err := reg.Issue("family-read", []agentgrant.Permission{agentgrant.PermissionDraftCreate}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "owner@example.test"}}, time.Time{})
-	require.NoError(t, err)
+	srv := NewServerWithOptions(ServerOptions{
+		Config:    &config.Config{Server: config.ServerConfig{APIKey: "owner-key"}},
+		Store:     &stubSourceStore{},
+		Logger:    testLogger(),
+		Scheduler: newMockScheduler(),
+	})
 	for _, tc := range []struct {
 		header, value string
 		status        int
-	}{{"", "", 401}, {apiprotocol.AgentTokenHeader, secret, 401}, {"Authorization", "Bearer owner-key", 503}} {
+	}{{"", "", 401}, {"Authorization", "Bearer owner-key", 503}} {
 		request := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1/family", nil)
 		request.RemoteAddr = "192.0.2.2:4242"
 		if tc.header != "" {

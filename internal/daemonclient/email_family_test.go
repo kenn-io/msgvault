@@ -18,6 +18,7 @@ import (
 
 type largeEmailFamilyStore struct {
 	*store.Store
+
 	family *store.EmailFamily
 }
 
