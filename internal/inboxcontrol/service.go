@@ -431,9 +431,19 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 	if err := s.authorize(receiptAuthorityContext(ctx, receipt), principal, receipt.Intent); err != nil {
 		return nil, err
 	}
+	authorizeResult := func(result *Result, outcome error) (*Result, error) {
+		authorizedReceipt := receipt
+		if result != nil && result.Receipt != nil {
+			authorizedReceipt = result.Receipt
+		}
+		if err := s.authorize(receiptAuthorityContext(ctx, authorizedReceipt), principal, authorizedReceipt.Intent); err != nil {
+			return nil, err
+		}
+		return result, outcome
+	}
 	read := receipt.Intent
 	if receipt.Projected == nil {
-		return result, ErrUnavailable
+		return authorizeResult(result, ErrUnavailable)
 	}
 	if receipt.After != nil && receipt.After.Target != (Target{}) {
 		read.Target = &receipt.After.Target
@@ -445,30 +455,30 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 			read.ResolvedFolder = receipt.Projected.ProvisionedFolder
 		} else {
 			// A label with the requested name is insufficient dispatch evidence.
-			return result, ErrUnavailable
+			return authorizeResult(result, ErrUnavailable)
 		}
 	}
 	resolveContext := ctx
 	if imapMoveRequest(receipt.Intent) && read.Target != nil && *read.Target != receipt.Before.Target {
 		if receipt.After == nil || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, *read.Target) {
-			return result, ErrOutcomeUnknown
+			return authorizeResult(result, ErrOutcomeUnknown)
 		}
 		resolveContext = context.WithValue(ctx, receiptMoveTargetKey{}, *read.Target)
 	}
 	provider, err := s.Resolve(resolveContext, read)
 	if err != nil || provider == nil {
-		return result, ErrUnavailable
+		return authorizeResult(result, ErrUnavailable)
 	}
 	defer closeProvider(provider)
 	after, err := provider.Observe(ctx, read)
 	if err != nil || !observationMatchesRequest(after, read) {
-		return result, ErrOutcomeUnknown
+		return authorizeResult(result, ErrOutcomeUnknown)
 	}
 	if err := provider.Verify(read, receipt.Before, *receipt.Projected, after); err != nil {
-		return result, ErrOutcomeUnknown
+		return authorizeResult(result, ErrOutcomeUnknown)
 	}
 	if err := verifyMovedSource(ctx, provider, receipt.Before, after); err != nil {
-		return result, ErrOutcomeUnknown
+		return authorizeResult(result, ErrOutcomeUnknown)
 	}
 	// Local reconciliation and durable receipt settlement have independent
 	// deadlines, even after cancellation or a slow provider readback.
@@ -479,10 +489,12 @@ func (s *Service) controlReceipt(ctx context.Context, request Request, principal
 	completion, cancel := context.WithTimeout(context.WithoutCancel(completionBase), 5*time.Second)
 	defer cancel()
 	if s.ReconcileState == nil || s.ReconcileState(completion, receipt.Before, after) != nil {
-		return s.finishDetached(ctx, result, StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
+		settled, outcome := s.finishDetached(ctx, result, StatusReconcileOnly, &after, "local-reconcile-failed", ErrReconcileOnly)
+		return authorizeResult(settled, outcome)
 	}
 	result.After = &after
-	return s.finishDetached(ctx, result, StatusVerified, &after, "", nil)
+	settled, outcome := s.finishDetached(ctx, result, StatusVerified, &after, "", nil)
+	return authorizeResult(settled, outcome)
 }
 
 func requestSourceID(request Request) int64 {

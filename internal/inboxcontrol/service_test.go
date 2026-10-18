@@ -437,6 +437,57 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 	assertions.Equal(1, f.provider.dispatches)
 }
 
+func TestInboxControlReceiptReauthorizesAfterRecoveryObservation(t *testing.T) {
+	t.Run("settles before suppressing result", func(t *testing.T) {
+		f := newControlFixture(t)
+		r := f.execution(t)
+		reconcile := f.service.ReconcileState
+		f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+			return errors.New("fixture local failure")
+		}
+		pending, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+		require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
+		require.NotNil(t, pending)
+		f.service.ReconcileState = reconcile
+		f.provider.onObserve = func(context.Context, int, inboxcontrol.Request) error {
+			f.denied = true
+			return nil
+		}
+
+		result, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: pending.Receipt.ID}, f.principal, f.gate)
+		require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+		assert.Nil(t, result)
+		stored, err := f.archive.Store.GetInboxReceipt(t.Context(), pending.Receipt.ID)
+		require.NoError(t, err)
+		assert.Equal(t, inboxcontrol.StatusVerified, stored.Status)
+		assert.Equal(t, 1, f.provider.dispatches)
+	})
+
+	t.Run("suppresses readback error", func(t *testing.T) {
+		f := newControlFixture(t)
+		r := f.execution(t)
+		f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+			return errors.New("fixture local failure")
+		}
+		pending, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+		require.ErrorIs(t, err, inboxcontrol.ErrReconcileOnly)
+		require.NotNil(t, pending)
+		f.provider.onObserve = func(context.Context, int, inboxcontrol.Request) error {
+			f.denied = true
+			return nil
+		}
+		f.provider.observeError = errors.New("fixture readback failure")
+
+		result, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: pending.Receipt.ID}, f.principal, f.gate)
+		require.ErrorIs(t, err, inboxcontrol.ErrDenied)
+		assert.Nil(t, result)
+		stored, err := f.archive.Store.GetInboxReceipt(t.Context(), pending.Receipt.ID)
+		require.NoError(t, err)
+		assert.Equal(t, inboxcontrol.StatusReconcileOnly, stored.Status)
+		assert.Equal(t, 1, f.provider.dispatches)
+	})
+}
+
 func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
