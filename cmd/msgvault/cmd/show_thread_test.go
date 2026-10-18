@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -61,6 +63,16 @@ func TestLoadThreadMessagesBeyondRateLimitBurst(t *testing.T) {
 }
 
 func TestShowThreadPaginationAndIdentity(t *testing.T) {
+	// Serving tests permanently disable telemetry in their process.
+	// Keep the successful-read assertions in a fresh process.
+	const subprocessEnv = "MSGVAULT_SHOW_THREAD_TEST"
+	if os.Getenv(subprocessEnv) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestShowThreadPaginationAndIdentity$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args are fixed test flags.
+		cmd.Env = append(os.Environ(), subprocessEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return
+	}
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
