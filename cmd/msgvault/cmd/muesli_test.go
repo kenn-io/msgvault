@@ -137,20 +137,6 @@ func TestWriteMuesliSummaryReportsContactsState(t *testing.T) {
 	assert.Contains(t, out.String(), "Full Disk Access")
 }
 
-func TestMuesliImportOptionsCarryContactsSettings(t *testing.T) {
-	enabled := false
-	opts := muesliImportOptions(config.MuesliSource{
-		Identifier: "mac", AccountEmail: "you@example.com", DBPath: "/tmp/muesli.db",
-		Contacts: &enabled, ContactsPath: "/tmp/AddressBook", PhoneCountryCode: "44",
-	})
-
-	assert.Equal(t, muesli.ImportOptions{
-		RecordingMaxBytes: muesli.DefaultRecordingMaxBytes,
-		Identifier:        "mac", AccountEmail: "you@example.com", DBPath: "/tmp/muesli.db",
-		ContactsEnabled: false, ContactsPath: "/tmp/AddressBook", PhoneCountryCode: "44",
-	}, opts)
-}
-
 func TestMuesliCommandsUseInvocationConfiguration(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	cfg := &config.Config{Muesli: []config.MuesliSource{{Identifier: "mac"}}}

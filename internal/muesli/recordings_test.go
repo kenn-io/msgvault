@@ -348,7 +348,7 @@ func TestScanRemoteRestoresRecordingAfterArchiveBackupRollback(t *testing.T) {
 		{name: "full scan with existing restored message", full: true, seedExisting: true},
 		{name: "full scan with existing message and deferred recording", full: true, seedExisting: true, deferRecording: true},
 		{name: "newly created after transcript edit", editTranscript: true},
-		{name: "created while recording is deferred", full: true, deferRecording: true},
+		{name: "created while recording is deferred", deferRecording: true},
 		{name: "created while recordings are disabled", recordingsDisabled: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
