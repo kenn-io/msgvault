@@ -104,7 +104,7 @@ func (e *Executor) WithProgress(p Progress) *Executor {
 
 // ExecuteOptions configures deletion execution.
 type ExecuteOptions struct {
-	Method    Method // Trash or permanent delete
+	Method    Method // Must be MethodTrash or MethodDelete; unset or unknown is an error
 	BatchSize int    // Messages per batch for batch delete API
 	Resume    bool   // Resume from last checkpoint
 }
@@ -413,6 +413,9 @@ func (e *Executor) persistTerminalManifest(manifestID string, manifest *Manifest
 func (e *Executor) Execute(ctx context.Context, manifestID string, opts *ExecuteOptions) (retErr error) {
 	if opts == nil {
 		opts = DefaultExecuteOptions()
+	}
+	if opts.Method != MethodTrash && opts.Method != MethodDelete {
+		return fmt.Errorf("unsupported deletion method %q", opts.Method)
 	}
 	batchSize := opts.BatchSize
 	if batchSize == 0 {
