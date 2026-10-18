@@ -171,6 +171,10 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "loop_suppressions", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
 	},
+	"open_loops": {
+		TableName: "open_loops", KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("counterparty_person_id")},
+	},
 	"vcard_resource_envelopes": {
 		TableName: "vcard_resource_envelopes", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},

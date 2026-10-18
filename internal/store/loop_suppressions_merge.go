@@ -24,6 +24,17 @@ func mergeParticipantLoopSuppressionsTx(
 	return nil
 }
 
+func mergeParticipantLoopCounterpartiesTx(
+	ctx context.Context, tx *loggedTx, absorbedID, survivorID int64,
+) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops
+		SET counterparty_participant_id = ?
+		WHERE counterparty_participant_id = ?`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("transfer absorbed participant loop counterparties: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) mergePersonLoopSuppressionsTx(
 	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
 ) error {
@@ -58,6 +69,17 @@ func (s *Store) mergePersonLoopSuppressionsTx(
 		personMergeActionDeduplicated, &survivorSuppressionID,
 	); err != nil {
 		return fmt.Errorf("record deduplicated person loop suppression: %w", err)
+	}
+	return nil
+}
+
+func mergePersonLoopCounterpartiesTx(
+	ctx context.Context, tx *loggedTx, survivorID, absorbedID int64,
+) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops
+		SET counterparty_person_id = ?
+		WHERE counterparty_person_id = ?`, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("transfer absorbed person loop counterparties: %w", err)
 	}
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestMergeParticipantsTransfersAndDeduplicatesLoopSuppressions(t *testing.T) {
@@ -22,7 +22,8 @@ func TestMergeParticipantsTransfersAndDeduplicatesLoopSuppressions(t *testing.T)
 			assert := assert.New(t)
 			require := require.New(t)
 			ctx := t.Context()
-			st := testutil.NewTestStore(t)
+			f := storetest.New(t)
+			st := f.Store
 			survivorID, err := st.EnsureParticipant("survivor@example.test", "Survivor", "example.test")
 			require.NoError(err)
 			absorbedID, err := st.EnsureParticipant("absorbed@example.test", "Absorbed", "example.test")
@@ -35,6 +36,11 @@ func TestMergeParticipantsTransfersAndDeduplicatesLoopSuppressions(t *testing.T)
 			_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO loop_suppressions
 				(target_kind, participant_id, note) VALUES ('participant', ?, 'absorbed mute')`), absorbedID)
 			require.NoError(err)
+			loopID := insertSchemaLoop(t, f, "participant-merge-loop", "reply_owed", "turn_state")
+			loopExec(t, st, `UPDATE open_loops SET counterparty_participant_id = ?, summary = ?,
+				status = 'closed', closed_at = CURRENT_TIMESTAMP,
+				closed_reason = 'done', closed_by = 'user' WHERE id = ?`,
+				absorbedID, "preserve loop history", loopID)
 
 			require.NoError(st.MergeParticipantsContext(ctx, absorbedID, survivorID))
 
@@ -46,6 +52,15 @@ func TestMergeParticipantsTransfersAndDeduplicatesLoopSuppressions(t *testing.T)
 			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*) FROM loop_suppressions
 				WHERE target_kind = 'participant'`)).Scan(&remaining))
 			assert.Equal(1, remaining)
+			var loopParticipantID int64
+			var loopStatus, summary, closedReason string
+			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT counterparty_participant_id,
+				status, summary, closed_reason FROM open_loops WHERE id = ?`), loopID).Scan(
+				&loopParticipantID, &loopStatus, &summary, &closedReason))
+			assert.Equal(survivorID, loopParticipantID)
+			assert.Equal("closed", loopStatus)
+			assert.Equal("preserve loop history", summary)
+			assert.Equal("done", closedReason)
 		})
 	}
 }
@@ -62,7 +77,8 @@ func TestMergePersonsTransfersAndRestoresLoopSuppressions(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			ctx := t.Context()
-			st := testutil.NewTestStore(t)
+			f := storetest.New(t)
+			st := f.Store
 			survivorParticipantID, err := st.EnsureParticipant(
 				"person-survivor@example.test", "Survivor", "example.test")
 			require.NoError(err)
@@ -81,6 +97,11 @@ func TestMergePersonsTransfersAndRestoresLoopSuppressions(t *testing.T) {
 			_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO loop_suppressions
 				(target_kind, person_id, note) VALUES ('person', ?, 'absorbed mute')`), absorbed.ID)
 			require.NoError(err)
+			loopID := insertSchemaLoop(t, f, "person-merge-loop", "reply_owed", "turn_state")
+			loopExec(t, st, `UPDATE open_loops SET counterparty_person_id = ?, summary = ?,
+				status = 'closed', closed_at = CURRENT_TIMESTAMP,
+				closed_reason = 'done', closed_by = 'user' WHERE id = ?`,
+				absorbed.ID, "preserve loop history", loopID)
 
 			merged, err := st.MergePersonsContext(ctx, store.PersonMergeRequest{
 				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
@@ -89,6 +110,15 @@ func TestMergePersonsTransfersAndRestoresLoopSuppressions(t *testing.T) {
 				IdempotencyKey:           "merge-loop-suppressions", Actor: "test",
 			})
 			require.NoError(err)
+			var mergedLoopPersonID int64
+			var loopStatus, summary, closedReason string
+			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT counterparty_person_id,
+				status, summary, closed_reason FROM open_loops WHERE id = ?`), loopID).Scan(
+				&mergedLoopPersonID, &loopStatus, &summary, &closedReason))
+			assert.Equal(merged.Person.ID, mergedLoopPersonID)
+			assert.Equal("closed", loopStatus)
+			assert.Equal("preserve loop history", summary)
+			assert.Equal("done", closedReason)
 			var mergedNote string
 			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT note FROM loop_suppressions
 				WHERE person_id = ?`), merged.Person.ID).Scan(&mergedNote))
@@ -107,6 +137,14 @@ func TestMergePersonsTransfersAndRestoresLoopSuppressions(t *testing.T) {
 			require.NoError(err)
 			assert.True(split.ExactReversal)
 			assert.Empty(split.UnrestoredRows)
+			var splitLoopPersonID int64
+			require.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT counterparty_person_id,
+				status, summary, closed_reason FROM open_loops WHERE id = ?`), loopID).Scan(
+				&splitLoopPersonID, &loopStatus, &summary, &closedReason))
+			assert.Equal(split.NewPerson.ID, splitLoopPersonID)
+			assert.Equal("closed", loopStatus)
+			assert.Equal("preserve loop history", summary)
+			assert.Equal("done", closedReason)
 
 			rows, err := st.DB().QueryContext(ctx, st.Rebind(`SELECT person_id, note FROM loop_suppressions
 				WHERE target_kind = 'person' ORDER BY person_id`))
