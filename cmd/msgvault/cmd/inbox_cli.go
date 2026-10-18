@@ -18,7 +18,7 @@ const maxInboxCLIRequest = 1 << 20
 func init() { rootCmd.AddCommand(newInboxCmd()) }
 
 func newInboxCmd() *cobra.Command {
-	parent := &cobra.Command{Use: "inbox", Short: "Observe and control exact native inbox items through the daemon", Long: "Read exact inbox metadata, preview native actions, and retrieve durable receipts. Mutation commands preview by default. Execute with --apply and the expected state, signed preview token, and idempotency key in the request. No command sends a message."}
+	parent := &cobra.Command{Use: "inbox", Short: "Observe and control inbox items through the daemon", Long: "Read exact inbox metadata, preview native actions, and retrieve durable receipts. Mutation commands preview by default. Execute with --apply and the expected state, signed preview token, and idempotency key in the request. No command sends a message."}
 	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpGetCapabilities, inboxcontrol.OpGetState, inboxcontrol.OpListFolders, inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpTags, inboxcontrol.OpCreateFolder, inboxcontrol.OpReceiptGet, inboxcontrol.OpReconcile} {
 		var requestPath string
 		var apply bool

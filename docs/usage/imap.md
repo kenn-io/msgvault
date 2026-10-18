@@ -181,7 +181,7 @@ current tags before retrying.
 
 ## Control an exact server copy (unreleased)
 
-The [`inbox` commands](../cli-reference.md#inbox) preview and change one
+The [`inbox` commands](chat.md#native-imap-inbox-control) preview and change one
 recorded IMAP mailbox copy through the daemon. Use an owner-supplied target
 containing the account, archived item, mailbox, UIDVALIDITY, and UID. These last
 two server values identify the mailbox generation and the message within it.
@@ -195,7 +195,7 @@ msgvault inbox set-read --request target.json > preview.json
 
 Mutation commands preview by default. Prepare execution from the returned
 `before` state and signed `preview_token`, add an `idempotency_key`, and use
-`--apply` as described in the [CLI reference](../cli-reference.md#inbox).
+`--apply` as described in the [native IMAP Inbox contract](chat.md#native-imap-inbox-control).
 Preview reads the server without changing it. Execution separately checks
 mailbox write access. `set-read` and `set-unread` change the server's `\Seen`
 flag while preserving the local archive's read state.

@@ -94,6 +94,7 @@ type receiptCallerContextKey struct{}
 
 type signalReceiptReadLedger struct {
 	inboxcontrol.Ledger
+
 	secondRead chan struct{}
 	once       sync.Once
 }
@@ -662,7 +663,7 @@ func TestInboxReceiptReconcileReloadsAfterWaitingForGate(t *testing.T) {
 		select {
 		case <-signal:
 		case <-time.After(5 * time.Second):
-			requirements.FailNow("%s did not occur", name)
+			requirements.FailNowf("%s did not occur", name)
 		}
 	}
 	for name, done := range map[string]<-chan controlResult{"first reconciliation": firstDone, "second reconciliation": secondDone} {
@@ -673,7 +674,7 @@ func TestInboxReceiptReconcileReloadsAfterWaitingForGate(t *testing.T) {
 			requirements.NotNil(got.result.Receipt)
 			assertions.Equal(inboxcontrol.StatusVerified, got.result.Receipt.Status, "%s sees the settled receipt", name)
 		case <-time.After(5 * time.Second):
-			requirements.FailNow("%s did not complete", name)
+			requirements.FailNowf("%s did not complete", name)
 		}
 	}
 	assertions.Equal(readsBefore+1, f.provider.reads, "the second request returns the refreshed terminal receipt without another provider observation")

@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"math"
@@ -69,42 +68,23 @@ func retainSQLiteSourceIDHighWaterContext(ctx context.Context, tx contextStateme
 	return writeSourceIDHighWaterContext(ctx, tx, value)
 }
 
-func (s *Store) getOrCreateSQLiteSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
-	var source *Source
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		// withTx applies any current sync-generation fence before this writer
-		// reservation; do not acquire a new identity/sync lock after it.
-		if err := reserveSourceIDWriterContext(ctx, tx); err != nil {
-			return err
-		}
-		var err error
-		source, err = scanSource(tx.QueryRowContext(ctx, `SELECT id, source_type,
-			identifier, display_name, google_user_id, last_sync_at, sync_cursor,
-			sync_config, oauth_app, created_at, updated_at
-			FROM sources WHERE source_type=? AND identifier=?`, sourceType, identifier))
-		if err == nil {
-			return nil // An existing tuple needs no new ID, even at exhaustion.
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		value, err := sourceIDHighWaterContext(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if value == math.MaxInt64 {
-			return errors.New("source ID supply exhausted")
-		}
-		if err := writeSourceIDHighWaterContext(ctx, tx, value+1); err != nil {
-			return err
-		}
-		now := s.dialect.Now()
-		source, err = scanSource(tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources
-			(id,source_type,identifier,created_at,updated_at) VALUES(?,?,?,%s,%s)
-			ON CONFLICT(source_type,identifier) DO UPDATE SET identifier=sources.identifier
-			RETURNING id,source_type,identifier,display_name,google_user_id,
-			last_sync_at,sync_cursor,sync_config,oauth_app,created_at,updated_at`, now, now), value+1, sourceType, identifier))
-		return err
-	})
-	return source, err
+// allocateSQLiteSourceIDContext reserves and advances the retained ID inside
+// the source creation transaction. Call after the transaction's sync fence so
+// first use of the counter serializes independent SQLite connections.
+func allocateSQLiteSourceIDContext(ctx context.Context, tx contextStatementQuerier) (int64, error) {
+	if err := reserveSourceIDWriterContext(ctx, tx); err != nil {
+		return 0, err
+	}
+	value, err := sourceIDHighWaterContext(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if value == math.MaxInt64 {
+		return 0, errors.New("source ID supply exhausted")
+	}
+	next := value + 1
+	if err := writeSourceIDHighWaterContext(ctx, tx, next); err != nil {
+		return 0, err
+	}
+	return next, nil
 }

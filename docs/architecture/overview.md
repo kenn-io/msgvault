@@ -86,8 +86,8 @@ FLAGS from observed empty flags. Native IMAP MOVE mappings become durable before
 destination readback; reconciliation changes only the exact mailbox copy while
 preserving unrelated memberships and local read state. Microsoft mail sync
 atomically refreshes category labels and native metadata, keeping local archive
-read markers separate. [Inbox control](../api-server.md#native-gmail-inbox-control)
-and its [IMAP contract](../api-server.md#native-imap-inbox-control) own the
+read markers separate. [Inbox control](../usage/chat.md#native-gmail-inbox-control)
+and its [IMAP contract](../usage/chat.md#native-imap-inbox-control) own the
 public behavior and current provider support.
 
 ## Responsibilities

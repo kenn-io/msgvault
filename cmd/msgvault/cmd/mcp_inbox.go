@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
@@ -12,7 +13,11 @@ import (
 
 func admitInboxMCP(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
 	descriptor, err := client.MCPCapabilities(ctx)
-	if err != nil || !descriptor.HasInboxContract() {
+	admitInboxMCPCapabilities(descriptor, err, opts, owner)
+}
+
+func admitInboxMCPCapabilities(descriptor *apiprotocol.MCPCapabilities, err error, opts *mcpserver.ServeOptions, owner bool) {
+	if err != nil || descriptor == nil || !descriptor.HasInboxContract() {
 		return
 	}
 	for _, op := range inboxMCPOperations(opts.GrantPermissions, owner) {

@@ -133,10 +133,10 @@ Category writes need current `Mail.ReadWrite` evidence as well as `inbox.read`
 and `inbox.tag`; they preserve native read state and the actual folder. Other
 Microsoft Inbox actions are unsupported. Native control does not discover
 candidates or run batches. See
-[the API contract](../api-server.md#native-gmail-inbox-control) for request
+[the native Inbox contract](#native-gmail-inbox-control) for request
 fields, label semantics, permissions, receipt recovery, and implemented limits.
 
-## Native IMAP Inbox control
+## Native IMAP Inbox control {#native-imap-inbox-control}
 
 The same Inbox tools and signed preview workflow support exact IMAP mailbox
 copies. An owner supplies the recorded account/item/mailbox/UIDVALIDITY/UID
@@ -147,7 +147,7 @@ form of `update_message_tags` for signed keyword edits.
 
 Capabilities depend on current native evidence and do not establish write
 access. Uncertain writes retain receipts; reconciliation never repeats MOVE or
-CREATE. See [the IMAP contract](../api-server.md#native-imap-inbox-control) for
+CREATE. See [the IMAP contract](#native-imap-inbox-control) for
 extension requirements, account binding, and recovery limits. The existing
 owner tag tool form keeps its separate behavior.
 

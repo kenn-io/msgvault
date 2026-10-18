@@ -76,7 +76,12 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 					}
 					assert.ElementsMatch(t, tc.add, delta.Add)
 					assert.ElementsMatch(t, tc.remove, delta.Remove)
-					labels = emailtags.Project(labels, emailtags.MessageTagChange{Add: delta.Add, Remove: delta.Remove}, false)
+					labels = slices.DeleteFunc(labels, func(id string) bool { return slices.Contains(delta.Remove, id) })
+					for _, id := range delta.Add {
+						if !slices.Contains(labels, id) {
+							labels = append(labels, id)
+						}
+					}
 					// Another actor adds a label after dispatch. Never restore a full snapshot.
 					labels = append(labels, "ConcurrentLabel")
 					_, _ = w.Write([]byte(`{"id":"message-1"}`))
@@ -374,7 +379,7 @@ func TestInboxGmailMetadataBatchUsesBoundedConcurrencyAndPreservesResults(t *tes
 	}
 	select {
 	case id := <-started:
-		requirements.FailNow("metadata batch exceeded configured concurrency before a request completed: %s", id)
+		requirements.FailNowf("metadata batch exceeded configured concurrency before a request completed: %s", id)
 	case <-time.After(time.Second):
 	}
 	releaseOnce.Do(func() { close(release) })
@@ -425,7 +430,7 @@ func TestInboxGmailMetadataBatchReturnsCancellation(t *testing.T) {
 	select {
 	case got := <-done:
 		assertions.Nil(got.results)
-		assertions.ErrorIs(got.err, context.Canceled)
+		requirements.ErrorIs(got.err, context.Canceled)
 	case <-time.After(5 * time.Second):
 		requirements.FailNow("metadata batch did not stop after context cancellation")
 	}

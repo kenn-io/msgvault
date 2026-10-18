@@ -354,7 +354,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.MessageTags = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.InboxMinAPISchemaVersion) {
-		admitInboxMCP(ctx, st, &opts, true)
+		admitInboxMCPCapabilities(capabilities, discoveryErr, &opts, true)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st

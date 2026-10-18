@@ -75,10 +75,10 @@ func TestInboxProviderStateRequiresExactMembership(t *testing.T) {
 	assertions.Nil(got)
 }
 
-func TestInboxRetainedReceiptIdentityAllowsTombstonesButLiveTargetDoesNot(t *testing.T) {
+func TestInboxProviderStateObservationAllowsTombstonesButLiveTargetDoesNot(t *testing.T) {
 	f, receipt := inboxReceiptFixture(t)
 	target := receipt.Before.Target
-	for _, column := range []string{"deleted_at", "deleted_from_source_at"} {
+	for i, column := range []string{"deleted_at", "deleted_from_source_at"} {
 		t.Run(column, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -86,9 +86,19 @@ func TestInboxRetainedReceiptIdentityAllowsTombstonesButLiveTargetDoesNot(t *tes
 			requirements.NoError(err)
 
 			requirements.NoError(f.Store.ValidateInboxItemIdentityContext(t.Context(), target), "a retained receipt can still bind to its original item")
-			assertions.ErrorIs(f.Store.ValidateInboxTargetContext(t.Context(), target), inboxcontrol.ErrInvalid, "provider access still requires a live item")
-			_, err = f.Store.ObserveInboxState(t.Context(), receipt.Before)
-			assertions.ErrorIs(err, inboxcontrol.ErrInvalid, "tombstoned items cannot accept new provider observations")
+			requirements.ErrorIs(f.Store.ValidateInboxTargetContext(t.Context(), target), inboxcontrol.ErrInvalid, "provider access still requires a live item")
+			state := receipt.Before
+			state.ObservedAt = state.ObservedAt.Add(time.Duration(i+1) * time.Second)
+			changed, err := f.Store.ObserveInboxState(t.Context(), state)
+			requirements.NoError(err, "sync may update provider metadata for a retained item")
+			assertions.True(changed)
+			stored, err := f.Store.GetInboxProviderState(t.Context(), target)
+			requirements.NoError(err)
+			requirements.NotNil(stored)
+			assertions.Equal(state.ObservedAt, stored.ObservedAt)
+			var stillTombstoned int
+			requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT COUNT(*) FROM messages WHERE id=? AND "+column+" IS NOT NULL"), target.ItemID).Scan(&stillTombstoned))
+			assertions.Equal(1, stillTombstoned, "metadata refresh must preserve the deletion marker")
 
 			_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET "+column+"=NULL WHERE id=?"), target.ItemID)
 			requirements.NoError(err)

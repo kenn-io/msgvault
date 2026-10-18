@@ -48,6 +48,10 @@ func TestMCPCapabilitiesRetainsRouteParameters(t *testing.T) {
 	assertions := assert.New(t)
 	seen := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = io.WriteString(w, `{"api_schema_version":"3.16.0"}`)
+			return
+		}
 		seen <- r.Header.Get("X-Api-Key")
 		_, _ = io.WriteString(w, `{"version":1,"routes":[{"operation_id":"listSourceStatus","method":"GET","path":"/api/v1/sources/status","query_parameters":["source_type"]}]}`)
 	}))

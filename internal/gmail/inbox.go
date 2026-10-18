@@ -251,10 +251,7 @@ func (c *Client) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]Mes
 		return nil, nil
 	}
 	results := make([]MessageLabelsBatchResult, len(ids))
-	concurrency := c.concurrency
-	if concurrency < 1 {
-		concurrency = 1
-	}
+	concurrency := max(c.concurrency, 1)
 	sem := make(chan struct{}, concurrency)
 	group, batchCtx := errgroup.WithContext(ctx)
 	for i, id := range ids {

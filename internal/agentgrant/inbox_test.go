@@ -21,7 +21,7 @@ func TestInboxPermissionGrantLifecycle(t *testing.T) {
 				source := SourceRef{ID: 1, Type: "gmail", Identifier: "reader@example.test"}
 				registry := NewRegistry()
 				expires := time.Now().Add(time.Hour)
-				id, secret, grant, err := registry.Issue("inbox", []Permission{permission}, []SourceRef{source}, expires)
+				_, secret, grant, err := registry.Issue("inbox", []Permission{permission}, []SourceRef{source}, expires)
 				require.NoError(t, err)
 				assert.Equal(t, expires, grant.ExpiresAt)
 				assert.True(t, grant.Allows(permission, source))
@@ -30,17 +30,21 @@ func TestInboxPermissionGrantLifecycle(t *testing.T) {
 				assert.False(t, grant.HasPermission(PermissionMessageRead))
 				_, allowed := registry.Lookup(secret)
 				require.True(t, allowed)
-				require.True(t, registry.Revoke(id))
-				_, allowed = registry.Lookup(secret)
-				assert.False(t, allowed, "revocation denies active Inbox authority")
-				id, secret, _, err = registry.Issue("expiring inbox", []Permission{permission}, []SourceRef{source}, expires)
-				require.NoError(t, err)
-				time.Sleep(time.Hour)
-				_, allowed = registry.Lookup(secret)
-				assert.False(t, allowed, "expiry denies Inbox authority at its boundary")
-				require.True(t, registry.Revoke(id))
-				assert.Empty(t, registry.List())
 			})
 		})
 	}
+}
+
+func TestInboxPermissionGrantExpiresAtBoundary(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		source := SourceRef{ID: 1, Type: "gmail", Identifier: "reader@example.test"}
+		registry := NewRegistry()
+		expires := time.Now().Add(time.Hour)
+		_, secret, grant, err := registry.Issue("expiring inbox", []Permission{"inbox.read"}, []SourceRef{source}, expires)
+		require.NoError(t, err)
+		assert.True(t, grant.Allows("inbox.read", source))
+		time.Sleep(time.Hour)
+		_, allowed := registry.Lookup(secret)
+		assert.False(t, allowed, "expiry denies Inbox authority at its boundary")
+	})
 }

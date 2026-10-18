@@ -49,12 +49,26 @@ func TestInboxLiveDescriptorUsesRegisteredRouteAndCurrentGrant(t *testing.T) {
 		requirements.NoError(json.Unmarshal(w.Body.Bytes(), &descriptor))
 		assertions.Equal(1, descriptor.Version)
 		assertions.Equal(delegated, descriptor.Delegated)
-		requirements.Len(descriptor.Routes, 1)
-		assertions.Equal("controlInbox", descriptor.Routes[0].OperationID)
-		assertions.Equal(http.MethodPost, descriptor.Routes[0].Method)
-		assertions.Equal("/api/v1/inbox/control", descriptor.Routes[0].Path)
+		if delegated {
+			requirements.Len(descriptor.Routes, 1)
+		}
+		var inboxRoute *struct {
+			OperationID       string   `json:"operation_id"`
+			Method            string   `json:"method"`
+			Path              string   `json:"path"`
+			RequestProperties []string `json:"request_properties"`
+		}
+		for i := range descriptor.Routes {
+			if descriptor.Routes[i].OperationID == "controlInbox" {
+				inboxRoute = &descriptor.Routes[i]
+				break
+			}
+		}
+		requirements.NotNil(inboxRoute, "the signed control route is registered for the current caller")
+		assertions.Equal(http.MethodPost, inboxRoute.Method)
+		assertions.Equal("/api/v1/inbox/control", inboxRoute.Path)
 		for _, field := range []string{"operation", "target", "source", "expected", "preview_token", "idempotency_key", "receipt_id", "dry_run", "tags", "destination", "origin_folder"} {
-			assertions.Contains(descriptor.Routes[0].RequestProperties, field)
+			assertions.Contains(inboxRoute.RequestProperties, field)
 		}
 		assertions.Contains(descriptor.InboxOperations, "archive")
 		if delegated {

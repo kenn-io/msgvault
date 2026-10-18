@@ -132,7 +132,7 @@ func TestDaemonInboxIMAPNativeSignedReadState(t *testing.T) {
 		_, err = a.store.DB().Exec(a.store.Rebind("UPDATE messages SET "+column+"=CURRENT_TIMESTAMP WHERE id=?"), target.ItemID)
 		requirements.NoError(err)
 		_, err = a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target}, principal, authorize, gate)
-		assertions.ErrorIs(err, inboxcontrol.ErrDenied, "tombstoned items cannot start new provider reads")
+		requirements.ErrorIs(err, inboxcontrol.ErrDenied, "tombstoned items cannot start new provider reads")
 		retained, err := a.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: result.Receipt.ID}, principal, authorize, gate)
 		requirements.NoError(err, "a verified receipt remains readable while its original item is tombstoned")
 		requirements.NotNil(retained.Receipt)
@@ -561,6 +561,62 @@ func TestDaemonInboxIMAPMoveRechecksGrantAndReplaysOriginalTarget(t *testing.T) 
 	assertions.Zero(counts.copies.Load())
 	assertions.Zero(counts.expunges.Load())
 	assertions.Zero(counts.creates.Load())
+}
+
+func TestDaemonInboxIMAPReadReceiptSurvivesLaterMove(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	a, target, counts := inboxIMAPDaemonFixtureWithCommands(t)
+	a.config.Server.APIKey = "synthetic-native-owner-key"
+	a.config.Server.AgentAccess = true
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: slog.New(slog.DiscardHandler), OperationGate: api.NewSerialOperationGate()}).Router())
+	t.Cleanup(server.Close)
+	client := inboxIMAPDelegatedClient(t, server.URL, a.config.Server.APIKey, target.SourceID, "inbox.read", "inbox.read-state", "inbox.move")
+	source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
+	folders, err := client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpListFolders, Source: &source})
+	requirements.NoError(err)
+	var destination inboxcontrol.Folder
+	for _, folder := range folders.Folders {
+		if folder.ID == "Archive" {
+			destination = folder
+		}
+	}
+	requirements.NotZero(destination.UIDValidity)
+
+	readRequest := inboxcontrol.Request{Operation: inboxcontrol.OpSetRead, Target: &target, DryRun: true}
+	readPreview, err := client.ControlInbox(t.Context(), readRequest)
+	requirements.NoError(err)
+	requirements.NotNil(readPreview.Before)
+	requirements.NotEmpty(readPreview.PreviewToken)
+	readRequest.DryRun, readRequest.Expected, readRequest.PreviewToken, readRequest.IdempotencyKey = false, readPreview.Before, readPreview.PreviewToken, "read-before-move"
+	readResult, err := client.ControlInbox(t.Context(), readRequest)
+	requirements.NoError(err)
+	requirements.NotNil(readResult.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, readResult.Receipt.Status)
+
+	moveRequest := inboxcontrol.Request{Operation: inboxcontrol.OpMove, Target: &target, Destination: &destination, DryRun: true}
+	movePreview, err := client.ControlInbox(t.Context(), moveRequest)
+	requirements.NoError(err)
+	requirements.NotNil(movePreview.Before)
+	requirements.NotEmpty(movePreview.PreviewToken)
+	moveRequest.DryRun, moveRequest.Expected, moveRequest.PreviewToken, moveRequest.IdempotencyKey = false, movePreview.Before, movePreview.PreviewToken, "move-after-read"
+	moveResult, err := client.ControlInbox(t.Context(), moveRequest)
+	requirements.NoError(err)
+	requirements.NotNil(moveResult.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, moveResult.Receipt.Status)
+	_, err = a.store.EmailTagTargetContext(t.Context(), target.ItemID, "INBOX")
+	requirements.Error(err, "the later MOVE removes the earlier receipt's exact membership")
+
+	retained, err := client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: readResult.Receipt.ID})
+	requirements.NoError(err)
+	requirements.NotNil(retained.Receipt)
+	assertions.Equal(readResult.Receipt.ID, retained.Receipt.ID)
+	replay, err := client.ControlInbox(t.Context(), readRequest)
+	requirements.NoError(err, "the earlier idempotency key remains readable after a later MOVE")
+	requirements.NotNil(replay.Receipt)
+	assertions.Equal(readResult.Receipt.ID, replay.Receipt.ID)
+	assertions.Equal(int64(1), counts.stores.Load(), "receipt reads and replay do not repeat the old provider mutation")
+	assertions.Equal(int64(1), counts.moves.Load())
 }
 
 func TestDaemonInboxIMAPCreateFolderHasDurableExactEpoch(t *testing.T) {

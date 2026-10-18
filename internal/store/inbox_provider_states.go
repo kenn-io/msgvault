@@ -39,7 +39,7 @@ func observeInboxStateTx(ctx context.Context, tx *loggedTx, state inboxcontrol.S
 	if err != nil {
 		return false, fmt.Errorf("encode inbox provider observation: %w", err)
 	}
-	if err := validateInboxArchiveTarget(ctx, tx, state.Target); err != nil {
+	if err := validateInboxArchiveObservationTarget(ctx, tx, state.Target); err != nil {
 		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO inbox_provider_states
@@ -84,6 +84,19 @@ func validateInboxArchiveTarget(ctx context.Context, tx *loggedTx, target inboxc
 		if live != 1 {
 			return fmt.Errorf("%w: inbox item is no longer live", inboxcontrol.ErrInvalid)
 		}
+	}
+	if target.SourceType == sourceTypeIMAP {
+		return validateInboxIMAPMembership(ctx, tx, target)
+	}
+	return nil
+}
+
+// Provider observations may refresh retained metadata after an item is
+// tombstoned. This path never authorizes a provider mutation; live item checks
+// remain in validateInboxArchiveTarget.
+func validateInboxArchiveObservationTarget(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
+	if err := validateInboxArchiveIdentity(ctx, tx, target); err != nil {
+		return err
 	}
 	if target.SourceType == sourceTypeIMAP {
 		return validateInboxIMAPMembership(ctx, tx, target)

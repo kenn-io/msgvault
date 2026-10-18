@@ -174,24 +174,32 @@ func TestDaemonMessageTagsReleaseFailureKeepsSavedResult(t *testing.T) {
 			var body struct {
 				Categories []string `json:"categories"`
 			}
-			require.NoError(json.NewDecoder(r.Body).Decode(&body))
+			if !assert.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+				return
+			}
 			tags = body.Categories
 			// Disconnect only this fixture's advisory-lock session. The archive
 			// save uses another connection and must retain its successful result.
 			var lockPID int
-			require.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`
+			if !assert.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`
 				SELECT pid FROM pg_locks
 				WHERE locktype='advisory' AND granted AND objsubid=1
 				AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
 				AND ((classid::bigint << 32) | objid::bigint)=hashtextextended(
 					current_schema() || ':msgvault-sync:' || CAST(CAST(? AS BIGINT) AS TEXT), 0)
-			`), source.ID).Scan(&lockPID))
+			`), source.ID).Scan(&lockPID)) {
+				return
+			}
 			var terminated bool
-			require.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`SELECT pg_terminate_backend(?, 5000)`), lockPID).Scan(&terminated))
-			require.True(terminated)
+			if !assert.NoError(st.DB().QueryRowContext(r.Context(), st.Rebind(`SELECT pg_terminate_backend(?, 5000)`), lockPID).Scan(&terminated)) {
+				return
+			}
+			if !assert.True(terminated) {
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		require.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "immutable-1", "categories": tags, "@odata.etag": `W/"v1"`}))
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"id": "immutable-1", "categories": tags, "@odata.etag": `W/"v1"`}))
 	}))
 	t.Cleanup(server.Close)
 	var logs bytes.Buffer

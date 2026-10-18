@@ -1694,10 +1694,22 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		if shadowed {
 			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
 		}
+		columns := "source_type, identifier, created_at, updated_at"
+		values := "?, ?, %s, %s"
+		args := []any{sourceType, identifier}
+		if !s.IsPostgreSQL() {
+			id, err := allocateSQLiteSourceIDContext(ctx, tx)
+			if err != nil {
+				return err
+			}
+			columns = "id, " + columns
+			values = "?, ?, ?, %s, %s"
+			args = []any{id, sourceType, identifier}
+		}
 		now := s.dialect.Now()
-		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
-   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
-   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (%s)
+   VALUES (%s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+   RETURNING `+sourceCatalogColumns, columns, fmt.Sprintf(values, now, now)), args...)
 		var err error
 		source, err = scanSource(row)
 		if err != nil {

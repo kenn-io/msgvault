@@ -564,15 +564,18 @@ func ReceiptMoveTarget(ctx context.Context) (Target, bool) {
 	return target, ok
 }
 
-// A durable validated mapping permits receipt authorization on the original
-// live item after local reconciliation has retired only its origin membership.
-// Principal/intent checks precede this context; current grants remain required.
+// A durable receipt may authorize retained access to the original item identity
+// after deletion or membership reconciliation. Principal/intent checks and
+// current grants remain required.
 type receiptAuthorityTargetKey struct{}
 
 func receiptAuthorityContext(ctx context.Context, receipt *Receipt) context.Context {
-	if receipt == nil || receipt.Projected == nil || receipt.After == nil || !imapMoveRequest(receipt.Intent) || *receipt.Intent.Target != receipt.Before.Target || receipt.SourceID != receipt.Before.Target.SourceID || receipt.Before.Target.Validate() != nil || receipt.Projected.Target != receipt.Before.Target || receipt.After.Target == receipt.Before.Target || !validDispatchMapping(receipt.Intent, receipt.Before, *receipt.Projected, receipt.After.Target) {
+	if receipt == nil || receipt.Intent.Target == nil || *receipt.Intent.Target != receipt.Before.Target || receipt.SourceID != receipt.Before.Target.SourceID || receipt.Before.Target.Validate() != nil {
 		return ctx
 	}
+	// A durable receipt authenticates access to its original item identity even
+	// after sync or local deletion tombstones that item. Current source and
+	// action authority is still checked by the caller before this hint is used.
 	return context.WithValue(ctx, receiptAuthorityTargetKey{}, receipt.Before.Target)
 }
 
