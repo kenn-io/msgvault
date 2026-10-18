@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -35,7 +36,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	assertions.Equal(before, columns())
 	version, err := s.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(11, version)
+	assertions.Equal(store.SchemaVersion, version)
 	held := insertSchemaLoop(t, f, "held", "reply_owed", "turn_state")
 	done := insertSchemaLoop(t, f, "done", "awaiting_reply", "turn_state")
 	loopExec(t, s, "UPDATE open_loops SET snoozed_until=?,agenda_state='created',fulfilment_suggested_at=CURRENT_TIMESTAMP WHERE id=?", time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), held)

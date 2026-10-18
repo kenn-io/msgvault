@@ -37,6 +37,11 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			}
 		}
 	}
+	hasLiveCoverageGap := func(kind string) bool {
+		return slices.ContainsFunc(live, func(l LiveLoop) bool {
+			return l.Kind == kind && slices.Contains(v.CoverageGaps, l.ID)
+		})
+	}
 	if slices.Contains(supp.Conversations, view.ConversationID) {
 		closeKept("", "muted")
 		return v
@@ -249,19 +254,19 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			// A body budget or read failure cannot prove that the live question
 			// has no recipient or has been withdrawn.
 			keepUncertain(kind)
-			return v
 		}
 		if len(candidates) == 0 {
+			if hasLiveCoverageGap(kind) {
+				return v
+			}
 			closeKept(kind, "withdrawn")
 			return v
 		}
 	}
 	// Missing or unread evidence cannot prove a new turn. Reconciliation can
 	// retry later, but this pass must preserve the older obligation.
-	for _, l := range live {
-		if l.Kind == kind && slices.Contains(v.CoverageGaps, l.ID) {
-			return v
-		}
+	if hasLiveCoverageGap(kind) {
+		return v
 	}
 	if anchor == nil {
 		// Settlement already checked retained anchors, including the extended
