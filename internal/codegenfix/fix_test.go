@@ -32,6 +32,8 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.Contains(string(got), dailyNoteDecoyValidatorBlock())
 	assertions.Contains(string(got), dailyNotePersonIDsValidatorBlock("gte=1"))
 	assertions.NotContains(string(got), dailyNotePersonIDsValidatorBlock("omitempty,gte=1"))
+	assertions.NotContains(string(got), `typesValidator.Var(w.Snippet, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.Subject, "required")`)
 	again, err := RewriteGeneratedValidators(got)
 	require.NoError(t, err)
 	if !bytes.Equal(got, again) {
@@ -62,6 +64,16 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(m.ProviderChatID, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(p.AliasReason, "required")`)
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
+}
+
+func TestRewriteGeneratedValidatorsAllowsEmptyWhoKnowsMetadata(t *testing.T) {
+	assertions := assert.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	assertions.NotContains(string(got), `typesValidator.Var(w.DisplayName, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.EmailAddress, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.Accelerator, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(w.SourceMessageID, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -167,6 +179,24 @@ func (e Evidence) Validate() error {
 	}
 	return errors
 }
+type WhoKnowsEvidence struct {
+	Snippet string
+	Subject string
+	SourceMessageID string
+}
+func (w WhoKnowsEvidence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(w.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(w.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(w.SourceMessageID, "required"); err != nil {
+		errors = errors.Append("SourceMessageID", err)
+	}
+	return errors
+}
 func (e ExploreGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
@@ -185,7 +215,20 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + whoKnowsEmptyStringValidatorFixture()
+}
+
+func whoKnowsEmptyStringValidatorFixture() string {
+	return "type WhoKnowsRanked struct {\n\tDisplayName string\n}\n" +
+		"func (w WhoKnowsRanked) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(w.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n\treturn errors\n}\n" +
+		"type WhoKnowsUnsavedCandidate struct {\n\tDisplayName string\n\tEmailAddress string\n}\n" +
+		"func (w WhoKnowsUnsavedCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(w.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(w.EmailAddress, \"required\"); err != nil {\n\t\terrors = errors.Append(\"EmailAddress\", err)\n\t}\n\treturn errors\n}\n" +
+		"type WhoKnowsRetrieval struct {\n\tAccelerator string\n}\n" +
+		"func (w WhoKnowsRetrieval) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(w.Accelerator, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Accelerator\", err)\n\t}\n\treturn errors\n}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

@@ -374,13 +374,15 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds bounded, cited topic-knowledge rankings through people/who-knows.
+const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
 func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
+	nullablePublicObjectRefs(doc, "WhoKnowsEvidence", "excerpt")
 	hardenEmbeddingStatusSchemas(doc, false)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -390,6 +392,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
+	hardenWhoKnowsClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
@@ -1603,7 +1606,82 @@ func nullableSchemaProperty(schema *huma.Schema, propertyName string) {
 		property.Extensions = map[string]any{}
 	}
 	property.Extensions["x-omitempty"] = false
-	property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
-		"validate": "omitempty",
+	setClientValidationTag(property, "omitempty")
+}
+
+func setClientValidationTag(property *huma.Schema, tag string) {
+	if property == nil {
+		return
+	}
+	if property.Extensions == nil {
+		property.Extensions = map[string]any{}
+	}
+	extraTags, ok := property.Extensions["x-oapi-codegen-extra-tags"].(map[string]any)
+	if !ok {
+		extraTags = map[string]any{}
+	}
+	extraTags["validate"] = tag
+	property.Extensions["x-oapi-codegen-extra-tags"] = extraTags
+}
+
+// hardenWhoKnowsClientSchemas preserves nullable values and valid zero values
+// in generated Go clients.
+func hardenWhoKnowsClientSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	for schemaName, names := range map[string][]string{
+		"WhoKnowsContactCoverage":  {"oldest_computed_at"},
+		"WhoKnowsEvidence":         {"vector_score", "excerpt", "sent_at"},
+		"WhoKnowsExcerpt":          {"char_offset", "line"},
+		"WhoKnowsParams":           {"after", "before"},
+		"WhoKnowsBreakdown":        {"profile_score", "latest_authored_at"},
+		"WhoKnowsUnsavedBreakdown": {"profile_score", "latest_authored_at"},
+		"WhoKnowsTieValue":         {"temperature", "last_contact_at"},
+		"WhoKnowsRetrieval":        {"top_vector_score"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, name := range names {
+			property := schema.Properties[name]
+			if property == nil {
+				continue
+			}
+			if property.Ref != "" {
+				property.AllOf = []*huma.Schema{{Ref: property.Ref}}
+				property.Ref = ""
+				property.Type = "object"
+			}
+			property.Nullable = true
+			schema.Required = slices.DeleteFunc(schema.Required, func(required string) bool { return required == name })
+			nullableSchemaProperty(schema, name)
+		}
+	}
+	for schemaName, names := range map[string][]string{
+		"WhoKnowsEvidence":         {"snippet", "source_message_id", "subject"},
+		"WhoKnowsExcerpt":          {"snippet"},
+		"WhoKnowsMessageCoverage":  {"coverage_sampled_at"},
+		"WhoKnowsOrganization":     {"title"},
+		"WhoKnowsRanked":           {"display_name"},
+		"WhoKnowsRetrieval":        {"accelerator"},
+		"WhoKnowsUnsavedCandidate": {"display_name", "email_address"},
+	} {
+		schema := doc.Components.Schemas.Map()[schemaName]
+		if schema == nil {
+			continue
+		}
+		for _, name := range names {
+			property := schema.Properties[name]
+			if property == nil {
+				continue
+			}
+			if property.Extensions == nil {
+				property.Extensions = map[string]any{}
+			}
+			property.Extensions["x-omitempty"] = false
+			setClientValidationTag(property, "omitempty")
+		}
 	}
 }

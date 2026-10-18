@@ -1690,6 +1690,64 @@ func TestOpenAPIContactCandidateAllowsEmptySavedDisplayName(t *testing.T) {
 	assertions.Equal(map[string]any{"validate": "omitempty"}, displayName.Extensions["x-oapi-codegen-extra-tags"])
 }
 
+func TestOpenAPIWhoKnowsClientHandlesNullableAndEmptyValues(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schemas := openAPIClientDocument().Components.Schemas.Map()
+
+	for schemaName, properties := range map[string][]string{
+		"WhoKnowsContactCoverage":  {"oldest_computed_at"},
+		"WhoKnowsBreakdown":        {"latest_authored_at"},
+		"WhoKnowsEvidence":         {"sent_at"},
+		"WhoKnowsParams":           {"after", "before"},
+		"WhoKnowsTieValue":         {"last_contact_at"},
+		"WhoKnowsUnsavedBreakdown": {"latest_authored_at"},
+	} {
+		schema := schemas[schemaName]
+		requirements.NotNil(schema, schemaName)
+		for _, propertyName := range properties {
+			field := schemaName + "." + propertyName
+			property := schema.Properties[propertyName]
+			requirements.NotNil(property, field)
+			assertions.True(property.Nullable, field)
+			assertions.NotContains(schema.Required, propertyName, field)
+			assertions.Equal(false, property.Extensions["x-omitempty"], field)
+			assertions.Equal(
+				map[string]any{"validate": "omitempty"},
+				property.Extensions["x-oapi-codegen-extra-tags"],
+				field,
+			)
+		}
+	}
+
+	for schemaName, properties := range map[string][]string{
+		"WhoKnowsEvidence":         {"snippet", "source_message_id", "subject"},
+		"WhoKnowsMessageCoverage":  {"coverage_sampled_at"},
+		"WhoKnowsExcerpt":          {"snippet"},
+		"WhoKnowsOrganization":     {"title"},
+		"WhoKnowsRanked":           {"display_name"},
+		"WhoKnowsRetrieval":        {"accelerator"},
+		"WhoKnowsUnsavedCandidate": {"display_name", "email_address"},
+	} {
+		schema := schemas[schemaName]
+		requirements.NotNil(schema, schemaName)
+		for _, propertyName := range properties {
+			field := schemaName + "." + propertyName
+			property := schema.Properties[propertyName]
+			requirements.NotNil(property, field)
+			assertions.Contains(schema.Required, propertyName, field)
+			assertions.Equal("string", property.Type, field)
+			assertions.Equal(false, property.Extensions["x-omitempty"], field)
+			assertions.Equal(
+				map[string]any{"validate": "omitempty"},
+				property.Extensions["x-oapi-codegen-extra-tags"],
+				field,
+			)
+		}
+	}
+}
+
 func TestOpenAPIPersonMergeSnapshotUsesLosslessGoType(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)

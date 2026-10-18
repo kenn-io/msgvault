@@ -262,6 +262,60 @@ are excluded. Search text and the curated person documents go to the configured
 embedding endpoint. `--limit` defaults to 20 and accepts 1–100; `--json` includes
 person IDs and scores.
 
+## Find who knows about a topic
+
+On unreleased `main`, use archived content to find people who may be able to
+help with a topic:
+
+```bash
+msgvault person who-knows "kubernetes networking"
+msgvault person who-knows "certificate rotation" --after 2026-01-01 --json
+```
+
+This ranks saved people by messages they authored, with message IDs, dates and
+an explainable score breakdown. Recipients receive a small, capped contribution;
+meeting organizers and attendees receive the same attendance credit. Your
+`ask_me_about` values and current employment can add explicit boosts. Optional
+semantic profile matches use the separately enabled and consented
+[people index](/docs/configuration/#vectorpeople).
+
+Authored evidence decays with a 180-day half-life and a 0.1 floor. The score is
+logarithmic authored depth plus capped reception, multiplied by authored thread
+and channel breadth, then boosted by declared topics, profile similarity and
+organization matches. Relationship temperature breaks rounded-score ties when
+the published analytics cache is available; otherwise last contact does.
+
+Your identities and automated senders are excluded by default. List messages
+and one-way senders are downweighted. Unsaved contacts appear separately with a
+promotion command. `--include-owner` restores your evidence too; `--saved-only`
+hides unsaved contacts. The command does not create or edit profiles.
+
+Vector search must be configured and ready. Topic text goes to the configured
+embedding endpoint once, like semantic message search. If the active generation
+changes before profile search, the fallback sends the topic twice to that same
+endpoint. Profile boosts send no additional profile data during this request.
+
+The default retrieval pool requests 200 messages, bounded by twice
+`[vector.search].k_per_signal`. A coverage warning explains embedding backlog or
+stale contact state; recent messages without vectors can rank lower. During a
+generation rebuild, if coverage counts belong to a different generation than
+the one used for retrieval, the response reports zero message counts with a
+zero `coverage_sampled_at` and adds
+`embedding_coverage_generation_mismatch`; treat those counts as unavailable.
+An underfill hint means filtering may have exhausted the pool: increase
+`--candidates`, and increase `k_per_signal` if necessary. Use `--min-score` to
+reject weak message matches; the default is model-independent and imposes no
+vector-score floor.
+
+`--after` is inclusive and `--before` is exclusive for timestamps. Date-only
+`--before` includes the named day. Date windows use a slower exact retrieval path
+(target p95 3 seconds, versus 1.5 seconds without a window on a warm index;
+these are performance targets, not measured guarantees). `--excerpts` reads one
+matching body chunk per shown citation; ordinary evidence uses metadata only.
+
+The owner-only [HTTP endpoint](/docs/api-server/#find-who-knows-about-a-topic)
+provides the same result. See the [CLI options](/docs/cli-reference/#person-who-knows).
+
 ## Find files related to a person
 
 Use a saved person ID to find attachments across their linked identities:

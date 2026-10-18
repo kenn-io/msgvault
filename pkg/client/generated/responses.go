@@ -2363,6 +2363,12 @@ type SearchPeopleResponse = PersonSearchResponse
 
 type SearchPeopleErrorResponse = ErrorResponse
 
+type FindPeopleWhoKnowResponse = WhoKnowsResponse
+
+type FindPeopleWhoKnowErrorResponse = ErrorResponse
+
+type FindPeopleWhoKnowErrorResponseJSON = ErrorResponse
+
 type DeletePersonErrorResponse = ErrorResponse
 
 type DeletePersonErrorResponseJSON = ErrorResponse
@@ -5696,6 +5702,15 @@ type SearchPeopleResp struct {
 	StatusCode   int
 	JSON200      *SearchPeopleResponse
 	JSON503      *SearchPeopleErrorResponse
+}
+
+type FindPeopleWhoKnowResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *FindPeopleWhoKnowResponse
+	JSON400      *FindPeopleWhoKnowErrorResponse
+	JSON503      *FindPeopleWhoKnowErrorResponseJSON
 }
 
 type DeletePersonResp struct {

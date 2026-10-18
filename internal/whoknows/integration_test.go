@@ -179,7 +179,7 @@ func realServiceFixture(t *testing.T) (*Service, map[int64]string, *fixtureEmbed
 	embedder := &fixtureEmbedder{}
 	engine := hybrid.NewEngine(backend, st.DB(), embedder, hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	s := &Service{Retriever: engine, Data: st, KPerSignal: 100, Now: func() time.Time { return time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC) }, CoverageReader: func(context.Context) (vector.EmbeddingStatus, error) {
-		return vector.EmbeddingStatus{Eligible: int64(len(chunks)), Current: int64(len(chunks)), CoverageSampledAt: time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)}, nil
+		return vector.EmbeddingStatus{Generation: vector.EmbeddingGenerationStatus{ID: gen, State: string(vector.GenerationActive)}, Eligible: int64(len(chunks)), Current: int64(len(chunks)), CoverageSampledAt: time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)}, nil
 	}}
 	return s, persons, embedder
 }

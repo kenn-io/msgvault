@@ -408,7 +408,7 @@ func TestServiceOptionalProfilesContactStateAndExcerpts(t *testing.T) {
 	retriever := &fixedRetriever{hits: []vector.FusedHit{{MessageID: id, RRFScore: 1, VectorScore: .9}}}
 	profiles := &profileResults{results: []personsearch.Result{{Person: *person, Score: .9}}}
 	s := Service{Retriever: retriever, Data: f.Store, ProfileSearcher: profiles, PeopleEnabled: true, Now: func() time.Time { return now }, CoverageReader: func(context.Context) (vector.EmbeddingStatus, error) {
-		return vector.EmbeddingStatus{Pending: 1800, Eligible: 2000, Current: 200, CoverageSampledAt: now}, nil
+		return vector.EmbeddingStatus{Generation: vector.EmbeddingGenerationStatus{ID: 1, State: string(vector.GenerationActive)}, Pending: 1800, Eligible: 2000, Current: 200, CoverageSampledAt: now}, nil
 	}}
 	got, err := s.Find(t.Context(), "cloud", DefaultParams())
 	must.NoError(err)
@@ -510,6 +510,37 @@ func TestServiceOptionalProfilesContactStateAndExcerpts(t *testing.T) {
 	must.NoError(err)
 	must.Len(got.People, 1)
 	check.Contains(got.People[0].Flags, "profile_only")
+}
+
+func TestServiceDoesNotUseBuildingGenerationCoverageForActiveRetrieval(t *testing.T) {
+	check := assert.New(t)
+	must := require.New(t)
+	f := storetest.New(t)
+	active := vector.EmbeddingGenerationStatus{ID: 1, State: string(vector.GenerationActive)}
+	s := Service{
+		Retriever: &fixedRetriever{},
+		Data:      f.Store,
+		CoverageReader: func(context.Context) (vector.EmbeddingStatus, error) {
+			return vector.EmbeddingStatus{
+				Generation:       vector.EmbeddingGenerationStatus{ID: 2, State: string(vector.GenerationBuilding)},
+				ActiveGeneration: &active,
+				Eligible:         100,
+				Current:          40,
+				Pending:          60,
+			}, nil
+		},
+	}
+
+	got, err := s.Find(t.Context(), "topic", DefaultParams())
+	must.NoError(err)
+
+	check.Equal(int64(1), got.Coverage.Generation.ID)
+	check.Zero(got.Coverage.Messages.Eligible)
+	check.Zero(got.Coverage.Messages.Current)
+	check.Zero(got.Coverage.Messages.Pending)
+	check.True(got.Coverage.Messages.CoverageSampledAt.IsZero())
+	check.Contains(got.Coverage.StaleReasons, "embedding_coverage_generation_mismatch")
+	check.NotContains(got.Coverage.StaleReasons, "embedding_backlog:60")
 }
 
 func TestServiceSenderAuthenticationProvenance(t *testing.T) {

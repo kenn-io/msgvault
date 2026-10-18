@@ -2875,6 +2875,33 @@ reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
 
+### person who-knows
+
+On unreleased `main`, rank people by authored topical evidence:
+
+```bash
+msgvault person who-knows <topic words...> [flags]
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--limit` | `10` | Saved people, 1–50 |
+| `--evidence` | `3` | Citations per person, 0–10 |
+| `--candidates` | `200` | Retrieved messages, 50–1000; effective pool is at most twice `k_per_signal` |
+| `--half-life` | `180` | Days, or a Go duration rounded up to days; 0 disables decay; at most 3650 days |
+| `--min-score` | `0` | Message vector-score floor; 0 disables it |
+| `--min-profile-score` | `0.5` | Profile similarity threshold, 0–1 |
+| `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after inclusive, before exclusive for timestamps; date-only before includes the named day |
+| `--include-owner` | false | Include your identities and authored evidence |
+| `--saved-only` | false | Omit unsaved contacts |
+| `--no-organizations` | false | Omit the organization aggregate |
+| `--tiebreak` | `temperature` | `temperature`, `last_contact`, or `none` |
+| `--excerpts` | false | Read a matching body chunk for each shown message |
+| `--json` | false | Return the API JSON |
+
+See [topical people search](usage/people.md#find-who-knows-about-a-topic) for
+scoring, exclusions, coverage, retrieval limits and query egress.
+
 ### person track, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not
