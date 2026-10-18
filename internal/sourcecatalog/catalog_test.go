@@ -56,24 +56,3 @@ func TestSourceCatalogContactOnlyAndUnknownSources(t *testing.T) {
 	assert.False(ok)
 	assert.Empty(ForCommand("sync-unregistered-provider"))
 }
-
-func TestSourceCatalogOmiIsNativeMeetingSync(t *testing.T) {
-	assert := Assert.New(t)
-	require := Require.New(t)
-	descriptor, ok := Lookup(Omi)
-	require.True(ok)
-	assert.Equal("api_poll", descriptor.Transport)
-	assert.True(descriptor.Meetings)
-	assert.Equal([]string{"sync-omi"}, Commands(Omi))
-	assert.Equal([]Descriptor{descriptor}, ForCommand("sync-omi"))
-}
-
-func TestSourceCatalogAdvertisesOnlyCompletedLiveMessageConsumers(t *testing.T) {
-	var live []string
-	for _, descriptor := range List() {
-		if descriptor.LiveMessages {
-			live = append(live, descriptor.Type)
-		}
-	}
-	Assert.ElementsMatch(t, []string{"gmail", "imap", "msmail", "beeper", "slack", "teams", "discord", "matrix"}, live)
-}

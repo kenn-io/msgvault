@@ -40,7 +40,13 @@ func (s *Syncer) nativeProfileWithPermission(ctx context.Context, source *store.
 	}
 	observation := store.NativeSourcePermission{SourceID: source.ID, SourceReference: resource.Reference, SourceType: sourceTypeGmail, NativeIdentity: source.Identifier}
 	s.nativeGmailSourceID = source.ID
-	s.nativeGmailSourceReference = resource.Reference
+	// Scope membership authority is attached later, after a native label
+	// inventory has been admitted. Profile success alone cannot authorize it.
+	s.nativeGmailSourceReference = ""
+	s.nativeGmailScopePins = nil
+	s.nativeGmailPermissionReference = resource.Reference
+	s.nativeGmailInitiallyReadGrant = false
+	s.nativeGmailPermissionReduced = false
 	s.nativeGmailNativeIdentity = source.Identifier
 	if _, native := s.client.(nativeMessageReadPermission); !native {
 		// Events-only grant checks must preserve ordinary archival semantics.
@@ -89,7 +95,54 @@ func (s *Syncer) nativeProfileWithPermission(ctx context.Context, source *store.
 	if err := s.store.ObserveNativeSourcePermission(ctx, observation); err != nil {
 		return nil, err
 	}
+	s.nativeGmailInitiallyReadGrant = observation.Known && observation.MessageRead
 	return profile, nil
+}
+
+// nativeGmailPermissionNarrowedAfterRefresh checks for a known loss after a
+// Gmail call that may refresh the native token. The initial positive probe
+// determines whether a later negative observation is a reduction.
+func (s *Syncer) nativeGmailPermissionNarrowedAfterRefresh() bool {
+	if !s.nativeGmailInitiallyReadGrant || s.nativeGmailPermissionReduced {
+		return false
+	}
+	native, ok := s.client.(nativeMessageReadPermission)
+	if !ok {
+		return false
+	}
+	messageRead, known := native.NativeMessageReadPermission()
+	return known && !messageRead
+}
+
+// persistNativeGmailPermissionReduction revokes the run's pinned Events
+// lifetime and drops scope pins before subsequent message writes can reuse it.
+func (s *Syncer) persistNativeGmailPermissionReduction(ctx context.Context) error {
+	if s.nativeGmailPermissionReduced || s.nativeGmailSourceID <= 0 || s.nativeGmailPermissionReference == "" {
+		return nil
+	}
+	if err := s.store.ObserveNativeSourcePermission(ctx, store.NativeSourcePermission{
+		SourceID:        s.nativeGmailSourceID,
+		SourceReference: s.nativeGmailPermissionReference,
+		SourceType:      sourceTypeGmail,
+		NativeIdentity:  s.nativeGmailNativeIdentity,
+		Known:           true,
+	}); err != nil {
+		return err
+	}
+	s.nativeGmailPermissionReduced = true
+	s.nativeGmailSourceReference = ""
+	s.nativeGmailPermissionReference = ""
+	s.nativeGmailScopePins = nil
+	return nil
+}
+
+// observeNativeGmailPermissionReduction records a known loss of message-read
+// scope immediately after successful Gmail history requests.
+func (s *Syncer) observeNativeGmailPermissionReduction(ctx context.Context) error {
+	if !s.nativeGmailPermissionNarrowedAfterRefresh() {
+		return nil
+	}
+	return s.persistNativeGmailPermissionReduction(ctx)
 }
 
 // nativeGmailPermissionFailure applies an authorization loss observed after
@@ -97,7 +150,7 @@ func (s *Syncer) nativeProfileWithPermission(ctx context.Context, source *store.
 // The observer never reloads the resource, so a stale request cannot revoke a
 // replacement source lifetime.
 func (s *Syncer) nativeGmailPermissionFailure(ctx context.Context, cause error) error {
-	if cause == nil || s.nativeGmailSourceID <= 0 || s.nativeGmailSourceReference == "" {
+	if cause == nil || s.nativeGmailPermissionReduced || s.nativeGmailSourceID <= 0 || s.nativeGmailPermissionReference == "" {
 		return cause
 	}
 	denied := false
@@ -110,7 +163,7 @@ func (s *Syncer) nativeGmailPermissionFailure(ctx context.Context, cause error) 
 	if !denied {
 		return cause
 	}
-	observation := store.NativeSourcePermission{SourceID: s.nativeGmailSourceID, SourceReference: s.nativeGmailSourceReference, SourceType: sourceTypeGmail, NativeIdentity: s.nativeGmailNativeIdentity, Known: true}
+	observation := store.NativeSourcePermission{SourceID: s.nativeGmailSourceID, SourceReference: s.nativeGmailPermissionReference, SourceType: sourceTypeGmail, NativeIdentity: s.nativeGmailNativeIdentity, Known: true}
 	return errors.Join(cause, s.store.ObserveNativeSourcePermission(ctx, observation))
 }
 

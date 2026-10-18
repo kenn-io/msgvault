@@ -183,6 +183,10 @@ func (s *Syncer) incremental(
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("list history: %w", err)
 			}
+			if err := s.observeNativeGmailPermissionReduction(ctx); err != nil {
+				_ = s.store.FailSync(syncID, err.Error())
+				return nil, fmt.Errorf("observe Gmail message-read permission after history refresh: %w", err)
+			}
 
 			// Collect all message IDs referenced in this page for a single batch existence check
 			allIDs := make(map[string]bool)
