@@ -20,9 +20,9 @@ import (
 	"go.kenn.io/msgvault/internal/twilio"
 )
 
-// Exercise the real Twilio HTTP client, importer, CAS, and daemon media job.
-// The external services use synthetic responses and a valid stereo PCM WAV.
-func TestTwilioRecordingDocbankConsent(t *testing.T) {
+// TestTwilioRecordingReachesDocbank checks that an imported Twilio recording keeps
+// its Twilio identity and reaches Docbank byte-for-byte with upload consent.
+func TestTwilioRecordingReachesDocbank(t *testing.T) {
 	const accountSID = "AC00000000000000000000000000000001"
 	const callSID = "CA00000000000000000000000000000001"
 	const recordingSID = "RE00000000000000000000000000000001"

@@ -1387,10 +1387,7 @@ Docbank's WAV and MP3 capability. Capture gaps and unsupported formats remain
 typed local states.
 
 Msgvault's Docbank audio route delivers files up to 1 GiB, even when a source's
-capture limit is higher. Larger files remain in the msgvault archive. The route
-reads each file fully into memory while inspecting it, so memory use includes
-the whole recording plus inspection and allocation overhead. These file limits
-are not RAM limits.
+capture limit is higher. Larger files remain in the msgvault archive.
 
 Agents can quote the transcripts of delivered files in
 [Kata issues](usage/kata-issues.md#cite-a-docbank-transcript).
