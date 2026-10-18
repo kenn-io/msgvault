@@ -31,6 +31,7 @@ type controlProvider struct {
 
 type cancelAfterPrepareLedger struct {
 	inboxcontrol.Ledger
+
 	cancel context.CancelFunc
 }
 
