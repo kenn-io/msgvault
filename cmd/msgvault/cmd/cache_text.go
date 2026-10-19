@@ -146,6 +146,24 @@ func (s *cacheSourceSnapshot) identityExportSQL(column string) string {
 		" THEN msgvault_unknown_identity('') ELSE " + column + " END"
 }
 
+// Participant projections are materialized through sqlite_query on the
+// sqlite_scanner path. Those temporary tables carry hex-encoded text so an
+// invalid SQLite value cannot enter DuckDB's VARCHAR storage before the final
+// export projection sanitizes or rejects it.
+func (s *cacheSourceSnapshot) participantTextSQL(column string) string {
+	if s.csvSnapshot {
+		return s.textSQL(column)
+	}
+	return cacheTextSQL("unhex(" + column + ")")
+}
+
+func (s *cacheSourceSnapshot) participantIdentityExportSQL(column string) string {
+	if s.csvSnapshot {
+		return s.identityExportSQL(column)
+	}
+	return cacheIdentityExportSQL("unhex(" + column + ")")
+}
+
 func csvInvalidTextSQL(column string) string {
 	qualifier, name := "", column
 	if i := strings.LastIndexByte(column, '.'); i >= 0 {

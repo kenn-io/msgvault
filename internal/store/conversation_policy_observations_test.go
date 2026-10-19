@@ -88,6 +88,68 @@ func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing
 	assertions.Zero(identifierCount(coldOnlyParticipant, "+15550123457"), "cold-only provider identifier stays hidden")
 }
 
+func TestImportedNativePhoneIdentifiersRemainEligibleAfterColdChatRoom(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, chatSource, full, _, _ := policyObservationFixture(t)
+	ctx := t.Context()
+	type nativePhone struct {
+		name           string
+		sourceType     string
+		identifierType string
+		phone          string
+		participantID  int64
+	}
+	fixtures := []nativePhone{
+		{name: "imazing-csv", sourceType: "imazing_csv", identifierType: "imazing_csv", phone: "+15550123458"},
+		{name: "synctech-sms", sourceType: "synctech_sms", identifierType: "synctech_sms", phone: "+15550123459"},
+	}
+	for i := range fixtures {
+		fixture := &fixtures[i]
+		participantID, err := s.EnsureParticipantByPhone(fixture.phone, "Synthetic "+fixture.name, fixture.identifierType)
+		requirements.NoError(err)
+		fixture.participantID = participantID
+		source, err := s.GetOrCreateSource(fixture.sourceType, "native-"+fixture.name)
+		requirements.NoError(err)
+		room, err := s.EnsureConversation(source.ID, "native-room", "Native history")
+		requirements.NoError(err)
+		_, err = s.UpsertMessageContext(ctx, &store.Message{
+			SourceID: source.ID, ConversationID: room, SourceMessageID: "native-phone-support",
+			MessageType: "sms", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+		})
+		requirements.NoError(err)
+		requirements.NoError(s.EnsureConversationParticipantContext(ctx, full, participantID, "member"))
+	}
+
+	phoneWhere := store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	if s.IsPostgreSQL() {
+		identifierWhere = store.FullParticipantIdentifierWherePostgres("pi")
+	}
+	for _, fixture := range fixtures {
+		var phoneCount, identifierCount int64
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+phoneWhere), fixture.participantID).Scan(&phoneCount)
+		requirements.NoError(err)
+		err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participant_identifiers pi
+			WHERE pi.participant_id=? AND pi.identifier_type=? AND pi.identifier_value=? AND `+identifierWhere), fixture.participantID, fixture.identifierType, fixture.phone).Scan(&identifierCount)
+		requirements.NoError(err)
+		assertions.Equal(int64(1), phoneCount, fixture.name+" native history supports its exact phone")
+		assertions.Equal(int64(1), identifierCount, fixture.name+" native history supports its exact identifier")
+	}
+
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, chatSource, "full", conversationpolicy.Cold))
+	for _, fixture := range fixtures {
+		var phoneCount, identifierCount int64
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+phoneWhere), fixture.participantID).Scan(&phoneCount)
+		requirements.NoError(err)
+		err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participant_identifiers pi
+			WHERE pi.participant_id=? AND pi.identifier_type=? AND pi.identifier_value=? AND `+identifierWhere), fixture.participantID, fixture.identifierType, fixture.phone).Scan(&identifierCount)
+		requirements.NoError(err)
+		assertions.Equal(int64(1), phoneCount, fixture.name+" native phone remains supported after chat demotion")
+		assertions.Equal(int64(1), identifierCount, fixture.name+" native identifier remains supported after chat demotion")
+	}
+}
+
 func policyObservationSupport(t *testing.T, s *store.Store, id int64) []int64 {
 	t.Helper()
 	rows, err := s.DB().Query(s.Rebind(`SELECT conversation_id FROM participant_contact_observation_conversations WHERE observation_id=? ORDER BY conversation_id`), id)

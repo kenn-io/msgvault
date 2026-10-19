@@ -1406,17 +1406,34 @@ func (b *Backend) filterCurrentRevisionHits(ctx context.Context, candidates []re
 		ids = append(ids, candidate.messageID)
 	}
 	var current map[int64]int64
+	var live map[int64]struct{}
 	var err error
 	if b.policyStore != nil {
 		current, err = b.currentEmbeddingRevisions(ctx, ids)
 		if err != nil {
 			return nil, err
 		}
+	} else if b.mainDB != nil {
+		liveIDs, err := b.filteredMessageIDs(ctx, vector.Filter{MessageIDs: ids})
+		if err != nil {
+			return nil, err
+		}
+		live = make(map[int64]struct{}, len(liveIDs))
+		for _, id := range liveIDs {
+			live[id] = struct{}{}
+		}
 	}
 	hits := make([]vector.Hit, 0, len(candidates))
 	for _, candidate := range candidates {
-		if b.policyStore != nil && current[candidate.messageID] != candidate.revision {
-			continue
+		if b.policyStore != nil {
+			currentRevision, ok := current[candidate.messageID]
+			if !ok || currentRevision != candidate.revision {
+				continue
+			}
+		} else if b.mainDB != nil {
+			if _, ok := live[candidate.messageID]; !ok {
+				continue
+			}
 		}
 		hits = append(hits, vector.Hit{MessageID: candidate.messageID, Score: candidate.score})
 	}
@@ -2313,6 +2330,9 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 	if len(stampedMessageIDs) > vector.FilteredCoverageBatchSize {
 		return 0, fmt.Errorf("%w: got %d, maximum %d",
 			vector.ErrCoverageBatchTooLarge, len(stampedMessageIDs), vector.FilteredCoverageBatchSize)
+	}
+	if b.mainDB == nil {
+		return 0, errors.New("snapshot coverage requires the main message database")
 	}
 	encoded, err := json.Marshal(stampedMessageIDs, json.Deterministic(true))
 	if err != nil {

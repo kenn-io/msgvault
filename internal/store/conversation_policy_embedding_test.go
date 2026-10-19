@@ -59,8 +59,10 @@ func TestConversationPolicyChangeInvalidatesSharedParticipantContextEmbeddings(t
 	}
 	shared, err := s.ResolveConversationParticipantContext(t.Context(), changedRoom, identity)
 	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(t.Context(), changedRoom, shared.ParticipantID, "member"))
 	targetMember, err := s.ResolveConversationParticipantContext(t.Context(), targetRoom, identity)
 	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(t.Context(), targetRoom, targetMember.ParticipantID, "member"))
 	assertions.Equal(shared.ParticipantID, targetMember.ParticipantID)
 
 	messageID, err := s.UpsertMessage(&store.Message{

@@ -923,7 +923,7 @@ func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
 			COALESCE(%s, '') AS identifier_value,
 			COALESCE(%s, '') AS display_value,
 			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
-		FROM %s pi`, s.identityExportSQL("pi.identifier_type"), s.identityExportSQL("pi.identifier_value"), s.textSQL("pi.display_value"), s.snapshotTable(cacheExportParticipantIdentifiers))
+		FROM %s pi`, s.participantIdentityExportSQL("pi.identifier_type"), s.participantIdentityExportSQL("pi.identifier_value"), s.participantTextSQL("pi.display_value"), s.snapshotTable(cacheExportParticipantIdentifiers))
 }
 
 // participantsExportSelectSQL renders the participants dataset export. The
@@ -938,7 +938,7 @@ func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
 			COALESCE(%s, '') AS phone_number
-		FROM %s p`, s.identityExportSQL("p.email_address"), s.textSQL("p.domain"), s.textSQL("p.display_name"), s.textSQL("p.phone_number"), s.snapshotTable(cacheExportParticipants))
+		FROM %s p`, s.participantIdentityExportSQL("p.email_address"), s.participantTextSQL("p.domain"), s.participantTextSQL("p.display_name"), s.participantTextSQL("p.phone_number"), s.snapshotTable(cacheExportParticipants))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
@@ -2168,14 +2168,14 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 }
 
 // participantExportQuery applies the value-level chat policy in SQLite. The
-// scanner path returns byte values so DuckDB can repair or reject malformed
-// UTF-8 in the final cache projection without decoding it while materializing
-// the temporary table.
-func participantExportQuery(asBlob bool) string {
+// scanner path hex-encodes text so DuckDB never materializes malformed UTF-8
+// while creating the temporary table; the final cache projection decodes and
+// repairs display text or rejects invalid identity keys.
+func participantExportQuery(hexEncodeText bool) string {
 	value := func(eligible, column string) string {
 		expression := "CASE WHEN " + eligible + " THEN " + column + " END"
-		if asBlob {
-			return "CAST(" + expression + " AS BLOB)"
+		if hexEncodeText {
+			return "HEX(CAST(" + expression + " AS BLOB))"
 		}
 		return expression
 	}
@@ -2192,12 +2192,12 @@ func participantExportQuery(asBlob bool) string {
 	)
 }
 
-func participantIdentifierExportQuery(asBlob bool) string {
+func participantIdentifierExportQuery(hexEncodeText bool) string {
 	identifierType, identifierValue, displayValue := "pi.identifier_type", "pi.identifier_value", "pi.display_value"
-	if asBlob {
-		identifierType = "CAST(" + identifierType + " AS BLOB)"
-		identifierValue = "CAST(" + identifierValue + " AS BLOB)"
-		displayValue = "CAST(" + displayValue + " AS BLOB)"
+	if hexEncodeText {
+		identifierType = "HEX(CAST(" + identifierType + " AS BLOB))"
+		identifierValue = "HEX(CAST(" + identifierValue + " AS BLOB))"
+		displayValue = "HEX(CAST(" + displayValue + " AS BLOB))"
 	}
 	return `SELECT pi.participant_id, ` + identifierType + ` AS identifier_type, ` + identifierValue + ` AS identifier_value, ` + displayValue + ` AS display_value, pi.is_primary
 		FROM participant_identifiers pi WHERE ` + store.FullParticipantIdentifierWhereSQLite("pi")

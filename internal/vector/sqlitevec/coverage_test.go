@@ -464,7 +464,10 @@ func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
-	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 4})
+	mainDB := openMainDBWithOneMessage(t)
+	_, err := mainDB.Exec(`INSERT INTO messages (id) VALUES (3)`)
+	require.NoError(err)
+	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 4, MainDB: mainDB})
 	require.NoError(err)
 	t.Cleanup(func() { _ = b.Close() })
 	gen, err := b.CreateGeneration(ctx, "test-model", 4, "fp")
@@ -474,6 +477,8 @@ func TestSnapshotCoverageCountsSuppliedIDsWithinBatchLimit(t *testing.T) {
 		{MessageID: 1, ChunkIndex: 1, Vector: []float32{0, 1, 0, 0}},
 		{MessageID: 2, Vector: []float32{0, 0, 1, 0}},
 	}))
+	_, err = mainDB.Exec(`UPDATE messages SET embed_gen = ? WHERE id IN (1, 3)`, int64(gen))
+	require.NoError(err)
 
 	count, err := b.EmbeddedMessageCountForSnapshot(ctx, gen, []int64{1, 3})
 	require.NoError(err)

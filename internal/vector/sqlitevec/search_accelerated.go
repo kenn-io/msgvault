@@ -439,8 +439,11 @@ func (b *Backend) rerankAcceleratedCandidates(
 		if _, ok := live[candidate.messageID]; !ok {
 			continue
 		}
-		if b.policyStore != nil && currentRevisions[candidate.messageID] != candidate.revision {
-			continue
+		if b.policyStore != nil {
+			currentRevision, ok := currentRevisions[candidate.messageID]
+			if !ok || currentRevision != candidate.revision {
+				continue
+			}
 		}
 		var distance float64
 		if err := stmt.QueryRowContext(ctx, queryBlob, candidate.embeddingID).Scan(&distance); err != nil {

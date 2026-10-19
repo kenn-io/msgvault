@@ -182,6 +182,36 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 		"ledger marked after successful backfill")
 }
 
+func TestBackfillEmbedGenLeavesRevisionMismatchUncovered(t *testing.T) {
+	require := require.New(t)
+	assertions := assert.New(t)
+	require.NoError(RegisterExtension())
+	ctx := context.Background()
+	mainPath, vecPath := seedEmbeddedMain(ctx, t)
+
+	s, err := store.Open(mainPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	// The store migration advances previously unstamped messages to revision 1,
+	// while this legacy active-generation vector still has revision 0.
+	_, err = s.DB().Exec(`UPDATE messages SET embedding_revision = 1, embed_gen = NULL WHERE id = 1`)
+	require.NoError(err)
+	_, err = s.DB().Exec(`DELETE FROM applied_migrations WHERE name = ?`, embedGenBackfillMigration)
+	require.NoError(err)
+
+	b, err := Open(ctx, Options{Path: vecPath, MainPath: mainPath, Dimension: 4, MainDB: s.DB()})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+
+	_, isNull := embedGenOf(t, s.DB(), 1)
+	assertions.True(isNull, "a revision-zero vector cannot cover a revision-one archive message")
+	active, err := b.ActiveGeneration(ctx)
+	require.NoError(err)
+	stats, err := b.Stats(ctx, active.ID)
+	require.NoError(err)
+	assertions.Equal(int64(1), stats.PendingCount, "the mismatched vector remains eligible for a backstop rebuild")
+}
+
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the SQLite
 // regression guard for the pending-signal preservation case: the one-time
 // upgrade backfill must NOT stamp embed_gen=active on a message that carried an

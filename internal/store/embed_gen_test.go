@@ -220,24 +220,34 @@ func TestSetEmbedGenIfUnchanged(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	id := seedMessageForLM(t, st)
 	tokenAtRead := baselineLM(t, st, id)
+	var revisionAtRead int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&revisionAtRead))
 
 	_, err := st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ? WHERE message_id = ?`), "corrected body", id)
 	require.NoError(err)
-	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+	missed, covered, err := st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: tokenAtRead, EmbeddingRevision: revisionAtRead,
+	}}, 7)
 	require.NoError(err)
 	assert.Equal([]int64{id}, missed)
 	assert.Zero(covered)
 	assert.False(readEmbedGen(t, st, id).Valid, "a stale token must not stamp the row")
 	tokenAtRead = baselineLM(t, st, id)
+	var currentRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&currentRevision))
 
 	missed, covered, err = st.SetEmbedGenIfUnchanged(context.Background(),
-		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead}}, 7)
+		[]store.EmbedGenStamp{{ID: id, LastModified: tokenAtRead, EmbeddingRevision: currentRevision}}, 7)
 	require.NoError(err)
 	assert.Empty(missed)
 	assert.Equal(1, covered)
 	assert.Equal(sql.NullInt64{Int64: 7, Valid: true}, readEmbedGen(t, st, id))
 	coveredToken := readLM(t, st, id)
-	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{ID: id, LastModified: coveredToken}}, 7)
+	missed, covered, err = st.SetEmbedGenIfUnchanged(t.Context(), []store.EmbedGenStamp{{
+		ID: id, LastModified: coveredToken, EmbeddingRevision: currentRevision,
+	}}, 7)
 	require.NoError(err)
 	assert.Empty(missed, "an already covered row is not a CAS miss")
 	assert.Zero(covered, "an already covered row is not newly covered")
