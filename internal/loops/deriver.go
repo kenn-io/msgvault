@@ -149,11 +149,12 @@ func (d *Deriver) drain(ctx context.Context, now time.Time, result *RunResult) e
 				withdrawn = append(withdrawn, store.LoopCloseDecision{ID: row.ID, Reason: "withdrawn", At: now})
 				continue
 			}
-			ownerParticipationMessageID, err := ownerParticipationFromEvidence(row.EvidenceJSON)
+			ownerParticipation, err := ownerParticipationFromEvidence(row.EvidenceJSON)
 			if err != nil {
 				return fmt.Errorf("read owner participation evidence for loop %d: %w", row.ID, err)
 			}
-			loop := LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID, OwnerParticipationMessageID: ownerParticipationMessageID}
+			loop := LiveLoop{ID: row.ID, Kind: row.Kind, AnchorMessageID: *row.AnchorMessageID,
+				OwnerParticipationMessageID: ownerParticipation.MessageID, OwnerParticipationKnown: ownerParticipation.Known}
 			if row.CounterpartyParticipantID != nil {
 				loop.CounterpartyParticipantID = *row.CounterpartyParticipantID
 			}
@@ -230,7 +231,12 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 		return out, nil
 	}
 	spec := v.Open
-	evidence, err := json.Marshal([]storedEvidence{{MessageID: spec.Anchor.ID, ConversationID: view.ConversationID, OccurredAt: spec.Anchor.OccurredAt, Subject: spec.Anchor.Subject, TruncatedRun: spec.TruncatedRun, OwnerParticipationMessageID: spec.OwnerParticipationMessageID}}, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+	var ownerParticipationMessageID *int64
+	if spec.OwnerParticipationKnown {
+		id := spec.OwnerParticipationMessageID
+		ownerParticipationMessageID = &id
+	}
+	evidence, err := json.Marshal([]storedEvidence{{MessageID: spec.Anchor.ID, ConversationID: view.ConversationID, OccurredAt: spec.Anchor.OccurredAt, Subject: spec.Anchor.Subject, TruncatedRun: spec.TruncatedRun, OwnerParticipationMessageID: ownerParticipationMessageID}}, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	if err != nil {
 		return out, err
 	}
@@ -251,15 +257,15 @@ func storedVerdict(view ConversationView, v Verdict) (store.LoopVerdict, error) 
 	return out, nil
 }
 
-func ownerParticipationFromEvidence(raw jsontext.Value) (int64, error) {
+func ownerParticipationFromEvidence(raw jsontext.Value) (ownerParticipationEvidence, error) {
 	var evidence []storedEvidence
 	if err := json.Unmarshal(raw, &evidence); err != nil {
-		return 0, err
+		return ownerParticipationEvidence{}, err
 	}
-	if len(evidence) == 0 {
-		return 0, nil
+	if len(evidence) == 0 || evidence[0].OwnerParticipationMessageID == nil {
+		return ownerParticipationEvidence{}, nil
 	}
-	return evidence[0].OwnerParticipationMessageID, nil
+	return ownerParticipationEvidence{MessageID: *evidence[0].OwnerParticipationMessageID, Known: true}, nil
 }
 
 // storedEvidence preserves the persisted evidence JSON shape without changing
@@ -270,5 +276,5 @@ type storedEvidence struct {
 	OccurredAt                  time.Time `json:"occurred_at"`
 	Subject                     string    `json:"subject"`
 	TruncatedRun                bool      `json:"truncated_run,omitzero"`
-	OwnerParticipationMessageID int64     `json:"owner_participation_message_id,omitzero"`
+	OwnerParticipationMessageID *int64    `json:"owner_participation_message_id,omitzero"`
 }

@@ -83,6 +83,7 @@ type LiveLoop struct {
 	CounterpartyParticipantID   int64
 	CounterpartyPersonID        int64
 	OwnerParticipationMessageID int64
+	OwnerParticipationKnown     bool
 }
 
 type Suppressions struct {
@@ -101,6 +102,7 @@ type Spec struct {
 	PreviousTurnAt              time.Time
 	PreviousTurnMessageID       int64
 	OwnerParticipationMessageID int64
+	OwnerParticipationKnown     bool
 	// TruncatedRun marks body-limited or unreadable evidence in the trailing run.
 	TruncatedRun bool
 }

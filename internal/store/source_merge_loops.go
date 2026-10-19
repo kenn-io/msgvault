@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -28,21 +27,6 @@ func (s *Store) transferMergedLoopState(ctx context.Context, tx *loggedTx, conve
 }
 
 func (s *Store) transferMergedConversationLoopState(ctx context.Context, tx *loggedTx, from, into int64, conversationIDs, messageSurvivors map[int64]int64) error {
-	if err := transferConversationLoopSuppression(ctx, tx, from, into); err != nil {
-		return err
-	}
-	var muted bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions
-WHERE target_kind='conversation' AND conversation_id=?)`, into).Scan(&muted); err != nil {
-		return err
-	}
-	if muted {
-		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET status='closed',closed_at=`+s.dialect.Now()+`,
-closed_reason='muted',closed_by='user',closed_message_id=NULL,updated_at=`+s.dialect.Now()+`
-WHERE conversation_id=? AND status<>'closed'`, into); err != nil {
-			return err
-		}
-	}
 	loops, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.conversation_id=? ORDER BY l.id", from)
 	if err != nil {
 		return err
@@ -50,19 +34,15 @@ WHERE conversation_id=? AND status<>'closed'`, into); err != nil {
 	for _, loop := range loops {
 		reason, by := "", ""
 		if loop.Status != "closed" {
-			if muted {
-				reason, by = "muted", "user"
-			} else {
-				collision, found, err := findMergedLoopCollision(ctx, tx, loop, into)
-				if err != nil {
-					return err
-				}
-				if found {
-					reason, by = "withdrawn", "system"
-					if collision.ConversationID == into {
-						if err := mergeLoopOwnerState(ctx, tx, loop, collision, s.dialect.Now()); err != nil {
-							return err
-						}
+			collision, found, err := findMergedLoopCollision(ctx, tx, loop, into)
+			if err != nil {
+				return err
+			}
+			if found {
+				reason, by = "withdrawn", "system"
+				if collision.ConversationID == into {
+					if err := mergeLoopOwnerState(ctx, tx, loop, collision, s.dialect.Now()); err != nil {
+						return err
 					}
 				}
 			}
@@ -90,47 +70,6 @@ WHERE id=? AND status<>'closed'`, reason, by, loop.ID); err != nil {
 		}
 	}
 	return nil
-}
-
-func transferConversationLoopSuppression(ctx context.Context, tx *loggedTx, from, into int64) error {
-	var sourceID, destinationID int64
-	var sourceNote, destinationNote string
-	sourceErr := tx.QueryRowContext(ctx, `SELECT id,note FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`, from).Scan(&sourceID, &sourceNote)
-	if errors.Is(sourceErr, sql.ErrNoRows) {
-		return nil
-	}
-	if sourceErr != nil {
-		return sourceErr
-	}
-	destinationErr := tx.QueryRowContext(ctx, `SELECT id,note FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`, into).Scan(&destinationID, &destinationNote)
-	if errors.Is(destinationErr, sql.ErrNoRows) {
-		_, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id=? WHERE id=?`, into, sourceID)
-		return err
-	}
-	if destinationErr != nil {
-		return destinationErr
-	}
-	note := combineLoopSuppressionNotes(destinationNote, sourceNote)
-	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note=? WHERE id=?`, note, destinationID); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id=?`, sourceID)
-	return err
-}
-
-func combineLoopSuppressionNotes(destination, source string) string {
-	if source == "" || source == destination {
-		return destination
-	}
-	if destination == "" {
-		return source
-	}
-	for _, line := range strings.Split(destination, "\n") {
-		if line == source {
-			return destination
-		}
-	}
-	return destination + "\n" + source
 }
 
 func remapMergedMessageID(id *int64, survivors map[int64]int64) *int64 {

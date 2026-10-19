@@ -88,8 +88,9 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			continue
 		}
 		anchorInWindow := slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
-		needsOwnerParticipationEvidence := l.Kind == ReplyOwed && l.OwnerParticipationMessageID == 0
-		if l.Kind == ReplyOwed && l.OwnerParticipationMessageID != 0 {
+		hasOwnerParticipationEvidence := l.OwnerParticipationKnown || l.OwnerParticipationMessageID != 0
+		needsOwnerParticipationEvidence := l.Kind == ReplyOwed && !hasOwnerParticipationEvidence
+		if l.Kind == ReplyOwed && hasOwnerParticipationEvidence {
 			anchorIndex := slices.IndexFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
 			needsOwnerParticipationEvidence = anchorIndex >= 0 && isBulkMessage(settlementView.Messages[anchorIndex]) &&
 				!slices.ContainsFunc(settlementView.Messages, func(m LoopMessage) bool { return m.ID == l.OwnerParticipationMessageID })
@@ -111,7 +112,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settlementView.AnchorExists = view.AnchorExists
 			settlementView.BodyText = view.BodyText
 		}
-		closed, gap, anchor, ownerParticipationMessageID, err := t.settle(settlementView, l, now, cfg)
+		closed, gap, anchor, ownerParticipation, err := t.settle(settlementView, l, now, cfg)
 		if err != nil {
 			v.Err = err
 			return v
@@ -126,9 +127,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
 		if closed == nil && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
-			l.OwnerParticipationMessageID = ownerParticipationMessageID
+			l.OwnerParticipationMessageID = ownerParticipation.MessageID
+			l.OwnerParticipationKnown = ownerParticipation.Known
 			retained[l.Kind] = settledLoop{loop: l, anchor: anchor}
-			if gap && l.Kind == ReplyOwed && ownerParticipationMessageID == 0 && anchor != nil && isBulkMessage(*anchor) {
+			if gap && l.Kind == ReplyOwed && !ownerParticipation.Known && anchor != nil && isBulkMessage(*anchor) {
 				unprovenBulkAnchors[l.ID] = anchor.ID
 			}
 		}
@@ -183,22 +185,25 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	large := settlementView.ConversationType == "group_chat" && nonOwnerCount(settlementView.Participants) > cfg.MaxGroupCounterparts
 	var anchor *LoopMessage
 	var counterparty LoopParticipant
-	ownerParticipationMessageID := int64(0)
+	ownerParticipation := ownerParticipationEvidence{}
 	kind, threshold := ReplyOwed, cfg.ReplyOwedAfter
 	var uncertain bool
 	if trailing.direction == Inbound {
 		ownerWrote := len(turns) > 1 && turns[1].direction == Outbound
 		if ownerWrote && len(turns[1].messages) > 0 {
-			ownerParticipationMessageID = turns[1].messages[len(turns[1].messages)-1].ID
+			ownerParticipation = ownerParticipationEvidence{MessageID: turns[1].messages[len(turns[1].messages)-1].ID, Known: true}
 		}
-		retainedOwnerParticipationMessageID := int64(0)
+		retainedOwnerParticipation := ownerParticipationEvidence{}
 		retainedAnchorMessageID := int64(0)
 		if settled, ok := retained[ReplyOwed]; ok {
 			if anchor == nil && settled.anchor != nil {
 				anchorCopy := *settled.anchor
 				anchor = &anchorCopy
 			}
-			retainedOwnerParticipationMessageID = settled.loop.OwnerParticipationMessageID
+			retainedOwnerParticipation = ownerParticipationEvidence{
+				MessageID: settled.loop.OwnerParticipationMessageID,
+				Known:     settled.loop.OwnerParticipationKnown || settled.loop.OwnerParticipationMessageID != 0,
+			}
 			retainedAnchorMessageID = settled.loop.AnchorMessageID
 		}
 		bulk := false
@@ -235,10 +240,10 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			list = list || anchor.ListID != ""
 			bulk = bulk || isBulkMessage(*anchor)
 		}
-		if ownerParticipationMessageID == 0 && anchor != nil && anchor.ID == retainedAnchorMessageID {
-			ownerParticipationMessageID = retainedOwnerParticipationMessageID
+		if !ownerParticipation.Known && anchor != nil && anchor.ID == retainedAnchorMessageID {
+			ownerParticipation = retainedOwnerParticipation
 		}
-		if ownerParticipationMessageID != 0 {
+		if ownerParticipation.Known {
 			ownerWrote = true
 		}
 		if anchor != nil && suppressed(counterparty, supp) {
@@ -351,7 +356,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	v.Open = &Spec{Kind: kind, Status: status, Summary: summary, Anchor: *anchor, LastActivity: last, Counterparty: counterparty,
 		OwedSinceAt: anchor.OccurredAt, OpensAt: opensAt, TruncatedRun: t.truncated || uncertain,
 		PreviousTurnKnown: len(turns) > 1, PreviousTurnAt: previousTurnAt, PreviousTurnMessageID: previousTurnMessageID,
-		OwnerParticipationMessageID: ownerParticipationMessageID}
+		OwnerParticipationMessageID: ownerParticipation.MessageID, OwnerParticipationKnown: ownerParticipation.Known}
 	for _, m := range trailing.messages {
 		v.Open.TurnMessageIDs = append(v.Open.TurnMessageIDs, m.ID)
 	}
