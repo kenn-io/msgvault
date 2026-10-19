@@ -59,6 +59,7 @@ var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Valu
 
 var requiredPointerValidators = [][3]string{
 	{"CliAccountResponse", "Alias", "c"},
+	{"InboxContext", "Text", "i"},
 	{"FileMetadataResponse", "Filename", "f"},
 	{"FileMetadataResponse", "MimeType", "f"},
 	{"FileSearchRow", "Filename", "f"},
@@ -76,8 +77,39 @@ var requiredPointerValidators = [][3]string{
 	{"PersonFactEvidence", "Excerpt", "p"},
 }
 
-// RewriteGeneratedValidators preserves required-but-empty string fields as
-// pointers while making their generated presence validation unconditional.
+const generatedInboxStateBindingValidation = `	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+`
+
+const inboxStateAlternativeBindingValidation = `	sourcePresent := i.Source != (InboxSourceIdentity{})
+	targetPresent := i.Target != (InboxTarget{})
+	if sourcePresent == targetPresent {
+		errors = errors.Append("Source/Target", fmt.Errorf("exactly one of Source or Target must be populated"))
+	} else if sourcePresent {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	} else {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+`
+
+// RewriteGeneratedValidators repairs known generator gaps in required field
+// presence and validates the InboxState source/target binding alternative.
 func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	result := append([]byte(nil), source...)
 	for _, target := range [][2]string{{"ExploreGroupsHTTPRequest", "e"}, {"FileGroupsHTTPRequest", "f"}} {
@@ -116,10 +148,16 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		end := start + endOffset
 		validator := result[start:end]
 		guarded := []byte("\tif " + receiver + "." + field + " != nil {\n\t\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
+		customType := []byte("\tif v, ok := any(" + receiver + "." + field + ").(runtime.Validator); ok {\n\t\tif err := v.Validate(); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
 		required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
 		switch {
 		case bytes.Contains(validator, guarded):
 			rewritten := bytes.Replace(validator, guarded, required, 1)
+			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
+		case typeName == "InboxContext" && field == "Text" && bytes.Contains(validator, customType):
+			// A plain *string cannot implement runtime.Validator. Presence is
+			// mandatory, while a present empty archived body remains valid.
+			rewritten := bytes.Replace(validator, customType, required, 1)
 			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		case bytes.Contains(validator, required):
 		default:
@@ -206,5 +244,35 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
+	var err error
+	result, err = rewriteInboxStateBindingValidation(result)
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func rewriteInboxStateBindingValidation(source []byte) ([]byte, error) {
+	const marker = "func (i InboxState) Validate() error {"
+	start := bytes.Index(source, []byte(marker))
+	if start < 0 {
+		return nil, errors.New("generated InboxState binding validator shape changed")
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated InboxState binding validator shape changed")
+	}
+	end := start + endOffset
+	validator := source[start:end]
+	generated := []byte(generatedInboxStateBindingValidation)
+	fixed := []byte(inboxStateAlternativeBindingValidation)
+	switch {
+	case bytes.Count(validator, generated) == 1 && bytes.Count(validator, fixed) == 0:
+		rewritten := bytes.Replace(validator, generated, fixed, 1)
+		return append(append(append([]byte(nil), source[:start]...), rewritten...), source[end:]...), nil
+	case bytes.Count(validator, generated) == 0 && bytes.Count(validator, fixed) == 1:
+		return source, nil
+	default:
+		return nil, errors.New("generated InboxState binding validator shape changed")
+	}
 }

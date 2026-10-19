@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
+	"sync/atomic"
 	"testing"
 
 	imapapi "github.com/emersion/go-imap/v2"
@@ -20,12 +22,15 @@ import (
 type keywordTestSession struct {
 	imapserver.Session
 
+	available         []imapapi.Flag
 	permanent         []imapapi.Flag
 	readOnlyPermanent []imapapi.Flag
 	omitPermanent     bool
 	rejectRemove      bool
+	retainSeen        bool
 	omitFlags         bool
 	selectModes       chan<- bool
+	stores            *atomic.Int64
 }
 
 func (s *keywordTestSession) Select(name string, opts *imapapi.SelectOptions) (*imapapi.SelectData, error) {
@@ -35,6 +40,9 @@ func (s *keywordTestSession) Select(name string, opts *imapapi.SelectOptions) (*
 	data, err := s.Session.Select(name, opts)
 	if err != nil {
 		return nil, fmt.Errorf("select test mailbox: %w", err)
+	}
+	if s.available != nil {
+		data.Flags = s.available
 	}
 	if s.permanent != nil {
 		data.PermanentFlags = s.permanent
@@ -48,8 +56,14 @@ func (s *keywordTestSession) Select(name string, opts *imapapi.SelectOptions) (*
 	return data, nil
 }
 func (s *keywordTestSession) Store(w *imapserver.FetchWriter, set imapapi.NumSet, flags *imapapi.StoreFlags, opts *imapapi.StoreOptions) error {
+	if s.stores != nil {
+		s.stores.Add(1)
+	}
 	if s.rejectRemove && flags.Op == imapapi.StoreFlagsDel {
 		return errors.New("synthetic remove rejection")
+	}
+	if s.retainSeen && flags.Op == imapapi.StoreFlagsDel && slices.Contains(flags.Flags, imapapi.FlagSeen) {
+		return nil
 	}
 	if err := s.Session.Store(w, set, flags, opts); err != nil {
 		return fmt.Errorf("store test keyword flags: %w", err)

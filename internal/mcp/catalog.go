@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -59,6 +60,7 @@ type catalogCapabilities struct {
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
+	inboxTags       bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -148,6 +150,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
+		inboxTags:       opts.Inbox != nil && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags),
 	}
 }
 
@@ -206,6 +209,27 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 				definitions[i] = namedPromotionDefinition()
 			}
 		}
+	}
+	if opts.Inbox != nil {
+		if opts.DelegatedOnly && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags) {
+			definitions = append(definitions, messageTagDefinition(true))
+		}
+		seen := make(map[inboxcontrol.Operation]bool)
+		for _, op := range opts.InboxOperations {
+			if !seen[op] {
+				if definition, ok := stableInboxDefinitions[op]; ok {
+					definitions = append(definitions, definition)
+				}
+				seen[op] = true
+			}
+		}
+	}
+	readable := !opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "inbox.read")
+	if opts.InboxCandidates != nil && readable {
+		definitions = append(definitions, inboxCandidatesDefinition())
+	}
+	if opts.InboxContext != nil && readable && (!opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "inbox.content.read")) {
+		definitions = append(definitions, inboxContextDefinition())
 	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions

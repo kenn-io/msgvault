@@ -56,6 +56,21 @@ Use --dry-run with an edit to preview it without writing.`,
 				return fmt.Errorf("this daemon is too old for native email tags; upgrade it to API schema %s or newer", messageTagsMinAPISchemaVersion)
 			}
 			result, err := client.MessageTags(cmd.Context(), id, input, change.Mailbox)
+			outputFailure := func(cause error) error {
+				if input != nil && !input.DryRun {
+					message := "tag result output failed; inspect the receipt or original operation key before retrying"
+					if result != nil && result.ReceiptID != "" {
+						message += "; Inbox receipt: " + textutil.SanitizeTerminal(result.ReceiptID)
+					} else if result != nil && result.IdempotencyKey != "" {
+						message += "; Inbox operation key: " + textutil.SanitizeTerminal(result.IdempotencyKey)
+					}
+					if result != nil && len(result.ReplayRequest) > 0 {
+						message += "; Inbox replay request: " + textutil.SanitizeTerminal(string(result.ReplayRequest))
+					}
+					return emailtags.Failure("remote_unknown", message, result, cause)
+				}
+				return cause
+			}
 			if asJSON {
 				var value any = result
 				if err != nil {
@@ -67,10 +82,10 @@ Use --dry-run with an edit to preview it without writing.`,
 				}
 				data, encodeErr := json.Marshal(value)
 				if encodeErr != nil {
-					return encodeErr
+					return outputFailure(encodeErr)
 				}
-				if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), string(data)); writeErr != nil {
-					return fmt.Errorf("write message tags JSON: %w", writeErr)
+				if writeErr := writeInboxCLIOutputLine(cmd, data); writeErr != nil {
+					return outputFailure(fmt.Errorf("write message tags JSON: %w", writeErr))
 				}
 			} else if result != nil {
 				verb := "Tags"
@@ -79,8 +94,23 @@ Use --dry-run with an edit to preview it without writing.`,
 				} else if result.DryRun {
 					verb = "Preview tags"
 				}
-				if _, writeErr := fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", verb, textutil.SanitizeTerminal(strings.Join(result.Tags, ", "))); writeErr != nil {
-					return fmt.Errorf("write message tags: %w", writeErr)
+				if writeErr := writeInboxCLIOutputLine(cmd, []byte(fmt.Sprintf("%s: %s", verb, textutil.SanitizeTerminal(strings.Join(result.Tags, ", "))))); writeErr != nil {
+					return outputFailure(fmt.Errorf("write message tags: %w", writeErr))
+				}
+				if result.ReceiptID != "" {
+					if writeErr := writeInboxCLIOutputLine(cmd, []byte(fmt.Sprintf("Inbox receipt: %s (%s)", textutil.SanitizeTerminal(result.ReceiptID), textutil.SanitizeTerminal(result.ReceiptStatus)))); writeErr != nil {
+						return outputFailure(fmt.Errorf("write tag receipt: %w", writeErr))
+					}
+				} else if result.IdempotencyKey != "" {
+					if writeErr := writeInboxCLIOutputLine(cmd, []byte("Inbox operation key: "+textutil.SanitizeTerminal(result.IdempotencyKey))); writeErr != nil {
+						return outputFailure(fmt.Errorf("write tag operation key: %w", writeErr))
+					}
+				}
+				if err != nil && len(result.ReplayRequest) > 0 {
+					line := append([]byte("Inbox replay request: "), result.ReplayRequest...)
+					if writeErr := writeInboxCLIOutputLine(cmd, line); writeErr != nil {
+						return outputFailure(fmt.Errorf("write tag replay request: %w", writeErr))
+					}
 				}
 				if input == nil {
 					for _, tag := range result.AvailableTags {

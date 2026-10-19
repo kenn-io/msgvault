@@ -1,0 +1,85 @@
+package cmd
+
+import (
+	"net/http"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"go.kenn.io/msgvault/internal/inboxcontrol"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInboxMCPWiringRequiresLiveContract(t *testing.T) {
+	assertions := assert.New(t)
+
+	for _, delegated := range []bool{false, true} {
+		var healthRequests atomic.Int32
+		var discoveryRequests atomic.Int32
+		client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/v1/health":
+				healthRequests.Add(1)
+				_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+			case "/api/v1/agent-tokens/self":
+				_, _ = w.Write([]byte(`{"id":"synthetic-inbox-grant","permissions":["inbox.read","inbox.archive"],"sources":[{"id":1,"source_type":"gmail","identifier":"owner@example.test"}]}`))
+			case "/api/v1/mcp/capabilities":
+				discoveryRequests.Add(1)
+				http.NotFound(w, r)
+			default:
+				http.NotFound(w, r)
+			}
+		})
+		if delegated {
+			opts, err := delegatedMCPServeOptions(t.Context(), client)
+			require.NoError(t, err)
+			assertions.Nil(opts.Inbox)
+			assertions.Empty(opts.InboxOperations)
+		} else {
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
+			assertions.Nil(opts.Inbox)
+			assertions.Empty(opts.InboxOperations)
+		}
+		assertions.Equal(int32(1), healthRequests.Load(), "reuse the authenticated health schema probe")
+		assertions.Equal(int32(1), discoveryRequests.Load(), "discover Inbox operations once")
+	}
+}
+
+// This fixture pins the daemon discovery boundary. The native acceptance tests
+// independently obtain this contract from the registered production router.
+const inboxMCPTestDescriptor = `{"version":1,"delegated":false,"routes":[{"operation_id":"controlInbox","method":"POST","path":"/api/v1/inbox/control","query_parameters":[],"request_properties":["operation","target","source","expected","preview_token","idempotency_key","receipt_id","dry_run","tags","destination","origin_folder"]}],"inbox_operations":["get-state","archive","tags","receipt-get"]}`
+
+func TestInboxMCPWiringIntersectsLiveOperations(t *testing.T) {
+	for _, delegated := range []bool{false, true} {
+		t.Run(map[bool]string{false: "owner", true: "delegated"}[delegated], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+				case "/api/v1/agent-tokens/self":
+					_, _ = w.Write([]byte(`{"id":"synthetic-inbox-grant","permissions":["inbox.read","inbox.archive"],"sources":[{"id":1,"source_type":"gmail","identifier":"owner@example.test"}]}`))
+				case "/api/v1/mcp/capabilities":
+					_, _ = w.Write([]byte(strings.Replace(inboxMCPTestDescriptor, `"get-state","archive","tags","receipt-get"`, `"archive","tags"`, 1)))
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			opts := daemonMCPServeOptions(t.Context(), client, nil)
+			if delegated {
+				var err error
+				opts, err = delegatedMCPServeOptions(t.Context(), client)
+				requirements.NoError(err)
+			}
+			requirements.NotNil(opts.Inbox)
+			want := []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpTags}
+			if delegated {
+				want = []inboxcontrol.Operation{inboxcontrol.OpArchive}
+			}
+			assertions.Equal(want, opts.InboxOperations)
+		})
+	}
+}

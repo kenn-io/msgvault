@@ -3,20 +3,26 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
+	"errors"
+	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
 type cliTagsBackend struct {
-	calls   int
-	id      int64
-	change  *emailtags.MessageTagChange
-	mailbox string
-	fail    bool
+	calls         int
+	id            int64
+	change        *emailtags.MessageTagChange
+	mailbox       string
+	fail          bool
+	replayRequest []byte
 }
 
 func (b *cliTagsBackend) SupportsAPISchemaVersion(context.Context, string) (bool, error) {
@@ -28,6 +34,7 @@ func (b *cliTagsBackend) MessageTags(ctx context.Context, id int64, change *emai
 	b.change = change
 	b.mailbox = mailbox
 	result := &emailtags.MessageTagResult{MessageID: id, Provider: "imap", Tags: []string{"Next"}, DryRun: change != nil && change.DryRun, Verified: change == nil || !change.DryRun}
+	result.ReplayRequest = b.replayRequest
 	if b.fail {
 		return result, emailtags.Failure("remote_unknown", "Read tags before retrying", result, nil)
 	}
@@ -88,4 +95,160 @@ func TestMessageTagsClientRequiresSchema(t *testing.T) {
 	err := command.Execute()
 	require.ErrorContains(t, err, "API schema "+messageTagsMinAPISchemaVersion)
 	assert.Zero(t, requests)
+}
+
+type cliInboxTagsBackend struct{ cliTagsBackend }
+
+func (b *cliInboxTagsBackend) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string) (*emailtags.MessageTagResult, error) {
+	result, err := b.cliTagsBackend.MessageTags(ctx, id, change, mailbox)
+	result.ReceiptID, result.ReceiptStatus, result.IdempotencyKey = "receipt-fixture", "verified", "tags-fixture"
+	return result, err
+}
+
+func TestInboxMessageTagsCommandPrintsReceipt(t *testing.T) {
+	command := newMessageTagsCommand(&cliInboxTagsBackend{})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"7", "--add", "Next"})
+	require.NoError(t, command.Execute())
+	assert.Contains(t, output.String(), "Inbox receipt: receipt-fixture (verified)")
+}
+
+func TestMessageTagsCommandPrintsReplayRequestAfterUnknownOutcome(t *testing.T) {
+	replayRequest := `{"operation":"tags","idempotency_key":"tags-key","preview_token":"signed-preview"}`
+	backend := &cliTagsBackend{fail: true, replayRequest: []byte(replayRequest)}
+	command := newMessageTagsCommand(backend)
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"7", "--add", "Next"})
+	err := command.Execute()
+	require.Error(t, err)
+	assert.Contains(t, output.String(), "Inbox replay request:")
+	assert.Contains(t, output.String(), replayRequest)
+}
+
+type inboxTagOutputWriter struct{}
+
+func (inboxTagOutputWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestInboxMessageTagsOutputFailureNamesRecoverableReceipt(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			backend := &cliInboxTagsBackend{}
+			command := newMessageTagsCommand(backend)
+			command.SetOut(inboxTagOutputWriter{})
+			command.SetErr(io.Discard)
+			command.SilenceUsage, command.SilenceErrors = true, true
+			args := []string{"7", "--add", "Next"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			command.SetArgs(args)
+			err := command.Execute()
+			requirements.ErrorContains(err, "receipt-fixture")
+			failure, ok := errors.AsType[*emailtags.MessageTagError](err)
+			requirements.True(ok)
+			assertions.Equal("remote_unknown", failure.Code)
+			requirements.NotNil(failure.Result)
+			assertions.Equal("receipt-fixture", failure.Result.ReceiptID)
+			assertions.Equal(1, backend.calls)
+		})
+	}
+}
+
+func TestMessageTagsOutputFailurePreservesReplayRequestAfterLostResponse(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			target := inboxcontrol.Target{SourceID: 2, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "native-7"}
+			read, inbox := false, true
+			state := inboxcontrol.State{Target: target, Tags: []string{"INBOX"}, Read: &read, Inbox: &inbox, Location: "INBOX", Revision: "gmail-revision-1", ObservedAt: time.Now().UTC()}
+			projected := state
+			projected.Tags = []string{"INBOX", "Label_next"}
+			controls := []inboxcontrol.Request{}
+			dispatches := 0
+			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+				case "/api/v1/mcp/capabilities":
+					_, _ = w.Write([]byte(inboxMCPTestDescriptor))
+				case "/api/v1/messages/7/tags":
+					if r.Method == http.MethodPost {
+						w.WriteHeader(http.StatusConflict)
+						_, _ = w.Write([]byte(`{"error":"inbox_preview_required","message":"Use signed control"}`))
+						return
+					}
+					data, err := json.Marshal(map[string]any{"message_id": 7, "source_id": 2, "provider": "gmail", "tags": state.Tags, "before": state.Tags, "available_tags": []emailtags.MessageTag{{ID: "Label_next", Name: "Next"}}, "verified": true, "target": target})
+					if !assertions.NoError(err) {
+						return
+					}
+					_, _ = w.Write(data)
+				case "/api/v1/inbox/control":
+					var request inboxcontrol.Request
+					body, err := io.ReadAll(r.Body)
+					if !assertions.NoError(err) || !assertions.NoError(json.Unmarshal(body, &request)) {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					controls = append(controls, request)
+					if request.DryRun {
+						data, err := json.Marshal(inboxcontrol.Result{Before: &state, Projected: &projected, PreviewToken: "signed-preview"})
+						if !assertions.NoError(err) {
+							return
+						}
+						_, _ = w.Write(data)
+						return
+					}
+					dispatches++
+					hijacker, ok := w.(http.Hijacker)
+					if !assertions.True(ok, "HTTP test server supports dropping the committed response") {
+						return
+					}
+					conn, _, err := hijacker.Hijack()
+					if !assertions.NoError(err) {
+						return
+					}
+					_ = conn.Close()
+				default:
+					assertions.Fail("unexpected request", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			})
+			t.Cleanup(func() { assertions.NoError(client.Close()) })
+			command := newMessageTagsCommand(client)
+			var stderr bytes.Buffer
+			command.SetOut(inboxTagOutputWriter{})
+			command.SetErr(&stderr)
+			command.SilenceUsage = true
+			args := []string{"7", "--add", "Next"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			command.SetArgs(args)
+			err := command.Execute()
+			requirements.Error(err)
+			failure, ok := errors.AsType[*emailtags.MessageTagError](err)
+			requirements.True(ok)
+			requirements.NotNil(failure.Result)
+			requirements.NotEmpty(failure.Result.IdempotencyKey)
+			requirements.NotEmpty(failure.Result.ReplayRequest)
+			assertions.Empty(failure.Result.ReceiptID, "the committed receipt ID was in the lost response")
+			requirements.Len(controls, 2)
+			assertions.Equal(1, dispatches, "the lost HTTP response followed one committed Inbox dispatch")
+			assertions.Equal(controls[1].IdempotencyKey, failure.Result.IdempotencyKey)
+			assertions.Contains(failure.Message, "Inbox replay request:")
+			assertions.Contains(failure.Message, "signed-preview")
+			assertions.Contains(stderr.String(), "signed-preview", "the user must be able to recover the operation after stdout fails")
+			var replay inboxcontrol.Request
+			requirements.NoError(json.Unmarshal(failure.Result.ReplayRequest, &replay))
+			assertions.Equal(controls[1], replay)
+		})
+	}
 }

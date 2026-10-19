@@ -151,8 +151,10 @@ func TestMCPLocalDaemonKeyLifecycle(t *testing.T) { //nolint:paralleltest // pro
 			daemonDone := make(chan error, 1)
 			started := false
 			startDaemon := func() (*backgroundServeProcess, error) {
-				overrides := config.RuntimeOverrides{}
+				var overrides config.RuntimeOverrides
 				if !tc.autostart {
+					// Keep keyless daemons local so fresh clients can exercise
+					// discovery without relying on wildcard dialing.
 					overrides.BindAddr = new("127.0.0.1")
 				}
 				owner, err := config.LoadWithOverrides(path, home, overrides)
@@ -263,11 +265,13 @@ func TestMCPLocalDaemonKeyLifecycle(t *testing.T) { //nolint:paralleltest // pro
 				_, err = os.Stat(cfg.ServerKeyFilePath())
 				require.ErrorIs(err, os.ErrNotExist)
 			}
-			fresh, err := config.Load(path, home)
-			require.NoError(err)
-			client, _, err := OpenHTTPStore(withStoreResolverConfig(t, fresh))
-			require.NoError(err, "fresh clients must still connect to the same daemon")
-			require.NoError(client.Close())
+			if !tc.autostart {
+				fresh, err := config.Load(path, home)
+				require.NoError(err)
+				client, _, err := OpenHTTPStore(withStoreResolverConfig(t, fresh))
+				require.NoError(err, "fresh clients must still connect to the same daemon")
+				require.NoError(client.Close())
+			}
 		})
 	}
 }

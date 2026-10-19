@@ -75,6 +75,21 @@ write. Successful changes use calendar sync's Store persistence path immediately
 without advancing sync cursors. Remote completion and archive completion are
 reported separately so clients can reconcile a partial failure.
 
+Native Inbox control binds exact archive identity to a live account and
+provider item. Store atomically claims durable receipts before dispatch and
+retains independent readback evidence. A source lifecycle fence excludes removal
+through settlement; removal retires control authority without erasing audit
+receipts. Provider observations and source revisions update in the same Store
+transaction. Gmail sync retains prior label evidence when metadata refresh fails
+and preserves its history cursor for retry. IMAP sync distinguishes omitted
+FLAGS from observed empty flags. Native IMAP MOVE mappings become durable before
+destination readback; reconciliation changes only the exact mailbox copy while
+preserving unrelated memberships and local read state. Microsoft mail sync
+atomically refreshes category labels and native metadata, keeping local archive
+read markers separate. [Inbox control](../api-server.md#native-gmail-inbox-control)
+and its [IMAP contract](../api-server.md#native-imap-inbox-control) own the
+public behavior and current provider support.
+
 ## Responsibilities
 
 | Component | Owns | Main source locations |

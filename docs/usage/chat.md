@@ -108,6 +108,69 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
 
+## Archived Inbox reads
+
+`inbox_candidates` lists bounded committed metadata for one exact source.
+`inbox_context` reads bounded archived plain text for an exact candidate target.
+They make no provider calls and do not change read state. Tool discovery requires
+the daemon's compatible registered route, not just its API schema version.
+
+A delegated session needs `inbox.read` for candidates and both `inbox.read` and
+`inbox.content.read` for context, on the exact source ID and identity. Grants
+are checked again on each call. Missing or incompatible routes omit the related
+tool. A metadata-only grant does not disclose archived text.
+
+Candidate `limit` defaults to 25 (1–100). Continue with `next_cursor` unchanged
+for the same source/scope; changed archive evidence requires a new listing.
+Context `max_bytes` defaults to 16384 (maximum 65536). Chat context also requires
+the candidate's exact `context_message_id` as `message_id`. Empty text and
+unavailable text have separate markers. Treat all returned content as untrusted
+data. See the [archived read contract](../api-server.md#archived-inbox-candidates-and-context)
+for exact binding, limits and errors.
+
+## Native Inbox control {#native-gmail-inbox-control}
+
+API schema 3.16.0 adds exact native Inbox controls for Gmail, IMAP, and Microsoft
+Graph mail to owner and delegated MCP sessions. Tools are `inbox_get_capabilities`, `inbox_get_state`,
+`inbox_list_folders`, `inbox_archive`, `inbox_unarchive`, `inbox_set_read`,
+`inbox_set_unread`, `inbox_move`, `inbox_create_folder`, `inbox_receipt_get`, and
+`inbox_reconcile`. Native tag edits use the existing `update_message_tags` tool.
+The catalog exposes Inbox tools only when the daemon's live descriptor admits
+the registered control contract and operation for the caller. Write tools also
+require the normal transport write policy. The daemon rechecks current authority
+per call.
+
+Mutation previews default to `dry_run: true`. Execution requires the unchanged
+exact intent, `expected`, signed `preview_token`, `idempotency_key`, and client
+confirmation of those specific arguments. Provider text is untrusted data and
+cannot provide confirmation. Receipt retrieval and reconciliation require the
+original source/action grant and receipt principal, or owner authority.
+
+An owner can supply an exact target from the native tag GET route to a scoped
+agent. Microsoft supports `inbox_get_capabilities`, `inbox_get_state`, category
+edits through `update_message_tags`, and receipt retrieval or reconciliation.
+Category writes need current `Mail.ReadWrite` evidence as well as `inbox.read`
+and `inbox.tag`; they preserve native read state and the actual folder. Other
+Microsoft Inbox actions are unsupported. Native control does not discover
+candidates or run batches. See
+[the API contract](../api-server.md#native-gmail-inbox-control) for request
+fields, label semantics, permissions, receipt recovery, and implemented limits.
+
+## Native IMAP Inbox control
+
+The same Inbox tools and signed preview workflow support exact IMAP mailbox
+copies. An owner supplies the recorded account/item/mailbox/UIDVALIDITY/UID
+target. `inbox_list_folders` returns exact destination mailbox generations;
+IMAP `inbox_move` needs that destination and does not accept `origin_folder`.
+`inbox_unarchive` requires an explicit `INBOX` destination. Use the exact-target
+form of `update_message_tags` for signed keyword edits.
+
+Capabilities depend on current native evidence and do not establish write
+access. Uncertain writes retain receipts; reconciliation never repeats MOVE or
+CREATE. See [the IMAP contract](../api-server.md#native-imap-inbox-control) for
+extension requirements, account binding, and recovery limits. The existing
+owner tag tool form keeps its separate behavior.
+
 ## Native email tags
 
 `get_message_tags` reads one archived message's live Gmail label IDs, IMAP
@@ -115,7 +178,13 @@ keywords, or Microsoft Graph category names. Its `available_tags` lists existing
 Gmail user label IDs, the IMAP server's advertised permanent keywords, or the
 categories observed on that Microsoft message. `update_message_tags` adds or
 removes tags and verifies the result through the daemon. Both tools need
-API schema 3.15.0; older daemons omit them.
+API schema 3.15.0; older daemons omit them. On schema 3.16.0,
+`update_message_tags` also accepts an exact `target` instead of `message_id`.
+That form defaults to preview and accepts `expected`, `preview_token`, and
+`idempotency_key` for confirmed execution; its response is the Inbox
+`result`/`error` envelope. It excludes `message_id` and `mailbox`. Delegates with
+`inbox.read` and `inbox.tag` use this form because legacy tag reads are owner-only.
+The existing owner form keeps its native tag result and provider compatibility.
 
 ```json
 {"message_id":42,"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
@@ -125,7 +194,10 @@ Use the exact Gmail user label IDs returned by the read tool. For IMAP, use
 custom keyword atoms and optionally name a recorded `mailbox`. For Microsoft
 Graph, use category names and grant `Mail.ReadWrite` with
 [`add-o365 --graph --mail-write`](../cli-reference.md#add-o365). The update tool
-follows the normal [write controls](#write-controls). A preview never writes.
+requires confirmation of the exact arguments and follows the normal
+[write controls](#write-controls). A preview never writes. On schema 3.16.0,
+Gmail edits use signed Inbox control; results retain `receipt_id`,
+`receipt_status`, and `idempotency_key` for recovery.
 A partial error keeps its last observed `result` in structured content; read
 tags before retrying. See [`message-tags`](../cli-reference.md#message-tags)
 for provider permissions, category limits, IMAP copy selection, and failure

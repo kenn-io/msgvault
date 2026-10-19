@@ -1581,6 +1581,58 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type ListInboxCandidatesResponse = InboxCandidatePage
+
+type ListInboxCandidatesErrorResponse = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON403 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON409 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON500 = ErrorResponse
+
+type ListInboxCandidatesErrorResponseJSON503 = ErrorResponse
+
+type GetInboxContextResponse = InboxContext
+
+type GetInboxContextErrorResponse = ErrorResponse
+
+type GetInboxContextErrorResponseJSON = ErrorResponse
+
+type GetInboxContextErrorResponseJSON403 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON413 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON415 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON500 = ErrorResponse
+
+type GetInboxContextErrorResponseJSON503 = ErrorResponse
+
+type ControlInboxResponse = InboxResult
+
+type ControlInboxErrorResponse = InboxControlError
+
+type ControlInboxErrorResponseJSON = InboxControlError
+
+type ControlInboxErrorResponseJSON403 = InboxControlError
+
+type ControlInboxErrorResponseJSON409 = InboxControlError
+
+type ControlInboxErrorResponseJSON413 = InboxControlError
+
+type ControlInboxErrorResponseJSON415 = InboxControlError
+
+type ControlInboxErrorResponseJSON500 = InboxControlError
+
+type ControlInboxErrorResponseJSON501 = InboxControlError
+
+type ControlInboxErrorResponseJSON502 = InboxControlError
+
+type ControlInboxErrorResponseJSON503 = InboxControlError
+
 type GetDocbankAttachmentStatusResponse = DocbankAttachmentStatus
 
 type GetDocbankAttachmentStatusErrorResponse = APIHTTPError
@@ -1817,7 +1869,7 @@ type ListMessageRecordingsResponse = MessageRecordingsResponse
 
 type ListMessageRecordingsErrorResponse = ErrorResponse
 
-type GetMessageTagsResponse = MessageTagResult
+type GetMessageTagsResponse = MessageTagResponse
 
 type GetMessageTagsErrorResponse = MessageTagError
 
@@ -5013,6 +5065,50 @@ type GetImportJobResp struct {
 	JSON200      *GetImportJobResponse
 	JSON401      *GetImportJobErrorResponse
 	JSON404      *GetImportJobErrorResponseJSON
+}
+
+type ListInboxCandidatesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListInboxCandidatesResponse
+	JSON400      *ListInboxCandidatesErrorResponse
+	JSON401      *ListInboxCandidatesErrorResponseJSON
+	JSON403      *ListInboxCandidatesErrorResponseJSON403
+	JSON409      *ListInboxCandidatesErrorResponseJSON409
+	JSON500      *ListInboxCandidatesErrorResponseJSON500
+	JSON503      *ListInboxCandidatesErrorResponseJSON503
+}
+
+type GetInboxContextResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetInboxContextResponse
+	JSON400      *GetInboxContextErrorResponse
+	JSON401      *GetInboxContextErrorResponseJSON
+	JSON403      *GetInboxContextErrorResponseJSON403
+	JSON413      *GetInboxContextErrorResponseJSON413
+	JSON415      *GetInboxContextErrorResponseJSON415
+	JSON500      *GetInboxContextErrorResponseJSON500
+	JSON503      *GetInboxContextErrorResponseJSON503
+}
+
+type ControlInboxResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlInboxResponse
+	JSON400      *ControlInboxErrorResponse
+	JSON401      *ControlInboxErrorResponseJSON
+	JSON403      *ControlInboxErrorResponseJSON403
+	JSON409      *ControlInboxErrorResponseJSON409
+	JSON413      *ControlInboxErrorResponseJSON413
+	JSON415      *ControlInboxErrorResponseJSON415
+	JSON500      *ControlInboxErrorResponseJSON500
+	JSON501      *ControlInboxErrorResponseJSON501
+	JSON502      *ControlInboxErrorResponseJSON502
+	JSON503      *ControlInboxErrorResponseJSON503
 }
 
 type GetDocbankAttachmentStatusResp struct {

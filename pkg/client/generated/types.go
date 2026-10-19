@@ -6548,6 +6548,510 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type InboxCandidate struct {
+	Available        bool       `json:"available"`
+	ContextMessageID *int64     `json:"context_message_id,omitempty"`
+	Snippet          *string    `json:"snippet,omitzero"`
+	State            InboxState `json:"state"`
+	Title            *string    `json:"title,omitzero"`
+}
+
+func (i InboxCandidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxCandidatePage struct {
+	ArchiveRevision   string                  `json:"archive_revision" validate:"required"`
+	Candidates        []InboxCandidate        `json:"candidates" validate:"required"`
+	NextCursor        *string                 `json:"next_cursor,omitzero"`
+	ProviderIngestion *InboxProviderIngestion `json:"provider_ingestion,omitempty"`
+	Scope             string                  `json:"scope" validate:"required"`
+	Source            InboxSourceIdentity     `json:"source"`
+	Unavailable       bool                    `json:"unavailable"`
+}
+
+func (i InboxCandidatePage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ArchiveRevision, "required"); err != nil {
+		errors = errors.Append("ArchiveRevision", err)
+	}
+	for i, item := range i.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if i.ProviderIngestion != nil {
+		if v, ok := any(i.ProviderIngestion).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ProviderIngestion", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.Scope, "required"); err != nil {
+		errors = errors.Append("Scope", err)
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxCapabilities struct {
+	ConditionalWrite bool                `json:"conditional_write"`
+	LocationModel    string              `json:"location_model" validate:"required"`
+	ObservedAt       time.Time           `json:"observed_at" validate:"required"`
+	Operations       []InboxCapability   `json:"operations" validate:"required"`
+	Source           InboxSourceIdentity `json:"source"`
+}
+
+func (i InboxCapabilities) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.LocationModel, "required"); err != nil {
+		errors = errors.Append("LocationModel", err)
+	}
+	if err := typesValidator.Var(i.ObservedAt, "required"); err != nil {
+		errors = errors.Append("ObservedAt", err)
+	}
+	for i, item := range i.Operations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Operations[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxCapability struct {
+	Operation string  `json:"operation" validate:"required"`
+	Reason    *string `json:"reason,omitzero"`
+	Status    string  `json:"status" validate:"required"`
+}
+
+func (i InboxCapability) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type InboxContext struct {
+	MessageID   int64       `json:"message_id"`
+	Target      InboxTarget `json:"target"`
+	Text        *string     `json:"text" validate:"required"`
+	Truncated   bool        `json:"truncated"`
+	Unavailable bool        `json:"unavailable"`
+}
+
+func (i InboxContext) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if err := typesValidator.Var(i.Text, "required"); err != nil {
+		errors = errors.Append("Text", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxContextRequest struct {
+	MaxBytes  *int64      `json:"max_bytes,omitempty" validate:"omitempty,gte=0,lte=65536"`
+	MessageID *int64      `json:"message_id,omitempty"`
+	Target    InboxTarget `json:"target"`
+}
+
+func (i InboxContextRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.MaxBytes != nil {
+		if err := typesValidator.Var(i.MaxBytes, "omitempty,gte=0,lte=65536"); err != nil {
+			errors = errors.Append("MaxBytes", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxControlError struct {
+	ErrorData string       `json:"error" validate:"required"`
+	Message   string       `json:"message" validate:"required"`
+	Result    *InboxResult `json:"result,omitempty"`
+}
+
+func (i InboxControlError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if err := typesValidator.Var(i.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if i.Result != nil {
+		if v, ok := any(i.Result).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Result", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s InboxControlError) Error() string {
+	return "unmapped client error"
+}
+
+type InboxFolder struct {
+	ID          *string `json:"id,omitzero"`
+	Name        *string `json:"name,omitzero"`
+	ParentID    *string `json:"parent_id,omitzero"`
+	Uidvalidity *int64  `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+}
+
+func (i InboxFolder) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type InboxProviderIngestion struct {
+	Reason string                       `json:"reason" validate:"required"`
+	Status InboxProviderIngestionStatus `json:"status" validate:"required"`
+}
+
+func (i InboxProviderIngestion) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if v, ok := any(i.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxReceipt struct {
+	After          *InboxState  `json:"after,omitempty"`
+	Before         InboxState   `json:"before"`
+	CreatedAt      time.Time    `json:"created_at" validate:"required"`
+	DispatchedAt   *time.Time   `json:"dispatched_at,omitempty"`
+	FailureCode    *string      `json:"failure_code,omitzero"`
+	FinishedAt     *time.Time   `json:"finished_at,omitempty"`
+	ID             string       `json:"id" validate:"required"`
+	IdempotencyKey string       `json:"idempotency_key" validate:"required"`
+	Intent         InboxRequest `json:"intent"`
+	IntentHash     string       `json:"intent_hash" validate:"required"`
+	PrincipalID    string       `json:"principal_id" validate:"required"`
+	Projected      *InboxState  `json:"projected,omitempty"`
+	SourceID       int64        `json:"source_id"`
+	StateHash      string       `json:"state_hash" validate:"required"`
+	Status         string       `json:"status" validate:"required"`
+}
+
+func (i InboxReceipt) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.After != nil {
+		if v, ok := any(i.After).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("After", err)
+			}
+		}
+	}
+	if v, ok := any(i.Before).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Before", err)
+		}
+	}
+	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(i.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(i.IdempotencyKey, "required"); err != nil {
+		errors = errors.Append("IdempotencyKey", err)
+	}
+	if v, ok := any(i.Intent).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Intent", err)
+		}
+	}
+	if err := typesValidator.Var(i.IntentHash, "required"); err != nil {
+		errors = errors.Append("IntentHash", err)
+	}
+	if err := typesValidator.Var(i.PrincipalID, "required"); err != nil {
+		errors = errors.Append("PrincipalID", err)
+	}
+	if i.Projected != nil {
+		if v, ok := any(i.Projected).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Projected", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.StateHash, "required"); err != nil {
+		errors = errors.Append("StateHash", err)
+	}
+	if err := typesValidator.Var(i.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxRequest struct {
+	Destination    *InboxFolder         `json:"destination,omitempty"`
+	DryRun         *bool                `json:"dry_run,omitempty"`
+	Expected       *InboxState          `json:"expected,omitempty"`
+	IdempotencyKey *string              `json:"idempotency_key,omitzero"`
+	Operation      string               `json:"operation" validate:"required"`
+	OriginFolder   *InboxFolder         `json:"origin_folder,omitempty"`
+	PreviewToken   *string              `json:"preview_token,omitzero"`
+	ReceiptID      *string              `json:"receipt_id,omitzero"`
+	Source         *InboxSourceIdentity `json:"source,omitempty"`
+	Tags           *MessageTagChange    `json:"tags,omitempty"`
+	Target         *InboxTarget         `json:"target,omitempty"`
+}
+
+func (i InboxRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.Destination != nil {
+		if v, ok := any(i.Destination).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Destination", err)
+			}
+		}
+	}
+	if i.Expected != nil {
+		if v, ok := any(i.Expected).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Expected", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.Operation, "required"); err != nil {
+		errors = errors.Append("Operation", err)
+	}
+	if i.OriginFolder != nil {
+		if v, ok := any(i.OriginFolder).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OriginFolder", err)
+			}
+		}
+	}
+	if i.Source != nil {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if i.Tags != nil {
+		if v, ok := any(i.Tags).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Tags", err)
+			}
+		}
+	}
+	if i.Target != nil {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxResult struct {
+	After        *InboxState        `json:"after,omitempty"`
+	Before       *InboxState        `json:"before,omitempty"`
+	Capabilities *InboxCapabilities `json:"capabilities,omitempty"`
+	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
+	Folders      []InboxFolder      `json:"folders,omitempty"`
+	PreviewToken *string            `json:"preview_token,omitzero"`
+	Projected    *InboxState        `json:"projected,omitempty"`
+	Receipt      *InboxReceipt      `json:"receipt,omitempty"`
+}
+
+func (i InboxResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.After != nil {
+		if v, ok := any(i.After).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("After", err)
+			}
+		}
+	}
+	if i.Before != nil {
+		if v, ok := any(i.Before).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Before", err)
+			}
+		}
+	}
+	if i.Capabilities != nil {
+		if v, ok := any(i.Capabilities).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Capabilities", err)
+			}
+		}
+	}
+	for i, item := range i.Folders {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Folders[%d]", i), err)
+			}
+		}
+	}
+	if i.Projected != nil {
+		if v, ok := any(i.Projected).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Projected", err)
+			}
+		}
+	}
+	if i.Receipt != nil {
+		if v, ok := any(i.Receipt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Receipt", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxSourceIdentity struct {
+	AccountID        string `json:"account_id" validate:"required"`
+	SourceID         int64  `json:"source_id"`
+	SourceIdentifier string `json:"source_identifier" validate:"required"`
+	SourceType       string `json:"source_type" validate:"required"`
+}
+
+func (i InboxSourceIdentity) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type InboxState struct {
+	Flags             []string            `json:"flags,omitzero"`
+	Folders           []InboxFolder       `json:"folders,omitempty"`
+	Inbox             *bool               `json:"inbox,omitempty"`
+	LastMessageID     *string             `json:"last_message_id,omitzero"`
+	Location          *string             `json:"location,omitzero"`
+	MarkedUnread      *bool               `json:"marked_unread,omitempty"`
+	ObservedAt        time.Time           `json:"observed_at" validate:"required"`
+	ProvisionedFolder *InboxFolder        `json:"provisioned_folder,omitempty"`
+	Read              *bool               `json:"read,omitempty"`
+	Revision          *string             `json:"revision,omitzero"`
+	Source            InboxSourceIdentity `json:"source"`
+	Tags              []string            `json:"tags,omitzero"`
+	Target            InboxTarget         `json:"target"`
+}
+
+func (i InboxState) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range i.Folders {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Folders[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.ObservedAt, "required"); err != nil {
+		errors = errors.Append("ObservedAt", err)
+	}
+	if i.ProvisionedFolder != nil {
+		if v, ok := any(i.ProvisionedFolder).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ProvisionedFolder", err)
+			}
+		}
+	}
+	sourcePresent := i.Source != (InboxSourceIdentity{})
+	targetPresent := i.Target != (InboxTarget{})
+	if sourcePresent == targetPresent {
+		errors = errors.Append("Source/Target", fmt.Errorf("exactly one of Source or Target must be populated"))
+	} else if sourcePresent {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	} else {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxTarget struct {
+	AccountID        string  `json:"account_id" validate:"required"`
+	ItemID           int64   `json:"item_id"`
+	Mailbox          *string `json:"mailbox,omitzero"`
+	ProviderID       string  `json:"provider_id" validate:"required"`
+	Scope            string  `json:"scope" validate:"required"`
+	SourceID         int64   `json:"source_id"`
+	SourceIdentifier string  `json:"source_identifier" validate:"required"`
+	SourceType       string  `json:"source_type" validate:"required"`
+	UID              *int64  `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity      *int64  `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+}
+
+func (i InboxTarget) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
 type KataEvidenceLinkRequest struct {
 	Evidence []Reference `json:"evidence" validate:"required"`
 }
@@ -6775,12 +7279,17 @@ func (l ListDeletionsResponse) Validate() error {
 }
 
 type MCPCapabilities struct {
-	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
-	Version int64                `json:"version"`
+	Delegated       bool                 `json:"delegated"`
+	InboxOperations []string             `json:"inbox_operations" validate:"required"`
+	Routes          []MCPRouteDescriptor `json:"routes" validate:"required"`
+	Version         int64                `json:"version"`
 }
 
 func (m MCPCapabilities) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.InboxOperations, "required"); err != nil {
+		errors = errors.Append("InboxOperations", err)
+	}
 	for i, item := range m.Routes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7595,20 +8104,93 @@ func (s MessageTagError) Error() string {
 	return "unmapped client error"
 }
 
+type MessageTagResponse struct {
+	AvailableTags     []MessageTag  `json:"available_tags" validate:"required"`
+	Before            []string      `json:"before" validate:"required"`
+	CanCreateKeywords *bool         `json:"can_create_keywords,omitempty"`
+	DryRun            bool          `json:"dry_run"`
+	Flags             []string      `json:"flags,omitempty"`
+	IdempotencyKey    *string       `json:"idempotency_key,omitzero"`
+	Mailbox           *string       `json:"mailbox,omitzero"`
+	MessageID         int64         `json:"message_id"`
+	Provider          string        `json:"provider" validate:"required"`
+	ReceiptID         *string       `json:"receipt_id,omitzero"`
+	ReceiptStatus     *string       `json:"receipt_status,omitzero"`
+	ReplayRequest     *InboxRequest `json:"replay_request,omitempty"`
+	SourceID          int64         `json:"source_id"`
+	Tags              []string      `json:"tags" validate:"required"`
+	Target            *InboxTarget  `json:"target,omitempty"`
+	UID               *int64        `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64        `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool          `json:"verified"`
+}
+
+func (m MessageTagResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.AvailableTags {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("AvailableTags[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Before, "required"); err != nil {
+		errors = errors.Append("Before", err)
+	}
+	if err := typesValidator.Var(m.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if m.ReplayRequest != nil {
+		if v, ok := any(m.ReplayRequest).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReplayRequest", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.Tags, "required"); err != nil {
+		errors = errors.Append("Tags", err)
+	}
+	if m.Target != nil {
+		if v, ok := any(m.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+	if m.UID != nil {
+		if err := typesValidator.Var(m.UID, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("UID", err)
+		}
+	}
+	if m.Uidvalidity != nil {
+		if err := typesValidator.Var(m.Uidvalidity, "omitempty,gte=0,lte=4294967295"); err != nil {
+			errors = errors.Append("Uidvalidity", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MessageTagResult struct {
-	AvailableTags     []MessageTag `json:"available_tags" validate:"required"`
-	Before            []string     `json:"before" validate:"required"`
-	CanCreateKeywords *bool        `json:"can_create_keywords,omitempty"`
-	DryRun            bool         `json:"dry_run"`
-	Flags             []string     `json:"flags,omitempty"`
-	Mailbox           *string      `json:"mailbox,omitzero"`
-	MessageID         int64        `json:"message_id"`
-	Provider          string       `json:"provider" validate:"required"`
-	SourceID          int64        `json:"source_id"`
-	Tags              []string     `json:"tags" validate:"required"`
-	UID               *int64       `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Uidvalidity       *int64       `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
-	Verified          bool         `json:"verified"`
+	AvailableTags     []MessageTag  `json:"available_tags" validate:"required"`
+	Before            []string      `json:"before" validate:"required"`
+	CanCreateKeywords *bool         `json:"can_create_keywords,omitempty"`
+	DryRun            bool          `json:"dry_run"`
+	Flags             []string      `json:"flags,omitempty"`
+	IdempotencyKey    *string       `json:"idempotency_key,omitzero"`
+	Mailbox           *string       `json:"mailbox,omitzero"`
+	MessageID         int64         `json:"message_id"`
+	Provider          string        `json:"provider" validate:"required"`
+	ReceiptID         *string       `json:"receipt_id,omitzero"`
+	ReceiptStatus     *string       `json:"receipt_status,omitzero"`
+	ReplayRequest     *InboxRequest `json:"replay_request,omitempty"`
+	SourceID          int64         `json:"source_id"`
+	Tags              []string      `json:"tags" validate:"required"`
+	UID               *int64        `json:"uid,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Uidvalidity       *int64        `json:"uidvalidity,omitempty" validate:"omitempty,gte=0,lte=4294967295"`
+	Verified          bool          `json:"verified"`
 }
 
 func (m MessageTagResult) Validate() error {
@@ -7625,6 +8207,13 @@ func (m MessageTagResult) Validate() error {
 	}
 	if err := typesValidator.Var(m.Provider, "required"); err != nil {
 		errors = errors.Append("Provider", err)
+	}
+	if m.ReplayRequest != nil {
+		if v, ok := any(m.ReplayRequest).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReplayRequest", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.Tags, "required"); err != nil {
 		errors = errors.Append("Tags", err)
@@ -14302,24 +14891,25 @@ func (s SourceReference) Validate() error {
 }
 
 type SourceStatus struct {
-	ActiveSync            *SyncRunStatus `json:"active_sync,omitempty"`
-	CanSync               bool           `json:"can_sync"`
-	DisplayName           *string        `json:"display_name,omitzero" validate:"required"`
-	ID                    int64          `json:"id"`
-	Identifier            string         `json:"identifier" validate:"required"`
-	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync,omitempty"`
-	LastSyncAt            *string        `json:"last_sync_at,omitzero" validate:"required"`
-	LatestSync            *SyncRunStatus `json:"latest_sync,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at,omitzero" validate:"required"`
-	Schedule              *string        `json:"schedule,omitzero"`
-	Scheduled             bool           `json:"scheduled"`
-	SchedulerLastError    *string        `json:"scheduler_last_error,omitzero"`
-	SchedulerPending      *bool          `json:"scheduler_pending,omitempty"`
-	SchedulerQueued       *bool          `json:"scheduler_queued,omitempty"`
-	SchedulerStartedAt    *string        `json:"scheduler_started_at,omitzero"`
-	SourceType            string         `json:"source_type" validate:"required"`
-	SyncUnavailableReason *string        `json:"sync_unavailable_reason,omitzero"`
-	UpdatedAt             string         `json:"updated_at" validate:"required"`
+	ActiveSync            *SyncRunStatus         `json:"active_sync,omitempty"`
+	CanSync               bool                   `json:"can_sync"`
+	DisplayName           *string                `json:"display_name,omitzero" validate:"required"`
+	ID                    int64                  `json:"id"`
+	Identifier            string                 `json:"identifier" validate:"required"`
+	LastSuccessfulSync    *SyncRunStatus         `json:"last_successful_sync,omitempty"`
+	LastSyncAt            *string                `json:"last_sync_at,omitzero" validate:"required"`
+	LatestSync            *SyncRunStatus         `json:"latest_sync,omitempty"`
+	NextSyncAt            *string                `json:"next_sync_at,omitzero" validate:"required"`
+	ProviderIngestion     InboxProviderIngestion `json:"provider_ingestion"`
+	Schedule              *string                `json:"schedule,omitzero"`
+	Scheduled             bool                   `json:"scheduled"`
+	SchedulerLastError    *string                `json:"scheduler_last_error,omitzero"`
+	SchedulerPending      *bool                  `json:"scheduler_pending,omitempty"`
+	SchedulerQueued       *bool                  `json:"scheduler_queued,omitempty"`
+	SchedulerStartedAt    *string                `json:"scheduler_started_at,omitzero"`
+	SourceType            string                 `json:"source_type" validate:"required"`
+	SyncUnavailableReason *string                `json:"sync_unavailable_reason,omitzero"`
+	UpdatedAt             string                 `json:"updated_at" validate:"required"`
 }
 
 func (s SourceStatus) Validate() error {
@@ -14361,6 +14951,11 @@ func (s SourceStatus) Validate() error {
 	if s.NextSyncAt != nil {
 		if err := typesValidator.Var(s.NextSyncAt, "required"); err != nil {
 			errors = errors.Append("NextSyncAt", err)
+		}
+	}
+	if v, ok := any(s.ProviderIngestion).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ProviderIngestion", err)
 		}
 	}
 	if err := typesValidator.Var(s.SourceType, "required"); err != nil {

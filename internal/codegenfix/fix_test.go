@@ -42,6 +42,18 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	}
 }
 
+func TestRewriteGeneratedValidatorsTreatsInboxBindingsAsAlternatives(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	requirements.NoError(err)
+	assertions.Contains(string(got), "sourcePresent := i.Source != (InboxSourceIdentity{})")
+	assertions.Contains(string(got), "targetPresent := i.Target != (InboxTarget{})")
+	assertions.Contains(string(got), "if sourcePresent == targetPresent")
+	assertions.NotContains(string(got), generatedInboxStateBindingValidation)
+	assertions.Contains(string(got), inboxStateAlternativeBindingValidation)
+}
+
 func firstDifference(left, right []byte) int {
 	for i := range min(len(left), len(right)) {
 		if left[i] != right[i] {
@@ -150,6 +162,7 @@ func generatedValidatorFixture() string {
 	return `type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
+
 type ExploreCacheUnavailableResponse struct {
 	RecoveryAction string ` + "`json:\"recovery_action\" validate:\"omitempty\"`" + `
 }
@@ -174,6 +187,15 @@ func (f FileGroupsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
 }
 ` + pointerValidatorFixture("FileMetadataResponse", "f") + pointerValidatorFixture("FileSearchRow", "f") +
+		`func (i InboxContext) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Text).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Text", err)
+		}
+	}
+}
+` +
 		pointerValidatorFixture("PersonFileSearchRow", "p") +
 		requiredStringPointerValidatorFixture("FileSuggestionRow", "f", "MimeType") +
 		requiredStringPointerValidatorFixture("PersonFileSuggestionRow", "p", "MimeType") +
@@ -185,7 +207,34 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + inboxStateValidatorFixture()
+}
+
+func inboxStateValidatorFixture() string {
+	return `type InboxSourceIdentity struct{}
+type InboxTarget struct{}
+type InboxState struct {
+	Source InboxSourceIdentity
+	Target InboxTarget
+}
+func (i InboxState) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+`
 }
 
 func contactRouteEmptyStringValidatorFixture() string {
@@ -273,4 +322,11 @@ func requiredStringPointerValidatorFixture(
 	}
 	result.WriteString("}\n")
 	return result.String()
+}
+
+func TestRewriteInboxContextTextPresence(t *testing.T) {
+	result, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
+	require.NoError(t, err)
+	assert.Contains(t, string(result), `typesValidator.Var(i.Text, "required")`)
+	assert.NotContains(t, string(result), `any(i.Text).(runtime.Validator)`)
 }

@@ -12,45 +12,63 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 )
 
-// MCPCapabilities reads implementation metadata with this client's existing
-// authentication. Missing, unknown or malformed discovery is an error; callers
-// must hide optional tools rather than guess support from an API version.
+const MCPDiscoveryMinAPISchemaVersion = InboxMinAPISchemaVersion
+
+var ErrMCPCapabilitiesUnavailable = errors.New("MCP operation discovery unavailable")
+
+// MCPCapabilities reads current caller admission without following redirects or
+// observing a provider. Version eligibility alone never admits a control call.
 func (c *Client) MCPCapabilities(ctx context.Context) (*apiprotocol.MCPCapabilities, error) {
-	response, err := c.DoGeneratedRequestWithContext(ctx, http.MethodGet, "/api/v1/mcp/capabilities", nil)
+	version, err := c.APISchemaVersion(ctx)
 	if err != nil {
-		return nil, err
+		return nil, ErrMCPCapabilitiesUnavailable
+	}
+	return c.MCPCapabilitiesAtSchemaVersion(ctx, version)
+}
+
+// MCPCapabilitiesAtSchemaVersion reads current caller admission after the
+// caller has already checked the daemon's API schema version.
+func (c *Client) MCPCapabilitiesAtSchemaVersion(ctx context.Context, version string) (*apiprotocol.MCPCapabilities, error) {
+	if !strings.HasPrefix(version, "3.") || !APISchemaVersionAtLeast(version, MCPDiscoveryMinAPISchemaVersion) {
+		return nil, ErrMCPCapabilitiesUnavailable
+	}
+	transport := *c.httpClient
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	response, err := c.doGeneratedRequestWithHTTPClient(ctx, http.MethodGet, "/api/v1/mcp/capabilities", nil, &transport, 1<<20)
+	if err != nil {
+		return nil, ErrMCPCapabilitiesUnavailable
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("MCP capability discovery unavailable")
+		return nil, ErrMCPCapabilitiesUnavailable
 	}
-	const wireLimit = 1 << 20
-	data, err := io.ReadAll(io.LimitReader(response.Body, wireLimit+1))
-	if err != nil {
-		return nil, err
+	body, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if err != nil || len(body) > 1<<20 {
+		return nil, ErrMCPCapabilitiesUnavailable
 	}
-	if len(data) > wireLimit {
-		return nil, errors.New("MCP capability discovery exceeds byte limit")
+	var descriptor apiprotocol.MCPCapabilities
+	if json.Unmarshal(body, &descriptor) != nil || descriptor.Version != 1 || descriptor.Routes == nil || len(descriptor.Routes) > 256 || len(descriptor.InboxOperations) > 64 {
+		return nil, ErrMCPCapabilitiesUnavailable
 	}
-	var capabilities apiprotocol.MCPCapabilities
-	if err := json.Unmarshal(data, &capabilities); err != nil {
-		return nil, errors.New("invalid MCP capability discovery")
+	if !validMCPCapabilities(&descriptor) {
+		return nil, ErrMCPCapabilitiesUnavailable
 	}
-	if capabilities.Version != 1 {
-		return nil, errors.New("unsupported MCP capability discovery")
+	seen := make(map[string]bool, len(descriptor.InboxOperations))
+	for _, operation := range descriptor.InboxOperations {
+		if !mcpDescriptorIdentity.MatchString(operation) || seen[operation] {
+			return nil, ErrMCPCapabilitiesUnavailable
+		}
+		seen[operation] = true
 	}
-	if !validMCPCapabilities(&capabilities) {
-		return nil, errors.New("invalid MCP capability descriptors")
-	}
-	return &capabilities, nil
+	return &descriptor, nil
 }
 
 var mcpDescriptorIdentity = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 func validMCPCapabilities(capabilities *apiprotocol.MCPCapabilities) bool {
-	routes := make(map[string]bool)
+	routes := make(map[string]bool, len(capabilities.Routes))
 	for _, route := range capabilities.Routes {
-		if !mcpDescriptorIdentity.MatchString(route.OperationID) || routes[route.OperationID] {
+		if !mcpDescriptorIdentity.MatchString(route.OperationID) || routes[route.OperationID] || len(route.Path) > 2048 || len(route.QueryParameters)+len(route.RequestProperties) > 256 {
 			return false
 		}
 		routes[route.OperationID] = true
@@ -70,7 +88,7 @@ func validMCPCapabilities(capabilities *apiprotocol.MCPCapabilities) bool {
 }
 
 func validMCPDescriptorNames(names []string) bool {
-	seen := make(map[string]bool)
+	seen := make(map[string]bool, len(names))
 	for _, name := range names {
 		if !mcpDescriptorIdentity.MatchString(name) || seen[name] {
 			return false
