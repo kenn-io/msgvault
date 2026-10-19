@@ -6548,6 +6548,70 @@ func (i ImportResult) Validate() error {
 	return errors
 }
 
+type InboxCandidate struct {
+	Available        bool       `json:"available"`
+	ContextMessageID *int64     `json:"context_message_id,omitempty"`
+	Snippet          *string    `json:"snippet,omitzero"`
+	State            InboxState `json:"state"`
+	Title            *string    `json:"title,omitzero"`
+}
+
+func (i InboxCandidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxCandidatePage struct {
+	ArchiveRevision   string                  `json:"archive_revision" validate:"required"`
+	Candidates        []InboxCandidate        `json:"candidates" validate:"required"`
+	NextCursor        *string                 `json:"next_cursor,omitzero"`
+	ProviderIngestion *InboxProviderIngestion `json:"provider_ingestion,omitempty"`
+	Scope             string                  `json:"scope" validate:"required"`
+	Source            InboxSourceIdentity     `json:"source"`
+	Unavailable       bool                    `json:"unavailable"`
+}
+
+func (i InboxCandidatePage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.ArchiveRevision, "required"); err != nil {
+		errors = errors.Append("ArchiveRevision", err)
+	}
+	for i, item := range i.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if i.ProviderIngestion != nil {
+		if v, ok := any(i.ProviderIngestion).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ProviderIngestion", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(i.Scope, "required"); err != nil {
+		errors = errors.Append("Scope", err)
+	}
+	if v, ok := any(i.Source).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Source", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type InboxCapabilities struct {
 	ConditionalWrite bool                `json:"conditional_write"`
 	LocationModel    string              `json:"location_model" validate:"required"`
@@ -6592,6 +6656,54 @@ func (i InboxCapability) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
 }
 
+type InboxContext struct {
+	MessageID   int64       `json:"message_id"`
+	Target      InboxTarget `json:"target"`
+	Text        *string     `json:"text" validate:"required"`
+	Truncated   bool        `json:"truncated"`
+	Unavailable bool        `json:"unavailable"`
+}
+
+func (i InboxContext) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if err := typesValidator.Var(i.Text, "required"); err != nil {
+		errors = errors.Append("Text", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type InboxContextRequest struct {
+	MaxBytes  *int64      `json:"max_bytes,omitempty" validate:"omitempty,gte=0,lte=65536"`
+	MessageID *int64      `json:"message_id,omitempty"`
+	Target    InboxTarget `json:"target"`
+}
+
+func (i InboxContextRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.MaxBytes != nil {
+		if err := typesValidator.Var(i.MaxBytes, "omitempty,gte=0,lte=65536"); err != nil {
+			errors = errors.Append("MaxBytes", err)
+		}
+	}
+	if v, ok := any(i.Target).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Target", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type InboxControlError struct {
 	ErrorData string       `json:"error" validate:"required"`
 	Message   string       `json:"message" validate:"required"`
@@ -6632,6 +6744,27 @@ type InboxFolder struct {
 
 func (i InboxFolder) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
+type InboxProviderIngestion struct {
+	Reason string                       `json:"reason" validate:"required"`
+	Status InboxProviderIngestionStatus `json:"status" validate:"required"`
+}
+
+func (i InboxProviderIngestion) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if v, ok := any(i.Status).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Status", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type InboxReceipt struct {
@@ -14758,24 +14891,25 @@ func (s SourceReference) Validate() error {
 }
 
 type SourceStatus struct {
-	ActiveSync            *SyncRunStatus `json:"active_sync,omitempty"`
-	CanSync               bool           `json:"can_sync"`
-	DisplayName           *string        `json:"display_name,omitzero" validate:"required"`
-	ID                    int64          `json:"id"`
-	Identifier            string         `json:"identifier" validate:"required"`
-	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync,omitempty"`
-	LastSyncAt            *string        `json:"last_sync_at,omitzero" validate:"required"`
-	LatestSync            *SyncRunStatus `json:"latest_sync,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at,omitzero" validate:"required"`
-	Schedule              *string        `json:"schedule,omitzero"`
-	Scheduled             bool           `json:"scheduled"`
-	SchedulerLastError    *string        `json:"scheduler_last_error,omitzero"`
-	SchedulerPending      *bool          `json:"scheduler_pending,omitempty"`
-	SchedulerQueued       *bool          `json:"scheduler_queued,omitempty"`
-	SchedulerStartedAt    *string        `json:"scheduler_started_at,omitzero"`
-	SourceType            string         `json:"source_type" validate:"required"`
-	SyncUnavailableReason *string        `json:"sync_unavailable_reason,omitzero"`
-	UpdatedAt             string         `json:"updated_at" validate:"required"`
+	ActiveSync            *SyncRunStatus         `json:"active_sync,omitempty"`
+	CanSync               bool                   `json:"can_sync"`
+	DisplayName           *string                `json:"display_name,omitzero" validate:"required"`
+	ID                    int64                  `json:"id"`
+	Identifier            string                 `json:"identifier" validate:"required"`
+	LastSuccessfulSync    *SyncRunStatus         `json:"last_successful_sync,omitempty"`
+	LastSyncAt            *string                `json:"last_sync_at,omitzero" validate:"required"`
+	LatestSync            *SyncRunStatus         `json:"latest_sync,omitempty"`
+	NextSyncAt            *string                `json:"next_sync_at,omitzero" validate:"required"`
+	ProviderIngestion     InboxProviderIngestion `json:"provider_ingestion"`
+	Schedule              *string                `json:"schedule,omitzero"`
+	Scheduled             bool                   `json:"scheduled"`
+	SchedulerLastError    *string                `json:"scheduler_last_error,omitzero"`
+	SchedulerPending      *bool                  `json:"scheduler_pending,omitempty"`
+	SchedulerQueued       *bool                  `json:"scheduler_queued,omitempty"`
+	SchedulerStartedAt    *string                `json:"scheduler_started_at,omitzero"`
+	SourceType            string                 `json:"source_type" validate:"required"`
+	SyncUnavailableReason *string                `json:"sync_unavailable_reason,omitzero"`
+	UpdatedAt             string                 `json:"updated_at" validate:"required"`
 }
 
 func (s SourceStatus) Validate() error {
@@ -14817,6 +14951,11 @@ func (s SourceStatus) Validate() error {
 	if s.NextSyncAt != nil {
 		if err := typesValidator.Var(s.NextSyncAt, "required"); err != nil {
 			errors = errors.Append("NextSyncAt", err)
+		}
+	}
+	if v, ok := any(s.ProviderIngestion).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ProviderIngestion", err)
 		}
 	}
 	if err := typesValidator.Var(s.SourceType, "required"); err != nil {

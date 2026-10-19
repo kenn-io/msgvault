@@ -16,10 +16,10 @@ func admitInboxMCP(ctx context.Context, client *daemonclient.Client, opts *mcpse
 	if err != nil {
 		return
 	}
-	admitInboxMCPWithCapabilities(client, descriptor, opts, owner)
+	admitInboxMCPFromDescriptor(descriptor, client, opts, owner)
 }
 
-func admitInboxMCPWithCapabilities(client *daemonclient.Client, descriptor *apiprotocol.MCPCapabilities, opts *mcpserver.ServeOptions, owner bool) {
+func admitInboxMCPFromDescriptor(descriptor *apiprotocol.MCPCapabilities, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
 	if descriptor == nil || !descriptor.HasInboxContract() {
 		return
 	}
@@ -31,6 +31,19 @@ func admitInboxMCPWithCapabilities(client *daemonclient.Client, descriptor *apip
 	if len(opts.InboxOperations) != 0 {
 		opts.Inbox = client
 	}
+}
+
+func configureInboxMCPTools(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool, schemaVersion string) {
+	descriptor, err := client.MCPCapabilitiesAtSchemaVersion(ctx, schemaVersion)
+	if err != nil {
+		return
+	}
+	configureInboxMCPToolsFromDescriptor(descriptor, client, opts, owner)
+}
+
+func configureInboxMCPToolsFromDescriptor(descriptor *apiprotocol.MCPCapabilities, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
+	admitInboxMCPFromDescriptor(descriptor, client, opts, owner)
+	configureInboxReadToolsFromDescriptor(descriptor, client, opts)
 }
 
 // inboxMCPOperations limits discovery to the current grant. The daemon still

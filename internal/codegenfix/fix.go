@@ -59,6 +59,7 @@ var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Valu
 
 var requiredPointerValidators = [][3]string{
 	{"CliAccountResponse", "Alias", "c"},
+	{"InboxContext", "Text", "i"},
 	{"FileMetadataResponse", "Filename", "f"},
 	{"FileMetadataResponse", "MimeType", "f"},
 	{"FileSearchRow", "Filename", "f"},
@@ -147,10 +148,16 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		end := start + endOffset
 		validator := result[start:end]
 		guarded := []byte("\tif " + receiver + "." + field + " != nil {\n\t\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
+		customType := []byte("\tif v, ok := any(" + receiver + "." + field + ").(runtime.Validator); ok {\n\t\tif err := v.Validate(); err != nil {\n\t\t\terrors = errors.Append(\"" + field + "\", err)\n\t\t}\n\t}")
 		required := []byte("\tif err := typesValidator.Var(" + receiver + "." + field + ", \"required\"); err != nil {\n\t\terrors = errors.Append(\"" + field + "\", err)\n\t}")
 		switch {
 		case bytes.Contains(validator, guarded):
 			rewritten := bytes.Replace(validator, guarded, required, 1)
+			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
+		case typeName == "InboxContext" && field == "Text" && bytes.Contains(validator, customType):
+			// A plain *string cannot implement runtime.Validator. Presence is
+			// mandatory, while a present empty archived body remains valid.
+			rewritten := bytes.Replace(validator, customType, required, 1)
 			result = append(append(append([]byte(nil), result[:start]...), rewritten...), result[end:]...)
 		case bytes.Contains(validator, required):
 		default:

@@ -224,6 +224,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	readable := !opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "inbox.read")
+	if opts.InboxCandidates != nil && readable {
+		definitions = append(definitions, inboxCandidatesDefinition())
+	}
+	if opts.InboxContext != nil && readable && (!opts.DelegatedOnly || slices.Contains(opts.GrantPermissions, "inbox.content.read")) {
+		definitions = append(definitions, inboxContextDefinition())
+	}
 	sort.Slice(definitions, func(i, j int) bool { return definitions[i].name < definitions[j].name })
 	return definitions
 }

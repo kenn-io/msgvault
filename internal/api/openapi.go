@@ -375,7 +375,9 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds signed, provider-native Inbox observations and controls.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds bounded archived Inbox candidates/context, registered read
+// discovery, and conservative source ingestion evidence.
+const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1130,6 +1132,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	if account := schemas["CliAccountResponse"]; account != nil && account.Properties["alias"] != nil {
 		account.Properties["alias"].Nullable = true
 	}
+	if context := schemas["InboxContext"]; context != nil {
+		if text := context.Properties["text"]; text != nil {
+			setCodegenGoType(text, "*string")
+		}
+	}
+
 	for _, schemaName := range []string{"FileSearchRow", "FileMetadataResponse", "PersonFileSearchRow", "MessageRecording"} {
 		if schema := schemas[schemaName]; schema != nil {
 			for _, property := range []string{"filename", "mime_type"} {

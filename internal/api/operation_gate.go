@@ -404,12 +404,12 @@ var operationGateExemptPaths = map[string]bool{
 	telemetryEventsPath: true,
 }
 
-// readOnlyPostRoutePatterns lists the analytical POST routes whose handlers
-// only read committed archive state (plus process-local in-memory state such
-// as explore candidate snapshots and preflight operation tokens). They use
-// POST solely because their requests are structured predicate bodies, so
-// queueing them on the operation gate would serialize pure reads behind long
-// archive mutations. Reads never needed the gate: every GET, including
+// readOnlyPostRoutePatterns lists the POST routes whose handlers only read
+// committed archive state (plus process-local in-memory state such as explore
+// candidate snapshots and preflight operation tokens). They use POST because
+// their requests are structured bodies, so queueing them on the operation
+// gate would serialize pure reads behind long archive mutations. Reads never
+// needed the gate: every GET, including
 // analytical detail routes such as participant inbox rollups, already
 // bypasses it and relies on the committed-cache revision/snapshot machinery
 // for consistency instead.
@@ -418,7 +418,8 @@ var operationGateExemptPaths = map[string]bool{
 // still gates. TestReadOnlyPostRoutePatternsMatchExplorationRoutes keeps this
 // table in sync with the routes registered through registerExploreRoute and
 // registerSearchCoverageRoute (the OpenAPI "Exploration" tag), so a new
-// analytical route forces a conscious classification decision here.
+// analytical route forces a conscious classification decision here. Inbox
+// context reads a bounded message body from the archive and also bypasses it.
 //
 // The remote-image proxy and CardDAV account test are the non-Exploration
 // entries. Both perform SSRF-validated outbound reads without changing
@@ -434,6 +435,7 @@ var readOnlyPostRoutePatterns = []string{
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
 	"/api/v1/messages/{id}/tags",
+	"/api/v1/inbox/context",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",

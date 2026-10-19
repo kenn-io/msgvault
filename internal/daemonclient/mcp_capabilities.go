@@ -23,13 +23,12 @@ func (c *Client) MCPCapabilities(ctx context.Context) (*apiprotocol.MCPCapabilit
 	if err != nil {
 		return nil, ErrMCPCapabilitiesUnavailable
 	}
-	return c.MCPCapabilitiesForSchemaVersion(ctx, version)
+	return c.MCPCapabilitiesAtSchemaVersion(ctx, version)
 }
 
-// MCPCapabilitiesForSchemaVersion reads caller admission after a caller has
-// already fetched the authenticated health response and its schema version.
-// This avoids probing health twice during daemon MCP startup.
-func (c *Client) MCPCapabilitiesForSchemaVersion(ctx context.Context, version string) (*apiprotocol.MCPCapabilities, error) {
+// MCPCapabilitiesAtSchemaVersion reads current caller admission after the
+// caller has already checked the daemon's API schema version.
+func (c *Client) MCPCapabilitiesAtSchemaVersion(ctx context.Context, version string) (*apiprotocol.MCPCapabilities, error) {
 	if !strings.HasPrefix(version, "3.") || !APISchemaVersionAtLeast(version, MCPDiscoveryMinAPISchemaVersion) {
 		return nil, ErrMCPCapabilitiesUnavailable
 	}

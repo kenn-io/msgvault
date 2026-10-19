@@ -20,6 +20,7 @@ const (
 	PermissionAttachmentRead    Permission = "attachment.read"
 	PermissionStatsRead         Permission = "stats.read"
 	PermissionInboxRead         Permission = "inbox.read"
+	PermissionInboxContentRead  Permission = "inbox.content.read"
 	PermissionInboxTag          Permission = "inbox.tag"
 	PermissionInboxArchive      Permission = "inbox.archive"
 	PermissionInboxReadState    Permission = "inbox.read-state"
@@ -40,6 +41,7 @@ var knownPermissions = map[string]Permission{
 	string(PermissionAttachmentRead):    PermissionAttachmentRead,
 	string(PermissionStatsRead):         PermissionStatsRead,
 	string(PermissionInboxRead):         PermissionInboxRead,
+	string(PermissionInboxContentRead):  PermissionInboxContentRead,
 	string(PermissionInboxTag):          PermissionInboxTag,
 	string(PermissionInboxArchive):      PermissionInboxArchive,
 	string(PermissionInboxReadState):    PermissionInboxReadState,

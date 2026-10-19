@@ -81,7 +81,7 @@ func parseIMAPInboxSyncAccount(identifier, kind string, config sql.NullString) (
 		return "", false
 	}
 	parsed, err := url.Parse(identifier)
-	if err != nil || parsed.User == nil || parsed.User.Username() == "" || (parsed.Scheme != "imap" && parsed.Scheme != "imaps" && parsed.Scheme != "imap+starttls") {
+	if err != nil || parsed.User == nil || parsed.User.Username() == "" || (parsed.Scheme != sourceTypeIMAP && parsed.Scheme != "imaps" && parsed.Scheme != "imap+starttls") {
 		return "", false
 	}
 	var account struct {

@@ -575,6 +575,14 @@ type ClientInterface interface {
 	GetImportJob(ctx context.Context, options *GetImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetImportJobResponse, error)
 	GetImportJobWithResponse(ctx context.Context, options *GetImportJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetImportJobResp, error)
 
+	// ListInboxCandidates List bounded committed inbox metadata for one exact source
+	ListInboxCandidates(ctx context.Context, options *ListInboxCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListInboxCandidatesResponse, error)
+	ListInboxCandidatesWithResponse(ctx context.Context, options *ListInboxCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListInboxCandidatesResp, error)
+
+	// GetInboxContext Read bounded archived text for one exact inbox target
+	GetInboxContext(ctx context.Context, options *GetInboxContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxContextResponse, error)
+	GetInboxContextWithResponse(ctx context.Context, options *GetInboxContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxContextResp, error)
+
 	// ControlInbox Preview, execute or reconcile one exact inbox action
 	ControlInbox(ctx context.Context, options *ControlInboxRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlInboxResponse, error)
 	ControlInboxWithResponse(ctx context.Context, options *ControlInboxRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ControlInboxResp, error)
@@ -9553,6 +9561,133 @@ func (c *Client) GetImportJob(ctx context.Context, options *GetImportJobRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/imports/{job_id}")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ListInboxCandidates List bounded committed inbox metadata for one exact source
+func (c *Client) ListInboxCandidates(ctx context.Context, options *ListInboxCandidatesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListInboxCandidatesResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/inbox/candidates",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ListInboxCandidatesResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ListInboxCandidatesErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ListInboxCandidatesErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ListInboxCandidatesResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ListInboxCandidatesResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/candidates")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetInboxContext Read bounded archived text for one exact inbox target
+func (c *Client) GetInboxContext(ctx context.Context, options *GetInboxContextRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetInboxContextResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/inbox/context",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetInboxContextResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetInboxContextErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetInboxContextErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetInboxContextResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetInboxContextResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/inbox/context")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

@@ -52,6 +52,18 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 					}
 				}
 			}
+			allowed := map[string]bool{}
+			if _, ok := s.store.(InboxCandidateReader); ok {
+				allowed["listInboxCandidates"] = !response.Delegated || inboxDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxRead)
+			}
+			if _, ok := s.store.(InboxContextReader); ok {
+				allowed["getInboxContext"] = !response.Delegated || inboxDiscoveryAllowed(auth.Grant, agentgrant.PermissionInboxContentRead)
+			}
+			for _, operation := range documentOperations(apiV1.OpenAPI()) {
+				if allowed[operation.OperationID] {
+					response.Routes = append(response.Routes, mcpRouteDescriptor(apiV1.OpenAPI(), operation))
+				}
+			}
 			sort.Strings(response.InboxOperations)
 			sort.Slice(response.Routes, func(i, j int) bool { return response.Routes[i].OperationID < response.Routes[j].OperationID })
 			writeJSON(w, http.StatusOK, response)

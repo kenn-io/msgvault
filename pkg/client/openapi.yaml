@@ -7099,6 +7099,48 @@ components:
         - candidates
         - applied
       type: object
+    InboxCandidate:
+      properties:
+        available:
+          type: boolean
+        context_message_id:
+          format: int64
+          type: integer
+        snippet:
+          type: string
+        state:
+          $ref: "#/components/schemas/InboxState"
+        title:
+          type: string
+      required:
+        - state
+        - available
+      type: object
+    InboxCandidatePage:
+      properties:
+        archive_revision:
+          type: string
+        candidates:
+          items:
+            $ref: "#/components/schemas/InboxCandidate"
+          type: array
+        next_cursor:
+          type: string
+        provider_ingestion:
+          $ref: "#/components/schemas/InboxProviderIngestion"
+        scope:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        unavailable:
+          type: boolean
+      required:
+        - source
+        - scope
+        - archive_revision
+        - candidates
+        - unavailable
+      type: object
     InboxCapabilities:
       properties:
         conditional_write:
@@ -7133,6 +7175,43 @@ components:
         - operation
         - status
       type: object
+    InboxContext:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+        text:
+          type: string
+          x-go-type: "*string"
+        truncated:
+          type: boolean
+        unavailable:
+          type: boolean
+      required:
+        - target
+        - message_id
+        - text
+        - truncated
+        - unavailable
+      type: object
+    InboxContextRequest:
+      additionalProperties: false
+      properties:
+        max_bytes:
+          format: int64
+          maximum: 65536
+          minimum: 0
+          type: integer
+        message_id:
+          format: int64
+          type: integer
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - target
+      type: object
     InboxControlError:
       properties:
         error:
@@ -7159,6 +7238,19 @@ components:
           maximum: 4294967295
           minimum: 0
           type: integer
+      type: object
+    InboxProviderIngestion:
+      properties:
+        reason:
+          type: string
+        status:
+          enum:
+            - unknown
+            - partial
+          type: string
+      required:
+        - status
+        - reason
       type: object
     InboxReceipt:
       properties:
@@ -15224,6 +15316,8 @@ components:
         next_sync_at:
           nullable: true
           type: string
+        provider_ingestion:
+          $ref: "#/components/schemas/InboxProviderIngestion"
         schedule:
           type: string
         scheduled:
@@ -15243,6 +15337,7 @@ components:
         updated_at:
           type: string
       required:
+        - provider_ingestion
         - id
         - source_type
         - identifier
@@ -16612,7 +16707,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.24.0
+  version: 3.25.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23227,6 +23322,182 @@ paths:
       summary: Get historical import status
       tags:
         - API
+  /api/v1/inbox/candidates:
+    get:
+      operationId: listInboxCandidates
+      parameters:
+        - description: Exact archive source ID
+          in: query
+          name: source_id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+        - description: Exact provider type
+          in: query
+          name: source_type
+          required: true
+          schema:
+            type: string
+        - description: Exact source identifier
+          in: query
+          name: source_identifier
+          required: true
+          schema:
+            type: string
+        - description: Exact provider account
+          in: query
+          name: account_id
+          required: true
+          schema:
+            type: string
+        - description: Native target scope
+          in: query
+          name: scope
+          required: true
+          schema:
+            enum:
+              - message
+              - chat
+            type: string
+        - description: Maximum candidates (default 25, range 1–100)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            maximum: 100
+            minimum: 1
+            type: integer
+        - description: Opaque source/scope/archive revision pagination cursor
+          in: query
+          name: cursor
+          schema:
+            maxLength: 16384
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxCandidatePage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List bounded committed inbox metadata for one exact source
+      tags:
+        - Inbox
+  /api/v1/inbox/context:
+    post:
+      operationId: getInboxContext
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxContextRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxContext"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Forbidden
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read bounded archived text for one exact inbox target
+      tags:
+        - Inbox
   /api/v1/inbox/control:
     post:
       operationId: controlInbox

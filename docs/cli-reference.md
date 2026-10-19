@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Read archived Inbox candidates and context | [inbox](#inbox) |
 | Preview and control one native Inbox item | [inbox](#inbox) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -281,12 +282,34 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## inbox
 
-Preview and control one exact Gmail item, IMAP mailbox copy, or Microsoft Graph
-mail item through the selected daemon. Requires API schema 3.16.0. Unreleased.
-The daemon verifies
-native account/item identity and current source/action authority on every call.
+Read archived Inbox metadata and text, or preview and control one exact Gmail,
+IMAP, or Microsoft Graph mail item through the selected daemon. Unreleased.
+Archived reads require API schema 3.17.0 and a compatible registered read
+contract; native control requires API schema 3.16.0 and its registered control
+contract. The daemon verifies exact identity and current authority on every call.
 The CLI also checks the daemon's live Inbox route and admitted operation before
 sending a control request. An unavailable or incompatible descriptor fails closed.
+
+```bash
+msgvault inbox candidates --source-id 1 --source-type gmail \
+  --source-identifier reader@example.test --account-id reader@example.test \
+  --scope message --limit 25
+msgvault inbox context --request context.json
+```
+
+Candidate pages contain metadata, exact targets, and an optional `next_cursor`.
+Use `--cursor` with the same source and scope to continue. `--limit` accepts
+1–100 (default 25); cursors are at most 16384 bytes. Changed archive evidence
+requires a fresh listing. Missing provider evidence is reported as unavailable.
+
+For context, put a candidate's `target` in `context.json` as
+`{"target": {...}, "max_bytes": 16384}`. A chat target also needs the exact
+`message_id` from its candidate's `context_message_id`. Context returns bounded
+archived text, with separate `truncated` and `unavailable` markers. Its byte
+limit defaults to 16384 and cannot exceed 65536. Candidates require `inbox.read`;
+context also requires `inbox.content.read`. These commands make no provider
+calls and do not change read state. The [API reference](api-server.md#archived-inbox-candidates-and-context)
+owns exact identity, bounds, and error behavior.
 
 ```bash
 msgvault inbox get-state --request target.json
@@ -296,7 +319,7 @@ msgvault inbox receipt-get --request receipt.json
 msgvault inbox reconcile --request receipt.json
 ```
 
-Every subcommand takes `--request <file>` or `--request -` for standard input.
+Control and context subcommands take `--request <file>` or `--request -` for standard input.
 The limit is 1 MiB. Mutation commands preview by default; `--apply` executes
 only with `expected`, a signed `preview_token`, and an `idempotency_key` already
 in the request. The subcommand selects `operation`; a different operation in
@@ -344,8 +367,8 @@ updates local evidence without repeating the mutation.
 [The API reference](api-server.md#native-gmail-inbox-control), including
 [IMAP control](api-server.md#native-imap-inbox-control), owns exact request
 fields, permissions, native limitations, receipt states, and error behavior.
-These commands never send a message. They do not provide candidate discovery or
-batch actions. Existing `message-tags` continues to support IMAP keywords and
+These commands never send a message. Batch actions are not provided.
+Existing `message-tags` continues to support IMAP keywords and
 Microsoft categories.
 
 ## message-tags
@@ -5144,7 +5167,7 @@ msgvault agent-token issue --label <name> \
 | Flag | Description |
 |---|---|
 | `--label <name>` | (required) Human-readable name for the grant |
-| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `inbox.read` plus `inbox.tag`, `inbox.archive`, `inbox.read-state`, `inbox.move`, or `inbox.folder-create` for [exact Gmail control](api-server.md#native-gmail-inbox-control); `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
+| `--permissions <perms>` | Comma-separated permissions: `search.read`, `message.read`, `attachment.read`, `stats.read` (see [scoped archive reads](#scoped-archive-reads)); `calendar.read` for availability, `calendar.event.read` for provider-derived event details in delegated plans and write receipts, `calendar.write` for calendar mutations, and additional `calendar.invite` for guest changes; `inbox.read` plus `inbox.content.read` for [archived Inbox context](api-server.md#archived-inbox-candidates-and-context), or `inbox.tag`, `inbox.archive`, `inbox.read-state`, `inbox.move`, or `inbox.folder-create` for [exact Gmail control](api-server.md#native-gmail-inbox-control); `draft.create` for `draft-reply`, `draft-compose`, and `draft-get`; `draft.edit` for `draft-get`, `draft-edit`, and `draft-recover`; `draft.delete` for `draft-get`, `draft-delete`, and `draft-recover` (see [managed drafts](#draft-get-draft-edit-draft-delete-and-draft-recover)) |
 | `--source-ids <ids>` | Comma-separated source IDs that the permissions apply to |
 | `--expires <expiry>` | Optional future RFC3339 timestamp or positive duration such as `24h`; the CLI clock converts a duration to absolute expiry |
 | `--sender <source-id>=<address>` | Restrict a source to one confirmed sender identity; repeat for multiple choices |
