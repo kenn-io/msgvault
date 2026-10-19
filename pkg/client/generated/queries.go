@@ -138,6 +138,17 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCalendarEventsQuery struct {
+	From   time.Time `json:"from" validate:"required"`
+	To     time.Time `json:"to" validate:"required"`
+	Limit  *int      `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+	Cursor *string   `json:"cursor,omitempty"`
+}
+
+func (l ListCalendarEventsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListCardDAVBooksQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`

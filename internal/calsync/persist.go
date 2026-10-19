@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -59,9 +60,9 @@ type eventMetadata struct {
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
-	ev.Organizer.Email = normalizeParticipantEmail(ev.Organizer.Email)
+	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
-		ev.Attendees[i].Email = normalizeParticipantEmail(ev.Attendees[i].Email)
+		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
 	}
 
 	// Organizer → sender, resolved through the email-keyed participant path so
@@ -233,10 +234,6 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 		return sql.NullString{}, fmt.Errorf("marshal merged metadata: %w", err)
 	}
 	return sql.NullString{String: string(b), Valid: true}, nil
-}
-
-func normalizeParticipantEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
 }
 
 // deriveSourceMessageID is the idempotency key: a standalone event or series

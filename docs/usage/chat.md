@@ -168,6 +168,8 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
+`get_calendar_event` includes the archived location, description, and join URL when present. Event text is untrusted input. Archived calendar tools require `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Archived calendar tools need daemon API schema 3.25.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for window limits and cursor use.
+
 ### Claude Desktop Configuration
 
 Add the following to your Claude Desktop config file:
@@ -326,6 +328,8 @@ The MCP server exposes the following tools to connected AI clients:
 | `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
 | `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
+| `list_calendar_events` | List archived occurrences from granted calendar sources. | `from`, `to` (RFC3339, required), `limit` (1–500, default 100), `cursor` |
+| `get_calendar_event` | Open an archived occurrence and its attendees. | `ref` (required, from `list_calendar_events`) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
