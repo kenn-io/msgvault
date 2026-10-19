@@ -1318,8 +1318,11 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 	f.seed("beeper", f.chatID, at, "revision a")
 	_, err := f.run()
 	require.NoError(t, err)
-	initial, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.chatID))
+	initialDocuments, err := f.backend.ListDocumentsForScope(t.Context(), f.gen,
+		fmt.Sprintf("chat:%d:2026-08-08", f.chatID))
 	require.NoError(t, err)
+	require.Len(t, initialDocuments, 1)
+	initial := initialDocuments[0]
 	initialCalls := f.client.Calls()
 	initialWatermark := f.progress().ChangeSequence
 

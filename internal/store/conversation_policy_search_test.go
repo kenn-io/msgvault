@@ -90,6 +90,43 @@ func TestConversationPolicySearchDefaultAndIncludeCold(t *testing.T) {
 	}
 }
 
+func TestConversationPolicySearchFiltersColdOnlyIdentityFromAddressDirections(t *testing.T) {
+	for _, direction := range []string{"from", "to", "cc", "bcc"} {
+		t.Run(direction, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			const address = "cold-only@example.test"
+			s := testutil.NewTestStore(t)
+			chatSource, err := s.GetOrCreateSource("slack", "synthetic:cold-search")
+			requirements.NoError(err)
+			coldRoom, err := s.EnsureConversation(chatSource.ID, "cold-room", "Cold room")
+			requirements.NoError(err)
+			requirements.NoError(s.SetConversationPolicyOverride(t.Context(), chatSource.ID, "cold-room", conversationpolicy.Cold))
+			participant, err := s.EnsureParticipant(address, "Hidden Example", "example.test")
+			requirements.NoError(err)
+			requirements.NoError(s.EnsureConversationParticipant(coldRoom, participant, "member"))
+
+			mailSource, err := s.GetOrCreateSource("gmail", "synthetic:full-search")
+			requirements.NoError(err)
+			fullRoom, err := s.EnsureConversation(mailSource.ID, "full-room", "Full room")
+			requirements.NoError(err)
+			messageID, err := s.UpsertMessage(&store.Message{
+				SourceID: mailSource.ID, ConversationID: fullRoom,
+				SourceMessageID: "full-message-" + direction, MessageType: "email",
+				Subject: sql.NullString{String: "full message", Valid: true},
+			})
+			requirements.NoError(err)
+			requirements.NoError(s.ReplaceMessageRecipientsContext(t.Context(), messageID,
+				direction, []int64{participant}, []string{""}))
+
+			messages, total, err := s.SearchMessagesQueryContext(t.Context(), search.Parse(direction+":"+address), 0, 10)
+			requirements.NoError(err)
+			assertions.Empty(messages, "address search must not use a value supported only by a cold chat room")
+			assertions.Zero(total)
+		})
+	}
+}
+
 func TestConversationPolicySearchDeletionScopeIndependent(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

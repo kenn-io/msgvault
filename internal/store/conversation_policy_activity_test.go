@@ -165,6 +165,40 @@ func TestConversationPolicyActivityRejectsFutureAndCrossRoom(t *testing.T) {
 		})
 	}
 }
+
+func TestConversationPolicyRevisitsFutureActivityWhenEligible(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		own  bool
+	}{
+		{name: "own post", own: true},
+		{name: "explicit mention"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newActivityFixture(t)
+			future := activityNow.Add(time.Minute)
+			id := f.message(t, "future-signal", future, tc.own)
+			if !tc.own {
+				requirements.NoError(f.s.ReplaceMessageRecipientsContext(t.Context(), id, "mention", []int64{f.self}, []string{"Self"}))
+			}
+
+			_, err := f.s.RefreshConversationPolicy(t.Context(), []int64{f.room}, activityNow)
+			requirements.NoError(err)
+			assertions.Equal(conversationpolicy.Cold, f.tier(t))
+			assertions.True(f.activity(t, activityNow).IsZero())
+
+			// No archive write follows the initial scan. Expiry must revisit this
+			// room after the provider timestamp becomes eligible.
+			_, err = f.s.ExpireConversationPolicy(t.Context(), future.Add(time.Second))
+			requirements.NoError(err)
+			assertions.Equal(conversationpolicy.Full, f.tier(t))
+			assertions.Equal(future, f.activity(t, future.Add(time.Second)))
+		})
+	}
+}
+
 func TestConversationPolicyActivityNewestFirstReplyRepair(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

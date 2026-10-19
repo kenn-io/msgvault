@@ -138,7 +138,7 @@ func TestBackfillEmbedGen_DoesNotCoverMismatchedLegacyVectorRevision(t *testing.
 	require.NoError(err)
 	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
 		{MessageID: 1, Vector: []float32{1, 0, 0, 0}, EmbeddingRevision: 0},
-		{MessageID: 2, Vector: []float32{0, 1, 0, 0}, EmbeddingRevision: 1},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}, EmbeddingRevision: 0},
 	}))
 	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen=$1`, int64(gen))
 	require.NoError(err)

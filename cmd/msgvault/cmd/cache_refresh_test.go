@@ -1336,12 +1336,15 @@ func TestParticipantIdentifierDriftCreatingParticipantRestagesParticipants(t *te
 	)
 	requirements.NoError(err)
 	defer func() { require.NoError(t, duckDB.Close()) }()
-	var participantName string
+	var exportedParticipantID int64
+	var exportedParticipantName string
 	requirements.NoError(duckDB.QueryRow(`
-		SELECT display_name FROM read_parquet(?) WHERE id = ?
-	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&participantName))
-	assertions.Equal("New Cache Participant", participantName,
+		SELECT id, display_name FROM read_parquet(?) WHERE id = ?
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), newParticipantID).Scan(&exportedParticipantID, &exportedParticipantName))
+	assertions.Equal(newParticipantID, exportedParticipantID,
 		"identifier drift that creates a participant must republish participants.parquet")
+	assertions.Empty(exportedParticipantName,
+		"the participant name remains hidden while its only evidence is in a cold chat room")
 
 	repaired := cacheNeedsBuild(dbPath, analyticsDir)
 	assertions.False(repaired.NeedsBuild,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -18,6 +19,8 @@ import (
 // values that are not valid UTF-8. DuckDB's sqlite scanner passes stored bytes
 // through unchecked, and its Parquet reader later rejects the whole file.
 const cacheUTF8FunctionName = "msgvault_valid_utf8"
+const cacheUTF8HexFunctionName = "msgvault_valid_utf8_hex"
+const cacheIdentityHexFunctionName = "msgvault_identity_export_hex"
 
 // cacheTextRepairs counts repaired text and unknown identity output values.
 type cacheTextRepairs struct {
@@ -80,6 +83,25 @@ func registerCacheTextFunctions(ctx context.Context, db *sql.DB, repairs *cacheT
 	functions := map[string]cacheStringFunc{
 		cacheUTF8FunctionName: func(s string) (any, error) {
 			return repairs.sanitize(s), nil
+		},
+		cacheUTF8HexFunctionName: func(s string) (any, error) {
+			decoded, err := hex.DecodeString(s)
+			if err != nil {
+				return nil, fmt.Errorf("decode SQLite text hex: %w", err)
+			}
+			return repairs.sanitize(string(decoded)), nil
+		},
+		cacheIdentityHexFunctionName: func(s string) (any, error) {
+			decoded, err := hex.DecodeString(s)
+			if err != nil {
+				return nil, fmt.Errorf("decode SQLite identity hex: %w", err)
+			}
+			value := string(decoded)
+			if !utf8.ValidString(value) {
+				repairs.identities.Add(1)
+				return nil, nil //nolint:nilnil // Invalid identities export as SQL NULL.
+			}
+			return value, nil
 		},
 		"msgvault_unknown_identity": func(string) (any, error) {
 			repairs.identities.Add(1)
@@ -154,14 +176,14 @@ func (s *cacheSourceSnapshot) participantTextSQL(column string) string {
 	if s.csvSnapshot {
 		return s.textSQL(column)
 	}
-	return cacheTextSQL("unhex(" + column + ")")
+	return cacheUTF8HexFunctionName + "(" + column + ")"
 }
 
 func (s *cacheSourceSnapshot) participantIdentityExportSQL(column string) string {
 	if s.csvSnapshot {
 		return s.identityExportSQL(column)
 	}
-	return cacheIdentityExportSQL("unhex(" + column + ")")
+	return cacheIdentityHexFunctionName + "(" + column + ")"
 }
 
 func csvInvalidTextSQL(column string) string {

@@ -645,7 +645,7 @@ SELECT p.person_id,
        coalesce((
 	       SELECT raw.display_name
 	       FROM read_parquet('` + participants + `') raw
-	       WHERE raw.id = p.person_id
+	       WHERE try_cast(raw.id AS BIGINT) = p.person_id
        ), '') AS display_name,
        p.partial_label,
        coalesce(CAST((
@@ -655,10 +655,10 @@ SELECT p.person_id,
 		       display_value := pi.display_value,
 		       is_primary := pi.is_primary,
 		       provenance := 'participant_identifiers',
-		       participant_id := pi.participant_id
+		       participant_id := try_cast(pi.participant_id AS BIGINT)
 	       ) ORDER BY pi.is_primary DESC, pi.identifier_type, pi.identifier_value))
 	       FROM read_parquet('` + identifiers + `') pi
-	       WHERE list_contains(p.member_ids, pi.participant_id)
+	       WHERE list_contains(p.member_ids, try_cast(pi.participant_id AS BIGINT))
        ) AS VARCHAR), '[]') AS identifiers,
 	       p.activity_count,
 	       p.meeting_count,
