@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-18"
 title: Architecture Overview
 description: How msgvault captures communications, preserves the archive, and serves people, search, and automation.
 ---
@@ -85,14 +85,18 @@ transactions and the archive operation gate. Shutdown cancels and joins these
 workers before closing the Store. The MCP adapter forwards owner-authorized
 requests to this daemon; it does not open the archive or deliver callbacks.
 
-Native Gmail Inbox control binds exact archive identity to a live account and
-provider item. Store atomically claims durable receipts before dispatch and
+Native Gmail and IMAP Inbox controls bind exact archive identity to a live
+account and provider item. Store atomically claims durable receipts before dispatch and
 retains independent readback evidence. A source lifecycle fence excludes removal
 through settlement; removal retires control authority without erasing audit
 receipts. Provider observations and source revisions update in the same Store
 transaction. Gmail sync retains prior label evidence when metadata refresh fails
-and preserves its history cursor for retry. [Inbox control](../api-server.md#native-gmail-inbox-control)
-owns the public contract and current Gmail-only scope.
+and preserves its history cursor for retry. IMAP sync distinguishes omitted
+FLAGS from observed empty flags. Native IMAP MOVE mappings become durable before
+destination readback; reconciliation changes only the exact mailbox copy while
+preserving unrelated memberships and local read state.
+[Inbox control](../api-server.md#native-gmail-inbox-control) and its
+[IMAP contract](../api-server.md#native-imap-inbox-control) own the public behavior.
 
 ## Responsibilities
 

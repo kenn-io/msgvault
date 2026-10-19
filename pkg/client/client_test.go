@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/contentverify"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -127,6 +128,77 @@ func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 			"roles": ["from", "conversation_member"]
 		}
 	}`, string(encoded))
+}
+
+func TestGeneratedInboxStateValidatesMessageAndFolderPreviews(t *testing.T) {
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	source := inboxcontrol.SourceIdentity{
+		SourceID: 1, SourceType: "imap", SourceIdentifier: "imaps://reader@example.test:993", AccountID: "reader",
+	}
+	target := inboxcontrol.Target{
+		SourceID: 1, SourceType: "imap", SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID,
+		Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "synthetic-message", Mailbox: "INBOX", UIDValidity: 17, UID: 1,
+	}
+	for _, test := range []struct {
+		name  string
+		state inboxcontrol.State
+	}{
+		{
+			name: "message",
+			state: inboxcontrol.State{
+				Target: target, Read: new(false), ObservedAt: now,
+			},
+		},
+		{
+			name: "folder",
+			state: inboxcontrol.State{
+				Source: source, Folders: []inboxcontrol.Folder{{ID: "INBOX", Name: "INBOX"}}, ObservedAt: now,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			responseJSON, err := json.Marshal(test.state)
+			requirements.NoError(err)
+			var sdk generated.InboxState
+			requirements.NoError(json.Unmarshal(responseJSON, &sdk))
+			requirements.NoError(sdk.Validate())
+
+			requestJSON, err := json.Marshal(generated.InboxRequest{Operation: "set-read", Expected: &sdk})
+			requirements.NoError(err)
+			var request inboxcontrol.Request
+			requirements.NoError(json.Unmarshal(requestJSON, &request))
+			requirements.NotNil(request.Expected)
+			wantHash, err := inboxcontrol.SemanticFingerprint(test.state)
+			requirements.NoError(err)
+			gotHash, err := inboxcontrol.SemanticFingerprint(*request.Expected)
+			requirements.NoError(err)
+			assertions.Equal(wantHash, gotHash, "SDK expected-state transport must retain the signed preflight evidence")
+		})
+	}
+}
+
+func TestGeneratedInboxStateRejectsMissingOrAmbiguousBinding(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing",
+			body: `{"observed_at":"2026-10-18T12:00:00Z"}`,
+		},
+		{
+			name: "ambiguous",
+			body: `{"observed_at":"2026-10-18T12:00:00Z","source":{"source_id":1,"source_type":"imap","source_identifier":"imaps://reader@example.test:993","account_id":"reader"},"target":{"source_id":1,"source_type":"imap","source_identifier":"imaps://reader@example.test:993","account_id":"reader","scope":"message","item_id":7,"provider_id":"synthetic-message","mailbox":"INBOX","uidvalidity":17,"uid":1}}`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var state generated.InboxState
+			require.NoError(t, json.Unmarshal([]byte(test.body), &state))
+			assert.ErrorContains(t, state.Validate(), "Binding")
+		})
+	}
 }
 
 func TestGeneratedPatchPersonCanClearDisplayName(t *testing.T) {

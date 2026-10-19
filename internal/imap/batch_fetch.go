@@ -335,7 +335,7 @@ func (c *Client) fetchChunk(
 	uidSet imap.UIDSet,
 	fetchOpts *imap.FetchOptions,
 ) (msgs []*imapclient.FetchMessageBuffer, fatal bool, err error) {
-	msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
+	msgs, err = collectObservedFetch(c.conn.Fetch(uidSet, fetchOpts))
 	if err == nil {
 		return msgs, false, nil
 	}
@@ -351,7 +351,7 @@ func (c *Client) fetchChunk(
 		c.logger.Warn("mailbox reselect failed after reconnect", "mailbox", mailbox, "error", selErr)
 		return nil, true, selErr
 	}
-	msgs, err = c.conn.Fetch(uidSet, fetchOpts).Collect()
+	msgs, err = collectObservedFetch(c.conn.Fetch(uidSet, fetchOpts))
 	if err != nil {
 		c.logger.Warn("UID FETCH failed after reconnect", "mailbox", mailbox, "error", err)
 		return nil, false, fmt.Errorf("UID FETCH after reconnect in mailbox %q: %w", mailbox, err)

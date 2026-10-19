@@ -17,7 +17,7 @@ type MCPCapabilitiesResponse = apiprotocol.MCPCapabilities
 func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[MCPCapabilitiesResponse](apiV1,
 		"getMCPCapabilities", http.MethodGet, "/mcp/capabilities",
-		"Describe supported MCP daemon operations", func(w http.ResponseWriter, r *http.Request) {
+		"Describe admitted MCP daemon operations", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			auth := s.requestAuthentication(r)
 			if auth.Mode != AuthModeCaller {
@@ -27,10 +27,14 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
 				return
 			}
+			routes := []apiprotocol.MCPRouteDescriptor{}
+			if auth.Mode != AuthModeDelegated {
+				routes = mcpRouteDescriptors(root.OpenAPI())
+			}
 			response := MCPCapabilitiesResponse{
 				Version:         1,
 				Delegated:       auth.Mode == AuthModeDelegated,
-				Routes:          mcpRouteDescriptors(root.OpenAPI()),
+				Routes:          routes,
 				InboxOperations: []string{},
 			}
 			if _, ok := s.store.(InboxController); ok {
@@ -46,6 +50,10 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 					}
 				}
 			}
+			if response.Delegated && len(response.InboxOperations) == 0 {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+				return
+			}
 			if len(response.InboxOperations) > 0 {
 				for _, operation := range documentOperations(apiV1.OpenAPI()) {
 					if operation.OperationID == "controlInbox" {
@@ -60,7 +68,7 @@ func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
 
 func inboxDiscoveryAllowed(grant *agentgrant.Grant, permission agentgrant.Permission) bool {
 	return grant != nil && grant.HasPermission(agentgrant.PermissionInboxRead) && grant.HasPermission(permission) && slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
-		return source.ID > 0 && source.Type == "gmail" && source.Identifier != ""
+		return source.ID > 0 && (source.Type == "gmail" || source.Type == "imap") && source.Identifier != ""
 	})
 }
 

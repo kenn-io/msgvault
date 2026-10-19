@@ -64,6 +64,28 @@ func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) 
 	assertions.NotContains(string(got), `typesValidator.Var(c.DisplayName, "required")`)
 }
 
+func TestRewriteGeneratedValidatorsUsesOnlyPopulatedInboxStateBinding(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	got, err := RewriteGeneratedValidators([]byte(
+		generatedValidatorFixture() + generatedInboxStateValidatorFixture() + generatedOptionalValueJSONTagFixture(),
+	))
+	requirements.NoError(err)
+	assertions.Contains(string(got), "sourcePopulated := i.Source != nil && *i.Source != (InboxSourceIdentity{})")
+	assertions.Contains(string(got), "targetPopulated := i.Target != nil && *i.Target != (InboxTarget{})")
+	assertions.Contains(string(got), "if sourcePopulated == targetPopulated {")
+	assertions.Contains(string(got), "if sourcePopulated {")
+	assertions.Contains(string(got), "if targetPopulated {")
+	assertions.NotContains(string(got), "if i.Source != nil {\n\t\tif v, ok := any(i.Source).(runtime.Validator)")
+	assertions.NotContains(string(got), "if i.Target != nil {\n\t\tif v, ok := any(i.Target).(runtime.Validator)")
+	assertions.Contains(string(got), `json:"json,omitzero,omitempty"`)
+	assertions.Contains(string(got), `json:"text,omitzero,omitempty"`)
+	assertions.Contains(string(got), `json:"raw,omitzero,omitempty"`)
+	again, err := RewriteGeneratedValidators(got)
+	requirements.NoError(err)
+	assertions.Equal(got, again)
+}
+
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
 	assert := assert.New(t)
 	methods := `type RunQueryClientInterface interface {
@@ -150,6 +172,9 @@ func generatedValidatorFixture() string {
 	return `type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
+type Evidence struct {
+	Excerpt string
+}
 type ExploreCacheUnavailableResponse struct {
 	RecoveryAction string ` + "`json:\"recovery_action\" validate:\"omitempty\"`" + `
 }
@@ -205,6 +230,41 @@ func contactCandidateEmptyStringValidatorFixture() string {
 		"func (c ContactCandidate) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(c.DisplayName, \"required\"); err != nil {\n\t\terrors = errors.Append(\"DisplayName\", err)\n\t}\n" +
 		"\tif len(errors) == 0 {\n\t\treturn nil\n\t}\n\treturn errors\n}\n"
+}
+
+func generatedInboxStateValidatorFixture() string {
+	return `
+type InboxSourceIdentity struct { SourceID int64 }
+type InboxTarget struct { SourceID int64; UID *int64 }
+type InboxState struct { Source *InboxSourceIdentity; Target *InboxTarget }
+func (i InboxState) Validate() error {
+	var errors runtime.ValidationErrors
+	if i.Source != nil {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+	if i.Target != nil {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+	if len(errors) == 0 { return nil }
+	return errors
+}
+`
+}
+
+func generatedOptionalValueJSONTagFixture() string {
+	return `type OptionalValueJSONTagFixture struct {
+	Text *string ` + "`json:\"text,omitempty\"`" + `
+	Raw jsontext.Value ` + "`json:\"raw,omitempty\"`" + `
+}
+`
 }
 
 func exploreCacheRecoveryActionRequiredValidatorBlock() string {

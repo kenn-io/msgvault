@@ -29,6 +29,15 @@ func TestInboxStateCollectionsRemainOptionalInOpenAPI(t *testing.T) {
 	}
 }
 
+func TestInboxStateBindingsAreOptionalInOpenAPI(t *testing.T) {
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		state := document.Components.Schemas.Map()["InboxState"]
+		require.NotNil(t, state)
+		assert.NotContains(t, state.Required, "source")
+		assert.NotContains(t, state.Required, "target")
+	}
+}
+
 func TestInboxStateGeneratedSDKPreservesExpectedEvidence(t *testing.T) {
 	assertions := assert.New(t)
 
