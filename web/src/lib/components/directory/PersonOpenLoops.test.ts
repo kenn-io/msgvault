@@ -8,10 +8,10 @@ function loop(id = 12) {
   return {
     id,
     kind: "reply_owed",
-    summary: "Review the draft?",
+    summary: id === 12 ? "Review the draft?" : `Review item ${id}?`,
     age_seconds: 172800,
-    anchor_message_id: 42,
-    conversation_id: 77,
+    anchor_message_id: id + 30,
+    conversation_id: id + 65,
     owed_since_at: "2026-10-15T12:00:00Z",
   };
 }
@@ -54,14 +54,18 @@ describe("PersonOpenLoops", () => {
 
   it("retains stale results with a visible warning", async () => {
     render(PersonOpenLoops, {
-      client: clientFor([loop()], true, "more"),
+      client: clientFor(
+        [loop(12), loop(13), loop(14), loop(15), loop(16)],
+        true,
+        "more",
+      ),
       personID: 7,
     });
     expect(await screen.findByRole("status")).toBeDefined();
     expect(screen.getByRole("status").textContent).toContain(
       "Archive may be stale",
     );
-    expect(screen.getByText("1+ open loops")).toBeDefined();
+    expect(screen.getByText("5+ open loops")).toBeDefined();
     expect(
       screen.getByRole("link", { name: "Review the draft?" }),
     ).toBeDefined();
