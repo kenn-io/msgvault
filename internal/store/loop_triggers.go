@@ -63,6 +63,10 @@ func (d *SQLiteDialect) EnsureLoopProjectionTriggers(q querier) error {
  AFTER UPDATE OF %s ON messages FOR EACH ROW
  WHEN %s
 	 BEGIN %s END`, strings.Join(messageUpdateColumns, ", "), strings.Join(messageUpdateConditions, "\n   OR "), body),
+		"DROP TRIGGER IF EXISTS trg_loop_queue_messages_delete",
+		fmt.Sprintf(`CREATE TRIGGER trg_loop_queue_messages_delete
+ AFTER DELETE ON messages FOR EACH ROW
+ BEGIN %s END`, loopSQLiteEnqueue("conversations", "id", "id=OLD.conversation_id", "'message_deleted'")),
 		"DROP TRIGGER IF EXISTS trg_loop_queue_conversation_type_update",
 		`CREATE TRIGGER trg_loop_queue_conversation_type_update
  AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW
@@ -90,8 +94,8 @@ func (d *SQLiteDialect) EnsureLoopProjectionTriggers(q querier) error {
 }
 
 // EnsureLoopProjectionTriggers installs the same guarded invalidation contract
-// on PostgreSQL. Only ownership/thread changes can fire the message
-// trigger; bookkeeping updates do not add projection work.
+// on PostgreSQL. Ownership/thread changes, and physical message deletion, can
+// fire message triggers; bookkeeping updates do not add projection work.
 func (d *PostgreSQLDialect) EnsureLoopProjectionTriggers(q querier) error {
 	statements := []string{
 		`CREATE OR REPLACE FUNCTION enqueue_loop_conversation(p_conversation_id BIGINT,p_reason TEXT) RETURNS VOID AS $$
@@ -143,6 +147,16 @@ func (d *PostgreSQLDialect) EnsureLoopProjectionTriggers(q querier) error {
 	      OR OLD.source_is_from_me IS DISTINCT FROM NEW.source_is_from_me
 	      OR OLD.identity_is_from_me IS DISTINCT FROM NEW.identity_is_from_me)
    EXECUTE FUNCTION queue_loop_messages_move()`,
+		`CREATE OR REPLACE FUNCTION queue_loop_messages_delete() RETURNS trigger AS $$
+   BEGIN
+    PERFORM enqueue_loop_conversation(OLD.conversation_id,'message_deleted');
+    RETURN OLD;
+   END;
+   $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER IF EXISTS trg_loop_queue_messages_delete ON messages`,
+		`CREATE TRIGGER trg_loop_queue_messages_delete
+ AFTER DELETE ON messages FOR EACH ROW
+   EXECUTE FUNCTION queue_loop_messages_delete()`,
 		`CREATE OR REPLACE FUNCTION queue_loop_conversation_type() RETURNS trigger AS $$
    BEGIN
     IF OLD.conversation_type IS DISTINCT FROM NEW.conversation_type THEN

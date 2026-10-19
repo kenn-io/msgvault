@@ -108,6 +108,54 @@ func TestDeriverUndatedLiveAnchorRetainsCoverageGap(t *testing.T) {
 	assertions.True(evidence[0].CoverageGap)
 }
 
+func TestDeriverGCInvalidatesConversationAfterSourceDeletedAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	messageID := deriveInbound(t, f, now)
+	sourceMessageID := fmt.Sprintf("inbound-%d", f.ConvID)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	requirements.NotNil(live[0].AnchorMessageID)
+	assertions.Equal(messageID, *live[0].AnchorMessageID)
+	loopID := live[0].ID
+
+	var revision, processedRevision int64
+	readQueue := func() {
+		requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT revision,processed_revision
+			FROM loop_conversation_queue WHERE conversation_id=?`), f.ConvID).Scan(&revision, &processedRevision))
+	}
+	readQueue()
+	assertions.Equal(revision, processedRevision, "the first projection must drain its queue")
+	requirements.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceMessageID))
+	readQueue()
+	assertions.Equal(revision, processedRevision, "source tombstones are consumed by the feed until physical GC")
+
+	plan, err := f.Store.PlanGCContext(t.Context())
+	requirements.NoError(err)
+	deleted, err := f.Store.ExecuteGCContext(t.Context(), plan)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), deleted)
+	readQueue()
+	assertions.Greater(revision, processedRevision, "physical deletion must invalidate the conversation after its anchor is purged")
+
+	d.now = func() time.Time { return now.Add(time.Minute) }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	closed, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal("closed", closed.Status)
+	requirements.NotNil(closed.ClosedReason)
+	assertions.Equal("withdrawn", *closed.ClosedReason)
+}
+
 func TestDeriverRefreshesRetainedReplyOwedCounterpartyAfterSenderCorrection(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

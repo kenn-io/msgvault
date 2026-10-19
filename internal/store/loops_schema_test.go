@@ -243,9 +243,10 @@ func TestLoopSchemaAssociationTriggers(t *testing.T) {
 			var nullBound sql.NullTime
 			requirements.NoError(s.DB().QueryRow(s.Rebind("SELECT feed_bound FROM loop_conversation_queue WHERE conversation_id=?"), conv).Scan(&nullBound))
 			assertions.False(nullBound.Valid)
-			// Cascading deletes cannot enqueue deleted messages or conversations.
+			// The message trigger queues its conversation once; association cascades
+			// cannot look up the already-deleted parent message and add revisions.
 			loopExec(t, s, "DELETE FROM messages WHERE id=?", next)
-			assertions.Equal(int64(5), queueRevision(t, s, conv), "association cascades ignore a deleted message")
+			assertions.Equal(int64(6), queueRevision(t, s, conv), "message deletion invalidates once")
 			loopExec(t, s, "DELETE FROM conversations WHERE id=?", conv)
 			assertions.Equal(1, loopCount(t, s, "loop_conversation_queue"))
 		})
@@ -280,6 +281,43 @@ func TestLoopSchemaMessageMoveOwnershipTriggers(t *testing.T) {
 	loopExec(t, s, "UPDATE messages SET conversation_id=? WHERE id=?", old, mid)
 	assertions.Equal(int64(6), queueRevision(t, s, next))
 	assertions.Equal(int64(2), queueRevision(t, s, old))
+}
+
+func TestLoopSchemaMessageDeleteQueuesOldConversation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	s := f.Store
+	messageID := f.CreateMessage("deleted-message")
+	loopExec(t, s, "DELETE FROM loop_conversation_queue")
+
+	loopExec(t, s, "DELETE FROM messages WHERE id=?", messageID)
+
+	assertions.Equal(int64(1), queueRevision(t, s, f.ConvID))
+	var reason string
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT reason FROM loop_conversation_queue
+		WHERE conversation_id=?`), f.ConvID).Scan(&reason))
+	assertions.Equal("message_deleted", reason)
+}
+
+func TestLoopSchemaMessageDeleteTriggerUpgrade(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	s := f.Store
+	loopExec(t, s, "DELETE FROM applied_migrations WHERE name=?", "loop_projection_triggers_v2")
+	requirements.NoError(s.MarkMigrationApplied("loop_projection_triggers_v1"))
+	if s.IsPostgreSQL() {
+		loopExec(t, s, "DROP TRIGGER IF EXISTS trg_loop_queue_messages_delete ON messages")
+	} else {
+		loopExec(t, s, "DROP TRIGGER IF EXISTS trg_loop_queue_messages_delete")
+	}
+	requirements.NoError(s.InitSchemaContext(t.Context()))
+
+	messageID := f.CreateMessage("deleted-message-upgrade")
+	loopExec(t, s, "DELETE FROM loop_conversation_queue")
+	loopExec(t, s, "DELETE FROM messages WHERE id=?", messageID)
+	assertions.Equal(int64(1), queueRevision(t, s, f.ConvID))
 }
 
 // Rebuilding the legacy recipient table must restore loop triggers even when

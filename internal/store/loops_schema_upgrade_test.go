@@ -37,6 +37,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 			{"trg_loop_queue_recipients_update", "message_recipients"},
 			{"trg_loop_queue_recipients_delete", "message_recipients"},
 			{"trg_loop_queue_messages_move", "messages"},
+			{"trg_loop_queue_messages_delete", "messages"},
 			{"trg_loop_queue_conversation_type_update", "conversations"},
 			{"trg_loop_queue_conversation_participants", "conversation_participants"},
 		} {
@@ -46,7 +47,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 		for _, trigger := range []string{
 			"trg_loop_queue_labels_insert", "trg_loop_queue_labels_update", "trg_loop_queue_labels_delete",
 			"trg_loop_queue_recipients_insert", "trg_loop_queue_recipients_update", "trg_loop_queue_recipients_delete",
-			"trg_loop_queue_messages_move", "trg_loop_queue_conversation_type_update",
+			"trg_loop_queue_messages_move", "trg_loop_queue_messages_delete", "trg_loop_queue_conversation_type_update",
 			"trg_loop_queue_conversation_participants_insert", "trg_loop_queue_conversation_participants_update", "trg_loop_queue_conversation_participants_delete",
 		} {
 			loopExec(t, s, "DROP TRIGGER IF EXISTS "+trigger)
@@ -55,7 +56,7 @@ func TestLoopSchemaUpgradeAndRetry(t *testing.T) {
 	for _, table := range []string{"open_loops", "loop_suppressions", "loop_conversation_queue", "message_automation_signals", "loop_derivation_state"} {
 		loopExec(t, s, "DROP TABLE "+table)
 	}
-	loopExec(t, s, "DELETE FROM applied_migrations WHERE name='loop_projection_triggers_v1'")
+	loopExec(t, s, "DELETE FROM applied_migrations WHERE name='loop_projection_triggers_v2'")
 	loopExec(t, s, "UPDATE archive_metadata SET value='10' WHERE key='schema_version'")
 	requirements.NoError(s.InitSchemaContext(t.Context()))
 	assertions.Equal(before, columns())
