@@ -1681,30 +1681,27 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("get source: %w", err)
 	}
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := lockSourceMaintenance(ctx, tx); err != nil {
-			return err
-		}
-		var shadowed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source_settings ss WHERE ss.alias_key = ?
-   AND NOT EXISTS (SELECT 1 FROM sources existing WHERE existing.id = ss.source_id AND existing.source_type = ? AND existing.identifier = ?))`,
-			strings.ToLower(identifier), sourceType, identifier).Scan(&shadowed); err != nil {
-			return err
-		}
-		if shadowed {
-			return fmt.Errorf("%w: provider identifier conflicts with an archive alias", ErrSourceSettingsInvalid)
-		}
-		now := s.dialect.Now()
-		row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
-   VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
-   RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
-		var err error
-		source, err = scanSource(row)
-		if err != nil {
-			return fmt.Errorf("upsert source: %w", err)
-		}
-		return requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID)
-	})
+	if !s.IsPostgreSQL() {
+		source, err = s.getOrCreateSQLiteSourceContext(ctx, sourceType, identifier)
+	} else {
+		err = s.withTxContext(ctx, func(tx *loggedTx) error {
+			if err := lockSourceMaintenance(ctx, tx); err != nil {
+				return err
+			}
+			if err := checkNewSourceIdentifierAlias(ctx, tx, sourceType, identifier); err != nil {
+				return err
+			}
+			now := s.dialect.Now()
+			row := tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources (source_type, identifier, created_at, updated_at)
+				VALUES (?, ?, %s, %s) ON CONFLICT (source_type, identifier) DO UPDATE SET identifier = sources.identifier
+				RETURNING `+sourceCatalogColumns, now, now), sourceType, identifier)
+			source, err = scanSource(row)
+			if err != nil {
+				return fmt.Errorf("upsert source: %w", err)
+			}
+			return requireSourceWritableWith(boundQuerier{ctx: ctx, q: tx}, source.ID)
+		})
+	}
 	if err != nil {
 		return nil, err
 	}

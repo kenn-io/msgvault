@@ -374,7 +374,8 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds signed, provider-native Inbox observations and controls.
+const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -382,6 +383,7 @@ func OpenAPIDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(false)
 	hardenSourceStatusPublicSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, false)
+	hardenMessageTagReplayRequestSchemas(doc)
 	relaxResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	return doc
@@ -391,10 +393,25 @@ func openAPIClientDocument() *huma.OpenAPI {
 	doc := baseOpenAPIDocument(true)
 	hardenSourceStatusClientSchemas(doc)
 	hardenEmbeddingStatusSchemas(doc, true)
+	hardenMessageTagReplayRequestSchemas(doc)
 	clearResponseAdditionalProperties(doc)
 	hardenOperationSchemas(doc)
 	applyClientCodegenExtensions(doc)
 	return doc
+}
+
+func hardenMessageTagReplayRequestSchemas(doc *huma.OpenAPI) {
+	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
+		return
+	}
+	schemas := doc.Components.Schemas.Map()
+	for _, name := range []string{"MessageTagResponse", "MessageTagResult"} {
+		if schema := schemas[name]; schema != nil {
+			if _, ok := schema.Properties["replay_request"]; ok {
+				schema.Properties["replay_request"] = &huma.Schema{Ref: "#/components/schemas/InboxRequest"}
+			}
+		}
+	}
 }
 
 func hardenOperationSchemas(doc *huma.OpenAPI) {
@@ -1005,6 +1022,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{
 					"validate": "omitempty",
 				}
+			}
+		}
+	}
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
 			}
 		}
 	}

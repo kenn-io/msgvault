@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -102,6 +103,27 @@ func TestMergeSourcesBlocksActiveDraftsAndRetainsDiscardedReceipts(t *testing.T)
 			assert.Equal(from.ID, retainedSourceID, "discarded provider receipts remain owned by the retired source")
 		})
 	}
+}
+
+func TestMergeSourcesBlocksDispatchingInboxReceipt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, receipt := inboxReceiptFixture(t)
+	into, err := f.Store.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err)
+	_, _, err = f.Store.PrepareInboxReceipt(t.Context(), receipt)
+	require.NoError(err)
+	require.NoError(f.Store.MarkInboxDispatching(t.Context(), receipt.ID))
+
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: receipt.SourceID, IntoSourceID: into.ID})
+	require.ErrorIs(err, store.ErrSourceMergeInvalid)
+
+	got, err := f.Store.GetInboxReceipt(t.Context(), receipt.ID)
+	require.NoError(err)
+	assert.Equal(inboxcontrol.StatusDispatching, got.Status)
+	settings, err := f.Store.GetSourceSettingsContext(t.Context(), receipt.SourceID)
+	require.NoError(err)
+	assert.Zero(settings.MergedIntoSourceID)
 }
 
 func TestMergeSourcesSafety(t *testing.T) {

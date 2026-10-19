@@ -1,0 +1,291 @@
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"time"
+
+	"go.kenn.io/msgvault/internal/inboxcontrol"
+)
+
+var _ inboxcontrol.Ledger = (*Store)(nil)
+
+// PrepareInboxReceipt claims a principal/source/key atomically. The winner is
+// the only caller that may dispatch. A replay returns the original receipt;
+// changed intent fails even if the earlier receipt is terminal.
+func (s *Store) PrepareInboxReceipt(ctx context.Context, receipt inboxcontrol.Receipt) (*inboxcontrol.Receipt, bool, error) {
+	if err := receipt.ValidatePrepared(); err != nil {
+		return nil, false, err
+	}
+	encoded, err := json.Marshal(receipt)
+	if err != nil {
+		return nil, false, fmt.Errorf("encode inbox receipt: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO inbox_operation_receipts
+		(id, principal_id, source_id, idempotency_key_hash, intent_hash, receipt_json, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?)
+		ON CONFLICT (principal_id, source_id, idempotency_key_hash) DO NOTHING`,
+		receipt.ID, receipt.PrincipalID, receipt.SourceID, inboxIdempotencyKeyHash(receipt.IdempotencyKey), receipt.IntentHash, string(encoded), receipt.CreatedAt.UnixNano())
+	if err != nil {
+		return nil, false, fmt.Errorf("claim inbox receipt: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect inbox receipt claim: %w", err)
+	}
+	if rows == 1 {
+		// The INSERT committed this exact prepared receipt. Returning it directly
+		// avoids losing the claim if the caller context is canceled before a
+		// follow-up lookup can read it.
+		return &receipt, true, nil
+	}
+	got, err := s.LookupInboxReceipt(ctx, receipt.PrincipalID, receipt.SourceID, receipt.IdempotencyKey)
+	if err != nil {
+		return nil, false, err
+	}
+	if got == nil || got.IntentHash != receipt.IntentHash {
+		return nil, false, inboxcontrol.ErrConflict
+	}
+	return got, false, nil
+}
+
+// LookupInboxReceipt is storage-only. The controller supplies a principal
+// derived from authentication and checks current source/action permissions.
+func (s *Store) LookupInboxReceipt(ctx context.Context, principal string, sourceID int64, key string) (*inboxcontrol.Receipt, error) {
+	return scanInboxReceipt(s.db.QueryRowContext(ctx, `SELECT receipt_json, status, dispatched_at, finished_at, after_json, failure_code
+		FROM inbox_operation_receipts WHERE principal_id = ? AND source_id = ? AND idempotency_key_hash = ?`, principal, sourceID, inboxIdempotencyKeyHash(key)))
+}
+
+// PostgreSQL text cannot store NUL. Hash the lookup key while JSON retains its
+// original UTF-8 bytes, preserving the request contract on both databases.
+func inboxIdempotencyKeyHash(key string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
+}
+
+func (s *Store) GetInboxReceipt(ctx context.Context, id string) (*inboxcontrol.Receipt, error) {
+	return scanInboxReceipt(s.db.QueryRowContext(ctx, `SELECT receipt_json, status, dispatched_at, finished_at, after_json, failure_code
+		FROM inbox_operation_receipts WHERE id = ?`, id))
+}
+
+func scanInboxReceipt(row *sql.Row) (*inboxcontrol.Receipt, error) {
+	var encoded, status, failure string
+	var dispatched, finished sql.NullInt64
+	var after sql.NullString
+	if err := row.Scan(&encoded, &status, &dispatched, &finished, &after, &failure); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil //nolint:nilnil // Absence permits the ledger to claim a new operation.
+		}
+		return nil, fmt.Errorf("read inbox receipt: %w", err)
+	}
+	var receipt inboxcontrol.Receipt
+	if err := json.Unmarshal([]byte(encoded), &receipt); err != nil {
+		return nil, fmt.Errorf("decode inbox receipt: %w", err)
+	}
+	receipt.Status = inboxcontrol.Status(status)
+	receipt.FailureCode = failure
+	if dispatched.Valid {
+		value := time.Unix(0, dispatched.Int64).UTC()
+		receipt.DispatchedAt = &value
+	}
+	if finished.Valid {
+		value := time.Unix(0, finished.Int64).UTC()
+		receipt.FinishedAt = &value
+	}
+	if after.Valid {
+		receipt.After = new(inboxcontrol.State)
+		if err := json.Unmarshal([]byte(after.String), receipt.After); err != nil {
+			return nil, fmt.Errorf("decode inbox receipt observation: %w", err)
+		}
+	}
+	return &receipt, nil
+}
+
+// MarkInboxDispatching commits evidence before any provider I/O. It never
+// accepts dispatching or terminal receipts, so uncertain writes cannot replay.
+func (s *Store) MarkInboxDispatching(ctx context.Context, id string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET status = 'dispatching', dispatched_at = ? WHERE id = ? AND status = 'prepared' AND source_removed_at IS NULL`, time.Now().UTC().UnixNano(), id)
+	return inboxReceiptTransition(result, err)
+}
+
+func inboxReceiptTransition(result sql.Result, err error) error {
+	if err != nil {
+		return fmt.Errorf("persist inbox receipt transition: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect inbox receipt transition: %w", err)
+	}
+	if rows != 1 {
+		return inboxcontrol.ErrConflict
+	}
+	return nil
+}
+
+// RecordInboxReceiptMapping commits native dispatch identity before readback.
+// The five-method Ledger stays unchanged. A mapping is append-only evidence.
+func (s *Store) RecordInboxReceiptMapping(ctx context.Context, id string, mapping inboxcontrol.State) error {
+	if _, err := inboxcontrol.SemanticFingerprint(mapping); err != nil {
+		return err
+	}
+	if mapping.Source != (inboxcontrol.SourceIdentity{}) || mapping.ObservedAt.IsZero() || mapping.Inbox != nil || mapping.Read != nil || mapping.MarkedUnread != nil || mapping.ProvisionedFolder != nil || len(mapping.Folders) != 0 || len(mapping.Tags) != 0 || len(mapping.Flags) != 0 || mapping.Location != "" || mapping.Revision != "" || mapping.LastMessageID != "" {
+		return inboxcontrol.ErrInvalid
+	}
+	receipt, err := s.GetInboxReceipt(ctx, id)
+	if err != nil {
+		return err
+	}
+	if receipt == nil || receipt.Status != inboxcontrol.StatusDispatching {
+		return inboxcontrol.ErrConflict
+	}
+	if !inboxReceiptMoveMapping(receipt, mapping.Target) {
+		return inboxcontrol.ErrInvalid
+	}
+	encoded, err := json.Marshal(mapping)
+	if err != nil {
+		return fmt.Errorf("encode Inbox dispatch mapping: %w", err)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET after_json=? WHERE id=? AND status='dispatching' AND after_json IS NULL AND source_removed_at IS NULL`, string(encoded), id)
+	return inboxReceiptTransition(result, err)
+}
+
+// Match only the signed destination and preserve every immutable item field.
+func inboxReceiptMoveMapping(receipt *inboxcontrol.Receipt, target inboxcontrol.Target) bool {
+	if receipt == nil || receipt.Projected == nil || receipt.Intent.Target == nil || *receipt.Intent.Target != receipt.Before.Target || target.Validate() != nil || receipt.SourceID != target.SourceID {
+		return false
+	}
+	before := receipt.Before.Target
+	if before.SourceType != "imap" || target.Mailbox == before.Mailbox || (receipt.Intent.Operation != inboxcontrol.OpMove && receipt.Intent.Operation != inboxcontrol.OpArchive && receipt.Intent.Operation != inboxcontrol.OpUnarchive) || len(receipt.Projected.Folders) != 1 {
+		return false
+	}
+	destination := receipt.Projected.Folders[0]
+	if destination.ID == "" || destination.UIDValidity == 0 || destination.ParentID != "" || target.Mailbox != destination.ID || target.UIDValidity != destination.UIDValidity || target.UID == 0 {
+		return false
+	}
+	target.Mailbox, target.UIDValidity, target.UID = before.Mailbox, before.UIDValidity, before.UID
+	return target == before
+}
+
+// FinishInboxReceipt preserves immutable dispatch evidence. Reconciliation may
+// resolve uncertain/partial outcomes, but cannot overwrite a verified receipt.
+func (s *Store) FinishInboxReceipt(ctx context.Context, id string, status inboxcontrol.Status, after *inboxcontrol.State, code string) error {
+	switch status {
+	case inboxcontrol.StatusVerified, inboxcontrol.StatusPartial, inboxcontrol.StatusUnknown, inboxcontrol.StatusReconcileOnly, inboxcontrol.StatusFailed:
+	default:
+		return fmt.Errorf("%w: invalid final receipt status", inboxcontrol.ErrInvalid)
+	}
+	if status == inboxcontrol.StatusVerified && after == nil {
+		return fmt.Errorf("%w: verified receipt requires observation", inboxcontrol.ErrInvalid)
+	}
+	var encoded any
+	if after != nil {
+		if _, err := inboxcontrol.SemanticFingerprint(*after); err != nil {
+			return err
+		}
+		receipt, err := s.GetInboxReceipt(ctx, id)
+		if err != nil {
+			return err
+		}
+		if receipt == nil {
+			return inboxcontrol.ErrConflict
+		}
+		target := after.Target
+		before := receipt.Before.Target
+		if target != before {
+			if !inboxReceiptMoveMapping(receipt, target) || receipt.After == nil || receipt.After.Target != target {
+				return inboxcontrol.ErrInvalid
+			}
+			target = before
+		} else if receipt.After != nil && receipt.After.Target != before {
+			return inboxcontrol.ErrInvalid
+		}
+		if target != before || after.Source != receipt.Before.Source || after.ObservedAt.IsZero() {
+			return fmt.Errorf("%w: final observation differs from receipt identity", inboxcontrol.ErrInvalid)
+		}
+		data, err := json.Marshal(after)
+		if err != nil {
+			return fmt.Errorf("encode inbox final observation: %w", err)
+		}
+		encoded = string(data)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE inbox_operation_receipts SET status = ?, finished_at = ?, after_json = COALESCE(?, after_json), failure_code = ?
+		WHERE id = ? AND (status IN ('dispatching', 'unknown', 'partial', 'reconcile-only') OR (status = 'prepared' AND ? = 'failed'))`,
+		status, time.Now().UTC().UnixNano(), encoded, code, id, status)
+	return inboxReceiptTransition(result, err)
+}
+
+// RecoverInboxReceipts runs at startup and waits for source execution ownership
+// before recovering each source. Active workers keep their receipts intact, and
+// a successful return guarantees no busy source was skipped. No uncertain
+// provider operation is retried or erased by recovery.
+func (s *Store) RecoverInboxReceipts(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_id FROM inbox_operation_receipts WHERE status IN ('prepared', 'dispatching') GROUP BY source_id`)
+	if err != nil {
+		return fmt.Errorf("list interrupted inbox sources: %w", err)
+	}
+	var sourceIDs []int64
+	for rows.Next() {
+		var sourceID int64
+		if err := rows.Scan(&sourceID); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read interrupted inbox source: %w", err)
+		}
+		sourceIDs = append(sourceIDs, sourceID)
+	}
+	err = errors.Join(rows.Err(), rows.Close())
+	if err != nil {
+		return fmt.Errorf("read interrupted inbox sources: %w", err)
+	}
+	for _, sourceID := range sourceIDs {
+		lock, err := s.acquireInboxRecoveryLock(ctx, sourceID)
+		if err != nil {
+			return fmt.Errorf("acquire inbox recovery ownership: %w", err)
+		}
+		// Receipts outlive source deletion. Keep execution ownership while
+		// recovering them even when there is no source row left to lock.
+		recoveryErr := s.recoverAbandonedSyncSource(ctx, sourceID)
+		if recoveryErr == nil || errors.Is(recoveryErr, ErrSourceNotFound) {
+			recoveryErr = s.recoverInboxSourceReceipts(ctx, sourceID)
+		}
+		err = errors.Join(recoveryErr, s.abandonSyncExecutionLock(sourceID, lock))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const inboxRecoveryLockRetryInterval = 100 * time.Millisecond
+
+func (s *Store) acquireInboxRecoveryLock(ctx context.Context, sourceID int64) (syncExecutionLock, error) {
+	ticker := time.NewTicker(inboxRecoveryLockRetryInterval)
+	defer ticker.Stop()
+	for {
+		lock, err := s.acquireSyncExecutionLock(ctx, sourceID)
+		if !errors.Is(err, ErrSyncAlreadyActive) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (s *Store) recoverInboxSourceReceipts(ctx context.Context, sourceID int64) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, transition := range []struct{ from, to, code string }{
+			{"prepared", "failed", "interrupted-before-dispatch"},
+			{"dispatching", "unknown", "interrupted-after-dispatch"},
+		} {
+			if _, err := tx.ExecContext(ctx, `UPDATE inbox_operation_receipts SET status = ?, finished_at = ?, failure_code = ? WHERE source_id = ? AND status = ?`, transition.to, time.Now().UTC().UnixNano(), transition.code, sourceID, transition.from); err != nil {
+				return fmt.Errorf("recover inbox receipts: %w", err)
+			}
+		}
+		return nil
+	})
+}

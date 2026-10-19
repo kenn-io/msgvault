@@ -843,6 +843,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	inboxKey, err := prepareInboxRuntime(ctx, cfg, s)
+	if err != nil {
+		return fmt.Errorf("prepare Inbox control runtime: %w", err)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -866,6 +871,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
+		inboxKey:               inboxKey,
 		config:                 cfg,
 		options:                state.options,
 		logger:                 logger,
@@ -1760,6 +1766,8 @@ type storeAPIAdapter struct {
 	beeperDraftPolicy         []config.GmailDraftSource
 	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
+	inboxKey                  []byte
+	beeperInboxClientFactory  func(context.Context, *store.Source) (*beeper.Client, error)
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,

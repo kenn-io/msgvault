@@ -29,7 +29,7 @@ func newRootCommand() *cobra.Command {
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
 		Long: `msgvault archives email, chat, and meetings for offline search.
-Commands start or reuse a local daemon, or use [remote].url from config.toml.
+Start or reuse a local daemon, or use [remote].url from config.toml.
 --local forces the local daemon.
 
 Start here:
@@ -264,7 +264,7 @@ func skipsConfigLoad(cmd *cobra.Command) bool {
 // must be run by the owner.
 func agentDelegatedCapable(cmd *cobra.Command) bool {
 	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
-		if ancestor.Name() == "calendar" {
+		if ancestor.Name() == "calendar" || ancestor.Name() == "inbox" {
 			return true
 		}
 	}
