@@ -226,18 +226,24 @@ func fetchParticipantsForMessageList(ctx context.Context, db store.SQLReader, re
 		placeholders[i] = "?"
 		idToIndex[msg.ID] = i
 	}
+	addressExpr := `COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), '')`
+	nameExpr := recipientNameExpr("mr", "p")
+	if tablePrefix == "" {
+		addressExpr = `COALESCE(NULLIF(` + eligibleParticipantEmailExpr("p") + `, ''), NULLIF(` + eligibleParticipantPhoneExpr("p") + `, ''), '')`
+		nameExpr = eligibleRecipientNameExpr("mr", "p")
+	}
 
 	rows, err := db.QueryContext(ctx, rebind(fmt.Sprintf(`
 		SELECT mr.message_id,
 		       mr.recipient_type,
-		       COALESCE(NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM %smessage_recipients mr
 		JOIN %sparticipants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s)
 		  AND mr.recipient_type IN ('to', 'cc', 'bcc')
 		ORDER BY mr.message_id, mr.id
-	`, recipientNameExpr("mr", "p"), tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
+	`, addressExpr, nameExpr, tablePrefix, tablePrefix, strings.Join(placeholders, ","))), ids...)
 	if err != nil {
 		return err
 	}

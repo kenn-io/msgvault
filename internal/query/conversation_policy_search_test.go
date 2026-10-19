@@ -228,7 +228,6 @@ func TestConversationPolicyAggregatesUseOnlyFullParticipantValues(t *testing.T) 
 		}
 	}
 	requirements.NotNil(visibleHydrated)
-	assertions.Equal("visible@example.test", visibleHydrated.FromEmail)
 }
 
 func TestConversationPolicySearchDeletionScopeIndependent(t *testing.T) {

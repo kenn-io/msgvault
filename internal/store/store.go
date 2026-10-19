@@ -2333,6 +2333,10 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
 	}
 
+	if err := s.runOnceMigration(ctx, migrationAppleWhatsAppNameProvenance, 1, false, s.backfillAppleParticipantNamesContext); err != nil {
+		return fmt.Errorf("backfill Apple WhatsApp name provenance: %w", err)
+	}
+
 	// Reconcile the system relationship type catalog on every open: insert
 	// missing seeds, repair structural drift, and leave user-owned labels,
 	// vCard mappings, colours, icons, and descriptions alone. See

@@ -207,15 +207,20 @@ func mapInt64Set(values []int64) map[int64]struct{} {
 	return set
 }
 
+// Contextual blocks include historical senders even after they leave the roster.
+// Their supported names can change when a different conversation becomes Cold.
 func (s *Store) invalidateContextualParticipantMessagesTx(ctx context.Context, tx *loggedTx, participantIDs []int64) error {
 	participantIDs = sortedInt64Set(mapInt64Set(participantIDs))
 	return execInChunksContext(ctx, tx, participantIDs, nil, `
+		WITH changed_participants AS (SELECT id FROM participants WHERE id IN (%s))
 		UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1
 		WHERE message_type='beeper'
-		  AND EXISTS (
-			SELECT 1 FROM conversation_participants target_member
-			WHERE target_member.conversation_id=messages.conversation_id
-			  AND target_member.participant_id IN (%s)
+		  AND conversation_id IN (
+			SELECT conversation_id FROM conversation_participants
+			WHERE participant_id IN (SELECT id FROM changed_participants)
+			UNION
+			SELECT conversation_id FROM messages
+			WHERE sender_id IN (SELECT id FROM changed_participants)
 		  )
 		  AND `+FullMessageWhere("messages"))
 }

@@ -3387,6 +3387,35 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 	})
 }
 
+// Reply repair takes the policy fence before source/sync and message locks.
+// A policy refresh holds the exclusive fence while reading those messages and
+// draining their activity hints, so the opposite order can deadlock.
+func (s *Store) withConversationPolicyReplyTx(ctx context.Context, sourceID int64, write func(*loggedTx) error) error {
+	if sourceID > 0 {
+		if err := s.requireSyncSource(sourceID); err != nil {
+			return err
+		}
+	}
+	if !s.IsPostgreSQL() {
+		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyShared)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
+	return s.withTxLockedContext(ctx, nil, func(tx *loggedTx) error {
+		if s.IsPostgreSQL() {
+			if err := s.LockPostgresConversationPolicyTx(ctx, tx.Tx, ConversationPolicyShared); err != nil {
+				return err
+			}
+		}
+		if s.syncGeneration != nil && sourceID > 0 {
+			return s.lockSyncSourceTx(ctx, tx, sourceID)
+		}
+		return nil
+	}, write)
+}
+
 // SetReplyTo links a channel reply to its parent by resolving the parent's
 // source_message_id to its internal messages.id within the same source.
 func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
@@ -3395,7 +3424,7 @@ func (s *Store) SetReplyTo(sourceID int64, childSourceMessageID, parentSourceMes
 
 // SetReplyToContext honors cancellation during SetReplyTo.
 func (s *Store) SetReplyToContext(ctx context.Context, sourceID int64, childSourceMessageID, parentSourceMessageID string) error {
-	return s.withConversationPolicySourceActivityTx(ctx, sourceID, func(tx *loggedTx) error {
+	return s.withConversationPolicyReplyTx(ctx, sourceID, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		_, err := q.Exec(`UPDATE messages SET reply_to_message_id=(SELECT parent.id FROM messages parent WHERE parent.source_id=messages.source_id AND parent.source_message_id=?) WHERE source_id=? AND source_message_id=?`, parentSourceMessageID, sourceID, childSourceMessageID)
 		if err != nil {
@@ -3451,7 +3480,7 @@ func (s *Store) SetMessageEditedStateContext(ctx context.Context, messageID int6
 // SetMessageReplyContext links a message to the message it replies to while
 // preserving the scoped sync-generation fence of the writer.
 func (s *Store) SetMessageReplyContext(ctx context.Context, messageID, replyToMessageID int64) error {
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyReplyTx(ctx, 0, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
@@ -3471,10 +3500,7 @@ func (s *Store) ClearMessageRepliesContext(ctx context.Context, sourceID int64, 
 	if len(messageIDs) == 0 {
 		return nil
 	}
-	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyReplyTx(ctx, sourceID, func(tx *loggedTx) error {
 		if err := execInChunksContext(ctx, tx, messageIDs, []any{sourceID},
 			`UPDATE messages SET reply_to_message_id = NULL WHERE source_id = ? AND id IN (%s)`); err != nil {
 			return err

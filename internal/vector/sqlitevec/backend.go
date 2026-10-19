@@ -2209,6 +2209,21 @@ func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.Generatio
 	return n, nil
 }
 
+// Materialize the bounded input once and probe the generation/message index.
+// CROSS JOIN keeps the batch outermost; SQLite otherwise may scan the whole
+// generation and build an automatic index over the revision batch.
+const filteredEmbeddedMessageCountSQL = `
+ WITH current_revisions(message_id, embedding_revision) AS MATERIALIZED (
+  SELECT CAST(json_extract(pair.value, '$[0]') AS INTEGER),
+         CAST(json_extract(pair.value, '$[1]') AS INTEGER)
+  FROM json_each(?) pair
+ )
+ SELECT COUNT(DISTINCT e.message_id)
+ FROM current_revisions current_revision
+ CROSS JOIN embeddings e ON e.generation_id = ?
+  AND e.message_id = current_revision.message_id
+  AND e.embedding_revision = current_revision.embedding_revision`
+
 // EmbeddedMessageCountForIDs intersects a DuckDB-resolved canonical context
 // with the selected vector generation inside vectors.db.
 func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.GenerationID, messageIDs []int64) (int64, error) {
@@ -2254,14 +2269,8 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		return 0, err
 	}
 	var count int64
-	if err := b.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT e.message_id)
-		FROM embeddings e
-		WHERE e.generation_id = ?
-		  AND EXISTS (SELECT 1 FROM json_each(?) pair
-		               WHERE json_extract(pair.value, '$[0]') = e.message_id
-		                 AND json_extract(pair.value, '$[1]') = e.embedding_revision)`,
-		int64(gen), revisionPairs).Scan(&count); err != nil {
+	if err := b.db.QueryRowContext(ctx, filteredEmbeddedMessageCountSQL,
+		revisionPairs, int64(gen)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
 	}
 	return count, nil
@@ -2315,14 +2324,8 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 		return 0, err
 	}
 	var count int64
-	if err := b.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT e.message_id)
-		FROM embeddings e
-		WHERE e.generation_id = ?
-		  AND EXISTS (SELECT 1 FROM json_each(?) pair
-		               WHERE json_extract(pair.value, '$[0]') = e.message_id
-		                 AND json_extract(pair.value, '$[1]') = e.embedding_revision)`,
-		int64(gen), revisionPairs).Scan(&count); err != nil {
+	if err := b.db.QueryRowContext(ctx, filteredEmbeddedMessageCountSQL,
+		revisionPairs, int64(gen)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count snapshot embedded messages: %w", err)
 	}
 	return count, nil

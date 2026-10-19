@@ -740,6 +740,9 @@ func runEvalWithRerankerFactory(cmd *cobra.Command, _ []string, makeReranker eva
 	if len(rerankOptions.Shapes) > 0 {
 		judgedTopics := 0
 		for _, topic := range topics {
+			if search.ParseOR(topic.Query).IncludeCold {
+				return usageErr(cmd, fmt.Errorf("topic %s: include:cold is unavailable with hosted Jev reranking", topic.ID))
+			}
 			if qrels.HasJudgments(topic.ID) {
 				judgedTopics++
 			}

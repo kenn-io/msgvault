@@ -809,7 +809,7 @@ func aggregateSearchKeyCondition(
 ) string {
 	switch groupBy {
 	case ViewSenderNames, ViewRecipientNames:
-		return metadataContainsExpression(d, recipientNameExpr(recipientAlias, participantAlias))
+		return metadataContainsExpression(d, eligibleRecipientNameExpr(recipientAlias, participantAlias))
 	case ViewLabels:
 		return metadataContainsExpression(d, labelAlias+".name")
 	default:

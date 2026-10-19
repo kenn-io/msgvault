@@ -75,22 +75,3 @@ func (s *Store) markSourceConversationPolicyActivityDirtyTx(ctx context.Context,
  ON CONFLICT(key) DO UPDATE SET value=excluded.value`, conversationPolicyActivityDirtyPrefix, sourceID)
 	return err
 }
-
-// Match the source-before-sync-fence order used by source-scoped writes while
-// retaining a transaction even for direct callers, so hints commit atomically.
-func (s *Store) withConversationPolicySourceActivityTx(ctx context.Context, sourceID int64, write func(*loggedTx) error) error {
-	if err := s.requireSyncSource(sourceID); err != nil {
-		return err
-	}
-	return s.withoutSyncScope().withTxContext(ctx, func(tx *loggedTx) error {
-		if s.syncGeneration != nil {
-			if err := s.lockSyncSourceTx(ctx, tx, sourceID); err != nil {
-				return err
-			}
-			if err := s.fenceSyncGenerationTx(ctx, tx); err != nil {
-				return err
-			}
-		}
-		return write(tx)
-	})
-}

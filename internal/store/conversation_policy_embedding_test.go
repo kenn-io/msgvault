@@ -90,6 +90,59 @@ func TestConversationPolicyChangeInvalidatesSharedParticipantContextEmbeddings(t
 	assertions.Contains(ids, messageID, "the invalidated message must be discoverable by the embed worker")
 }
 
+func TestConversationPolicyChangeInvalidatesDepartedSenderContextEmbeddings(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("beeper", "contextual-embedding-policy")
+	requirements.NoError(err)
+	changedRoom, err := s.EnsureConversation(source.ID, "changed", "Synthetic changed room")
+	requirements.NoError(err)
+	targetRoom, err := s.EnsureConversation(source.ID, "target", "Synthetic target room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "changed", conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "target", conversationpolicy.Full))
+
+	identity := store.ConversationParticipantIdentity{
+		IdentifierType: "beeper", IdentifierValue: "synthetic:shared-member", DisplayName: "Synthetic Shared Member",
+	}
+	shared, err := s.ResolveConversationParticipantContext(t.Context(), changedRoom, identity)
+	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(t.Context(), changedRoom, shared.ParticipantID, "member"))
+	targetMember, err := s.ResolveConversationParticipantContext(t.Context(), targetRoom, identity)
+	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(t.Context(), targetRoom, targetMember.ParticipantID, "member"))
+	assertions.Equal(shared.ParticipantID, targetMember.ParticipantID)
+
+	messageID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: targetRoom,
+		SourceMessageID: "target-context-message", MessageType: "beeper",
+		SenderID: sql.NullInt64{Int64: shared.ParticipantID, Valid: true},
+	})
+	requirements.NoError(err)
+	// The latest block still contains this sender after they leave the roster.
+	requirements.NoError(s.ReplaceConversationParticipantsContext(t.Context(), targetRoom, nil))
+	requirements.NoError(s.SetEmbedGen(t.Context(), []int64{messageID}, 37))
+	var before sql.NullInt64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&before))
+	assertions.True(before.Valid)
+	assertions.Equal(int64(37), before.Int64)
+	var beforeRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&beforeRevision))
+
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "changed", conversationpolicy.Cold))
+	var after sql.NullInt64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&after))
+	assertions.False(after.Valid, "a Full message with changed roster context must be re-embedded")
+	var afterRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&afterRevision))
+	assertions.Greater(afterRevision, beforeRevision, "a stale contextual vector must fail the publication revision check")
+	ids, err := s.ScanForEmbedding(t.Context(), 37, 0, 10)
+	requirements.NoError(err)
+	assertions.Contains(ids, messageID, "the invalidated message must be discoverable by the embed worker")
+}
+
 func TestConversationPolicyPromotionBackfillsBelowWatermark(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
