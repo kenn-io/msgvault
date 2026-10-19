@@ -100,11 +100,21 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		add(effective, row.MessageID, o)
 		return nil
 	}
+	reported := map[int64]bool{}
+	report := func(id int64, reason string) {
+		if !reported[id] {
+			page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: id, Reason: reason})
+			reported[id] = true
+		}
+	}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return page, err
 		}
 		e := row.Event
+		if e.Kind == "exception" && e.Original == nil {
+			report(row.MessageID, "exception has no original start")
+		}
 		switch e.Kind {
 		case "exception", "single":
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
@@ -116,7 +126,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 					add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
 				}
 			} else {
-				page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: row.MessageID, Reason: calendarMissingBoundsReason(e)})
+				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
 			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
@@ -129,7 +139,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				return page, err
 			}
 			if reason != "" {
-				page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: row.MessageID, Reason: reason})
+				report(row.MessageID, reason)
 			}
 			for _, o := range occurrences {
 				if err := addSeriesOccurrence(row, o); err != nil {
@@ -219,12 +229,15 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	return append(occurrences, resolved...), count, "", nil
 }
 
-// Keep independently bounded edits alongside resolved overrides for generation failures.
+// Keep unidentified edits alongside resolved overrides and all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
 	for _, row := range rows {
 		e := row.Event
 		if e.Start != nil && e.End != nil {
 			bounded = append(bounded, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", ExceptionRef: row.MessageID, HasException: true})
+			if e.Original == nil {
+				resolved = append(resolved, bounded[len(bounded)-1])
+			}
 		}
 	}
 	if set == nil {
@@ -261,7 +274,7 @@ func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception
 	for _, row := range rows {
 		e := row.Event
 		if e.Original == nil {
-			return nil, errors.New("missing exception original start")
+			continue
 		}
 		// An omitted event zone inherits the master's zone during expansion.
 		var zone *time.Location

@@ -46,6 +46,39 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
+func TestListCalendarOccurrencesUnidentifiedExceptions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edit","recurringEventId":"weekly","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"status":"cancelled"}`)
+	_, unidentified := calendarFixture(t, st, "unidentified", `{"id":"unidentified","recurringEventId":"weekly","status":"cancelled"}`)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 21))
+	require.NoError(err)
+	assert.ElementsMatch([]CalendarUnexpandable{
+		{MessageID: edit, Reason: "exception has no original start"},
+		{MessageID: unidentified, Reason: "exception has no original start"},
+	}, page.Unexpandable)
+	require.Len(page.Occurrences, 4)
+	for i, want := range []struct {
+		id                 int64
+		start, end, status string
+	}{
+		{master, "2027-03-14T10:00:00Z", "2027-03-14T11:00:00Z", "confirmed"},
+		{edit, "2027-03-14T12:00:00Z", "2027-03-14T13:00:00Z", "confirmed"},
+		{cancelled, "2027-03-21T10:00:00Z", "2027-03-21T11:00:00Z", "cancelled"},
+		{master, "2027-03-28T10:00:00Z", "2027-03-28T11:00:00Z", "confirmed"},
+	} {
+		got := page.Occurrences[i]
+		assert.Equal(want.id, got.MessageID)
+		assert.Equal(master, got.SeriesMessageID)
+		assert.Equal(want.start, got.Start.Format(time.RFC3339))
+		assert.Equal(want.end, got.End.Format(time.RFC3339))
+		assert.Equal(want.status, got.Status)
+	}
+}
+
 func TestListCalendarOccurrencesUnexpandable(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -59,6 +92,38 @@ func TestListCalendarOccurrencesUnexpandable(t *testing.T) {
 	assertions.Empty(page.Occurrences)
 	requirements.Len(page.Unexpandable, 1)
 	assertions.Equal(id, page.Unexpandable[0].MessageID)
+}
+
+func TestListCalendarOccurrencesUnidentifiedExceptionsWithoutRecurrence(t *testing.T) {
+	for _, masterPresent := range []bool{true, false} {
+		t.Run(fmt.Sprintf("master=%t", masterPresent), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			var master int64
+			if masterPresent {
+				_, master = calendarFixture(t, st, "master", `{"id":"single","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+			}
+			_, edit := calendarFixture(t, st, "edit", `{"id":"edit","recurringEventId":"single","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+			_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"single","status":"cancelled"}`)
+			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			require.NoError(err)
+			assert.ElementsMatch([]CalendarUnexpandable{
+				{MessageID: edit, Reason: "exception has no original start"},
+				{MessageID: cancelled, Reason: "exception has no original start"},
+			}, page.Unexpandable)
+			if masterPresent {
+				require.Len(page.Occurrences, 2)
+				assert.Equal(master, page.Occurrences[0].MessageID)
+				page.Occurrences = page.Occurrences[1:]
+			}
+			require.Len(page.Occurrences, 1)
+			assert.Equal(edit, page.Occurrences[0].MessageID)
+			assert.Equal(master, page.Occurrences[0].SeriesMessageID)
+			assert.Equal("2027-03-14T12:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+			assert.Equal("2027-03-14T13:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
+		})
+	}
 }
 
 func TestListCalendarOccurrencesOffsetFreeTime(t *testing.T) {
@@ -153,7 +218,7 @@ func TestListCalendarOccurrencesOrphanExceptions(t *testing.T) {
 	assertions.Equal(complete, page.Occurrences[0].MessageID)
 	assertions.Zero(page.Occurrences[0].SeriesMessageID)
 	assertions.Equal("2027-03-03T17:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
-	assertions.ElementsMatch([]CalendarUnexpandable{{MessageID: incomplete, Reason: "missing series master and event bounds"}, {MessageID: unidentified, Reason: "missing series master and event bounds"}}, page.Unexpandable)
+	assertions.ElementsMatch([]CalendarUnexpandable{{MessageID: incomplete, Reason: "missing series master and event bounds"}, {MessageID: unidentified, Reason: "exception has no original start"}}, page.Unexpandable)
 }
 
 func TestListCalendarOccurrencesAllDayQueryZone(t *testing.T) {
