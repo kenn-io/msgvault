@@ -17,7 +17,7 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
-	"github.com/robfig/cron/v3"
+	"go.kenn.io/msgvault/internal/cronexpr"
 )
 
 var (
@@ -891,7 +891,6 @@ func validateEditableCandidate(cfg *Config) error {
 			return fmt.Errorf("vector config: %w", err)
 		}
 	}
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	schedules := map[string]string{
 		"vector.embed.schedule.cron":      cfg.Vector.Embed.Schedule.Cron,
 		"vector.multimodal.schedule.cron": cfg.Vector.Multimodal.Schedule.Cron,
@@ -936,7 +935,7 @@ func validateEditableCandidate(cfg *Config) error {
 		if expression == "" {
 			continue
 		}
-		if _, err := parser.Parse(expression); err != nil {
+		if _, err := cronexpr.Parser.Parse(expression); err != nil {
 			return fmt.Errorf("invalid %s %q: %w", key, expression, err)
 		}
 	}

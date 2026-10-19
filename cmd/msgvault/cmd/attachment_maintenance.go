@@ -369,7 +369,12 @@ func runWithAttachmentMutation(
 	if err != nil {
 		return fmt.Errorf("acquire attachment mutation lease: %w", err)
 	}
-	return errors.Join(run(ctx), lease.Release())
+	runErr := run(ctx)
+	if releaseErr := lease.Release(); releaseErr != nil {
+		return errors.Join(runErr, releaseErr)
+	}
+	// Keep a bare deferral unchanged when release succeeds; the scheduler compares it directly.
+	return runErr
 }
 
 // runScheduledSource distinguishes attachment-producing provider/SyncTech

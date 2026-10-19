@@ -1066,8 +1066,8 @@ describe('EverythingWorkspace', () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
       const path = new URL(request.url).pathname;
+      if (!path.endsWith('/telemetry/events')) requests.push(request);
       return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
     });
     const state = new ExploreState(window);

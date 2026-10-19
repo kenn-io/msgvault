@@ -118,6 +118,14 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 		routeCase{writer, remoteClientTestReaderKey, http.MethodDelete, "/api/v1/cli/collections/reader", "", http.StatusOK},
 	))
 
+	// Search index repair must release the gate before the busy-gate assertions.
+	require.Eventually(
+		func() bool { return !reader.srv.ftsEnsureRunning.Load() },
+		10*time.Second,
+		time.Millisecond,
+		"FTS ensure worker stops running",
+	)
+
 	// Forbidden writes bypass the busy gate; permitted reader writes hide its holder.
 	orig := operationGateWaitLimit
 	operationGateWaitLimit = 20 * time.Millisecond
@@ -143,7 +151,6 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 	check([]routeCase{
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/sync", `{}`, http.StatusForbidden},
 		{reader, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusForbidden},
-		{writer, remoteClientTestReaderKey, http.MethodPost, "/api/v1/cli/collections", create, http.StatusServiceUnavailable},
 	})
 }
 

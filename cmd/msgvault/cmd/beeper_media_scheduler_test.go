@@ -441,7 +441,7 @@ func TestBeeperMediaGatedStoreWrites(t *testing.T) {
 	server, httpServer := newRetentionServer(t)
 	gate := api.NewSerialOperationGate()
 	logger := slog.New(slog.DiscardHandler)
-	sched, media := newServeSchedulers(nil, logger, nil, gate)
+	sched, media := newServeSchedulers(nil, logger, nil, gate, nil)
 	require.NoError(sched.AddJob(scheduler.Job{Name: "test-gated-job", Schedule: "0 0 1 1 *",
 		Run: func(context.Context) error { return nil }}))
 	cfg := config.DocbankIntegrationConfig{Enabled: true, URL: httpServer.URL,
@@ -527,7 +527,7 @@ func TestBeeperMediaJobStatus(t *testing.T) {
 	_, httpServer := newRetentionServer(t)
 	gate := api.NewSerialOperationGate()
 	logger := slog.New(slog.DiscardHandler)
-	sched, media := newServeSchedulers(nil, logger, nil, gate)
+	sched, media := newServeSchedulers(nil, logger, nil, gate, nil)
 	defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
 	require.NoError(sched.AddJob(scheduler.Job{Name: "test-gated-job", Schedule: "0 0 1 1 *",
 		Run: func(context.Context) error { return nil }}))
@@ -560,7 +560,7 @@ func TestBeeperMediaDoesNotPreventIdleShutdown(t *testing.T) {
 		idle := api.NewIdleTracker(3*time.Minute, func() { close(idleShutdown) })
 		logger := slog.New(slog.DiscardHandler)
 		gate := api.NewSerialOperationGate()
-		sched, media := newServeSchedulers(nil, logger, idle, gate)
+		sched, media := newServeSchedulers(nil, logger, idle, gate, nil)
 		defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
 		require.NoError(t, configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), t.TempDir(),
 			config.DocbankIntegrationConfig{Enabled: true, URL: "http://127.0.0.1"}, logger))

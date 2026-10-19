@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -39,7 +38,7 @@ Examples:
   msgvault show-thread 123
   msgvault show-thread 123 --json --limit 50 --offset 50`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (result error) {
 			if limit < 1 || limit > query.ThreadMaxLimit {
 				return usageErr(cmd, errors.New("--limit must be between 1 and 500"))
 			}
@@ -79,6 +78,9 @@ Examples:
 			if err != nil {
 				return err
 			}
+			if len(messages) > 0 {
+				defer reportSuccessfulCLIAction(cmd, client, "message_opened", "", "", &result)
+			}
 			if page.HasMore {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "More messages: use --offset %d\n", page.Offset+len(page.Messages))
 			}
@@ -90,17 +92,20 @@ Examples:
 					}
 					values[i] = messageJSONValue(msg)
 				}
-				enc := jsontext.NewEncoder(os.Stdout, jsontext.WithIndent("  "))
+				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 				return json.MarshalEncode(enc, map[string]any{"conversation_id": page.ConversationID, "total": page.Total, "offset": page.Offset, "has_more": page.HasMore, "messages": values}, json.Deterministic(true))
 			}
-			fmt.Printf("Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset)
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset); err != nil {
+				return fmt.Errorf("write thread: %w", err)
+			}
 			for _, msg := range messages {
 				date := "undated"
 				if !msg.SentAt.IsZero() {
 					date = msg.SentAt.Format("2006-01-02 15:04:05Z07:00")
 				}
-				fmt.Printf("\nMessage %d · %s · %s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject))
-				fmt.Println(textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted)))
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted))); err != nil {
+					return fmt.Errorf("write thread: %w", err)
+				}
 			}
 			return nil
 		},

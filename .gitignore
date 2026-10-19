@@ -26,6 +26,8 @@ oauth_client*.json
 .beads/
 .mcp.json
 .worktrees/
+/tmp/
+/web/tmp/
 
 # Python
 __pycache__/

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -63,4 +65,48 @@ func TestScreenViewsFollowPresentationAndUserActivity(t *testing.T) {
 	assertions.Len(screens, 6)
 	update(keyDown())
 	assertions.Len(screens, 7)
+}
+
+func TestMessageOpenedFollowsReadableTransitions(t *testing.T) {
+	for _, mode := range []tuiMode{modeEmail, modeTexts, modeMeetings, modePeople} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			assert, m, calls := assert.New(t), NewBuilder().Build(), 0
+			m.width, m.height, m.mode = 100, 24, mode
+			m.level, m.textState.level, m.meetingState.level, m.peopleState.level = levelMessageDetail, textLevelDetail, meetingLevelDetail, peopleLevelMessage
+			m.messageDetail, m.meetingState.detail = &query.MessageDetail{ID: 1}, &query.MessageDetail{ID: 1}
+			m.reportAction = func(_ context.Context, event, _, _ string) error {
+				assert.Equal("message_opened", event)
+				calls++
+				return errors.New("capture failed")
+			}
+			update := func(msg tea.Msg) {
+				updated, cmd := m.Update(msg)
+				m = asModel(t, updated)
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
+			}
+			update(tea.WindowSizeMsg{Width: 100, Height: 24})
+			assert.Equal(1, calls)
+			update(spinnerTickMsg{})
+			update(key('x'))
+			update(tea.WindowSizeMsg{Width: 110, Height: 24})
+			assert.Equal(1, calls, "unrelated updates do not retry a failed report")
+			m.settings.active = true
+			update(tea.WindowSizeMsg{Width: 100, Height: 24})
+			m.settings.active = false
+			update(tea.WindowSizeMsg{Width: 100, Height: 24})
+			assert.Equal(2, calls, "returning to cached readable content is a new transition")
+			m.messageDetail.ID, m.meetingState.detail.ID = 2, 2
+			update(tea.WindowSizeMsg{Width: 100, Height: 24})
+			assert.Equal(3, calls)
+			m.messageReportedDay = "2020-01-01"
+			update(spinnerTickMsg{})
+			assert.Equal(3, calls)
+			update(key('x'))
+			assert.Equal(4, calls, "first key press on a new UTC day reports the same readable detail")
+			update(key('x'))
+			assert.Equal(4, calls)
+		})
+	}
 }

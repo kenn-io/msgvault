@@ -16,6 +16,12 @@ import (
 
 const daemonCLISubprocessEnv = "MSGVAULT_DAEMON_CLI_PARENT_PID"
 
+// ErrSyncPaused signals a sync that paused until a later run.
+var ErrSyncPaused = errors.New("sync paused")
+
+// ExitCodeSyncPaused carries a paused outcome from the CLI child to the daemon.
+const ExitCodeSyncPaused = 75
+
 var daemonCLIExecutableResolver = os.Executable
 
 func isDaemonCLISubprocess() bool {
@@ -84,7 +90,7 @@ func runDaemonCLISubprocessStreamWithEnv(
 	if secondStreamErr != nil {
 		return secondStreamErr
 	}
-	return classifyDaemonCLIWaitErr(waitErr, args)
+	return classifyDaemonCLIWaitErr(waitErr, args, emitLocked)
 }
 
 // cliSubprocessExitSentinel marks a daemon CLI subprocess that ran and exited
@@ -94,17 +100,23 @@ func runDaemonCLISubprocessStreamWithEnv(
 const cliSubprocessExitSentinel = "msgvault: cli subprocess exited non-zero"
 
 // classifyDaemonCLIWaitErr maps a subprocess Wait() error to what the proxy
-// should report. A non-zero exit (the command ran and failed) becomes the
+// should report. A paused exit emits its outcome and succeeds. Other non-zero exits become the
 // sentinel: its real error was already streamed to the caller's stderr, so the
 // client must not print a second, redundant "CLI subprocess ...: exit status
 // 1" wrapper. Any other failure (couldn't start, signal, etc.) is wrapped with
 // context because nothing else surfaced it.
-func classifyDaemonCLIWaitErr(waitErr error, args []string) error {
+func classifyDaemonCLIWaitErr(waitErr error, args []string, emit func(string, string) error) error {
 	if waitErr == nil {
 		return nil
 	}
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) && exitErr.Exited() {
+		if exitErr.ExitCode() == ExitCodeSyncPaused {
+			if emit != nil {
+				return emit("outcome", "paused")
+			}
+			return nil
+		}
 		// A normal non-zero exit: the command ran and streamed its own error,
 		// so collapse to the silent sentinel. A signal-terminated process
 		// (Exited() is false, ExitCode() == -1) streamed nothing, so keep it

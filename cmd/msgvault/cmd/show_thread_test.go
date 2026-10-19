@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -15,10 +17,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 func TestLoadThreadMessagesBeyondRateLimitBurst(t *testing.T) {
@@ -59,6 +63,23 @@ func TestLoadThreadMessagesBeyondRateLimitBurst(t *testing.T) {
 }
 
 func TestShowThreadPaginationAndIdentity(t *testing.T) {
+	// Serving tests permanently disable telemetry in their process.
+	// Keep the successful-read assertions in a fresh process.
+	const subprocessEnv = "MSGVAULT_SHOW_THREAD_TEST"
+	if os.Getenv(subprocessEnv) != "1" {
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestShowThreadPaginationAndIdentity$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args are fixed test flags.
+		cmd.Env = append(os.Environ(), subprocessEnv+"=1")
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return
+	}
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	terminal := cliActionTerminal
+	cliActionTerminal = func(uintptr) bool { return true }
+	t.Cleanup(func() { cliActionTerminal = terminal })
 	for _, tc := range []struct {
 		name                         string
 		offset                       int
@@ -78,10 +99,16 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
+			var events []map[string]any
 
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
+				case "/api/v1/telemetry/events":
+					var event map[string]any
+					assert.NoError(json.NewDecoder(r.Body).Decode(&event))
+					events = append(events, event)
+					w.WriteHeader(http.StatusAccepted)
 				case "/api/v1/health":
 					assert.NoError(json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.3.0"}))
 				case "/api/v1/cli/message/thread":
@@ -117,6 +144,11 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 			done := captureStdout(t)
 			err := root.Execute()
 			out := done()
+			if tc.wantError != "" || tc.offset > 0 {
+				assert.Empty(events)
+			} else {
+				assert.Equal([]map[string]any{{"event": "message_opened", "properties": map[string]any{"surface": "cli"}}}, events)
+			}
 			if tc.wantError != "" {
 				require.ErrorContains(err, tc.wantError)
 				assert.NotContains(stderr.String(), "More messages:")

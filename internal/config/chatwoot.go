@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/chatwoot"
+	"go.kenn.io/msgvault/internal/cronexpr"
 	"go.kenn.io/msgvault/internal/envutil"
 )
 
@@ -66,7 +66,6 @@ func (c *Config) ScheduledChatwootSources() []ChatwootSource {
 func (c *Config) validateChatwootSources() error {
 	labels := map[string]bool{}
 	accounts := map[string]bool{}
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	for i := range c.Chatwoot {
 		src := &c.Chatwoot[i]
 		src.Identifier = strings.TrimSpace(src.Identifier)
@@ -112,7 +111,7 @@ func (c *Config) validateChatwootSources() error {
 			}
 		}
 		if src.Schedule != "" {
-			if _, err := parser.Parse(src.Schedule); err != nil {
+			if _, err := cronexpr.Parser.Parse(src.Schedule); err != nil {
 				return fmt.Errorf("chatwoot[%d].schedule: %w", i, err)
 			}
 		}

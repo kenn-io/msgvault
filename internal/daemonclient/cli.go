@@ -909,7 +909,7 @@ func (c *Client) runCLIStream(
 
 	return decodeCLIStream(resp.Body, operation, func(event cliStreamEvent) (bool, error) {
 		switch event.Type {
-		case "stdout", "stderr":
+		case "stdout", "stderr", "outcome":
 			if output != nil && event.Data != "" {
 				if err := output(event.Type, event.Data); err != nil {
 					return false, err

@@ -115,14 +115,14 @@ func TestServeSchedulerReportsActualGateHolder(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
 		gate := api.NewSerialOperationGate()
-		sched, media := newServeSchedulers(nil, testDiscardLogger(), &fakeDaemonWorkTracker{allow: true}, gate)
+		sched, media := newServeSchedulers(nil, testDiscardLogger(), &fakeDaemonWorkTracker{allow: true}, gate, nil)
 		defer func() { <-sched.Stop().Done(); <-media.Stop().Done() }()
 		release := make(chan struct{})
 		require.NoError(sched.AddJob(scheduler.Job{Name: "activity-projection", Schedule: "0 0 1 1 *", Run: func(context.Context) error {
 			<-release
 			return nil
 		}}))
-		_, startErr := sched.StartJob("activity-projection")
+		_, startErr := sched.StartJob("activity-projection", false)
 		require.NoError(startErr)
 		synctest.Wait()
 		label, since, busy := gate.Holder()

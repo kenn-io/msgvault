@@ -169,7 +169,7 @@ Schema 3.11.0 adds `GET /media/search/status` to report whether Docbank transcri
 Schema 3.9.0 adds source-scoped agent read permissions and optional `expires_at`. Admitted FTS search responses, including aggregates, filtered messages and total statistics with search text, carry optional `index_state`. Agent checks are bounded; owner CLI searches retain automatic verification and repair.
 See [scoped archive reads](cli-reference.md#scoped-archive-reads).
 
-Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web and terminal UIs use to
+Schema 3.3.0 adds `POST /api/v1/telemetry/events`, which the web, terminal UI, and interactive CLI use to
 report anonymous usage events through the daemon. See
 [Telemetry](configuration.md#telemetry).
 
@@ -314,13 +314,10 @@ value under twelve characters, for the CardDAV password, and when nothing
 is set; the value itself is never returned. `validation` gains two optional
 fields:
 
-- `format: "cron"` marks a five-field cron schedule (minute, hour, day of
-  month, month, day of week) as the daemon's scheduler parses it: `*` or `?`,
-  numbers, ranges, comma lists, `/step`, and three-letter month and weekday
-  names. A `CRON_TZ=<zone>` or `TZ=<zone>` prefix with an IANA zone name runs
-  the schedule in that zone instead of the daemon's local time. Descriptors
-  such as `@hourly`, the `L`, `W`, and `#` extensions, and a field made only
-  of commas are rejected. The daemon trims surrounding whitespace and treats
+- `format: "cron"` marks a five-field cron schedule, optionally preceded by a
+  `CRON_TZ=<zone>` or `TZ=<zone>` prefix. The daemon accepts exactly the
+  [cron schedules](configuration.md#cron-schedules) its configuration file
+  accepts. The daemon trims surrounding whitespace and treats
   a zone prefix with no fields after it as the empty value, then validates
   the expression on PATCH; an empty value is rejected when the setting is
   `required`.

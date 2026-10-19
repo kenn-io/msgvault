@@ -36,8 +36,8 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
+	github.com/netresearch/go-cron v0.16.1
 	github.com/rivo/uniseg v0.4.7
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/rotisserie/eris v0.5.4
 	github.com/shirou/gopsutil/v4 v4.26.6
 	github.com/spf13/cobra v1.10.2

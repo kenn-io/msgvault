@@ -1,4 +1,4 @@
-import { captureTelemetryEvent } from '../api/generated/api/api';
+import { reportAction } from './actions';
 import type { APIClient } from '../api/client';
 import type { ExploreWorkspace } from '../explore/models';
 
@@ -9,11 +9,7 @@ export function startScreenViewReporting(client: APIClient, screen: ExploreWorks
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 3000);
     pending.set(controller, timer);
-    void captureTelemetryEvent(
-      { event: 'screen_viewed', properties: { screen, surface: 'web' } },
-      { ...client, signal: controller.signal },
-    )
-      .catch(() => undefined)
+    void reportAction(client, 'screen_viewed', 'screen', screen, controller.signal)
       .finally(() => {
         window.clearTimeout(timer);
         pending.delete(controller);

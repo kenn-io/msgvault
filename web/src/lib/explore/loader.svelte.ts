@@ -8,6 +8,7 @@ import type {
   ExploreGroupResult,
   ExploreGroupRow,
   ExploreResult,
+  ExploreSearchMode,
   FileMIMEFamily
 } from './models';
 import { createExploreAPI, type ExploreAPI } from './api';
@@ -35,6 +36,7 @@ export interface ExploreLoaderCallbacks {
   onPredicateChange: () => void;
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
+  onSearchAccepted?: (query: string, mode: ExploreSearchMode, signal: AbortSignal) => void;
 }
 
 const REPEATED_CURSOR_NOTICE = 'Pagination stopped because the server repeated a cursor without progress.';
@@ -191,6 +193,9 @@ export class ExploreLoader {
     void request
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
+        if (loaded.status !== 'unavailable') {
+          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal);
+        }
         if (loaded.status === 'unavailable') {
           this.rows = [];
           this.groupRows = [];

@@ -21,6 +21,12 @@ const (
 	EventScreenViewed = "screen_viewed"
 	// EventSessionEnded reports bucketed UI session duration.
 	EventSessionEnded = "session_ended"
+	// EventSearchRun counts a person searching the archive.
+	EventSearchRun = "search_run"
+	// EventMessageOpened counts a message becoming visible.
+	EventMessageOpened = "message_opened"
+	// EventSyncFinished counts a normally completed manual sync.
+	EventSyncFinished = "sync_finished"
 	// propertySurface names the interface that reported an event.
 	propertySurface = "surface"
 	application     = "msgvault"
@@ -28,6 +34,13 @@ const (
 	// PostHog project API keys are public ingest identifiers, not credentials.
 	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
+
+// Core actions require every listed property, using the same values as the allowlist.
+var actionProperties = map[string]map[string][]string{
+	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
+	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
+	EventSyncFinished:  {propertySurface: {"web", "cli"}},
+}
 
 // Options configures the daemon reporter.
 type Options struct {
@@ -58,9 +71,14 @@ func newReporterOrDisabled(opts Options, endpoint string, logger *slog.Logger) *
 	return reporter
 }
 
-// CaptureHandler serves UI events and persists daily screen claims in dataDir.
+// CaptureHandler serves usage events and persists daily screen and action claims in dataDir.
 func CaptureHandler(reporter *posthog.Reporter, dataDir string) http.Handler {
-	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter), dir: dataDir, now: time.Now}
+	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter), captureEvent: reporter.Capture, dir: dataDir, now: time.Now}
+}
+
+// Enabled applies the environment overrides to the configured telemetry choice.
+func Enabled(configEnabled bool) bool {
+	return posthog.EnabledFromEnv(envPrefix) && (strings.TrimSpace(os.Getenv(EnabledEnv)) != "" || configEnabled)
 }
 
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
@@ -74,7 +92,14 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui")),
 			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))),
 	}
-	if strings.TrimSpace(os.Getenv(EnabledEnv)) == "" && !opts.ConfigEnabled {
+	for event, required := range actionProperties {
+		properties := make([]posthog.AllowedProperty, 0, len(required))
+		for key, values := range required {
+			properties = append(properties, posthog.AllowProperty(key, posthog.AllowStringValues(values...)))
+		}
+		allowed = append(allowed, posthog.WithAllowedEvent(event, properties...))
+	}
+	if !Enabled(opts.ConfigEnabled) {
 		// Only the daemon reports, so the process-wide switch is this reporter's switch.
 		posthog.DisableProcess()
 	}
