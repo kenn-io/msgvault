@@ -22,6 +22,9 @@ type MessageTag struct {
 }
 
 type MessageTagResult struct {
+	ReceiptID         string       `json:"receipt_id,omitempty"`
+	ReceiptStatus     string       `json:"receipt_status,omitempty"`
+	IdempotencyKey    string       `json:"idempotency_key,omitempty"`
 	MessageID         int64        `json:"message_id"`
 	SourceID          int64        `json:"source_id"`
 	Provider          string       `json:"provider"`

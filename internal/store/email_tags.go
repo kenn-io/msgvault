@@ -8,6 +8,12 @@ import (
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/emailtags"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
+)
+
+const (
+	sourceTypeGmail = "gmail"
+	sourceTypeIMAP  = "imap"
 )
 
 // EmailTagTarget binds one archived message to its exact provider identity.
@@ -33,13 +39,13 @@ func (s *Store) EmailTagTargetContext(ctx context.Context, id int64, mailbox str
 		return target, fmt.Errorf("resolve email tag target: %w", err)
 	}
 	if target.Provider == "" {
-		target.Provider = "gmail"
+		target.Provider = sourceTypeGmail
 	}
-	if target.Provider != "imap" {
+	if target.Provider != sourceTypeIMAP {
 		if mailbox != "" {
 			return target, emailtags.Failure("invalid_request", "mailbox selection applies only to IMAP", nil, nil)
 		}
-		if target.Provider != "gmail" && target.Provider != "msmail" {
+		if target.Provider != sourceTypeGmail && target.Provider != "msmail" {
 			return target, emailtags.Failure("unsupported_provider", "tags can be edited only on connected Gmail, IMAP, and Microsoft Graph messages", nil, nil)
 		}
 		return target, nil
@@ -91,119 +97,127 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 	if result == nil || !result.Verified || result.DryRun || result.Provider != target.Provider {
 		return errors.New("tag snapshot is not verified")
 	}
-	if target.Provider == "imap" && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
+	if target.Provider == sourceTypeIMAP && (result.Flags == nil || result.Mailbox != target.Mailbox || result.UIDValidity != target.UIDValidity || result.UID != target.UID) {
 		return errors.New("IMAP snapshot does not match the target membership")
 	}
 	return s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
-		// The attribution transaction holds the source lock while we recheck identity.
-		var locked int64
-		err := tx.QueryRowContext(ctx, `SELECT id FROM messages
+		return s.saveEmailTagsTx(ctx, tx, target, result)
+	})
+}
+
+// saveEmailTagsTx persists a verified snapshot inside the caller's source-locked
+// attribution transaction, so Inbox observations and label changes commit together.
+func (s *Store) saveEmailTagsTx(ctx context.Context, tx *loggedTx, target EmailTagTarget, result *emailtags.MessageTagResult) error {
+	// The attribution transaction holds the source lock while we recheck identity.
+	var locked int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM messages
    WHERE id=? AND source_id=? AND source_message_id=? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`, target.ID, target.SourceID, target.SourceMessageID).Scan(&locked)
+	if err != nil {
+		return fmt.Errorf("archived tag identity changed: %w", err)
+	}
+	if target.Provider == sourceTypeIMAP {
+		flags, err := json.Marshal(result.Flags)
 		if err != nil {
-			return fmt.Errorf("archived tag identity changed: %w", err)
+			return err
 		}
-		if target.Provider == "imap" {
-			flags, err := json.Marshal(result.Flags)
-			if err != nil {
-				return err
-			}
-			return s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, target.ID, func() error {
-				err := tx.QueryRowContext(ctx, `UPDATE imap_message_memberships SET flags=?,updated_at=CURRENT_TIMESTAMP
+		return s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, target.ID, func() error {
+			err := tx.QueryRowContext(ctx, `UPDATE imap_message_memberships SET flags=?,updated_at=CURRENT_TIMESTAMP
     WHERE source_id=? AND message_id=? AND mailbox=? AND uidvalidity=? AND uid=?
     AND EXISTS (SELECT 1 FROM imap_folder_state fs WHERE fs.source_id=imap_message_memberships.source_id AND fs.mailbox=imap_message_memberships.mailbox AND fs.uidvalidity=imap_message_memberships.uidvalidity)
     RETURNING message_id`, string(flags), target.SourceID, target.ID, target.Mailbox, target.UIDValidity, target.UID).Scan(&locked)
-				if err != nil {
-					return fmt.Errorf("IMAP tag membership changed: %w", err)
-				}
-				return nil
-			})
-		}
-		if target.Provider == "msmail" {
-			_, err := s.reconcileMicrosoftMailLabelsTx(ctx, tx, target.SourceID, target.ID, nil, &result.Tags)
-			return err
-		}
-		if target.Provider != "gmail" {
-			return errors.New("unsupported tag provider")
-		}
-		q := boundQuerier{ctx: ctx, q: tx}
-		descriptors := make(map[string]LabelInfo)
-		catalogChanged := false
-		available := make(map[string]string, len(result.AvailableTags))
-		for _, tag := range result.AvailableTags {
-			available[tag.ID] = tag.Name
-		}
-		for _, tag := range result.Tags {
-			if IsSystemLabel(tag) {
-				descriptors[tag] = LabelInfo{Name: tag, Type: "system", SystemRole: GmailSystemRoleForLabelID(tag)}
-			} else if name, ok := available[tag]; ok {
-				descriptors[tag] = LabelInfo{Name: name, Type: "user"}
-			}
-		}
-		pending := make([]string, 0, len(descriptors))
-		for tag := range descriptors {
-			pending = append(pending, tag)
-		}
-		for i := 0; i < len(pending); i++ {
-			tag := pending[i]
-			info := descriptors[tag]
-			var name string
-			var kind, role sql.NullString
-			err := q.QueryRow(`SELECT name,label_type,system_role FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&name, &kind, &role)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if err == nil && IsSystemLabel(tag) {
-				// Tag readback carries system IDs, not provider display names.
-				info.Name = name
-				descriptors[tag] = info
-			}
-			if errors.Is(err, sql.ErrNoRows) || name != info.Name || kind.String != info.Type || !labelSystemRoleMatches(role, info.SystemRole) {
-				catalogChanged = true
-			}
-			if err == nil && name == info.Name {
-				continue
-			}
-			// Include only live labels that must move aside for this rename.
-			// The batch's two-phase rename then keeps their identities distinct.
-			var conflict sql.NullString
-			err = q.QueryRow(`SELECT source_label_id FROM labels WHERE source_id=? AND name=?`, target.SourceID, info.Name).Scan(&conflict)
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
 			if err != nil {
-				return fmt.Errorf("check Gmail label name %q: %w", info.Name, err)
+				return fmt.Errorf("IMAP tag membership changed: %w", err)
 			}
-			if _, included := descriptors[conflict.String]; included {
-				continue
-			}
-			if name, ok := available[conflict.String]; ok {
-				descriptors[conflict.String] = LabelInfo{Name: name, Type: "user"}
-				pending = append(pending, conflict.String)
-			}
+			return nil
+		})
+	}
+	if target.Provider == "msmail" {
+		_, err := s.reconcileMicrosoftMailLabelsTx(ctx, tx, target.SourceID, target.ID, nil, &result.Tags)
+		return err
+	}
+	if target.Provider != sourceTypeGmail {
+		return errors.New("unsupported tag provider")
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	descriptors := make(map[string]LabelInfo)
+	catalogChanged := false
+	available := make(map[string]string, len(result.AvailableTags))
+	for _, tag := range result.AvailableTags {
+		available[tag.ID] = tag.Name
+	}
+	for _, tag := range result.Tags {
+		if IsSystemLabel(tag) {
+			descriptors[tag] = LabelInfo{Name: tag, Type: "system", SystemRole: GmailSystemRoleForLabelID(tag)}
+		} else if name, ok := available[tag]; ok {
+			descriptors[tag] = LabelInfo{Name: name, Type: "user"}
 		}
-		ids, err := ensureLabelsBatchWith(q, target.SourceID, descriptors, labelFlipsTx(ctx, tx, target.SourceID))
-		if err != nil {
+	}
+	pending := make([]string, 0, len(descriptors))
+	for tag := range descriptors {
+		pending = append(pending, tag)
+	}
+	for i := 0; i < len(pending); i++ {
+		tag := pending[i]
+		info := descriptors[tag]
+		var name string
+		var kind, role sql.NullString
+		err := q.QueryRow(`SELECT name,label_type,system_role FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&name, &kind, &role)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		desired := make([]int64, 0, len(result.Tags))
-		for _, tag := range result.Tags {
-			id, ok := ids[tag]
-			if !ok {
-				if err := q.QueryRow(`SELECT id FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&id); err != nil {
-					return fmt.Errorf("gmail label %q is unavailable locally; sync the account: %w", tag, err)
-				}
-			}
-			desired = append(desired, id)
+		if err == nil && IsSystemLabel(tag) {
+			// Tag readback carries system IDs, not provider display names.
+			info.Name = name
+			descriptors[tag] = info
 		}
-		changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, target.ID, desired, true)
+		if errors.Is(err, sql.ErrNoRows) || name != info.Name || kind.String != info.Type || !labelSystemRoleMatches(role, info.SystemRole) {
+			catalogChanged = true
+		}
+		if err == nil && name == info.Name {
+			continue
+		}
+		// Include only live labels that must move aside for this rename.
+		// The batch's two-phase rename then keeps their identities distinct.
+		var conflict sql.NullString
+		err = q.QueryRow(`SELECT source_label_id FROM labels WHERE source_id=? AND name=?`, target.SourceID, info.Name).Scan(&conflict)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
-			return err
+			return fmt.Errorf("check Gmail label name %q: %w", info.Name, err)
 		}
-		if changed || catalogChanged {
-			return s.bumpDerivedDataRevision(tx, true)
+		if _, included := descriptors[conflict.String]; included {
+			continue
 		}
-		return nil
-	})
+		name, live := available[conflict.String]
+		if !live {
+			return fmt.Errorf("%w: unresolved Gmail label name conflict", inboxcontrol.ErrConflict)
+		}
+		descriptors[conflict.String] = LabelInfo{Name: name, Type: "user"}
+		pending = append(pending, conflict.String)
+	}
+	ids, err := ensureLabelsBatchWith(q, target.SourceID, descriptors, labelFlipsTx(ctx, tx, target.SourceID))
+	if err != nil {
+		return err
+	}
+	desired := make([]int64, 0, len(result.Tags))
+	for _, tag := range result.Tags {
+		id, ok := ids[tag]
+		if !ok {
+			if err := q.QueryRow(`SELECT id FROM labels WHERE source_id=? AND source_label_id=?`, target.SourceID, tag).Scan(&id); err != nil {
+				return fmt.Errorf("gmail label %q is unavailable locally; sync the account: %w", tag, err)
+			}
+		}
+		desired = append(desired, id)
+	}
+	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, target.ID, desired, true)
+	if err != nil {
+		return err
+	}
+	if changed || catalogChanged {
+		return s.bumpDerivedDataRevision(tx, true)
+	}
+	return nil
 }
 
 // GmailSystemRoleForLabelID returns Gmail's canonical role, independent of the

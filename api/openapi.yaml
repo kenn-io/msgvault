@@ -7111,6 +7111,269 @@ components:
         - candidates
         - applied
       type: object
+    InboxCapabilities:
+      additionalProperties: true
+      properties:
+        conditional_write:
+          type: boolean
+        location_model:
+          type: string
+        observed_at:
+          format: date-time
+          type: string
+        operations:
+          items:
+            $ref: "#/components/schemas/InboxCapability"
+          type: array
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+      required:
+        - source
+        - location_model
+        - conditional_write
+        - observed_at
+        - operations
+      type: object
+    InboxCapability:
+      additionalProperties: true
+      properties:
+        operation:
+          type: string
+        reason:
+          type: string
+        status:
+          type: string
+      required:
+        - operation
+        - status
+      type: object
+    InboxControlError:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        result:
+          $ref: "#/components/schemas/InboxResult"
+      required:
+        - error
+        - message
+      type: object
+    InboxFolder:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        parent_id:
+          type: string
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      type: object
+    InboxReceipt:
+      additionalProperties: true
+      properties:
+        after:
+          $ref: "#/components/schemas/InboxState"
+        before:
+          $ref: "#/components/schemas/InboxState"
+        created_at:
+          format: date-time
+          type: string
+        dispatched_at:
+          format: date-time
+          type: string
+        failure_code:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        idempotency_key:
+          type: string
+        intent:
+          $ref: "#/components/schemas/InboxRequest"
+        intent_hash:
+          type: string
+        principal_id:
+          type: string
+        projected:
+          $ref: "#/components/schemas/InboxState"
+        source_id:
+          format: int64
+          type: integer
+        state_hash:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - principal_id
+        - source_id
+        - idempotency_key
+        - intent_hash
+        - state_hash
+        - intent
+        - before
+        - status
+        - created_at
+      type: object
+    InboxRequest:
+      additionalProperties: false
+      properties:
+        destination:
+          $ref: "#/components/schemas/InboxFolder"
+        dry_run:
+          type: boolean
+        expected:
+          $ref: "#/components/schemas/InboxState"
+        idempotency_key:
+          type: string
+        operation:
+          type: string
+        origin_folder:
+          $ref: "#/components/schemas/InboxFolder"
+        preview_token:
+          type: string
+        receipt_id:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        tags:
+          $ref: "#/components/schemas/MessageTagChange"
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - operation
+      type: object
+    InboxResult:
+      additionalProperties: true
+      properties:
+        after:
+          $ref: "#/components/schemas/InboxState"
+        before:
+          $ref: "#/components/schemas/InboxState"
+        capabilities:
+          $ref: "#/components/schemas/InboxCapabilities"
+        expires_at:
+          format: date-time
+          type: string
+        folders:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
+        preview_token:
+          type: string
+        projected:
+          $ref: "#/components/schemas/InboxState"
+        receipt:
+          $ref: "#/components/schemas/InboxReceipt"
+      type: object
+    InboxSourceIdentity:
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - account_id
+      type: object
+    InboxState:
+      additionalProperties: false
+      properties:
+        flags:
+          items:
+            type: string
+          type: array
+        folders:
+          items:
+            $ref: "#/components/schemas/InboxFolder"
+          type: array
+        inbox:
+          type: boolean
+        last_message_id:
+          type: string
+        location:
+          type: string
+        marked_unread:
+          type: boolean
+        observed_at:
+          format: date-time
+          type: string
+        provisioned_folder:
+          $ref: "#/components/schemas/InboxFolder"
+        read:
+          type: boolean
+        revision:
+          type: string
+        source:
+          $ref: "#/components/schemas/InboxSourceIdentity"
+        tags:
+          items:
+            type: string
+          type: array
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+      required:
+        - target
+        - source
+        - observed_at
+      type: object
+    InboxTarget:
+      additionalProperties: false
+      properties:
+        account_id:
+          type: string
+        item_id:
+          format: int64
+          type: integer
+        mailbox:
+          type: string
+        provider_id:
+          type: string
+        scope:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      required:
+        - source_id
+        - source_type
+        - source_identifier
+        - account_id
+        - scope
+        - item_id
+        - provider_id
+      type: object
     KataEvidenceLinkRequest:
       additionalProperties: false
       properties:
@@ -7268,6 +7531,12 @@ components:
     MCPCapabilities:
       additionalProperties: true
       properties:
+        delegated:
+          type: boolean
+        inbox_operations:
+          items:
+            type: string
+          type: array
         routes:
           items:
             $ref: "#/components/schemas/MCPRouteDescriptor"
@@ -7277,7 +7546,9 @@ components:
           type: integer
       required:
         - version
+        - delegated
         - routes
+        - inbox_operations
       type: object
     MCPRouteDescriptor:
       additionalProperties: true
@@ -8177,6 +8448,69 @@ components:
         - error
         - message
       type: object
+    MessageTagResponse:
+      additionalProperties: true
+      properties:
+        available_tags:
+          items:
+            $ref: "#/components/schemas/MessageTag"
+          type: array
+        before:
+          items:
+            type: string
+          type: array
+        can_create_keywords:
+          type: boolean
+        dry_run:
+          type: boolean
+        flags:
+          items:
+            type: string
+          type: array
+        idempotency_key:
+          type: string
+        mailbox:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        provider:
+          type: string
+        receipt_id:
+          type: string
+        receipt_status:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        tags:
+          items:
+            type: string
+          type: array
+        target:
+          $ref: "#/components/schemas/InboxTarget"
+        uid:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        uidvalidity:
+          format: int64
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+        verified:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - provider
+        - tags
+        - before
+        - available_tags
+        - dry_run
+        - verified
+      type: object
     MessageTagResult:
       additionalProperties: true
       properties:
@@ -8196,12 +8530,18 @@ components:
           items:
             type: string
           type: array
+        idempotency_key:
+          type: string
         mailbox:
           type: string
         message_id:
           format: int64
           type: integer
         provider:
+          type: string
+        receipt_id:
+          type: string
+        receipt_status:
           type: string
         source_id:
           format: int64
@@ -23118,6 +23458,93 @@ paths:
       summary: Get historical import status
       tags:
         - API
+  /api/v1/inbox/control:
+    post:
+      operationId: controlInbox
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InboxRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Request Entity Too Large
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Unsupported Media Type
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboxControlError"
+          description: Service Unavailable
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview, execute or reconcile one exact inbox action
+      tags:
+        - Inbox
   /api/v1/integrations/docbank/attachments:
     get:
       operationId: getDocbankAttachmentStatus
@@ -24574,7 +25001,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessageTagResult"
+                $ref: "#/components/schemas/MessageTagResponse"
           description: OK
         "400":
           content:
@@ -24636,6 +25063,7 @@ paths:
       tags:
         - API
     post:
+      description: Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing.
       operationId: updateMessageTags
       parameters:
         - description: Archived message ID
