@@ -34,14 +34,51 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 		add, remove         []string
 		tags                *emailtags.MessageTagChange
 		origin, destination *inboxcontrol.Folder
+		wantTags            []string
+		wantInbox           bool
+		wantRead            bool
 	}{
-		{name: "explicit label move", op: inboxcontrol.OpMove, add: []string{"LabelNew"}, remove: []string{"LabelOld"}, origin: &inboxcontrol.Folder{ID: "LabelOld"}, destination: &inboxcontrol.Folder{ID: "LabelNew"}},
-		{name: "archive", op: inboxcontrol.OpArchive, remove: []string{"INBOX"}},
-		{name: "unarchive", op: inboxcontrol.OpUnarchive, add: []string{"INBOX"}},
-		{name: "read", op: inboxcontrol.OpSetRead, remove: []string{"UNREAD"}},
-		{name: "unread", op: inboxcontrol.OpSetUnread, add: []string{"UNREAD"}},
-		{name: "retained tagging", op: inboxcontrol.OpTags, add: []string{"LabelNew"}, remove: []string{"LabelOld"}, tags: &emailtags.MessageTagChange{Add: []string{"LabelNew"}, Remove: []string{"LabelOld"}}},
-		{name: "tag removal added concurrently", op: inboxcontrol.OpTags, add: []string{"LabelNew"}, tags: &emailtags.MessageTagChange{Add: []string{"LabelNew"}, Remove: []string{"ConcurrentLabel"}}},
+		{
+			name: "explicit label move", op: inboxcontrol.OpMove,
+			add: []string{"LabelNew"}, remove: []string{"LabelOld"},
+			origin: &inboxcontrol.Folder{ID: "LabelOld"}, destination: &inboxcontrol.Folder{ID: "LabelNew"},
+			wantTags:  []string{"INBOX", "UNREAD", "STARRED", "LabelOther", "LabelNew", "ConcurrentLabel"},
+			wantInbox: true, wantRead: false,
+		},
+		{
+			name: "archive", op: inboxcontrol.OpArchive, remove: []string{"INBOX"},
+			wantTags:  []string{"UNREAD", "STARRED", "LabelOld", "LabelOther", "ConcurrentLabel"},
+			wantInbox: false, wantRead: false,
+		},
+		{
+			name: "unarchive", op: inboxcontrol.OpUnarchive, add: []string{"INBOX"},
+			wantTags:  []string{"INBOX", "UNREAD", "STARRED", "LabelOld", "LabelOther", "ConcurrentLabel"},
+			wantInbox: true, wantRead: false,
+		},
+		{
+			name: "read", op: inboxcontrol.OpSetRead, remove: []string{"UNREAD"},
+			wantTags:  []string{"INBOX", "STARRED", "LabelOld", "LabelOther", "ConcurrentLabel"},
+			wantInbox: true, wantRead: true,
+		},
+		{
+			name: "unread", op: inboxcontrol.OpSetUnread, add: []string{"UNREAD"},
+			wantTags:  []string{"INBOX", "UNREAD", "STARRED", "LabelOld", "LabelOther", "ConcurrentLabel"},
+			wantInbox: true, wantRead: false,
+		},
+		{
+			name: "retained tagging", op: inboxcontrol.OpTags,
+			add: []string{"LabelNew"}, remove: []string{"LabelOld"},
+			tags:      &emailtags.MessageTagChange{Add: []string{"LabelNew"}, Remove: []string{"LabelOld"}},
+			wantTags:  []string{"INBOX", "UNREAD", "STARRED", "LabelOther", "LabelNew", "ConcurrentLabel"},
+			wantInbox: true, wantRead: false,
+		},
+		{
+			name: "tag removal added concurrently", op: inboxcontrol.OpTags,
+			add:       []string{"LabelNew"},
+			tags:      &emailtags.MessageTagChange{Add: []string{"LabelNew"}, Remove: []string{"ConcurrentLabel"}},
+			wantTags:  []string{"INBOX", "UNREAD", "STARRED", "LabelOld", "LabelOther", "LabelNew", "ConcurrentLabel"},
+			wantInbox: true, wantRead: false,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -77,7 +114,14 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 					}
 					assert.ElementsMatch(t, tc.add, delta.Add)
 					assert.ElementsMatch(t, tc.remove, delta.Remove)
-					labels = emailtags.Project(labels, emailtags.MessageTagChange{Add: delta.Add, Remove: delta.Remove}, false)
+					for _, id := range delta.Remove {
+						labels = slices.DeleteFunc(labels, func(label string) bool { return label == id })
+					}
+					for _, id := range delta.Add {
+						if !slices.Contains(labels, id) {
+							labels = append(labels, id)
+						}
+					}
 					// Another actor adds a label after dispatch. Never restore a full snapshot.
 					labels = append(labels, "ConcurrentLabel")
 					_, _ = w.Write([]byte(`{"id":"message-1"}`))
@@ -105,13 +149,11 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 			}
 			assertions.Equal(1, posts)
 			assertions.Equal(2, gets)
-			assertions.Contains(after.Tags, "LabelOther")
-			assertions.Contains(after.Tags, "STARRED")
-			assertions.Contains(after.Tags, "ConcurrentLabel")
-			if tc.op == inboxcontrol.OpTags {
-				assertions.True(*after.Inbox)
-				assertions.False(*after.Read)
-			}
+			requirements.NotNil(after.Inbox)
+			requirements.NotNil(after.Read)
+			assertions.ElementsMatch(tc.wantTags, after.Tags)
+			assertions.Equal(tc.wantInbox, *after.Inbox)
+			assertions.Equal(tc.wantRead, *after.Read)
 		})
 	}
 }
