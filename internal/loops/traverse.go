@@ -14,6 +14,7 @@ type traversal struct {
 	bodies               map[int64]bodyResult
 	uncertainAcks        map[int64]bool
 	missingAnchors       map[int64]struct{}
+	liveReplyAnchors     map[int64]struct{}
 	anchorResults        map[int64]bool
 	checkedAnchors       map[int64]bool
 	truncated            bool
@@ -102,8 +103,13 @@ func (t *traversal) substantive(v ConversationView, i int) bool {
 			continue
 		}
 		// List-ID mail cannot create a reply obligation. Bulk labels and headers
-		// can still mark an eligible direct question after owner participation.
+		// only mark an eligible direct question after owner participation or
+		// when a verified live loop already uses that message as its anchor.
 		if previous.Direction == Inbound && previous.ListID != "" {
+			continue
+		}
+		if previous.Direction == Inbound && isBulkMail(previous) &&
+			!t.bulkQuestionEligible(v, j, previous) {
 			continue
 		}
 		if !metadataSubstantive(previous) {
@@ -140,6 +146,27 @@ func (t *traversal) substantive(v ConversationView, i int) bool {
 		}
 	}
 	return true
+}
+
+func (t *traversal) bulkQuestionEligible(v ConversationView, index int, message LoopMessage) bool {
+	counterparty, ok := obligationCounterparty(v, ReplyOwed, message)
+	if !ok || suppressed(counterparty, t.suppressions) {
+		return false
+	}
+	if _, live := t.liveReplyAnchors[message.ID]; live {
+		return true
+	}
+	for i := index - 1; i >= 0; i-- {
+		previous := v.Messages[i]
+		if previous.Direction == Inbound && isListOrBulkMail(previous) {
+			continue
+		}
+		if !t.substantive(v, i) {
+			continue
+		}
+		return previous.Direction == Outbound
+	}
+	return false
 }
 
 type turn struct {

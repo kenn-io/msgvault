@@ -153,6 +153,73 @@ func TestDetectRetainsDirectRequestAfterListQuestionAcknowledgement(t *testing.T
 	assertions.Equal(view.Participants[1].ID, got.Open.Counterparty.ID)
 }
 
+func TestDetectRetainsDirectRequestAfterPromotionQuestionAcknowledgement(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	promotionQuestion := view.Messages[0]
+	promotionQuestion.ID, promotionQuestion.OccurredAt = 10, now.Add(-72*time.Hour)
+	promotionQuestion.Labels = []string{"CATEGORY_PROMOTIONS"}
+	acknowledgement := promotionQuestion
+	acknowledgement.ID, acknowledgement.Direction, acknowledgement.Sender = 11, Outbound, view.Participants[0]
+	acknowledgement.Labels = nil
+	acknowledgement.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	acknowledgement.OccurredAt = now.Add(-48 * time.Hour)
+	request := view.Messages[0]
+	request.ID, request.OccurredAt = 12, now.Add(-24*time.Hour)
+	view.Messages = []LoopMessage{promotionQuestion, acknowledgement, request}
+	view.LastMessageAt = request.OccurredAt
+	view.BodyText = func(id int64) (string, error) {
+		switch id {
+		case promotionQuestion.ID:
+			return "Could you review this newsletter?", nil
+		case acknowledgement.ID:
+			return "Thanks!", nil
+		default:
+			return "Can you send the report?", nil
+		}
+	}
+
+	got := Detect(view, nil, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	assertions.Empty(got.Close)
+	requirements.NotNil(got.Open)
+	assertions.Equal(ReplyOwed, got.Open.Kind)
+	assertions.Equal(request.ID, got.Open.Anchor.ID)
+	assertions.Equal(view.Participants[1].ID, got.Open.Counterparty.ID)
+}
+
+func TestDetectPreservesVerifiedPromotionAnchorDuringAcknowledgement(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	promotionQuestion := view.Messages[0]
+	promotionQuestion.ID, promotionQuestion.OccurredAt = 10, now.Add(-48*time.Hour)
+	promotionQuestion.Labels = []string{"CATEGORY_PROMOTIONS"}
+	acknowledgement := promotionQuestion
+	acknowledgement.ID, acknowledgement.Direction, acknowledgement.Sender = 11, Outbound, view.Participants[0]
+	acknowledgement.Labels = nil
+	acknowledgement.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	acknowledgement.OccurredAt = now.Add(-24 * time.Hour)
+	view.Messages = []LoopMessage{promotionQuestion, acknowledgement}
+	view.LastMessageAt = acknowledgement.OccurredAt
+	view.BodyText = func(id int64) (string, error) {
+		if id == promotionQuestion.ID {
+			return "Could you review this newsletter?", nil
+		}
+		return "Thanks!", nil
+	}
+	view.AnchorExists = func(id int64) (bool, error) { return id == promotionQuestion.ID, nil }
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: promotionQuestion.ID}},
+		now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	assertions.Empty(got.Close)
+	assertions.Empty(got.CoverageGaps)
+	requirements.NotNil(got.Open)
+	assertions.Equal(promotionQuestion.ID, got.Open.Anchor.ID)
+}
+
 func TestDetectBulkQuestionSurvivesAcknowledgementLookback(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

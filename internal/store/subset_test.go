@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,6 +145,215 @@ func TestSubsetCompletePersonMergePacket(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(alias.SurvivingPersonID)
 	assert.Equal(fixture.sourcePersonID, *alias.SurvivingPersonID)
+}
+
+func TestSubsetPersonMergePacketPreservesLoopStateForSplit(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	survivor, _, err := source.CreatePersonFromParticipant(1)
+	require.NoError(err)
+	absorbed, _, err := source.CreatePersonFromParticipant(2)
+	require.NoError(err)
+	var generationID, factClaimID int64
+	require.NoError(source.DB().QueryRowContext(ctx, source.Rebind(`INSERT INTO person_fact_generations (
+		person_id, generation_key, source_cursors_json, program_id, program_version,
+		program_fingerprint, catalog_fingerprint, provider, provider_version,
+		model, model_version, provider_policy_fingerprint, resolved_at
+	) VALUES (?, 'subset-loop-merge-history', '{}', 'test', '1', ?, 'catalog',
+		'test', '1', 'test', '1', 'policy', CURRENT_TIMESTAMP) RETURNING id`),
+		absorbed.ID, strings.Repeat("a", 64)).Scan(&generationID))
+	require.NoError(source.DB().QueryRowContext(ctx, source.Rebind(`INSERT INTO person_fact_claims (
+		person_id, generation_id, claim_key, target_kind, target_key, target_revision,
+		relation, submitted_value_json, origin, confidence_json
+	) VALUES (?, ?, 'subset-loop-merge-history', 'attribute', 'test', '1',
+		'support', '{}', 'system', '{}') RETURNING id`),
+		absorbed.ID, generationID).Scan(&factClaimID))
+	var conversationID, sourceID, anchorMessageID int64
+	require.NoError(source.DB().QueryRowContext(ctx, `SELECT conversation_id, source_id, id
+		FROM messages ORDER BY id LIMIT 1`).Scan(&conversationID, &sourceID, &anchorMessageID))
+	evidenceJSON := fmt.Sprintf(`[{
+		"message_id":%d,"conversation_id":%d,
+		"occurred_at":"2026-01-02T03:04:05Z","quote":"subset evidence"
+	}]`, anchorMessageID, conversationID)
+	_, err = source.DB().ExecContext(ctx, source.Rebind(`INSERT INTO open_loops (
+		turn_key, conversation_id, source_id, kind, detector, status, channel,
+		counterparty_participant_id, counterparty_person_id, anchor_message_id,
+		owed_since_at, last_activity_message_id, last_activity_at, opens_at,
+			summary, evidence_json, ruleset_version, fact_claim_id, closed_at, closed_reason, closed_by
+	) VALUES (?, ?, ?, 'reply_owed', 'turn_state', 'closed', 'email', ?, ?, ?,
+			CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+			?, ?, 1, ?, CURRENT_TIMESTAMP, 'done', 'user')`),
+		"subset-loop-merge-history", conversationID, sourceID, int64(2), absorbed.ID,
+		anchorMessageID, anchorMessageID, "preserve this loop", evidenceJSON, factClaimID)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, source.Rebind(`INSERT INTO loop_suppressions (
+		target_kind, person_id, note
+	) VALUES ('person', ?, 'preserve this mute')`), absorbed.ID)
+	require.NoError(err)
+	merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "subset-loop-state-merge", Actor: "test",
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 4, CopySubsetOptions{
+		IncludeIdentity: true, IncludeProfiles: true,
+		IncludeAttributes: true, IncludeVCardResources: true,
+	})
+	require.NoError(err)
+	require.Equal(int64(1), copyResult.PersonMergePackets)
+	assert.Zero(copyResult.OmittedPersonMergePackets)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	current, err := destination.GetPersonContext(ctx, merged.Person.ID)
+	require.NoError(err)
+	split, err := destination.SplitPersonMergeContext(ctx, PersonSplitRequest{
+		SourcePersonID: current.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs:         absorbed.ParticipantIDs,
+		ExpectedSourceRevision: current.Revision,
+		IdempotencyKey:         "subset-loop-state-split", Actor: "test",
+	})
+	require.NoError(err)
+	assert.True(split.ExactReversal)
+	var personID int64
+	var status, summary, closedReason, copiedEvidence string
+	var copiedFactClaim sql.NullInt64
+	require.NoError(destination.DB().QueryRowContext(ctx, destination.Rebind(`SELECT
+		counterparty_person_id, status, summary, closed_reason, evidence_json, fact_claim_id FROM open_loops
+		WHERE turn_key = 'subset-loop-merge-history'`)).Scan(
+		&personID, &status, &summary, &closedReason, &copiedEvidence, &copiedFactClaim))
+	assert.Equal(split.NewPerson.ID, personID)
+	assert.Equal("closed", status)
+	assert.Equal("preserve this loop", summary)
+	assert.Equal("done", closedReason)
+	assert.JSONEq(evidenceJSON, copiedEvidence)
+	assert.False(copiedFactClaim.Valid)
+	var suppressionPersonID int64
+	var note string
+	require.NoError(destination.DB().QueryRowContext(ctx, destination.Rebind(`SELECT person_id, note
+		FROM loop_suppressions WHERE target_kind = 'person'`)).Scan(&suppressionPersonID, &note))
+	assert.Equal(split.NewPerson.ID, suppressionPersonID)
+	assert.Equal("preserve this mute", note)
+}
+
+func TestSubsetPersonMergePacketOmitsOutOfScopeHistoricalLoopEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, snapshotEvidence, postEvidence string
+	}{
+		{
+			name:             "immutable snapshot evidence",
+			snapshotEvidence: `[{"message_id":1,"conversation_id":1,"quote":"snapshot outside quote"}]`,
+			postEvidence:     `[{"message_id":4,"conversation_id":2,"quote":"selected quote"}]`,
+		},
+		{
+			name:             "post merge journal evidence",
+			snapshotEvidence: `[{"message_id":4,"conversation_id":2,"quote":"selected quote"}]`,
+			postEvidence:     `[{"message_id":1,"conversation_id":1,"quote":"journal outside quote"}]`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			_, err = source.DB().ExecContext(ctx, `INSERT INTO conversation_participants
+				(conversation_id, participant_id) VALUES (2, 1)`)
+			require.NoError(err)
+			_, err = source.DB().ExecContext(ctx, `UPDATE messages SET sender_id = 1 WHERE id = 4`)
+			require.NoError(err)
+			_, err = source.DB().ExecContext(ctx, `UPDATE message_recipients SET participant_id = 1
+				WHERE message_id = 4 AND recipient_type = 'from'`)
+			require.NoError(err)
+			survivor, _, err := source.CreatePersonFromParticipant(1)
+			require.NoError(err)
+			absorbed, _, err := source.CreatePersonFromParticipant(2)
+			require.NoError(err)
+			_, err = source.DB().ExecContext(ctx, source.Rebind(`INSERT INTO open_loops (
+				turn_key, conversation_id, source_id, kind, detector, status, channel,
+				counterparty_participant_id, counterparty_person_id, anchor_message_id,
+				owed_since_at, last_activity_message_id, last_activity_at, opens_at,
+				summary, evidence_json, ruleset_version, closed_at, closed_reason, closed_by
+			) VALUES (?, 2, 1, 'reply_owed', 'turn_state', 'closed', 'email', 2, ?, 4,
+				CURRENT_TIMESTAMP, 4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+				'preserve this loop', ?, 1, CURRENT_TIMESTAMP, 'done', 'user')`),
+				"subset-loop-evidence-scope", absorbed.ID, tc.snapshotEvidence)
+			require.NoError(err)
+			var loopID int64
+			require.NoError(source.DB().QueryRowContext(ctx, source.Rebind(`SELECT id FROM open_loops
+				WHERE turn_key = ?`), "subset-loop-evidence-scope").Scan(&loopID))
+			merged, err := source.MergePersonsContext(ctx, PersonMergeRequest{
+				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+				ExpectedSurvivorRevision: survivor.Revision,
+				ExpectedAbsorbedRevision: absorbed.Revision,
+				IdempotencyKey:           "subset-loop-evidence-scope-merge", Actor: "test",
+			})
+			require.NoError(err)
+			selectedEvidence := `[{"message_id":4,"conversation_id":2,"quote":"selected quote"}]`
+			_, err = source.DB().ExecContext(ctx, source.Rebind(`UPDATE open_loops
+				SET evidence_json = ? WHERE id = ?`), selectedEvidence, loopID)
+			require.NoError(err)
+			setSubsetLoopPostMergeEvidence(t, source, merged.Merge.ID, loopID, tc.postEvidence)
+			require.NoError(source.Close())
+
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			copyResult, err := CopySubsetWithOptions(sourcePath, destinationDir, 2, CopySubsetOptions{
+				IncludeIdentity: true, IncludeProfiles: true,
+				IncludeAttributes: true, IncludeVCardResources: true,
+			})
+			require.NoError(err)
+			assert.Zero(copyResult.PersonMergePackets)
+			assert.Equal(int64(1), copyResult.OmittedPersonMergePackets)
+			destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(destination.Close()) })
+			var copiedEvidence string
+			require.NoError(destination.DB().QueryRowContext(ctx, destination.Rebind(`SELECT evidence_json
+				FROM open_loops WHERE turn_key = ?`), "subset-loop-evidence-scope").Scan(&copiedEvidence))
+			assert.JSONEq(selectedEvidence, copiedEvidence)
+			_, err = destination.GetPersonMergeContext(ctx, merged.Merge.ID)
+			require.ErrorIs(err, ErrPersonMergeNotFound)
+		})
+	}
+}
+
+func setSubsetLoopPostMergeEvidence(
+	t *testing.T, st *Store, mergeID, loopID int64, evidence string,
+) {
+	t.Helper()
+	require := require.New(t)
+	var postJSON string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT post_merge_row_json
+		FROM person_merge_rows WHERE merge_id = ? AND table_name = 'open_loops'
+		AND original_row_id = ?`), mergeID, loopID).Scan(&postJSON))
+	var row personMergeSnapshotRow
+	require.NoError(json.Unmarshal([]byte(postJSON), &row))
+	updated := false
+	for i := range row.Columns {
+		if row.Columns[i].Name != "evidence_json" {
+			continue
+		}
+		row.Columns[i].Value.Text = &evidence
+		updated = true
+		break
+	}
+	require.True(updated)
+	encoded, err := json.Marshal(row, json.Deterministic(true))
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_merge_rows
+		SET post_merge_row_json = ? WHERE merge_id = ? AND table_name = 'open_loops'
+		AND original_row_id = ?`), string(encoded), mergeID, loopID)
+	require.NoError(err)
 }
 
 func TestSubsetIncludesFullySplitPersonMergePacket(t *testing.T) {
@@ -1868,11 +2078,13 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive predates both triggers that name source_is_from_me.
-	// The upgrade below reinstalls them through their migrations.
+	// A pre-attribution archive predates the activity, cache, and open-loop
+	// triggers that name attribution columns. The upgrade below reinstalls them
+	// through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
 		DROP TRIGGER trg_cache_message_facts_update;
+		DROP TRIGGER trg_loop_queue_messages_move;
 		ALTER TABLE messages DROP COLUMN identity_is_from_me;
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
@@ -3821,8 +4033,9 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 // update messages, which resolves to main.messages, so the rename back — ALTER
 // TABLE ... RENAME TO messages — fails its schema reparse with "error in
 // trigger trg_message_bodies_last_modified_upd: no such table: main.messages".
-// Neither attribution column is indexed. The activity and cache triggers that
-// name source_is_from_me postdate such archives, so drop them before the column.
+// Neither attribution column is indexed. The activity, cache, and open-loop
+// triggers that name attribution columns postdate such archives, so drop them
+// before the columns.
 func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3835,8 +4048,9 @@ func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require.NoError(err, "open source db")
 
 	_, err = db.Exec(`DROP TRIGGER trg_activity_queue_messages_update;
-		DROP TRIGGER trg_cache_message_facts_update`)
-	require.NoError(err, "drop triggers that name source_is_from_me")
+		DROP TRIGGER trg_cache_message_facts_update;
+		DROP TRIGGER trg_loop_queue_messages_move`)
+	require.NoError(err, "drop triggers that name attribution columns")
 
 	for _, col := range []string{"source_is_from_me", "identity_is_from_me"} {
 		_, err = db.Exec(
@@ -3995,6 +4209,8 @@ func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
 
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
+	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move`)
+	require.NoError(err, "drop trigger that names identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN Identity_Is_From_Me BOOLEAN`)
@@ -4046,6 +4262,8 @@ func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
 
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
+	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move`)
+	require.NoError(err, "drop trigger that names identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN "İdentity_is_from_me" TEXT`)

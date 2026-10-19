@@ -25,6 +25,8 @@ import (
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
 
+const messagesTableName = "messages"
+
 // querier is satisfied by both *sql.DB and *sql.Tx, allowing
 // helpers to run inside or outside a transaction.
 type querier interface {
@@ -4771,6 +4773,16 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 			return err
 		}
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
+			return err
+		}
+		if err := mergeParticipantLoopSuppressionsTx(
+			ctx, tx, oldID, newID,
+		); err != nil {
+			return err
+		}
+		if err := mergeParticipantLoopCounterpartiesTx(
+			ctx, tx, oldID, newID,
+		); err != nil {
 			return err
 		}
 		edges, err := s.loadLinkEdgesTxContext(ctx, tx)

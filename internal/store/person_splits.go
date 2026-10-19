@@ -1149,6 +1149,11 @@ var personSplitSnapshotDependencies = map[string][]personSplitSnapshotDependency
 }
 
 var personSplitSnapshotColumnDependencies = map[string]map[string]personSplitSnapshotDependency{
+	openLoopsTableName: {
+		"fact_claim_id": {
+			column: "fact_claim_id", table: "person_fact_claims", key: "id",
+		},
+	},
 	personRelationshipReviewsTableName: {
 		"accepted_relationship_id": {
 			column: "accepted_relationship_id", table: personRelationshipsTableName, key: "id",

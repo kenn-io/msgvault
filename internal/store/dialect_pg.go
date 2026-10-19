@@ -2364,6 +2364,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     included so a future checkpoint writer cannot race the cascade.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
+//   - open_loops: source_id is a direct cascade target and loop projection
+//     workers write these rows.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -2391,7 +2393,7 @@ var exclusiveLockTables = []string{
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	"sync_operations",
-	"source_import_items", "sync_run_items", "sync_checkpoints",
+	"source_import_items", "sync_run_items", "sync_checkpoints", openLoopsTableName,
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 }
 

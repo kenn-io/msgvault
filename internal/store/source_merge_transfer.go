@@ -11,6 +11,12 @@ import (
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
 	conversations := map[int64]int64{}
+	messageSurvivors := make(map[int64]int64)
+	for _, m := range plan.messages {
+		if m.survivor != 0 {
+			messageSurvivors[m.id] = m.survivor
+		}
+	}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
 			return err
@@ -21,12 +27,26 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 				return err
 			}
 		} else {
+			if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id = ?
+				WHERE target_kind = 'conversation' AND conversation_id = ?
+				  AND NOT EXISTS (SELECT 1 FROM loop_suppressions existing
+					WHERE existing.target_kind = 'conversation' AND existing.conversation_id = ?)`,
+				c.destination, c.id, c.destination); err != nil {
+				return fmt.Errorf("transfer merged conversation loop suppression: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions
+				WHERE target_kind = 'conversation' AND conversation_id = ?`, c.id); err != nil {
+				return fmt.Errorf("deduplicate merged conversation loop suppression: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversation_participants(conversation_id, participant_id, role, joined_at, left_at)
  SELECT ?, participant_id, role, joined_at, left_at FROM conversation_participants WHERE conversation_id = ?
  ON CONFLICT (conversation_id, participant_id) DO NOTHING`, c.destination, c.id); err != nil {
 				return err
 			}
 		}
+	}
+	if err := transferSourceMergeLoops(ctx, tx, from, into, conversations, messageSurvivors, s.dialect.Now()); err != nil {
+		return fmt.Errorf("transfer open loop state: %w", err)
 	}
 	// Batch the ordinary row transfer and provenance writes. The values table
 	// keeps provider IDs and hidden-survivor decisions in the same transaction.

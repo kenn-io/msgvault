@@ -750,9 +750,6 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			return nil, err
 		}
 	}
-	if err := copyPersonMergePackets(tx, options, result); err != nil {
-		return nil, err
-	}
 	// Every table a native vCard mapping can own a row in — profile
 	// components, relationships, employments, attribute values — has been
 	// copied or deliberately skipped by now, so this is the first point at
@@ -777,6 +774,17 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	if err := copyMessages(tx); err != nil {
+		return nil, err
+	}
+	// Loop history carries message references, so copy it after the selected
+	// messages. Complete merge packets must be selected after the loop rows
+	// their snapshots depend on have crossed the subset boundary.
+	if options.IncludeProfiles && options.IncludeAttributes && options.IncludeVCardResources {
+		if err := copySubsetLoopState(tx); err != nil {
+			return nil, err
+		}
+	}
+	if err := copyPersonMergePackets(tx, options, result); err != nil {
 		return nil, err
 	}
 	// Merge-protection markers are portable owning-row state. Copy them from
@@ -971,6 +979,81 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	}
 
 	return result, nil
+}
+
+// copySubsetLoopState copies loop history and suppressions required by complete
+// person-merge snapshots. It only includes rows whose references remain inside
+// the selected archive.
+func copySubsetLoopState(tx *sql.Tx) error {
+	hasOpenLoops, err := sourceTableExists(tx, openLoopsTableName)
+	if err != nil {
+		return fmt.Errorf("check open loop schema: %w", err)
+	}
+	if hasOpenLoops {
+		predicates := []string{
+			`conversation_id IN (SELECT id FROM conversations)`,
+			`source_id IN (SELECT id FROM sources)`,
+		}
+		hasEvidence, err := sourceColumnExists(tx, openLoopsTableName, "evidence_json")
+		if err != nil {
+			return fmt.Errorf("check open loop evidence references: %w", err)
+		}
+		if hasEvidence {
+			predicates = append(predicates, `CASE
+				WHEN json_valid(evidence_json) THEN CASE
+					WHEN json_type(evidence_json) = 'array' THEN NOT EXISTS (
+						SELECT 1 FROM json_each(evidence_json) AS loop_evidence
+						WHERE CASE WHEN loop_evidence.type = 'object' THEN
+							COALESCE(json_type(loop_evidence.value, '$.message_id'), '') <> 'integer'
+							OR json_extract(loop_evidence.value, '$.message_id') NOT IN (
+								SELECT id FROM messages
+							)
+							OR COALESCE(json_type(loop_evidence.value, '$.conversation_id'), '') <> 'integer'
+							OR json_extract(loop_evidence.value, '$.conversation_id') NOT IN (
+								SELECT id FROM conversations
+							)
+						ELSE 1 END
+					) ELSE 0 END ELSE 0 END`)
+		}
+		for _, dependency := range []struct{ column, table string }{
+			{"counterparty_participant_id", "participants"},
+			{"counterparty_person_id", "persons"},
+			{"anchor_message_id", messagesTableName},
+			{"last_activity_message_id", messagesTableName},
+			{"closed_message_id", messagesTableName},
+			{"fact_claim_id", "person_fact_claims"},
+		} {
+			present, err := sourceColumnExists(tx, openLoopsTableName, dependency.column)
+			if err != nil {
+				return fmt.Errorf("check open loop %s dependency: %w", dependency.column, err)
+			}
+			if !present {
+				continue
+			}
+			column := quoteIdentifier(dependency.column)
+			predicates = append(predicates, fmt.Sprintf(
+				`(%s IS NULL OR %s IN (SELECT id FROM %s))`,
+				column, column, quoteIdentifier(dependency.table),
+			))
+		}
+		if _, err := copyByName(tx, openLoopsTableName, strings.Join(predicates, " AND ")); err != nil {
+			return fmt.Errorf("copy open loops: %w", err)
+		}
+	}
+
+	hasSuppressions, err := sourceTableExists(tx, "loop_suppressions")
+	if err != nil {
+		return fmt.Errorf("check loop suppression schema: %w", err)
+	}
+	if hasSuppressions {
+		if _, err := copyByName(tx, "loop_suppressions", `
+			(target_kind = 'participant' AND participant_id IN (SELECT id FROM participants))
+			OR (target_kind = 'person' AND person_id IN (SELECT id FROM persons))
+			OR (target_kind = 'conversation' AND conversation_id IN (SELECT id FROM conversations))`); err != nil {
+			return fmt.Errorf("copy loop suppressions: %w", err)
+		}
+	}
+	return nil
 }
 
 // copyPersonMergePackets copies an audit packet only when the scoped archive
@@ -1351,10 +1434,18 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("verify person merge packet %d snapshot: %w", mergeID, err)
 	}
-	rows, err := tx.Query(`SELECT table_name, current_row_id, current_row_key,
-		action, provenance_kind, split_id, snapshot_path
+	postMergeJSONExpression := "NULL"
+	hasPostMergeJSON, err := sourceColumnExists(tx, "person_merge_rows", "post_merge_row_json")
+	if err != nil {
+		return false, fmt.Errorf("check person merge post-state schema: %w", err)
+	}
+	if hasPostMergeJSON {
+		postMergeJSONExpression = "post_merge_row_json"
+	}
+	rows, err := tx.Query(fmt.Sprintf(`SELECT table_name, current_row_id, current_row_key,
+		action, provenance_kind, split_id, snapshot_path, %s
 		FROM src.person_merge_rows WHERE merge_id = ?
-		ORDER BY table_name, original_row_key`, mergeID)
+		ORDER BY table_name, original_row_key`, postMergeJSONExpression), mergeID)
 	if err != nil {
 		return false, fmt.Errorf("load person merge packet rows: %w", err)
 	}
@@ -1365,6 +1456,7 @@ func personMergePacketRowsComplete(tx *sql.Tx, mergeID int64) (bool, error) {
 		if err := rows.Scan(
 			&row.table, &row.currentID, &row.currentKey,
 			&row.action, &row.provenance, &row.splitID, &row.snapshotPath,
+			&row.postMergeJSON,
 		); err != nil {
 			_ = rows.Close()
 			return false, fmt.Errorf("scan person merge packet row: %w", err)
@@ -1470,6 +1562,7 @@ type personMergePacketRow struct {
 	currentID                               sql.NullInt64
 	currentKey                              sql.NullString
 	splitID                                 sql.NullInt64
+	postMergeJSON                           sql.NullString
 }
 
 // personMergeSnapshotRowsComplete proves that every immutable snapshot row is
@@ -1505,6 +1598,22 @@ func personMergeSnapshotRowsComplete(
 			return present, err
 		}
 		complete, err := personMergeSnapshotDependenciesComplete(tx, row, lineagePeople)
+		if err != nil || !complete {
+			return complete, err
+		}
+	}
+	for _, journal := range packetRows {
+		if journal.table != openLoopsTableName || !journal.postMergeJSON.Valid {
+			continue
+		}
+		var postRow personMergeSnapshotRow
+		if err := json.Unmarshal([]byte(journal.postMergeJSON.String), &postRow); err != nil {
+			return false, fmt.Errorf("decode open loop merge post-state: %w", err)
+		}
+		if postRow.TableName != journal.table {
+			return false, nil
+		}
+		complete, err := personMergeSnapshotDependenciesComplete(tx, postRow, lineagePeople)
 		if err != nil || !complete {
 			return complete, err
 		}
@@ -1592,6 +1701,10 @@ func personMergeSnapshotRowPresent(
 func personMergeSnapshotDependenciesComplete(
 	tx *sql.Tx, row personMergeSnapshotRow, lineagePeople map[int64]struct{},
 ) (bool, error) {
+	evidenceComplete, err := personMergeSnapshotLoopEvidenceComplete(tx, row)
+	if err != nil || !evidenceComplete {
+		return evidenceComplete, err
+	}
 	spec, ok := personMergeTableRegistry[row.TableName]
 	if !ok {
 		return false, fmt.Errorf("validate person merge snapshot dependencies: unregistered table %q", row.TableName)
@@ -1670,11 +1783,35 @@ func personMergeSnapshotDependenciesComplete(
 		"employments": {
 			{"organization_id", "organizations"}, {"address_id", "organization_addresses"},
 		},
+		"loop_suppressions": {
+			{"participant_id", "participants"}, {"conversation_id", "conversations"},
+		},
+		openLoopsTableName: {
+			{"conversation_id", "conversations"}, {"source_id", "sources"},
+			{"counterparty_participant_id", "participants"},
+			{"anchor_message_id", messagesTableName},
+			{"last_activity_message_id", messagesTableName},
+			{"closed_message_id", messagesTableName},
+			{"fact_claim_id", "person_fact_claims"},
+		},
 	}
 	for _, dependency := range dependencies[row.TableName] {
 		id, present := personMergeSnapshotIntegerColumn(row, dependency.column)
 		if !present {
 			continue
+		}
+		if row.TableName == openLoopsTableName && dependency.column == "fact_claim_id" {
+			var sourceClaimPresent int
+			if err := tx.QueryRow(`SELECT EXISTS (
+				SELECT 1 FROM src.person_fact_claims WHERE id = ?
+			)`, id).Scan(&sourceClaimPresent); err != nil {
+				return false, fmt.Errorf("validate snapshot fact claim %d in source: %w", id, err)
+			}
+			if sourceClaimPresent == 0 {
+				// Merges can delete a claim and leave its original ID in the
+				// immutable loop snapshot after the live FK is set to NULL.
+				continue
+			}
 		}
 		included, err := subsetRowIDExists(tx, dependency.table, id)
 		if err != nil || !included {
@@ -1721,6 +1858,43 @@ func personMergeSnapshotDependenciesComplete(
 		}
 	}
 	return true, nil
+}
+
+func personMergeSnapshotLoopEvidenceComplete(tx *sql.Tx, row personMergeSnapshotRow) (bool, error) {
+	if row.TableName != openLoopsTableName {
+		return true, nil
+	}
+	for _, column := range row.Columns {
+		if column.Name != "evidence_json" {
+			continue
+		}
+		if column.Value.Text == nil {
+			return false, nil
+		}
+		return subsetLoopEvidenceReferencesComplete(tx, *column.Value.Text)
+	}
+	return true, nil
+}
+
+func subsetLoopEvidenceReferencesComplete(tx *sql.Tx, evidenceJSON string) (bool, error) {
+	var complete int
+	if err := tx.QueryRow(`SELECT CASE WHEN json_valid(?) THEN CASE
+		WHEN json_type(?) = 'array' THEN NOT EXISTS (
+			SELECT 1 FROM json_each(?) AS loop_evidence
+			WHERE CASE WHEN loop_evidence.type = 'object' THEN
+				COALESCE(json_type(loop_evidence.value, '$.message_id'), '') <> 'integer'
+				OR json_extract(loop_evidence.value, '$.message_id') NOT IN (
+					SELECT id FROM messages
+				)
+				OR COALESCE(json_type(loop_evidence.value, '$.conversation_id'), '') <> 'integer'
+				OR json_extract(loop_evidence.value, '$.conversation_id') NOT IN (
+					SELECT id FROM conversations
+				)
+			ELSE 1 END
+		) ELSE 0 END ELSE 0 END`, evidenceJSON, evidenceJSON, evidenceJSON).Scan(&complete); err != nil {
+		return false, fmt.Errorf("validate loop evidence references: %w", err)
+	}
+	return complete != 0, nil
 }
 
 func personMergeSnapshotServiceIDPreserved(tx *sql.Tx, sourceID int64) (bool, error) {
@@ -2513,7 +2687,7 @@ func vcardMappingOwnerCopied(tx *sql.Tx, mapping vcard.NativeMapping) (bool, err
 // copyMessages copies the selected messages, naming the columns the source and
 // destination have in common, read from the two schemas at copy time.
 func copyMessages(tx *sql.Tx) error {
-	if _, err := copyByName(tx, "messages",
+	if _, err := copyByName(tx, messagesTableName,
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
 	}
@@ -2894,7 +3068,7 @@ func selectSubsetIdentityKeys(tx *sql.Tx, hasDeliveryAddresses bool) error {
 			FROM src.message_recipients mr JOIN src.messages m ON m.id = mr.message_id
 			WHERE mr.message_id IN (SELECT id FROM selected_messages)
 			  AND mr.recipient_type IN ('from', 'to', 'cc') AND mr.email_address IS NOT NULL`},
-		{"messages", "account_address", `SELECT source_id, account_address FROM src.messages
+		{messagesTableName, "account_address", `SELECT source_id, account_address FROM src.messages
 			WHERE id IN (SELECT id FROM selected_messages) AND account_address IS NOT NULL`},
 	}
 	for _, o := range optional {
@@ -2969,7 +3143,7 @@ func subsetSourceMailboxes(tx *sql.Tx) ([]subsetIdentityKey, error) {
 // Reads use the same bounded prefix as derivation; undecodable payloads add
 // nothing, as they add no evidence there.
 func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
-	present, err := sourceColumnExists(tx, "messages", "account_path")
+	present, err := sourceColumnExists(tx, messagesTableName, "account_path")
 	if err != nil || !present {
 		return nil, err
 	}

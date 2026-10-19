@@ -56,9 +56,16 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
 		}
-		if _, err := t.checkAnchor(view, l.AnchorMessageID); err != nil {
+		exists, err := t.checkAnchor(view, l.AnchorMessageID)
+		if err != nil {
 			v.Err = fmt.Errorf("check loop anchor: %w", err)
 			return v
+		}
+		if l.Kind == ReplyOwed && exists {
+			if t.liveReplyAnchors == nil {
+				t.liveReplyAnchors = make(map[int64]struct{})
+			}
+			t.liveReplyAnchors[l.AnchorMessageID] = struct{}{}
 		}
 	}
 	turns := t.trailing(view)
@@ -142,6 +149,19 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if gap {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
+	}
+	if len(t.liveReplyAnchors) > 0 {
+		unsettledAnchors := make(map[int64]struct{}, len(t.liveReplyAnchors))
+		for _, l := range live {
+			if l.Kind != ReplyOwed ||
+				slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == l.ID }) {
+				continue
+			}
+			if _, verified := t.liveReplyAnchors[l.AnchorMessageID]; verified {
+				unsettledAnchors[l.AnchorMessageID] = struct{}{}
+			}
+		}
+		t.liveReplyAnchors = unsettledAnchors
 	}
 	if len(t.missingAnchors) > 0 {
 		// AnchorExists is authoritative even if a stale row remains in the

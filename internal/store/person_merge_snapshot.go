@@ -24,6 +24,7 @@ import (
 const personMergeSnapshotVersion = 1
 
 const (
+	openLoopsTableName                     = "open_loops"
 	identityMatchCandidatesTableName       = "identity_match_candidates"
 	identityMatchCandidateSourcesTableName = "identity_match_candidate_sources"
 	identityMatchEvidenceTableName         = "identity_match_evidence"
@@ -166,6 +167,14 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	"person_tracking": {
 		TableName: "person_tracking", KeyColumn: "person_id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	"loop_suppressions": {
+		TableName: "loop_suppressions", KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+	},
+	openLoopsTableName: {
+		TableName: openLoopsTableName, KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("counterparty_person_id")},
 	},
 	"vcard_resource_envelopes": {
 		TableName: "vcard_resource_envelopes", KeyColumn: "id", Snapshot: true,
@@ -646,6 +655,7 @@ func (s *Store) capturePersonMergeQueryTx(
 			TableName:      spec.TableName,
 			OriginSide:     personMergeRowOrigin(values, indexes, spec.PersonReferences, absorbedID),
 			ProvenanceKind: personMergeRowProvenance(spec.TableName, values, indexes, absorbedID),
+			ParticipantID:  personMergeRowParticipantID(spec.TableName, values, indexes),
 			Columns:        make([]personMergeSnapshotColumn, 0, len(columns)),
 		}
 		for i, column := range columns {
@@ -677,6 +687,9 @@ func (s *Store) capturePersonMergeQueryTx(
 func personMergeRowProvenance(
 	table string, values []any, indexes map[string]int, absorbedID int64,
 ) personMergeProvenanceKind {
+	if table == openLoopsTableName && personMergeRowParticipantID(table, values, indexes) != nil {
+		return personMergeProvenanceParticipantExact
+	}
 	if table == personAttributeValuesTableName {
 		if index, ok := indexes["person_id"]; ok {
 			if id, valid := personMergeSnapshotInt64(values[index]); valid && id == absorbedID {
@@ -686,6 +699,23 @@ func personMergeRowProvenance(
 		return personMergeProvenanceInboundReference
 	}
 	return personMergeTableProvenance(table)
+}
+
+func personMergeRowParticipantID(
+	table string, values []any, indexes map[string]int,
+) *int64 {
+	if table != openLoopsTableName {
+		return nil
+	}
+	index, ok := indexes["counterparty_participant_id"]
+	if !ok {
+		return nil
+	}
+	participantID, valid := personMergeSnapshotInt64(values[index])
+	if !valid || participantID <= 0 {
+		return nil
+	}
+	return &participantID
 }
 
 func canonicalPersonMergeSnapshotRowKey(
