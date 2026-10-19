@@ -188,8 +188,12 @@ func TestOpenLoopsPersonProfileCountsAllPagesAndRetainsFive(t *testing.T) {
 	requirements := require.New(t)
 	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	report := freshness.Report{Stale: true, Projections: map[string]*freshness.ProjectionFreshness{"open_loops": {Stale: true}}}
-	rows := []loops.Loop{{ID: 1, Kind: "reply_owed"}, {ID: 2, Kind: "awaiting_reply"}, {ID: 3, Kind: "reply_owed"}, {ID: 4, Kind: "commitment_owed_by_me"}, {ID: 5, Kind: "awaiting_reply"}, {ID: 6, Kind: "commitment_owed_to_me"}, {ID: 7, Kind: "reply_owed"}}
-	b := &loopMCPBackend{pages: map[string]loops.ListResponse{"": {Items: rows[:4], NextCursor: "second", Freshness: report}, "second": {Items: rows[4:], Freshness: report}}}
+	kinds := []string{"reply_owed", "awaiting_reply", "commitment_owed_by_me", "commitment_owed_to_me"}
+	rows := make([]loops.Loop, 201)
+	for i := range rows {
+		rows[i] = loops.Loop{ID: int64(i + 1), Kind: kinds[i%len(kinds)]}
+	}
+	b := &loopMCPBackend{pages: map[string]loops.ListResponse{"": {Items: rows[:200], NextCursor: "second", Freshness: report}, "second": {Items: rows[200:], Freshness: report}}}
 	people := &profileReadingPeopleBackend{profile: &peoplebrowser.PersonProfile{Person: store.Person{ID: 7, CreatedAt: now}}}
 	opts := peopleToolOptions(people)
 	opts.Loops = b
@@ -197,17 +201,30 @@ func TestOpenLoopsPersonProfileCountsAllPagesAndRetainsFive(t *testing.T) {
 	body := toolStructuredContent(t, result)
 	block, ok := body["open_loops"].(map[string]any)
 	requirements.True(ok, "%v", body)
-	assertions.InDelta(float64(7), block["count"], 0)
-	assertions.InDelta(float64(4), block["waiting_on_me"], 0)
-	assertions.InDelta(float64(3), block["waiting_on_them"], 0)
-	assertions.Len(block["items"], 5)
+	assertions.InDelta(float64(201), block["count"], 0)
+	assertions.InDelta(float64(101), block["waiting_on_me"], 0)
+	assertions.InDelta(float64(100), block["waiting_on_them"], 0)
+	items, ok := block["items"].([]any)
+	requirements.True(ok)
+	requirements.Len(items, 5)
+	for i, raw := range items {
+		item, ok := raw.(map[string]any)
+		requirements.True(ok)
+		assertions.InDelta(float64(i+1), item["id"], 0)
+	}
 	currency, ok := block["freshness"].(map[string]any)
 	requirements.True(ok)
 	assertions.Equal(true, currency["stale"])
 	requirements.Len(b.listed, 2)
-	for _, o := range b.listed {
+	for i, o := range b.listed {
 		assertions.Equal(int64(7), o.PersonID)
 		assertions.Equal("open", o.Status)
+		assertions.Equal(200, o.Limit)
+		if i == 0 {
+			assertions.Empty(o.Cursor)
+		} else {
+			assertions.Equal("second", o.Cursor)
+		}
 	}
 	opts.Loops = nil
 	result = rawCallTool(t, opts, "get_person_profile", map[string]any{"person_id": float64(7)})
