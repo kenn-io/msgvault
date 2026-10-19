@@ -1776,6 +1776,7 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		return m.reloadCurrentView()
 	}
 
+	m.submitted = true
 	m.searchQuery = queryStr
 	// In message list view, execute search to show results
 	if m.level == levelMessageList {
@@ -1793,7 +1794,8 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(spinCmd, m.loadData())
 	}
 	// Aggregate rows already match the committed debounced search.
-	return m, nil
+	cmd := m.acceptedSearchAction(queryStr, m.searchMode, len(m.rows))
+	return m, cmd
 }
 
 func (m Model) searchInputValidationError(queryStr string) error {

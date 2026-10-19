@@ -1110,6 +1110,9 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		OAuthApp:     appDecision.OAuthApp,
 		OAuthAppSet:  appDecision.OAuthAppSet,
 		Calendars:    src.Calendars,
+		OnResult: func(identifier string, err error) {
+			recordSyncAttempt(ctx, sourceTypeCalendar, identifier, err)
+		},
 	})
 	if logger != nil {
 		syncer = syncer.WithLogger(logger)

@@ -14,13 +14,62 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 	"golang.org/x/oauth2"
 )
+
+type calendarOutageAPI struct {
+	*gcal.MockAPI
+
+	failing string
+}
+
+func (c *calendarOutageAPI) ListEvents(ctx context.Context, id string, params gcal.EventsListParams) (*gcal.EventsPage, error) {
+	if id == c.failing {
+		return nil, errors.New("calendar unavailable")
+	}
+	return c.MockAPI.ListEvents(ctx, id, params)
+}
+
+func TestCalendarSourcesFailIndependently(t *testing.T) {
+	for _, incremental := range []bool{false, true} {
+		t.Run(fmt.Sprintf("incremental=%t", incremental), func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			cfg := lifecycleTestConfig(t.TempDir())
+			cfg.Analytics.AutoBuildCache = false
+			state := testInvocationWithConfig(cfg)
+			events := 0
+			state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+				assert.Equal(t, "sync_failed", event)
+				assert.Equal(t, "gcal", props["sync_source"])
+				events++
+				return nil
+			}}
+			ctx := withInvocation(t.Context(), state)
+			client := &calendarOutageAPI{MockAPI: gcal.NewMockAPI()}
+			client.Calendars = []gcal.Calendar{{ID: "first", AccessRole: "owner"}, {ID: "second", AccessRole: "owner"}}
+			if incremental {
+				client.FullSyncToken["first"], client.FullSyncToken["second"] = "first-token", "second-token"
+				_, err := calsync.New(client, st, calsync.Options{AccountEmail: "user@example.com"}).Full(ctx)
+				require.NoError(err)
+			}
+			for i, failing := range []string{"first", "first", "second", "second", "first"} {
+				client.failing = failing
+				err := runConfiguredGCalSyncWithClientBuilder(ctx, st, config.GCalSource{Email: "user@example.com"},
+					func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return client, nil })
+				require.ErrorContains(err, "calendar unavailable")
+				assert.Equal(t, []int{1, 1, 2, 2, 3}[i], events)
+			}
+		})
+	}
+}
 
 func TestCalendarDateBounds(t *testing.T) {
 	cmd := &cobra.Command{}

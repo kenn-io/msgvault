@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportError } from '../../telemetry/actions';
   import {
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
@@ -44,6 +45,7 @@
   let lockStatusStale = $state(false);
   let statusError = $state('');
   let triggerError = $state('');
+  $effect(() => { if (triggerError) return reportError(client, 'sync'); });
   let triggering = $state<string>();
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;

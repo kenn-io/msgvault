@@ -12,6 +12,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -86,6 +88,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			}
 			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
+				var eventsMu sync.Mutex
 				var events []map[string]any
 				mux := http.NewServeMux()
 				registerStatsProbeHandler(mux)
@@ -95,7 +98,9 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					if r.URL.Path == "/api/v1/telemetry/events" {
 						var event map[string]any
 						assert.NoError(json.UnmarshalRead(r.Body, &event))
+						eventsMu.Lock()
 						events = append(events, event)
+						eventsMu.Unlock()
 						w.WriteHeader(http.StatusServiceUnavailable)
 						return
 					}
@@ -183,12 +188,16 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				if kind != "" {
 					properties["search_type"], event = kind, "search_run"
 				}
-				assert.Equal([]map[string]any{{"event": event, "properties": properties}}, events)
+				want := []map[string]any{{"event": event, "properties": properties}}
+				if kind != "" {
+					want = append([]map[string]any{{"event": "search_empty", "properties": properties}}, want...)
+				}
+				assert.ElementsMatch(want, events)
 				if action == "search" {
 					searchOffset = 1
 					require.NoError(run(cmd))
 					invocationFromCommand(cmd).sends.Wait(time.Second)
-					assert.Len(events, 1, "continuation pages do not count")
+					assert.Len(events, 2, "continuation pages do not count")
 				}
 			})
 		}
@@ -215,14 +224,14 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				release := make(chan struct{})
-				requests := 0
+				var requests atomic.Int32
 				mux := http.NewServeMux()
 				registerStatsProbeHandler(mux)
 				mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
 					_, _ = w.Write([]byte(`{"results":[]}`))
 				})
 				mux.HandleFunc("/api/v1/telemetry/events", func(w http.ResponseWriter, _ *http.Request) {
-					requests++
+					requests.Add(1)
 					if tc.name == "stalled" {
 						<-release
 					} else {
@@ -255,7 +264,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 				elapsed := time.Since(exitStart)
 				synctest.Wait()
 				assert.Equal(tc.want, elapsed)
-				assert.Equal(1, requests)
+				assert.Equal(int32(2), requests.Load())
 				close(release)
 				invocationFromCommand(root).sends.Wait(time.Second)
 			})

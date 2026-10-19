@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,9 +19,54 @@ import (
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/scheduler"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/chatwootapi"
 )
+
+func TestChatwootInboxesFailIndependently(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
+	var failing atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/accounts/9/inboxes":
+			_, _ = fmt.Fprint(w, `{"payload":[{"id":7},{"id":8}]}`)
+		case "/api/v1/accounts/9/agents":
+			_, _ = fmt.Fprint(w, `[]`)
+		case "/api/v1/accounts/9/conversations":
+			if r.URL.Query().Get("inbox_id") == strconv.FormatInt(failing.Load(), 10) {
+				http.Error(w, "inbox unavailable", http.StatusForbidden)
+				return
+			}
+			_, _ = fmt.Fprint(w, `{"data":{"payload":[]}}`)
+		default:
+			assert.Fail(t, "unexpected provider request", r.URL.Path)
+		}
+	}))
+	t.Cleanup(server.Close)
+	src := config.ChatwootSource{URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN"}
+	_, err := registerChatwootProfile(t.Context(), st, src)
+	require.NoError(err)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Analytics.AutoBuildCache = false
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal(t, "sync_failed", event)
+		assert.Equal(t, "chatwoot", props["sync_source"])
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	for i, id := range []int64{7, 7, 8, 8, 7} {
+		failing.Store(id)
+		require.Error(runConfiguredChatwootSync(ctx, st, src))
+		assert.Equal(t, []int{1, 1, 2, 2, 3}[i], events)
+	}
+}
 
 func TestChatwootRegisteredInboxSelection(t *testing.T) {
 	assert := assert.New(t)

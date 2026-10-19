@@ -36,9 +36,9 @@
       const { data, error: failure } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, { ...client, signal: requestController.signal });
       if (request !== generation) return;
       if (!data) throw new Error(errorMessage(failure, 'This file has no searchable text yet.'));
-      reportWhenVisible(() => reportSearch(client, submitted, 'full_text'), requestController.signal);
       // A filename match names the file, not a passage in it.
       hits = data.results.filter((hit) => hit.attachment_id === attachmentID && hit.message_id === messageID && hit.extraction_id && hit.chunk_key && hit.matched_signals.includes('content'));
+      reportWhenVisible(() => reportSearch(client, submitted, 'full_text', hits.length), requestController.signal);
     } catch (cause) {
       if (request === generation) error = errorMessage(cause, 'Unable to search this file.');
     } finally {

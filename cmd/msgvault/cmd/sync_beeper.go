@@ -434,6 +434,9 @@ func runScheduledBeeperAttempts(
 		}
 		attempted++
 		stopped, err := attempt(accountID)
+		if err != nil || !stopped {
+			recordSyncAttempt(ctx, sourceTypeBeeper, accountID, err)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("beeper %s: %w", accountID, err))
 		}

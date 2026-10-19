@@ -13,7 +13,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
     MeetingRef,
@@ -526,7 +526,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
-      onSearchAccepted: (query, mode, signal) => { reportWhenVisible(() => reportSearch(client, query, mode), signal); },
+      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, count), signal); },
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the
@@ -542,7 +542,10 @@
         ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
+  $effect(() => { if (loader.error || loader.pageError) return reportError(client, 'search'); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
+    loader.submitted = true;
+    loader.retry();
     const workspace = exploreState.current.workspace;
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
@@ -1532,6 +1535,7 @@
             />
           {:else}
             <FilesWorkspace
+              bind:submitted={loader.submitted}
               {client}
               embedded
               showHeader={false}

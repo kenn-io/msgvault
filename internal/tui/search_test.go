@@ -1839,7 +1839,9 @@ func TestAcceptedSearchActions(t *testing.T) {
 			m.width, m.height, m.mode, m.searchMode = 100, 24, tc.mode, tc.search
 			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID = 2, 2, 2
 			m.reportAction = func(_ context.Context, e, p, v string) error {
-				events = append(events, e+":"+p+":"+v)
+				if e == "search_run" {
+					events = append(events, e+":"+p+":"+v)
+				}
 				return nil
 			}
 			if tc.search == searchModeSemantic {

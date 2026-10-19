@@ -121,6 +121,7 @@ type Scheduler struct {
 	logger                  *slog.Logger
 	work                    WorkTracker
 	accountPreemptionPolicy func(string) bool
+	jobResults              func(context.Context, string) (context.Context, func(error))
 
 	mu        sync.RWMutex
 	jobs      map[string]cron.EntryID // email -> cron entry ID
@@ -342,6 +343,12 @@ func (s *Scheduler) AddAccountsFromConfig(cfg *config.Config) (int, []error) {
 	return scheduled, errors
 }
 
+// WithJobResults starts per-run observation and reports completed jobs, excluding scheduling control flow.
+func (s *Scheduler) WithJobResults(report func(context.Context, string) (context.Context, func(error))) *Scheduler {
+	s.jobResults = report
+	return s
+}
+
 func (s *Scheduler) AddJob(job Job) error {
 	if job.MaxRuntime < 0 {
 		return errors.New("job runtime budget must be non-negative")
@@ -386,7 +393,19 @@ func (s *Scheduler) AddJob(job Job) error {
 	}
 	s.genericJobs[job.Name] = entryID
 	s.genericSchedules[job.Name] = schedule
-	s.genericFuncs[job.Name] = job.Run
+	s.genericFuncs[job.Name] = func(ctx context.Context) error {
+		var report func(error)
+		if s.jobResults != nil {
+			ctx, report = s.jobResults(ctx, job.Name)
+		}
+		err := job.Run(ctx)
+		if report != nil && ctx.Err() == nil && !jobctx.PreemptionRequested(ctx) &&
+			!errors.Is(err, context.Canceled) &&
+			!errors.Is(err, ErrDeferUntilNextTrigger) && !errors.Is(err, ErrReschedule) && !errors.Is(err, ErrYieldedToWaiter) {
+			report(err)
+		}
+		return err
+	}
 	s.genericPreemptible[job.Name] = job.Preemptible
 	s.genericMaxRuntime[job.Name] = job.MaxRuntime
 	s.genericBackground[job.Name] = job.Background

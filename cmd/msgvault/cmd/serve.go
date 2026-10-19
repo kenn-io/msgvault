@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -435,7 +436,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create and configure scheduler
+	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
+	sched.WithJobResults(syncJobResults(s, state))
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
 	})
@@ -4075,6 +4078,30 @@ func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisp
 	return a.jobScheduler(name).StartJob(name, manual)
 }
 
+func syncJobResults(s *store.Store, state *invocation) func(context.Context, string) (context.Context, func(error)) {
+	return func(ctx context.Context, name string) (context.Context, func(error)) {
+		recorded := new(atomic.Bool)
+		return context.WithValue(ctx, syncAttemptKey{}, recorded), func(err error) {
+			if sourceType, ok := api.SyncSourceForJob(name); ok {
+				switch sourceType {
+				case sourceTypeMatrix, sourceTypeBeeper, sourceTypeSlack, sourceTypeCalendar, "chatwoot":
+					if !recorded.Load() && err != nil {
+						sources, _ := s.ListSources(sourceType)
+						_, account, scoped := strings.Cut(name, ":")
+						for _, source := range sources {
+							if source.MergedIntoSourceID == 0 && (!scoped || source.Identifier == account || strings.HasPrefix(source.Identifier, account+"/")) {
+								state.syncFailures.Record(sourceType, source.Identifier, err)
+							}
+						}
+					}
+				default:
+					state.syncFailures.Record(sourceType, name, err)
+				}
+			}
+		}
+	}
+}
+
 // runScheduledSync performs a sync for a scheduled account. It resolves
 // ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
 // dispatches each in turn. When no source row matches, it falls back to
@@ -4122,6 +4149,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 		if scheduledSyncYielded(ctx) {
 			return scheduledSyncYieldResult(ctx, syncErr)
 		}
+		state.syncFailures.Record(sourceTypeGmail, identifier, syncErr)
 		if syncErr == nil {
 			logger.Info("sync completed",
 				"identifier", identifier,
@@ -4169,6 +4197,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			}
 			return scheduledSyncYieldResult(ctx, errs...)
 		}
+		state.syncFailures.Record(sourceType, src.Identifier, err)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue

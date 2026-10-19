@@ -68,6 +68,10 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
+	if req.Event == EventSearchEmpty || req.Event == EventErrorShown || req.Event == EventSyncFailed {
+		h.capture.ServeHTTP(w, r)
+		return
+	}
 	required, action := actionProperties[req.Event]
 	if !action && req.Event != EventScreenViewed {
 		h.capture.ServeHTTP(w, r)

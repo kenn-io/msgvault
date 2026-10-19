@@ -4,12 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
+	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 // invocationOptions is the set of root-owned options that belong to one
@@ -49,9 +51,12 @@ type invocation struct {
 	logger    *slog.Logger
 	logResult *logging.Result
 	sends     *posthog.SendGroup
+
+	syncFailures *telemetry.SyncFailures
 }
 
 type invocationContextKey struct{}
+type syncAttemptKey struct{}
 
 func newInvocation() *invocation {
 	return &invocation{
@@ -79,6 +84,15 @@ func invocationFromContext(ctx context.Context) *invocation {
 	}
 	inv, _ := ctx.Value(invocationContextKey{}).(*invocation)
 	return inv
+}
+
+func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) {
+	if recorded, ok := ctx.Value(syncAttemptKey{}).(*atomic.Bool); ok {
+		recorded.Store(true)
+	}
+	if state := invocationFromContext(ctx); state != nil {
+		state.syncFailures.Record(sourceType, identifier, err)
+	}
 }
 
 func invocationFromCommand(cmd *cobra.Command) *invocation {

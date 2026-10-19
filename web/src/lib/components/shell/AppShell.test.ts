@@ -794,6 +794,26 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
+    it.each(['everything', 'files'] as const)('counts an explicit empty %s submission once', async (workspace) => {
+      const state = shellState(workspace), events: Array<{ event: string; properties: unknown }> = [];
+      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+        const request = input as Request;
+        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
+          events.push(await request.json());
+          return Response.json({ status: 'queued' }, { status: 202 });
+        }
+        return Response.json({ ...exploreResponse(), files: [] });
+      }));
+      render(AppShell, { client, state });
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
+      await fireEvent.input(search, { target: { value: 'missing' } });
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+      await fireEvent.submit(search.closest('form')!);
+      await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1));
+      expect(events.find((event) => event.event === 'search_empty')?.properties).toEqual({ surface: 'web', search_type: 'text' });
+    });
+
     it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
       const state = shellState('everything'), events: string[] = [];

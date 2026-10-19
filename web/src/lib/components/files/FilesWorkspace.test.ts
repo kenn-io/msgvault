@@ -47,6 +47,34 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it.each(['submitted', 'preview', 'image'])('counts only submitted empty %s searches', async (kind) => {
+    const events: Array<{ event: string; properties: { search_type: string } }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+        events.push(await (input as Request).json());
+        return Response.json({ status: 'queued' }, { status: 202 });
+      }
+      return Response.json({ ...response(), files: [], total_count: 0 });
+    });
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn),
+      predicate: { query: kind === 'image' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' },
+      submitted: kind === 'submitted',
+    });
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    if (kind === 'image') {
+      await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+      await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
+      await waitFor(() => expect(events.some((event) => event.event === 'search_empty')).toBe(true));
+    }
+    await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'preview' ? 0 : 1));
+    events.length = 0;
+    await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(0);
+  });
+
   it.each(['text', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
     const events: Array<{ properties: { search_type: string } }> = [];
     let textSearchRequests = 0, resolveStale!: (response: Response) => void;
@@ -208,6 +236,7 @@ describe('FilesWorkspace', () => {
     let initialCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const path = new URL(request.url, document.baseURI).pathname;
       if (path === '/api/v1/files/900') return Response.json({
         id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
@@ -483,6 +512,7 @@ describe('FilesWorkspace', () => {
     let cursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (body.cursor) {
         cursorCalls += 1;
@@ -870,6 +900,7 @@ describe('FilesWorkspace', () => {
     let cursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (!body.cursor) return Response.json(first);
       cursorCalls += 1;
@@ -912,6 +943,7 @@ describe('FilesWorkspace', () => {
       let cursorCalls = 0;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
         const body = await request.clone().json() as { cursor?: string };
         if (body.cursor) {
           cursorCalls += 1;
@@ -1005,6 +1037,7 @@ describe('FilesWorkspace', () => {
     let deadCursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const path = new URL(request.url, document.baseURI).pathname;
       if (path === '/api/v1/files/900') return Response.json({
         id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
@@ -1060,6 +1093,7 @@ describe('FilesWorkspace', () => {
     let initialCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (body.cursor) return Response.json(drifted);
       initialCalls += 1;

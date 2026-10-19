@@ -4,8 +4,8 @@
 import type { TelemetryEventRequestProperties } from "./telemetryEventRequestProperties";
 
 export interface TelemetryEventRequest {
-  /** Allowlisted event name, app_opened, screen_viewed, session_ended, search_run, message_opened, or sync_finished */
+  /** Allowlisted event name, app_opened, screen_viewed, session_ended, search_run, message_opened, sync_finished, search_empty, error_shown, or sync_failed */
   event: string;
-  /** Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. Invalid core actions are dropped; unknown properties are stripped */
+  /** Fixed properties: surface (web, tui, cli), screen for screen_viewed, duration_bucket for session_ended, search_type (text, semantic, hybrid) for search_run. Searches report after successful current first-page results load, including retries and reloads; message opens report when readable. Core actions require surface; search_run also requires search_type. The daemon counts successful manual browser sync completions even after the person leaves Sources; the CLI posts its successful sync_finished events. search_empty counts submitted empty searches only, excluding previews and reloads. error_shown uses kind (search, message, sync, other). sync_failed uses sync_source (registered source type) and reason (auth, network, rate_limited, other); it counts a source entering failure, in memory until recovery or restart. Unlisted outcome values become other. Invalid core actions are dropped; unknown properties are stripped */
   properties?: TelemetryEventRequestProperties;
 }

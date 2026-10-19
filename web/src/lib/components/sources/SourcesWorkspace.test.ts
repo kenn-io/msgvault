@@ -413,8 +413,10 @@ describe('SourcesWorkspace', () => {
   it('releases Sync now buttons after a timeout and refreshes status without retriggering', async () => {
     let statusReads = 0;
     let triggers = 0;
+    const events: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return request.json().then((event) => { events.push(event); return Response.json({ status: 'queued' }, { status: 202 }); });
       if (request.method === 'POST') {
         triggers += 1;
         return new Promise<Response>((_resolve, reject) => {
@@ -445,6 +447,7 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('5 processed')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
     expect(triggers).toBe(1);
+    expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]);
     rendered.unmount();
   });
 

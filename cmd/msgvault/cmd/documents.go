@@ -1215,6 +1215,9 @@ func runSearchDocuments(
 			kind = "text"
 		}
 		defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", kind, &result)
+		if len(response.Results) == 0 {
+			defer reportSuccessfulCLIAction(command, client, "search_empty", "search_type", kind, &result)
+		}
 	}
 	if jsonOutput {
 		return json.MarshalEncode(jsontext.NewEncoder(command.OutOrStdout()), response, json.Deterministic(true))

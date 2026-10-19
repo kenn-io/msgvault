@@ -36,7 +36,7 @@ export interface ExploreLoaderCallbacks {
   onPredicateChange: () => void;
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
-  onSearchAccepted?: (query: string, mode: ExploreSearchMode, signal: AbortSignal) => void;
+  onSearchAccepted?: (query: string, mode: ExploreSearchMode, signal: AbortSignal, count?: number) => void;
 }
 
 const REPEATED_CURSOR_NOTICE = 'Pagination stopped because the server repeated a cursor without progress.';
@@ -86,6 +86,7 @@ export class ExploreLoader {
   private readonly state: ExploreState;
   private readonly api: ExploreAPI;
   private readonly callbacks: ExploreLoaderCallbacks;
+  submitted = $state(false);
   private requestGeneration = 0;
   private requestController: AbortController | undefined;
   private pagePredicate: ReturnType<ExploreState['predicate']> | undefined;
@@ -121,6 +122,8 @@ export class ExploreLoader {
   }
 
   private runLoad(requestFingerprint: string): void {
+    const submitted = untrack(() => this.submitted);
+    this.submitted = false;
     this.clearCacheBuildRetry();
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
@@ -135,6 +138,7 @@ export class ExploreLoader {
     const fileFilenameQuery = this.state.current.fileFilenameQuery;
     const fileMIMEFamilies = this.state.current.fileMIMEFamilies;
     if (!this.callbacks.isEnabled() || (workspace !== 'everything' && !filesGrouping)) {
+      if (workspace === 'files' && !filesGrouping) this.submitted = submitted;
       this.requestGeneration += 1;
       this.requestController?.abort();
       this.loading = false;
@@ -194,7 +198,7 @@ export class ExploreLoader {
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
         if (loaded.status !== 'unavailable') {
-          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal);
+          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal, submitted ? loaded.result.rows.length : undefined);
         }
         if (loaded.status === 'unavailable') {
           this.rows = [];

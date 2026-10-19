@@ -37,6 +37,8 @@ type EmbedEnqueuer interface {
 
 // Options configures a calendar sync run.
 type Options struct {
+	// OnResult receives each attempted calendar's source identifier and outcome.
+	OnResult func(identifier string, err error)
 	// AccountEmail is the OAuth account that owns the token; it keys token
 	// lookup and is stored in each source's sync_config. Never the source
 	// identifier.
@@ -126,7 +128,11 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		if err := s.syncCalendarFull(ctx, cal, &result); err != nil {
+		err := s.syncCalendarFull(ctx, cal, &result)
+		if s.opts.OnResult != nil && !errors.Is(err, store.ErrSourceRetired) {
+			s.opts.OnResult(s.sourceIdentifier(cal), err)
+		}
+		if err != nil {
 			if errors.Is(err, store.ErrSourceRetired) && !slices.Contains(s.opts.Calendars, cal.ID) {
 				s.logger.Info("skipping retired calendar source", "calendar", cal.ID)
 				continue

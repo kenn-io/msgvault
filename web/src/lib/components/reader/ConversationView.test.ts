@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient as createClient } from '../../api/client';
 import ConversationView from './ConversationView.svelte';
+import MessagePage from './MessagePage.svelte';
 
 const telemetryEvents: unknown[] = [];
 beforeEach(() => { telemetryEvents.length = 0; });
@@ -339,6 +340,7 @@ describe('ConversationView', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation network error');
+    await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
   });
 
   it('silently ignores AbortError request settlements', async () => {
@@ -362,6 +364,30 @@ describe('ConversationView', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
+  });
+
+  it.each(['body', 'linked message'])('reports a displayed %s loading failure', async (failure) => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname === '/api/v1/messages/2') {
+        return Response.json({ message: 'Message unavailable' }, { status: 500 });
+      }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(2)],
+        has_before: false, has_after: false, total: 1
+      });
+    });
+    const client = createAPIClient(fetchFn);
+    if (failure === 'body') {
+      render(ConversationView, { props: { client, conversationId: 7, anchorId: 2 } });
+    } else {
+      render(MessagePage, { props: { client, messageID: 2 } });
+    }
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Message unavailable');
+    await waitFor(() => expect(telemetryEvents).toEqual([
+      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } }
+    ]));
   });
 
   it('keeps omitted-body messages as snippet cards without fetching their bodies', async () => {

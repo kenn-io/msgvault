@@ -31,6 +31,13 @@ export function reportAction(client: APIClient, event: string, property?: string
   }).then(() => {}).catch(() => {});
 }
 
-export function reportSearch(client: APIClient, query: string, mode: ExploreSearchMode): Promise<void> {
-  return query.trim() ? reportAction(client, 'search_run', 'search_type', mode === 'full_text' ? 'text' : mode) : Promise.resolve();
+export function reportSearch(client: APIClient, query: string, mode: ExploreSearchMode, count?: number): Promise<void> {
+  if (!query.trim()) return Promise.resolve();
+  const kind = mode === 'full_text' ? 'text' : mode;
+  if (count === 0) void reportAction(client, 'search_empty', 'search_type', kind);
+  return reportAction(client, 'search_run', 'search_type', kind);
+}
+
+export function reportError(client: APIClient, kind: string): () => void {
+  return reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', kind));
 }

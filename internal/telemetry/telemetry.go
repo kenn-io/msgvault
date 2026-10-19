@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ const (
 	EventMessageOpened = "message_opened"
 	// EventSyncFinished counts a normally completed manual sync.
 	EventSyncFinished = "sync_finished"
+	EventSearchEmpty  = "search_empty"
+	EventErrorShown   = "error_shown"
+	EventSyncFailed   = "sync_failed"
 	// propertySurface names the interface that reported an event.
 	propertySurface = "surface"
 	application     = "msgvault"
@@ -35,8 +39,11 @@ const (
 	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
 
-// Core actions require every listed property, using the same values as the allowlist.
+// Actions use fixed property values. Core actions also require every listed property.
 var actionProperties = map[string]map[string][]string{
+	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
+	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},
+	EventSyncFailed:    {"sync_source": {"gmail", "imap", "msmail", "teams", "discord", "beeper", "matrix", "slack", "carddav", "chatwoot", "synctech_sms", "gcal", "omi", "granola", "plaud", "circleback", "notion_meetings", "twilio", "twenty", "muesli"}, "reason": {"auth", "network", "rate_limited", "other"}},
 	EventSearchRun:     {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventMessageOpened: {propertySurface: {"web", "tui", "cli"}},
 	EventSyncFinished:  {propertySurface: {"web", "cli"}},
@@ -95,7 +102,11 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 	for event, required := range actionProperties {
 		properties := make([]posthog.AllowedProperty, 0, len(required))
 		for key, values := range required {
-			properties = append(properties, posthog.AllowProperty(key, posthog.AllowStringValues(values...)))
+			filter := posthog.AllowStringValues(values...)
+			if key == "kind" || key == "reason" || key == "sync_source" {
+				filter = outcomeValue(values)
+			}
+			properties = append(properties, posthog.AllowProperty(key, filter))
 		}
 		allowed = append(allowed, posthog.WithAllowedEvent(event, properties...))
 	}
@@ -133,5 +144,15 @@ func DurationBucket(duration time.Duration) string {
 		return "5_to_30m"
 	default:
 		return "over_30m"
+	}
+}
+
+// outcomeValue keeps outcome properties within their fixed vocabulary.
+func outcomeValue(values []string) func(any) (any, bool) {
+	return func(value any) (any, bool) {
+		if s, ok := value.(string); ok && slices.Contains(values, s) {
+			return s, true
+		}
+		return "other", true
 	}
 }
