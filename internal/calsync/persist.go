@@ -229,24 +229,8 @@ func (s *Syncer) reconcileLegacyEventSourceMessageID(sourceID int64, ev gcal.Eve
 	if ev.RecurringEventID == "" || ev.ID == "" || newSourceMessageID == "" || newSourceMessageID == ev.ID {
 		return nil
 	}
-	stored, err := s.store.StoredMessagesContext(context.Background(), sourceID, "", []string{ev.ID, newSourceMessageID})
-	if err != nil {
-		return fmt.Errorf("read legacy calendar event identity: %w", err)
-	}
-	legacy, hasLegacy := stored[ev.ID]
-	if !hasLegacy || legacy.MessageType != gcal.MessageTypeCalendarEvent {
-		return nil
-	}
-	if duplicate, hasNew := stored[newSourceMessageID]; hasNew {
-		if duplicate.MessageType != gcal.MessageTypeCalendarEvent {
-			return fmt.Errorf("new calendar event identity %q belongs to message type %q", newSourceMessageID, duplicate.MessageType)
-		}
-		if err := s.store.MigrateSourceMessageID(sourceID, duplicate.ConversationID, newSourceMessageID, ev.ID); err != nil {
-			return fmt.Errorf("remove duplicate calendar event identity %q: %w", newSourceMessageID, err)
-		}
-	}
-	if err := s.store.MigrateSourceMessageID(sourceID, legacy.ConversationID, ev.ID, newSourceMessageID); err != nil {
-		return fmt.Errorf("adopt legacy calendar event identity %q: %w", ev.ID, err)
+	if err := s.store.ReconcileCalendarEventSourceMessageIDContext(context.Background(), sourceID, ev.ID, newSourceMessageID); err != nil {
+		return fmt.Errorf("reconcile legacy calendar event identity %q: %w", ev.ID, err)
 	}
 	return nil
 }

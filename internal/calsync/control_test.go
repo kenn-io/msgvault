@@ -2,7 +2,9 @@ package calsync
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
+	"strconv"
 	"testing"
 	"time"
 
@@ -123,4 +125,82 @@ func TestPersistOffsetFreeExceptionResyncReusesLegacyMessage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPersistCancelledOffsetFreeExceptionPreservesNewerDuplicateSnapshot(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	mock := gcal.NewMockAPI()
+	cal := gcal.Calendar{ID: "primary", AccessRole: "owner", TimeZone: "America/New_York"}
+	s, st := newSyncer(t, mock, Options{})
+	legacyRaw := []byte(`{"id":"instance-example","summary":"Planning","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`)
+	legacyEvent, err := gcalmodel.DecodeEvent(legacyRaw)
+	requirements.NoError(err)
+	newSourceMessageID := deriveSourceMessageID(legacyEvent)
+	legacyEvent.OriginalStartTime = gcal.EventDateTime{}
+	archivedID, err := s.PersistEvent(t.Context(), cal, legacyEvent)
+	requirements.NoError(err)
+
+	source := primarySource(t, st)
+	newerRaw := []byte(`{"id":"instance-example","summary":"Rescheduled planning","description":"Updated meeting details","location":"Room 7","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T23:00:00Z","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-10T00:30:00Z","timeZone":"America/New_York"}}`)
+	newerEvent, err := gcalmodel.DecodeEvent(newerRaw)
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, conversationKey(newerEvent), gcal.ConversationType, "")
+	requirements.NoError(err)
+	body := serializeBody(newerEvent)
+	duplicateID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: newSourceMessageID, MessageType: gcal.MessageTypeCalendarEvent,
+		SentAt:       eventSentAt(newerEvent),
+		Subject:      sql.NullString{String: newerEvent.Summary, Valid: true},
+		Snippet:      sql.NullString{String: Snippet(body), Valid: body != ""},
+		SizeEstimate: int64(len(body)),
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(archivedID, duplicateID)
+	metadata, err := json.Marshal(buildMetadata(newerEvent, cal, testAccount), json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(duplicateID, sql.NullString{String: string(metadata), Valid: true}))
+	requirements.NoError(st.UpsertMessageBody(duplicateID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}))
+	requirements.NoError(st.UpsertMessageRawWithFormat(duplicateID, newerRaw, gcal.RawFormat))
+	requirements.NoError(st.UpsertFTS(duplicateID, newerEvent.Summary, body, "", "", ""))
+
+	cancelledRaw := []byte(`{"id":"instance-example","status":"cancelled","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"}}`)
+	cancelledEvent, err := gcalmodel.DecodeEvent(cancelledRaw)
+	requirements.NoError(err)
+	resyncedID, err := s.PersistEvent(t.Context(), cal, cancelledEvent)
+	requirements.NoError(err)
+	assertions.Equal(archivedID, resyncedID, "the legacy archive message ID is retained")
+
+	row, ok := getMsg(t, st, source.ID, newSourceMessageID)
+	requirements.True(ok, "the canonical recurrence key is retained")
+	assertions.Equal(archivedID, row.id)
+	assertions.Equal("Rescheduled planning", row.subject.String)
+	assertions.Equal("cancelled", parseMeta(t, row)["status"])
+	assertions.Equal("Updated meeting details", bodyText(t, st, archivedID))
+	_, ok = getMsg(t, st, source.ID, legacyEvent.ID)
+	assertions.False(ok, "the legacy event.id key is removed")
+	var duplicateCount int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM messages WHERE id = ?`), duplicateID).Scan(&duplicateCount))
+	assertions.Zero(duplicateCount, "the duplicate recurrence-key row is removed")
+	if st.FTS5Available() {
+		matches, _, err := st.SearchMessages("rescheduled", 0, 10)
+		requirements.NoError(err)
+		var retainedFound bool
+		for _, match := range matches {
+			if match.ID == archivedID {
+				retainedFound = true
+				break
+			}
+		}
+		assertions.True(retainedFound, "the retained row remains searchable from the newer snapshot")
+	}
+
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), "evt:"+strconv.FormatInt(archivedID, 10))
+	requirements.NoError(err)
+	assertions.Equal("Rescheduled planning", detail.Subject)
+	assertions.Equal("cancelled", detail.Status)
+	assertions.Equal(time.Date(2027, 3, 9, 23, 0, 0, 0, time.UTC), detail.Start)
+	assertions.Equal("Room 7", detail.Location)
+	assertions.Equal("Updated meeting details", detail.Description)
 }
