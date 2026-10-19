@@ -773,11 +773,15 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		metadataObservedAt := time.Now().UTC()
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
+			err = s.nativeMailPermissionFailure(ctx, err)
 			for _, id := range labelRefreshIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
 			}
 			checkpoint.ErrorsCount += int64(len(labelRefreshIDs))
 			return nil, fmt.Errorf("fetch message labels: %w", err)
+		}
+		if err := s.observeNativeGmailPermissionReduction(ctx); err != nil {
+			return nil, fmt.Errorf("observe Gmail message-read permission after metadata refresh: %w", err)
 		}
 
 		for i, sourceMessageID := range labelRefreshIDs {
@@ -790,6 +794,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
+			labelResult.Err = s.nativeMailPermissionFailure(ctx, labelResult.Err)
 			if errors.Is(labelResult.Err, gmail.ErrMessageGone) {
 				// The message left the mailbox mid-run. Deletion detection
 				// retires it; acknowledging here is what lets the folder keep

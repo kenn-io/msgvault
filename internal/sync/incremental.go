@@ -212,7 +212,14 @@ func (s *Syncer) incremental(
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("check existing messages: %w", err)
 			}
-			labelMetadata := s.readHistoryLabelMetadata(ctx, historyResp.History, existingMap)
+			labelMetadata, err := s.readHistoryLabelMetadata(ctx, historyResp.History, existingMap)
+			if err != nil {
+				err = fmt.Errorf("observe Gmail message-read permission after label metadata refresh: %w", err)
+				if failErr := s.store.FailSyncWithCheckpoint(syncID, err.Error(), checkpoint); failErr != nil {
+					return nil, errors.Join(err, fmt.Errorf("fail incremental sync: %w", failErr))
+				}
+				return nil, err
+			}
 
 			// Collect new message IDs to batch-fetch and deleted IDs to batch-mark
 			newMsgThreads := make(map[string]string) // deduplicates by ID
@@ -467,13 +474,13 @@ func (s *Syncer) replayFetchFailures(
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.HistoryRecord, existingMap map[string]int64) map[string]gmail.MessageLabelsBatchResult {
+func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.HistoryRecord, existingMap map[string]int64) (map[string]gmail.MessageLabelsBatchResult, error) {
 	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
-		return nil
+		return nil, nil
 	}
 	reader, ok := s.client.(messageLabelBatchReader)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	messageIDs := make([]string, 0)
@@ -497,28 +504,40 @@ func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.H
 		}
 	}
 	if len(messageIDs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)
 	metadataByID := make(map[string]gmail.MessageLabelsBatchResult, len(messageIDs))
 	if err != nil {
+		err = s.nativeMailPermissionFailure(ctx, err)
 		for _, id := range messageIDs {
 			metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: err}
 		}
-		return metadataByID
+		return metadataByID, nil
 	}
 	if len(results) != len(messageIDs) {
 		resultErr := fmt.Errorf("gmail label metadata result count mismatch: got %d, want %d", len(results), len(messageIDs))
-		for _, id := range messageIDs {
-			metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: resultErr}
+		for i, id := range messageIDs {
+			if i >= len(results) {
+				metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: resultErr}
+				continue
+			}
+			result := results[i]
+			result.Err = s.nativeMailPermissionFailure(ctx, result.Err)
+			metadataByID[id] = result
 		}
-		return metadataByID
+	} else {
+		for i, id := range messageIDs {
+			result := results[i]
+			result.Err = s.nativeMailPermissionFailure(ctx, result.Err)
+			metadataByID[id] = result
+		}
 	}
-	for i, id := range messageIDs {
-		metadataByID[id] = results[i]
+	if err := s.observeNativeGmailPermissionReduction(ctx); err != nil {
+		return metadataByID, err
 	}
-	return metadataByID
+	return metadataByID, nil
 }
 
 func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, labelMetadata map[string]gmail.MessageLabelsBatchResult, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) error {
