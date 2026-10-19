@@ -866,8 +866,11 @@ func utf8Prefix(value string, maxBytes int) string {
 
 func documentRevision(kind string, row AssemblyMessage, policy AssemblyPolicy, chunks []OwnedChunk) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00%d\x00", kind, row.ID,
-		row.ConversationID, row.MessageType, row.EmbeddingRevision, policy.MaxChunkRunes, policy.MaxDocumentUTF8Bytes)
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00", kind, row.ID,
+		row.ConversationID, row.MessageType, policy.MaxChunkRunes, policy.MaxDocumentUTF8Bytes)
+	if row.EmbeddingRevision != 0 {
+		_, _ = fmt.Fprintf(h, "embedding-revision:%d\x00", row.EmbeddingRevision)
+	}
 	if policy.DocumentPrefixUTF8Bytes > 0 {
 		_, _ = fmt.Fprintf(h, "document-prefix-bytes:%d\x00", policy.DocumentPrefixUTF8Bytes)
 	}

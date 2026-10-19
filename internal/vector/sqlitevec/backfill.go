@@ -7,7 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -214,7 +214,7 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	for revision := range idsByRevision {
 		revisions = append(revisions, revision)
 	}
-	sort.Slice(revisions, func(i, j int) bool { return revisions[i] < revisions[j] })
+	slices.Sort(revisions)
 	for _, revision := range revisions {
 		ids := idsByRevision[revision]
 		for start := 0; start < len(ids); start += backfillStampChunk {

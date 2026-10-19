@@ -49,6 +49,14 @@ type WorkStore interface {
 	SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error)
 }
 
+type skipStampPolicyStore interface {
+	IsPostgreSQL() bool
+	AcquireSQLiteConversationPolicyFence(ctx context.Context, mode store.ConversationPolicyLockMode) (func(), error)
+	CheckSQLiteConversationPolicyPublication(ctx context.Context, ids []int64) error
+	LockPostgresConversationPolicyTx(ctx context.Context, tx store.ConversationPolicyTx, mode store.ConversationPolicyLockMode) error
+	CheckConversationPolicyPublicationTx(ctx context.Context, tx store.ConversationPolicyTx, ids []int64) error
+}
+
 // WorkerDeps bundles the collaborators a Worker needs. Backend, VectorsDB,
 // MainDB, Store, and Client are required; the remaining fields have
 // sensible defaults when zero: BatchSize defaults to 32,
@@ -734,6 +742,7 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 		}
 		policyWhere = " AND " + store.FullMessageWhere("m")
 	}
+	policyFiltered := policyWhere != ""
 
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
@@ -815,10 +824,42 @@ func (w *Worker) embedBatch(ctx context.Context, ids []int64) (embedBatchResult,
 
 	// Identify scanned ids that had no row in messages; we'll report
 	// them back so the caller can skip-mark them.
-	var missing []int64
+	var missingCandidates []int64
 	for _, id := range ids {
 		if _, ok := fetched[id]; !ok {
-			missing = append(missing, id)
+			missingCandidates = append(missingCandidates, id)
+		}
+	}
+	missing := missingCandidates
+	if policyFiltered && len(missingCandidates) > 0 {
+		placeholders := make([]string, len(missingCandidates))
+		args := make([]any, len(missingCandidates))
+		for i, id := range missingCandidates {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		existsQuery := w.rebind(fmt.Sprintf(`SELECT id FROM messages WHERE id IN (%s)`, strings.Join(placeholders, ",")))
+		existingRows, err := w.deps.MainDB.QueryContext(ctx, existsQuery, args...)
+		if err != nil {
+			return embedBatchResult{}, fmt.Errorf("check policy-filtered messages: %w", err)
+		}
+		defer func() { _ = existingRows.Close() }()
+		existing := make(map[int64]struct{}, len(missingCandidates))
+		for existingRows.Next() {
+			var id int64
+			if err := existingRows.Scan(&id); err != nil {
+				return embedBatchResult{}, fmt.Errorf("scan policy-filtered message id: %w", err)
+			}
+			existing[id] = struct{}{}
+		}
+		if err := existingRows.Err(); err != nil {
+			return embedBatchResult{}, fmt.Errorf("iterate policy-filtered message rows: %w", err)
+		}
+		missing = make([]int64, 0, len(missingCandidates))
+		for _, id := range missingCandidates {
+			if _, ok := existing[id]; !ok {
+				missing = append(missing, id)
+			}
 		}
 	}
 
@@ -1296,12 +1337,41 @@ func (w *Worker) stampSkipped(ctx context.Context, gen vector.GenerationID, ids 
 	if w.deps.beforeSkipStamp != nil {
 		w.deps.beforeSkipStamp(ctx, ids)
 	}
+	var policyIDs []int64
+	var releasePolicy func()
+	policyStore, hasPolicyStore := w.deps.Store.(skipStampPolicyStore)
+	if hasPolicyStore {
+		for _, id := range ids {
+			if _, ok := lm[id]; ok {
+				policyIDs = append(policyIDs, id)
+			}
+		}
+		ctx = store.WithConversationPolicyMessageIDs(ctx, policyIDs)
+		if len(policyIDs) > 0 && !policyStore.IsPostgreSQL() {
+			releasePolicy, err = policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+			if err != nil {
+				return nil, fmt.Errorf("acquire policy fence for skip stamp: %w", err)
+			}
+			defer releasePolicy()
+			if err := policyStore.CheckSQLiteConversationPolicyPublication(ctx, policyIDs); err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	tx, err := w.deps.MainDB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin skip stamp tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if len(policyIDs) > 0 && hasPolicyStore && policyStore.IsPostgreSQL() {
+		if err := policyStore.LockPostgresConversationPolicyTx(ctx, tx, store.ConversationPolicyShared); err != nil {
+			return nil, fmt.Errorf("acquire policy fence for skip stamp: %w", err)
+		}
+		if err := policyStore.CheckConversationPolicyPublicationTx(ctx, tx, policyIDs); err != nil {
+			return nil, err
+		}
+	}
 
 	deleteIDs := make([]int64, 0, len(ids))
 	covered := 0

@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -29,11 +28,7 @@ func TestDocumentVisualColdPolicyCleanupRepairsProgressAndUnpreparedClaims(t *te
 	requirements.NoError(f.Store.AdvanceVisualGenerationSourceFence(ctx, visual.ID, fence))
 	requirements.NoError(f.Store.CheckpointDocumentVectorBuildForFingerprint(ctx, doc.ID, doc.Fingerprint, 100, false, store.DocumentVectorUsageDelta{}, time.Now().UTC()))
 	requirements.NoError(f.Store.SetConversationPolicyOverride(ctx, f.Source.ID, "default-thread", conversationpolicy.Cold))
-	repair, ok := any(f.Store).(interface {
-		ReconcileConversationPolicyMediaProgress(ctx context.Context) error
-	})
-	requirements.True(ok, "cleanup must repair main progress even without native files")
-	requirements.NoError(repair.ReconcileConversationPolicyMediaProgress(ctx))
+	requirements.NoError(f.Store.ReconcileConversationPolicyMediaProgress(ctx))
 	cursor, err := f.Store.GetDocumentVectorBuildCursor(ctx, doc.ID)
 	requirements.NoError(err)
 	assertions.Zero(cursor)

@@ -25,8 +25,8 @@ WITH message_facts AS (
 	WHERE year(m.sent_at) = %d
 ), canon AS (
 	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
+	       lower(coalesce(try_cast(p.domain AS VARCHAR), '')) AS participant_domain
 	FROM read_parquet('%s') p
 	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
 ), owner_canon AS (

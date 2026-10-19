@@ -8,7 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -82,7 +82,7 @@ func encodeEmbeddingRevisionPairs(revisions map[int64]int64) (string, error) {
 	for id := range revisions {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	pairs := make([][2]int64, 0, len(ids))
 	for _, id := range ids {
 		pairs = append(pairs, [2]int64{id, revisions[id]})

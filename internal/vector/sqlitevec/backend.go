@@ -1261,7 +1261,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		}
 	}
 
-	idClause, filterArgs, err := b.resolveFilter(ctx, filter, gen)
+	idClause, filterArgs, err := b.resolveFilter(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -1461,8 +1461,8 @@ func (b *Backend) filterCurrentRevisionHits(ctx context.Context, candidates []re
 // unambiguous: the vec0 table itself no longer carries `message_id`
 // post-chunking, but a stray reference here would have read as
 // "embeddings.message_id" by accident, masking the chunking change.
-func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter, gen vector.GenerationID) (string, []any, error) {
-	ids, err := b.filteredMessageIDsForGeneration(ctx, filter, gen)
+func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter) (string, []any, error) {
+	ids, err := b.filteredMessageIDs(ctx, filter)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1492,68 +1492,16 @@ const deletedOverfetchFactor = 2
 // filter fast path so that pure-vector/find_similar callers don't pay
 // the cost of materializing the full live-corpus id list just to
 // enforce the deletion check.
-func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit, gen vector.GenerationID) ([]vector.Hit, error) {
-	if len(hits) == 0 {
-		return hits, nil
-	}
-	ids := make([]int64, len(hits))
-	for i, h := range hits {
-		ids[i] = h.MessageID
-	}
-	blob, err := json.Marshal(ids, json.Deterministic(true))
-	if err != nil {
-		return nil, fmt.Errorf("encode hit ids: %w", err)
-	}
-	q := `SELECT m.id FROM messages m
-	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND ` + b.liveMessageWhere("m")
-	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
-	if err != nil {
-		return nil, fmt.Errorf("live-hit filter: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	live := make(map[int64]struct{}, len(hits))
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan live id: %w", err)
-		}
-		live[id] = struct{}{}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate live ids: %w", err)
-	}
-	out := hits[:0]
-	for _, h := range hits {
-		if _, ok := live[h.MessageID]; ok {
-			out = append(out, h)
-		}
-	}
-	return out, nil
-}
-
 // filteredMessageIDs runs the filter against the main DB and returns
 // matching message IDs. See spec §5.3.
 func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]int64, error) {
 	return b.filteredMessageIDsLimit(ctx, f, 0)
 }
 
-func (b *Backend) filteredMessageIDsForGeneration(ctx context.Context, f vector.Filter, gen vector.GenerationID) ([]int64, error) {
-	return b.filteredMessageIDsLimitForGeneration(ctx, f, 0, gen)
-}
-
 // filteredMessageIDsLimit runs the authoritative filter query and optionally
 // stops after limit rows. A positive limit supports bounded cardinality probes
 // without materializing a large filtered population.
 func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, limit int) ([]int64, error) {
-	return b.filteredMessageIDsLimitWithGeneration(ctx, f, limit, nil)
-}
-
-func (b *Backend) filteredMessageIDsLimitForGeneration(ctx context.Context, f vector.Filter, limit int, gen vector.GenerationID) ([]int64, error) {
-	return b.filteredMessageIDsLimitWithGeneration(ctx, f, limit, &gen)
-}
-
-func (b *Backend) filteredMessageIDsLimitWithGeneration(ctx context.Context, f vector.Filter, limit int, gen *vector.GenerationID) ([]int64, error) {
 	if len(f.ListIDSubstrings) > 0 || len(f.ListIDExactGroups) > 0 || f.ListID != "" {
 		hasListID, err := sqliteColumnExists(ctx, b.mainDB, "messages", "list_id")
 		if err != nil {

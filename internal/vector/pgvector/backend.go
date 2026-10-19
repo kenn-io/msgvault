@@ -1162,7 +1162,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		baseArgs = append(baseArgs, v)
 		return fmt.Sprintf("$%d", len(baseArgs))
 	}
-	existsClause := b.filterExistsClause("e", filter, gen, bind)
+	existsClause := b.filterExistsClause("e", filter, bind)
 	innerArg := fmt.Sprintf("$%d", len(baseArgs)+1)
 	outerArg := fmt.Sprintf("$%d", len(baseArgs)+2)
 	stmt := fmt.Sprintf(`
@@ -1194,7 +1194,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 // filter clauses, keeping the whole filter in SQL instead of round-tripping
 // matching ids through Go. Filter values are bound via the supplied bind
 // closure; the live + filter clauses all reference the inner alias `m`. [V2].
-func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, gen vector.GenerationID, bind func(any) string) string {
+func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, bind func(any) string) string {
 	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
 	return fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM messages m WHERE m.id = %s.message_id AND %s)",
@@ -1217,7 +1217,7 @@ func (b *Backend) filteredChunkAndMessageCount(ctx context.Context, gen vector.G
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	existsClause := b.filterExistsClause("e", f, gen, bind)
+	existsClause := b.filterExistsClause("e", f, bind)
 	q := `SELECT COUNT(*), COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		  WHERE e.generation_id = $1 AND ` + existsClause

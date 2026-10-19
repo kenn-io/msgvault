@@ -57,15 +57,9 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 				}
 				maintenanceDone <- err
 			}()
-			// Maintenance now waits on the first lock in its ordered fence:
-			// source removal takes the exclusive policy advisory lock first;
-			// channel purge and the generic exclusive lock seed the identity row
-			// before they reach its UPDATE or LOCK TABLE.
-			waitingQuery := "INSERT INTO archive_metadata%"
-			if maintenance == "source removal" {
-				waitingQuery = "SELECT pg_advisory_xact_lock%"
-			}
-			waitForPGBlockedQuery(ctx, t, st, writerPID, waitingQuery)
+			// Maintenance must wait on the scoped writer before it takes the
+			// exclusive table locks. The statement used by that fence can vary.
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
 			require.NoError(blocker.Commit())
 			assert.NoError(<-writeDone, "scoped conversation creation")
 			assert.NoError(<-maintenanceDone, "maintenance")

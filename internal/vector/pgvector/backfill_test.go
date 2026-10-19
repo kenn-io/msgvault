@@ -113,6 +113,52 @@ func TestBackfillEmbedGen_UpgradeStampsEmbeddedOnly(t *testing.T) {
 	assert.True(isNull3Again, "msg 3 still NULL after second backfill (ledger no-op)")
 }
 
+func TestBackfillEmbedGen_DoesNotCoverMismatchedLegacyVectorRevision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	ctx := context.Background()
+	db := openPGTestDB(t)
+	_, err := db.Exec(`CREATE TABLE applied_migrations (
+		name TEXT PRIMARY KEY,
+		applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`)
+	require.NoError(err)
+	for _, id := range []int64{1, 2} {
+		_, err := db.Exec(`INSERT INTO messages (id) VALUES ($1)`, id)
+		require.NoError(err)
+	}
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embedding_revision=1 WHERE id=1`)
+	require.NoError(err)
+
+	b, err := Open(ctx, Options{DB: db, Dimension: 4})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+	gen, err := b.CreateGeneration(ctx, "legacy-revision", 4, "")
+	require.NoError(err)
+	require.NoError(b.Upsert(ctx, gen, []vector.Chunk{
+		{MessageID: 1, Vector: []float32{1, 0, 0, 0}, EmbeddingRevision: 0},
+		{MessageID: 2, Vector: []float32{0, 1, 0, 0}, EmbeddingRevision: 1},
+	}))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen=$1`, int64(gen))
+	require.NoError(err)
+	require.NoError(b.ActivateGeneration(ctx, gen, true))
+	_, err = db.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL`)
+	require.NoError(err)
+	_, err = db.ExecContext(ctx, `DELETE FROM applied_migrations WHERE name=$1`, embedGenBackfillMigration)
+	require.NoError(err)
+
+	require.NoError(b.BackfillEmbedGenForUpgrade(ctx))
+	_, mismatchedIsNull := embedGenOf(t, db, 1)
+	assert.True(mismatchedIsNull, "a revision-zero legacy vector cannot cover revision one")
+	matched, matchedIsNull := embedGenOf(t, db, 2)
+	assert.False(matchedIsNull, "a vector at the current message revision covers the message")
+	assert.Equal(int64(gen), matched)
+	stats, err := b.Stats(ctx, gen)
+	require.NoError(err)
+	assert.Equal(int64(1), stats.PendingCount, "the mismatched message remains eligible for the backstop scan")
+}
+
 // TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal is the PG
 // regression guard for the pending-signal preservation case: the one-time
 // upgrade backfill must NOT stamp embed_gen=active on a message that carried an

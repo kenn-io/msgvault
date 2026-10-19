@@ -115,7 +115,7 @@ func (b *Backend) searchAccelerator(
 	}
 	if !filter.IsEmpty() || b.policyStore != nil {
 		threshold := b.exactFilterVectorThreshold
-		messageIDs, probeErr := b.filteredMessageIDsLimitForGeneration(ctx, filter, threshold+1, gen)
+		messageIDs, probeErr := b.filteredMessageIDsLimit(ctx, filter, threshold+1)
 		if probeErr != nil {
 			if ctx.Err() != nil {
 				return nil, vector.SearchMetadata{}, ctx.Err()
@@ -155,7 +155,7 @@ func (b *Backend) searchAccelerator(
 	if k > b.annWorkCeiling {
 		return nil, vector.SearchMetadata{}, nil
 	}
-	hits, metadata, err := b.searchAccelerated(ctx, tx, *accelerator, gen, queryVec, k, filter)
+	hits, metadata, err := b.searchAccelerated(ctx, tx, *accelerator, queryVec, k, filter)
 	if err == nil {
 		if err := tx.Commit(); err != nil {
 			return nil, vector.SearchMetadata{}, fmt.Errorf("finish accelerated read: %w", err)
@@ -182,7 +182,6 @@ func (b *Backend) searchAccelerated(
 	ctx context.Context,
 	queryer acceleratedQueryer,
 	accelerator AcceleratorStatus,
-	gen vector.GenerationID,
 	queryVec []float32,
 	k int,
 	filter vector.Filter,
@@ -200,7 +199,7 @@ func (b *Backend) searchAccelerated(
 		if err != nil {
 			return nil, vector.SearchMetadata{}, err
 		}
-		hits, err := b.rerankAcceleratedCandidates(ctx, queryer, accelerator, gen, queryVec, k, filter, rowIDs)
+		hits, err := b.rerankAcceleratedCandidates(ctx, queryer, accelerator, queryVec, k, filter, rowIDs)
 		if err != nil {
 			return nil, vector.SearchMetadata{}, err
 		}
@@ -367,7 +366,6 @@ func (b *Backend) rerankAcceleratedCandidates(
 	ctx context.Context,
 	queryer acceleratedQueryer,
 	accelerator AcceleratorStatus,
-	gen vector.GenerationID,
 	queryVec []float32,
 	k int,
 	filter vector.Filter,
@@ -412,7 +410,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	if len(boundedFilter.MessageIDs) == 0 {
 		return []vector.Hit{}, nil
 	}
-	liveIDs, err := b.filteredMessageIDsForGeneration(ctx, boundedFilter, gen)
+	liveIDs, err := b.filteredMessageIDs(ctx, boundedFilter)
 	if err != nil {
 		return nil, err
 	}

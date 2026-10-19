@@ -403,9 +403,8 @@ func TestContextWorkerPublishesVectorsAtCurrentEmbeddingRevision(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)
 	beforeDocuments := f.client.Documents()
-	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
-		`UPDATE messages SET embedding_revision=embedding_revision+1, embed_gen=NULL WHERE id=?`), messageID)
-	require.NoError(t, err)
+	require.NoError(t, f.store.UpsertMessageBody(messageID,
+		sql.NullString{String: "revision-sensitive changed chat body", Valid: true}, sql.NullString{}))
 
 	result, err = f.run()
 	require.NoError(t, err)
@@ -1315,20 +1314,20 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 		racePublisher = &contextFenceRacePublisher{DocumentPublisher: deps.Publisher}
 		deps.Publisher = racePublisher
 	})
-	id := f.seed("email", f.chatID, time.Now().UTC(), "revision a")
+	at := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+	f.seed("beeper", f.chatID, at, "revision a")
 	_, err := f.run()
 	require.NoError(t, err)
-	initial, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("message:%d", id))
+	initial, err := f.backend.GetDocument(t.Context(), f.gen, fmt.Sprintf("chat:%d:2026-08-08", f.chatID))
 	require.NoError(t, err)
 	initialCalls := f.client.Calls()
 	initialWatermark := f.progress().ChangeSequence
 
-	require.NoError(t, f.store.UpsertMessageBody(id,
-		sql.NullString{String: "revision b", Valid: true}, sql.NullString{}))
+	f.seed("beeper", f.chatID, at.Add(time.Minute), "revision b")
 	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
 	require.NoError(t, err)
 	staleDocuments, err := f.worker.deps.Assembler.AssembleScopes(t.Context(), snapshot,
-		[]AffectedScope{{Kind: "email", MessageID: id}})
+		[]AffectedScope{{Kind: "beeper", ConversationID: f.chatID}})
 	require.NoError(t, err)
 	staleSequence := snapshot.SourceSequence()
 	require.NoError(t, snapshot.Close())
@@ -1344,13 +1343,12 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 		staleDocuments, staleVectors, make([]bool, len(staleDocuments)))
 	require.NoError(t, err)
 
-	require.NoError(t, f.store.UpsertMessageBody(id,
-		sql.NullString{String: "revision a", Valid: true}, sql.NullString{}))
+	require.NoError(t, f.store.MarkMessageDeleted(f.sourceID, fmt.Sprintf("beeper-%d", f.sequence)))
 	latestSequence := latestContextSequence(t, f.store)
 	require.Greater(t, latestSequence, staleSequence)
 	racePublisher.beforeFence = func() error {
 		return racePublisher.PublishScope(t.Context(), f.gen,
-			fmt.Sprintf("message:%d", id), staleSequence, stalePublications, staleChunks)
+			initial.Key, staleSequence, stalePublications, staleChunks)
 	}
 
 	_, err = f.run()

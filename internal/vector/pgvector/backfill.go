@@ -169,7 +169,8 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		    AND EXISTS (
 		        SELECT 1 FROM embeddings e
 		         WHERE e.message_id = messages.id
-		           AND e.generation_id = $1)`
+		           AND e.generation_id = $1
+		           AND e.embedding_revision = messages.embedding_revision)`
 	if b.policyStore != nil {
 		stamp += " AND " + store.FullMessageWhere("messages")
 	}

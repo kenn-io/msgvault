@@ -50,6 +50,78 @@ func TestWorkerColdPolicyFenceBeforeRequestAndPublication(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
 }
 
+func TestEmbedBatchDistinguishesPolicyFilteredMessagesFromMissing(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "filtered-policy")
+	require.NoError(t, err)
+	room, err := st.EnsureConversation(src.ID, "room", "Room")
+	require.NoError(t, err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: room, SourceMessageID: "message",
+		MessageType: "beeper", Subject: sql.NullString{String: "Synthetic body", Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	work, err := st.CaptureConversationPolicyWork(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Cold))
+
+	w := NewWorker(WorkerDeps{Store: st, MainDB: st.DB(), Client: &fakeEmbeddingClient{dim: 4}})
+	missingID := id + 1000
+	result, err := w.embedBatch(work, []int64{id, missingID})
+	require.NoError(t, err)
+	assert.Empty(t, result.chunks)
+	assert.Equal(t, []int64{missingID}, result.missing, "only a physically absent message is missing")
+}
+
+func TestWorkerSkipStampRejectsStalePolicyAndPreservesVectors(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "skip-policy")
+	require.NoError(t, err)
+	room, err := st.EnsureConversation(src.ID, "room", "Room")
+	require.NoError(t, err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: room, SourceMessageID: "empty-message",
+		MessageType: "beeper", Subject: sql.NullString{String: "", Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "room", conversationpolicy.Full))
+	b, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: filepath.Join(t.TempDir(), "vectors.db"), MainDB: st.DB(), PolicyStore: st, Dimension: 4,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, b.Close()) })
+	gen, err := b.CreateGeneration(t.Context(), "skip-policy", 4, "")
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(t.Context(), gen, []vector.Chunk{{
+		MessageID: id, Vector: []float32{1, 0, 0, 0},
+	}}))
+
+	changedPolicy := false
+	w := NewWorker(WorkerDeps{
+		Store: st, MainDB: st.DB(), Backend: b, VectorsDB: b.DB(),
+		Client: &fakeEmbeddingClient{dim: 4}, BatchSize: 1, MaxConsecutiveFailures: 1,
+		Recorder: newTestOperationRecorder(),
+		beforeSkipStamp: func(ctx context.Context, _ []int64) {
+			if changedPolicy {
+				return
+			}
+			changedPolicy = true
+			require.NoError(t, st.SetConversationPolicyOverride(ctx, src.ID, "room", conversationpolicy.Cold))
+			require.NoError(t, st.SetConversationPolicyOverride(ctx, src.ID, "room", conversationpolicy.Full))
+		},
+	})
+	_, err = w.RunOnce(t.Context(), gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+
+	var embedGen sql.NullInt64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), id).Scan(&embedGen))
+	assert.False(t, embedGen.Valid, "stale skip authority leaves the message pending")
+	var vectorCount int
+	require.NoError(t, b.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM embeddings WHERE generation_id=? AND message_id=?`, int64(gen), id).Scan(&vectorCount))
+	assert.Equal(t, 1, vectorCount, "stale skip authority cannot delete the existing vector")
+}
+
 func TestWorkerRechecksMessageEligibilityBetweenSubBatches(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := st.GetOrCreateSource("beeper", "subbatch-policy")

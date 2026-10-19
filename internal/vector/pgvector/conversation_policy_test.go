@@ -392,11 +392,7 @@ func TestPersonColdPolicyCleanupPreservesCurrentVersions(t *testing.T) {
 	// An upgrade changes the semantic version even for otherwise unchanged text.
 	_, err = b.db.ExecContext(ctx, st.Rebind(`INSERT INTO person_embeddings(generation_id,person_id,published_revision,dimension,embedded_at) VALUES (?,?,'legacy-version',4,0) ON CONFLICT(generation_id,person_id) DO UPDATE SET published_revision=excluded.published_revision`), int64(gen), person.ID)
 	require.NoError(t, err)
-	pruner, ok := any(b).(interface {
-		PruneIneligiblePersons(ctx context.Context) (int64, error)
-	})
-	require.True(t, ok)
-	n, err := pruner.PruneIneligiblePersons(ctx)
+	n, err := b.PruneIneligiblePersons(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 	var count int
@@ -405,7 +401,7 @@ func TestPersonColdPolicyCleanupPreservesCurrentVersions(t *testing.T) {
 	revisions, err := b.ListPersonRevisions(ctx, next)
 	require.NoError(t, err)
 	assert.Equal(t, map[int64]string{person.ID: doc.Revision}, revisions)
-	n, err = pruner.PruneIneligiblePersons(ctx)
+	n, err = b.PruneIneligiblePersons(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
