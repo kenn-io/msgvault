@@ -37,7 +37,7 @@ func TestListCalendarOccurrencesSourceMergeArchiveOnly(t *testing.T) {
 		addEvent(source, "move", `{"id":"move","recurringEventId":"weekly","status":"confirmed","originalStartTime":{"dateTime":"2027-03-16T09:00:00Z"},"start":{"dateTime":"`+moved+`"},"end":{"dateTime":"`+moved[:11]+`10:00:00Z"}}`)
 	}
 	window := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	before, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 2, 0))
+	before, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: window, To: window.AddDate(0, 2, 0)})
 	requirements.NoError(err)
 	var want []store.CalendarOccurrence
 	for _, occurrence := range before.Occurrences {
@@ -52,7 +52,7 @@ func TestListCalendarOccurrencesSourceMergeArchiveOnly(t *testing.T) {
 	var archiveOnly int
 	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM source_merge_archive_only_messages`).Scan(&archiveOnly))
 	requirements.Equal(3, archiveOnly)
-	after, err := st.ListCalendarOccurrencesContext(t.Context(), window, window.AddDate(0, 2, 0))
+	after, err := st.ListCalendarOccurrencesContext(t.Context(), store.CalendarOccurrenceQuery{From: window, To: window.AddDate(0, 2, 0)})
 	requirements.NoError(err)
 	assertions.Empty(after.Unexpandable)
 	assertions.Equal(want, after.Occurrences)

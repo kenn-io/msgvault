@@ -24,8 +24,8 @@ var agentReadPermissions = map[string]agentgrant.Permission{
 	"searchMessagesByDomains": agentgrant.PermissionSearchRead,
 	"getStats":                agentgrant.PermissionStatsRead, "getCLIStats": agentgrant.PermissionStatsRead, "getTotalStats": agentgrant.PermissionStatsRead,
 	"getCLIMessageThread": agentgrant.PermissionMessageRead,
-	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead,
-	"getMessage":          agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
+	"listCalendarEvents":  agentgrant.PermissionCalendarEventRead, "getCalendarEvent": agentgrant.PermissionCalendarEventRead,
+	"getMessage": agentgrant.PermissionMessageRead, "getCLIMessage": agentgrant.PermissionMessageRead,
 	"getAttachment": agentgrant.PermissionAttachmentRead, "getAttachmentContent": agentgrant.PermissionAttachmentRead,
 	"getCLIAttachment": agentgrant.PermissionAttachmentRead,
 	"listCLIAccounts":  agentgrant.PermissionSearchRead, "listCLICollections": agentgrant.PermissionSearchRead,
@@ -54,7 +54,7 @@ func agentReadPermission(operation string, grant *agentgrant.Grant) (agentgrant.
 		}
 		return permission, nil
 	}
-	if operation == "listCalendarEvents" && grant != nil && grant.HasPermission(agentgrant.PermissionMessageRead) {
+	if (operation == "listCalendarEvents" || operation == "getCalendarEvent") && grant != nil && grant.HasPermission(agentgrant.PermissionMessageRead) {
 		permission = agentgrant.PermissionMessageRead
 	}
 	if grant == nil || permission == "" || !grant.HasPermission(permission) {
@@ -307,7 +307,7 @@ func (s *Server) agentScopedStats(w http.ResponseWriter, r *http.Request, cli bo
 // collection discovery, in a fixed order so denials and logs are stable.
 var agentDiscoveryPermissions = []agentgrant.Permission{
 	agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead,
-	agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead, agentgrant.PermissionCalendarEventRead,
+	agentgrant.PermissionAttachmentRead, agentgrant.PermissionStatsRead,
 }
 
 func agentDiscoveryPermission(grant *agentgrant.Grant) agentgrant.Permission {

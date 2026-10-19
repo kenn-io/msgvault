@@ -13,13 +13,15 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.24.0"
+const calendarEventsMinAPISchemaVersion = "3.25.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {
-	ListCalendarOccurrencesContext(ctx context.Context, from, to time.Time) (store.CalendarOccurrencePage, error)
+	ListCalendarOccurrencesContext(ctx context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error)
+	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
 	APISchemaVersion(ctx context.Context) (string, error)
 }
 type calendarEventsOpen func(context.Context) (calendarEventsClient, func(), error)
@@ -32,21 +34,19 @@ func openCalendarEvents(ctx context.Context) (calendarEventsClient, func(), erro
 	return client, func() { _ = client.Close() }, nil
 }
 func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
-	var from, to string
+	var from, to, cursor string
+	var limit int
 	var jsonOutput bool
 	command := &cobra.Command{Use: "events --from <date> --to <date>", Short: "List archived calendar events", Args: cobra.NoArgs}
 	command.Flags().StringVar(&from, "from", "", "window start: YYYY-MM-DD or RFC3339")
 	command.Flags().StringVar(&to, "to", "", "exclusive window end: YYYY-MM-DD or RFC3339")
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print occurrences and attendees as JSON")
+	command.Flags().IntVar(&limit, "limit", 100, "maximum occurrences, 1 to 500")
+	command.Flags().StringVar(&cursor, "cursor", "", "next cursor from the same window")
 	_ = command.MarkFlagRequired("from")
 	_ = command.MarkFlagRequired("to")
-	command.RunE = func(cmd *cobra.Command, _ []string) error {
-		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
-			if cmd.Flags().Changed(name) {
-				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
-			}
-		}
-		bounds := make([]time.Time, 2)
+	bounds := make([]time.Time, 2)
+	prepare := func(cmd *cobra.Command) error {
 		for i, value := range []string{from, to} {
 			var err error
 			bounds[i], err = parseCalendarEventsBound(value)
@@ -57,19 +57,14 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 		if bounds[1].Before(bounds[0]) || bounds[1].Equal(bounds[0]) && bounds[1].Format(time.DateOnly) <= bounds[0].Format(time.DateOnly) {
 			return usageErr(cmd, errors.New("--to must be after --from"))
 		}
-		client, cleanup, err := open(cmd.Context())
-		if err != nil {
-			return err
+		return nil
+	}
+	command.RunE = archiveCalendarRun(open, prepare, func(cmd *cobra.Command, _ []string, client calendarEventsClient) error {
+		query := store.CalendarOccurrenceQuery{From: bounds[0], To: bounds[1], Cursor: cursor}
+		if cmd.Flags().Changed("limit") {
+			query.Limit = &limit
 		}
-		defer cleanup()
-		version, err := client.APISchemaVersion(cmd.Context())
-		if err != nil {
-			return err
-		}
-		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
-			return errors.New("calendar events require daemon API schema 3.24.0 or newer")
-		}
-		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), bounds[0], bounds[1])
+		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), query)
 		if err != nil {
 			var apiError *daemonclient.APIError
 			if errors.As(err, &apiError) && apiError.Code == "query_too_broad" {
@@ -88,28 +83,22 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			}
 			return nil
 		}
+
 		if len(page.Occurrences) == 0 {
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "No archived calendar events from %s to %s.\n", from, to); err != nil {
 				return fmt.Errorf("write calendar events: %w", err)
 			}
 		} else {
-			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tTITLE"); err != nil {
-				return fmt.Errorf("write calendar events: %w", err)
-			}
-			for _, o := range page.Occurrences {
-				start, end := o.Start.In(time.Local).Format("2006-01-02 15:04"), o.End.In(time.Local).Format("2006-01-02 15:04")
-				if o.AllDay {
-					start, end = o.StartDate, o.EndDate
-				}
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, normalizeSearchTableText(o.Subject)); err != nil {
-					return fmt.Errorf("write calendar events: %w", err)
-				}
-			}
-			if err := writer.Flush(); err != nil {
-				return fmt.Errorf("write calendar events: %w", err)
+			if err := printCalendarOccurrences(cmd, page.Occurrences); err != nil {
+				return err
 			}
 		}
+		if page.NextCursor != "" {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "next cursor: %s\n", page.NextCursor); err != nil {
+				return fmt.Errorf("write calendar cursor: %w", err)
+			}
+		}
+
 		if len(page.Unexpandable) > 0 {
 			noun := "events"
 			if len(page.Unexpandable) == 1 {
@@ -133,7 +122,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 			}
 		}
 		return nil
-	}
+	})
 	return command
 }
 
@@ -163,4 +152,92 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 		return calendarEventDeletedStatus
 	}
 	return o.Status
+}
+
+func archiveCalendarRun(open calendarEventsOpen, prepare func(*cobra.Command) error, run func(*cobra.Command, []string, calendarEventsClient) error) func(*cobra.Command, []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
+			if cmd.Flags().Changed(name) {
+				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
+			}
+		}
+		if prepare != nil {
+			if err := prepare(cmd); err != nil {
+				return err
+			}
+		}
+		client, cleanup, err := open(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		version, err := client.APISchemaVersion(cmd.Context())
+		if err != nil {
+			return err
+		}
+		if !daemonclient.APISchemaVersionAtLeast(version, calendarEventsMinAPISchemaVersion) {
+			return fmt.Errorf("calendar events require daemon API schema %s or newer", calendarEventsMinAPISchemaVersion)
+		}
+		return run(cmd, args, client)
+	}
+}
+
+func printCalendarOccurrences(cmd *cobra.Command, occurrences []store.CalendarOccurrence) error {
+	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "START\tEND (EXCL)\tSTATUS\tID\tREF\tTITLE"); err != nil {
+		return fmt.Errorf("write calendar heading: %w", err)
+	}
+	for _, o := range occurrences {
+		start, end := o.Start.In(time.Local).Format("2006-01-02 15:04"), o.End.In(time.Local).Format("2006-01-02 15:04")
+		if o.AllDay {
+			start, end = o.StartDate, o.EndDate
+		}
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, o.Ref, normalizeSearchTableText(o.Subject)); err != nil {
+			return fmt.Errorf("write calendar occurrence: %w", err)
+		}
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("write calendar occurrences: %w", err)
+	}
+	return nil
+}
+
+func newCalendarEventCommand(open calendarEventsOpen) *cobra.Command {
+	var jsonOutput bool
+	command := &cobra.Command{Use: "event <ref>", Short: "Read an archived calendar occurrence", Args: cobra.ExactArgs(1)}
+	command.Flags().BoolVar(&jsonOutput, "json", false, "print the occurrence as JSON")
+	command.RunE = archiveCalendarRun(open, nil, func(cmd *cobra.Command, args []string, client calendarEventsClient) error {
+		o, err := client.GetCalendarOccurrenceContext(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			data, err := json.Marshal(o)
+			if err != nil {
+				return fmt.Errorf("write calendar event: %w", err)
+			}
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), string(data)); err != nil {
+				return fmt.Errorf("write calendar event: %w", err)
+			}
+			return nil
+		}
+
+		if err := printCalendarOccurrences(cmd, []store.CalendarOccurrence{o.CalendarOccurrence}); err != nil {
+			return err
+		}
+		for _, field := range []struct{ label, value string }{{"location", textutil.SanitizeTerminal(o.Location)}, {"description", textutil.SanitizeTerminalMultiline(o.Description)}, {"join URL", textutil.SanitizeTerminal(o.JoinURL)}} {
+			if field.value != "" {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s: %s\n", field.label, field.value); err != nil {
+					return fmt.Errorf("write calendar content: %w", err)
+				}
+			}
+		}
+		for _, a := range o.Attendees {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %s  %s  %s\n", textutil.SanitizeTerminal(a.Email), textutil.SanitizeTerminal(a.DisplayName), textutil.SanitizeTerminal(a.Role), textutil.SanitizeTerminal(a.RSVP)); err != nil {
+				return fmt.Errorf("write calendar attendee: %w", err)
+			}
+		}
+		return nil
+	})
+	return command
 }

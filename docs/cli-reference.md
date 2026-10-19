@@ -1739,10 +1739,15 @@ List archived calendar events or control live Google Calendar events through the
 
 ```bash
 msgvault calendar events --from 2027-03-01 --to 2027-04-01
-msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --limit 100 --json
+msgvault calendar event evt:123@20270302T170000Z --json
 ```
 
-`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.24.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.25.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+`--limit` defaults to 100 and accepts 1–500. Pass the returned `next_cursor` with `--cursor` and keep the window unchanged. Windows allow at most 400 days. The table adds `REF` after `ID` and prints the next cursor on its own line.
+
+`calendar event <ref>` opens an occurrence and prints its attendees, roles, and RSVPs. `--json` includes the archived location, description, and join URL when present. Paging, detail, and delegated reads require daemon API schema 3.25.0. Agents need `calendar.event.read` or `message.read` on the source. Both archive commands reject the live-calendar flags listed above.
 
 For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar

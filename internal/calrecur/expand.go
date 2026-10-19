@@ -289,3 +289,41 @@ func conservativeEnd(ctx context.Context, s Set, duration time.Duration, duratio
 	}
 	return end, true
 }
+
+// Resolve confirms a generated original identity using the same steps as Expand.
+func Resolve(ctx context.Context, s Set, duration time.Duration, durationDays int, id Identity, budget int) (Occurrence, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Occurrence{}, false, err
+	}
+	if id.AllDay != s.AllDay {
+		return Occurrence{}, false, nil
+	}
+	if duration < 0 || durationDays < 0 {
+		return Occurrence{}, false, unsupported("duration", errors.New("duration must not be negative"))
+	}
+	until, err := s.identityStart(id)
+	if err != nil {
+		return Occurrence{}, false, err
+	}
+	if s.AllDay {
+		var exists bool
+		until, exists, err = s.instanceStart(until)
+		if err != nil {
+			return Occurrence{}, false, unsupported("original date", err)
+		}
+		if !exists {
+			return Occurrence{}, false, nil
+		}
+	}
+
+	found := false
+	err = iter(ctx, s, until, &candidateBudget{ctx: ctx, limit: budget}, func(i instance) bool {
+		found = i.Identity.Key() == id.Key()
+		return !found
+	})
+	if err != nil || !found {
+		return Occurrence{}, false, err
+	}
+	o, err := nominal(s, id, duration, durationDays)
+	return o, err == nil, err
+}

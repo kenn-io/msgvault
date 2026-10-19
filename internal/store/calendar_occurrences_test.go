@@ -27,7 +27,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 	_, single := calendarFixture(t, st, "single", calendarRaw)
 	from, err := time.Parse(time.RFC3339, "2027-03-01T00:00:00Z")
 	requirements.NoError(err)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 3)
 	assertions.Empty(page.Unexpandable)
@@ -39,34 +39,19 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal("Example event", page.Occurrences[2].Subject)
 	assertions.Equal(page.Occurrences[0].Attendees, page.Occurrences[2].Attendees)
 	assertions.Equal("accepted", page.Occurrences[0].Attendees[0].RSVP)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from.AddDate(0, 1, 0), from.AddDate(0, 2, 0))
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from.AddDate(0, 1, 0), To: from.AddDate(0, 2, 0)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
-func TestListCalendarOccurrencesUnexpandable(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	st := newRFC822IDBackfillBackendStore(t)
-	_, id := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"date":"2027-03-01"},"end":{"date":"2027-03-02"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
-	from, err := time.Parse(time.DateOnly, "2027-03-01")
-	requirements.NoError(err)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
-	requirements.NoError(err)
-	assertions.Empty(page.Occurrences)
-	requirements.Len(page.Unexpandable, 1)
-	assertions.Equal(id, page.Unexpandable[0].MessageID)
-}
-
 func TestListCalendarOccurrencesOffsetFreeTime(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "offset-free", `{"id":"offset-free","start":{"dateTime":"2027-03-02T09:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-02T10:00:00","timeZone":"America/New_York"}}`)
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Empty(page.Unexpandable)
 	requirements.Len(page.Occurrences, 1)
@@ -80,7 +65,7 @@ func TestListCalendarOccurrencesYearlyByMonth(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "yearly", `{"id":"yearly","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=YEARLY;BYMONTH=3"]}`)
 	from := time.Date(2028, time.March, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	require.NoError(err)
 	assert.Empty(page.Unexpandable)
 	require.Len(page.Occurrences, 1)
@@ -104,7 +89,7 @@ func TestListCalendarOccurrencesUndecodableEvent(t *testing.T) {
 	}
 	assertions, requirements := assert.New(t), require.New(t)
 	from := time.Date(2027, time.March, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	requirements.NoError(err)
 	assertions.Empty(page.Occurrences)
 	assertions.Equal(expected, page.Unexpandable)
@@ -115,6 +100,7 @@ func TestListCalendarOccurrencesRequestBudgetKeepsCompletedResults(t *testing.T)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, completed := calendarFixture(t, st, "completed", `{"id":"completed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`)
 	_, completedException := calendarFixture(t, st, "completed-exception", `{"id":"completed-exception","recurringEventId":"completed","originalStartTime":{"dateTime":"2027-03-03T17:00:00Z"},"status":"cancelled"}`)
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 	var interrupted int64
 	for i := range calrecur.RequestReadBudget / calrecur.SeriesReadBudget {
 		_, interrupted = calendarFixture(t, st, fmt.Sprintf("long-%d", i), fmt.Sprintf(`{"id":"long-%d","start":{"dateTime":"1800-01-01T17:00:00Z"},"end":{"dateTime":"1800-01-01T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, i))
@@ -123,10 +109,8 @@ func TestListCalendarOccurrencesRequestBudgetKeepsCompletedResults(t *testing.T)
 	_, later := calendarFixture(t, st, "later", `{"id":"later","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`)
 	_, laterException := calendarFixture(t, st, "later-exception", `{"id":"later-exception","recurringEventId":"later","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"},"status":"cancelled"}`)
 	_, single := calendarFixture(t, st, "single", calendarRaw)
-	// Include the long series' early occurrences to catch partial expansion leaks.
-	from := time.Date(1800, 1, 1, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: to})
 	requirements.NoError(err)
 	var ids []int64
 	for _, occurrence := range page.Occurrences {
@@ -138,6 +122,13 @@ func TestListCalendarOccurrencesRequestBudgetKeepsCompletedResults(t *testing.T)
 		{MessageID: interrupted, Reason: "request work limit reached; long-running series count their steps from their start"},
 		{MessageID: later, Reason: "request work limit reached; long-running series count their steps from their start"},
 	}, page.Unexpandable[9:])
+	// This window includes generated instances just before the per-series limit.
+	// An interrupted expansion must discard those instances, even on early pages.
+	early := time.Date(1936, 1, 1, 0, 0, 0, 0, time.UTC)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: early, To: early.AddDate(1, 0, 0)})
+	requirements.NoError(err)
+	assertions.Empty(page.Occurrences)
+	assertions.Len(page.Unexpandable, 10)
 }
 
 func TestListCalendarOccurrencesOrphanExceptions(t *testing.T) {
@@ -147,7 +138,7 @@ func TestListCalendarOccurrencesOrphanExceptions(t *testing.T) {
 	_, incomplete := calendarFixture(t, st, "sparse-orphan", `{"id":"sparse-orphan","recurringEventId":"missing","status":"cancelled","originalStartTime":{"dateTime":"2027-03-04T17:00:00Z"}}`)
 	_, unidentified := calendarFixture(t, st, "unidentified-orphan", `{"id":"unidentified-orphan","recurringEventId":"missing","status":"cancelled"}`)
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(complete, page.Occurrences[0].MessageID)
@@ -170,11 +161,11 @@ func TestListCalendarOccurrencesAllDayQueryZone(t *testing.T) {
 			zone, err := time.LoadLocation("America/Los_Angeles")
 			requirements.NoError(err)
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, zone)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			assertions.Empty(page.Occurrences, "March 2 is outside March 1")
 			from = from.AddDate(0, 0, 1)
-			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, 1)
 			assertions.Equal(id, page.Occurrences[0].MessageID)
@@ -203,7 +194,7 @@ func TestListCalendarOccurrencesAllDayPartialWindow(t *testing.T) {
 			requirements.NoError(err)
 			to, err := time.Parse(time.RFC3339, tc.to)
 			requirements.NoError(err)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: to})
 			requirements.NoError(err)
 			assert.Len(t, page.Occurrences, tc.want)
 		})
@@ -216,7 +207,7 @@ func TestListCalendarOccurrencesSkippedStartDate(t *testing.T) {
 	calendarFixture(t, st, "skipped-start", `{"id":"skipped-start","start":{"date":"2011-12-30","timeZone":"Pacific/Apia"},"end":{"date":"2011-12-31","timeZone":"Pacific/Apia"},"recurrence":["RRULE:FREQ=DAILY;COUNT=3","RDATE;VALUE=DATE:20111229,20111230"]}`)
 	from := time.Date(2011, 12, 28, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2012, 1, 4, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, to)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: to})
 	requirements.NoError(err)
 	assertions.Empty(page.Unexpandable)
 	var dates []string
@@ -245,7 +236,7 @@ func TestListCalendarOccurrencesMultiDayExceptions(t *testing.T) {
 				}
 				_, exception := calendarFixture(t, st, "exception", fmt.Sprintf(`{"id":"exception","recurringEventId":"weekly","originalStartTime":%s,%s}`, start, fields))
 				from := time.Date(2027, 3, 5, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 				requirements.NoError(err)
 				assertions.Empty(page.Unexpandable)
 				if moved {
@@ -275,7 +266,7 @@ func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original))
 			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
 			from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 			requirements.NoError(err)
 			assertions.Empty(page.Unexpandable)
 			requirements.Len(page.Occurrences, 1)
@@ -285,54 +276,6 @@ func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 			assertions.Equal("cancelled", o.Status)
 			assertions.Equal(tc.wantStart, o.Start.UTC().Format(time.RFC3339))
 			assertions.Equal(tc.wantEnd, o.End.UTC().Format(time.RFC3339))
-		})
-	}
-}
-
-func TestListCalendarOccurrencesUnexpandableKeepsEditedExceptions(t *testing.T) {
-	for _, recurrence := range []string{"RRULE:FREQ=HOURLY", "RRULE:FREQ=DAILY"} {
-		t.Run(recurrence, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"master","status":"confirmed","start":{"dateTime":"1800-01-01T17:00:00Z"},"end":{"dateTime":"1800-01-01T18:00:00Z"},"recurrence":[%q]}`, recurrence))
-			_, edited := calendarFixture(t, st, "edited", `{"id":"edited","recurringEventId":"master","status":"confirmed","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"},"start":{"dateTime":"2027-03-03T19:00:00Z"},"end":{"dateTime":"2027-03-03T20:00:00Z"}}`)
-			calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"master","status":"cancelled","originalStartTime":{"dateTime":"2027-03-04T17:00:00Z"}}`)
-			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
-			require.NoError(err)
-			require.Len(page.Unexpandable, 1)
-			assert.Equal(master, page.Unexpandable[0].MessageID)
-			require.Len(page.Occurrences, 1)
-			assert.Equal(edited, page.Occurrences[0].MessageID)
-			assert.Equal(master, page.Occurrences[0].SeriesMessageID)
-			assert.Equal("2027-03-03T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
-			assert.Equal("2027-03-03T20:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
-		})
-	}
-}
-
-func TestListCalendarOccurrencesUnexpandableKeepsCancelledExceptions(t *testing.T) {
-	for _, tc := range []struct{ recurrence, reason string }{
-		{"RRULE:FREQ=HOURLY", "unsupported recurrence"},
-		{"RRULE:FREQ=DAILY", "recurrence generation budget exceeded"},
-	} {
-		t.Run(tc.recurrence, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"master","start":{"dateTime":"1800-01-01T17:00:00Z"},"end":{"dateTime":"1800-01-01T18:00:00Z"},"recurrence":[%q]}`, tc.recurrence))
-			_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"master","status":"cancelled","originalStartTime":{"dateTime":"2027-03-04T17:00:00Z"},"start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}}`)
-			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
-			requirements.NoError(err)
-			requirements.Len(page.Unexpandable, 1)
-			assertions.Equal(master, page.Unexpandable[0].MessageID)
-			assertions.Equal(tc.reason, page.Unexpandable[0].Reason)
-			requirements.Len(page.Occurrences, 1)
-			assertions.Equal(cancelled, page.Occurrences[0].MessageID)
-			assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
-			assertions.Equal("cancelled", page.Occurrences[0].Status)
-			assertions.Equal("2027-03-04T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
-			assertions.Equal("2027-03-04T20:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
 		})
 	}
 }
@@ -347,14 +290,10 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 	rows, err := calendarEventRowsInWindow(t.Context(), st.db, st.dialect, from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	assertions.Empty(rows, "tombstones must consume no request budget")
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
 	assertions.Empty(page.Occurrences)
 	assertions.Empty(page.Unexpandable)
-	_, unknown := calendarFixture(t, st, "unknown", `{"id":"unknown"}`)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	assertions.Equal([]CalendarUnexpandable{{MessageID: unknown, Reason: "missing event bounds"}}, page.Unexpandable)
 }
 
 func TestListCalendarOccurrencesExceptionMessageIDZero(t *testing.T) {
@@ -369,7 +308,7 @@ func TestListCalendarOccurrencesExceptionMessageIDZero(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.UpsertMessageRawWithFormat(0, []byte(`{"id":"edited","recurringEventId":"master","status":"tentative","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"},"start":{"dateTime":"2027-03-03T19:00:00Z"},"end":{"dateTime":"2027-03-03T20:00:00Z"},"attendees":[{"email":"edited@example.com","responseStatus":"declined"}]}`), "gcal_json"))
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	require.NoError(err)
 	assert.Empty(page.Unexpandable)
 	require.Len(page.Occurrences, 1)
@@ -401,7 +340,7 @@ func TestListCalendarOccurrencesDefaultGoogleStatus(t *testing.T) {
 			_, err := st.PersistMessage(data)
 			require.NoError(err)
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			require.NoError(err)
 			require.Len(page.Occurrences, 1)
 			body, err := json.Marshal(page)

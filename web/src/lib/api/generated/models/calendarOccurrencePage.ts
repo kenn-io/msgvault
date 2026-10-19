@@ -5,6 +5,7 @@ import type { CalendarOccurrence } from "./calendarOccurrence";
 import type { CalendarUnexpandable } from "./calendarUnexpandable";
 
 export interface CalendarOccurrencePage {
+  next_cursor?: string;
   occurrences: CalendarOccurrence[];
   unexpandable: CalendarUnexpandable[];
   [key: string]: unknown;

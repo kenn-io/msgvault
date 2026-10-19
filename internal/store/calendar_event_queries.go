@@ -263,24 +263,35 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 }
 
 // Only sparse cancellations inherit omitted details from the master.
-func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, error) {
-	var stored []byte
-	var compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
-		return row, fmt.Errorf("read cancellation evidence: %w", err)
+func inheritCalendarCancellation(ctx context.Context, r *loggedDB, row, master CalendarEventRow) (CalendarEventRow, *calendarCancellationEvidence, error) {
+	evidence, err := readCalendarCancellationEvidence(ctx, r, row.MessageID)
+	if err != nil || !evidence.sparse {
+		return row, evidence, err
 	}
-	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	return inheritSparseCalendarCancellation(row, master, evidence.fields), evidence, nil
+}
+
+type calendarCancellationEvidence struct {
+	raw    []byte
+	format string
+	fields map[string]any
+	sparse bool
+}
+
+func readCalendarCancellationEvidence(ctx context.Context, r *loggedDB, messageID int64) (*calendarCancellationEvidence, error) {
+	raw, format, err := readCalendarRaw(ctx, r, messageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &calendarCancellationEvidence{sparse: true}, nil
+	}
 	if err != nil {
-		return row, err
+		return nil, err
 	}
-	var fields map[string]any
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return row, fmt.Errorf("decode cancellation evidence: %w", err)
+	evidence := &calendarCancellationEvidence{raw: raw, format: format}
+	if err := json.Unmarshal(raw, &evidence.fields); err != nil {
+		return nil, fmt.Errorf("decode cancellation evidence: %w", err)
 	}
-	if fields["start"] != nil || fields["end"] != nil {
-		return row, nil
-	}
-	return inheritSparseCalendarCancellation(row, master, fields), nil
+	evidence.sparse = evidence.fields["start"] == nil && evidence.fields["end"] == nil
+	return evidence, nil
 }
 
 func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[string]any) CalendarEventRow {
