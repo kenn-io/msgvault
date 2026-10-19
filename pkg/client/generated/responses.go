@@ -1705,6 +1705,8 @@ type ListOpenLoopsErrorResponseJSON413 = ErrorResponse
 
 type ListOpenLoopsErrorResponseJSON415 = ErrorResponse
 
+type ListOpenLoopsErrorResponseJSON422 = ErrorResponse
+
 type ListOpenLoopsErrorResponseJSON500 = ErrorResponse
 
 type ListOpenLoopsErrorResponseJSON503 = ErrorResponse
@@ -1724,6 +1726,8 @@ type RebuildLoopsErrorResponseJSON409 = ErrorResponse
 type RebuildLoopsErrorResponseJSON413 = ErrorResponse
 
 type RebuildLoopsErrorResponseJSON415 = ErrorResponse
+
+type RebuildLoopsErrorResponseJSON422 = ErrorResponse
 
 type RebuildLoopsErrorResponseJSON500 = ErrorResponse
 
@@ -1745,6 +1749,8 @@ type RunLoopsErrorResponseJSON413 = ErrorResponse
 
 type RunLoopsErrorResponseJSON415 = ErrorResponse
 
+type RunLoopsErrorResponseJSON422 = ErrorResponse
+
 type RunLoopsErrorResponseJSON500 = ErrorResponse
 
 type RunLoopsErrorResponseJSON503 = ErrorResponse
@@ -1765,6 +1771,8 @@ type GetLoopsStatusErrorResponseJSON413 = ErrorResponse
 
 type GetLoopsStatusErrorResponseJSON415 = ErrorResponse
 
+type GetLoopsStatusErrorResponseJSON422 = ErrorResponse
+
 type GetLoopsStatusErrorResponseJSON500 = ErrorResponse
 
 type GetLoopsStatusErrorResponseJSON503 = ErrorResponse
@@ -1784,6 +1792,8 @@ type ListLoopSuppressionsErrorResponseJSON409 = ErrorResponse
 type ListLoopSuppressionsErrorResponseJSON413 = ErrorResponse
 
 type ListLoopSuppressionsErrorResponseJSON415 = ErrorResponse
+
+type ListLoopSuppressionsErrorResponseJSON422 = ErrorResponse
 
 type ListLoopSuppressionsErrorResponseJSON500 = ErrorResponse
 
@@ -1807,6 +1817,8 @@ type CreateLoopSuppressionErrorResponseJSON413 = ErrorResponse
 
 type CreateLoopSuppressionErrorResponseJSON415 = ErrorResponse
 
+type CreateLoopSuppressionErrorResponseJSON422 = ErrorResponse
+
 type CreateLoopSuppressionErrorResponseJSON500 = ErrorResponse
 
 type CreateLoopSuppressionErrorResponseJSON503 = ErrorResponse
@@ -1824,6 +1836,8 @@ type DeleteLoopSuppressionErrorResponseJSON409 = ErrorResponse
 type DeleteLoopSuppressionErrorResponseJSON413 = ErrorResponse
 
 type DeleteLoopSuppressionErrorResponseJSON415 = ErrorResponse
+
+type DeleteLoopSuppressionErrorResponseJSON422 = ErrorResponse
 
 type DeleteLoopSuppressionErrorResponseJSON500 = ErrorResponse
 
@@ -1845,6 +1859,8 @@ type GetWaitingLoopsErrorResponseJSON413 = ErrorResponse
 
 type GetWaitingLoopsErrorResponseJSON415 = ErrorResponse
 
+type GetWaitingLoopsErrorResponseJSON422 = ErrorResponse
+
 type GetWaitingLoopsErrorResponseJSON500 = ErrorResponse
 
 type GetWaitingLoopsErrorResponseJSON503 = ErrorResponse
@@ -1864,6 +1880,8 @@ type GetOpenLoopErrorResponseJSON409 = ErrorResponse
 type GetOpenLoopErrorResponseJSON413 = ErrorResponse
 
 type GetOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type GetOpenLoopErrorResponseJSON422 = ErrorResponse
 
 type GetOpenLoopErrorResponseJSON500 = ErrorResponse
 
@@ -1885,9 +1903,55 @@ type CloseOpenLoopErrorResponseJSON413 = ErrorResponse
 
 type CloseOpenLoopErrorResponseJSON415 = ErrorResponse
 
+type CloseOpenLoopErrorResponseJSON422 = ErrorResponse
+
 type CloseOpenLoopErrorResponseJSON500 = ErrorResponse
 
 type CloseOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type UntrackOpenLoopErrorResponse = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON409 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type UntrackOpenLoopErrorResponseJSON503 = ErrorResponse
+
+type TrackOpenLoopResponse = LoopTrackResponse
+
+type TrackOpenLoopResponseJSON = LoopTrackResponse
+
+type TrackOpenLoopErrorResponse = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON403 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON404 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON409 = LoopAlreadyTrackedResponse
+
+type TrackOpenLoopErrorResponseJSON413 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON422 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON500 = ErrorResponse
+
+type TrackOpenLoopErrorResponseJSON503 = ErrorResponse
 
 type UnsnoozeOpenLoopResponse = LoopDetailResponse
 
@@ -1904,6 +1968,8 @@ type UnsnoozeOpenLoopErrorResponseJSON409 = ErrorResponse
 type UnsnoozeOpenLoopErrorResponseJSON413 = ErrorResponse
 
 type UnsnoozeOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type UnsnoozeOpenLoopErrorResponseJSON422 = ErrorResponse
 
 type UnsnoozeOpenLoopErrorResponseJSON500 = ErrorResponse
 
@@ -1924,6 +1990,8 @@ type SnoozeOpenLoopErrorResponseJSON409 = ErrorResponse
 type SnoozeOpenLoopErrorResponseJSON413 = ErrorResponse
 
 type SnoozeOpenLoopErrorResponseJSON415 = ErrorResponse
+
+type SnoozeOpenLoopErrorResponseJSON422 = ErrorResponse
 
 type SnoozeOpenLoopErrorResponseJSON500 = ErrorResponse
 
@@ -2958,6 +3026,8 @@ type ListPersonLoopsErrorResponseJSON409 = ErrorResponse
 type ListPersonLoopsErrorResponseJSON413 = ErrorResponse
 
 type ListPersonLoopsErrorResponseJSON415 = ErrorResponse
+
+type ListPersonLoopsErrorResponseJSON422 = ErrorResponse
 
 type ListPersonLoopsErrorResponseJSON500 = ErrorResponse
 
@@ -5403,6 +5473,7 @@ type ListOpenLoopsResp struct {
 	JSON409      *ListOpenLoopsErrorResponseJSON409
 	JSON413      *ListOpenLoopsErrorResponseJSON413
 	JSON415      *ListOpenLoopsErrorResponseJSON415
+	JSON422      *ListOpenLoopsErrorResponseJSON422
 	JSON500      *ListOpenLoopsErrorResponseJSON500
 	JSON503      *ListOpenLoopsErrorResponseJSON503
 }
@@ -5419,6 +5490,7 @@ type RebuildLoopsResp struct {
 	JSON409      *RebuildLoopsErrorResponseJSON409
 	JSON413      *RebuildLoopsErrorResponseJSON413
 	JSON415      *RebuildLoopsErrorResponseJSON415
+	JSON422      *RebuildLoopsErrorResponseJSON422
 	JSON500      *RebuildLoopsErrorResponseJSON500
 	JSON503      *RebuildLoopsErrorResponseJSON503
 }
@@ -5435,6 +5507,7 @@ type RunLoopsResp struct {
 	JSON409      *RunLoopsErrorResponseJSON409
 	JSON413      *RunLoopsErrorResponseJSON413
 	JSON415      *RunLoopsErrorResponseJSON415
+	JSON422      *RunLoopsErrorResponseJSON422
 	JSON500      *RunLoopsErrorResponseJSON500
 	JSON503      *RunLoopsErrorResponseJSON503
 }
@@ -5451,6 +5524,7 @@ type GetLoopsStatusResp struct {
 	JSON409      *GetLoopsStatusErrorResponseJSON409
 	JSON413      *GetLoopsStatusErrorResponseJSON413
 	JSON415      *GetLoopsStatusErrorResponseJSON415
+	JSON422      *GetLoopsStatusErrorResponseJSON422
 	JSON500      *GetLoopsStatusErrorResponseJSON500
 	JSON503      *GetLoopsStatusErrorResponseJSON503
 }
@@ -5467,6 +5541,7 @@ type ListLoopSuppressionsResp struct {
 	JSON409      *ListLoopSuppressionsErrorResponseJSON409
 	JSON413      *ListLoopSuppressionsErrorResponseJSON413
 	JSON415      *ListLoopSuppressionsErrorResponseJSON415
+	JSON422      *ListLoopSuppressionsErrorResponseJSON422
 	JSON500      *ListLoopSuppressionsErrorResponseJSON500
 	JSON503      *ListLoopSuppressionsErrorResponseJSON503
 }
@@ -5484,6 +5559,7 @@ type CreateLoopSuppressionResp struct {
 	JSON409      *CreateLoopSuppressionErrorResponseJSON409
 	JSON413      *CreateLoopSuppressionErrorResponseJSON413
 	JSON415      *CreateLoopSuppressionErrorResponseJSON415
+	JSON422      *CreateLoopSuppressionErrorResponseJSON422
 	JSON500      *CreateLoopSuppressionErrorResponseJSON500
 	JSON503      *CreateLoopSuppressionErrorResponseJSON503
 }
@@ -5499,6 +5575,7 @@ type DeleteLoopSuppressionResp struct {
 	JSON409      *DeleteLoopSuppressionErrorResponseJSON409
 	JSON413      *DeleteLoopSuppressionErrorResponseJSON413
 	JSON415      *DeleteLoopSuppressionErrorResponseJSON415
+	JSON422      *DeleteLoopSuppressionErrorResponseJSON422
 	JSON500      *DeleteLoopSuppressionErrorResponseJSON500
 	JSON503      *DeleteLoopSuppressionErrorResponseJSON503
 }
@@ -5515,6 +5592,7 @@ type GetWaitingLoopsResp struct {
 	JSON409      *GetWaitingLoopsErrorResponseJSON409
 	JSON413      *GetWaitingLoopsErrorResponseJSON413
 	JSON415      *GetWaitingLoopsErrorResponseJSON415
+	JSON422      *GetWaitingLoopsErrorResponseJSON422
 	JSON500      *GetWaitingLoopsErrorResponseJSON500
 	JSON503      *GetWaitingLoopsErrorResponseJSON503
 }
@@ -5531,6 +5609,7 @@ type GetOpenLoopResp struct {
 	JSON409      *GetOpenLoopErrorResponseJSON409
 	JSON413      *GetOpenLoopErrorResponseJSON413
 	JSON415      *GetOpenLoopErrorResponseJSON415
+	JSON422      *GetOpenLoopErrorResponseJSON422
 	JSON500      *GetOpenLoopErrorResponseJSON500
 	JSON503      *GetOpenLoopErrorResponseJSON503
 }
@@ -5547,8 +5626,43 @@ type CloseOpenLoopResp struct {
 	JSON409      *CloseOpenLoopErrorResponseJSON409
 	JSON413      *CloseOpenLoopErrorResponseJSON413
 	JSON415      *CloseOpenLoopErrorResponseJSON415
+	JSON422      *CloseOpenLoopErrorResponseJSON422
 	JSON500      *CloseOpenLoopErrorResponseJSON500
 	JSON503      *CloseOpenLoopErrorResponseJSON503
+}
+
+type UntrackOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *UntrackOpenLoopErrorResponse
+	JSON401      *UntrackOpenLoopErrorResponseJSON
+	JSON403      *UntrackOpenLoopErrorResponseJSON403
+	JSON404      *UntrackOpenLoopErrorResponseJSON404
+	JSON409      *UntrackOpenLoopErrorResponseJSON409
+	JSON413      *UntrackOpenLoopErrorResponseJSON413
+	JSON415      *UntrackOpenLoopErrorResponseJSON415
+	JSON422      *UntrackOpenLoopErrorResponseJSON422
+	JSON500      *UntrackOpenLoopErrorResponseJSON500
+	JSON503      *UntrackOpenLoopErrorResponseJSON503
+}
+
+type TrackOpenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *TrackOpenLoopResponse
+	JSON201      *TrackOpenLoopResponseJSON
+	JSON400      *TrackOpenLoopErrorResponse
+	JSON401      *TrackOpenLoopErrorResponseJSON
+	JSON403      *TrackOpenLoopErrorResponseJSON403
+	JSON404      *TrackOpenLoopErrorResponseJSON404
+	JSON409      *TrackOpenLoopErrorResponseJSON409
+	JSON413      *TrackOpenLoopErrorResponseJSON413
+	JSON415      *TrackOpenLoopErrorResponseJSON415
+	JSON422      *TrackOpenLoopErrorResponseJSON422
+	JSON500      *TrackOpenLoopErrorResponseJSON500
+	JSON503      *TrackOpenLoopErrorResponseJSON503
 }
 
 type UnsnoozeOpenLoopResp struct {
@@ -5563,6 +5677,7 @@ type UnsnoozeOpenLoopResp struct {
 	JSON409      *UnsnoozeOpenLoopErrorResponseJSON409
 	JSON413      *UnsnoozeOpenLoopErrorResponseJSON413
 	JSON415      *UnsnoozeOpenLoopErrorResponseJSON415
+	JSON422      *UnsnoozeOpenLoopErrorResponseJSON422
 	JSON500      *UnsnoozeOpenLoopErrorResponseJSON500
 	JSON503      *UnsnoozeOpenLoopErrorResponseJSON503
 }
@@ -5579,6 +5694,7 @@ type SnoozeOpenLoopResp struct {
 	JSON409      *SnoozeOpenLoopErrorResponseJSON409
 	JSON413      *SnoozeOpenLoopErrorResponseJSON413
 	JSON415      *SnoozeOpenLoopErrorResponseJSON415
+	JSON422      *SnoozeOpenLoopErrorResponseJSON422
 	JSON500      *SnoozeOpenLoopErrorResponseJSON500
 	JSON503      *SnoozeOpenLoopErrorResponseJSON503
 }
@@ -6504,6 +6620,7 @@ type ListPersonLoopsResp struct {
 	JSON409      *ListPersonLoopsErrorResponseJSON409
 	JSON413      *ListPersonLoopsErrorResponseJSON413
 	JSON415      *ListPersonLoopsErrorResponseJSON415
+	JSON422      *ListPersonLoopsErrorResponseJSON422
 	JSON500      *ListPersonLoopsErrorResponseJSON500
 	JSON503      *ListPersonLoopsErrorResponseJSON503
 }

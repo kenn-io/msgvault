@@ -879,3 +879,31 @@ func TestCitingFindsEveryCitedSource(t *testing.T) {
 	_, _, err = service.Citing(t.Context(), kataevidence.SourceKeys(message), 10)
 	require.ErrorIs(err, taskclient.ErrUnreachable)
 }
+
+func TestGetAndCommentStayInConfiguredProject(t *testing.T) {
+	f := newFixture(t)
+	evidence := f.evidence(t, 0)
+	result, err := f.service.Create(t.Context(), "get-comment", kataissues.CreateInput{Title: "Follow up", Evidence: []kataevidence.Reference{evidence.Reference}})
+	require.NoError(t, err)
+	got, err := f.service.Get(t.Context(), result.Issue.QualifiedRef)
+	require.NoError(t, err)
+	assert.Equal(t, result.Issue.UID, got.UID)
+	_, err = f.service.Get(t.Context(), "other#ab12")
+	require.ErrorIs(t, err, kataissues.ErrOutsideProject)
+	require.NoError(t, f.service.Comment(t.Context(), got.UID, "event-key", "A reply arrived."))
+	require.NoError(t, f.service.Comment(t.Context(), got.UID, "event-key", "A reply arrived."))
+	got, err = f.service.Get(t.Context(), got.UID)
+	require.NoError(t, err)
+	assert.Contains(t, got.CommentBodies, "A reply arrived.")
+	count := 0
+	for _, body := range got.CommentBodies {
+		if body == "A reply arrived." {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count)
+	f.kata.mismatchComment.Store(true)
+	require.NoError(t, f.service.Comment(t.Context(), got.UID, "event-key", "Changed display text."))
+	f.kata.failComment.Store(true)
+	require.Error(t, f.service.Comment(t.Context(), got.UID, "other-event", "A different reply."))
+}

@@ -382,7 +382,7 @@ func TestMergeSourcesTransfersEmailConversationMuteBeforeDerivation(t *testing.T
 		ConversationID: survivorConversation, Now: now, Verdict: store.LoopVerdict{Open: &destinationOpen},
 	}))
 	var destinationLoopID int64
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND anchor_message_id=?`), survivorConversation, survivorMessage).Scan(&destinationLoopID))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND anchor_message_id=? AND status<>'closed'`), survivorConversation, survivorMessage).Scan(&destinationLoopID))
 	var sourceLoopID int64
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND anchor_message_id=?`), hiddenConversation, hiddenMessage).Scan(&sourceLoopID))
 	muted, err := st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
@@ -1121,6 +1121,74 @@ func TestMergeSourcesDeduplicatesLoopHistoryAndPreservesCompletion(t *testing.T)
 	var sourceLoopCount int
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE id=?`), historyLoopID).Scan(&sourceLoopCount))
 	assert.Zero(sourceLoopCount, "the duplicate occurrence is folded into the surviving turn identity")
+}
+
+func TestMergeSourcesTerminalLoopWinsOverTrackingAndNewerMute(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		terminalFromSource bool
+		competitor         string
+	}{
+		{name: "tracked destination", terminalFromSource: true, competitor: "tracked"},
+		{name: "tracked source", competitor: "tracked"},
+		{name: "later user mute", competitor: "muted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			from, err := st.GetOrCreateSource("beeper", "terminal-loop-history-"+test.competitor)
+			require.NoError(err)
+			into, err := st.GetOrCreateSource("beeper", "terminal-loop-live-"+test.name)
+			require.NoError(err)
+			sourceAnchor, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-terminal-loop", "history", "same body", 1)
+			destinationAnchor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-terminal-loop", "live", "same body", 1)
+			now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+			sourceLoopID := mergeFixtureLoop(t, st, from.ID, sourceConversation, sourceAnchor, "reply_owed", now)
+			destinationLoopID := mergeFixtureLoop(t, st, into.ID, destinationConversation, destinationAnchor, "reply_owed", now)
+			terminalLoopID, competitorLoopID := destinationLoopID, sourceLoopID
+			if test.terminalFromSource {
+				terminalLoopID, competitorLoopID = sourceLoopID, destinationLoopID
+			}
+			completedAt := now.Add(-time.Hour)
+			_, err = st.CloseLoopContext(t.Context(), terminalLoopID, "done", completedAt)
+			require.NoError(err)
+			_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET closed_by='system' WHERE id=?`), terminalLoopID)
+			require.NoError(err)
+
+			issueUID := "synthetic-terminal-" + test.name
+			if test.competitor == "tracked" {
+				_, inserted, err := st.InsertLoopKataLinkContext(t.Context(), store.LoopKataLink{
+					LoopID: competitorLoopID, IssueUID: issueUID, IssueRef: "example#term1",
+					LinkedVia: "existing", LinkedAt: now,
+				}, "")
+				require.NoError(err)
+				assert.True(inserted)
+			} else {
+				mutedAt := completedAt.Add(time.Hour)
+				_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET status='closed',closed_at=?,
+					closed_reason='muted',closed_by='user',agenda_state='dismissed',updated_at=? WHERE id=?`),
+					mutedAt, mutedAt, competitorLoopID)
+				require.NoError(err)
+			}
+
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+			require.NoError(err)
+			got, err := st.GetOpenLoopContext(t.Context(), destinationLoopID)
+			require.NoError(err)
+			assert.Equal("closed", got.Status)
+			require.NotNil(got.ClosedReason)
+			assert.Equal("done", *got.ClosedReason)
+			require.NotNil(got.ClosedBy)
+			assert.Equal("system", *got.ClosedBy)
+			if test.competitor == "tracked" {
+				require.NotNil(got.Kata)
+				assert.Equal(issueUID, got.Kata.IssueUID, "terminal state must retain the duplicate's Kata link")
+			} else {
+				assert.Nil(got.Kata)
+			}
+		})
+	}
 }
 
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
@@ -1904,4 +1972,62 @@ func TestMergeSourcesTransfersAcrossBatchBoundaries(t *testing.T) {
  WHERE m.source_id = ? AND m.deleted_at IS NULL AND EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages a WHERE a.message_id = m.id AND a.original_source_message_id LIKE 'message-%')`), into.ID).Scan(&count))
 	assert.Equal(205, count)
+}
+func TestMergeSourcesPreservesKataLinkOnRetainedDuplicateLoopHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "loop-complete-history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "loop-complete-live-example")
+	require.NoError(err)
+	survivor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-completed-loop", "live", "same body", 1)
+	duplicate, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-completed-loop", "history", "same body", 1)
+	created := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	completed := created.Add(4 * time.Hour)
+	var destinationLoopID, historyLoopID int64
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO open_loops(
+		turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,anchor_message_id,
+		owed_since_at,last_activity_message_id,last_activity_at,opens_at,evidence_json,ruleset_version,
+		agenda_state,created_at,updated_at
+	) VALUES(?,1,?,?,'reply_owed','turn_state','open','chat',?,?,?, ?,?,'[]',1,'none',?,?) RETURNING id`),
+		fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor), destinationConversation, into.ID,
+		survivor, created, survivor, created.Add(2*time.Hour), created.Add(48*time.Hour), created, created).Scan(&destinationLoopID)
+	require.NoError(err)
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO open_loops(
+		turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,anchor_message_id,
+		owed_since_at,last_activity_message_id,last_activity_at,opens_at,evidence_json,ruleset_version,
+		agenda_state,closed_at,closed_reason,closed_by,created_at,updated_at
+	) VALUES(?,1,?,?,'reply_owed','turn_state','closed','chat',?,?,?, ?,?,'[]',1,'dismissed',?,'done','user',?,?) RETURNING id`),
+		fmt.Sprintf("turn:%d:reply_owed:%d", sourceConversation, duplicate), sourceConversation, from.ID,
+		duplicate, created, duplicate, completed, completed.Add(24*time.Hour), completed, created, completed).Scan(&historyLoopID)
+	require.NoError(err)
+	_, inserted, err := st.InsertLoopKataLinkContext(t.Context(), store.LoopKataLink{
+		LoopID: historyLoopID, IssueUID: "synthetic-history-issue", IssueRef: "example#hist1", LinkedVia: "existing", LinkedAt: created,
+	}, "")
+	require.NoError(err)
+	assert.True(inserted)
+	withdrawn := completed.Add(time.Hour)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET status='closed',closed_at=?,closed_reason='withdrawn',closed_by='system',updated_at=? WHERE id=?`),
+		withdrawn, withdrawn, destinationLoopID)
+	require.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE conversation_id=? AND turn_key=?`), destinationConversation, fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor)).Scan(&count))
+	assert.Equal(1, count, "source merge folds duplicate terminal history into the surviving turn row")
+	var status, reason, by, agenda string
+	err = st.DB().QueryRow(st.Rebind(`SELECT status,closed_reason,closed_by,agenda_state FROM open_loops WHERE id=?`), destinationLoopID).Scan(&status, &reason, &by, &agenda)
+	require.NoError(err)
+	assert.Equal("closed", status)
+	assert.Equal("done", reason)
+	assert.Equal("user", by)
+	assert.Equal("dismissed", agenda)
+	var retainedHistoryCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE id=?`), historyLoopID).Scan(&retainedHistoryCount))
+	assert.Zero(retainedHistoryCount, "the historical row is folded into the destination loop identity")
+	link, err := st.GetLoopKataLinkContext(t.Context(), destinationLoopID)
+	require.NoError(err)
+	assert.Equal("synthetic-history-issue", link.IssueUID)
 }

@@ -63,6 +63,22 @@ func TestLibraryHandlerAuthorizesBeforeGate(t *testing.T) { //nolint:paralleltes
 	assert.Equal(t, Operation{ID: "rebuildCLIFTS", Method: http.MethodPost, Path: "/api/v1/cli/rebuild-fts"}, seen)
 }
 
+func TestLibraryHandlerAuthorizesLoopUntrackAsPublicOperation(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	srv := newLibraryHandlerTestServer(t)
+	var seen Operation
+	handler := srv.Handler(func(w http.ResponseWriter, _ *http.Request, operation Operation) bool {
+		seen = operation
+		w.WriteHeader(http.StatusForbidden)
+		return false
+	})
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/api/v1/loops/42/kata", nil))
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Equal(t, Operation{ID: "untrackOpenLoop", Method: http.MethodDelete, Path: "/api/v1/loops/{id}/kata"}, seen)
+}
+
 func TestLibraryHandlerClientClassDoesNotLiftTimeout(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

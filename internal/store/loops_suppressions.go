@@ -10,6 +10,13 @@ import (
 
 const loopSuppressionColumns = "id,target_kind,participant_id," + personMergePersonIDColumn + ",conversation_id,note,created_at"
 
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
 func scanLoopSuppression(row scanner) (LoopSuppression, error) {
 	var suppression LoopSuppression
 	err := row.Scan(&suppression.ID, &suppression.TargetKind, &suppression.ParticipantID, &suppression.PersonID, &suppression.ConversationID, &suppression.Note, &suppression.CreatedAt)
@@ -50,6 +57,7 @@ func validateLoopSuppression(request LoopSuppressionRequest) error {
 	}
 	return nil
 }
+
 func loopSuppressionPredicate(request LoopSuppressionRequest) (string, []any) {
 	switch request.TargetKind {
 	case "participant":
@@ -165,6 +173,14 @@ func (s *Store) reconcileParticipantLoopStateTx(
 			LoopSuppressionRequest{TargetKind: string(AttributeObjectPerson), PersonID: &personID})
 	}
 	return nil
+}
+
+func loopSuppressionAppliesTx(ctx context.Context, tx *loggedTx, conversationID int64, participantID, personID *int64) (bool, error) {
+	var muted bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions
+		WHERE conversation_id=? OR participant_id=? OR person_id=?
+		OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, conversationID, participantID, personID, participantID).Scan(&muted)
+	return muted, err
 }
 
 // suppressionConversationIDs includes native membership even before any loop has been derived.

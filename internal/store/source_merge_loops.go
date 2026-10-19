@@ -27,7 +27,7 @@ func (s *Store) transferMergedLoopState(ctx context.Context, tx *loggedTx, conve
 }
 
 func (s *Store) transferMergedConversationLoopState(ctx context.Context, tx *loggedTx, from, into int64, conversationIDs, messageSurvivors map[int64]int64) error {
-	loops, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.conversation_id=? ORDER BY l.id", from)
+	loops, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.conversation_id=? ORDER BY l.id", from)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func findMergedLoopCollision(ctx context.Context, tx *loggedTx, source OpenLoop,
 		predicate += " OR (l.conversation_id=? AND l.kind=? AND l.detector='turn_state')"
 		args = append(args, destinationID, source.Kind)
 	}
-	query := "SELECT " + openLoopColumns + " FROM open_loops l WHERE l.id<>? AND l.status<>'closed' AND (" + predicate + ") ORDER BY CASE WHEN l.conversation_id=? THEN 0 ELSE 1 END,l.id LIMIT 1"
+	query := "SELECT " + openLoopColumns + openLoopFrom + " WHERE l.id<>? AND l.status<>'closed' AND (" + predicate + ") ORDER BY CASE WHEN l.conversation_id=? THEN 0 ELSE 1 END,l.id LIMIT 1"
 	args = append(args, destinationID)
 	loop, err := scanOpenLoop(tx.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, ErrLoopNotFound) {

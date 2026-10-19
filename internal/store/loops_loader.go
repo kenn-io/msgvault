@@ -33,6 +33,23 @@ func loopMessageExcludedSQL(message, source string) string {
 			AND ` + message + `.is_sent=FALSE))`
 }
 
+func loopCategoryLabelIDFromSystemRole(role string) string {
+	switch role {
+	case labelSystemRoleGmailCategoryPersonal:
+		return "CATEGORY_PERSONAL"
+	case labelSystemRoleGmailCategorySocial:
+		return "CATEGORY_SOCIAL"
+	case labelSystemRoleGmailCategoryPromotions:
+		return "CATEGORY_PROMOTIONS"
+	case labelSystemRoleGmailCategoryUpdates:
+		return "CATEGORY_UPDATES"
+	case labelSystemRoleGmailCategoryForums:
+		return "CATEGORY_FORUMS"
+	default:
+		return ""
+	}
+}
+
 func (s *Store) LoopMessageBodyContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
 	err := s.db.QueryRowContext(ctx, "SELECT body_text FROM message_bodies WHERE message_id=?", messageID).Scan(&body)
@@ -52,7 +69,7 @@ func (s *Store) LoadLoopConversationContext(ctx context.Context, conversationID 
 		var last nullableTimestamp
 		err := tx.QueryRowContext(ctx, `SELECT c.id,c.source_id,s.source_type,c.conversation_type,
 (SELECT MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) FROM messages m JOIN sources src ON src.id=m.source_id
-WHERE m.conversation_id=c.id AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+draftEvidenceSQL("m", "src")+`))
+WHERE m.conversation_id=c.id AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+loopMessageExcludedSQL("m", "src")+`))
 FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversationID).Scan(&out.ConversationID, &out.SourceID, &out.SourceType, &out.ConversationType, &last)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrLoopNotFound
@@ -159,9 +176,8 @@ UNION SELECT mr.participant_id FROM message_recipients mr JOIN messages m ON m.i
 			}
 		}
 		// Group eligibility uses current roster members and unlisted senders. A sender
-		// with a roster row that has left must not remain a current counterpart.
-		// Email recipients establish participation only when the archive has no active
-		// conversation roster rows.
+		// with a roster row that has left must not remain a current counterpart. Email
+		// recipients remain participants even when the conversation also has a roster.
 		participantIDs := `SELECT participant_id FROM conversation_participants WHERE conversation_id=? AND left_at IS NULL
 
 UNION SELECT m.sender_id FROM messages m WHERE m.conversation_id=? AND m.sender_id IS NOT NULL
@@ -196,16 +212,28 @@ AND NOT EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation
 				positions[m.ID] = i
 			}
 			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-			rows, err = tx.QueryContext(ctx, `SELECT ml.message_id,l.source_label_id FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id IN (`+placeholders+`) AND l.source_label_id IS NOT NULL ORDER BY ml.message_id,l.source_label_id`, ids...)
+			labelArgs := append(append([]any(nil), ids...),
+				labelSystemRoleGmailCategoryPersonal, labelSystemRoleGmailCategorySocial,
+				labelSystemRoleGmailCategoryPromotions, labelSystemRoleGmailCategoryUpdates,
+				labelSystemRoleGmailCategoryForums,
+			)
+			rows, err = tx.QueryContext(ctx, `SELECT ml.message_id,l.source_label_id,l.system_role FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id IN (`+placeholders+`) AND (l.source_label_id IS NOT NULL OR l.system_role IN (?,?,?,?,?)) ORDER BY ml.message_id,COALESCE(l.source_label_id,l.system_role,'')`, labelArgs...)
 			if err != nil {
 				return err
 			}
 			for rows.Next() {
 				var id int64
-				var label string
-				if err := rows.Scan(&id, &label); err != nil {
+				var providerLabelID, systemRole sql.NullString
+				if err := rows.Scan(&id, &providerLabelID, &systemRole); err != nil {
 					_ = rows.Close()
 					return err
+				}
+				label := providerLabelID.String
+				if !providerLabelID.Valid {
+					label = loopCategoryLabelIDFromSystemRole(systemRole.String)
+				}
+				if label == "" {
+					continue
 				}
 				i := positions[id]
 				out.Messages[i].Labels = append(out.Messages[i].Labels, label)

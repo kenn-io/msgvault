@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/kataissues"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/taskclient"
@@ -22,6 +23,9 @@ const kataEvidencePreparePath = "/api/v1/integrations/kata/evidence/prepare"
 
 // KataIssueOperations quotes archive evidence and files it in Kata.
 type KataIssueOperations interface {
+	loops.KataConnector
+	Get(ctx context.Context, ref string) (taskclient.KataTask, error)
+	Comment(ctx context.Context, issueUID, key, body string) error
 	Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error)
 	Create(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error)
 	Link(ctx context.Context, ref string, evidence []kataevidence.Reference) (taskclient.KataTask, error)
@@ -248,8 +252,16 @@ func kataIssueReceipt(issue taskclient.KataTask) KataIssueReceipt {
 }
 
 func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
+	if !s.writeKnownKataIssueError(w, err) {
+		writeError(w, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable")
+	}
+}
+
+// writeKnownKataIssueError lets shared callers retain their own fallback for
+// unexpected failures outside the Kata integration.
+func (s *Server) writeKnownKataIssueError(w http.ResponseWriter, err error) bool {
 	if s.writeIfContextError(w, err) {
-		return
+		return true
 	}
 	for _, entry := range []struct {
 		cause         error
@@ -286,13 +298,22 @@ func (s *Server) writeKataIssueError(w http.ResponseWriter, err error) {
 		{taskclient.ErrRequestRejected, http.StatusUnprocessableEntity, "kata_request_rejected", "Kata rejected this request"},
 		{taskclient.ErrAuthenticationRequired, http.StatusUnauthorized, "authentication_required", "Kata authentication is required"},
 		{taskclient.ErrWrongProject, http.StatusServiceUnavailable, "wrong_project", "The configured Kata project is unavailable"},
+		{taskclient.ErrIncompatible, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrInsecureDescriptor, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrInsecureEndpoint, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrInvalidResponse, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrPlatformSecurityLimit, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrRedirect, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrResponseTooLarge, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrRevisionRequired, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
+		{taskclient.ErrUnreachable, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable"},
 	} {
 		if errors.Is(err, entry.cause) {
 			writeError(w, entry.status, entry.code, entry.message)
-			return
+			return true
 		}
 	}
-	writeError(w, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable")
+	return false
 }
 
 type kataIssueStore interface {
@@ -314,6 +335,12 @@ type kataIssueBackend struct {
 }
 
 func newKataIssueBackend(cfg *config.Config, messageStore MessageStore, logger *slog.Logger) KataIssueOperations {
+	return NewKataIssueOperations(cfg, messageStore, logger)
+}
+
+// NewKataIssueOperations shares the configured evidence and Kata connection
+// boundary between HTTP operations and the daemon's loop bridge.
+func NewKataIssueOperations(cfg *config.Config, messageStore MessageStore, logger *slog.Logger) KataIssueOperations {
 	archive, ok := messageStore.(kataIssueStore)
 	if !ok || cfg == nil {
 		return nil
@@ -390,4 +417,39 @@ func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int
 		keys = append(keys, sourceKeys[len(sourceKeys)-1])
 	}
 	return service.Citing(ctx, keys, kataIssueFindLimit)
+}
+
+// Connect pays the integration preflight once for a bounded bridge pass.
+func (b *kataIssueBackend) Connect(ctx context.Context) (loops.KataIssues, error) {
+	service, err := b.service(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &connectedKataIssues{Service: service, preparer: b.evidence}, nil
+}
+
+type connectedKataIssues struct {
+	*kataissues.Service
+
+	preparer *kataevidence.Service
+}
+
+func (b *connectedKataIssues) Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error) {
+	return b.preparer.Prepare(ctx, selectors)
+}
+
+func (b *kataIssueBackend) Get(ctx context.Context, ref string) (taskclient.KataTask, error) {
+	service, err := b.service(ctx)
+	if err != nil {
+		return taskclient.KataTask{}, err
+	}
+	return service.Get(ctx, ref)
+}
+
+func (b *kataIssueBackend) Comment(ctx context.Context, issueUID, key, body string) error {
+	service, err := b.service(ctx)
+	if err != nil {
+		return err
+	}
+	return service.Comment(ctx, issueUID, key, body)
 }

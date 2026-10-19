@@ -77,12 +77,23 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return fmt.Errorf("transfer source merge loop state: %w", err)
 	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
-	// before archive labels lose provider IDs; Drafts takes precedence.
+	// before archive labels lose provider IDs; Drafts takes precedence, while
+	// category roles keep loop bulk exclusions intact after source merges.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
- WHEN system_role = 'drafts' OR source_label_id = 'DRAFT' THEN 'drafts'
- ELSE 'sent' END
- WHERE source_id IN (?, ?) AND source_label_id IN ('SENT', 'DRAFT')
- AND EXISTS (SELECT 1 FROM sources s WHERE s.id = labels.source_id AND s.source_type = 'gmail')`, from, into); err != nil {
+		WHEN system_role = ? OR source_label_id = 'DRAFT' THEN ?
+		WHEN source_label_id = 'SENT' THEN ?
+		WHEN source_label_id = 'CATEGORY_PERSONAL' THEN ?
+		WHEN source_label_id = 'CATEGORY_SOCIAL' THEN ?
+		WHEN source_label_id = 'CATEGORY_PROMOTIONS' THEN ?
+		WHEN source_label_id = 'CATEGORY_UPDATES' THEN ?
+		WHEN source_label_id = 'CATEGORY_FORUMS' THEN ?
+		END
+		WHERE source_id IN (?, ?) AND source_label_id IN ('SENT', 'DRAFT', 'CATEGORY_PERSONAL', 'CATEGORY_SOCIAL', 'CATEGORY_PROMOTIONS', 'CATEGORY_UPDATES', 'CATEGORY_FORUMS')
+		AND EXISTS (SELECT 1 FROM sources s WHERE s.id = labels.source_id AND s.source_type = 'gmail')`,
+		LabelSystemRoleDrafts, LabelSystemRoleDrafts, LabelSystemRoleSent,
+		labelSystemRoleGmailCategoryPersonal, labelSystemRoleGmailCategorySocial,
+		labelSystemRoleGmailCategoryPromotions, labelSystemRoleGmailCategoryUpdates,
+		labelSystemRoleGmailCategoryForums, from, into); err != nil {
 		return err
 	}
 	// Incoming labels are archive organization, not destination provider label IDs.
@@ -455,6 +466,7 @@ type sourceMergeLiveLoop struct {
 	id                    int64
 	kind                  string
 	lastActivityAt        time.Time
+	hasKata               bool
 	snoozedUntil          sql.NullTime
 	agendaState           string
 	fulfilmentSuggestedAt sql.NullTime
@@ -467,10 +479,11 @@ func (s *Store) resolveSourceMergeLiveLoopCollision(
 	sourceLoopID, destinationConversationID int64,
 ) error {
 	var sourceLoop sourceMergeLiveLoop
-	err := tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
-		fulfilment_suggested_at, evidence_json FROM open_loops
+	err := tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at,
+		EXISTS (SELECT 1 FROM loop_kata_links k WHERE k.loop_id = open_loops.id),
+		snoozed_until, agenda_state, fulfilment_suggested_at, evidence_json FROM open_loops
 		WHERE id = ? AND detector = 'turn_state' AND status <> 'closed'`, sourceLoopID).
-		Scan(&sourceLoop.id, &sourceLoop.kind, &sourceLoop.lastActivityAt, &sourceLoop.snoozedUntil,
+		Scan(&sourceLoop.id, &sourceLoop.kind, &sourceLoop.lastActivityAt, &sourceLoop.hasKata, &sourceLoop.snoozedUntil,
 			&sourceLoop.agendaState, &sourceLoop.fulfilmentSuggestedAt, &sourceLoop.evidence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -479,11 +492,12 @@ func (s *Store) resolveSourceMergeLiveLoopCollision(
 		return err
 	}
 	var destinationLoop sourceMergeLiveLoop
-	err = tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at, snoozed_until, agenda_state,
-		fulfilment_suggested_at, evidence_json FROM open_loops
+	err = tx.QueryRowContext(ctx, `SELECT id, kind, last_activity_at,
+		EXISTS (SELECT 1 FROM loop_kata_links k WHERE k.loop_id = open_loops.id),
+		snoozed_until, agenda_state, fulfilment_suggested_at, evidence_json FROM open_loops
 		WHERE conversation_id = ? AND kind = ? AND detector = 'turn_state' AND status <> 'closed'
 		ORDER BY last_activity_at DESC, id LIMIT 1`, destinationConversationID, sourceLoop.kind).
-		Scan(&destinationLoop.id, &destinationLoop.kind, &destinationLoop.lastActivityAt,
+		Scan(&destinationLoop.id, &destinationLoop.kind, &destinationLoop.lastActivityAt, &destinationLoop.hasKata,
 			&destinationLoop.snoozedUntil, &destinationLoop.agendaState,
 			&destinationLoop.fulfilmentSuggestedAt, &destinationLoop.evidence)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -493,7 +507,11 @@ func (s *Store) resolveSourceMergeLiveLoopCollision(
 		return err
 	}
 	winner, retired := &destinationLoop, &sourceLoop
-	if sourceLoop.lastActivityAt.After(destinationLoop.lastActivityAt) {
+	if sourceLoop.hasKata != destinationLoop.hasKata {
+		if sourceLoop.hasKata {
+			winner, retired = &sourceLoop, &destinationLoop
+		}
+	} else if sourceLoop.lastActivityAt.After(destinationLoop.lastActivityAt) {
 		winner, retired = &sourceLoop, &destinationLoop
 	}
 	if err := s.transferSourceMergeLiveLoopOwnerState(ctx, tx, winner, retired); err != nil {
@@ -613,14 +631,13 @@ func (s *Store) collapseSourceMergeLoopDuplicate(
 	messageSurvivors map[int64]int64,
 ) (bool, error) {
 	source, err := scanOpenLoop(tx.QueryRowContext(ctx,
-		"SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", sourceLoopID,
+		"SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=?", sourceLoopID,
 	))
 	if err != nil {
 		return false, err
 	}
 	destination, err := scanOpenLoop(tx.QueryRowContext(ctx,
-		"SELECT "+openLoopColumns+` FROM open_loops l
-		WHERE l.id<>? AND l.conversation_id=? AND l.turn_key=? AND l.cycle=? ORDER BY l.id LIMIT 1`,
+		"SELECT "+openLoopColumns+openLoopFrom+` WHERE l.id<>? AND l.conversation_id=? AND l.turn_key=? AND l.cycle=? ORDER BY l.id LIMIT 1`,
 		sourceLoopID, destinationConversationID, turnKey, sourceCycle,
 	))
 	if errors.Is(err, ErrLoopNotFound) {
@@ -633,6 +650,11 @@ func (s *Store) collapseSourceMergeLoopDuplicate(
 		return false, nil
 	}
 	winnerIsSource := sourceMergeLoopWins(source, destination)
+	if source.Kata != nil && destination.Kata == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_kata_links SET loop_id=? WHERE loop_id=?`, destination.ID, source.ID); err != nil {
+			return false, fmt.Errorf("retarget tracked loop link from %d to %d: %w", source.ID, destination.ID, err)
+		}
+	}
 	sourceState := sourceMergeLoopState(source)
 	destinationState := sourceMergeLoopState(destination)
 	winnerState, retiredState := &destinationState, &sourceState
@@ -644,7 +666,7 @@ func (s *Store) collapseSourceMergeLoopDuplicate(
 	}
 	if winnerIsSource {
 		winner, err := scanOpenLoop(tx.QueryRowContext(ctx,
-			"SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", sourceLoopID,
+			"SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=?", sourceLoopID,
 		))
 		if err != nil {
 			return false, fmt.Errorf("reload winning source loop: %w", err)
@@ -677,6 +699,13 @@ func (s *Store) collapseSourceMergeLoopDuplicate(
 }
 
 func sourceMergeLoopWins(source, destination OpenLoop) bool {
+	sourceTerminal, destinationTerminal := loopTerminal(source), loopTerminal(destination)
+	if sourceTerminal != destinationTerminal {
+		return sourceTerminal
+	}
+	if (source.Kata != nil) != (destination.Kata != nil) {
+		return source.Kata != nil
+	}
 	sourceUserClosed := source.Status == "closed" && source.ClosedBy != nil && *source.ClosedBy == "user"
 	destinationUserClosed := destination.Status == "closed" && destination.ClosedBy != nil && *destination.ClosedBy == "user"
 	if sourceUserClosed != destinationUserClosed {

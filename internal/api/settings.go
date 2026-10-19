@@ -761,7 +761,9 @@ func (s *Server) buildSettingsResponse(
 	return SettingsResponse{
 		Groups: append([]SettingGroup(nil), settingsGroups...), Settings: settings,
 		PersonEnrichmentProviders: providers, CredentialETag: credentials.ETag,
-		PendingRestart: pendingRestart,
+		// Confirmations may use this project only when it matches the backend's
+		// running configuration, including after an on-disk edit outside HTTP.
+		PendingRestart: pendingRestart || strings.TrimSpace(cfg.Integrations.Kata.DefaultProject) != strings.TrimSpace(s.cfg.Integrations.Kata.DefaultProject),
 	}, nil
 }
 

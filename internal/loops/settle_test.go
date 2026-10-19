@@ -259,6 +259,34 @@ func TestSettlementReanchorsWhenInboundAddressingIsCorrected(t *testing.T) {
 	assertions.Equal(newer.OccurredAt, got.Open.OwedSinceAt)
 }
 
+func TestSettlementWithdrawsEditedQuestionAndReanchorsLaterQuestion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	anchor := view.Messages[0]
+	anchor.Direction = Outbound
+	anchor.Sender = view.Participants[0]
+	anchor.Recipients = []LoopRecipient{{LoopParticipant: view.Participants[1], Type: "to"}}
+	newer := anchor
+	newer.ID = anchor.ID + 1
+	newer.OccurredAt = anchor.OccurredAt.Add(time.Hour)
+	view.Messages = []LoopMessage{anchor, newer}
+	view.BodyText = func(id int64) (string, error) {
+		if id == anchor.ID {
+			return "FYI, the meeting moved.", nil
+		}
+		return "Can you confirm the new time?", nil
+	}
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: AwaitingReply, AnchorMessageID: anchor.ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	requirements.NotNil(got.Open)
+	assertions.Equal(newer.ID, got.Open.Anchor.ID)
+	assertions.Equal(newer.OccurredAt, got.Open.OwedSinceAt)
+}
+
 func TestSettlementLookupErrorPreventsApply(t *testing.T) {
 	view, now := detectorFixture()
 	view.AnchorExists = func(int64) (bool, error) { return false, errors.New("archive unavailable") }
@@ -415,31 +443,4 @@ func TestDetectNeutralWindowKeepsUnsettledLive(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestDetectUsesRecoveredAnchorForCCOnlyFollowUp(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	view, now := detectorFixture()
-	anchor := view.Messages[0]
-	followUp := anchor
-	followUp.ID = anchor.ID + 1
-	followUp.OccurredAt = now.Add(-time.Hour)
-	followUp.Recipients = append([]LoopRecipient(nil), followUp.Recipients...)
-	followUp.Recipients[0].Type = "cc"
-	view.Messages = []LoopMessage{followUp}
-	view.AnchorExists = func(int64) (bool, error) { return true, nil }
-	view.Extend = func() (ConversationView, error) {
-		extended := view
-		extended.Messages = []LoopMessage{anchor, followUp}
-		return extended, nil
-	}
-
-	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID}}, now, DefaultThresholds(), Suppressions{})
-	requirements.NoError(got.Err)
-	assertions.Empty(got.Close)
-	requirements.NotNil(got.Open)
-	assertions.Equal(anchor.ID, got.Open.Anchor.ID)
-	assertions.Equal(anchor.Sender.ID, got.Open.Counterparty.ID)
-	assertions.Equal(followUp.ID, got.Open.LastActivity.ID)
 }

@@ -153,6 +153,7 @@ type handlers struct {
 	calendar             CalendarBackend
 	personAgendaBackend  PersonAgendaBackend
 	kata                 KataBackend
+	kataProject          func(context.Context) (string, error)
 	identityReview       IdentityReviewBackend
 	personCardDAV        PersonCardDAVBackend
 	messageTags          MessageTagBackend

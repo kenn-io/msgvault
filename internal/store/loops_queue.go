@@ -105,9 +105,12 @@ func (s *Store) CommitLoopFeedContext(ctx context.Context, ids []int64, cursor C
 	})
 }
 func (s *Store) loopRescanIDs(ctx context.Context, q contextRowsQuerier, state LoopDerivationState, cutoff time.Time, limit int) ([]int64, error) {
-	query := `SELECT c.id FROM conversations c WHERE (? OR c.last_message_at>=? OR EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?) OR EXISTS(SELECT 1 FROM open_loops l WHERE l.conversation_id=c.id AND l.status<>'closed'))`
-	cutoffParam := s.dialect.TimestampParam(cutoff)
-	args := []any{cutoff.IsZero(), cutoffParam, cutoffParam}
+	query := `SELECT c.id FROM conversations c WHERE (? OR c.last_message_at>=? OR
+		EXISTS(SELECT 1 FROM messages m JOIN sources src ON src.id=m.source_id
+			WHERE m.conversation_id=c.id AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND NOT ` + draftEvidenceSQL("m", "src") + `) OR
+		EXISTS(SELECT 1 FROM open_loops l WHERE l.conversation_id=c.id AND l.status<>'closed'))`
+	cutoffAt := s.dialect.TimestampParam(cutoff)
+	args := []any{cutoff.IsZero(), cutoffAt, cutoffAt}
 	if state.RescanStartedAt != nil {
 		query += " AND c.id>?"
 		args = append(args, state.RescanLastConversationID)

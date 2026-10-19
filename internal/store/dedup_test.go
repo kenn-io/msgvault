@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -53,6 +54,72 @@ func TestStore_FindDuplicatesByRFC822ID(t *testing.T) {
 	groups, err = f.Store.FindDuplicatesByRFC822ID()
 	require.NoError(err, "FindDuplicatesByRFC822ID after merge")
 	assert.Empty(groups, "groups after merge")
+}
+
+func TestStore_MergeDuplicatesRetargetsLoopAndPreservesSnoozeAndKata(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	survivorID := newRFC822Message(t, f, "mailbox-survivor", "duplicate-loop-anchor")
+	duplicateID := newRFC822Message(t, f, "mailbox-duplicate", "duplicate-loop-anchor")
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	loopID := mergeFixtureLoop(t, f.Store, f.Source.ID, f.ConvID, duplicateID, "reply_owed", now)
+	snoozedUntil := now.Add(24 * time.Hour)
+	_, err := f.Store.SnoozeLoopContext(t.Context(), loopID, snoozedUntil, now)
+	requirements.NoError(err)
+	_, inserted, err := f.Store.InsertLoopKataLinkContext(t.Context(), store.LoopKataLink{
+		LoopID: loopID, IssueUID: "dedup-loop-issue", IssueRef: "example#dedup1", LinkedVia: "existing", LinkedAt: now,
+	}, "")
+	requirements.NoError(err)
+	assertions.True(inserted)
+	evidence := fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_participation_message_id":%d,"owner_note":"preserve this note"}]`, duplicateID, f.ConvID, duplicateID)
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE open_loops SET evidence_json=? WHERE id=?"), evidence, loopID)
+	requirements.NoError(err)
+
+	_, err = f.Store.MergeDuplicates(survivorID, []int64{duplicateID}, "dedup-loop-batch")
+	requirements.NoError(err)
+
+	got, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	requirements.NotNil(got.AnchorMessageID)
+	assertions.Equal(survivorID, *got.AnchorMessageID)
+	requirements.NotNil(got.LastActivityMessageID)
+	assertions.Equal(survivorID, *got.LastActivityMessageID)
+	requirements.NotNil(got.SnoozedUntil)
+	assertions.True(snoozedUntil.Equal(*got.SnoozedUntil))
+	requirements.NotNil(got.Kata)
+	assertions.Equal("dedup-loop-issue", got.Kata.IssueUID)
+	assertions.JSONEq(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"owner_participation_message_id":%d,"owner_note":"preserve this note"}]`, survivorID, f.ConvID, survivorID), string(got.EvidenceJSON))
+}
+
+func TestStore_MergeDuplicatesMovesLoopToSurvivorConversation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	survivorID := newRFC822Message(t, f, "mailbox-survivor-copy", "same-thread-message")
+	duplicateID := newRFC822Message(t, f, "mailbox-duplicate-copy", "same-thread-message")
+	duplicateConversationID, err := f.Store.EnsureConversationWithType(f.Source.ID, "same-thread-history", "email_thread", "Same thread")
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE messages SET conversation_id=? WHERE id=?"), duplicateConversationID, duplicateID)
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	loopID := mergeFixtureLoop(t, f.Store, f.Source.ID, duplicateConversationID, duplicateID, "reply_owed", now)
+
+	_, err = f.Store.MergeDuplicates(survivorID, []int64{duplicateID}, "dedup-loop-conversation-batch")
+	requirements.NoError(err)
+
+	got, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal(f.ConvID, got.ConversationID)
+	assertions.Equal(f.Source.ID, got.SourceID)
+	requirements.NotNil(got.AnchorMessageID)
+	assertions.Equal(survivorID, *got.AnchorMessageID)
+	assertions.Equal(fmt.Sprintf("turn:%d:reply_owed:%d", f.ConvID, survivorID), got.TurnKey)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assertions.Equal(loopID, live[0].ID)
 }
 
 func TestStore_DuplicateGroupsCanonicalizeBracketedRFC822IDs(t *testing.T) {

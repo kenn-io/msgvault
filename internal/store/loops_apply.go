@@ -71,7 +71,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 				}
 			}
 			for _, id := range apply.Verdict.CoverageGaps {
-				loop, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=? AND l.conversation_id=? AND l.status<>'closed'", id, apply.ConversationID))
+				loop, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=? AND l.conversation_id=? AND l.status<>'closed'", id, apply.ConversationID))
 				if errors.Is(err, ErrLoopNotFound) {
 					continue
 				}
@@ -98,7 +98,7 @@ func (s *Store) ApplyLoopVerdictContext(ctx context.Context, apply LoopApply) er
 }
 
 func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open LoopOpenDecision, now time.Time) error {
-	history, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.conversation_id=? AND l.kind=? AND l.detector='turn_state' ORDER BY l.created_at DESC,l.id DESC", open.ConversationID, open.Kind)
+	history, err := listLoopsQuery(ctx, tx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.conversation_id=? AND l.kind=? AND l.detector='turn_state' ORDER BY l.created_at DESC,l.id DESC", open.ConversationID, open.Kind)
 	if err != nil {
 		return err
 	}

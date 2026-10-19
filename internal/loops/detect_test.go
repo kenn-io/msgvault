@@ -1416,6 +1416,11 @@ func TestDetectKeepsEstablishedBulkLoopUncertainWhenPriorParticipationIsOutsideW
 	}
 	view.LastMessageAt = view.Messages[len(view.Messages)-1].OccurredAt
 	view.AnchorExists = func(int64) (bool, error) { return true, nil }
+	view.CheckOwnerParticipation = func(anchorID, participationID int64) (bool, bool, error) {
+		assertions.Equal(anchor.ID, anchorID)
+		assertions.Equal(int64(9), participationID)
+		return false, false, nil
+	}
 	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID, OwnerParticipationMessageID: 9}}, now, DefaultThresholds(), Suppressions{})
 	requirements.NoError(got.Err)
 	assertions.Empty(got.Close)
@@ -1532,12 +1537,19 @@ func TestDetectRevalidatesSavedBulkOwnerParticipation(t *testing.T) {
 			view.Messages = []LoopMessage{ownerMessage, anchor}
 			view.LastMessageAt = anchor.OccurredAt
 			view.AnchorExists = func(int64) (bool, error) { return true, nil }
+			view.CheckOwnerParticipation = func(anchorID, participationID int64) (bool, bool, error) {
+				assertions.Equal(anchor.ID, anchorID)
+				assertions.Equal(ownerMessage.ID, participationID)
+				return false, true, nil
+			}
 
 			got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID, OwnerParticipationMessageID: ownerMessage.ID}}, now, DefaultThresholds(), Suppressions{})
 			requirements.NoError(got.Err)
 			requirements.Len(got.Close, 1)
 			assertions.Equal("withdrawn", got.Close[0].Reason)
-			assertions.Nil(got.Open)
+			if got.Open != nil {
+				assertions.NotEqual(anchor.ID, got.Open.Anchor.ID, "invalid saved participation cannot keep the old bulk anchor eligible")
+			}
 		})
 	}
 }
@@ -1559,7 +1571,11 @@ func TestDetectKeepsBulkReplyUncertainWhenSavedOwnerParticipationIsUnknown(t *te
 	view.Messages = []LoopMessage{ownerMessage, anchor}
 	view.LastMessageAt = anchor.OccurredAt
 	view.AnchorExists = func(int64) (bool, error) { return true, nil }
-	view.CheckOwnerParticipation = func(int64, int64) (bool, bool, error) { return false, false, nil }
+	view.CheckOwnerParticipation = func(anchorID, participationID int64) (bool, bool, error) {
+		assertions.Equal(anchor.ID, anchorID)
+		assertions.Equal(ownerMessage.ID, participationID)
+		return false, false, nil
+	}
 
 	got := Detect(view, []LiveLoop{{
 		ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID,
@@ -1573,12 +1589,16 @@ func TestDetectKeepsBulkReplyUncertainWhenSavedOwnerParticipationIsUnknown(t *te
 
 func TestDetectRevalidatesSavedBulkOwnerParticipationOutsideWindow(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		participation bool
-		wantClose     bool
+		name      string
+		valid     bool
+		known     bool
+		history   bool
+		wantClose bool
+		wantGap   bool
 	}{
-		{name: "removed message", wantClose: true},
-		{name: "older message remains available", participation: true},
+		{name: "known invalid", known: true, history: true, wantClose: true},
+		{name: "older valid message", valid: true, known: true},
+		{name: "older participation remains unknown", wantGap: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -1590,7 +1610,13 @@ func TestDetectRevalidatesSavedBulkOwnerParticipationOutsideWindow(t *testing.T)
 			anchor.Signals = &mime.AutomationSignals{PrecedenceBulk: true}
 			view.Messages = []LoopMessage{anchor}
 			view.LastMessageAt = anchor.OccurredAt
-			view.AnchorExists = func(id int64) (bool, error) { return id == anchor.ID || tc.participation, nil }
+			view.HistoryComplete = tc.history
+			view.AnchorExists = func(id int64) (bool, error) { return id == anchor.ID, nil }
+			view.CheckOwnerParticipation = func(anchorID, participationID int64) (bool, bool, error) {
+				assertions.Equal(anchor.ID, anchorID)
+				assertions.Equal(int64(9), participationID)
+				return tc.valid, tc.known, nil
+			}
 			view.Extend = func() (ConversationView, error) { return view, nil }
 
 			got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: anchor.ID, CounterpartyParticipantID: anchor.Sender.ID, OwnerParticipationMessageID: 9}}, now, DefaultThresholds(), Suppressions{})
@@ -1602,7 +1628,11 @@ func TestDetectRevalidatesSavedBulkOwnerParticipationOutsideWindow(t *testing.T)
 				return
 			}
 			assertions.Empty(got.Close)
-			assertions.Equal([]int64{1}, got.CoverageGaps, "out-of-window evidence remains uncertain")
+			if tc.wantGap {
+				assertions.Equal([]int64{1}, got.CoverageGaps, "out-of-window evidence remains uncertain")
+			} else {
+				assertions.Empty(got.CoverageGaps, "validated out-of-window evidence remains eligible")
+			}
 		})
 	}
 }
@@ -1661,5 +1691,21 @@ func TestDetectSettlesAwaitingLoopAfterBodyBudgetIsSpent(t *testing.T) {
 	requirements.Len(got.Close, 1)
 	assertions.Equal("turn_flip", got.Close[0].Reason)
 	assertions.Equal(answer.ID, got.Close[0].MessageID)
+	assertions.Empty(got.CoverageGaps)
+}
+
+func TestDetectWithdrawsBulkLoopWhenNoOwnerParticipation(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	view.HistoryComplete = true
+	view.Messages[0].Signals = &mime.AutomationSignals{PrecedenceBulk: true}
+	view.AnchorExists = func(int64) (bool, error) { return true, nil }
+
+	got := Detect(view, []LiveLoop{{ID: 1, Kind: ReplyOwed, AnchorMessageID: view.Messages[0].ID}}, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("withdrawn", got.Close[0].Reason)
+	assertions.Nil(got.Open)
 	assertions.Empty(got.CoverageGaps)
 }

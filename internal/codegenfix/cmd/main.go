@@ -25,6 +25,10 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := rewrite(os.Args[2], codegenfix.RewriteTrackOpenLoopClient); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
 func rewrite(path string, transform func([]byte) ([]byte, error)) error {

@@ -33,6 +33,50 @@ function clientFor(
 }
 
 describe("PersonOpenLoops", () => {
+  it("shows a tracked issue and its cache age beside an untracked row", async () => {
+    const tracked = {
+      ...loop(),
+      kata: {
+        qualified_ref: "example#ab12",
+        status: "open",
+        web_url: "https://kata.example.test/issues/ab12",
+        checked_at: "2026-10-17T10:00:00Z",
+      },
+    };
+    render(PersonOpenLoops, {
+      client: clientFor([tracked, loop(13)]),
+      personID: 7,
+    });
+    const link = await screen.findByRole("link", { name: "example#ab12" });
+    expect(link.getAttribute("href")).toBe(
+      "https://kata.example.test/issues/ab12",
+    );
+    expect(screen.getAllByText("example#ab12")).toHaveLength(1);
+    expect(screen.getByText("open", { exact: true })).toBeDefined();
+    expect(
+      screen.getByTitle("Kata checked 2026-10-17T10:00:00Z"),
+    ).toBeDefined();
+  });
+
+  it.each([undefined, "javascript:alert(1)"])(
+    "shows an issue without a link for an unsafe or absent URL: %s",
+    async (web_url) => {
+      const tracked = {
+        ...loop(),
+        kata: {
+          qualified_ref: "example#ab12",
+          status: "missing",
+          web_url,
+          checked_at: null,
+        },
+      };
+      render(PersonOpenLoops, { client: clientFor([tracked]), personID: 7 });
+      expect(await screen.findByText("example#ab12")).toBeDefined();
+      expect(screen.queryByRole("link", { name: "example#ab12" })).toBeNull();
+      expect(screen.getByTitle("Kata never checked")).toBeDefined();
+    },
+  );
+
   it("shows current loop evidence and a reader link without edit controls", async () => {
     render(PersonOpenLoops, { client: clientFor([loop()]), personID: 7 });
     expect(screen.getByRole("heading", { name: "Open loops" })).toBeDefined();
@@ -55,7 +99,7 @@ describe("PersonOpenLoops", () => {
   it("retains stale results with a visible warning", async () => {
     render(PersonOpenLoops, {
       client: clientFor(
-        [loop(12), loop(13), loop(14), loop(15), loop(16)],
+        Array.from({ length: 5 }, (_, index) => loop(12 + index)),
         true,
         "more",
       ),
@@ -66,9 +110,8 @@ describe("PersonOpenLoops", () => {
       "Archive may be stale",
     );
     expect(screen.getByText("5+ open loops")).toBeDefined();
-    expect(
-      screen.getByRole("link", { name: "Review the draft?" }),
-    ).toBeDefined();
+    expect(screen.getAllByRole("link")).toHaveLength(5);
+    expect(screen.getByRole("link", { name: "Review item 16?" })).toBeDefined();
   });
 
   it("shows an empty state", async () => {

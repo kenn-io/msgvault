@@ -653,6 +653,8 @@ optional quote spans, never whole message bodies.
 | GET | `/api/v1/loops` | `{items, next_cursor, freshness}`; `kind`, `status`, `person_id`, `source_id`, `include_snoozed`, `limit`, `cursor` |
 | GET | `/api/v1/loops/waiting` | `{groups, count, freshness}`; `top`, `allow_stale`, `as_of` |
 | GET | `/api/v1/loops/{id}` | `{loop, freshness}` with evidence |
+| POST | `/api/v1/loops/{id}/kata` | `{issue_ref?, title?, list?}`; 201 new link, 200 replay; `{loop, freshness, issue, replayed, note?}` |
+| DELETE | `/api/v1/loops/{id}/kata` | Remove the local link; bodyless 204; preserve the Kata issue |
 | POST | `/api/v1/loops/{id}/done` | Optional `{note}`; complete this turn |
 | POST | `/api/v1/loops/{id}/snooze` | `{until}` as a future RFC3339 instant |
 | DELETE | `/api/v1/loops/{id}/snooze` | Remove the snooze |
@@ -661,6 +663,25 @@ optional quote spans, never whole message bodies.
 | GET | `/api/v1/loops/status` | Derivation state, queue/backfill progress and freshness |
 | POST | `/api/v1/loops/run`, `/api/v1/loops/rebuild` | `{disposition}`: started, pending or coalesced |
 | GET | `/api/v1/people/{id}/loops` | Open person loops with freshness; optional `limit` |
+
+API schema 3.26.0 adds `closed_by` and nullable `kata` to every loop view.
+The Kata block carries `issue_uid`, `qualified_ref`, `title`, `status`
+(`open`, `closed`, `missing`), optional `web_url`, `linked_via`, `linked_at`,
+`checked_at`, `live`, `attempts`, `next_attempt_at`, optional `last_error`,
+`closed_notified_at` and `closed_loop_at`. Lists use the cache; detail refreshes
+live and keeps cached data on failure. The archive freshness block is separate.
+Status state includes `kata_last_run_at`, `kata_last_success_at` and
+`kata_last_error`.
+
+Tracking requires the Kata integration. `issue_ref` cannot combine with `title`
+or `list` (422). A closed loop returns 409 `loop_already_closed`; a loop tracked
+to a different issue returns 409 `loop_already_tracked` with its `kata` block.
+Missing loops or absent links on untrack return 404 `loop_not_found`.
+Kata failures retain their evidence error codes; unavailable Kata returns 503
+`kata_unavailable`. The issue receipt has `uid`, `ref`, `qualified_ref`,
+`project`, `title`, `status`, `revision` (empty for cached replay) and optional
+`web_url`. See [loop tracking](usage/open-loops.md#track-a-loop-in-kata) for the
+bridge's behavior and never-close rule.
 
 Lists default to open, unsnoozed loops, oldest `owed_since_at` then ID, with
 50 items and a maximum of 200. Pass the opaque `next_cursor` unchanged.

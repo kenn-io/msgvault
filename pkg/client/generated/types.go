@@ -6818,6 +6818,7 @@ type Loop struct {
 	AnchorMessageID       *int64           `json:"anchor_message_id" validate:"omitempty"`
 	Channel               string           `json:"channel" validate:"required"`
 	ClosedAt              *time.Time       `json:"closed_at" validate:"omitempty"`
+	ClosedBy              *string          `json:"closed_by" validate:"omitempty"`
 	ClosedMessageID       *int64           `json:"closed_message_id" validate:"omitempty"`
 	ClosedReason          *string          `json:"closed_reason" validate:"omitempty"`
 	ConversationID        int64            `json:"conversation_id"`
@@ -6827,6 +6828,7 @@ type Loop struct {
 	DueAt                 *time.Time       `json:"due_at" validate:"omitempty"`
 	Evidence              []LoopEvidence   `json:"evidence" validate:"required"`
 	ID                    int64            `json:"id"`
+	Kata                  *LoopKata        `json:"kata" validate:"omitempty"`
 	Kind                  string           `json:"kind" validate:"required"`
 	LastActivityAt        time.Time        `json:"last_activity_at" validate:"required"`
 	LastActivityMessageID *int64           `json:"last_activity_message_id" validate:"omitempty"`
@@ -6862,6 +6864,13 @@ func (l Loop) Validate() error {
 			}
 		}
 	}
+	if l.Kata != nil {
+		if v, ok := any(l.Kata).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Kata", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(l.Kind, "required"); err != nil {
 		errors = errors.Append("Kind", err)
 	}
@@ -6886,6 +6895,33 @@ func (l Loop) Validate() error {
 	return errors
 }
 
+type LoopAlreadyTrackedResponse struct {
+	ErrorData string    `json:"error" validate:"required"`
+	Kata      *LoopKata `json:"kata,omitempty"`
+	Message   string    `json:"message" validate:"required"`
+}
+
+func (l LoopAlreadyTrackedResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.ErrorData, "required"); err != nil {
+		errors = errors.Append("ErrorData", err)
+	}
+	if l.Kata != nil {
+		if v, ok := any(l.Kata).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Kata", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(l.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type LoopCounterparty struct {
 	DisplayName   *string `json:"display_name" validate:"omitempty"`
 	ParticipantID int64   `json:"participant_id"`
@@ -6900,6 +6936,9 @@ type LoopDerivationState struct {
 	FeedCursorMessageID          int64      `json:"feed_cursor_message_id"`
 	FeedFrontier                 *time.Time `json:"feed_frontier" validate:"omitempty"`
 	IdentityRevision             int64      `json:"identity_revision"`
+	KataLastError                *string    `json:"kata_last_error" validate:"omitempty"`
+	KataLastRunAt                *time.Time `json:"kata_last_run_at" validate:"omitempty"`
+	KataLastSuccessAt            *time.Time `json:"kata_last_success_at" validate:"omitempty"`
 	LastError                    *string    `json:"last_error" validate:"omitempty"`
 	LastReconcileAt              *time.Time `json:"last_reconcile_at" validate:"omitempty"`
 	LastRunAt                    *time.Time `json:"last_run_at" validate:"omitempty"`
@@ -6944,19 +6983,57 @@ func (l LoopDetailResponse) Validate() error {
 }
 
 type LoopEvidence struct {
-	ConversationID int64     `json:"conversation_id"`
-	CoverageGap    *bool     `json:"coverage_gap,omitempty"`
-	MessageID      int64     `json:"message_id"`
-	OccurredAt     time.Time `json:"occurred_at" validate:"required"`
-	OwnerNote      *string   `json:"owner_note,omitzero"`
-	Quote          *string   `json:"quote,omitzero"`
-	QuoteEndRune   *int64    `json:"quote_end_rune,omitempty"`
-	QuoteStartRune *int64    `json:"quote_start_rune,omitempty"`
-	Subject        *string   `json:"subject" validate:"omitempty"`
-	TruncatedRun   *bool     `json:"truncated_run,omitempty"`
+	ConversationID    int64     `json:"conversation_id"`
+	CoverageGap       *bool     `json:"coverage_gap,omitempty"`
+	KataClosedRef     *string   `json:"kata_closed_ref,omitzero"`
+	KataReopenBlocked *string   `json:"kata_reopen_blocked,omitzero"`
+	MessageID         int64     `json:"message_id"`
+	OccurredAt        time.Time `json:"occurred_at" validate:"required"`
+	OwnerNote         *string   `json:"owner_note,omitzero"`
+	Quote             *string   `json:"quote,omitzero"`
+	QuoteEndRune      *int64    `json:"quote_end_rune,omitempty"`
+	QuoteStartRune    *int64    `json:"quote_start_rune,omitempty"`
+	Subject           *string   `json:"subject" validate:"omitempty"`
+	TruncatedRun      *bool     `json:"truncated_run,omitempty"`
 }
 
 func (l LoopEvidence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LoopKata struct {
+	Attempts         int64      `json:"attempts"`
+	CheckedAt        *time.Time `json:"checked_at" validate:"omitempty"`
+	ClosedLoopAt     *time.Time `json:"closed_loop_at" validate:"omitempty"`
+	ClosedNotifiedAt *time.Time `json:"closed_notified_at" validate:"omitempty"`
+	IssueUID         string     `json:"issue_uid" validate:"required"`
+	LastError        *string    `json:"last_error,omitzero"`
+	LinkedAt         time.Time  `json:"linked_at" validate:"required"`
+	LinkedVia        string     `json:"linked_via" validate:"required"`
+	Live             bool       `json:"live"`
+	NextAttemptAt    *time.Time `json:"next_attempt_at" validate:"omitempty"`
+	QualifiedRef     string     `json:"qualified_ref" validate:"required"`
+	Status           *string    `json:"status" validate:"omitempty"`
+	Title            *string    `json:"title" validate:"omitempty"`
+	WebURL           *string    `json:"web_url,omitzero"`
+}
+
+func (l LoopKata) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type LoopKataIssue struct {
+	Project      string  `json:"project" validate:"required"`
+	QualifiedRef string  `json:"qualified_ref" validate:"required"`
+	Ref          string  `json:"ref" validate:"required"`
+	Revision     *string `json:"revision" validate:"omitempty"`
+	Status       string  `json:"status" validate:"required"`
+	Title        string  `json:"title" validate:"required"`
+	UID          string  `json:"uid" validate:"required"`
+	WebURL       *string `json:"web_url,omitzero"`
+}
+
+func (l LoopKataIssue) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(l))
 }
 
@@ -7075,6 +7152,43 @@ func (l LoopSuppressionResult) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Suppression", err)
 			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type LoopTrackRequest struct {
+	IssueRef *string `json:"issue_ref,omitzero"`
+	List     *string `json:"list,omitzero"`
+	Title    *string `json:"title,omitzero"`
+}
+
+type LoopTrackResponse struct {
+	Freshness FreshnessReport `json:"freshness"`
+	Issue     LoopKataIssue   `json:"issue"`
+	Loop      Loop            `json:"loop"`
+	Note      *string         `json:"note,omitzero"`
+	Replayed  bool            `json:"replayed"`
+}
+
+func (l LoopTrackResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Freshness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Freshness", err)
+		}
+	}
+	if v, ok := any(l.Issue).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Issue", err)
+		}
+	}
+	if v, ok := any(l.Loop).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Loop", err)
 		}
 	}
 	if len(errors) == 0 {

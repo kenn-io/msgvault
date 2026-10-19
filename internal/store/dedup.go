@@ -558,6 +558,9 @@ func (s *Store) MergeDuplicates(
 				}
 			}
 		}
+		if err := s.retargetDuplicateLoopReferences(ctx, tx, survivorID, duplicateIDs); err != nil {
+			return fmt.Errorf("retarget loop references before hiding duplicates: %w", err)
+		}
 
 		for _, dupID := range duplicateIDs {
 			if _, err := tx.Exec(`UPDATE messages SET reply_to_message_id = ?

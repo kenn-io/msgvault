@@ -108,6 +108,9 @@ func libraryHandlerLoopDeleteOperation(r *http.Request) (Operation, bool) {
 	if parts[3] == "suppressions" {
 		return Operation{ID: "deleteLoopSuppression", Method: http.MethodDelete, Path: "/api/v1/loops/suppressions/{id}"}, true
 	}
+	if parts[4] == "kata" {
+		return Operation{ID: "untrackOpenLoop", Method: http.MethodDelete, Path: "/api/v1/loops/{id}/kata"}, true
+	}
 	if parts[4] == "snooze" {
 		return Operation{ID: "unsnoozeOpenLoop", Method: http.MethodDelete, Path: "/api/v1/loops/{id}/snooze"}, true
 	}

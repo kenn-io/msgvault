@@ -54,6 +54,44 @@ func TestLoopLoaderOrderAndNativeDirection(t *testing.T) {
 	assertions.ErrorIs(err, store.ErrInvalidLoop)
 }
 
+func TestLoopLoaderExcludesLegacyUnsentSynctechFromActivityTime(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15550000001")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "legacy-unsent", "Legacy SMS thread")
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	oldAt := now.Add(-400 * 24 * time.Hour)
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.test", "manual"))
+	loopExec(t, f.Store, "UPDATE conversations SET conversation_type='direct_chat' WHERE id=?", conversationID)
+	for _, participant := range []int64{owner, peer} {
+		loopExec(t, f.Store, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", conversationID, participant)
+	}
+	var deliveredID int64
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO messages(
+		source_id,conversation_id,source_message_id,message_type,sent_at,source_is_from_me,is_sent,sender_id,subject,snippet
+	) VALUES(?,?,?,'sms',?,FALSE,TRUE,?,'Old question','Could you help?') RETURNING id`),
+		source.ID, conversationID, "delivered-old", loopTestStamp(f.Store, oldAt), peer).Scan(&deliveredID))
+	loopExec(t, f.Store, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", deliveredID, owner)
+	loopExec(t, f.Store, `INSERT INTO messages(
+		source_id,conversation_id,source_message_id,message_type,sent_at,source_is_from_me,is_sent,sender_id,subject,snippet
+	) VALUES(?,?,?,'sms',?,TRUE,FALSE,?,'Pending text','Not yet sent')`,
+		source.ID, conversationID, "legacy-unsent", loopTestStamp(f.Store, now.Add(-time.Hour)), owner)
+
+	loaded, err := f.Store.LoadLoopConversationContext(t.Context(), conversationID, 10)
+	requirements.NoError(err)
+	assertions.True(oldAt.Equal(loaded.LastMessageAt))
+	requirements.Len(loaded.Messages, 1)
+	assertions.Equal(deliveredID, loaded.Messages[0].ID)
+	verdict := loops.Detect(loopViewFromLoadedConversation(t, loaded, f.Store), nil, now, loops.DefaultThresholds(), loops.Suppressions{})
+	requirements.NoError(verdict.Err)
+	requirements.Nil(verdict.Open, "the old delivered message stays outside the lookback window")
+}
+
 func TestLoopLoaderExcludesCurrentProviderDrafts(t *testing.T) {
 	for _, provider := range []string{"gmail", "imap"} {
 		t.Run(provider, func(t *testing.T) {
@@ -293,6 +331,52 @@ func TestLoopLoaderSkipsNullProviderLabelID(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(view.Messages, 1)
 	assert.Equal(t, []string{"provider-label"}, view.Messages[0].Labels)
+}
+
+func TestLoopLoaderPreservesGmailCategoryEvidenceAfterSourceMerge(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	from, err := f.Store.GetOrCreateSource("gmail", "history-account@example.test")
+	requirements.NoError(err)
+	into, err := f.Store.GetOrCreateSource("gmail", "live-account@example.test")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(from.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	conversationID, err := f.Store.EnsureConversationWithType(from.ID, "category-thread", "email_thread", "Promotional email")
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	messageID, err := f.Store.UpsertMessage(&store.Message{
+		SourceID: from.ID, ConversationID: conversationID, SourceMessageID: "promotions-only-inbound",
+		MessageType: "email", SentAt: sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true},
+		SenderID: sql.NullInt64{Int64: peer, Valid: true}, Subject: sql.NullString{String: "Weekly update", Valid: true},
+		Snippet: sql.NullString{String: "An update for subscribers", Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{String: "An update for subscribers", Valid: true}, sql.NullString{}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(messageID, "from", []int64{peer}, []string{"Peer"}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{owner}, []string{"Owner"}))
+	categoryLabels := []string{"CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "CATEGORY_FORUMS"}
+	descriptors := make(map[string]store.LabelInfo, len(categoryLabels))
+	for _, category := range categoryLabels {
+		descriptors[category] = store.LabelInfo{Name: category, Type: "system"}
+	}
+	labelIDs, err := f.Store.EnsureLabelsBatch(from.ID, descriptors)
+	requirements.NoError(err)
+	for _, category := range categoryLabels {
+		requirements.NoError(f.Store.AddMessageLabels(messageID, []int64{labelIDs[category]}))
+	}
+
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	loaded, err := f.Store.LoadLoopConversationContext(t.Context(), conversationID, 10)
+	requirements.NoError(err)
+	requirements.Len(loaded.Messages, 1)
+	assertions.ElementsMatch(categoryLabels, loaded.Messages[0].Labels)
+	verdict := loops.Detect(loopViewFromLoadedConversation(t, loaded, f.Store), nil, now, loops.DefaultThresholds(), loops.Suppressions{})
+	requirements.NoError(verdict.Err)
+	requirements.Nil(verdict.Open, "a message excluded by Gmail's Promotions category must not open a reply loop")
 }
 
 func TestLoopLoaderHydratesDepartedRecipientMetadata(t *testing.T) {

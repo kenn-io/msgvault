@@ -19,7 +19,7 @@ import (
 
 func newLoopsCommand() *cobra.Command {
 	group := &cobra.Command{Use: "loops", Short: "Find unanswered turns and manage follow-ups"}
-	group.AddCommand(newLoopsWaitingCommand(), newLoopsListCommand(), newLoopsShowCommand(), newLoopsActionCommand("done"), newLoopsActionCommand("snooze"), newLoopsActionCommand("unsnooze"), newLoopsMuteCommand(false), newLoopsMuteCommand(true), newLoopsMutesCommand(), newLoopsStatusCommand())
+	group.AddCommand(newLoopsWaitingCommand(), newLoopsListCommand(), newLoopsShowCommand(), newLoopsTrackCommand(), newLoopsUntrackCommand(), newLoopsActionCommand("done"), newLoopsActionCommand("snooze"), newLoopsActionCommand("unsnooze"), newLoopsMuteCommand(false), newLoopsMuteCommand(true), newLoopsMutesCommand(), newLoopsStatusCommand())
 	for _, name := range []string{"run", "rebuild"} {
 		command := &cobra.Command{Use: name, Short: map[string]string{"run": "Request one derivation pass now", "rebuild": "Request a full lookback rescan, preserving owner actions"}[name], Args: cobra.NoArgs}
 		command.RunE = func(cmd *cobra.Command, _ []string) error {
@@ -91,8 +91,9 @@ func newLoopsWaitingCommand() *cobra.Command {
 			for _, group := range result.Groups {
 				age := int64(max(time.Duration(0), result.Freshness.AsOf.Sub(group.OldestOwedSinceAt)) / time.Second)
 				_, _ = fmt.Fprintf(writer, "%s\t%d loop(s)\toldest %s\n", loopCounterpartyName(group.Counterparty), group.LoopCount, loopAge(age))
+				_, _ = fmt.Fprintln(writer, "  ID\tSUMMARY\tOWED SINCE\tCHANNEL\tKATA")
 				for _, item := range group.Loops {
-					_, _ = fmt.Fprintf(writer, "  %d\t%s\t%s\t%s\n", item.ID, cleanLoopText(item.Summary), item.OwedSinceAt.Format(time.RFC3339), cleanLoopText(item.Channel))
+					_, _ = fmt.Fprintf(writer, "  %d\t%s\t%s\t%s\t%s\n", item.ID, cleanLoopText(item.Summary), item.OwedSinceAt.Format(time.RFC3339), cleanLoopText(item.Channel), loopKataColumn(item))
 				}
 			}
 			if len(result.Groups) == 0 {
@@ -148,9 +149,9 @@ func newLoopsListCommand() *cobra.Command {
 				return writePersonAgendaJSON(cmd, result)
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(writer, "ID\tPERSON\tKIND\tSTATUS\tOWED SINCE\tCHANNEL\tSUMMARY")
+			_, _ = fmt.Fprintln(writer, "ID\tPERSON\tKIND\tSTATUS\tOWED SINCE\tCHANNEL\tKATA\tSUMMARY")
 			for _, item := range result.Items {
-				_, _ = fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, loopCounterpartyName(item.Counterparty), cleanLoopText(item.Kind), cleanLoopText(item.Status), item.OwedSinceAt.Format(time.RFC3339), cleanLoopText(item.Channel), cleanLoopText(item.Summary))
+				_, _ = fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", item.ID, loopCounterpartyName(item.Counterparty), cleanLoopText(item.Kind), cleanLoopText(item.Status), item.OwedSinceAt.Format(time.RFC3339), cleanLoopText(item.Channel), loopKataColumn(item), cleanLoopText(item.Summary))
 			}
 			if err := writer.Flush(); err != nil {
 				return fmt.Errorf("flush loops list output: %w", err)
@@ -187,6 +188,79 @@ func newLoopsShowCommand() *cobra.Command {
 			}
 			return writeLoopDetail(cmd, result.Loop)
 		})
+	}
+	return command
+}
+
+// loopsKataMinAPISchemaVersion adds persistent loop issue links.
+const loopsKataMinAPISchemaVersion = "3.26.0"
+
+func newLoopsTrackCommand() *cobra.Command {
+	var request loops.TrackRequest
+	var jsonOutput bool
+	command := &cobra.Command{Use: "track <id>", Short: "Track a loop with a new or existing Kata issue", Args: cobra.ExactArgs(1)}
+	command.Flags().StringVar(&request.IssueRef, "issue", "", "Existing issue ref; first link adds evidence, replays reuse the cached receipt")
+	command.Flags().StringVar(&request.Title, "title", "", "Issue title (default derived from the loop; at most 512 characters)")
+	command.Flags().StringVar(&request.List, "list", "", "Person agenda list (default agenda; requires a person)")
+	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
+	command.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := positiveLoopID(cmd, args[0])
+		if err != nil {
+			return err
+		}
+		if cmd.Flags().Changed("issue") && (cmd.Flags().Changed("title") || cmd.Flags().Changed("list")) {
+			return usageErr(cmd, errors.New("--issue cannot be combined with --title or --list"))
+		}
+		client, closeClient, err := openKataClient(cmd, loopsKataMinAPISchemaVersion)
+		if err != nil {
+			return err
+		}
+		defer closeClient()
+		result, err := client.TrackOpenLoop(cmd.Context(), id, request)
+		if err != nil {
+			if conflict, ok := errors.AsType[*daemonclient.LoopAlreadyTrackedError](err); ok {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Already tracked: %s %s\n", cleanLoopText(conflict.Kata.QualifiedRef), cleanLoopText(conflict.Kata.Status))
+			}
+			return err
+		}
+		writeLoopsFreshness(cmd, result.Freshness)
+		if result.Note != "" {
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), cleanLoopText(result.Note))
+		}
+		if jsonOutput {
+			return writePersonAgendaJSON(cmd, result)
+		}
+		replay := ""
+		if result.Replayed {
+			replay = " (already tracked)"
+		}
+		if _, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s%s\n", cleanLoopText(result.Issue.QualifiedRef), cleanLoopText(result.Issue.Status), cleanLoopText(result.Issue.Title), replay); err != nil {
+			return fmt.Errorf("write tracked loop issue: %w", err)
+		}
+		return writeLoopDetail(cmd, result.Loop)
+	}
+	return command
+}
+func newLoopsUntrackCommand() *cobra.Command {
+	command := &cobra.Command{Use: "untrack <id>", Short: "Remove a loop's Kata issue link", Args: cobra.ExactArgs(1)}
+	command.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := positiveLoopID(cmd, args[0])
+		if err != nil {
+			return err
+		}
+		client, closeClient, err := openKataClient(cmd, loopsKataMinAPISchemaVersion)
+		if err != nil {
+			return err
+		}
+		defer closeClient()
+		if err = client.UntrackOpenLoop(cmd.Context(), id); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "Untracked loop %d.\n", id)
+		if err != nil {
+			return fmt.Errorf("write untracked loop result: %w", err)
+		}
+		return nil
 	}
 	return command
 }
@@ -351,6 +425,9 @@ func newLoopsStatusCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("write loops status: %w", err)
 			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Kata last run: %s\nKata last success: %s\nKata last error: %s\n", loopTime(state.KataLastRunAt), loopTime(state.KataLastSuccessAt), cleanLoopText(state.KataLastError)); err != nil {
+				return fmt.Errorf("write Kata loop status: %w", err)
+			}
 			return nil
 		})
 	}
@@ -380,7 +457,36 @@ func suppressionTarget(item loops.Suppression) *int64 {
 func writeLoopDetail(cmd *cobra.Command, item loops.Loop) error {
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintf(writer, "Loop %d\t%s\t%s\n%s\nPerson: %s\nOwed since: %s\nLast activity: %s\nChannel: %s\nConversation: %d\nSource: %d\nSnoozed until: %s\n", item.ID, cleanLoopText(item.Kind), cleanLoopText(item.Status), cleanLoopText(item.Summary), loopCounterpartyName(item.Counterparty), item.OwedSinceAt.Format(time.RFC3339), item.LastActivityAt.Format(time.RFC3339), cleanLoopText(item.Channel), item.ConversationID, item.SourceID, loopTime(item.SnoozedUntil))
+	if item.ClosedBy != nil {
+		suffix := ""
+		if *item.ClosedBy == "system" && item.Kata != nil && item.Kata.ClosedLoopAt != nil {
+			ref := ""
+			ref = item.Kata.QualifiedRef
+			if ref == "" {
+				for _, evidence := range item.Evidence {
+					if evidence.KataClosedRef != "" {
+						ref = evidence.KataClosedRef
+						break
+					}
+				}
+			}
+			if ref != "" {
+				suffix = " (Kata " + cleanLoopText(ref) + " closed)"
+			}
+		}
+		_, _ = fmt.Fprintf(writer, "Closed by: %s%s\n", cleanLoopText(*item.ClosedBy), suffix)
+	}
+	if kata := item.Kata; kata != nil {
+		checked := "never checked"
+		if kata.CheckedAt != nil {
+			checked = "checked " + loopTime(kata.CheckedAt)
+		}
+		_, _ = fmt.Fprintf(writer, "Kata: %s  %s  %s  %s\nKata live: %t\nKata linked via: %s\nKata linked at: %s\nKata attempts: %d\nKata next attempt: %s\nKata last error: %s\nKata closure notified: %s\nKata closed loop at: %s\n", cleanLoopText(kata.QualifiedRef), cleanLoopText(kata.Status), checked, cleanLoopText(kata.Title), kata.Live, cleanLoopText(kata.LinkedVia), kata.LinkedAt.Format(time.RFC3339), kata.Attempts, loopTime(kata.NextAttemptAt), cleanLoopText(kata.LastError), loopTime(kata.ClosedNotifiedAt), loopTime(kata.ClosedLoopAt))
+	}
 	for _, evidence := range item.Evidence {
+		if evidence.KataReopenBlocked != "" {
+			_, _ = fmt.Fprintf(writer, "Kata reopen blocked by loop: %s\n", cleanLoopText(evidence.KataReopenBlocked))
+		}
 		if evidence.MessageID != 0 {
 			_, _ = fmt.Fprintf(writer, "Evidence: message %d\t%s\t%s\n", evidence.MessageID, evidence.OccurredAt.Format(time.RFC3339), cleanLoopText(evidence.Subject))
 		}
@@ -418,6 +524,13 @@ func writeLoopsFreshness(cmd *cobra.Command, report freshness.Report) {
 	for _, warning := range report.Warnings {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "WARNING: %s\n", cleanLoopText(warning))
 	}
+}
+
+func loopKataColumn(item loops.Loop) string {
+	if item.Kata == nil {
+		return "-"
+	}
+	return cleanLoopText(item.Kata.QualifiedRef) + " " + cleanLoopText(item.Kata.Status)
 }
 
 func cleanLoopText(value string) string { return textutil.SanitizeTerminal(value) }

@@ -81,24 +81,18 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 	return st
 }
 
-// TestExclusiveLockTablesCoverCascade pins finding S4: every table with a
-// direct ON DELETE CASCADE foreign key to sources(id) MUST appear in
-// exclusiveLockTables, otherwise RemoveSourceSerialized's cascade DELETE can
+// TestExclusiveLockTablesCoverCascade pins the invariant that every table with
+// a direct ON DELETE CASCADE foreign key to sources(id) must appear in
+// exclusiveLockTables. Otherwise RemoveSourceSerialized's cascade DELETE can
 // race a concurrent writer to that table and reopen the race the EXCLUSIVE
 // lock exists to close.
-//
-// Before the fix, source_import_items (written by UpsertSourceImportItem) and
-// sync_checkpoints were absent, so this test would fail and name them. It is a
-// single-level pg_constraint query because both newly-added tables are direct
-// FKs to sources; that is authoritative for the cascade tables this lock must
-// cover.
 func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
 	st := newPGStoreInternal(t, dbURL)
 
-	// Tables with a direct ON DELETE CASCADE FK to sources(id), read from the
+	// Tables with a direct ON DELETE CASCADE FK to sources, read from the
 	// catalog (scoped to the test's current schema so sibling schemas can't
 	// leak in).
 	rows, err := st.DB().Query(`
@@ -139,7 +133,6 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 		"source_import_items must be a direct cascade target (sanity)")
 	assert.Contains(cascadeTables, "sync_checkpoints",
 		"sync_checkpoints must be a direct cascade target (sanity)")
-
 	var missing []string
 	for _, tbl := range cascadeTables {
 		if !lockSet[tbl] {
@@ -149,6 +142,28 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	sort.Strings(missing)
 	assert.Empty(missing,
 		"every ON DELETE CASCADE-to-sources table must be in exclusiveLockTables; missing: %v", missing)
+
+	// Loop Kata links cascade through open_loops rather than directly from
+	// sources. Bridge cache updates write the child row directly, so its FK
+	// parent lock does not serialize those updates with source removal.
+	var loopKataLinkCascades bool
+	err = st.DB().QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_constraint c
+			JOIN pg_class child ON child.oid = c.conrelid
+			JOIN pg_namespace ns ON ns.oid = child.relnamespace
+			WHERE c.contype = 'f'
+			  AND c.conrelid = 'loop_kata_links'::regclass
+			  AND c.confrelid = 'open_loops'::regclass
+			  AND c.confdeltype = 'c'
+			  AND ns.nspname = current_schema()
+		)
+	`).Scan(&loopKataLinkCascades)
+	require.NoError(err, "query loop Kata cascade relationship")
+	assert.True(loopKataLinkCascades, "loop_kata_links must cascade from open_loops")
+	assert.True(lockSet["loop_kata_links"],
+		"loop_kata_links must be locked while a source removal cascades through open_loops")
 
 	// Source removal explicitly deletes identity candidates whose polymorphic
 	// observation endpoints belong to the source. Evidence then cascades from

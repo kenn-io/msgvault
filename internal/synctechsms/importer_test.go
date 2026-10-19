@@ -192,6 +192,130 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 	}
 }
 
+func TestImporterRemovesUnsentMMSLabelWhenReimportedAsSent(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
+  <mms date="1717214460000" msg_box="4" read="1" m_id="mms-transition">
+    <parts><part seq="0" ct="text/plain" text="outgoing update" /></parts>
+    <addrs><addr address="+15550000001" type="137" /><addr address="+15551234567" type="151" /></addrs>
+  </mms>
+</smses>`)
+
+	options := ImportOptions{OwnerPhone: "+15550000001", IncludeMMS: true}
+	_, err := NewImporter(f.Store, options).ImportPath(dir)
+	requirements.NoError(err, "import outbox MMS")
+
+	var sourceID int64
+	requirements.NoError(f.Store.DB().QueryRow(`SELECT id FROM sources WHERE source_type = ?`, SourceType).Scan(&sourceID))
+	var firstMessageID int64
+	var isSent, hasUnsentLabel bool
+	const stateQuery = `SELECT m.id, COALESCE(m.is_sent, FALSE), EXISTS(
+		SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+		WHERE ml.message_id = m.id AND l.source_id = m.source_id AND l.source_label_id = 'synctech-unsent'
+	) FROM messages m WHERE m.source_id = ? AND m.message_type = 'mms'`
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(stateQuery), sourceID).Scan(&firstMessageID, &isSent, &hasUnsentLabel))
+	assertions.False(isSent)
+	assertions.True(hasUnsentLabel)
+
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
+  <mms date="1717214460000" msg_box="2" read="1" m_id="mms-transition">
+    <parts><part seq="0" ct="text/plain" text="outgoing update" /></parts>
+    <addrs><addr address="+15550000001" type="137" /><addr address="+15551234567" type="151" /></addrs>
+  </mms>
+</smses>`)
+	_, err = NewImporter(f.Store, options).ImportPath(dir)
+	requirements.NoError(err, "reimport sent MMS")
+
+	var secondMessageID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(stateQuery), sourceID).Scan(&secondMessageID, &isSent, &hasUnsentLabel))
+	assertions.Equal(firstMessageID, secondMessageID, "stable MMS identity should update the existing message")
+	assertions.True(isSent, "reimported MMS should be marked sent")
+	assertions.False(hasUnsentLabel, "sent MMS should not retain synthetic unsent evidence")
+}
+
+func TestImporterPreservesUnsentSMSMMSAndExcludesCallLogsFromLoops(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="9">
+  <sms address="+15551234567" date="1717214400000" type="3" body="sms draft" contact_name="Alice" />
+  <sms address="+15551234567" date="1717214460000" type="4" body="sms outbox" contact_name="Alice" />
+  <sms address="+15551234567" date="1717214520000" type="5" body="sms failed" contact_name="Alice" />
+  <sms address="+15551234567" date="1717214580000" type="6" body="sms queued" contact_name="Alice" />
+  <sms address="+15551234567" date="1717214640000" type="2" body="sms sent" contact_name="Alice" />
+  <sms address="+15551234567" date="1717214700000" type="1" body="sms inbound" contact_name="Alice" />
+  <mms date="1717214760000" msg_box="3" m_id="mms-draft"><parts><part seq="0" ct="text/plain" text="mms draft" /></parts><addrs><addr address="+15550000001" type="137" /><addr address="+15551234567" type="151" /></addrs></mms>
+  <mms date="1717214820000" msg_box="4" m_id="mms-outbox"><parts><part seq="0" ct="text/plain" text="mms outbox" /></parts><addrs><addr address="+15550000001" type="137" /><addr address="+15551234567" type="151" /></addrs></mms>
+  <mms date="1717214880000" msg_box="2" m_id="mms-sent"><parts><part seq="0" ct="text/plain" text="mms sent" /></parts><addrs><addr address="+15550000001" type="137" /><addr address="+15551234567" type="151" /></addrs></mms>
+</smses>`)
+	writeFile(t, filepath.Join(dir, "calls.xml"), `<calls count="1"><call number="+15551234567" duration="42" date="1717214940000" type="1" contact_name="Alice" /></calls>`)
+	imp := NewImporter(f.Store, ImportOptions{
+		OwnerPhone: "+15550000001", IncludeSMS: true, IncludeMMS: true, IncludeCalls: true,
+	})
+	_, err := imp.ImportPath(dir)
+	requirements.NoError(err)
+
+	var sourceID int64
+	requirements.NoError(f.Store.DB().QueryRow("SELECT id FROM sources WHERE source_type='synctech_sms'").Scan(&sourceID))
+	rows, err := f.Store.DB().Query(f.Store.Rebind(`SELECT m.snippet, COALESCE(m.source_is_from_me,FALSE), EXISTS(
+		SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
+		WHERE ml.message_id=m.id AND l.source_id=m.source_id AND l.system_role='drafts'
+	) FROM messages m WHERE m.source_id=? AND m.message_type IN ('sms','mms')`), sourceID)
+	requirements.NoError(err)
+	persisted := make(map[string]struct {
+		fromMe bool
+		unsent bool
+	})
+	for rows.Next() {
+		var body string
+		var fromMe, unsent bool
+		requirements.NoError(rows.Scan(&body, &fromMe, &unsent))
+		persisted[body] = struct {
+			fromMe bool
+			unsent bool
+		}{fromMe: fromMe, unsent: unsent}
+	}
+	requirements.NoError(rows.Err())
+	requirements.NoError(rows.Close())
+	requirements.Len(persisted, 9)
+	for _, body := range []string{"sms draft", "sms outbox", "sms failed", "sms queued", "mms draft", "mms outbox"} {
+		assertions.True(persisted[body].fromMe, "%s should retain owner authorship", body)
+		assertions.True(persisted[body].unsent, "%s must retain native unsent evidence", body)
+	}
+	for _, body := range []string{"sms sent", "mms sent"} {
+		assertions.True(persisted[body].fromMe, "%s should retain owner authorship", body)
+		assertions.False(persisted[body].unsent, "%s is delivered evidence", body)
+	}
+	assertions.False(persisted["sms inbound"].fromMe)
+	assertions.False(persisted["sms inbound"].unsent)
+
+	var textConversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM conversations WHERE source_id=? AND source_conversation_id LIKE 'text:%'"), sourceID).Scan(&textConversationID))
+	view, err := f.Store.LoadLoopConversationContext(t.Context(), textConversationID, 20)
+	requirements.NoError(err)
+	loaded := make(map[string]bool)
+	for _, message := range view.Messages {
+		loaded[message.Snippet] = true
+	}
+	for _, body := range []string{"sms draft", "sms outbox", "sms failed", "sms queued", "mms draft", "mms outbox"} {
+		assertions.NotContains(loaded, body, "%s must not enter turn derivation", body)
+	}
+	for _, body := range []string{"sms sent", "mms sent", "sms inbound"} {
+		assertions.Contains(loaded, body)
+	}
+	requirements.Len(loaded, 3)
+
+	var callConversationID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind("SELECT id FROM conversations WHERE source_id=? AND source_conversation_id LIKE 'calls:%'"), sourceID).Scan(&callConversationID))
+	callView, err := f.Store.LoadLoopConversationContext(t.Context(), callConversationID, 20)
+	requirements.NoError(err)
+	assertions.Empty(callView.Messages, "call records do not represent unanswered conversation turns")
+}
+
 func assertMessageCount(t *testing.T, st *store.Store, want int) {
 	t.Helper()
 	var got int

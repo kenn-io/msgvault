@@ -201,7 +201,7 @@ func (t *traversal) settle(v ConversationView, live *LiveLoop, now time.Time, cf
 		live.OwnerParticipationMessageID = 0
 		live.OwnerParticipationKnown = false
 		live.OwnerParticipationUnknown = false
-		return nil, false, &v.Messages[anchor], ownerParticipationEvidence{}, nil
+		return &CloseDecision{ID: live.ID, Reason: "withdrawn", At: now}, false, &v.Messages[anchor], ownerParticipationEvidence{}, nil
 	}
 	if anchorUnreadable {
 		live.OwnerParticipationMessageID = ownerParticipation.MessageID

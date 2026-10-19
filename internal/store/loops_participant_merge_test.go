@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -34,15 +35,18 @@ func TestMergeParticipantsPreservesLoopMuteAndCounterpart(t *testing.T) {
 		{participantID: absorbed, note: "absorbed mute", createdAt: absorbedCreatedAt},
 		{participantID: survivor, note: "survivor mute", createdAt: survivorCreatedAt},
 	} {
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO loop_suppressions
-			(target_kind, participant_id, note, created_at) VALUES ('participant', ?, ?, ?)`),
-			row.participantID, row.note, row.createdAt)
+		_, err := f.Store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+			TargetKind: "participant", ParticipantID: &row.participantID, Note: row.note,
+		}, row.createdAt)
 		requirements.NoError(err)
 	}
 
 	requirements.NoError(f.Store.MergeParticipantsContext(t.Context(), absorbed, survivor))
 	got, err := f.Store.GetOpenLoopContext(t.Context(), rows[0].ID)
 	requirements.NoError(err)
+	assertions.Equal("closed", got.Status)
+	requirements.NotNil(got.ClosedReason)
+	assertions.Equal("muted", *got.ClosedReason)
 	requirements.NotNil(got.CounterpartyParticipantID)
 	assertions.Equal(survivor, *got.CounterpartyParticipantID)
 

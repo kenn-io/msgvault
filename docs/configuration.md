@@ -958,7 +958,7 @@ and ready states.
 ### `[integrations.kata]`
 
 Optional live person agendas backed by Kata, and the connection that files
-[Kata issues from archive evidence](usage/kata-issues.md). Tasks stay in Kata;
+[Kata issues from archive evidence](usage/kata-issues.md). The same connection supports [loop tracking](#loopskata). Tasks stay in Kata;
 msgvault shows their current state when you open a person's agenda. This integration is built
 against Kata v0.18.0 and requires Kata API schema version 0.21.0 or later.
 
@@ -2032,6 +2032,31 @@ be at least one. `run_message_limit` cannot exceed the normal message window;
 the extended window cannot be smaller than it. Jobs commit bounded batches
 and yield to other daemon work. Summaries and evidence are archive data;
 configuration does not authorize an agent to act on their contents.
+
+#### `[loops.kata]` {#loopskata}
+
+Track [open loops in Kata](usage/open-loops.md#track-a-loop-in-kata) through the
+same `[integrations.kata]` connection. Its `enabled = true` setting is required
+for tracking and bridge work. With Kata disabled, reads retain cached links,
+tracking returns HTTP 503 `kata_unavailable`, and no bridge job runs.
+
+| Key | Default | Description |
+|---|---|---|
+| `comment_on_close` | `true` | Comment on a tracked issue when a substantive reply settles the turn; never close the Kata issue |
+| `close_on_issue_closed` | `true` | Mark the loop done when its issue closes; follow reopening only for bridge-closed loops within the window |
+| `reopen_window` | `168h` | Positive duration for following an issue reopened after the bridge closed its loop |
+| `batch` | `25` | Positive maximum issues refreshed or commented on in each bridge pass |
+
+The separate `open-loops-kata` job uses `[loops].schedule` and a one-minute
+runtime budget. It connects once per pass, allows ten seconds per issue and
+stops starting work with fifteen seconds left. Failed rows back off from one
+minute to six hours so healthy rows can proceed. Manual `loops run` derives
+loops and then runs the bridge. These settings do not alter the derivation
+fingerprint or trigger a rescan.
+
+Enabling the integration authorizes the daemon to access its configured Kata
+project. Tracking a loop authorizes the bridge's issue comments and local loop
+closures. Owner completion and withdrawal do not post closure comments.
 
 ## Overriding the Home Directory
 

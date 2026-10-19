@@ -13,6 +13,7 @@ var (
 )
 
 type OpenLoop struct {
+	Kata                                                             *LoopKataLink
 	ID                                                               int64
 	TurnKey                                                          string
 	Cycle                                                            int64

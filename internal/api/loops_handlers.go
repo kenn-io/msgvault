@@ -77,6 +77,20 @@ func (s *Server) loopHandler(operation string) http.HandlerFunc {
 			switch operation {
 			case "getOpenLoop":
 				result, err = s.loopService.Get(r.Context(), id)
+			case "trackOpenLoop":
+				var request loops.TrackRequest
+				if _, ok := decodeEntityRequestFields(w, r, &request, "loop"); !ok {
+					return
+				}
+				var response loops.TrackResponse
+				response, err = s.loopService.Track(r.Context(), id, request)
+				result = response
+				if !response.Replayed {
+					status = http.StatusCreated
+				}
+			case "untrackOpenLoop":
+				err = s.loopService.Untrack(r.Context(), id)
+				status = http.StatusNoContent
 			case "closeOpenLoop":
 				var request CloseOpenLoopRequest
 				if _, ok := decodeEntityRequestFields(w, r, &request, "loop"); !ok {
@@ -217,6 +231,10 @@ func parseLoopWaiting(r *http.Request) (loops.WaitingOptions, error) {
 }
 
 func (s *Server) writeLoopError(w http.ResponseWriter, err error) {
+	if tracked, ok := errors.AsType[*loops.AlreadyTrackedError](err); ok {
+		writeJSON(w, http.StatusConflict, LoopAlreadyTrackedResponse{Error: "loop_already_tracked", Message: "Open loop is already tracked", Kata: &tracked.Kata})
+		return
+	}
 	if stale, ok := errors.AsType[*loops.StaleError](err); ok {
 		writeJSON(w, http.StatusConflict, stale.Response)
 		return
@@ -225,6 +243,8 @@ func (s *Server) writeLoopError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
+	case errors.Is(err, loops.ErrKataUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "kata_unavailable", "Kata is unavailable")
 	case errors.Is(err, loops.ErrDisabled):
 		writeError(w, http.StatusServiceUnavailable, "loops_disabled", "Open loops are unavailable")
 	case errors.Is(err, store.ErrLoopNotFound):
@@ -234,6 +254,9 @@ func (s *Server) writeLoopError(w http.ResponseWriter, err error) {
 	case errors.Is(err, store.ErrInvalidLoop), errors.Is(err, store.ErrInvalidActivityRequest):
 		writeError(w, http.StatusBadRequest, "bad_request", "Invalid open-loop request")
 	default:
+		if s.writeKnownKataIssueError(w, err) {
+			return
+		}
 		s.logger.Error("open-loop request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "Open-loop request failed")
 	}

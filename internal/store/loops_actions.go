@@ -18,7 +18,7 @@ func (s *Store) withLiveLoopContext(ctx context.Context, id int64, fn func(*logg
 			if err := s.lockLoopConversationContext(ctx, tx, initial.ConversationID); err != nil {
 				return err
 			}
-			live, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", id))
+			live, err := scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=?", id))
 			if err != nil {
 				return err
 			}
@@ -28,7 +28,7 @@ func (s *Store) withLiveLoopContext(ctx context.Context, id int64, fn func(*logg
 			if err := fn(tx, live); err != nil {
 				return err
 			}
-			updated, err = scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", id))
+			updated, err = scanOpenLoop(tx.QueryRowContext(ctx, "SELECT "+openLoopColumns+openLoopFrom+" WHERE l.id=?", id))
 			return err
 		})
 		if err != nil {

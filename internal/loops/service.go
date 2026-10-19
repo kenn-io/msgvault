@@ -39,6 +39,13 @@ type ListOptions struct {
 	Cursor             string
 }
 
+// KataRefreshGate protects the archive write performed after a detail read
+// refreshes its cached issue state. It is optional so direct Store readers can
+// remain independent of the API server's operation scheduler.
+type KataRefreshGate interface {
+	TryBeginWorkContext(context.Context) (func(), bool)
+}
+
 type ListResponse struct {
 	Items      []Loop           `json:"items"`
 	NextCursor string           `json:"next_cursor,omitempty"`
@@ -48,6 +55,14 @@ type ListResponse struct {
 type DetailResponse struct {
 	Loop      Loop             `json:"loop"`
 	Freshness freshness.Report `json:"freshness"`
+}
+
+type TrackResponse struct {
+	DetailResponse
+
+	Issue    KataIssue `json:"issue"`
+	Replayed bool      `json:"replayed"`
+	Note     string    `json:"note,omitempty"`
 }
 
 type WaitingOptions struct {
@@ -75,20 +90,26 @@ type WaitingResponse struct {
 // freshness inventory. Request clocks never alter persisted derivation state.
 type Service struct {
 	st              *store.Store
+	kata            KataIssues
+	kataRefreshGate KataRefreshGate
 	cfg             config.Config
 	accountSnapshot func() []config.AccountSchedule
 	projection      func(context.Context) (freshness.ProjectionState, error)
 	now             func() time.Time
 }
 
-func NewService(st *store.Store, cfg *config.Config, projection func(context.Context) (freshness.ProjectionState, error)) (*Service, error) {
+func NewService(st *store.Store, cfg *config.Config, projection func(context.Context) (freshness.ProjectionState, error), options ...ServiceOption) (*Service, error) {
 	if st == nil || cfg == nil {
 		return nil, errors.New("open loops: store and configuration are required")
 	}
 	if err := cfg.Loops.Validate(); err != nil {
 		return nil, err
 	}
-	return &Service{st: st, cfg: *cfg, projection: projection, now: time.Now}, nil
+	s := &Service{st: st, cfg: *cfg, projection: projection, now: time.Now}
+	for _, option := range options {
+		option(s)
+	}
+	return s, nil
 }
 
 // SetAccountSnapshot supplies the live configured accounts used by freshness
@@ -99,7 +120,16 @@ func (s *Service) SetAccountSnapshot(snapshot func() []config.AccountSchedule) {
 	}
 }
 
+// SetKataRefreshGate coordinates optional detail-refresh writes with archive
+// operations such as a backup freeze. Install it before serving requests.
+func (s *Service) SetKataRefreshGate(gate KataRefreshGate) {
+	if s != nil {
+		s.kataRefreshGate = gate
+	}
+}
+
 func (s *Service) Enabled() bool { return s != nil && s.cfg.Loops.Enabled }
+
 func (s *Service) check() error {
 	if !s.Enabled() {
 		return ErrDisabled
@@ -135,7 +165,7 @@ func (s *Service) Freshness(ctx context.Context, now time.Time, sourceIDs []int6
 			return freshness.Report{}, err
 		}
 	}
-	return freshness.Build(ctx, freshness.Inputs{Now: now, StaleAfter: s.cfg.Loops.StaleAfter,
+	return freshness.Build(ctx, freshness.Inputs{Now: now, StaleAfter: cfg.Loops.StaleAfter,
 		Sources: filtered, Projections: map[string]freshness.ProjectionState{"open_loops": state}})
 }
 
@@ -230,10 +260,14 @@ func (s *Service) Get(ctx context.Context, id int64) (DetailResponse, error) {
 	if err != nil {
 		return DetailResponse{}, err
 	}
+	row, live := s.refreshKata(ctx, row)
 	now := s.now().UTC()
 	loop, err := publicLoop(row, now)
 	if err != nil {
 		return DetailResponse{}, err
+	}
+	if loop.Kata != nil {
+		loop.Kata.Live = live
 	}
 	report, err := s.Freshness(ctx, now, []int64{row.SourceID})
 	return DetailResponse{Loop: loop, Freshness: report}, err
@@ -264,11 +298,16 @@ func publicLoop(row store.OpenLoop, now time.Time) (Loop, error) {
 	if evidence == nil {
 		evidence = []Evidence{}
 	}
+	var kata *LoopKata
+	if row.Kata != nil {
+		value := publicLoopKata(*row.Kata)
+		kata = &value
+	}
 	counterparty := Counterparty{PersonID: row.CounterpartyPersonID, DisplayName: row.CounterpartyDisplayName}
 	if row.CounterpartyParticipantID != nil {
 		counterparty.ParticipantID = *row.CounterpartyParticipantID
 	}
-	return Loop{ID: row.ID, TurnKey: row.TurnKey, Cycle: row.Cycle, Kind: row.Kind, Status: row.Status,
+	return Loop{Kata: kata, ClosedBy: row.ClosedBy, ID: row.ID, TurnKey: row.TurnKey, Cycle: row.Cycle, Kind: row.Kind, Status: row.Status,
 		Channel: row.Channel, ConversationID: row.ConversationID, SourceID: row.SourceID, Counterparty: counterparty,
 		Summary: row.Summary, OwedSinceAt: row.OwedSinceAt, AnchorMessageID: row.AnchorMessageID,
 		LastActivityMessageID: row.LastActivityMessageID, LastActivityAt: row.LastActivityAt, OpensAt: row.OpensAt,

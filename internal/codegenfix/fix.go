@@ -7,11 +7,19 @@ import (
 	"regexp"
 )
 
-// RewriteCreateLoopSuppressionClient accepts the 200 dry-run response as well
-// as the 201 persisted-suppression response in the generated convenience
-// method. The generated WithResponse method already models both statuses.
+// RewriteCreateLoopSuppressionClient accepts both dry-run and persisted
+// suppression responses in the generated convenience method.
 func RewriteCreateLoopSuppressionClient(source []byte) ([]byte, error) {
-	const methodName = "CreateLoopSuppression"
+	return rewriteCreatedAndOKClient(source, "CreateLoopSuppression")
+}
+
+// RewriteTrackOpenLoopClient accepts both a newly created Kata link and an
+// idempotent replay response in the generated convenience method.
+func RewriteTrackOpenLoopClient(source []byte) ([]byte, error) {
+	return rewriteCreatedAndOKClient(source, "TrackOpenLoop")
+}
+
+func rewriteCreatedAndOKClient(source []byte, methodName string) ([]byte, error) {
 	start := bytes.Index(source, []byte("func (c *Client) "+methodName+"("))
 	if start < 0 {
 		return nil, fmt.Errorf("generated %s method shape changed", methodName)

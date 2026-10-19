@@ -7329,6 +7329,10 @@ components:
           type:
             - string
             - "null"
+        closed_by:
+          type:
+            - string
+            - "null"
         closed_message_id:
           format: int64
           type:
@@ -7360,6 +7364,10 @@ components:
         id:
           format: int64
           type: integer
+        kata:
+          oneOf:
+            - $ref: "#/components/schemas/LoopKata"
+            - type: "null"
         kind:
           type: string
         last_activity_at:
@@ -7391,6 +7399,8 @@ components:
         turn_key:
           type: string
       required:
+        - closed_by
+        - kata
         - id
         - turn_key
         - cycle
@@ -7415,6 +7425,19 @@ components:
         - closed_message_id
         - detector
         - agenda_state
+      type: object
+    LoopAlreadyTrackedResponse:
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        kata:
+          $ref: "#/components/schemas/LoopKata"
+        message:
+          type: string
+      required:
+        - error
+        - message
       type: object
     LoopCounterparty:
       additionalProperties: true
@@ -7463,6 +7486,18 @@ components:
         identity_revision:
           format: int64
           type: integer
+        kata_last_error:
+          type: string
+        kata_last_run_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        kata_last_success_at:
+          format: date-time
+          type:
+            - string
+            - "null"
         last_error:
           type: string
         last_reconcile_at:
@@ -7510,6 +7545,9 @@ components:
           format: date-time
           type: string
       required:
+        - kata_last_run_at
+        - kata_last_success_at
+        - kata_last_error
         - singleton
         - feed_cursor_at
         - feed_cursor_message_id
@@ -7551,6 +7589,10 @@ components:
           type: integer
         coverage_gap:
           type: boolean
+        kata_closed_ref:
+          type: string
+        kata_reopen_blocked:
+          type: string
         message_id:
           format: int64
           type: integer
@@ -7576,6 +7618,93 @@ components:
         - conversation_id
         - occurred_at
         - subject
+      type: object
+    LoopKata:
+      additionalProperties: true
+      properties:
+        attempts:
+          format: int64
+          type: integer
+        checked_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        closed_loop_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        closed_notified_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        issue_uid:
+          type: string
+        last_error:
+          type: string
+        linked_at:
+          format: date-time
+          type: string
+        linked_via:
+          type: string
+        live:
+          type: boolean
+        next_attempt_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        qualified_ref:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        web_url:
+          type: string
+      required:
+        - issue_uid
+        - qualified_ref
+        - title
+        - status
+        - linked_via
+        - linked_at
+        - checked_at
+        - live
+        - attempts
+        - next_attempt_at
+        - closed_notified_at
+        - closed_loop_at
+      type: object
+    LoopKataIssue:
+      additionalProperties: true
+      properties:
+        project:
+          type: string
+        qualified_ref:
+          type: string
+        ref:
+          type: string
+        revision:
+          type: string
+        status:
+          type: string
+        title:
+          type: string
+        uid:
+          type: string
+        web_url:
+          type: string
+      required:
+        - uid
+        - ref
+        - qualified_ref
+        - project
+        - title
+        - status
+        - revision
       type: object
     LoopListResponse:
       additionalProperties: true
@@ -7692,6 +7821,35 @@ components:
       required:
         - suppression
         - would_close
+      type: object
+    LoopTrackRequest:
+      additionalProperties: false
+      properties:
+        issue_ref:
+          type: string
+        list:
+          type: string
+        title:
+          type: string
+      type: object
+    LoopTrackResponse:
+      additionalProperties: true
+      properties:
+        freshness:
+          $ref: "#/components/schemas/FreshnessReport"
+        issue:
+          $ref: "#/components/schemas/LoopKataIssue"
+        loop:
+          $ref: "#/components/schemas/Loop"
+        note:
+          type: string
+        replayed:
+          type: boolean
+      required:
+        - issue
+        - replayed
+        - loop
+        - freshness
       type: object
     LoopWaitingGroup:
       additionalProperties: true
@@ -17089,7 +17247,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.25.0
+  version: 3.26.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24309,6 +24467,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -24379,6 +24543,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -24459,6 +24629,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -24534,6 +24710,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -24604,6 +24786,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -24695,6 +24883,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -24770,6 +24964,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -24867,6 +25067,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -24946,6 +25152,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -25041,6 +25253,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "500":
           content:
             application/json:
@@ -25062,6 +25280,189 @@ paths:
       security:
         - apiKey: []
       summary: Mark an unanswered turn done
+      tags:
+        - API
+  /api/v1/loops/{id}/kata:
+    delete:
+      operationId: untrackOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          description: Error
+      security:
+        - apiKey: []
+      summary: Remove a loop's local Kata link
+      tags:
+        - API
+    post:
+      operationId: trackOpenLoop
+      parameters:
+        - description: Positive loop, suppression or person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            minimum: 1
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoopTrackRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopTrackResponse"
+          description: OK
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopTrackResponse"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoopAlreadyTrackedResponse"
+          description: Conflict
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Track a loop in Kata with quoted archive evidence
       tags:
         - API
   /api/v1/loops/{id}/snooze:
@@ -25120,6 +25521,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -25209,6 +25616,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:
@@ -30329,6 +30742,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "415":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
           content:
             application/json:
               schema:

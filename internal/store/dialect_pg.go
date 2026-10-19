@@ -2364,6 +2364,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //     included so a future checkpoint writer cannot race the cascade.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
+//   - loop_kata_links: bridge refreshes update link rows directly, without
+//     touching open_loops, so source removal must lock this cascade child too.
 //
 // collections is included (despite not being a direct sources cascade target)
 // so a concurrent collection rename cannot race the collection_sources cascade.
@@ -2373,8 +2375,8 @@ var exclusiveLockTables = []string{
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
+	"open_loops", "loop_kata_links", "loop_suppressions",
 	"message_delivery_addresses",
-	"open_loops", "loop_suppressions",
 	"meeting_details", "meeting_action_items",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
@@ -2382,7 +2384,7 @@ var exclusiveLockTables = []string{
 	// persons and person_participants: MergeParticipants (reached from the
 	// Beeper import path) repoints bindings and bumps person revisions, so
 	// both belong to the sync/import write set this lock mirrors.
-	"persons", "person_participants", "open_loops", "loop_suppressions",
+	"persons", "person_participants",
 	"person_sweep_changes", "person_sweep_sync_publications",
 	// Activity projection rows are written from and cascade with the sync
 	// archive. The queue is trigger-written by every message/participant

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -32,7 +33,7 @@ func newPersonSplitFixture(t *testing.T) personSplitFixture {
 }
 
 func newPersonSplitFixtureWithAbsorbedSetup(
-	t *testing.T, setup func(*store.Store, *store.Person),
+	t *testing.T, setup func(*store.Store, *store.Person, *store.Person),
 ) personSplitFixture {
 	t.Helper()
 	require := require.New(t)
@@ -64,7 +65,7 @@ func newPersonSplitFixtureWithAbsorbedSetup(
 	})
 	require.NoError(err)
 	if setup != nil {
-		setup(st, absorbed)
+		setup(st, survivor, absorbed)
 	}
 	survivor, err = st.GetPersonContext(ctx, survivor.ID)
 	require.NoError(err)
@@ -89,7 +90,7 @@ func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()
-	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, absorbed *store.Person) {
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, _, absorbed *store.Person) {
 		for _, event := range []struct {
 			pinned bool
 			actor  string
@@ -152,6 +153,201 @@ func TestSplitPersonMerge_ExactReversalRestoresExplicitFactPinState(t *testing.T
 	assert.Equal("post-merge-pin-test", sourcePins[0].Actor)
 	require.NotNil(sourcePins[0].EventID)
 	assert.Equal(postMergeEventID, *sourcePins[0].EventID)
+}
+
+func TestSplitPersonMergeRestoresLoopSuppressions(t *testing.T) {
+	for _, survivorAlreadyMuted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("survivor_already_muted_%t", survivorAlreadyMuted), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+			f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, survivor, absorbed *store.Person) {
+				if survivorAlreadyMuted {
+					_, err := st.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+						TargetKind: "person", PersonID: &survivor.ID, Note: "survivor mute",
+					}, now)
+					require.NoError(err)
+				}
+				_, err := st.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+					TargetKind: "person", PersonID: &absorbed.ID, Note: "absorbed mute",
+				}, now)
+				require.NoError(err)
+			})
+
+			var mergedCount int
+			var mergedNote string
+			err := f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*), MAX(note)
+				FROM loop_suppressions WHERE target_kind = 'person' AND person_id = ?`), f.survivor.ID).
+				Scan(&mergedCount, &mergedNote)
+			require.NoError(err)
+			require.Equal(1, mergedCount)
+			if survivorAlreadyMuted {
+				assert.Equal("survivor mute", mergedNote)
+			} else {
+				assert.Equal("absorbed mute", mergedNote)
+			}
+
+			result, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+				SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
+				ParticipantIDs:         f.absorbedParticipants,
+				ExpectedSourceRevision: f.survivor.Revision,
+				IdempotencyKey:         "split-loop-suppression", Actor: "test",
+			})
+			require.NoError(err)
+			assert.True(result.ExactReversal)
+			var absorbedNote string
+			err = f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT note FROM loop_suppressions
+				WHERE target_kind = 'person' AND person_id = ?`), result.NewPerson.ID).Scan(&absorbedNote)
+			require.NoError(err)
+			assert.Equal("absorbed mute", absorbedNote)
+			var sourceCount int
+			err = f.store.DB().QueryRowContext(ctx, f.store.Rebind(`SELECT COUNT(*) FROM loop_suppressions
+				WHERE target_kind = 'person' AND person_id = ?`), result.SourcePerson.ID).Scan(&sourceCount)
+			require.NoError(err)
+			if survivorAlreadyMuted {
+				assert.Equal(1, sourceCount)
+			} else {
+				assert.Zero(sourceCount)
+			}
+		})
+	}
+}
+
+func TestSplitPersonMergePreservesReplacementLiveLoop(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		reuseOriginalKey bool
+	}{
+		{name: "same turn key", reuseOriginalKey: true},
+		{name: "same conversation and kind", reuseOriginalKey: false},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			testSplitPersonMergePreservesReplacementLiveLoop(t, tc.reuseOriginalKey)
+		})
+	}
+}
+
+func testSplitPersonMergePreservesReplacementLiveLoop(t *testing.T, reuseOriginalKey bool) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	var open store.LoopOpenDecision
+	var originalLoopID int64
+	f := newPersonSplitFixtureWithAbsorbedSetup(t, func(st *store.Store, survivor, absorbed *store.Person) {
+		source, err := st.GetOrCreateSource("beeper", "person-split-loop-example")
+		requirements.NoError(err)
+		conversation, err := st.EnsureConversationWithType(source.ID, "person-split-thread", "email_thread", "Example subject")
+		requirements.NoError(err)
+		participantID := absorbed.ParticipantIDs[0]
+		participant := participantID
+		personID := absorbed.ID
+		anchorID, err := st.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversation, SourceMessageID: "person-split-anchor",
+			MessageType: "email", SentAt: sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true},
+			SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+		})
+		requirements.NoError(err)
+		open = store.LoopOpenDecision{
+			TurnKey: fmt.Sprintf("turn:%d:reply_owed:%d", conversation, anchorID),
+			Kind:    "reply_owed", Status: "open", Channel: "email", ConversationID: conversation, SourceID: source.ID,
+			CounterpartyParticipantID: &participant, CounterpartyPersonID: &personID, AnchorMessageID: anchorID,
+			LastActivityMessageID: anchorID, OwedSinceAt: now.Add(-48 * time.Hour), LastActivityAt: now.Add(-48 * time.Hour),
+			OpensAt: now.Add(-24 * time.Hour), EvidenceJSON: []byte(`[{}]`), RulesetVersion: 1,
+			TurnMessageIDs: []int64{anchorID},
+		}
+		requirements.NoError(st.ApplyLoopVerdictContext(ctx, store.LoopApply{
+			ConversationID: conversation, Now: now, Verdict: store.LoopVerdict{Open: &open},
+		}))
+		live, err := st.ListLiveConversationLoopsContext(ctx, conversation)
+		requirements.NoError(err)
+		requirements.Len(live, 1)
+		originalLoopID = live[0].ID
+		_, inserted, err := st.InsertLoopKataLinkContext(ctx, store.LoopKataLink{
+			LoopID: originalLoopID, IssueUID: "synthetic-person-split-issue", IssueRef: "msgvault#split",
+			LinkedVia: "existing", LinkedAt: now,
+		}, "")
+		requirements.NoError(err)
+		assertions.True(inserted)
+		_, err = st.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+			TargetKind: "person", PersonID: &survivor.ID, Note: "survivor person mute",
+		}, now)
+		requirements.NoError(err)
+	})
+
+	survivorID := f.survivor.ID
+	originalAfterMerge, err := f.store.GetOpenLoopContext(ctx, originalLoopID)
+	requirements.NoError(err)
+	requirements.Equal("closed", originalAfterMerge.Status)
+	requirements.NotNil(originalAfterMerge.ClosedReason)
+	requirements.Equal("muted", *originalAfterMerge.ClosedReason)
+	var journalRows int
+	requirements.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(
+		"SELECT COUNT(*) FROM person_merge_rows WHERE merge_id=? AND table_name='open_loops' AND original_row_id=?",
+	), f.merge.Merge.ID, originalLoopID).Scan(&journalRows))
+	requirements.Equal(1, journalRows, "the pre-merge loop must be journaled for reversal")
+	var suppressionID int64
+	requirements.NoError(f.store.DB().QueryRowContext(ctx, f.store.Rebind(
+		"SELECT id FROM loop_suppressions WHERE target_kind='person' AND person_id=?",
+	), survivorID).Scan(&suppressionID))
+	requirements.NoError(f.store.DeleteLoopSuppressionContext(ctx, suppressionID, 24*time.Hour, now.Add(2*time.Hour)))
+	replacementAnchorID := open.AnchorMessageID
+	if !reuseOriginalKey {
+		replacementAnchorID, err = f.store.UpsertMessage(&store.Message{
+			SourceID: open.SourceID, ConversationID: open.ConversationID, SourceMessageID: "person-split-replacement-anchor",
+			MessageType: "email", SentAt: sql.NullTime{Time: now.Add(time.Hour), Valid: true},
+			SenderID: sql.NullInt64{Int64: *open.CounterpartyParticipantID, Valid: true},
+		})
+		requirements.NoError(err)
+	}
+	replacementDecision := open
+	if !reuseOriginalKey {
+		replacementDecision.TurnKey = fmt.Sprintf("turn:%d:reply_owed:%d", open.ConversationID, replacementAnchorID)
+		replacementDecision.AnchorMessageID = replacementAnchorID
+	}
+	replacementDecision.LastActivityMessageID = replacementAnchorID
+	replacementDecision.CounterpartyPersonID = &survivorID
+	replacementDecision.OwedSinceAt = now.Add(time.Hour)
+	replacementDecision.LastActivityAt = now.Add(time.Hour)
+	replacementDecision.TurnMessageIDs = []int64{replacementAnchorID}
+	requirements.NoError(f.store.ApplyLoopVerdictContext(ctx, store.LoopApply{
+		ConversationID: open.ConversationID, Now: now.Add(2 * time.Hour), Verdict: store.LoopVerdict{Open: &replacementDecision},
+	}))
+	replacement, err := f.store.ListLiveConversationLoopsContext(ctx, open.ConversationID)
+	requirements.NoError(err)
+	requirements.Len(replacement, 1)
+	assertions.NotEqual(originalLoopID, replacement[0].ID)
+	if reuseOriginalKey {
+		assertions.Equal(open.TurnKey, replacement[0].TurnKey)
+		assertions.Equal(int64(2), replacement[0].Cycle, "reopening a withdrawn turn must advance its cycle")
+	}
+	originalBeforeSplit, err := f.store.GetOpenLoopContext(ctx, originalLoopID)
+	requirements.NoError(err)
+	requirements.Equal("closed", originalBeforeSplit.Status)
+
+	split, err := f.store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: f.survivor.ID, MergeID: f.merge.Merge.ID,
+		ParticipantIDs:         f.absorbedParticipants,
+		ExpectedSourceRevision: f.survivor.Revision,
+		IdempotencyKey:         "split-replacement-loop", Actor: "test",
+	})
+	requirements.NoError(err)
+	assertions.True(split.ExactReversal)
+	assertions.Empty(split.UnrestoredRows)
+	live, err := f.store.ListLiveConversationLoopsContext(ctx, open.ConversationID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assertions.Equal(replacement[0].ID, live[0].ID)
+	original, err := f.store.GetOpenLoopContext(ctx, originalLoopID)
+	requirements.NoError(err)
+	assertions.Equal("closed", original.Status)
+	requirements.NotNil(original.ClosedReason)
+	assertions.Equal("muted", *original.ClosedReason)
+	link, err := f.store.GetLoopKataLinkContext(ctx, originalLoopID)
+	requirements.NoError(err)
+	assertions.Equal("synthetic-person-split-issue", link.IssueUID)
 }
 
 func TestSplitPersonMerge_ExactReversal(t *testing.T) {

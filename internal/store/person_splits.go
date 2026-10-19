@@ -1486,6 +1486,25 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	if len(currentRows) != 1 {
 		return fmt.Errorf("%w: current %s row is missing", ErrPersonSplitParticipants, row.TableName)
 	}
+	preserveClosedLoopLifecycle := false
+	if row.TableName == "open_loops" && personSplitSnapshotRowText(row, "status") != "closed" &&
+		personSplitSnapshotRowText(currentRows[0], "status") == "closed" {
+		// Keep a closed historical row closed when a later live row occupies
+		// either live-loop uniqueness key.
+		var hasLiveReplacement bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM open_loops WHERE id <> ? AND status <> 'closed' AND (
+				turn_key = ? OR (? = 'turn_state' AND detector = 'turn_state'
+					AND conversation_id = ? AND kind = ?)
+			)
+		)`, journal.originalRowID.Int64, personSplitSnapshotRowText(currentRows[0], "turn_key"),
+			personSplitSnapshotRowText(currentRows[0], "detector"),
+			personSplitSnapshotRowInteger(currentRows[0], "conversation_id"),
+			personSplitSnapshotRowText(currentRows[0], "kind")).Scan(&hasLiveReplacement); err != nil {
+			return fmt.Errorf("inspect replacement loop during split: %w", err)
+		}
+		preserveClosedLoopLifecycle = hasLiveReplacement
+	}
 	recordTargetPresent, err := s.personSplitSnapshotRecordTargetPresentTx(
 		ctx, tx, row, sourceID, newPersonID, survivorSnapshotID, absorbedSnapshotID,
 	)
@@ -1509,6 +1528,9 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	assignments := make([]string, 0, len(row.Columns))
 	args := make([]any, 0, len(row.Columns)+3)
 	for _, column := range row.Columns {
+		if preserveClosedLoopLifecycle && personSplitLoopLifecycleColumn(column.Name) {
+			continue
+		}
 		if !recordTargetPresent &&
 			(column.Name == "active_until" || column.Name == "superseded_at") {
 			continue
@@ -1580,6 +1602,15 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		return fmt.Errorf("%w: current %s row is missing", ErrPersonSplitParticipants, row.TableName)
 	}
 	return nil
+}
+
+func personSplitLoopLifecycleColumn(column string) bool {
+	switch column {
+	case "status", "closed_at", "closed_reason", "closed_by", "closed_message_id", "snoozed_until", "updated_at":
+		return true
+	default:
+		return false
+	}
 }
 
 func personSplitSnapshotColumnsByName(

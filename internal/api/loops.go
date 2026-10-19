@@ -10,6 +10,12 @@ import (
 	"go.kenn.io/msgvault/internal/loops"
 )
 
+type LoopAlreadyTrackedResponse struct {
+	Error   string          `json:"error"`
+	Message string          `json:"message"`
+	Kata    *loops.LoopKata `json:"kata,omitempty"`
+}
+
 type CloseOpenLoopRequest struct {
 	Note string `json:"note,omitempty"`
 }
@@ -28,6 +34,8 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 		{"listOpenLoops", http.MethodGet, "/loops", "List open-loop history", jsonResponsesFor[loops.ListResponse](api), nil},
 		{"getWaitingLoops", http.MethodGet, "/loops/waiting", "Rank people waiting for the owner's reply", jsonResponsesFor[loops.WaitingResponse](api), nil},
 		{"getOpenLoop", http.MethodGet, "/loops/{id}", "Get one loop and archived evidence references", jsonResponsesFor[loops.DetailResponse](api), nil},
+		{"trackOpenLoop", http.MethodPost, "/loops/{id}/kata", "Track a loop in Kata with quoted archive evidence", jsonResponsesFor[loops.TrackResponse](api, http.StatusOK, http.StatusCreated), jsonRequestBodyFor[loops.TrackRequest](api)},
+		{"untrackOpenLoop", http.MethodDelete, "/loops/{id}/kata", "Remove a loop's local Kata link", rawHumaResponses(http.StatusNoContent), nil},
 		{"closeOpenLoop", http.MethodPost, "/loops/{id}/done", "Mark an unanswered turn done", jsonResponsesFor[loops.DetailResponse](api), jsonRequestBodyFor[CloseOpenLoopRequest](api)},
 		{"snoozeOpenLoop", http.MethodPost, "/loops/{id}/snooze", "Snooze an open loop", jsonResponsesFor[loops.DetailResponse](api), jsonRequestBodyFor[SnoozeOpenLoopRequest](api)},
 		{"unsnoozeOpenLoop", http.MethodDelete, "/loops/{id}/snooze", "Remove a loop's snooze", jsonResponsesFor[loops.DetailResponse](api), nil},
@@ -44,10 +52,13 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 		op.Parameters = loopRouteParameters(r.id)
 		op.RequestBody = r.body
 		op.Responses = r.responses
-		op.Errors = []int{400, 401, 403, 404, 409, 413, 415, 500, 503}
+		op.Errors = []int{400, 401, 403, 404, 409, 413, 415, 422, 500, 503}
 		addErrorResponses(api, op.Responses, op.Errors...)
 		if r.id == "getWaitingLoops" {
 			op.Responses["409"] = jsonResponsesFor[loops.LoopsStaleResponse](api, http.StatusConflict)["409"]
+		}
+		if r.id == "trackOpenLoop" {
+			op.Responses["409"] = jsonResponsesFor[LoopAlreadyTrackedResponse](api, http.StatusConflict)["409"]
 		}
 		if r.method == http.MethodDelete {
 			documentRawHumaOperation(api, &op)
@@ -72,6 +83,9 @@ func (s *Server) registerLoopDeletes(api huma.API) {
 		case target == "suppressions":
 			r.SetPathValue("id", action)
 			s.loopHandler("deleteLoopSuppression")(w, r)
+		case action == "kata":
+			r.SetPathValue("id", target)
+			s.loopHandler("untrackOpenLoop")(w, r)
 		case action == "snooze":
 			r.SetPathValue("id", target)
 			s.loopHandler("unsnoozeOpenLoop")(w, r)
@@ -84,7 +98,7 @@ func (s *Server) registerLoopDeletes(api huma.API) {
 
 func loopOperation(id string) bool {
 	switch id {
-	case "listOpenLoops", "getWaitingLoops", "getOpenLoop", "closeOpenLoop", "snoozeOpenLoop", "unsnoozeOpenLoop", "listLoopSuppressions", "createLoopSuppression", "deleteLoopSuppression", "getLoopsStatus", "runLoops", "rebuildLoops", "listPersonLoops":
+	case "trackOpenLoop", "untrackOpenLoop", "listOpenLoops", "getWaitingLoops", "getOpenLoop", "closeOpenLoop", "snoozeOpenLoop", "unsnoozeOpenLoop", "listLoopSuppressions", "createLoopSuppression", "deleteLoopSuppression", "getLoopsStatus", "runLoops", "rebuildLoops", "listPersonLoops":
 		return true
 	default:
 		return false
@@ -94,7 +108,7 @@ func loopOperation(id string) bool {
 func loopRouteParameters(id string) []*huma.Param {
 	var out []*huma.Param
 	switch id {
-	case "getOpenLoop", "closeOpenLoop", "snoozeOpenLoop", "unsnoozeOpenLoop", "deleteLoopSuppression", "listPersonLoops":
+	case "trackOpenLoop", "untrackOpenLoop", "getOpenLoop", "closeOpenLoop", "snoozeOpenLoop", "unsnoozeOpenLoop", "deleteLoopSuppression", "listPersonLoops":
 		p := pathIntegerParam("Positive loop, suppression or person ID")
 		minimum := float64(1)
 		p.Schema.Minimum = &minimum

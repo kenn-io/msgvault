@@ -52,6 +52,16 @@
     if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h`;
     return `${Math.max(0, Math.floor(seconds / 60))}m`;
   }
+
+  function safeIssueURL(value: string | undefined): string | undefined {
+    if (!value) return undefined;
+    try {
+      const url = new URL(value);
+      return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined;
+    } catch {
+      return undefined;
+    }
+  }
 </script>
 
 <section aria-label="Open loops">
@@ -72,6 +82,14 @@
                 <span title={`Owed since ${loop.owed_since_at}`}>{ageLabel(loop.age_seconds)}</span></div>
               {#if loop.anchor_message_id != null}<a href={`/messages/${loop.anchor_message_id}`}>{loop.summary || 'Open archived conversation'}</a>
               {:else}<span>{loop.summary || 'Archived conversation'}</span>{/if}
+              {#if loop.kata}
+                {@const issueURL = safeIssueURL(loop.kata.web_url)}
+                <div class="kata" title={loop.kata.checked_at ? `Kata checked ${loop.kata.checked_at}` : 'Kata never checked'}>
+                  {#if issueURL}<a href={issueURL} target="_blank" rel="noreferrer">{loop.kata.qualified_ref}</a>
+                  {:else}<span>{loop.kata.qualified_ref}</span>{/if}
+                  <span>{loop.kata.status}</span>
+                </div>
+              {/if}
             </li>
           {/each}
         </ul>{/if}
@@ -88,4 +106,6 @@
   ul { display: grid; gap: var(--space-3); padding: 0; list-style: none; }
   li { display: grid; gap: var(--space-1); overflow-wrap: anywhere; }
   .stale { color: var(--status-warning-ink); }
+  .kata { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-sm); }
+  .kata > span { color: var(--text-muted); }
 </style>

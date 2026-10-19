@@ -21,8 +21,9 @@ import (
 )
 
 type Importer struct {
-	store *store.Store
-	opts  ImportOptions
+	store          *store.Store
+	opts           ImportOptions
+	unsentLabelIDs map[int64]int64
 }
 
 func NewImporter(st *store.Store, opts ImportOptions) *Importer {
@@ -150,10 +151,11 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Drafts are owner-authored messages that never made it out, but
-	// they still belong on the owner's side of the conversation. Without
-	// SMSTypeDraft here a draft imports as if it came from the contact.
-	fromMe := sms.Type == SMSTypeSent || sms.Type == SMSTypeOutbox || sms.Type == SMSTypeFailed || sms.Type == SMSTypeQueued || sms.Type == SMSTypeDraft
+	// Unsent records are owner-authored but are not delivered turns. Persist
+	// that distinction with the source's draft-role label so loop derivation
+	// cannot treat them as a reply or a new question.
+	unsent := sms.Type == SMSTypeOutbox || sms.Type == SMSTypeFailed || sms.Type == SMSTypeQueued || sms.Type == SMSTypeDraft
+	fromMe := sms.Type == SMSTypeSent || unsent
 	senderID := remoteID
 	recipientIDs := []int64{ownerID}
 	if fromMe {
@@ -171,7 +173,16 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	if err != nil {
+		return 0, err
+	}
+	if unsent {
+		if err := i.markUnsent(sourceID, messageID); err != nil {
+			return 0, err
+		}
+	}
+	return messageID, nil
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -183,8 +194,9 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	// Drafts belong to the owner — see the matching note in importSMS.
-	fromMe := mms.MessageBox == MMSBoxSent || mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
+	// Outbox and draft records belong to the owner but are not delivered.
+	unsent := mms.MessageBox == MMSBoxOutbox || mms.MessageBox == MMSBoxDraft
+	fromMe := mms.MessageBox == MMSBoxSent || unsent
 	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
 		return 0, 0, err
@@ -205,11 +217,66 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	if unsent {
+		if err := i.markUnsent(sourceID, messageID); err != nil {
+			return messageID, 0, err
+		}
+	} else if err := i.clearUnsent(sourceID, messageID); err != nil {
+		return messageID, 0, err
+	}
 	imported, err := i.importMMSAttachments(sourceID, msgID, mms)
 	if err != nil {
 		return messageID, imported, err
 	}
 	return messageID, imported, nil
+}
+
+func (i *Importer) markUnsent(sourceID, messageID int64) error {
+	if i.unsentLabelIDs == nil {
+		i.unsentLabelIDs = make(map[int64]int64)
+	}
+	labelID := i.unsentLabelIDs[sourceID]
+	if labelID == 0 {
+		labels, err := i.store.EnsureLabelsBatch(sourceID, map[string]store.LabelInfo{
+			"synctech-unsent": {Name: "Unsent", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+		})
+		if err != nil {
+			return fmt.Errorf("ensure unsent label: %w", err)
+		}
+		labelID = labels["synctech-unsent"]
+		i.unsentLabelIDs[sourceID] = labelID
+	}
+	if err := i.store.AddMessageLabels(messageID, []int64{labelID}); err != nil {
+		return fmt.Errorf("mark message unsent: %w", err)
+	}
+	return nil
+}
+
+func (i *Importer) clearUnsent(sourceID, messageID int64) error {
+	if i.unsentLabelIDs == nil {
+		i.unsentLabelIDs = make(map[int64]int64)
+	}
+	labelID, cached := i.unsentLabelIDs[sourceID]
+	if !cached {
+		err := i.store.DB().QueryRow(i.store.Rebind(`
+			SELECT id FROM labels WHERE source_id = ? AND source_label_id = ?
+		`), sourceID, "synctech-unsent").Scan(&labelID)
+		if errors.Is(err, sql.ErrNoRows) {
+			i.unsentLabelIDs[sourceID] = 0
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("find unsent label: %w", err)
+		}
+		i.unsentLabelIDs[sourceID] = labelID
+	}
+	if labelID == 0 {
+		return nil
+	}
+	if err := i.store.RemoveMessageLabels(messageID, []int64{labelID}); err != nil {
+		return fmt.Errorf("clear unsent label: %w", err)
+	}
+	return nil
 }
 
 func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {

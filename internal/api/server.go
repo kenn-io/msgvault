@@ -712,6 +712,9 @@ func NewServerWithOptions(opts ServerOptions) *Server {
 	}
 	if s.loopService != nil {
 		s.loopService.SetAccountSnapshot(s.configuredAccountsSnapshot)
+		if gate, ok := opts.OperationGate.(loops.KataRefreshGate); ok {
+			s.loopService.SetKataRefreshGate(gate)
+		}
 	}
 	s.analyticsState.Store(&analyticsEngineState{
 		engine: opts.Engine, mode: opts.AnalyticsMode,

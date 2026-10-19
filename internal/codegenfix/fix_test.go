@@ -118,6 +118,35 @@ func (c *Client) CreateLoopSuppression(ctx context.Context, options *CreateLoopS
 	assertions.Equal(got, again)
 }
 
+func TestRewriteTrackOpenLoopClientAcceptsBothSuccessStatuses(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := `package generated
+func (c *Client) AnotherMethod() error {
+	if resp.StatusCode != 201 { return nil }
+	return nil
+}
+func (c *Client) TrackOpenLoop(ctx context.Context, options *TrackOpenLoopRequestOptions, reqEditors ...runtime.RequestEditorFn) (*TrackOpenLoopResponseJSON, error) {
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*TrackOpenLoopResponseJSON, error) {
+		if resp.StatusCode != 201 {
+			return nil, nil
+		}
+		return nil, nil
+	}
+	return responseParser(ctx, nil)
+}
+`
+
+	got, err := RewriteTrackOpenLoopClient([]byte(fixture))
+	requirements.NoError(err)
+	assertions.Contains(string(got), "if resp.StatusCode != 200 && resp.StatusCode != 201 {")
+	assertions.Contains(string(got), "func (c *Client) AnotherMethod() error {\n\tif resp.StatusCode != 201 {")
+
+	again, err := RewriteTrackOpenLoopClient(got)
+	requirements.NoError(err)
+	assertions.Equal(got, again)
+}
+
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
 	_, err := RewriteGeneratedValidators([]byte("package generated\n"))
 

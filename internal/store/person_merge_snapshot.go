@@ -163,17 +163,17 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 		TableName: "person_participants", KeyColumn: "participant_id", Snapshot: false,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
-	"open_loops": {
-		TableName: "open_loops", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("counterparty_person_id")},
+	"person_tracking": {
+		TableName: "person_tracking", KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"loop_suppressions": {
 		TableName: "loop_suppressions", KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
-	"person_tracking": {
-		TableName: "person_tracking", KeyColumn: personMergePersonIDColumn, Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	"open_loops": {
+		TableName: "open_loops", KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference("counterparty_person_id")},
 	},
 	"vcard_resource_envelopes": {
 		TableName: "vcard_resource_envelopes", KeyColumn: "id", Snapshot: true,

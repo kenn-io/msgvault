@@ -70,6 +70,54 @@ func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), boo
 	return g.BeginLabeledWorkContext(ctx, "")
 }
 
+// TryBeginWorkContext acquires the gate only when it is immediately available.
+// Read requests that have an optional archive write use this to skip the write
+// while a backup freeze or another operation owns the archive.
+func (g *SerialOperationGate) TryBeginWorkContext(ctx context.Context) (func(), bool) {
+	if g == nil {
+		return func() {}, true
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return func() {}, false
+	}
+	sem, _ := g.state()
+	g.mu.Lock()
+	if g.draining || g.requestWaiters > 0 || ctx.Err() != nil {
+		g.mu.Unlock()
+		return func() {}, false
+	}
+	select {
+	case sem <- struct{}{}:
+		if ctx.Err() != nil {
+			<-sem
+			g.mu.Unlock()
+			return func() {}, false
+		}
+		g.active++
+		g.holderSince = time.Now()
+		g.mu.Unlock()
+	default:
+		g.mu.Unlock()
+		return func() {}, false
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			g.mu.Lock()
+			if g.active > 0 {
+				g.active--
+			}
+			g.holderLabel = ""
+			g.holderSince = time.Time{}
+			g.mu.Unlock()
+			<-sem
+		})
+	}, true
+}
+
 // BeginRequestWorkContext is BeginLabeledWorkContext for API-request work.
 // While queued, the request counts toward HasRequestWaiters so background
 // holders (scheduled syncs, embed passes) know to yield.

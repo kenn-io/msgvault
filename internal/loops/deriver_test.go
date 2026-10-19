@@ -476,7 +476,7 @@ func TestDeriverKeepsBulkReplyLoopAfterOwnerParticipation(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("open", preserved.Status)
 	assertions.Contains(string(preserved.EvidenceJSON), fmt.Sprintf(`"owner_participation_message_id":%d`, ownerMessageID))
-	assertions.Contains(string(preserved.EvidenceJSON), `"coverage_gap":true`, "saved participation outside the extended window remains uncertain")
+	assertions.NotContains(string(preserved.EvidenceJSON), `"coverage_gap":true`, "store-backed participation validation confirms the saved evidence")
 	requirements.NotNil(preserved.SnoozedUntil)
 	assertions.True(until.Equal(*preserved.SnoozedUntil))
 	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
@@ -559,7 +559,7 @@ func TestDeriverKeepsBulkReplyLoopAfterZeroIDOwnerParticipation(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("open", preserved.Status)
 	assertions.Contains(string(preserved.EvidenceJSON), `"owner_participation_message_id":0`)
-	assertions.Contains(string(preserved.EvidenceJSON), `"coverage_gap":true`)
+	assertions.NotContains(string(preserved.EvidenceJSON), `"coverage_gap":true`, "store-backed validation confirms message ID zero")
 	requirements.NotNil(preserved.SnoozedUntil)
 	assertions.True(until.Equal(*preserved.SnoozedUntil))
 	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
@@ -1434,4 +1434,63 @@ func TestDeriverPreservesSelectedAwaitingCounterpartyAndSnoozeWhenAnotherIsMuted
 	assertions.Equal(higherID, *retained.CounterpartyParticipantID)
 	requirements.NotNil(retained.SnoozedUntil)
 	assertions.True(snoozedUntil.Equal(*retained.SnoozedUntil))
+}
+
+func TestDeriverRevalidatesSavedNegativeOwnerParticipationID(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	override := ""
+	if f.Store.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	ownerMessageID := int64(-1)
+	deriveExec(t, f, `INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type,sender_id,
+		sent_at,source_is_from_me,subject)`+override+` VALUES(?,?,?,?,?,?,?,?,?)`,
+		ownerMessageID, f.Source.ID, f.ConvID, "negative-owner-participation", "email", owner,
+		deriveStamp(f, now.Add(-72*time.Hour)), true, "Here is the update")
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", ownerMessageID, peer)
+	deriveExec(t, f, "INSERT INTO message_bodies(message_id,body_text) VALUES(?,?)", ownerMessageID, "Here is the update.")
+
+	bulkSignals := store.AutomationSignalsFromMIME(mime.AutomationSignals{PrecedenceBulk: true})
+	bulkMessageID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "negative-id-bulk-reply",
+			MessageType: "email", SenderID: sql.NullInt64{Int64: peer, Valid: true},
+			SentAt:  sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true},
+			Subject: sql.NullString{String: "Automatic update", Valid: true},
+		},
+		BodyText:          sql.NullString{String: "A bulk-marked reply.", Valid: true},
+		AutomationSignals: &bulkSignals,
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", bulkMessageID, owner)
+	deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, peer)
+	deriveExec(t, f, "UPDATE conversations SET last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-48*time.Hour)), f.ConvID)
+
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assertions.Contains(string(live[0].EvidenceJSON), `"owner_participation_message_id":-1`)
+
+	d.cfg.ConversationMessageLimit = 1
+	d.cfg.ConversationMessageLimitExtended = 1
+	now = now.Add(time.Minute)
+	d.now = func() time.Time { return now }
+	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "negative-owner-participation-refresh", now))
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Greater(result.ProcessedConversations, 0)
+	preserved, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", preserved.Status)
+	assertions.Contains(string(preserved.EvidenceJSON), `"owner_participation_message_id":-1`)
 }

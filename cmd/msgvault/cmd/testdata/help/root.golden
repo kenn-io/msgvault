@@ -45,7 +45,7 @@ Export:
   export-eml         Export a message as .eml file
   export-messages    Export messages in a time window as provider-neutral JSONL
 
-People, organizations, and identity:
+People, organizations and follow-ups:
   attribute-definition Manage portable attribute definitions
   carddav              Manage CardDAV connections, books, and conflicts
   collection           Manage named groups of accounts

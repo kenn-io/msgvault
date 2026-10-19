@@ -352,6 +352,24 @@ func (c CloseOpenLoopPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type UntrackOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (u UntrackOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type TrackOpenLoopPath struct {
+	// ID Positive loop, suppression or person ID
+	ID int64 `json:"id" validate:"gte=1"`
+}
+
+func (t TrackOpenLoopPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
+}
+
 type UnsnoozeOpenLoopPath struct {
 	// ID Positive loop, suppression or person ID
 	ID int64 `json:"id" validate:"gte=1"`

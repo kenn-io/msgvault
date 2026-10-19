@@ -13,6 +13,11 @@ export interface LoopDerivationState {
   /** @nullable */
   feed_frontier: string | null;
   identity_revision: number;
+  kata_last_error: string;
+  /** @nullable */
+  kata_last_run_at: string | null;
+  /** @nullable */
+  kata_last_success_at: string | null;
   last_error: string;
   /** @nullable */
   last_reconcile_at: string | null;
