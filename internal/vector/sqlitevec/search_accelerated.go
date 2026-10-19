@@ -307,7 +307,11 @@ func (b *Backend) searchExactFilteredPopulation(
 	if err != nil {
 		return nil, fmt.Errorf("encode exact-filter message IDs: %w", err)
 	}
-	freshRevisionSQL := ""
+	from := `FROM embeddings e
+		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id`
+	where := `WHERE e.generation_id = ?
+		  AND e.message_id IN (SELECT value FROM json_each(?))`
+	queryPrefix := ""
 	args := []any{float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob)}
 	if b.policyStore != nil {
 		revisions, err := b.currentEmbeddingRevisions(ctx, messageIDs)
@@ -321,24 +325,29 @@ func (b *Backend) searchExactFilteredPopulation(
 		if err != nil {
 			return nil, err
 		}
-		freshRevisionSQL = `AND EXISTS (
-			SELECT 1 FROM json_each(?) pair
-			 WHERE json_extract(pair.value, '$[0]') = e.message_id
-			   AND json_extract(pair.value, '$[1]') = e.embedding_revision
-		)`
-		args = append(args, revisionPairs)
+		// Materialize the bounded revision set once, then join current vectors by
+		// generation and message through their index.
+		queryPrefix = `WITH current_revisions(message_id, embedding_revision) AS MATERIALIZED (
+			SELECT CAST(json_extract(pair.value, '$[0]') AS INTEGER),
+			       CAST(json_extract(pair.value, '$[1]') AS INTEGER)
+			FROM json_each(?) pair
+		)
+		`
+		from = `FROM current_revisions current_revision
+		JOIN embeddings e ON e.generation_id = ?
+			AND e.message_id = current_revision.message_id
+			AND e.embedding_revision = current_revision.embedding_revision
+		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id`
+		where = ""
+		args = []any{revisionPairs, float32SliceBlob(queryVec), int64(accelerator.GenerationID)}
 	}
-	query := `SELECT e.message_id,
+	query := queryPrefix + `SELECT e.message_id,
 		MIN(vec1_l2_distance(?, a.embedding)) AS distance
-		FROM embeddings e
-		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id
-		WHERE e.generation_id = ?
-		  AND e.message_id IN (SELECT value FROM json_each(?))
-		  %s
+		` + from + `
+		` + where + `
 		GROUP BY e.message_id
 		ORDER BY distance ASC, e.message_id ASC
 		LIMIT ?`
-	query = fmt.Sprintf(query, freshRevisionSQL)
 	args = append(args, k)
 	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {

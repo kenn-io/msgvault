@@ -11,6 +11,35 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func TestParticipantNameRepairRemainsEligibleAfterColdChatSighting(t *testing.T) {
+	s, source, _, cold, _ := policyObservationFixture(t)
+	const phone = "+15550123456"
+	participantID, err := s.EnsureParticipantByPhone(phone, "", "sms")
+	require.NoError(t, err)
+	updated, err := s.UpdateParticipantDisplayNameByPhone(phone, "Native VCard Name")
+	require.NoError(t, err)
+	require.True(t, updated)
+	require.NoError(t, s.SetConversationPolicyOverride(t.Context(), source, "cold", conversationpolicy.Cold))
+	messageID, err := s.UpsertMessage(&store.Message{
+		SourceID: source, ConversationID: cold, SourceMessageID: "vcard-name-cold-chat",
+		MessageType: "chat", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	require.NoError(t, err)
+	_, err = s.DB().Exec(s.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name)
+		VALUES(?,?,'from',?)`), messageID, participantID, "Different Chat Name")
+	require.NoError(t, err)
+
+	eligibleNameCount := func(value string) int {
+		var count int
+		err := s.DB().QueryRow(s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+
+			store.FullParticipantNameWhere("p.id", "?")), participantID, value, value).Scan(&count)
+		require.NoError(t, err)
+		return count
+	}
+	assert.Equal(t, 1, eligibleNameCount("Native VCard Name"))
+	assert.Zero(t, eligibleNameCount("Different Chat Name"))
+}
+
 func TestConversationPolicyRawNameRequiresExactFullValue(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

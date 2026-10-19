@@ -86,7 +86,7 @@ func TestImporterColdPolicyRetainsTextAndMediaPolicy(t *testing.T) {
 			message, err := imp.store.InspectMessage(sourceMessageID(c.ID, ts(0)))
 			requirements.NoError(err)
 			assertions.Equal("retained text", message.BodyText)
-			if tc.override != "" {
+			if tc.override == conversationpolicy.Cold {
 				assertColdPolicyAccountScope(t, imp.store, "slack", c.ID)
 			}
 			if !tc.unknown {
@@ -200,7 +200,7 @@ func TestSlackdumpColdPolicyRetainsText(t *testing.T) {
 			message, err := st.InspectMessage("ROOM:1704067200.000001")
 			requirements.NoError(err)
 			assertions.Equal("retained text", message.BodyText)
-			if tc.override != "" {
+			if tc.override == conversationpolicy.Cold {
 				assertColdPolicyAccountScope(t, st, "slackdump", "ROOM")
 			}
 		})

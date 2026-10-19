@@ -296,7 +296,9 @@ func (s *Store) reconcilePromotedConversationConflictsTx(ctx context.Context, tx
 // A raw participant row can combine several providers after archival merges.
 // Eligibility therefore belongs to the observed value, not to that whole row.
 func participantChatProvenanceWhere(id string) string {
-	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id JOIN sources policy_source ON policy_source.id=policy_room.source_id WHERE policy_member.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation JOIN sources policy_source ON policy_source.id=policy_observation.source_id WHERE policy_observation.participant_id=` + id + ` AND policy_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS(SELECT 1 FROM messages policy_message JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_source.source_type IN ('beeper','slack','slackdump','discord','teams') AND (policy_message.sender_id=` + id + ` OR EXISTS(SELECT 1 FROM message_recipients policy_recipient WHERE policy_recipient.message_id=policy_message.id AND policy_recipient.participant_id=` + id + `))))`
+	// Keep sender and recipient checks separate so SQLite can use each index.
+	const chatSources = `'beeper','slack','slackdump','discord','teams'`
+	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id JOIN sources policy_source ON policy_source.id=policy_room.source_id WHERE policy_member.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation JOIN sources policy_source ON policy_source.id=policy_observation.source_id WHERE policy_observation.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM messages policy_message JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_message.sender_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM message_recipients policy_recipient JOIN messages policy_message ON policy_message.id=policy_recipient.message_id JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_recipient.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)))`
 }
 
 // FullParticipantValueWhere returns the SQL predicate for using one exact
@@ -384,8 +386,9 @@ func nativeParticipantIdentifierHistoryWhere(identifier string) string {
 // FullParticipantNameWhere returns the SQL predicate for using one exact raw
 // participant display name. Chat-derived names require a matching display
 // value on a live Full message or a surviving Full-room name observation.
-// A sender or roster ID alone cannot attest to the name stored on its shared
-// row. Independent curated profile names are read separately from this fallback.
+// Exact native and curated name observations remain independent support; a
+// sender or roster ID alone cannot attest to the name stored on its shared row.
+// Curated profile names are read separately from this fallback.
 func FullParticipantNameWhere(id, value string) string {
 	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(
  SELECT 1 FROM participant_contact_observations name_observation

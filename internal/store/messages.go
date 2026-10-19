@@ -5504,6 +5504,7 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTx(func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTx(tx); err != nil {
 			return err
@@ -5522,13 +5523,24 @@ func (s *Store) UpdateParticipantDisplayNameByPhone(phone, displayName string) (
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				context.Background(), tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(tx,
+			`SELECT id FROM participants WHERE phone_number = ? AND display_name = ?`, phone, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -5550,6 +5562,7 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTx(func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTx(tx); err != nil {
 			return err
@@ -5581,13 +5594,26 @@ func (s *Store) UpdateImessageParticipantDisplayNameByPhone(phone, displayName s
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				context.Background(), tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(tx, `SELECT id FROM participants
+			WHERE phone_number = ? AND display_name = ?
+			  AND EXISTS (SELECT 1 FROM participant_identifiers pi
+			    WHERE pi.participant_id = participants.id AND pi.identifier_type = 'imessage')`, phone, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -5852,6 +5878,7 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 	}
 
 	var updated bool
+	var namedParticipantIDs []int64
 	err := s.withTx(func(tx *loggedTx) error {
 		if err := s.lockIdentityMutationTx(tx); err != nil {
 			return err
@@ -5871,13 +5898,25 @@ func (s *Store) UpdateParticipantDisplayNameByEmail(email, displayName string) (
 			return err
 		}
 		updated, err = s.bumpParticipantDisplayNameRevisionIfChanged(tx, result)
-		if err != nil || !updated {
+		if err != nil {
 			return err
 		}
-		return s.invalidateParticipantPersonEnrichmentTx(
-			context.Background(), tx, participantIDs...)
+		if updated {
+			if err := s.invalidateParticipantPersonEnrichmentTx(
+				context.Background(), tx, participantIDs...,
+			); err != nil {
+				return err
+			}
+		}
+		namedParticipantIDs, err = s.participantIdentityUpdateIDsTx(tx,
+			`SELECT id FROM participants
+			 WHERE LOWER(email_address) = LOWER(?) AND display_name = ?`, email, displayName)
+		return err
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := s.recordVCardParticipantDisplayNameObservations(namedParticipantIDs, displayName); err != nil {
 		return false, err
 	}
 	return updated, nil
@@ -5903,6 +5942,20 @@ func (s *Store) participantIdentityUpdateIDsTx(
 		return nil, fmt.Errorf("iterate participant identity updates: %w", err)
 	}
 	return participantIDs, nil
+}
+
+func (s *Store) recordVCardParticipantDisplayNameObservations(participantIDs []int64, displayName string) error {
+	for _, participantID := range participantIDs {
+		_, err := s.RecordContactObservationContext(context.Background(), participantID, ParticipantContactObservationInput{
+			AddressKind:   ContactAddressDisplayName,
+			OriginalValue: displayName,
+			Envelope:      ValueEnvelopeInput{Source: ProvenanceVCardImport},
+		})
+		if err != nil {
+			return fmt.Errorf("record vCard display name for participant %d: %w", participantID, err)
+		}
+	}
+	return nil
 }
 
 // EnsureConversationParticipant adds a participant to a conversation.

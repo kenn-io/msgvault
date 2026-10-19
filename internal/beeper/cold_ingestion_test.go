@@ -98,7 +98,7 @@ func TestImporterColdPolicyRetainsTextAndMediaPolicy(t *testing.T) {
 			state := latestBeeperState(t, imp)
 			assertions.True(state.Chats[ch.ID].Done)
 			assertions.NotEmpty(state.Chats[ch.ID].Newest)
-			if tc.override != "" {
+			if tc.override == conversationpolicy.Cold {
 				assertColdPolicyAccountScope(t, st, "beeper", ch.ID)
 			}
 		})

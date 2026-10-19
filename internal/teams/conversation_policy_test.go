@@ -118,7 +118,7 @@ func TestImporterColdPolicyRetainsTextAndMediaPolicy(t *testing.T) {
 			} else {
 				assertions.NotEmpty(state.ChatCursor("cold-chat"))
 			}
-			if tc.override != "" {
+			if tc.override == conversationpolicy.Cold {
 				assertColdPolicyAccountScope(t, st, "teams", "cold-chat")
 			}
 		})

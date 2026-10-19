@@ -94,7 +94,7 @@ func TestImporterColdPolicyRetainsTextAndMediaPolicy(t *testing.T) {
 			requirements.NoError(err)
 			assertions.True(state.Containers["300"].BackfillComplete)
 			assertions.Equal("1001", state.Containers["300"].HighWater)
-			if tc.override != "" {
+			if tc.override == conversationpolicy.Cold {
 				assertColdPolicyAccountScope(t, st, "discord", "300")
 			}
 		})

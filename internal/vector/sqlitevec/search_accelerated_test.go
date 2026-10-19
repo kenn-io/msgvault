@@ -6,15 +6,93 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"math"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 )
+
+type exactFilteredQueryPlanDB struct {
+	*sql.DB
+	plan string
+}
+
+func (db *exactFilteredQueryPlanDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	rows, err := db.DB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+query, args...)
+	if err != nil {
+		return nil, err
+	}
+	var details []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		details = append(details, detail)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	db.plan = strings.Join(details, "\n")
+	return db.DB.QueryContext(ctx, query, args...)
+}
+
+func TestPolicyExactFilteredSearchMaterializesCurrentRevisionsOnce(t *testing.T) {
+	backend, st, sourceID, firstMessageID, generationID := newPolicyBackend(t)
+	ctx := t.Context()
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", "full"))
+	var roomID int64
+	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT id FROM conversations
+		WHERE source_id=? AND source_conversation_id='room'`), sourceID).Scan(&roomID))
+
+	const count = 256
+	ids := make([]int64, 0, count)
+	chunks := make([]vector.Chunk, 0, count)
+	for i := range count {
+		messageID := firstMessageID
+		if i > 0 {
+			var err error
+			messageID, err = st.UpsertMessage(&store.Message{
+				SourceID: sourceID, ConversationID: roomID,
+				SourceMessageID: fmt.Sprintf("exact-search-%d", i), MessageType: "beeper",
+			})
+			require.NoError(t, err)
+		}
+		ids = append(ids, messageID)
+		chunks = append(chunks, policyChunk(t, st, messageID, unitVec(4, i%4)))
+	}
+	require.NoError(t, backend.Upsert(ctx, generationID, chunks))
+	tableName := installReadyFlatAccelerator(t, backend, generationID, 4)
+	accelerator, err := backend.readyAcceleratorQuery(ctx, backend.db, generationID, 4, "")
+	require.NoError(t, err)
+	require.NotNil(t, accelerator)
+	require.Equal(t, tableName, accelerator.TableName)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages
+		SET embedding_revision=embedding_revision+1 WHERE id=?`), ids[4])
+	require.NoError(t, err)
+
+	queryer := &exactFilteredQueryPlanDB{DB: backend.db}
+	hits, err := backend.searchExactFilteredPopulation(ctx, queryer, *accelerator, unitVec(4, 0), 5, ids)
+	require.NoError(t, err)
+	require.Len(t, hits, 5)
+	assert.NotContains(t, []int64{hits[0].MessageID, hits[1].MessageID, hits[2].MessageID, hits[3].MessageID, hits[4].MessageID}, ids[4])
+	assert.Contains(t, queryer.plan, "MATERIALIZE current_revisions")
+	assert.Contains(t, queryer.plan, "SEARCH e USING INDEX idx_embeddings_gen_msg")
+	assert.NotContains(t, queryer.plan, "CORRELATED SCALAR SUBQUERY")
+}
 
 func TestAcceleratedSearchReranksFiltersAndDeduplicates(t *testing.T) {
 	backend, generationID, mainDB := openAcceleratedSearchBackend(t, 4, 4, Options{})
