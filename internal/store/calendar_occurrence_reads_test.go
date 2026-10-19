@@ -477,3 +477,15 @@ func TestCalendarOccurrenceInvalidQueries(t *testing.T) {
 		requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
 	}
 }
+
+func TestListCalendarOccurrencesClearedSeriesKeepsFractionalNeighbor(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, standalone := calendarFixture(t, st, "standalone", `{"id":"series-example","start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}}`)
+	calendarFixture(t, st, "exception", `{"id":"exception-example","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00.5Z"},"start":{"dateTime":"2027-04-02T17:00:00Z"},"end":{"dateTime":"2027-04-02T18:00:00Z"}}`)
+	from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	requirements.Equal(standalone, page.Occurrences[0].MessageID)
+}

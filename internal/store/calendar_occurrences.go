@@ -221,16 +221,22 @@ func calendarSingleStartHasException(event calevent.Event, exceptions map[calrec
 		}
 		start = calrecur.Identity{Instant: *event.Start}
 	}
-	key := start.Key()
-	if key == "" {
-		return false
-	}
 	for original := range exceptions {
-		if original.Key() == key {
+		if sameCalendarOccurrenceIdentity(start, original) {
 			return true
 		}
 	}
 	return false
+}
+
+func sameCalendarOccurrenceIdentity(left, right calrecur.Identity) bool {
+	if left.AllDay != right.AllDay {
+		return false
+	}
+	if left.AllDay {
+		return left.Date != "" && left.Date == right.Date
+	}
+	return !left.Instant.IsZero() && !right.Instant.IsZero() && left.Instant.Equal(right.Instant)
 }
 
 func calendarEventStartIdentity(event calevent.Event) calrecur.Identity {

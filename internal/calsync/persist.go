@@ -1,6 +1,7 @@
 package calsync
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
@@ -103,6 +104,9 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	if ev.RecurringEventID != "" {
 		convTitle = ""
 	}
+	if err := s.reconcileLegacyEventSourceMessageID(sourceID, ev); err != nil {
+		return 0, err
+	}
 	convID, err := s.store.EnsureConversationWithType(sourceID, conversationKey(ev), gcal.ConversationType, convTitle)
 	if err != nil {
 		return 0, fmt.Errorf("ensure conversation: %w", err)
@@ -191,6 +195,9 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 // cancellation. Returns (messageID, insertedNew).
 func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
 	smid := deriveSourceMessageID(ev)
+	if err := s.reconcileLegacyEventSourceMessageID(sourceID, ev); err != nil {
+		return 0, false, err
+	}
 	existing, err := s.store.MessageExistsBatch(sourceID, []string{smid})
 	if err != nil {
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
@@ -212,6 +219,36 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		return 0, false, err
 	}
 	return id, true, nil
+}
+
+// reconcileLegacyEventSourceMessageID adopts recurring exceptions that older
+// decoders stored under event.id. If a prior resync already inserted the newly
+// derived key, remove that duplicate first so the archived message ID survives.
+func (s *Syncer) reconcileLegacyEventSourceMessageID(sourceID int64, ev gcal.Event) error {
+	newSourceMessageID := deriveSourceMessageID(ev)
+	if ev.RecurringEventID == "" || ev.ID == "" || newSourceMessageID == "" || newSourceMessageID == ev.ID {
+		return nil
+	}
+	stored, err := s.store.StoredMessagesContext(context.Background(), sourceID, "", []string{ev.ID, newSourceMessageID})
+	if err != nil {
+		return fmt.Errorf("read legacy calendar event identity: %w", err)
+	}
+	legacy, hasLegacy := stored[ev.ID]
+	if !hasLegacy || legacy.MessageType != gcal.MessageTypeCalendarEvent {
+		return nil
+	}
+	if duplicate, hasNew := stored[newSourceMessageID]; hasNew {
+		if duplicate.MessageType != gcal.MessageTypeCalendarEvent {
+			return fmt.Errorf("new calendar event identity %q belongs to message type %q", newSourceMessageID, duplicate.MessageType)
+		}
+		if err := s.store.MigrateSourceMessageID(sourceID, duplicate.ConversationID, newSourceMessageID, ev.ID); err != nil {
+			return fmt.Errorf("remove duplicate calendar event identity %q: %w", newSourceMessageID, err)
+		}
+	}
+	if err := s.store.MigrateSourceMessageID(sourceID, legacy.ConversationID, ev.ID, newSourceMessageID); err != nil {
+		return fmt.Errorf("adopt legacy calendar event identity %q: %w", ev.ID, err)
+	}
+	return nil
 }
 
 // mergeStatusCancelled reads a message's existing metadata, sets status to
