@@ -558,7 +558,8 @@ func (s *Store) reconcilePersonLoopDecisionsTx(
 			return fmt.Errorf("deduplicate absorbed person loop suppression: %w", err)
 		}
 	}
-	return nil
+	return s.closeSuppressedLoopsForTargetTx(ctx, tx,
+		LoopSuppressionRequest{TargetKind: string(AttributeObjectPerson), PersonID: &survivorID})
 }
 
 func mergeLoopSuppressionNotes(survivorNote, absorbedNote string) string {

@@ -581,6 +581,18 @@ func (s *Store) transferSourceMergeLoopReferences(
 				}
 			}
 		}
+		if loop.detector == "turn_state" && loopConversationID != sourceConversationID {
+			collapsed, err := s.collapseSourceMergeLoopDuplicate(
+				ctx, tx, loop.id, loopConversationID, destinationSourceID, sourceConversationID,
+				turnKey, loop.cycle, anchor, activity, closedMessage, messageSurvivors,
+			)
+			if err != nil {
+				return fmt.Errorf("collapse duplicate loop %d in conversation %d: %w", loop.id, loopConversationID, err)
+			}
+			if collapsed {
+				continue
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET conversation_id = ?, source_id = ?,
 			turn_key = ?, cycle = ?, anchor_message_id = ?, last_activity_message_id = ?,
 			closed_message_id = ?, evidence_json = ? WHERE id = ?`,
@@ -589,6 +601,111 @@ func (s *Store) transferSourceMergeLoopReferences(
 		}
 	}
 	return nil
+}
+
+func (s *Store) collapseSourceMergeLoopDuplicate(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceLoopID, destinationConversationID, destinationSourceID, sourceConversationID int64,
+	turnKey string,
+	sourceCycle int64,
+	anchor, activity, closedMessage sql.NullInt64,
+	messageSurvivors map[int64]int64,
+) (bool, error) {
+	source, err := scanOpenLoop(tx.QueryRowContext(ctx,
+		"SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", sourceLoopID,
+	))
+	if err != nil {
+		return false, err
+	}
+	destination, err := scanOpenLoop(tx.QueryRowContext(ctx,
+		"SELECT "+openLoopColumns+` FROM open_loops l
+		WHERE l.id<>? AND l.conversation_id=? AND l.turn_key=? AND l.cycle=? ORDER BY l.id LIMIT 1`,
+		sourceLoopID, destinationConversationID, turnKey, sourceCycle,
+	))
+	if errors.Is(err, ErrLoopNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if source.Kind != destination.Kind || source.Detector != destination.Detector {
+		return false, nil
+	}
+	winnerIsSource := sourceMergeLoopWins(source, destination)
+	sourceState := sourceMergeLoopState(source)
+	destinationState := sourceMergeLoopState(destination)
+	winnerState, retiredState := &destinationState, &sourceState
+	if winnerIsSource {
+		winnerState, retiredState = &sourceState, &destinationState
+	}
+	if err := s.transferSourceMergeLiveLoopOwnerState(ctx, tx, winnerState, retiredState); err != nil {
+		return false, fmt.Errorf("transfer duplicate loop owner state: %w", err)
+	}
+	if winnerIsSource {
+		winner, err := scanOpenLoop(tx.QueryRowContext(ctx,
+			"SELECT "+openLoopColumns+" FROM open_loops l WHERE l.id=?", sourceLoopID,
+		))
+		if err != nil {
+			return false, fmt.Errorf("reload winning source loop: %w", err)
+		}
+		evidence, err := remapSourceMergeLoopEvidence(
+			[]byte(winner.EvidenceJSON), sourceConversationID, destinationConversationID, messageSurvivors,
+		)
+		if err != nil {
+			return false, fmt.Errorf("remap winning loop evidence: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET source_id=?,status=?,channel=?,owner_address=?,
+			counterparty_participant_id=?,counterparty_person_id=?,anchor_message_id=?,owed_since_at=?,
+			last_activity_message_id=?,last_activity_at=?,opens_at=?,due_at=?,snoozed_until=?,summary=?,
+			evidence_json=?,ruleset_version=?,fact_claim_id=?,agenda_state=?,fulfilment_suggested_at=?,
+			closed_at=?,closed_reason=?,closed_by=?,closed_message_id=?,updated_at=`+s.dialect.Now()+` WHERE id=?`,
+			destinationSourceID, winner.Status, winner.Channel, winner.OwnerAddress,
+			winner.CounterpartyParticipantID, winner.CounterpartyPersonID, anchor,
+			winner.OwedSinceAt, activity, winner.LastActivityAt, winner.OpensAt,
+			winner.DueAt, winner.SnoozedUntil, winner.Summary, string(evidence), winner.RulesetVersion,
+			winner.FactClaimID, winner.AgendaState, winner.FulfilmentSuggestedAt,
+			winner.ClosedAt, winner.ClosedReason, winner.ClosedBy, closedMessage, destination.ID,
+		); err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM open_loops WHERE id=?`, sourceLoopID); err != nil {
+		return false, fmt.Errorf("delete duplicate source loop: %w", err)
+	}
+	return true, nil
+}
+
+func sourceMergeLoopWins(source, destination OpenLoop) bool {
+	sourceUserClosed := source.Status == "closed" && source.ClosedBy != nil && *source.ClosedBy == "user"
+	destinationUserClosed := destination.Status == "closed" && destination.ClosedBy != nil && *destination.ClosedBy == "user"
+	if sourceUserClosed != destinationUserClosed {
+		return sourceUserClosed
+	}
+	if source.Status == "closed" && destination.Status != "closed" {
+		return sourceUserClosed
+	}
+	if source.Status != "closed" && destination.Status == "closed" {
+		return !destinationUserClosed
+	}
+	if source.Status == "closed" && destination.Status == "closed" {
+		return source.ClosedAt != nil && destination.ClosedAt != nil && source.ClosedAt.After(*destination.ClosedAt)
+	}
+	return source.LastActivityAt.After(destination.LastActivityAt)
+}
+
+func sourceMergeLoopState(loop OpenLoop) sourceMergeLiveLoop {
+	state := sourceMergeLiveLoop{
+		id: loop.ID, kind: loop.Kind, lastActivityAt: loop.LastActivityAt,
+		agendaState: loop.AgendaState, evidence: []byte(loop.EvidenceJSON),
+	}
+	if loop.SnoozedUntil != nil {
+		state.snoozedUntil = sql.NullTime{Time: *loop.SnoozedUntil, Valid: true}
+	}
+	if loop.FulfilmentSuggestedAt != nil {
+		state.fulfilmentSuggestedAt = sql.NullTime{Time: *loop.FulfilmentSuggestedAt, Valid: true}
+	}
+	return state
 }
 
 func remapSourceMergeLoopMessageID(messageID sql.NullInt64, survivors map[int64]int64) sql.NullInt64 {

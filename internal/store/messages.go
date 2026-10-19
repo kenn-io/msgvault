@@ -4940,6 +4940,9 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		); err != nil {
 			return err
 		}
+		if err := s.reconcileParticipantLoopStateTx(ctx, tx, oldID, newID, personID); err != nil {
+			return err
+		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM participants WHERE id = ?`, oldID)
 		if err != nil {
 			return err

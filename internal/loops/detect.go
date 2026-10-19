@@ -68,6 +68,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		closeKept("", "withdrawn")
 		return v
 	}
+	if cfg.Lookback > 0 && view.LastMessageAt.IsZero() {
+		// Without the conversation's latest timestamp, the bounded message window
+		// cannot establish whether an existing loop is still within lookback.
+		keepUncertain("")
+		return v
+	}
 	t := traversal{limit: cfg.RunMessageLimit, bodies: make(map[int64]bodyResult)}
 	turns := t.trailing(view)
 	recentTurns := turns
@@ -83,7 +89,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	}
 	retained := make(map[string]settledLoop)
 	unprovenBulkAnchors := make(map[int64]int64)
-	for _, l := range live {
+	for i := range live {
+		l := &live[i]
 		if l.Kind != ReplyOwed && l.Kind != AwaitingReply {
 			continue
 		}
@@ -109,7 +116,9 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			settlementView.ConversationType = view.ConversationType
 			settlementView.Participants = view.Participants
 			settlementView.LastMessageAt = view.LastMessageAt
+			settlementView.HistoryComplete = settlementView.HistoryComplete || view.HistoryComplete
 			settlementView.AnchorExists = view.AnchorExists
+			settlementView.CheckOwnerParticipation = view.CheckOwnerParticipation
 			settlementView.BodyText = view.BodyText
 		}
 		closed, gap, anchor, ownerParticipation, err := t.settle(settlementView, l, now, cfg)
@@ -129,8 +138,8 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if closed == nil && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
 			l.OwnerParticipationMessageID = ownerParticipation.MessageID
 			l.OwnerParticipationKnown = ownerParticipation.Known
-			retained[l.Kind] = settledLoop{loop: l, anchor: anchor}
-			if gap && l.Kind == ReplyOwed && !ownerParticipation.Known && anchor != nil && isBulkMessage(*anchor) {
+			retained[l.Kind] = settledLoop{loop: *l, anchor: anchor}
+			if !l.OwnerParticipationUnknown && l.Kind == ReplyOwed && !ownerParticipation.Known && anchor != nil && isBulkMessage(*anchor) {
 				unprovenBulkAnchors[l.ID] = anchor.ID
 			}
 		}
@@ -172,7 +181,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 	}
 	if extended && !settledTurnFlip && !settledExtendedWithdrawal && !hasEligibleTrailingAnchor(view, recentTurns, &t, cfg) {
 		// A statement nudge or CC-only message in the recent window cannot
-		// create a second Open for a retained live anchor found by extension.
+		// create a new obligation from an anchor found only by settlement.
 		for _, loop := range live {
 			if _, unproven := unprovenBulkAnchors[loop.ID]; unproven {
 				closeLive(loop, "withdrawn")
@@ -210,7 +219,6 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		list := false
 		for _, m := range trailing.messages {
 			list = list || m.ListID != ""
-			bulk = bulk || isBulkMessage(m)
 			if addressedToOwner(m, settlementView.ConversationType, large) &&
 				(anchor == nil || messageBefore(m, *anchor)) {
 				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
@@ -238,10 +246,20 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			// A retained anchor can come from the extended settlement window,
 			// outside the recent messages used to classify this trailing turn.
 			list = list || anchor.ListID != ""
-			bulk = bulk || isBulkMessage(*anchor)
+			bulk = isBulkMessage(*anchor)
 		}
-		if !ownerParticipation.Known && anchor != nil && anchor.ID == retainedAnchorMessageID {
-			ownerParticipation = retainedOwnerParticipation
+		if anchor != nil && anchor.ID == retainedAnchorMessageID {
+			if settled, ok := retained[ReplyOwed]; ok {
+				if settled.loop.OwnerParticipationUnknown {
+					// A preceding outbound turn can be present in the bounded view
+					// while its automation evidence remains unavailable. Do not let
+					// that turn bypass the retained row's validation gap.
+					ownerWrote = false
+					ownerParticipation = ownerParticipationEvidence{}
+				} else if !ownerParticipation.Known {
+					ownerParticipation = retainedOwnerParticipation
+				}
+			}
 		}
 		if ownerParticipation.Known {
 			ownerWrote = true
@@ -250,19 +268,20 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			closeKept(kind, "muted")
 			return v
 		}
-		liveAnchorInTurn := slices.ContainsFunc(live, func(l LiveLoop) bool {
-			return l.Kind == ReplyOwed &&
-				!slices.ContainsFunc(v.Close, func(c CloseDecision) bool { return c.ID == l.ID }) &&
-				!slices.Contains(v.CoverageGaps, l.ID) &&
-				slices.ContainsFunc(trailing.messages, func(m LoopMessage) bool { return m.ID == l.AnchorMessageID })
-		})
-		if anchor != nil && (list || (bulk && !ownerWrote && !liveAnchorInTurn)) {
+		if anchor != nil && list {
 			closeKept(kind, "withdrawn")
-			if bulk && !ownerWrote {
-				for _, loop := range live {
-					if anchorID, unproven := unprovenBulkAnchors[loop.ID]; unproven && slices.ContainsFunc(trailing.messages, func(message LoopMessage) bool { return message.ID == anchorID }) {
-						closeLive(loop, "withdrawn")
-					}
+			return v
+		}
+		if anchor != nil && bulk && !ownerWrote {
+			if settled, ok := retained[ReplyOwed]; ok && settled.loop.OwnerParticipationUnknown && settled.anchor != nil && settled.anchor.ID == anchor.ID {
+				// Keep the current row when archived participation evidence exists
+				// but cannot be validated yet; a later pass can retry the check.
+				return v
+			}
+			closeKept(kind, "withdrawn")
+			for _, loop := range live {
+				if anchorID, unproven := unprovenBulkAnchors[loop.ID]; unproven && anchorID == anchor.ID {
+					closeLive(loop, "withdrawn")
 				}
 			}
 			return v
@@ -500,7 +519,8 @@ func selectAwaitingReplyCounterparty(view ConversationView, turns []turn, anchor
 			bestPriority = priority
 		}
 	}
-	// Keep the saved selection only when current recipient evidence leaves it at the best priority.
+	// Keep the saved selection only when current recipient evidence leaves it
+	// at the best priority.
 	for _, participant := range candidates {
 		if participant.ID == preferredID && preferredID != 0 && candidatePriorities[participant.ID] == bestPriority {
 			return participant, true

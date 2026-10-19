@@ -125,6 +125,43 @@ func TestLoopApplyTerminalBoundaryAllowsNonpositiveMessageIDs(t *testing.T) {
 	assertions.Equal(int64(1), *rows[0].AnchorMessageID)
 }
 
+func TestLoopApplyPreservesLiveTurnWhenPriorTerminalIsOutsideWindow(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	ids := f.CreateMessages(4)
+
+	completed := loopOpen(t, f, ids[0], ids[0], now)
+	applyLoop(t, f, completed, now)
+	rows, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	_, err = f.Store.CloseLoopContext(t.Context(), rows[0].ID, "handled", now)
+	requirements.NoError(err)
+
+	live := loopOpen(t, f, ids[1], ids[2], now)
+	live.PreviousTurnKnown = true
+	live.TurnMessageIDs = ids[1:3]
+	applyLoop(t, f, live, now)
+	rows, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	liveID := rows[0].ID
+
+	// A later bounded run no longer includes the earlier completed turn or
+	// this live anchor. Settlement has already established the live turn.
+	newest := loopOpen(t, f, ids[3], ids[3], now)
+	newest.PreviousTurnKnown = false
+	newest.TurnMessageIDs = []int64{ids[3]}
+	applyLoop(t, f, newest, now)
+
+	got, err := f.Store.GetOpenLoopContext(t.Context(), liveID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	assertions.Equal(ids[1], *got.AnchorMessageID)
+}
+
 func TestLoopApplyRewriteCyclePreservesOwnerStateAndCAS(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -250,6 +287,42 @@ func TestLoopPersonMuteUsesCurrentParticipantMembership(t *testing.T) {
 			assertions.Len(live, wantLive)
 		})
 	}
+}
+
+func TestMergeParticipantsTransfersLoopSuppressionAndCounterparty(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	absorbed := f.EnsureParticipant("loop-merge-absorbed@example.test", "Absorbed", "example.test")
+	survivor := f.EnsureParticipant("loop-merge-survivor@example.test", "Survivor", "example.test")
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	ids := f.CreateMessages(3)
+	open := loopOpen(t, f, ids[1], ids[2], now)
+	open.CounterpartyParticipantID = &absorbed
+	applyLoop(t, f, open, now)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO loop_suppressions
+		(target_kind,participant_id,note,created_at) VALUES('participant',?,?,?)`),
+		absorbed, "owner decision", now)
+	requirements.NoError(err)
+
+	requirements.NoError(f.Store.MergeParticipants(absorbed, survivor))
+	var participantID int64
+	var status string
+	var reason sql.NullString
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT
+		counterparty_participant_id,status,closed_reason FROM open_loops WHERE conversation_id=?`),
+		f.ConvID).Scan(&participantID, &status, &reason))
+	assertions.Equal(survivor, participantID)
+	assertions.Equal("closed", status)
+	requirements.True(reason.Valid)
+	assertions.Equal("muted", reason.String)
+
+	var targetID int64
+	var note string
+	requirements.NoError(f.Store.DB().QueryRow(`SELECT participant_id,note FROM loop_suppressions
+		WHERE target_kind='participant'`).Scan(&targetID, &note))
+	assertions.Equal(survivor, targetID)
+	assertions.Equal("owner decision", note)
 }
 
 func TestLoopApplyRollbackAndSnoozeValidation(t *testing.T) {

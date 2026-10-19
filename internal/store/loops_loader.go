@@ -65,7 +65,7 @@ FROM conversations c JOIN sources s ON s.id=c.source_id WHERE c.id=?`, conversat
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.source_id,m.conversation_id,m.message_type,m.sent_at,m.received_at,m.internal_date,COALESCE(m.source_is_from_me,FALSE),m.deleted_at,m.deleted_from_source_at,m.sender_id,COALESCE(m.subject,''),COALESCE(m.snippet,''),COALESCE(m.list_id,''),`+draftEvidenceSQL("m", "src")+` FROM messages m JOIN sources src ON src.id=m.source_id
 WHERE m.conversation_id=? AND COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL AND NOT (`+loopMessageExcludedSQL("m", "src")+`)
-ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id DESC LIMIT ?`, conversationID, limit)
+ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id DESC LIMIT ?`, conversationID, limit+1)
 		if err != nil {
 			return err
 		}
@@ -100,6 +100,12 @@ ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST,m.id 
 		_ = rows.Close()
 		if err != nil {
 			return err
+		}
+		out.HistoryComplete = len(out.Messages) <= limit
+		if !out.HistoryComplete {
+			out.Messages = out.Messages[:limit]
+			candidates = candidates[:limit]
+			senderIDs = senderIDs[:limit]
 		}
 		candidates, err = s.attachActivityCounterpartsQueryerContext(ctx, tx, candidates)
 		if err != nil {
@@ -162,8 +168,7 @@ UNION SELECT m.sender_id FROM messages m WHERE m.conversation_id=? AND m.sender_
 AND NOT EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=m.conversation_id AND cp.participant_id=m.sender_id)`
 		participantArgs := []any{conversationID, conversationID}
 		if out.ConversationType == "email_thread" {
-			participantIDs += ` UNION SELECT mr.participant_id FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.conversation_id=?
-AND NOT EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id=m.conversation_id AND cp.left_at IS NULL)`
+			participantIDs += ` UNION SELECT mr.participant_id FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.conversation_id=?`
 			participantArgs = append(participantArgs, conversationID)
 		}
 		rows, err = tx.QueryContext(ctx, `SELECT participant_id FROM (`+participantIDs+`) loop_participant_ids ORDER BY participant_id`, participantArgs...)

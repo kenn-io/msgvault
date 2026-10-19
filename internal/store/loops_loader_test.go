@@ -25,6 +25,7 @@ func TestLoopLoaderOrderAndNativeDirection(t *testing.T) {
 	loopExec(t, f.Store, "INSERT INTO message_bodies(message_id,body_text) VALUES(?,?)", ids[2], "direct body")
 	view, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 2)
 	requirements.NoError(err)
+	assertions.False(view.HistoryComplete, "the bounded window reports older messages outside its limit")
 	requirements.Len(view.Messages, 2)
 	assertions.Equal(ids[1], view.Messages[0].ID)
 	assertions.Equal(ids[2], view.Messages[1].ID)
@@ -46,8 +47,9 @@ func TestLoopLoaderOrderAndNativeDirection(t *testing.T) {
 	assertions.False(exists)
 	_, err = f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 0)
 	requirements.ErrorIs(err, store.ErrInvalidLoop)
-	_, err = f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, loops.MaxConversationMessageLimit)
+	completeView, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, loops.MaxConversationMessageLimit)
 	requirements.NoError(err)
+	assertions.True(completeView.HistoryComplete, "the full archive fits in the requested window")
 	_, err = f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, loops.MaxConversationMessageLimit+1)
 	assertions.ErrorIs(err, store.ErrInvalidLoop)
 }

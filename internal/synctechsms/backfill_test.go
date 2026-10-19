@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -16,7 +17,7 @@ func TestBackfillNativeSendStateResumesInBoundedBatches(t *testing.T) {
 	requirements := require.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
-	const unsentSMSCount = 101
+	const unsentSMSCount = store.SynctechSMSNativeStateBackfillBatchSize + 1
 	const unsentMMSCount = 1
 	const totalUnsentCount = unsentSMSCount + unsentMMSCount
 	var xml strings.Builder
@@ -40,7 +41,7 @@ func TestBackfillNativeSendStateResumesInBoundedBatches(t *testing.T) {
 		WHERE src.source_type='synctech_sms' AND m.message_type IN ('sms','mms')
 		AND m.source_is_from_me=TRUE AND COALESCE(m.is_sent,TRUE)=TRUE
 		AND r.raw_format='synctech_sms_xml_json'
-		ORDER BY m.id LIMIT 1 OFFSET ?`), synctechSMSNativeStateBackfillBatchSize-1).Scan(&expectedCursor))
+		ORDER BY m.id LIMIT 1 OFFSET ?`), store.SynctechSMSNativeStateBackfillBatchSize-1).Scan(&expectedCursor))
 
 	first, err := BackfillNativeSendStateContext(t.Context(), f.Store)
 	requirements.NoError(err)

@@ -70,9 +70,11 @@ type ConversationView struct {
 	SourceType, ConversationType string
 	Participants                 []LoopParticipant
 	LastMessageAt                time.Time
+	HistoryComplete              bool
 	Messages                     []LoopMessage
 	BodyText                     func(messageID int64) (string, error)
 	AnchorExists                 func(messageID int64) (bool, error)
+	CheckOwnerParticipation      func(anchorMessageID, participationMessageID int64) (valid, known bool, err error)
 	Extend                       func() (ConversationView, error)
 }
 
@@ -84,6 +86,7 @@ type LiveLoop struct {
 	CounterpartyPersonID        int64
 	OwnerParticipationMessageID int64
 	OwnerParticipationKnown     bool
+	OwnerParticipationUnknown   bool
 }
 
 type Suppressions struct {

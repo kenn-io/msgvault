@@ -120,12 +120,9 @@ func (s *Store) reconcileOpenLoopTx(ctx context.Context, tx *loggedTx, open Loop
 			}
 		}
 	}
-	// A done anchor outside the bounded window blocks new loops unless the live
-	// row itself proves that the current turn already has an occurrence.
-	liveInTurn := live != nil && live.AnchorMessageID != nil &&
-		(slices.Contains(open.TurnMessageIDs, *live.AnchorMessageID) || *live.AnchorMessageID == open.AnchorMessageID)
-	blocked := (latest != nil && loopTerminal(*latest)) || (terminalOutside && live == nil) ||
-		(!open.PreviousTurnKnown && terminalOutside && !liveInTurn)
+	// A done anchor outside the bounded window blocks a new loop. An established
+	// live row survives while the incoming view has an unknown prior-turn boundary.
+	blocked := (latest != nil && loopTerminal(*latest)) || (terminalOutside && live == nil)
 	var muted bool
 	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions WHERE conversation_id=? OR participant_id=? OR person_id=? OR person_id IN (SELECT person_id FROM person_participants WHERE participant_id=?))`, open.ConversationID, open.CounterpartyParticipantID, open.CounterpartyPersonID, open.CounterpartyParticipantID).Scan(&muted); err != nil {
 		return err

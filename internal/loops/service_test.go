@@ -3,6 +3,7 @@ package loops
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func serviceFixture(t *testing.T) (*Service, *storetest.Fixture, time.Time, int6
 				LastActivityMessageID: message, CounterpartyParticipantID: &participant,
 				CounterpartyPersonID: &person.ID, OwedSinceAt: at, LastActivityAt: at,
 				OpensAt: at.Add(24 * time.Hour), Summary: "A question",
-				EvidenceJSON: json.RawMessage(evidence), RulesetVersion: 1,
+				EvidenceJSON: jsontext.Value(evidence), RulesetVersion: 1,
 				TurnMessageIDs: []int64{message},
 			}},
 		}))

@@ -2374,6 +2374,7 @@ var exclusiveLockTables = []string{
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
+	"open_loops", "loop_suppressions",
 	"meeting_details", "meeting_action_items",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
@@ -2457,7 +2458,7 @@ func (d *PostgreSQLDialect) BeginWriteSQL() string { return "BEGIN" }
 
 // SelectForUpdate returns " FOR UPDATE" so a SELECT inside a write
 // transaction takes a row-level lock that serializes subsequent merges.
-func (d *PostgreSQLDialect) SelectForUpdate() string { return " FOR UPDATE" }
+func (d *PostgreSQLDialect) SelectForUpdate() string { return selectForUpdateClause }
 
 // RowWriterLockSQL returns "": PostgreSQL row locks come from SelectForUpdate,
 // and a self-assign UPDATE would make concurrent REPEATABLE READ lockers of

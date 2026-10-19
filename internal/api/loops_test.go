@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -82,7 +83,7 @@ func newLoopHTTPFixtureWithOperationGate(t *testing.T, operationGate api.Operati
 			LastActivityMessageID: message, CounterpartyParticipantID: &participantID,
 			CounterpartyPersonID: &person.ID, OwedSinceAt: owed, LastActivityAt: owed,
 			OpensAt: owed.Add(24 * time.Hour), Summary: "A synthetic question",
-			EvidenceJSON:   json.RawMessage(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"occurred_at":%q,"subject":"Synthetic question"}]`, message, f.ConvID, owed.Format(time.RFC3339Nano))),
+			EvidenceJSON:   jsontext.Value(fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"occurred_at":%q,"subject":"Synthetic question"}]`, message, f.ConvID, owed.Format(time.RFC3339Nano))),
 			RulesetVersion: 1, TurnMessageIDs: []int64{message},
 		}},
 	}))

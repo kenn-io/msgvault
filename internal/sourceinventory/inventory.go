@@ -106,6 +106,9 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		if source.HistoryOnly || (staticSource(item.SourceType) && !configuredSource) {
 			item.Scheduling = "static"
 			item.SyncCommand = ""
+		} else if source.SourceType == "beeper" && !cfg.Beeper.AccountIncluded(source.Identifier) {
+			item.Scheduling = "disabled"
+			item.SyncCommand = ""
 		}
 		if item.SourceType == "beeper" && !cfg.Beeper.AccountIncluded(item.Identifier) {
 			item.Scheduling = "disabled"

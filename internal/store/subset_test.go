@@ -1868,8 +1868,8 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 
 	st, err := Open(srcDB)
 	require.NoError(err, "open source for upgrade")
-	// A pre-attribution archive predates triggers that name source_is_from_me.
-	// The upgrade below reinstalls them through their migrations.
+	// A pre-attribution archive predates the triggers that name the attribution
+	// columns. The upgrade below reinstalls them through their migrations.
 	_, err = st.DB().Exec(`
 		DROP TRIGGER trg_activity_queue_messages_update;
 		DROP TRIGGER trg_cache_message_facts_update;
@@ -3822,8 +3822,8 @@ func TestCopySubset_ControlCharInPath(t *testing.T) {
 // update messages, which resolves to main.messages, so the rename back — ALTER
 // TABLE ... RENAME TO messages — fails its schema reparse with "error in
 // trigger trg_message_bodies_last_modified_upd: no such table: main.messages".
-// Neither attribution column is indexed. The activity, cache and loop triggers
-// that name attribution columns postdate such archives, so drop them first.
+// Neither attribution column is indexed. The activity and cache triggers that
+// name source_is_from_me postdate such archives, so drop them before the column.
 func TestCopySubset_LegacySourceMissingAttributionColumns(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3998,7 +3998,7 @@ func TestCopySubset_SourceColumnCaseDiffers(t *testing.T) {
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
 	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move`)
-	require.NoError(err, "drop loop trigger before changing source column case")
+	require.NoError(err, "drop loop trigger that names attribution columns")
 	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN Identity_Is_From_Me BOOLEAN`)
@@ -4051,7 +4051,7 @@ func TestCopySubset_SourceOnlyColumnUnicodeLookalike(t *testing.T) {
 	db, err := sql.Open(sqliteutil.DriverName(), srcDB+"?_foreign_keys=OFF")
 	require.NoError(err, "open source db")
 	_, err = db.Exec(`DROP TRIGGER trg_loop_queue_messages_move`)
-	require.NoError(err, "drop loop trigger before removing the destination column")
+	require.NoError(err, "drop loop trigger that names attribution columns")
 	_, err = db.Exec(`ALTER TABLE messages DROP COLUMN identity_is_from_me`)
 	require.NoError(err, "drop messages.identity_is_from_me")
 	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN "İdentity_is_from_me" TEXT`)

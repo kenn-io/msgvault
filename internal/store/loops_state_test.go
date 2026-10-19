@@ -1,6 +1,8 @@
 package store_test
 
 import (
+	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +11,52 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestLoopReadyQueueWaitsForSynctechBackfillCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("synctech_sms", "+15551234567")
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	conversationIDs := make([]int64, 0, 2)
+	for i := range 2 {
+		conversationID, err := f.Store.EnsureConversation(source.ID, fmt.Sprintf("thread-%d", i), fmt.Sprintf("Thread %d", i))
+		requirements.NoError(err)
+		conversationIDs = append(conversationIDs, conversationID)
+		messageID, err := f.Store.UpsertMessage(&store.Message{
+			SourceID: source.ID, ConversationID: conversationID,
+			SourceMessageID: fmt.Sprintf("sms-%d", i), MessageType: "sms",
+			IsFromMe: true, IsSent: sql.NullBool{Bool: true, Valid: true},
+		})
+		requirements.NoError(err)
+		loopExec(t, f.Store, `INSERT INTO message_raw(message_id,raw_data,raw_format)
+			VALUES(?,?,'synctech_sms_xml_json')`, messageID, []byte(`{"Type":2}`))
+		requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{conversationID}, "backfill", now))
+	}
+
+	ready, err := f.Store.PendingLoopConversationsReadyForDerivationContext(t.Context(), 10)
+	requirements.NoError(err)
+	assertions.Empty(ready, "unverified Synctech messages remain queued until their send state is checked")
+
+	inspect := func(store.SynctechSMSStateBackfillCandidate) (bool, error) { return true, nil }
+	progress, err := f.Store.ProcessSynctechSMSNativeStateBackfillBatchContext(t.Context(), 1, inspect)
+	requirements.NoError(err)
+	assertions.Equal(1, progress.Processed)
+	assertions.False(progress.Complete)
+	ready, err = f.Store.PendingLoopConversationsReadyForDerivationContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(ready, 1)
+	assertions.Equal(conversationIDs[0], ready[0].ConversationID, "rows through the durable cursor can derive while later rows stay blocked")
+
+	progress, err = f.Store.ProcessSynctechSMSNativeStateBackfillBatchContext(t.Context(), 1, inspect)
+	requirements.NoError(err)
+	assertions.Equal(1, progress.Processed)
+	assertions.True(progress.Complete)
+	ready, err = f.Store.PendingLoopConversationsReadyForDerivationContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(ready, 2)
+}
 
 func TestLoopStateFeedUsesPriorFrontierAndAtomicCursor(t *testing.T) {
 	assertions := assert.New(t)

@@ -184,7 +184,7 @@ func (d *Deriver) loadView(ctx context.Context, id int64, limit int) (Conversati
 	if err != nil {
 		return ConversationView{}, err
 	}
-	view := ConversationView{ConversationID: row.ConversationID, SourceID: row.SourceID, SourceType: row.SourceType, ConversationType: row.ConversationType, LastMessageAt: row.LastMessageAt}
+	view := ConversationView{ConversationID: row.ConversationID, SourceID: row.SourceID, SourceType: row.SourceType, ConversationType: row.ConversationType, LastMessageAt: row.LastMessageAt, HistoryComplete: row.HistoryComplete}
 	for _, p := range row.Participants {
 		view.Participants = append(view.Participants, detectorParticipant(p))
 	}
@@ -194,7 +194,7 @@ func (d *Deriver) loadView(ctx context.Context, id int64, limit int) (Conversati
 			// its live row out of the window makes settlement retain a coverage gap.
 			continue
 		}
-		message := LoopMessage{ID: m.ID, OccurredAt: m.OccurredAt, Direction: Direction(m.Direction), OwnerAddress: m.OwnerAddress, Sender: detectorParticipant(m.Sender), ListID: m.ListID, Labels: m.Labels, Deleted: m.Deleted, Subject: m.Subject, Snippet: m.Snippet}
+		message := LoopMessage{ID: m.ID, OccurredAt: m.OccurredAt, Direction: Direction(m.Direction), OwnerAddress: m.OwnerAddress, Sender: detectorParticipant(m.Sender), ListID: m.ListID, Labels: m.Labels, Deleted: m.Deleted, Draft: m.Draft, Subject: m.Subject, Snippet: m.Snippet}
 		for _, recipient := range m.Recipients {
 			message.Recipients = append(message.Recipients, LoopRecipient{LoopParticipant: detectorParticipant(recipient.LoopParticipant), Type: recipient.RecipientType})
 		}
@@ -206,6 +206,9 @@ func (d *Deriver) loadView(ctx context.Context, id int64, limit int) (Conversati
 	view.BodyText = func(messageID int64) (string, error) { return d.st.LoopMessageBodyContext(ctx, messageID) }
 	view.AnchorExists = func(messageID int64) (bool, error) {
 		return d.st.LoopConversationAnchorExistsContext(ctx, id, messageID)
+	}
+	view.CheckOwnerParticipation = func(anchorMessageID, participationMessageID int64) (bool, bool, error) {
+		return d.st.CheckLoopOwnerParticipationContext(ctx, id, anchorMessageID, participationMessageID)
 	}
 	view.Extend = func() (ConversationView, error) { return d.loadView(ctx, id, d.cfg.ConversationMessageLimitExtended) }
 	return view, nil

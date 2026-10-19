@@ -218,6 +218,11 @@ func TestHistoryOnlyBeeperSourceIsStatic(t *testing.T) {
 	requirements.Len(items, 1)
 	requirements.Equal("static", items[0].Scheduling)
 	assertions.Empty(items[0].SyncCommand)
+	report, err := freshness.Build(t.Context(), freshness.Inputs{
+		Now: time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC), StaleAfter: 24 * time.Hour, Sources: items,
+	})
+	requirements.NoError(err)
+	assertions.False(report.Stale, "history-only Beeper sources must not block waiting rankings")
 }
 
 func TestExcludedBeeperAccountIsDisabledInFreshnessInventory(t *testing.T) {

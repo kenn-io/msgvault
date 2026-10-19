@@ -1375,7 +1375,7 @@ func (s *Store) getDocumentVectorPublicationForClaim(
 		FROM document_vector_publications
 		WHERE generation_id = ? AND extraction_id = ? AND chunk_id = ?`
 	if s.dialect.DriverName() == postgresDriverName {
-		query += s.dialect.SelectForUpdate()
+		query += selectForUpdateClause
 	}
 	var publication documentVectorPublication
 	publication.DocumentVectorChunkCandidate = candidate
@@ -1399,7 +1399,7 @@ func (s *Store) getDocumentVectorPublicationByToken(
 		lease_fence, lease_until, attempt_count, next_retry_at
 		FROM document_vector_publications WHERE generation_id = ? AND token = ?`
 	if s.dialect.DriverName() == postgresDriverName {
-		query += s.dialect.SelectForUpdate()
+		query += selectForUpdateClause
 	}
 	var publication documentVectorPublication
 	publication.GenerationID = generationID

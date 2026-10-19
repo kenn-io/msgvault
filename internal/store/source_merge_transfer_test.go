@@ -96,6 +96,34 @@ func emailMergeFixtureMessageInThread(t *testing.T, st *store.Store, sourceID in
 	return message, conversation
 }
 
+func emailMergeFixtureMessageWithBodyInThread(t *testing.T, st *store.Store, sourceID int64, threadID, providerID, body string, minute int) (int64, int64) {
+	t.Helper()
+	require := require.New(t)
+	sender, err := st.EnsureParticipant("sender@example.test", "Example Sender", "example.test")
+	require.NoError(err)
+	recipient, err := st.EnsureParticipant("recipient@example.test", "Example Recipient", "example.test")
+	require.NoError(err)
+	conversation, err := st.EnsureConversationWithType(sourceID, threadID, "email_thread", "Example subject")
+	require.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversation, SourceMessageID: providerID,
+		MessageType: "email", SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		SentAt:  sql.NullTime{Time: time.Date(2026, 1, 1, 0, minute, 0, 0, time.UTC), Valid: true},
+		Subject: sql.NullString{String: "Example subject", Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.UpsertMessageBody(message, sql.NullString{String: body, Valid: true}, sql.NullString{}))
+	require.NoError(st.ReplaceMessageRecipientsContext(t.Context(), message, "from", []int64{sender}, []string{"sender@example.test"}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_recipients SET email_address = 'sender@example.test'
+		WHERE message_id = ? AND recipient_type = 'from'`), message)
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipientsContext(t.Context(), message, "to", []int64{recipient}, []string{"recipient@example.test"}))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_recipients SET email_address = 'recipient@example.test'
+		WHERE message_id = ? AND recipient_type = 'to'`), message)
+	require.NoError(err)
+	return message, conversation
+}
+
 func mergeFixtureLoop(t *testing.T, st *store.Store, sourceID, conversationID, anchorID int64, kind string, now time.Time) int64 {
 	t.Helper()
 	require := require.New(t)
@@ -525,6 +553,53 @@ func TestMergeSourcesTransfersEmailConversationMuteToEverySurvivingThread(t *tes
 	}
 }
 
+func TestMergeSourcesIncomingLoopWinnerPersistsDestinationOwnerState(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "history-example")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "live-example")
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	incomingMessage, incomingConversation := mergeFixtureMessage(t, st, from.ID, "shared", "history-later", "newer source loop", 2)
+	destinationMessage, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared", "live-earlier", "older destination loop", 1)
+	incomingID := mergeFixtureLoop(t, st, from.ID, incomingConversation, incomingMessage, "awaiting_reply", now)
+	destinationID := mergeFixtureLoop(t, st, into.ID, destinationConversation, destinationMessage, "awaiting_reply", now)
+
+	snoozeUntil := now.Add(48 * time.Hour)
+	fulfilmentSuggestedAt := now.Add(30 * time.Minute)
+	destinationEvidence := fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"question","owner_note":"destination owner note"}]`, destinationMessage, destinationConversation)
+	_, err = st.DB().Exec(st.Rebind("UPDATE open_loops SET snoozed_until=?,agenda_state='dismissed',fulfilment_suggested_at=?,evidence_json=?,last_activity_at=?,updated_at=? WHERE id=?"),
+		snoozeUntil, fulfilmentSuggestedAt, destinationEvidence, now, now, destinationID)
+	requirements.NoError(err)
+	newerActivity := now.Add(2 * time.Hour)
+	_, err = st.DB().Exec(st.Rebind("UPDATE open_loops SET last_activity_at=?,updated_at=? WHERE id=?"), newerActivity, newerActivity, incomingID)
+	requirements.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+
+	incoming, err := st.GetOpenLoopContext(t.Context(), incomingID)
+	requirements.NoError(err)
+	assertions.Equal(destinationConversation, incoming.ConversationID)
+	assertions.Equal(into.ID, incoming.SourceID)
+	assertions.Equal("open", incoming.Status)
+	requirements.NotNil(incoming.SnoozedUntil)
+	assertions.True(snoozeUntil.Equal(*incoming.SnoozedUntil), "the moved winner keeps the destination snooze")
+	assertions.Equal("dismissed", incoming.AgendaState)
+	requirements.NotNil(incoming.FulfilmentSuggestedAt)
+	assertions.True(fulfilmentSuggestedAt.Equal(*incoming.FulfilmentSuggestedAt))
+	assertions.Contains(string(incoming.EvidenceJSON), "destination owner note")
+
+	destination, err := st.GetOpenLoopContext(t.Context(), destinationID)
+	requirements.NoError(err)
+	assertions.Equal("closed", destination.Status)
+	requirements.NotNil(destination.ClosedReason)
+	assertions.Equal("withdrawn", *destination.ClosedReason)
+}
+
 func TestMergeSourcesRetainsTerminalHistoryForDuplicateLoopAnchor(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -889,6 +964,194 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	require.NoError(err)
 	assert.True(again.AlreadyMerged)
 	assert.Equal(result.MessagesMoved, again.MessagesMoved)
+}
+
+func TestMergeSourcesTransfersLoopStateAndConversationSuppressions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "loop-history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "loop-live-example")
+	require.NoError(err)
+	survivor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-loop", "live", "same body", 1)
+	duplicate, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-loop", "history", "same body", 1)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	snoozedUntil := now.Add(24 * time.Hour)
+	var loopID int64
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO open_loops(
+		turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,owner_address,
+		anchor_message_id,owed_since_at,last_activity_message_id,last_activity_at,opens_at,
+		snoozed_until,summary,evidence_json,ruleset_version,agenda_state,created_at,updated_at
+	) VALUES(?,1,?,?, 'reply_owed','turn_state','open','chat','owner@example.test', ?,?,?,?,?,?,'Synthetic follow-up',?,1,'dismissed',?,?) RETURNING id`),
+		fmt.Sprintf("turn:%d:reply_owed:%d", sourceConversation, duplicate), sourceConversation, from.ID,
+		duplicate, now.Add(-72*time.Hour), duplicate, now.Add(-30*time.Hour), now.Add(-24*time.Hour),
+		snoozedUntil, fmt.Sprintf(`[{"message_id":%d,"conversation_id":%d,"quote":"same body"}]`, duplicate, sourceConversation), now.Add(-72*time.Hour), now).Scan(&loopID)
+	require.NoError(err)
+	var suppressionID int64
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO loop_suppressions(target_kind,conversation_id,note,created_at)
+		VALUES('conversation',?,'muted before consolidation',?) RETURNING id`), sourceConversation, now).Scan(&suppressionID)
+	require.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	var conversationID, sourceID, anchorID, lastActivityID int64
+	var turnKey, status, closedReason, closedBy, agendaState, evidence string
+	var actualSnooze time.Time
+	err = st.DB().QueryRow(st.Rebind(`SELECT turn_key,conversation_id,source_id,anchor_message_id,last_activity_message_id,
+		status,closed_reason,closed_by,snoozed_until,agenda_state,CAST(evidence_json AS TEXT)
+		FROM open_loops WHERE id=?`), loopID).Scan(&turnKey, &conversationID, &sourceID, &anchorID, &lastActivityID,
+		&status, &closedReason, &closedBy, &actualSnooze, &agendaState, &evidence)
+	require.NoError(err)
+	assert.Equal(destinationConversation, conversationID)
+	assert.Equal(into.ID, sourceID)
+	assert.Equal(survivor, anchorID)
+	assert.Equal(survivor, lastActivityID)
+	assert.Equal(fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor), turnKey)
+	assert.Equal("closed", status)
+	assert.Equal("muted", closedReason)
+	assert.Equal("user", closedBy)
+	assert.Equal(snoozedUntil, actualSnooze)
+	assert.Equal("dismissed", agendaState)
+	assert.Contains(evidence, fmt.Sprintf(`"message_id":%d`, survivor))
+	assert.Contains(evidence, fmt.Sprintf(`"conversation_id":%d`, destinationConversation))
+	var targetSuppressionID int64
+	var targetNote string
+	err = st.DB().QueryRow(st.Rebind(`SELECT id,note FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), destinationConversation).Scan(&targetSuppressionID, &targetNote)
+	require.NoError(err)
+	assert.Equal(suppressionID, targetSuppressionID)
+	assert.Equal("muted before consolidation", targetNote)
+	var oldSuppressionCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), sourceConversation).Scan(&oldSuppressionCount))
+	assert.Zero(oldSuppressionCount)
+}
+
+func TestMergeSourcesClosesMutedEmailDestinationLoops(t *testing.T) {
+	t.Run("moves a live loop into an already muted destination", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		st := testutil.NewTestStore(t)
+		from, err := st.GetOrCreateSource("gmail", "history@example.test")
+		require.NoError(err)
+		into, err := st.GetOrCreateSource("gmail", "live@example.test")
+		require.NoError(err)
+		sourceMessage, sourceConversation := emailMergeFixtureMessageWithBodyInThread(t, st, from.ID, "muted-thread", "history-message", "shared payload", 1)
+		_, destinationConversation := emailMergeFixtureMessageWithBodyInThread(t, st, into.ID, "muted-thread", "live-message", "shared payload", 1)
+		now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+		destinationMute := store.LoopSuppressionRequest{TargetKind: "conversation", ConversationID: &destinationConversation, Note: "muted destination"}
+		_, err = st.CreateLoopSuppressionContext(t.Context(), destinationMute, now)
+		require.NoError(err)
+		loopID := mergeFixtureLoop(t, st, from.ID, sourceConversation, sourceMessage, "reply_owed", now)
+
+		result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+		require.NoError(err)
+		assert.Equal(int64(1), result.DuplicatesHidden)
+		loop, err := st.GetOpenLoopContext(t.Context(), loopID)
+		require.NoError(err)
+		assert.Equal(destinationConversation, loop.ConversationID)
+		assert.Equal("closed", loop.Status)
+		require.NotNil(loop.ClosedReason)
+		assert.Equal("muted", *loop.ClosedReason)
+		require.NotNil(loop.ClosedBy)
+		assert.Equal("user", *loop.ClosedBy)
+		live, err := st.ListLiveConversationLoopsContext(t.Context(), destinationConversation)
+		require.NoError(err)
+		assert.Empty(live)
+	})
+
+	t.Run("transfers a source mute to every matched destination conversation", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		st := testutil.NewTestStore(t)
+		from, err := st.GetOrCreateSource("gmail", "muted-history@example.test")
+		require.NoError(err)
+		into, err := st.GetOrCreateSource("gmail", "multi-thread-live@example.test")
+		require.NoError(err)
+		_, sourceConversation := emailMergeFixtureMessageWithBodyInThread(t, st, from.ID, "source-thread", "history-a", "payload a", 1)
+		_, sameSourceConversation := emailMergeFixtureMessageWithBodyInThread(t, st, from.ID, "source-thread", "history-b", "payload b", 2)
+		require.Equal(sourceConversation, sameSourceConversation)
+		destinationMessageA, destinationConversationA := emailMergeFixtureMessageWithBodyInThread(t, st, into.ID, "destination-a", "live-a", "payload a", 1)
+		destinationMessageB, destinationConversationB := emailMergeFixtureMessageWithBodyInThread(t, st, into.ID, "destination-b", "live-b", "payload b", 2)
+		now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+		_, err = st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+			TargetKind: "conversation", ConversationID: &sourceConversation, Note: "muted source history",
+		}, now)
+		require.NoError(err)
+		loopA := mergeFixtureLoop(t, st, into.ID, destinationConversationA, destinationMessageA, "awaiting_reply", now)
+		loopB := mergeFixtureLoop(t, st, into.ID, destinationConversationB, destinationMessageB, "awaiting_reply", now)
+
+		result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+		require.NoError(err)
+		assert.Equal(int64(2), result.DuplicatesHidden)
+		for _, destinationConversation := range []int64{destinationConversationA, destinationConversationB} {
+			live, listErr := st.ListLiveConversationLoopsContext(t.Context(), destinationConversation)
+			require.NoError(listErr)
+			assert.Empty(live, "a transferred source mute applies to every mapped destination thread")
+			var muteCount int
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM loop_suppressions WHERE target_kind='conversation' AND conversation_id=?`), destinationConversation).Scan(&muteCount))
+			assert.Equal(1, muteCount)
+		}
+		for _, loopID := range []int64{loopA, loopB} {
+			loop, getErr := st.GetOpenLoopContext(t.Context(), loopID)
+			require.NoError(getErr)
+			assert.Equal("closed", loop.Status)
+			require.NotNil(loop.ClosedReason)
+			assert.Equal("muted", *loop.ClosedReason)
+			require.NotNil(loop.ClosedBy)
+			assert.Equal("user", *loop.ClosedBy)
+		}
+	})
+}
+
+func TestMergeSourcesDeduplicatesLoopHistoryAndPreservesCompletion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("beeper", "loop-complete-history-example")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("beeper", "loop-complete-live-example")
+	require.NoError(err)
+	survivor, destinationConversation := mergeFixtureMessage(t, st, into.ID, "shared-completed-loop", "live", "same body", 1)
+	duplicate, sourceConversation := mergeFixtureMessage(t, st, from.ID, "shared-completed-loop", "history", "same body", 1)
+	created := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	completed := created.Add(4 * time.Hour)
+	var destinationLoopID, historyLoopID int64
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO open_loops(
+		turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,anchor_message_id,
+		owed_since_at,last_activity_message_id,last_activity_at,opens_at,evidence_json,ruleset_version,
+		agenda_state,created_at,updated_at
+	) VALUES(?,1,?,?,'reply_owed','turn_state','open','chat',?,?,?, ?,?,'[]',1,'none',?,?) RETURNING id`),
+		fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor), destinationConversation, into.ID,
+		survivor, created, survivor, created.Add(2*time.Hour), created.Add(48*time.Hour), created, created).Scan(&destinationLoopID)
+	require.NoError(err)
+	err = st.DB().QueryRow(st.Rebind(`INSERT INTO open_loops(
+		turn_key,cycle,conversation_id,source_id,kind,detector,status,channel,anchor_message_id,
+		owed_since_at,last_activity_message_id,last_activity_at,opens_at,evidence_json,ruleset_version,
+		agenda_state,closed_at,closed_reason,closed_by,created_at,updated_at
+	) VALUES(?,1,?,?,'reply_owed','turn_state','closed','chat',?,?,?, ?,?,'[]',1,'dismissed',?,'done','user',?,?) RETURNING id`),
+		fmt.Sprintf("turn:%d:reply_owed:%d", sourceConversation, duplicate), sourceConversation, from.ID,
+		duplicate, created, duplicate, completed, completed.Add(24*time.Hour), completed, created, completed).Scan(&historyLoopID)
+	require.NoError(err)
+	withdrawn := completed.Add(time.Hour)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE open_loops SET status='closed',closed_at=?,closed_reason='withdrawn',closed_by='system',updated_at=? WHERE id=?`),
+		withdrawn, withdrawn, destinationLoopID)
+	require.NoError(err)
+
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE conversation_id=? AND turn_key=?`), destinationConversation, fmt.Sprintf("turn:%d:reply_owed:%d", destinationConversation, survivor)).Scan(&count))
+	assert.Equal(1, count)
+	var status, reason, by, agenda string
+	err = st.DB().QueryRow(st.Rebind(`SELECT status,closed_reason,closed_by,agenda_state FROM open_loops WHERE id=?`), destinationLoopID).Scan(&status, &reason, &by, &agenda)
+	require.NoError(err)
+	assert.Equal("closed", status)
+	assert.Equal("done", reason)
+	assert.Equal("user", by)
+	assert.Equal("dismissed", agenda)
+	var sourceLoopCount int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM open_loops WHERE id=?`), historyLoopID).Scan(&sourceLoopCount))
+	assert.Zero(sourceLoopCount, "the duplicate occurrence is folded into the surviving turn identity")
 }
 
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {

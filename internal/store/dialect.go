@@ -12,6 +12,7 @@ import (
 const (
 	CurrentFTSIndexingVersion = 2
 	postgresDriverName        = "pgx"
+	selectForUpdateClause     = " FOR UPDATE"
 )
 
 // FTSDoc is the set of fields the dialect needs to upsert a message into

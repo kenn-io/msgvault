@@ -381,10 +381,11 @@ func TestOpenLoopsChangedArgumentsCannotReuseConfirmation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name+"/"+tc.key, func(t *testing.T) {
+			assertions := assert.New(t)
 			b := &loopMCPBackend{suppressions: []loops.Suppression{{ID: 99, TargetKind: "person", PersonID: new(int64(7))}, {ID: 100, TargetKind: "person", PersonID: new(int64(8))}}}
 			result := confirmedCallTool(t, loopMCPOptions(b), tc.name, tc.args, true, func(string) { tc.args[tc.key] = tc.value })
-			assert.Equal(t, true, result["isError"])
-			assert.Empty(t, b.calls)
+			assertions.Equal(true, result["isError"])
+			assertions.Empty(b.calls)
 		})
 	}
 }

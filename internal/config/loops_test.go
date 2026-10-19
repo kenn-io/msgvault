@@ -12,6 +12,31 @@ import (
 	"go.kenn.io/msgvault/internal/looplimits"
 )
 
+func TestLoadLoopsConfigDefaults(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	requirements.NoError(os.WriteFile(path, []byte("[loops]\n"), 0600))
+	loaded, err := Load(path, "")
+	requirements.NoError(err)
+
+	assertions.True(loaded.Loops.Enabled)
+	assertions.Equal("*/15 * * * *", loaded.Loops.Schedule)
+	assertions.Equal(24*time.Hour, loaded.Loops.ReplyOwedAfter)
+	assertions.Equal(72*time.Hour, loaded.Loops.AwaitingReplyAfter)
+	assertions.Equal(24*time.Hour, loaded.Loops.StaleAfter)
+	assertions.Equal(3, loaded.Loops.MaxGroupCounterparts)
+	assertions.Equal(365*24*time.Hour, loaded.Loops.Lookback)
+	assertions.Equal(24*time.Hour, loaded.Loops.ReconcileInterval)
+	assertions.Equal(5, loaded.Loops.FeedPages)
+	assertions.Equal(2000, loaded.Loops.BatchMessages)
+	assertions.Equal(200, loaded.Loops.BatchConversations)
+	assertions.Equal(500, loaded.Loops.RescanBatch)
+	assertions.Equal(2000, loaded.Loops.SignalsBackfillBatch)
+	assertions.Equal(200, loaded.Loops.ConversationMessageLimit)
+	assertions.Equal(2000, loaded.Loops.ConversationMessageLimitExtended)
+	assertions.Equal(12, loaded.Loops.RunMessageLimit)
+}
 func TestLoopsConfigLoadAndManualSchedule(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

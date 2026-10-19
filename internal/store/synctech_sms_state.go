@@ -8,129 +8,185 @@ import (
 	"strconv"
 )
 
-const synctechSMSNativeStateBackfillMarker = "synctech_sms.native_send_state_backfill_v1"
-const synctechSMSNativeStateBackfillComplete = "complete"
+const (
+	synctechSMSNativeStateBackfillMarker    = "synctech_sms.native_send_state_backfill_v1"
+	synctechSMSNativeStateBackfillComplete  = "complete"
+	SynctechSMSNativeStateBackfillBatchSize = 128
+)
 
+// SynctechSMSStateBackfillCandidate carries one compressed raw record. Callers
+// inspect it synchronously so expanded attachment payloads are never retained
+// across the batch.
+type SynctechSMSStateBackfillCandidate struct {
+	MessageID     int64
+	MessageType   string
+	CompressedRaw []byte
+	Compression   sql.NullString
+}
+
+type SynctechSMSNativeStateBackfillProgress struct {
+	LastMessageID int64
+	Processed     int
+	Unsent        int
+	Complete      bool
+}
+
+// SynctechSMSNativeStateBackfillInspector reports whether the native record is
+// sent. A false result corrects the legacy TRUE default.
+type SynctechSMSNativeStateBackfillInspector func(candidate SynctechSMSStateBackfillCandidate) (sent bool, err error)
+
+// SynctechSMSNativeStateBackfillProgressContext returns the last committed
+// message ID and whether every eligible record has been inspected. A missing
+// marker starts before the first message so ready-queue filtering holds all
+// unverified imports until their batch is processed.
 func (s *Store) SynctechSMSNativeStateBackfillProgressContext(ctx context.Context) (afterMessageID int64, complete bool, err error) {
-	var value string
-	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT value FROM archive_metadata WHERE key = ?`), synctechSMSNativeStateBackfillMarker).Scan(&value)
+	var marker string
+	err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT value FROM archive_metadata WHERE key = ?`), synctechSMSNativeStateBackfillMarker).Scan(&marker)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, false, nil
+		return -1, false, nil
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("read Synctech SMS send-state backfill marker: %w", err)
 	}
-	if value == synctechSMSNativeStateBackfillComplete {
+	if marker == synctechSMSNativeStateBackfillComplete {
 		return 0, true, nil
 	}
-	afterMessageID, err = strconv.ParseInt(value, 10, 64)
-	if err != nil || afterMessageID < 0 {
-		return 0, false, fmt.Errorf("invalid Synctech SMS send-state backfill cursor %q", value)
+	afterMessageID, err = parseSynctechSMSNativeStateBackfillCursor(marker)
+	if err != nil {
+		return 0, false, fmt.Errorf("read Synctech SMS send-state backfill cursor: %w", err)
 	}
 	return afterMessageID, false, nil
 }
 
-// SynctechSMSNativeStateBackfillBatchContext streams one bounded page of
-// owner-authored records through inspect. It releases each decompressed raw
-// record before reading the next, so MMS part payloads never accumulate across
-// the batch. The caller returns false from inspect's sent result for drafts or
-// pending sends that need correction.
-func (s *Store) SynctechSMSNativeStateBackfillBatchContext(
+// ProcessSynctechSMSNativeStateBackfillBatchContext inspects at most batchSize
+// records after the durable cursor. Each message correction and the cursor
+// advance commit together, so cancellation resumes after the last committed
+// batch. The inspector sees one compressed raw record at a time.
+func (s *Store) ProcessSynctechSMSNativeStateBackfillBatchContext(
 	ctx context.Context,
-	afterMessageID int64,
-	limit int,
-	inspect func(messageType string, raw []byte) (sent, valid bool, err error),
-) (unsentMessageIDs []int64, lastMessageID int64, processed int, err error) {
-	if afterMessageID < 0 || limit < 1 || inspect == nil {
-		return nil, afterMessageID, 0, fmt.Errorf("Synctech SMS send-state backfill requires a nonnegative cursor, positive limit, and inspector")
+	batchSize int,
+	inspect SynctechSMSNativeStateBackfillInspector,
+) (progress SynctechSMSNativeStateBackfillProgress, err error) {
+	if err := ctx.Err(); err != nil {
+		return progress, err
 	}
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id, m.message_type, r.raw_data, r.compression
-		FROM messages m JOIN sources src ON src.id = m.source_id
-		JOIN message_raw r ON r.message_id = m.id
-		WHERE src.source_type = 'synctech_sms' AND m.message_type IN ('sms','mms')
-		AND m.source_is_from_me = TRUE AND COALESCE(m.is_sent, TRUE) = TRUE
-		AND m.id > ?
-		AND r.raw_format = 'synctech_sms_xml_json'
-		ORDER BY m.id LIMIT ?`), afterMessageID, limit)
-	if err != nil {
-		return nil, afterMessageID, 0, fmt.Errorf("query Synctech SMS send-state backfill batch: %w", err)
+	if batchSize < 1 {
+		return progress, fmt.Errorf("%w: Synctech SMS backfill batch size must be positive", ErrInvalidLoop)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		if err := ctx.Err(); err != nil {
-			return nil, afterMessageID, processed, err
-		}
-		var messageID int64
-		var messageType string
-		var compressed []byte
-		var compression sql.NullString
-		if err := rows.Scan(&messageID, &messageType, &compressed, &compression); err != nil {
-			return nil, afterMessageID, processed, fmt.Errorf("scan Synctech SMS send-state candidate: %w", err)
-		}
-		raw, err := decodeMessageRaw(compressed, compression)
-		if err != nil {
-			return nil, afterMessageID, processed, fmt.Errorf("decode Synctech SMS raw record for message %d: %w", messageID, err)
-		}
-		sent, valid, err := inspect(messageType, raw)
-		raw = nil
-		compressed = nil
-		if err != nil {
-			return nil, afterMessageID, processed, fmt.Errorf("inspect Synctech SMS send state for message %d: %w", messageID, err)
-		}
-		if !valid {
-			return nil, afterMessageID, processed, fmt.Errorf("stored Synctech message %d has no native send state", messageID)
-		}
-		if !sent {
-			unsentMessageIDs = append(unsentMessageIDs, messageID)
-		}
-		lastMessageID = messageID
-		processed++
+	if inspect == nil {
+		return progress, fmt.Errorf("%w: Synctech SMS backfill inspector is required", ErrInvalidLoop)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, afterMessageID, processed, fmt.Errorf("iterate Synctech SMS send-state batch: %w", err)
-	}
-	return unsentMessageIDs, lastMessageID, processed, nil
-}
 
-// FinishSynctechSMSNativeStateBackfillBatch corrects old unsent owner messages
-// and advances the durable cursor in one transaction. The is_sent trigger
-// queues changed conversations before the deriver reads its pending work.
-func (s *Store) FinishSynctechSMSNativeStateBackfillBatch(ctx context.Context, unsentMessageIDs []int64, afterMessageID int64, complete bool) error {
-	if afterMessageID < 0 {
-		return fmt.Errorf("Synctech SMS send-state backfill cursor must be nonnegative")
-	}
-	progress := strconv.FormatInt(afterMessageID, 10)
-	if complete {
-		progress = synctechSMSNativeStateBackfillComplete
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		var current string
-		err := tx.QueryRowContext(ctx, `SELECT value FROM archive_metadata WHERE key = ?`, synctechSMSNativeStateBackfillMarker).Scan(&current)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read Synctech SMS send-state backfill cursor: %w", err)
+	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES(?,'-1')
+			ON CONFLICT(key) DO NOTHING`, synctechSMSNativeStateBackfillMarker); err != nil {
+			return fmt.Errorf("initialize Synctech SMS send-state backfill cursor: %w", err)
 		}
-		if err == nil && current == synctechSMSNativeStateBackfillComplete {
+		cursorQuery := `SELECT value FROM archive_metadata WHERE key=?`
+		if s.IsPostgreSQL() {
+			cursorQuery += ` FOR UPDATE`
+		}
+		var marker string
+		markerErr := tx.QueryRowContext(ctx, cursorQuery, synctechSMSNativeStateBackfillMarker).Scan(&marker)
+		if markerErr != nil {
+			return fmt.Errorf("read Synctech SMS send-state backfill cursor: %w", markerErr)
+		}
+		if marker == synctechSMSNativeStateBackfillComplete {
+			progress.Complete = true
 			return nil
 		}
-		if err == nil {
-			if currentID, parseErr := strconv.ParseInt(current, 10, 64); parseErr != nil || currentID < 0 {
-				return fmt.Errorf("invalid Synctech SMS send-state backfill cursor %q", current)
+		cursor, err := parseSynctechSMSNativeStateBackfillCursor(marker)
+		if err != nil {
+			return fmt.Errorf("parse Synctech SMS send-state backfill cursor: %w", err)
+		}
+
+		rows, err := tx.QueryContext(ctx, `SELECT m.id,m.message_type
+			FROM messages m JOIN sources src ON src.id=m.source_id
+			WHERE m.id>? AND src.source_type='synctech_sms' AND m.message_type IN ('sms','mms')
+			AND m.source_is_from_me=TRUE AND COALESCE(m.is_sent,TRUE)=TRUE
+			AND EXISTS(SELECT 1 FROM message_raw r WHERE r.message_id=m.id AND r.raw_format='synctech_sms_xml_json')
+			ORDER BY m.id LIMIT ?`, cursor, batchSize+1)
+		if err != nil {
+			return fmt.Errorf("query Synctech SMS send-state backfill batch: %w", err)
+		}
+		type candidateID struct {
+			messageID   int64
+			messageType string
+		}
+		ids := make([]candidateID, 0, batchSize+1)
+		for rows.Next() {
+			var id candidateID
+			if err := rows.Scan(&id.messageID, &id.messageType); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan Synctech SMS send-state candidate id: %w", err)
 			}
+			ids = append(ids, id)
 		}
-		if err := execInChunksContext(ctx, tx, unsentMessageIDs, nil, `
-			UPDATE messages SET is_sent = FALSE
-			WHERE id IN (%s) AND COALESCE(is_sent, TRUE) = TRUE AND source_is_from_me = TRUE
-			AND message_type IN ('sms','mms')
-			AND source_id IN (SELECT id FROM sources WHERE source_type = 'synctech_sms')`); err != nil {
-			return fmt.Errorf("persist Synctech SMS native unsent state: %w", err)
+		rowsErr := rows.Err()
+		closeErr := rows.Close()
+		if rowsErr != nil {
+			return fmt.Errorf("iterate Synctech SMS send-state candidate ids: %w", rowsErr)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key, value) VALUES (?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = CASE
-				WHEN archive_metadata.value = 'complete' THEN archive_metadata.value
-				WHEN CAST(archive_metadata.value AS BIGINT) > CAST(? AS BIGINT) THEN archive_metadata.value
-				ELSE excluded.value END`, synctechSMSNativeStateBackfillMarker, progress, strconv.FormatInt(afterMessageID, 10)); err != nil {
-			return fmt.Errorf("record Synctech SMS send-state backfill progress: %w", err)
+		if closeErr != nil {
+			return fmt.Errorf("close Synctech SMS send-state candidate ids: %w", closeErr)
+		}
+		hasMore := len(ids) > batchSize
+		if hasMore {
+			ids = ids[:batchSize]
+		}
+		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			candidate := SynctechSMSStateBackfillCandidate{MessageID: id.messageID, MessageType: id.messageType}
+			err := tx.QueryRowContext(ctx, `SELECT raw_data,compression FROM message_raw
+				WHERE message_id=? AND raw_format='synctech_sms_xml_json'`, id.messageID).Scan(&candidate.CompressedRaw, &candidate.Compression)
+			if err != nil {
+				return fmt.Errorf("load Synctech SMS send-state record for message %d: %w", id.messageID, err)
+			}
+			sent, err := inspect(candidate)
+			if err != nil {
+				return fmt.Errorf("inspect Synctech SMS send state for message %d: %w", id.messageID, err)
+			}
+			if !sent {
+				if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_sent=FALSE
+					WHERE id=? AND source_is_from_me=TRUE AND COALESCE(is_sent,TRUE)=TRUE
+					AND message_type IN ('sms','mms')
+					AND source_id IN (SELECT id FROM sources WHERE source_type='synctech_sms')`, id.messageID); err != nil {
+					return fmt.Errorf("persist Synctech SMS native unsent state for message %d: %w", id.messageID, err)
+				}
+				progress.Unsent++
+			}
+			progress.Processed++
+			progress.LastMessageID = id.messageID
+			candidate.CompressedRaw = nil
+		}
+
+		progress.Complete = !hasMore
+		marker = strconv.FormatInt(cursor, 10)
+		if len(ids) > 0 {
+			marker = strconv.FormatInt(ids[len(ids)-1].messageID, 10)
+			progress.LastMessageID = ids[len(ids)-1].messageID
+		}
+		if progress.Complete {
+			marker = synctechSMSNativeStateBackfillComplete
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) VALUES(?,?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value`, synctechSMSNativeStateBackfillMarker, marker); err != nil {
+			return fmt.Errorf("persist Synctech SMS send-state backfill cursor: %w", err)
 		}
 		return nil
 	})
+	if err != nil {
+		return SynctechSMSNativeStateBackfillProgress{}, err
+	}
+	return progress, nil
+}
+
+func parseSynctechSMSNativeStateBackfillCursor(marker string) (int64, error) {
+	cursor, err := strconv.ParseInt(marker, 10, 64)
+	if err != nil || cursor < -1 {
+		return 0, fmt.Errorf("invalid cursor %q", marker)
+	}
+	return cursor, nil
 }

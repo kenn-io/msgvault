@@ -65,6 +65,7 @@ type LoopConversation struct {
 	SourceType, ConversationType string
 	Participants                 []LoopParticipant
 	LastMessageAt                time.Time
+	HistoryComplete              bool
 	Messages                     []LoopMessage
 }
 type LoopListFilter struct {

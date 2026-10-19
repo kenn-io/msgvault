@@ -1440,7 +1440,8 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 			reply_to_message_id INTEGER REFERENCES messages(id),
 			message_type TEXT NOT NULL DEFAULT 'email',
 			attachment_count INTEGER DEFAULT 0,
-			deleted_from_source_at DATETIME
+			deleted_from_source_at DATETIME,
+			is_sent BOOLEAN DEFAULT TRUE
 		)
 	`)
 	require.NoError(err, "create legacy messages table")

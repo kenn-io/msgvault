@@ -62,6 +62,111 @@ func loopSuppressionPredicate(request LoopSuppressionRequest) (string, []any) {
 	}
 }
 
+func (s *Store) transferLoopSuppressionTargetTx(
+	ctx context.Context, tx *loggedTx, targetKind, targetColumn string,
+	absorbedID, survivorID, mergeID int64,
+) error {
+	var absorbedSuppressionID int64
+	var absorbedNote string
+	var absorbedCreated time.Time
+	err := tx.QueryRowContext(ctx, `SELECT id,note,created_at FROM loop_suppressions
+		WHERE target_kind=? AND `+targetColumn+`=?`, targetKind, absorbedID).
+		Scan(&absorbedSuppressionID, &absorbedNote, &absorbedCreated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load absorbed loop suppression: %w", err)
+	}
+
+	var survivorSuppressionID int64
+	var survivorNote string
+	var survivorCreated time.Time
+	err = tx.QueryRowContext(ctx, `SELECT id,note,created_at FROM loop_suppressions
+		WHERE target_kind=? AND `+targetColumn+`=?`, targetKind, survivorID).
+		Scan(&survivorSuppressionID, &survivorNote, &survivorCreated)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET `+targetColumn+`=? WHERE id=?`, survivorID, absorbedSuppressionID); err != nil {
+			return fmt.Errorf("rebind absorbed loop suppression: %w", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load survivor loop suppression: %w", err)
+	}
+	createdAt := survivorCreated
+	if absorbedCreated.Before(createdAt) {
+		createdAt = absorbedCreated
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note=?,created_at=? WHERE id=?`,
+		mergeLoopSuppressionNotes(survivorNote, absorbedNote),
+		s.dialect.TimestampParam(createdAt), survivorSuppressionID); err != nil {
+		return fmt.Errorf("merge loop-suppression notes: %w", err)
+	}
+	if mergeID != 0 {
+		if err := s.setPersonMergeRowDispositionTx(ctx, tx, mergeID,
+			"loop_suppressions", absorbedSuppressionID, "deleted_snapshot", nil); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id=?`, absorbedSuppressionID); err != nil {
+		return fmt.Errorf("deduplicate absorbed loop suppression: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) closeSuppressedLoopsForTargetTx(ctx context.Context, tx *loggedTx, request LoopSuppressionRequest) error {
+	var targetColumn string
+	var target any
+	switch request.TargetKind {
+	case "participant":
+		targetColumn, target = "participant_id", request.ParticipantID
+	case string(AttributeObjectPerson):
+		targetColumn, target = personMergePersonIDColumn, request.PersonID
+	default:
+		return nil
+	}
+	var suppressionID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM loop_suppressions WHERE target_kind=? AND `+targetColumn+`=?`,
+		request.TargetKind, target).Scan(&suppressionID); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("check loop suppression: %w", err)
+	}
+	predicate, args := loopSuppressionPredicate(request)
+	now := s.dialect.Now()
+	_, err := tx.ExecContext(ctx, `UPDATE open_loops SET status='closed',closed_at=`+now+
+		`,closed_reason='muted',closed_by='user',closed_message_id=NULL,updated_at=`+now+
+		` WHERE status<>'closed' AND `+predicate, args...)
+	return err
+}
+
+func (s *Store) reconcileParticipantLoopStateTx(
+	ctx context.Context, tx *loggedTx, absorbedID, survivorID, personID int64,
+) error {
+	var counterpartyPerson any
+	if personID > 0 {
+		counterpartyPerson = personID
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE open_loops SET counterparty_participant_id=?,
+		counterparty_person_id=COALESCE(?,counterparty_person_id) WHERE counterparty_participant_id=?`,
+		survivorID, counterpartyPerson, absorbedID); err != nil {
+		return fmt.Errorf("rebind absorbed open-loop counterparts: %w", err)
+	}
+	if err := s.transferLoopSuppressionTargetTx(ctx, tx, "participant", "participant_id", absorbedID, survivorID, 0); err != nil {
+		return err
+	}
+	if err := s.closeSuppressedLoopsForTargetTx(ctx, tx,
+		LoopSuppressionRequest{TargetKind: "participant", ParticipantID: &survivorID}); err != nil {
+		return err
+	}
+	if personID > 0 {
+		return s.closeSuppressedLoopsForTargetTx(ctx, tx,
+			LoopSuppressionRequest{TargetKind: string(AttributeObjectPerson), PersonID: &personID})
+	}
+	return nil
+}
+
 // suppressionConversationIDs includes native membership even before any loop has been derived.
 func (s *Store) suppressionConversationIDs(ctx context.Context, tx *loggedTx, request LoopSuppressionRequest, lookback time.Duration, now time.Time) ([]int64, error) {
 	membership := "c.id=?"

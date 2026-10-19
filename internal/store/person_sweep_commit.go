@@ -484,7 +484,7 @@ func (s *Store) lockPersonSweepWorkRowTx(
 	query := `SELECT lease_owner, lease_fence, COALESCE(lease_until > ` + s.dialect.Now() + `, FALSE)
 		FROM person_sweep_work WHERE person_id = ?`
 	if s.IsPostgreSQL() {
-		query += s.dialect.SelectForUpdate()
+		query += selectForUpdateClause
 	}
 	var owner string
 	var fence int64
@@ -627,7 +627,7 @@ func (s *Store) advanceBoundPersonSweepCursorsTx(
 				WHERE person_id = ? AND source_lane = ? AND program_fingerprint = ?
 				AND catalog_fingerprint = ?`
 			if s.IsPostgreSQL() {
-				queryUpper += s.dialect.SelectForUpdate()
+				queryUpper += selectForUpdateClause
 			}
 			var upper string
 			if err := tx.QueryRowContext(ctx, queryUpper, advance.Key.PersonID, advance.Key.SourceLane,
