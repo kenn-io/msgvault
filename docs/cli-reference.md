@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-18"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,8 +20,8 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
-| Preview and control one Gmail Inbox item | [inbox](#inbox) |
-| Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account) |
+| Preview and control one Gmail or IMAP Inbox item | [inbox](#inbox) |
+| Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
@@ -281,7 +281,7 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ## inbox
 
-Preview and control one exact Gmail Inbox item through the selected daemon.
+Preview and control one exact Gmail item or IMAP mailbox copy through the selected daemon.
 Requires API schema 3.16.0. Available on `main`, unreleased. The daemon verifies
 native account/item identity and current source/action authority on every call.
 The CLI also checks the daemon's live Inbox route and admitted operation before
@@ -301,9 +301,11 @@ only with `expected`, a signed `preview_token`, and an `idempotency_key` already
 in the request. The subcommand selects `operation`; a different operation in
 the JSON is rejected.
 
-An owner obtains the exact `target` from the native tag GET route and places it
+For Gmail, an owner obtains the exact `target` from the native tag GET route and places it
 in `target.json` as `{"target": {...}}`. Delegates use an owner-supplied target
-and an Inbox grant. Keep the target unchanged and prepare execution from the
+and an Inbox grant. IMAP requires an owner-supplied exact recorded mailbox copy;
+see [IMAP control](api-server.md#native-imap-inbox-control) for its binding fields.
+Keep the target unchanged and prepare execution from the
 preview with a caller-chosen key:
 
 ```bash
@@ -323,16 +325,17 @@ updates local evidence without repeating the mutation.
 
 | Subcommand | Purpose |
 |---|---|
-| `get-capabilities`, `list-folders` | Observe source support and user-label catalog |
+| `get-capabilities`, `list-folders` | Observe source support and native location catalog |
 | `get-state` | Observe exact native item state |
-| `archive`, `unarchive` | Remove or add Gmail `INBOX` |
-| `set-read`, `set-unread` | Remove or add Gmail `UNREAD` |
-| `tags` | Add/remove existing Gmail user label IDs |
-| `move` | Remove an exact origin user label and add a destination user label |
-| `create-folder` | Create a Gmail user label |
+| `archive`, `unarchive` | Remove/add Gmail `INBOX`, or move an IMAP copy to the archive mailbox or `INBOX` |
+| `set-read`, `set-unread` | Change native read state while preserving local archive read state |
+| `tags` | Add/remove existing Gmail user label IDs or advertised IMAP keywords |
+| `move` | Change exact Gmail labels or move an exact IMAP mailbox copy |
+| `create-folder` | Create a Gmail user label or IMAP mailbox |
 | `receipt-get`, `reconcile` | Read or independently reconcile retained evidence |
 
-[The API reference](api-server.md#native-gmail-inbox-control) owns exact request
+[The API reference](api-server.md#native-gmail-inbox-control), including
+[IMAP control](api-server.md#native-imap-inbox-control), owns exact request
 fields, permissions, native limitations, receipt states, and error behavior.
 These commands never send a message. They do not provide candidate discovery or
 batch actions. Existing `message-tags` continues to support IMAP keywords and

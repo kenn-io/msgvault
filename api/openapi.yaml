@@ -6809,8 +6809,6 @@ components:
         target:
           $ref: "#/components/schemas/InboxTarget"
       required:
-        - target
-        - source
         - observed_at
       type: object
     InboxTarget:

@@ -3,7 +3,6 @@ package store_test
 import (
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,13 +28,13 @@ func TestInboxConsumerUpgradesPopulatedPredecessor(t *testing.T) {
 	}
 	beforeRecording := recordingSnapshot()
 	requirements.NotEmpty(beforeRecording[0])
-	// Reconstruct published recording schema 4 by removing only the Inbox
+	// Reconstruct the published predecessor schema by removing only the Inbox
 	// consumer tables. Preserve actual recording data, identity and messages.
 	for _, table := range []string{"inbox_operation_receipts", "inbox_provider_states", "inbox_source_revisions"} {
 		_, err = f.Store.DB().Exec("DROP TABLE " + table)
 		requirements.NoError(err)
 	}
-	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='4' WHERE key='schema_version'")
+	_, err = f.Store.DB().Exec(f.Store.Rebind("UPDATE archive_metadata SET value=? WHERE key='schema_version'"), strconv.Itoa(store.SchemaVersion-1))
 	requirements.NoError(err)
 	requirements.ErrorContains(f.Store.ValidateSchemaContext(t.Context()), "does not match")
 	var count int
@@ -64,7 +63,7 @@ func reconstructInboxPredecessor(t *testing.T, st *store.Store) {
 		_, err := st.DB().Exec("DROP TABLE " + table)
 		require.NoError(t, err)
 	}
-	_, err := st.DB().Exec("UPDATE archive_metadata SET value='4' WHERE key='schema_version'")
+	_, err := st.DB().Exec(st.Rebind("UPDATE archive_metadata SET value=? WHERE key='schema_version'"), strconv.Itoa(store.SchemaVersion-1))
 	require.NoError(t, err)
 }
 
@@ -79,7 +78,7 @@ func TestInboxConsumerRetriesInterruptedUpgrade(t *testing.T) {
 	requirements.Error(f.Store.InitSchemaContext(t.Context()))
 	version, err := f.Store.SchemaVersionContext(t.Context())
 	requirements.NoError(err)
-	assertions.Equal(4, version, "an interrupted migration must retain its predecessor marker")
+	assertions.Equal(store.SchemaVersion-1, version, "an interrupted migration must retain its predecessor marker")
 	_, err = f.Store.DB().Exec("DROP TABLE inbox_provider_states")
 	requirements.NoError(err)
 	requirements.NoError(f.Store.InitSchemaContext(t.Context()))
@@ -139,7 +138,6 @@ func TestInboxRevisionBelongsToObservationConsumer(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(changed)
 	assertions.Equal(int64(1), readRevision())
-	state.ObservedAt = state.ObservedAt.Add(time.Second)
 	state.Inbox = new(false)
 	changed, err = f.Store.ObserveInboxState(t.Context(), state)
 	requirements.NoError(err)

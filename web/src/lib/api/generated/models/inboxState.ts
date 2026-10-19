@@ -16,7 +16,7 @@ export interface InboxState {
   provisioned_folder?: InboxFolder;
   read?: boolean;
   revision?: string;
-  source: InboxSourceIdentity;
+  source?: InboxSourceIdentity;
   tags?: string[];
-  target: InboxTarget;
+  target?: InboxTarget;
 }

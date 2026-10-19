@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -391,6 +392,11 @@ func openAPIClientDocument() *huma.OpenAPI {
 func hardenOperationSchemas(doc *huma.OpenAPI) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
+	}
+	if state := doc.Components.Schemas.Map()["InboxState"]; state != nil {
+		state.Required = slices.DeleteFunc(state.Required, func(name string) bool {
+			return name == "source" || name == "target"
+		})
 	}
 	for _, name := range []string{
 		"OperationErrorResponse",

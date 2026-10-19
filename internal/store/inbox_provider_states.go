@@ -39,7 +39,7 @@ func observeInboxStateTx(ctx context.Context, tx *loggedTx, state inboxcontrol.S
 	if err != nil {
 		return false, fmt.Errorf("encode inbox provider observation: %w", err)
 	}
-	if err := validateInboxArchiveTarget(ctx, tx, state.Target); err != nil {
+	if err := validateInboxObservedTargetTx(ctx, tx, state.Target); err != nil {
 		return false, err
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO inbox_provider_states
@@ -67,6 +67,23 @@ func observeInboxStateTx(ctx context.Context, tx *loggedTx, state inboxcontrol.S
 	return rows == 1, nil
 }
 
+func validateInboxObservedTargetTx(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
+	archiveErr := validateInboxArchiveTarget(ctx, tx, target)
+	if archiveErr == nil {
+		return nil
+	}
+	original, hasOriginal := inboxcontrol.ReceiptAuthorityTarget(ctx)
+	mapped, hasMapping := inboxcontrol.ReceiptMoveTarget(ctx)
+	_, hasReceipt := inboxcontrol.ReceiptReconcileID(ctx)
+	if !hasOriginal || !hasMapping || !hasReceipt || mapped != target {
+		return archiveErr
+	}
+	if err := validateInboxMappedMoveIdentityTx(ctx, tx, original, mapped); err != nil {
+		return err
+	}
+	return validateInboxIMAPMembership(ctx, tx, mapped)
+}
+
 func inboxStateKey(target inboxcontrol.Target) (string, error) {
 	return inboxcontrol.SemanticFingerprint(inboxcontrol.State{Target: target})
 }
@@ -75,13 +92,31 @@ func validateInboxArchiveTarget(ctx context.Context, tx *loggedTx, target inboxc
 	if err := validateInboxArchiveIdentity(ctx, tx, target); err != nil {
 		return err
 	}
-	if target.SourceType == "imap" {
-		return fmt.Errorf("%w: IMAP membership control is unavailable", inboxcontrol.ErrInvalid)
+	if target.SourceType == sourceTypeIMAP {
+		return validateInboxIMAPMembership(ctx, tx, target)
 	}
 	return nil
 }
 
 func validateInboxArchiveIdentity(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
+	if err := validateInboxArchiveSourceIdentity(ctx, tx, target); err != nil {
+		return err
+	}
+	query := `SELECT COUNT(*) FROM messages WHERE id = ? AND source_id = ? AND source_message_id = ?`
+	if target.Scope == inboxcontrol.ScopeChat {
+		query = `SELECT COUNT(*) FROM conversations WHERE id = ? AND source_id = ? AND source_conversation_id = ?`
+	}
+	var count int
+	if err := tx.QueryRowContext(ctx, query, target.ItemID, target.SourceID, target.ProviderID).Scan(&count); err != nil {
+		return fmt.Errorf("resolve inbox observation item: %w", err)
+	}
+	if count != 1 {
+		return fmt.Errorf("%w: observation item differs from archive", inboxcontrol.ErrInvalid)
+	}
+	return nil
+}
+
+func validateInboxArchiveSourceIdentity(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
 	var count int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sources WHERE id = ? AND identifier = ?
 		AND (source_type = ? OR (source_type = '' AND ? = 'gmail'))`, target.SourceID, target.SourceIdentifier, target.SourceType, target.SourceType).Scan(&count); err != nil {
@@ -89,16 +124,6 @@ func validateInboxArchiveIdentity(ctx context.Context, tx *loggedTx, target inbo
 	}
 	if count != 1 {
 		return fmt.Errorf("%w: observation source differs from archive", inboxcontrol.ErrInvalid)
-	}
-	query := `SELECT COUNT(*) FROM messages WHERE id = ? AND source_id = ? AND source_message_id = ?`
-	if target.Scope == inboxcontrol.ScopeChat {
-		query = `SELECT COUNT(*) FROM conversations WHERE id = ? AND source_id = ? AND source_conversation_id = ?`
-	}
-	if err := tx.QueryRowContext(ctx, query, target.ItemID, target.SourceID, target.ProviderID).Scan(&count); err != nil {
-		return fmt.Errorf("resolve inbox observation item: %w", err)
-	}
-	if count != 1 {
-		return fmt.Errorf("%w: observation item differs from archive", inboxcontrol.ErrInvalid)
 	}
 	return nil
 }
@@ -121,4 +146,17 @@ func (s *Store) GetInboxProviderState(ctx context.Context, target inboxcontrol.T
 		return nil, fmt.Errorf("decode inbox provider observation: %w", err)
 	}
 	return &state, nil
+}
+
+// Exact membership authority, independently of caller/provider ID formatting.
+func validateInboxIMAPMembership(ctx context.Context, tx *loggedTx, target inboxcontrol.Target) error {
+	var count int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM imap_message_memberships mm WHERE mm.source_id=? AND mm.message_id=? AND mm.mailbox=? AND mm.uidvalidity=? AND mm.uid=? AND EXISTS(SELECT 1 FROM imap_folder_state fs WHERE fs.source_id=mm.source_id AND fs.mailbox=mm.mailbox AND fs.uidvalidity=mm.uidvalidity)`, target.SourceID, target.ItemID, target.Mailbox, target.UIDValidity, target.UID).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("resolve Inbox IMAP membership: %w", err)
+	}
+	if count != 1 {
+		return inboxcontrol.ErrInvalid
+	}
+	return nil
 }

@@ -133,6 +133,29 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	key, err := prepareInboxRuntime(t.Context(), cfg, st)
 	requirements.NoError(err)
 	adapter := &storeAPIAdapter{store: st, config: cfg, inboxKey: key, emailTagClientFactory: factory}
+	var cacheRefreshMu sync.Mutex
+	cacheRefreshes := 0
+	adapter.draftCacheRefresh = func(refreshCtx context.Context, identifier string) error {
+		if identifier != account {
+			return errors.New("Inbox cache refresh used the wrong source identifier")
+		}
+		execution, err := st.AcquireInboxExecutionContext(refreshCtx, source.ID)
+		if err != nil {
+			return err
+		}
+		if err := execution.Release(); err != nil {
+			return err
+		}
+		cacheRefreshMu.Lock()
+		cacheRefreshes++
+		cacheRefreshMu.Unlock()
+		return nil
+	}
+	cacheRefreshCount := func() int {
+		cacheRefreshMu.Lock()
+		defer cacheRefreshMu.Unlock()
+		return cacheRefreshes
+	}
 	server := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: slog.Default(), OperationGate: api.NewSerialOperationGate()})
 	call := func(method, path string, payload any, secret string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -268,6 +291,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NotNil(result.After)
 	assertions.False(*result.After.Inbox)
 	assertions.Contains(result.After.Tags, "STARRED")
+	assertions.Equal(1, cacheRefreshCount(), "verified Inbox changes request analytics refresh after source release")
 	mu.Lock()
 	assertions.Equal(1, posts)
 	assertions.Equal(1, readbacks, "success requires independent native metadata GET")
@@ -322,6 +346,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NotNil(recovered.Receipt)
 	assertions.Equal(result.Receipt.ID, recovered.Receipt.ID)
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status)
+	assertions.Equal(1, cacheRefreshCount(), "reading a receipt does not request another cache refresh")
 
 	activeID, activeSecret := issue(nil)
 	secret = activeSecret
@@ -344,6 +369,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &recovered))
 	requirements.NotNil(recovered.Receipt)
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status, "an authorized unknown receipt actually reconciles before removal")
+	assertions.Equal(2, cacheRefreshCount(), "receipt reconciliation requests analytics refresh after source release")
 	retiredPending := makeUnknown("native-retired-unknown")
 	requirements.NoError(st.RemoveSource(source.ID))
 	response = call(http.MethodPost, "/api/v1/inbox/control", receiptRequest, "")

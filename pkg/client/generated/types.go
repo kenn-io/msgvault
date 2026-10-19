@@ -6435,23 +6435,28 @@ func (i InboxSourceIdentity) Validate() error {
 }
 
 type InboxState struct {
-	Flags             []string            `json:"flags,omitzero"`
-	Folders           []InboxFolder       `json:"folders,omitempty"`
-	Inbox             *bool               `json:"inbox,omitempty"`
-	LastMessageID     *string             `json:"last_message_id,omitzero"`
-	Location          *string             `json:"location,omitzero"`
-	MarkedUnread      *bool               `json:"marked_unread,omitempty"`
-	ObservedAt        time.Time           `json:"observed_at" validate:"required"`
-	ProvisionedFolder *InboxFolder        `json:"provisioned_folder,omitempty"`
-	Read              *bool               `json:"read,omitempty"`
-	Revision          *string             `json:"revision,omitzero"`
-	Source            InboxSourceIdentity `json:"source"`
-	Tags              []string            `json:"tags,omitzero"`
-	Target            InboxTarget         `json:"target"`
+	Flags             []string             `json:"flags,omitzero"`
+	Folders           []InboxFolder        `json:"folders,omitempty"`
+	Inbox             *bool                `json:"inbox,omitempty"`
+	LastMessageID     *string              `json:"last_message_id,omitzero"`
+	Location          *string              `json:"location,omitzero"`
+	MarkedUnread      *bool                `json:"marked_unread,omitempty"`
+	ObservedAt        time.Time            `json:"observed_at" validate:"required"`
+	ProvisionedFolder *InboxFolder         `json:"provisioned_folder,omitempty"`
+	Read              *bool                `json:"read,omitempty"`
+	Revision          *string              `json:"revision,omitzero"`
+	Source            *InboxSourceIdentity `json:"source,omitempty"`
+	Tags              []string             `json:"tags,omitzero"`
+	Target            *InboxTarget         `json:"target,omitempty"`
 }
 
 func (i InboxState) Validate() error {
 	var errors runtime.ValidationErrors
+	sourcePopulated := i.Source != nil && *i.Source != (InboxSourceIdentity{})
+	targetPopulated := i.Target != nil && *i.Target != (InboxTarget{})
+	if sourcePopulated == targetPopulated {
+		errors = errors.Append("Binding", fmt.Errorf("exactly one inbox state binding must be populated"))
+	}
 	for i, item := range i.Folders {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6469,14 +6474,18 @@ func (i InboxState) Validate() error {
 			}
 		}
 	}
-	if v, ok := any(i.Source).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Source", err)
+	if sourcePopulated {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
 		}
 	}
-	if v, ok := any(i.Target).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("Target", err)
+	if targetPopulated {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

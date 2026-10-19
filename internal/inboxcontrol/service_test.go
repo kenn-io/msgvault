@@ -343,6 +343,54 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 	assertions.Equal(1, f.provider.dispatches)
 }
 
+func TestInboxControlReconcileReturnsTerminalReceiptAfterGate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status inboxcontrol.Status
+		code   string
+	}{
+		{name: "verified", status: inboxcontrol.StatusVerified},
+		{name: "failed", status: inboxcontrol.StatusFailed, code: "provider-rejected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			f := newControlFixture(t)
+			r := f.execution(t)
+			reconcile := f.service.ReconcileState
+			f.service.ReconcileState = func(context.Context, inboxcontrol.State, inboxcontrol.State) error {
+				return errors.New("fixture local failure")
+			}
+			pending, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+			requirements.ErrorIs(err, inboxcontrol.ErrReconcileOnly)
+			requirements.NotNil(pending.Receipt)
+			assertions.Equal(inboxcontrol.StatusReconcileOnly, pending.Receipt.Status)
+			f.service.ReconcileState = reconcile
+
+			reads := f.provider.reads
+			f.gate = func(ctx context.Context) (func(), error) {
+				current, err := f.archive.Store.GetInboxReceipt(ctx, pending.Receipt.ID)
+				requirements.NoError(err)
+				requirements.NotNil(current)
+				var after *inboxcontrol.State
+				if tc.status == inboxcontrol.StatusVerified {
+					after = current.After
+					requirements.NotNil(after)
+				}
+				requirements.NoError(f.archive.Store.FinishInboxReceipt(ctx, current.ID, tc.status, after, tc.code))
+				return func() {}, nil
+			}
+
+			result, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: pending.Receipt.ID}, f.principal, f.gate)
+			requirements.NoError(err)
+			requirements.NotNil(result.Receipt)
+			assertions.Equal(tc.status, result.Receipt.Status)
+			assertions.Equal(reads, f.provider.reads, "terminal receipts must not trigger another provider read")
+		})
+	}
+}
+
 func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -596,10 +644,14 @@ func TestInboxReceiptReconcileReturnsCurrentReceiptAfterWaitingForOwnership(t *t
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseGate) }) }
 	defer release()
-	waitingGate := func(context.Context) (func(), error) {
+	waitingGate := func(ctx context.Context) (func(), error) {
 		close(enteredGate)
-		<-releaseGate
-		return func() {}, nil
+		select {
+		case <-releaseGate:
+			return func() {}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	waitingResult := make(chan struct {
 		result *inboxcontrol.Result
@@ -651,10 +703,14 @@ func TestInboxReceiptReconcileReturnsCurrentFailureAfterWaitingForOwnership(t *t
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseGate) }) }
 	defer release()
-	waitingGate := func(context.Context) (func(), error) {
+	waitingGate := func(ctx context.Context) (func(), error) {
 		close(enteredGate)
-		<-releaseGate
-		return func() {}, nil
+		select {
+		case <-releaseGate:
+			return func() {}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	waitingResult := make(chan struct {
 		result *inboxcontrol.Result

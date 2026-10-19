@@ -77,7 +77,7 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		if endOffset < 0 {
 			return nil, fmt.Errorf("generated %s validator shape changed", typeName)
 		}
-		if validator := result[start : start+endOffset]; !bytes.Contains(validator, validation) {
+		if validator := result[start : start+endOffset+1]; !bytes.Contains(validator, validation) {
 			insertAt := start + len(marker)
 			result = append(append(append([]byte(nil), result[:insertAt]...), validation...), result[insertAt:]...)
 		}
@@ -168,11 +168,94 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated CreateDailyNoteEntryRequest.PersonIds validator shape changed")
 	}
 	attributeJSON := []byte("*struct{}  `json:\"json,omitempty\"`")
-	if !bytes.Contains(result, attributeJSON) {
+	rewrittenAttributeJSON := []byte("jsontext.Value `json:\"json,omitzero\"`")
+	rewrittenOptionalAttributeJSON := []byte("jsontext.Value `json:\"json,omitempty\"`")
+	rewrittenOmitZeroOptionalAttributeJSON := []byte("jsontext.Value `json:\"json,omitzero,omitempty\"`")
+	switch {
+	case bytes.Contains(result, attributeJSON):
+		result = bytes.Replace(result, attributeJSON,
+			[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
+	case bytes.Contains(result, rewrittenAttributeJSON),
+		bytes.Contains(result, rewrittenOptionalAttributeJSON),
+		bytes.Contains(result, rewrittenOmitZeroOptionalAttributeJSON):
+	default:
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
-	result = bytes.Replace(result, attributeJSON,
-		[]byte("jsontext.Value `json:\"json,omitempty\"`"), 1)
-	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
-	return result, nil
+	result = optionalValueJSONTag.ReplaceAllFunc(result, func(match []byte) []byte {
+		if bytes.Contains(match, []byte(",omitzero,")) {
+			return match
+		}
+		return bytes.Replace(match, []byte(",omitempty\""), []byte(",omitzero,omitempty\""), 1)
+	})
+	return rewriteInboxStateValidator(result)
+}
+
+func rewriteInboxStateValidator(source []byte) ([]byte, error) {
+	const typeName, receiver = "InboxState", "i"
+	if !bytes.Contains(source, []byte("type "+typeName+" struct")) {
+		return source, nil
+	}
+	shapeErr := fmt.Errorf("generated %s validator shape changed", typeName)
+	marker := []byte("func (" + receiver + " " + typeName + ") Validate() error {\n\tvar errors runtime.ValidationErrors\n")
+	start := bytes.Index(source, marker)
+	if start < 0 {
+		return nil, shapeErr
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, shapeErr
+	}
+	end := start + endOffset
+	validator := source[start:end]
+	oldSource := []byte(`	if i.Source != nil {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+`)
+	oldTarget := []byte(`	if i.Target != nil {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+`)
+	newSource := []byte(`	if sourcePopulated {
+		if v, ok := any(i.Source).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Source", err)
+			}
+		}
+	}
+`)
+	newTarget := []byte(`	if targetPopulated {
+		if v, ok := any(i.Target).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Target", err)
+			}
+		}
+	}
+`)
+	populationChecks := []byte(`	sourcePopulated := i.Source != nil && *i.Source != (InboxSourceIdentity{})
+	targetPopulated := i.Target != nil && *i.Target != (InboxTarget{})
+	if sourcePopulated == targetPopulated {
+		errors = errors.Append("Binding", fmt.Errorf("exactly one inbox state binding must be populated"))
+	}
+`)
+	sourceCount, targetCount, populationCount := bytes.Count(validator, oldSource), bytes.Count(validator, oldTarget), bytes.Count(validator, populationChecks)
+	newSourceCount, newTargetCount := bytes.Count(validator, newSource), bytes.Count(validator, newTarget)
+	switch {
+	case sourceCount == 1 && targetCount == 1 && populationCount == 0 && newSourceCount == 0 && newTargetCount == 0:
+		validator = bytes.Replace(validator, oldSource, newSource, 1)
+		validator = bytes.Replace(validator, oldTarget, newTarget, 1)
+		insertAt := len(marker)
+		validator = append(append(append([]byte(nil), validator[:insertAt]...), populationChecks...), validator[insertAt:]...)
+	case sourceCount == 0 && targetCount == 0 && populationCount == 1 && newSourceCount == 1 && newTargetCount == 1:
+	default:
+		return nil, shapeErr
+	}
+	return append(append(append([]byte(nil), source[:start]...), validator...), source[end:]...), nil
 }

@@ -12,46 +12,74 @@ import (
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
 
-func (s *Server) registerMCPCapabilitiesRoute(api huma.API) {
-	registerAPIV1RawHumaJSONRoute[apiprotocol.MCPCapabilities](api, "getMCPCapabilities", http.MethodGet, "/mcp/capabilities", "Describe admitted MCP daemon operations", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		auth := s.requestAuthentication(r)
-		if auth.Mode != AuthModeCaller {
-			auth = s.classifyAPIRequestDirect(r)
-		}
-		if auth.Mode == AuthModeRequired {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
-			return
-		}
-		response := apiprotocol.MCPCapabilities{Version: 1, Delegated: auth.Mode == AuthModeDelegated, Routes: []apiprotocol.MCPRouteDescriptor{}, InboxOperations: []string{}}
-		if _, ok := s.store.(InboxController); ok {
-			for _, op := range []inboxcontrol.Operation{inboxcontrol.OpGetCapabilities, inboxcontrol.OpGetState, inboxcontrol.OpListFolders, inboxcontrol.OpTags, inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder, inboxcontrol.OpReceiptGet, inboxcontrol.OpReconcile} {
-				permission, err := op.RequiredPermission()
-				if err == nil && (!response.Delegated || inboxDiscoveryAllowed(auth.Grant, permission)) {
-					response.InboxOperations = append(response.InboxOperations, string(op))
+type MCPCapabilitiesResponse = apiprotocol.MCPCapabilities
+
+func (s *Server) registerMCPCapabilitiesRoute(root, apiV1 huma.API) {
+	registerAPIV1RawHumaJSONRoute[MCPCapabilitiesResponse](apiV1,
+		"getMCPCapabilities", http.MethodGet, "/mcp/capabilities",
+		"Describe admitted MCP daemon operations", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			auth := s.requestAuthentication(r)
+			if auth.Mode != AuthModeCaller {
+				auth = s.classifyAPIRequestDirect(r)
+			}
+			if auth.Mode == AuthModeRequired {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+				return
+			}
+
+			routes := []apiprotocol.MCPRouteDescriptor{}
+			if auth.Mode != AuthModeDelegated {
+				routes = mcpRouteDescriptors(root.OpenAPI())
+			}
+			response := MCPCapabilitiesResponse{
+				Version:         1,
+				Delegated:       auth.Mode == AuthModeDelegated,
+				Routes:          routes,
+				InboxOperations: []string{},
+			}
+			if _, ok := s.store.(InboxController); ok {
+				for _, op := range []inboxcontrol.Operation{
+					inboxcontrol.OpGetCapabilities, inboxcontrol.OpGetState,
+					inboxcontrol.OpListFolders, inboxcontrol.OpTags,
+					inboxcontrol.OpArchive, inboxcontrol.OpUnarchive,
+					inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread,
+					inboxcontrol.OpMove, inboxcontrol.OpCreateFolder,
+					inboxcontrol.OpReceiptGet, inboxcontrol.OpReconcile,
+				} {
+					permission, err := op.RequiredPermission()
+					if err == nil && (!response.Delegated || inboxDiscoveryAllowed(auth.Grant, permission)) {
+						response.InboxOperations = append(response.InboxOperations, string(op))
+					}
 				}
 			}
-		}
-		if len(response.InboxOperations) > 0 {
-			for _, operation := range documentOperations(api.OpenAPI()) {
-				if operation.OperationID == "controlInbox" {
-					response.Routes = append(response.Routes, mcpRouteDescriptor(api.OpenAPI(), operation))
+			if response.Delegated && len(response.InboxOperations) == 0 {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "Authentication is required")
+				return
+			}
+			if len(response.InboxOperations) > 0 {
+				for _, operation := range documentOperations(apiV1.OpenAPI()) {
+					if operation.OperationID == "controlInbox" {
+						response.Routes = append(response.Routes, mcpRouteDescriptor(apiV1.OpenAPI(), operation))
+					}
 				}
 			}
-		}
-		sort.Strings(response.InboxOperations)
-		writeJSON(w, http.StatusOK, response)
-	})
+			sort.Strings(response.InboxOperations)
+			writeJSON(w, http.StatusOK, response)
+		})
 }
 
 func inboxDiscoveryAllowed(grant *agentgrant.Grant, permission agentgrant.Permission) bool {
 	return grant != nil && grant.HasPermission(agentgrant.PermissionInboxRead) && grant.HasPermission(permission) && slices.ContainsFunc(grant.Sources, func(source agentgrant.SourceRef) bool {
-		return source.ID > 0 && source.Type == "gmail" && source.Identifier != ""
+		return source.ID > 0 && (source.Type == "gmail" || source.Type == "imap") && source.Identifier != ""
 	})
 }
 
 func mcpRouteDescriptor(doc *huma.OpenAPI, operation *huma.Operation) apiprotocol.MCPRouteDescriptor {
-	result := apiprotocol.MCPRouteDescriptor{OperationID: operation.OperationID, Method: operation.Method, Path: operation.Path, QueryParameters: []string{}, RequestProperties: []string{}}
+	result := apiprotocol.MCPRouteDescriptor{
+		OperationID: operation.OperationID, Method: operation.Method, Path: operation.Path,
+		QueryParameters: []string{}, RequestProperties: []string{},
+	}
 	for _, parameter := range operation.Parameters {
 		if parameter.In == "query" {
 			result.QueryParameters = append(result.QueryParameters, parameter.Name)
@@ -73,4 +101,31 @@ func mcpRouteDescriptor(doc *huma.OpenAPI, operation *huma.Operation) apiprotoco
 	sort.Strings(result.QueryParameters)
 	sort.Strings(result.RequestProperties)
 	return result
+}
+
+func mcpRouteDescriptors(doc *huma.OpenAPI) []apiprotocol.MCPRouteDescriptor {
+	descriptors := make([]apiprotocol.MCPRouteDescriptor, 0)
+	for _, operation := range documentOperations(doc) {
+		if !mcpOperationDescribed(operation.OperationID) {
+			continue
+		}
+		descriptors = append(descriptors, mcpRouteDescriptor(doc, operation))
+	}
+	sort.Slice(descriptors, func(i, j int) bool {
+		return descriptors[i].OperationID < descriptors[j].OperationID
+	})
+	return descriptors
+}
+
+// Advertise only routes consumed by the source and profile MCP tools, and only
+// when their real routes are registered.
+func mcpOperationDescribed(operationID string) bool {
+	switch operationID {
+	case "listSourceStatus", "listSourceIdentities", "getSchedulerStatus", "triggerSync",
+		"getSettings", "patchSettings", "getParticipant", "getCacheBuildStatus",
+		"getPersonProfile", "patchPerson", "createPerson":
+		return true
+	default:
+		return false
+	}
 }

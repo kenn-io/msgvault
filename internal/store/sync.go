@@ -1617,7 +1617,37 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 	var source *Source
 	var err error
 	if !s.IsPostgreSQL() {
-		source, err = s.getOrCreateSQLiteSourceContext(ctx, sourceType, identifier)
+		err = s.withTxContext(ctx, func(tx *loggedTx) error {
+			if err := reserveSourceIDWriterContext(ctx, tx); err != nil {
+				return err
+			}
+			existing, lookupErr := scanSource(tx.QueryRowContext(ctx, `SELECT id, source_type,
+				identifier, display_name, google_user_id, last_sync_at, sync_cursor,
+				sync_config, oauth_app, created_at, updated_at
+				FROM sources WHERE source_type=? AND identifier=?`, sourceType, identifier))
+			if lookupErr == nil {
+				source = existing
+				return nil
+			}
+			if !errors.Is(lookupErr, sql.ErrNoRows) {
+				return lookupErr
+			}
+			sourceID, allocationErr := allocateSQLiteSourceIDContext(ctx, tx)
+			if allocationErr != nil {
+				return fmt.Errorf("allocate source ID: %w", allocationErr)
+			}
+			now := s.dialect.Now()
+			created, createErr := scanSource(tx.QueryRowContext(ctx, fmt.Sprintf(`INSERT INTO sources
+				(id,source_type,identifier,created_at,updated_at) VALUES(?,?,?,%s,%s)
+				ON CONFLICT(source_type,identifier) DO UPDATE SET identifier=sources.identifier
+				RETURNING id,source_type,identifier,display_name,google_user_id,
+				last_sync_at,sync_cursor,sync_config,oauth_app,created_at,updated_at`, now, now), sourceID, sourceType, identifier))
+			if createErr != nil {
+				return fmt.Errorf("upsert source: %w", createErr)
+			}
+			source = created
+			return nil
+		})
 	} else {
 		now := s.dialect.Now()
 		row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
