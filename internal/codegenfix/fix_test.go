@@ -103,7 +103,7 @@ func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing
 	meetingRefEnd := bytes.Index(got[meetingRefStart:], []byte("\n}\n")) + meetingRefStart
 	requirements.Greater(meetingRefEnd, meetingRefStart)
 	var meetingRefTitle string
-	for _, line := range strings.Split(string(got[meetingRefStart:meetingRefEnd]), "\n") {
+	for line := range strings.SplitSeq(string(got[meetingRefStart:meetingRefEnd]), "\n") {
 		if strings.Contains(line, "Title") {
 			meetingRefTitle = line
 			break
