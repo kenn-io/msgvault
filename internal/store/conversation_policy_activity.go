@@ -232,34 +232,78 @@ func (s *Store) conversationPolicyActivityExpiryStartTx(
 func (s *Store) conversationPolicyActivityIDsInIntervalTx(
 	ctx context.Context, tx *loggedTx, since, now time.Time,
 ) ([]int64, error) {
-	timestamp := "COALESCE(m.sent_at,m.received_at,m.internal_date)"
-	startBound, endBound := "?", "?"
-	if !s.IsPostgreSQL() {
-		// Offset-bearing SQLite timestamps need instant comparison. Keep a one
-		// second cushion for julianday's millisecond precision; the activity
-		// scanner parses timestamps and applies the exact interval afterward.
-		timestamp = "julianday(" + timestamp + ")"
-		startBound = "julianday(?) - (1.0 / 86400.0)"
-		endBound = "julianday(?) + (1.0 / 86400.0)"
+	since = since.UTC()
+	now = now.UTC()
+	const timestamp = "COALESCE(m.sent_at,m.received_at,m.internal_date)"
+	const conversations = "SELECT c.id FROM conversations c" +
+		" JOIN sources src ON src.id=c.source_id" +
+		" JOIN conversation_policy policy ON policy.conversation_id=c.id"
+	const supported = "src.source_type IN ('beeper','slack','slackdump','discord','teams')"
+	var ids []int64
+	readIDs := func(query string, args ...any) error {
+		rows, err := tx.QueryContext(ctx, s.Rebind(query), args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
 	}
-	query := "SELECT c.id FROM conversations c" +
+	if s.IsPostgreSQL() {
+		// PostgreSQL timestamps have microsecond precision. Round the interval
+		// inward so sub-microsecond bounds cannot admit an event outside it.
+		start := since.Truncate(time.Microsecond)
+		if start.Before(since) {
+			start = start.Add(time.Microsecond)
+		}
+		end := now.Truncate(time.Microsecond)
+		if start.After(end) {
+			return nil, nil
+		}
+		query := conversations + " WHERE " + supported +
+			" AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.source_id=c.source_id AND " + timestamp + " >= ? AND " + timestamp + " <= ?)" +
+			" ORDER BY c.id"
+		if err := readIDs(query, start, end); err != nil {
+			return nil, fmt.Errorf("find conversation activity in expiry interval: %w", err)
+		}
+		return ids, nil
+	}
+
+	// SQLite's julianday has millisecond precision. Find rooms in the safe
+	// interior with EXISTS, then parse only timestamps near either boundary so
+	// the precision cushion cannot admit activity just outside the interval.
+	interior := conversations + " WHERE " + supported +
+		" AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.source_id=c.source_id AND julianday(" + timestamp + ") >= julianday(?) + (1.0 / 86400.0) AND julianday(" + timestamp + ") <= julianday(?) - (1.0 / 86400.0))" +
+		" ORDER BY c.id"
+	if err := readIDs(interior, since, now); err != nil {
+		return nil, fmt.Errorf("find interior conversation activity in expiry interval: %w", err)
+	}
+	edgeQuery := "SELECT c.id," + timestamp + " FROM conversations c" +
 		" JOIN sources src ON src.id=c.source_id" +
 		" JOIN conversation_policy policy ON policy.conversation_id=c.id" +
-		" WHERE src.source_type IN ('beeper','slack','slackdump','discord','teams')" +
-		" AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.source_id=c.source_id AND " + timestamp + " >= " + startBound + " AND " + timestamp + " <= " + endBound + ")" +
+		" JOIN messages m ON m.conversation_id=c.id AND m.source_id=c.source_id" +
+		" WHERE " + supported + " AND ((julianday(" + timestamp + ") >= julianday(?) - (1.0 / 86400.0) AND julianday(" + timestamp + ") <= julianday(?) + (1.0 / 86400.0)) OR (julianday(" + timestamp + ") >= julianday(?) - (1.0 / 86400.0) AND julianday(" + timestamp + ") <= julianday(?) + (1.0 / 86400.0)))" +
 		" ORDER BY c.id"
-	rows, err := tx.QueryContext(ctx, s.Rebind(query), since.UTC(), now.UTC())
+	rows, err := tx.QueryContext(ctx, s.Rebind(edgeQuery), since, since, now, now)
 	if err != nil {
-		return nil, fmt.Errorf("find conversation activity in expiry interval: %w", err)
+		return nil, fmt.Errorf("find boundary conversation activity in expiry interval: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var ids []int64
 	for rows.Next() {
 		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var activity nullableTimestamp
+		if err := rows.Scan(&id, &activity); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		if activity.Valid && !activity.Time.Before(since) && !activity.Time.After(now) {
+			ids = append(ids, id)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
