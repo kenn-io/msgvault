@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -37,6 +38,42 @@ func TestPurgeChannelPreservesRepliesFromOtherChannels(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id, reply_to_message_id FROM messages WHERE id = ?"), reply).Scan(&conversation, &replyTo))
 	assert.Equal(retained, conversation)
 	assert.False(replyTo.Valid, "retained messages must no longer reference purged content")
+}
+
+func TestPurgeChannelWithdrawsConversationScopedIdentityEvidence(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "synthetic-workspace")
+	requirements.NoError(err)
+	room, err := st.EnsureConversation(source.ID, "synthetic-channel", "Synthetic channel")
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "synthetic-channel", conversationpolicy.Full))
+	participant, err := st.EnsureParticipantByIdentifier("slack", "synthetic-workspace:synthetic-user", "Synthetic User")
+	requirements.NoError(err)
+	input := store.ParticipantContactObservationInput{
+		SourceID:       &source.ID,
+		ConversationID: &room,
+		AddressKind:    store.ContactAddressEmail,
+		OriginalValue:  "synthetic-contact@example.test",
+		ProviderUserID: new("synthetic-provider-user"),
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	_, err = st.RecordContactObservationContext(t.Context(), participant, input)
+	requirements.NoError(err)
+	found, err := st.FindObservationsByProviderUserIDContext(t.Context(), *input.ProviderUserID, 0)
+	requirements.NoError(err)
+	requirements.Len(found, 1)
+	before, err := st.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+
+	requirements.NoError(st.PurgeChannelContext(t.Context(), source.ID, "synthetic-channel"))
+	found, err = st.FindObservationsByProviderUserIDContext(t.Context(), *input.ProviderUserID, 0)
+	requirements.NoError(err)
+	assertions.Empty(found, "purged room evidence must no longer support identity discovery")
+	after, err := st.ConversationPolicyRevision(t.Context())
+	requirements.NoError(err)
+	assertions.Greater(after, before, "purging a policy room must invalidate admitted identity work")
 }
 
 func TestPurgeChannelRemovesOnlyUnsharedPackedMappings(t *testing.T) {

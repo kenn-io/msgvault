@@ -133,8 +133,9 @@ func (s *cacheSourceSnapshot) textSQL(column string) string {
 	if !s.csvSnapshot {
 		return cacheTextSQL(column)
 	}
+	text := "TRY_CAST(" + column + " AS VARCHAR)"
 	return "CASE WHEN " + csvInvalidTextSQL(column) +
-		" THEN msgvault_count_text(" + column + ") ELSE " + column + " END"
+		" THEN msgvault_count_text(" + text + ") ELSE " + text + " END"
 }
 
 func (s *cacheSourceSnapshot) identityExportSQL(column string) string {

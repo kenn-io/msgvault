@@ -114,7 +114,7 @@ func (b *Backend) searchAccelerator(
 	}
 	if !filter.IsEmpty() || b.policyStore != nil {
 		threshold := b.exactFilterVectorThreshold
-		messageIDs, probeErr := b.filteredMessageIDsLimit(ctx, filter, threshold+1)
+		messageIDs, probeErr := b.filteredMessageIDsLimitForGeneration(ctx, filter, threshold+1, gen)
 		if probeErr != nil {
 			if ctx.Err() != nil {
 				return nil, vector.SearchMetadata{}, ctx.Err()
@@ -198,7 +198,7 @@ func (b *Backend) searchAccelerated(
 		if err != nil {
 			return nil, vector.SearchMetadata{}, err
 		}
-		hits, err := b.rerankAcceleratedCandidates(ctx, queryer, accelerator, queryVec, k, filter, rowIDs)
+		hits, err := b.rerankAcceleratedCandidates(ctx, queryer, accelerator, gen, queryVec, k, filter, rowIDs)
 		if err != nil {
 			return nil, vector.SearchMetadata{}, err
 		}
@@ -340,6 +340,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	ctx context.Context,
 	queryer acceleratedQueryer,
 	accelerator AcceleratorStatus,
+	gen vector.GenerationID,
 	queryVec []float32,
 	k int,
 	filter vector.Filter,
@@ -384,7 +385,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	if len(boundedFilter.MessageIDs) == 0 {
 		return []vector.Hit{}, nil
 	}
-	liveIDs, err := b.filteredMessageIDs(ctx, boundedFilter)
+	liveIDs, err := b.filteredMessageIDsForGeneration(ctx, boundedFilter, gen)
 	if err != nil {
 		return nil, err
 	}

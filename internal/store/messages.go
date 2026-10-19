@@ -1640,6 +1640,19 @@ func enqueueActivityProjectionMessage(q querier, d Dialect, messageID int64) err
 	return nil
 }
 
+func (s *Store) enqueueConversationActivityProjectionTx(ctx context.Context, tx *loggedTx, conversationID int64) error {
+	if conversationID <= 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO activity_projection_queue (message_id, revision, processed_revision, queued_at)
+		SELECT id, 1, 0, %s FROM messages WHERE conversation_id = ?
+		ON CONFLICT (message_id) DO UPDATE SET
+			revision = activity_projection_queue.revision + 1,
+			queued_at = excluded.queued_at`, s.dialect.Now()), conversationID)
+	return err
+}
+
 // UpsertMessageBody stores the body text and HTML for a message in the separate message_bodies table.
 func (s *Store) UpsertMessageBody(messageID int64, bodyText, bodyHTML sql.NullString) error {
 	return s.UpsertMessageBodyContext(context.Background(), messageID, bodyText, bodyHTML)

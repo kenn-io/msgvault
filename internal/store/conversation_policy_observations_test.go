@@ -33,6 +33,59 @@ func policyObservationInput(source int64, room *int64) store.ParticipantContactO
 	return store.ParticipantContactObservationInput{SourceID: &source, ConversationID: room, AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.org", ProviderUserID: new("provider:synthetic-user"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}}
 }
 
+func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, source, full, _, _ := policyObservationFixture(t)
+	ctx := t.Context()
+	const phone = "+15550123456"
+
+	nativeParticipant, err := s.EnsureParticipantByPhone(phone, "Synthetic Native Contact", "whatsapp")
+	requirements.NoError(err)
+	nativeSource, err := s.GetOrCreateSource("whatsapp", "synthetic-native-archive")
+	requirements.NoError(err)
+	_, err = s.UpsertMessageContext(ctx, &store.Message{
+		SourceID: nativeSource.ID, SourceMessageID: "native-phone-support", MessageType: "whatsapp",
+		SenderID: sql.NullInt64{Int64: nativeParticipant, Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(ctx, full, nativeParticipant, "member"))
+
+	coldOnlyParticipant, err := s.EnsureParticipantByPhone("+15550123457", "Synthetic Cold Only Contact", "whatsapp")
+	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(ctx, full, coldOnlyParticipant, "member"))
+
+	phoneWhere := store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")
+	phoneCount := func(participantID int64) int64 {
+		var count int64
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+phoneWhere), participantID).Scan(&count)
+		requirements.NoError(err)
+		return count
+	}
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	if s.IsPostgreSQL() {
+		identifierWhere = store.FullParticipantIdentifierWherePostgres("pi")
+	}
+	identifierCount := func(participantID int64, value string) int64 {
+		var count int64
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participant_identifiers pi
+			WHERE pi.participant_id=? AND pi.identifier_type='whatsapp' AND pi.identifier_value=? AND `+identifierWhere), participantID, value).Scan(&count)
+		requirements.NoError(err)
+		return count
+	}
+
+	assertions.Equal(int64(1), phoneCount(nativeParticipant), "native history supports this exact phone")
+	assertions.Equal(int64(1), identifierCount(nativeParticipant, phone), "native history supports this exact service identifier")
+	assertions.Zero(phoneCount(coldOnlyParticipant), "room membership alone does not support a phone")
+	assertions.Zero(identifierCount(coldOnlyParticipant, "+15550123457"), "room membership alone does not support a provider identifier")
+
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, source, "full", conversationpolicy.Cold))
+	assertions.Equal(int64(1), phoneCount(nativeParticipant), "independent native history survives chat demotion")
+	assertions.Equal(int64(1), identifierCount(nativeParticipant, phone), "independent native identity survives chat demotion")
+	assertions.Zero(phoneCount(coldOnlyParticipant), "cold-only phone data stays hidden")
+	assertions.Zero(identifierCount(coldOnlyParticipant, "+15550123457"), "cold-only provider identifier stays hidden")
+}
+
 func policyObservationSupport(t *testing.T, s *store.Store, id int64) []int64 {
 	t.Helper()
 	rows, err := s.DB().Query(s.Rebind(`SELECT conversation_id FROM participant_contact_observation_conversations WHERE observation_id=? ORDER BY conversation_id`), id)

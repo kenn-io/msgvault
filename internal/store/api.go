@@ -38,7 +38,7 @@ var participantDisplaySQL = func() string {
 	return `COALESCE(CASE
 		WHEN NULLIF(TRIM(` + name + `), '') IS NOT NULL
 		 AND NULLIF(` + address + `, '') IS NOT NULL
-		THEN ` + name + ` || ' <' || ` + address + `>'
+		THEN ` + name + ` || ' <' || ` + address + ` || '>'
 		ELSE COALESCE(NULLIF(` + address + `, ''), NULLIF(TRIM(` + name + `), ''), '')
 	END, '')`
 }()

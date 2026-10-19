@@ -395,6 +395,10 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 	   %s`,
 		b.liveMessageWhere("m"), conversationSQL, messageTypeSQL, senderGroupSQL, senderExactGroupSQL,
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
+	embeddingFreshSQL := ""
+	if b.policyStore != nil {
+		embeddingFreshSQL = `AND message_id IN (SELECT id FROM messages WHERE embed_gen = :gen)`
+	}
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
 		name := fmt.Sprintf("account_scope_%d", len(accountArgs))
@@ -439,6 +443,7 @@ WITH
             SELECT embedding_id FROM vec.embeddings
              WHERE generation_id = :gen
                AND message_id IN (SELECT id FROM filtered)
+               %s
        )
        AND v.embedding MATCH :query_vec
        AND k = %d
@@ -467,7 +472,7 @@ SELECT message_id, rrf_score, bm25_score, vector_score,
   FROM fused
  ORDER BY rrf_score DESC, message_id ASC
  LIMIT :limit
-`, filterWhere, kPlus1, req.KPerSignal, vecTable, currentChunkK, req.KPerSignal)
+	`, filterWhere, kPlus1, req.KPerSignal, vecTable, embeddingFreshSQL, currentChunkK, req.KPerSignal)
 	}
 
 	var queryVecArg any

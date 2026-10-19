@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json/v2"
+	"slices"
 	"time"
 )
 
@@ -27,8 +28,9 @@ func (s *Store) runConversationPolicyMaintenance(ctx context.Context, fn func(co
 }
 
 type conversationPolicyLifecycle struct {
-	people   []int64
-	revision int64
+	people       []int64
+	participants []int64
+	revision     int64
 	// A contact-only merge must not bootstrap unrelated chat policy. Its actual
 	// self resolver may still change, so compare it again after the mutation.
 	checkSelfOnly bool
@@ -69,7 +71,33 @@ func (s *Store) captureConversationPolicyRoomsTx(ctx context.Context, tx *logged
 		if err != nil {
 			return state, err
 		}
+		if err = queryInChunksContext(ctx, tx, rooms, nil,
+			`WITH target_rooms AS (SELECT id FROM conversations WHERE id IN (%s))
+			 SELECT cp.participant_id FROM conversation_participants cp
+			 WHERE EXISTS (SELECT 1 FROM target_rooms WHERE id=cp.conversation_id)
+			 UNION SELECT m.sender_id FROM messages m
+			 WHERE m.sender_id IS NOT NULL AND EXISTS (SELECT 1 FROM target_rooms WHERE id=m.conversation_id)
+			 UNION SELECT mr.participant_id FROM message_recipients mr
+			 WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id=mr.message_id
+			               AND EXISTS (SELECT 1 FROM target_rooms WHERE id=m.conversation_id))
+			 UNION SELECT o.participant_id FROM participant_contact_observations o
+			 WHERE EXISTS (SELECT 1 FROM participant_contact_observation_conversations edge
+			               WHERE edge.observation_id=o.id
+			                 AND EXISTS (SELECT 1 FROM target_rooms WHERE id=edge.conversation_id))
+			 ORDER BY participant_id`,
+			func(rows *loggedRows) error {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					return err
+				}
+				state.participants = append(state.participants, id)
+				return nil
+			}); err != nil {
+			return state, err
+		}
+		state.activityRooms = slices.Clone(rooms)
 	}
+	state.participants = sortedInt64Set(mapInt64Set(state.participants))
 	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(value AS BIGINT)),0) FROM archive_metadata WHERE key='conversation_policy_revision'`).Scan(&state.revision)
 	return state, err
 }
@@ -114,6 +142,7 @@ func (s *Store) captureParticipantConversationPolicyTx(ctx context.Context, tx *
 		}
 	}
 	state.activityRooms = rooms
+	state.participants = sortedInt64Set(mapInt64Set(append(state.participants, oldID, newID)))
 	return state, nil
 }
 
@@ -162,5 +191,31 @@ func (s *Store) finishConversationPolicyLifecycleTx(ctx context.Context, tx *log
 	if _, err = tx.ExecContext(ctx, `INSERT INTO archive_metadata(key,value) SELECT 'conversation_policy_cleanup_revision',value FROM archive_metadata WHERE key='conversation_policy_revision' ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
 		return err
 	}
+	if err = s.invalidateContextualParticipantMessagesTx(ctx, tx, state.participants); err != nil {
+		return err
+	}
 	return s.invalidateConversationPolicyPersonsTx(ctx, tx, state.people, refreshed.Revision)
+}
+
+func mapInt64Set(values []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(values))
+	for _, value := range values {
+		if value > 0 {
+			set[value] = struct{}{}
+		}
+	}
+	return set
+}
+
+func (s *Store) invalidateContextualParticipantMessagesTx(ctx context.Context, tx *loggedTx, participantIDs []int64) error {
+	participantIDs = sortedInt64Set(mapInt64Set(participantIDs))
+	return execInChunksContext(ctx, tx, participantIDs, nil, `
+		UPDATE messages SET embed_gen=NULL
+		WHERE message_type='beeper'
+		  AND EXISTS (
+			SELECT 1 FROM conversation_participants target_member
+			WHERE target_member.conversation_id=messages.conversation_id
+			  AND target_member.participant_id IN (%s)
+		  )
+		  AND `+FullMessageWhere("messages"))
 }

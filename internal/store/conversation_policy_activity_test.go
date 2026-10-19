@@ -240,6 +240,57 @@ func TestConversationPolicySelfRevisionReattributesHistory(t *testing.T) {
 	assertions.Equal(conversationpolicy.Cold, f.tier(t))
 	assertions.True(f.activity(t, activityNow).IsZero())
 }
+
+func TestColdPolicyHidesProjectedActivityBeforeRetractionCompletes(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newActivityFixture(t)
+	requirements.NoError(f.s.SetConversationPolicyOverride(t.Context(), f.source, "room", conversationpolicy.Full))
+	person, _, err := f.s.CreatePersonFromParticipant(f.other)
+	requirements.NoError(err)
+	occurredAt := activityNow.Add(-time.Hour)
+	messageID, err := f.s.UpsertMessage(&store.Message{
+		SourceID: f.source, ConversationID: f.room, SourceMessageID: "policy-activity",
+		MessageType: "slack", SentAt: sql.NullTime{Time: occurredAt, Valid: true},
+		SenderID: sql.NullInt64{Int64: f.other, Valid: true},
+	})
+	requirements.NoError(err)
+	candidates, err := f.s.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	requirements.NoError(err)
+	var candidate *store.ActivityCandidate
+	for i := range candidates {
+		if candidates[i].MessageID == messageID {
+			candidate = &candidates[i]
+			break
+		}
+	}
+	requirements.NotNil(candidate)
+	_, err = f.s.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{
+		activityProjectionFromCandidate(t, *candidate, person.ID, occurredAt),
+	})
+	requirements.NoError(err)
+	state, err := f.s.ContactStateContext(t.Context(), person.ID, activityNow)
+	requirements.NoError(err)
+	assertions.False(state.Stale)
+	requirements.NotNil(state.LastContactAt)
+	requirements.Equal(occurredAt, *state.LastContactAt)
+
+	requirements.NoError(f.s.SetConversationPolicyOverride(t.Context(), f.source, "room", conversationpolicy.Cold))
+	var storedEvents int
+	requirements.NoError(f.s.DB().QueryRow(f.s.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), messageID).Scan(&storedEvents))
+	assertions.Equal(1, storedEvents, "the async projector may not have retracted the stored row yet")
+	state, err = f.s.ContactStateContext(t.Context(), person.ID, activityNow)
+	requirements.NoError(err)
+	assertions.True(state.Stale)
+	assertions.Nil(state.LastContactAt, "stale contact summaries must read only current Full activity")
+	assertions.Zero(state.InteractionCount)
+	days, err := f.s.PersonDaysContext(t.Context(), store.PersonDaysRequest{
+		PersonID: person.ID, From: occurredAt.Format(time.DateOnly), To: occurredAt.Format(time.DateOnly),
+	})
+	requirements.NoError(err)
+	assertions.Zero(days.TotalCount, "Cold projected events must disappear from activity pages immediately")
+}
+
 func TestConversationPolicyExpiryDoesNotRecomputeActivity(t *testing.T) {
 	requirements := require.New(t)
 

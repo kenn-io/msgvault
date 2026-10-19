@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,6 +38,49 @@ func TestConversationPolicyEmbeddingScanCoverageAndHydration(t *testing.T) {
 	ids, err = s.ScanForEmbedding(t.Context(), 1, 0, 100)
 	requirements.NoError(err)
 	assertions.Equal([]int64{id}, ids)
+}
+
+func TestConversationPolicyChangeInvalidatesSharedParticipantContextEmbeddings(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("beeper", "contextual-embedding-policy")
+	requirements.NoError(err)
+	changedRoom, err := s.EnsureConversation(source.ID, "changed", "Synthetic changed room")
+	requirements.NoError(err)
+	targetRoom, err := s.EnsureConversation(source.ID, "target", "Synthetic target room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "changed", conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "target", conversationpolicy.Full))
+
+	identity := store.ConversationParticipantIdentity{
+		IdentifierType: "beeper", IdentifierValue: "synthetic:shared-member", DisplayName: "Synthetic Shared Member",
+	}
+	shared, err := s.ResolveConversationParticipantContext(t.Context(), changedRoom, identity)
+	requirements.NoError(err)
+	targetMember, err := s.ResolveConversationParticipantContext(t.Context(), targetRoom, identity)
+	requirements.NoError(err)
+	assertions.Equal(shared.ParticipantID, targetMember.ParticipantID)
+
+	messageID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: targetRoom,
+		SourceMessageID: "target-context-message", MessageType: "beeper",
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.SetEmbedGen(t.Context(), []int64{messageID}, 37))
+	var before sql.NullInt64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&before))
+	assertions.True(before.Valid)
+	assertions.Equal(int64(37), before.Int64)
+
+	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "changed", conversationpolicy.Cold))
+	var after sql.NullInt64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&after))
+	assertions.False(after.Valid, "a Full message with changed roster context must be re-embedded")
+	ids, err := s.ScanForEmbedding(t.Context(), 37, 0, 10)
+	requirements.NoError(err)
+	assertions.Contains(ids, messageID, "the invalidated message must be discoverable by the embed worker")
 }
 
 func TestConversationPolicyPromotionBackfillsBelowWatermark(t *testing.T) {

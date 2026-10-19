@@ -47,7 +47,7 @@ func (s *Store) conversationLastActivityWith(ctx context.Context, q accountIdent
 	// Provider-captured self proof has exact account/chat/network bindings.
 	// Roster completeness describes size; it does not withdraw an independently
 	// attributed self participant when the provider cannot count all members.
-	if sourceType == "beeper" && failure == "" {
+	if sourceType == sourceTypeBeeper && failure == "" {
 		var m routeMetadata
 		if json.Unmarshal([]byte(metadata), &m) == nil && m.Route != nil {
 			e := m.Route

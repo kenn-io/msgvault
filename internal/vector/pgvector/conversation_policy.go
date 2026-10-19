@@ -5,6 +5,7 @@ package pgvector
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -26,6 +27,21 @@ func (b *Backend) liveMessageWhere(alias string) string {
 			alias = "messages"
 		}
 		where += " AND " + store.FullMessageWhere(alias)
+	}
+	return where
+}
+
+// embeddedMessageWhere hides vectors that no longer match the message's
+// current embed_gen watermark. Conversation-policy lifecycle changes clear
+// that watermark before a changed room roster can leave old contextual text
+// visible through vector search.
+func (b *Backend) embeddedMessageWhere(alias string, gen vector.GenerationID) string {
+	where := b.liveMessageWhere(alias)
+	if b.policyStore != nil {
+		if alias == "" {
+			alias = "messages"
+		}
+		where += fmt.Sprintf(" AND %s.embed_gen = %d", alias, int64(gen))
 	}
 	return where
 }

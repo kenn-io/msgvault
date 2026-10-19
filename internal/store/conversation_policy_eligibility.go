@@ -15,6 +15,13 @@ func FullMessageWhere(alias string) string {
 	return `(EXISTS (SELECT 1 FROM conversations policy_conversation WHERE policy_conversation.id=` + alias + `.conversation_id AND ` + FullConversationWhere("policy_conversation") + `) OR (` + alias + `.conversation_id IS NULL AND NOT EXISTS (SELECT 1 FROM sources policy_message_source WHERE policy_message_source.id=` + alias + `.source_id AND policy_message_source.source_type IN ('beeper','slack','slackdump','discord','teams'))))`
 }
 
+// FullActivityEventWhere hides a projected event as soon as its message's
+// conversation becomes ineligible. Queue processing will then retract the
+// stored event and refresh contact state; this predicate closes that interval.
+func FullActivityEventWhere(alias string) string {
+	return `EXISTS (SELECT 1 FROM messages policy_activity_message WHERE policy_activity_message.id=` + alias + `.message_id AND ` + FullMessageWhere("policy_activity_message") + `)`
+}
+
 // LexicalMessageWhere admits only full conversations, plus cold when explicitly requested.
 // Source deletion visibility is an independent caller predicate.
 func LexicalMessageWhere(alias string, includeCold bool) string {

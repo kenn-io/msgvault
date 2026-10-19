@@ -1090,13 +1090,17 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// they treat embeddings as message-level. vecTable name derives
 	// from VectorTableName(active.Dimension) where dimension is sourced
 	// from index_generations; safe to interpolate.
+	policyClause := ""
+	if b.policyStore != nil {
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND " + b.embeddedMessageWhere("m", active.ID) + ")"
+	}
 	q := fmt.Sprintf(`
 		SELECT v.embedding
 		  FROM %s v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id = ?
-		   AND e.chunk_index = 0`,
+		   AND e.chunk_index = 0`+policyClause,
 		VectorTableName(active.Dimension))
 	var blob []byte
 	err = b.db.QueryRowContext(ctx, q, int64(active.ID), messageID).Scan(&blob)
@@ -1221,7 +1225,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 			if err != nil {
 				return nil, err
 			}
-			filtered, err := b.dropDeletedFromSource(ctx, hits)
+			filtered, err := b.dropDeletedFromSource(ctx, hits, gen)
 			if err != nil {
 				return nil, err
 			}
@@ -1241,7 +1245,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		}
 	}
 
-	idClause, filterArgs, err := b.resolveFilter(ctx, filter)
+	idClause, filterArgs, err := b.resolveFilter(ctx, filter, gen)
 	if err != nil {
 		return nil, err
 	}
@@ -1379,8 +1383,8 @@ func (b *Backend) scanHits(ctx context.Context, query string, args ...any) ([]ve
 // unambiguous: the vec0 table itself no longer carries `message_id`
 // post-chunking, but a stray reference here would have read as
 // "embeddings.message_id" by accident, masking the chunking change.
-func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter) (string, []any, error) {
-	ids, err := b.filteredMessageIDs(ctx, filter)
+func (b *Backend) resolveFilter(ctx context.Context, filter vector.Filter, gen vector.GenerationID) (string, []any, error) {
+	ids, err := b.filteredMessageIDsForGeneration(ctx, filter, gen)
 	if err != nil {
 		return "", nil, err
 	}
@@ -1410,7 +1414,7 @@ const deletedOverfetchFactor = 2
 // filter fast path so that pure-vector/find_similar callers don't pay
 // the cost of materializing the full live-corpus id list just to
 // enforce the deletion check.
-func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) ([]vector.Hit, error) {
+func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit, gen vector.GenerationID) ([]vector.Hit, error) {
 	if len(hits) == 0 {
 		return hits, nil
 	}
@@ -1422,9 +1426,9 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit) 
 	if err != nil {
 		return nil, fmt.Errorf("encode hit ids: %w", err)
 	}
-	q := `SELECT id FROM messages
+	q := `SELECT m.id FROM messages m
 	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND ` + b.liveMessageWhere("")
+	         AND ` + b.embeddedMessageWhere("m", gen)
 	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
 	if err != nil {
 		return nil, fmt.Errorf("live-hit filter: %w", err)
@@ -1456,10 +1460,22 @@ func (b *Backend) filteredMessageIDs(ctx context.Context, f vector.Filter) ([]in
 	return b.filteredMessageIDsLimit(ctx, f, 0)
 }
 
+func (b *Backend) filteredMessageIDsForGeneration(ctx context.Context, f vector.Filter, gen vector.GenerationID) ([]int64, error) {
+	return b.filteredMessageIDsLimitForGeneration(ctx, f, 0, gen)
+}
+
 // filteredMessageIDsLimit runs the authoritative filter query and optionally
 // stops after limit rows. A positive limit supports bounded cardinality probes
 // without materializing a large filtered population.
 func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, limit int) ([]int64, error) {
+	return b.filteredMessageIDsLimitWithGeneration(ctx, f, limit, nil)
+}
+
+func (b *Backend) filteredMessageIDsLimitForGeneration(ctx context.Context, f vector.Filter, limit int, gen vector.GenerationID) ([]int64, error) {
+	return b.filteredMessageIDsLimitWithGeneration(ctx, f, limit, &gen)
+}
+
+func (b *Backend) filteredMessageIDsLimitWithGeneration(ctx context.Context, f vector.Filter, limit int, gen *vector.GenerationID) ([]int64, error) {
 	if len(f.ListIDSubstrings) > 0 || len(f.ListIDExactGroups) > 0 || f.ListID != "" {
 		hasListID, err := sqliteColumnExists(ctx, b.mainDB, "messages", "list_id")
 		if err != nil {
@@ -1469,7 +1485,11 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 			return nil, errors.New(listIDSchemaRequiredErrorText)
 		}
 	}
-	clauses := []string{b.liveMessageWhere("m")}
+	liveWhere := b.liveMessageWhere("m")
+	if gen != nil {
+		liveWhere = b.embeddedMessageWhere("m", *gen)
+	}
+	clauses := []string{liveWhere}
 	accountClauses, args := search.AccountScopeConditions(f.AccountScopes, "m")
 	clauses = append(clauses, accountClauses...)
 	if len(f.MessageIDs) > 0 {
@@ -2283,13 +2303,18 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 	vecTable := VectorTableName(dim)
 
+	policyClause := ""
+	if b.policyStore != nil {
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND " + b.embeddedMessageWhere("m", gen) + ")"
+	}
 	q := fmt.Sprintf(`
 		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis, v.embedding
 		  FROM embeddings e
 		  JOIN %s v ON v.embedding_id = e.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id = ?
-		 ORDER BY e.chunk_index ASC`, vecTable)
+		   %s
+		 ORDER BY e.chunk_index ASC`, vecTable, policyClause)
 
 	rows, err := b.db.QueryContext(ctx, q, int64(gen), messageID)
 	if err != nil {

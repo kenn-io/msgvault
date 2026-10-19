@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"net/url"
 	"testing"
 	"time"
@@ -103,6 +104,49 @@ func TestPostgresLoadVectorRejectsColdConversationSeed(t *testing.T) {
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Cold))
 	_, err = b.LoadVector(ctx, id)
 	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+}
+
+func TestPostgresContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
+	b, st, sourceID, id, gen, ctx := newPolicyBackend(t)
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	require.NoError(t, b.Upsert(ctx, gen, chunks))
+	require.NoError(t, st.SetEmbedGen(ctx, []int64{id}, int64(gen)))
+	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
+
+	loaded, err := b.LoadVector(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, chunks[0].Vector, loaded)
+	hits, err := b.Search(ctx, gen, chunks[0].Vector, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	chunksScored, err := b.ScoreMessageChunks(ctx, gen, id, chunks[0].Vector)
+	require.NoError(t, err)
+	assert.Len(t, chunksScored, 1)
+
+	_, err = st.DB().ExecContext(ctx, `UPDATE messages SET embed_gen=NULL WHERE id=$1`, id)
+	require.NoError(t, err)
+	_, err = b.LoadVector(ctx, id)
+	assert.Error(t, err, "a stale embedding cannot seed a contextual query")
+	hits, err = b.Search(ctx, gen, chunks[0].Vector, 10, vector.Filter{})
+	require.NoError(t, err)
+	assert.Empty(t, hits, "an unstamped embedding cannot appear in vector search")
+	chunksScored, err = b.ScoreMessageChunks(ctx, gen, id, chunks[0].Vector)
+	require.NoError(t, err)
+	assert.Empty(t, chunksScored)
+
+	fused, _, err := b.FusedSearch(ctx, vector.FusedRequest{
+		Generation: gen, QueryVec: chunks[0].Vector, FTSTerms: []string{"policyneedle"},
+		KPerSignal: 10, Limit: 10, RRFK: 60,
+	})
+	require.NoError(t, err)
+	require.Len(t, fused, 1)
+	assert.True(t, math.IsNaN(fused[0].VectorScore), "the lexical leg remains available without a current vector")
+	fused, _, err = b.FusedSearch(ctx, vector.FusedRequest{
+		Generation: gen, QueryVec: chunks[0].Vector, KPerSignal: 10, Limit: 10, RRFK: 60,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, fused, "a vector-only fused query excludes stale embeddings")
 }
 
 func TestPostgresColdPolicyTransitionSerializesNativePublication(t *testing.T) {

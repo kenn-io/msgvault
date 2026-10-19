@@ -967,10 +967,14 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// always exists for any embedded message regardless of how many
 	// additional chunks it has. find_similar (the only LoadVector caller
 	// today) treats embeddings as message-level. Mirrors sqlitevec.
+	policyClause := ""
+	if b.policyStore != nil {
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = embeddings.message_id AND " + b.embeddedMessageWhere("m", active.ID) + ")"
+	}
 	var lit string
 	err = q.QueryRowContext(ctx,
 		`SELECT embedding::text FROM embeddings
-		  WHERE generation_id = $1 AND message_id = $2 AND chunk_index = 0`,
+		  WHERE generation_id = $1 AND message_id = $2 AND chunk_index = 0`+policyClause,
 		int64(active.ID), messageID).Scan(&lit)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no embedding for message %d in generation %d", messageID, active.ID)
@@ -1099,7 +1103,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 			       ) ann
 			 GROUP BY ann.message_id
 			 ORDER BY distance, ann.message_id
-			 LIMIT $4`, dim, b.liveMessageWhere("m"))
+			 LIMIT $4`, dim, b.embeddedMessageWhere("m", gen))
 		// Empty-filter path: the candidate universe is the whole
 		// generation, so the inner-LIMIT ceiling is the generation chunk
 		// count and there is no separate distinct-message early exit
@@ -1158,7 +1162,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 		baseArgs = append(baseArgs, v)
 		return fmt.Sprintf("$%d", len(baseArgs))
 	}
-	existsClause := b.filterExistsClause("e", filter, bind)
+	existsClause := b.filterExistsClause("e", filter, gen, bind)
 	innerArg := fmt.Sprintf("$%d", len(baseArgs)+1)
 	outerArg := fmt.Sprintf("$%d", len(baseArgs)+2)
 	stmt := fmt.Sprintf(`
@@ -1190,8 +1194,8 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 // filter clauses, keeping the whole filter in SQL instead of round-tripping
 // matching ids through Go. Filter values are bound via the supplied bind
 // closure; the live + filter clauses all reference the inner alias `m`. [V2].
-func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, bind func(any) string) string {
-	clauses := append([]string{b.liveMessageWhere("m")}, buildPGFilterClauses(f, bind)...)
+func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, gen vector.GenerationID, bind func(any) string) string {
+	clauses := append([]string{b.embeddedMessageWhere("m", gen)}, buildPGFilterClauses(f, bind)...)
 	return fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM messages m WHERE m.id = %s.message_id AND %s)",
 		embedAlias, strings.Join(clauses, " AND "))
@@ -1213,7 +1217,7 @@ func (b *Backend) filteredChunkAndMessageCount(ctx context.Context, gen vector.G
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	existsClause := b.filterExistsClause("e", f, bind)
+	existsClause := b.filterExistsClause("e", f, gen, bind)
 	q := `SELECT COUNT(*), COUNT(DISTINCT e.message_id)
 		   FROM embeddings e
 		  WHERE e.generation_id = $1 AND ` + existsClause
@@ -1695,7 +1699,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 
 	policyClause := ""
 	if b.policyStore != nil {
-		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id=embeddings.message_id AND " + b.liveMessageWhere("m") + ")"
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id=embeddings.message_id AND " + b.embeddedMessageWhere("m", gen) + ")"
 	}
 	stmt := fmt.Sprintf(`
 		SELECT chunk_index, chunk_char_start, chunk_char_end, source_basis,

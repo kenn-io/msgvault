@@ -304,7 +304,7 @@ func participantChatProvenanceWhere(id string) string {
 // Full room or independent curated evidence; an eligible room membership alone
 // cannot authorize another value on a merged participant row.
 func FullParticipantValueWhere(id, kind, value string) string {
-	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(SELECT 1 FROM participant_contact_observations value_observation WHERE value_observation.participant_id=` + id + ` AND value_observation.address_kind=` + kind + ` AND value_observation.normalized_value=LOWER(` + value + `) AND value_observation.active_until IS NULL AND value_observation.superseded_at IS NULL AND ` + FullObservationWhere("value_observation") + `) OR EXISTS(SELECT 1 FROM person_participants value_person JOIN person_contact_points value_contact ON value_contact.person_id=value_person.person_id WHERE value_person.participant_id=` + id + ` AND value_contact.address_kind=` + kind + ` AND value_contact.normalized_value=LOWER(` + value + `) AND value_contact.source IN ('user','carddav_import','vcard_import') AND value_contact.active_until IS NULL AND value_contact.superseded_at IS NULL) OR (` + kind + `='email' AND EXISTS(SELECT 1 FROM message_recipients value_recipient JOIN messages value_message ON value_message.id=value_recipient.message_id WHERE value_recipient.participant_id=` + id + ` AND LOWER(value_recipient.email_address)=LOWER(` + value + `) AND ` + LiveMessagesWhere("value_message", true) + ` AND ` + FullMessageWhere("value_message") + `)))`
+	return `(NOT ` + participantChatProvenanceWhere(id) + ` OR EXISTS(SELECT 1 FROM participant_contact_observations value_observation WHERE value_observation.participant_id=` + id + ` AND value_observation.address_kind=` + kind + ` AND value_observation.normalized_value=LOWER(` + value + `) AND value_observation.active_until IS NULL AND value_observation.superseded_at IS NULL AND ` + FullObservationWhere("value_observation") + `) OR EXISTS(SELECT 1 FROM person_participants value_person JOIN person_contact_points value_contact ON value_contact.person_id=value_person.person_id WHERE value_person.participant_id=` + id + ` AND value_contact.address_kind=` + kind + ` AND value_contact.normalized_value=LOWER(` + value + `) AND value_contact.source IN ('user','carddav_import','vcard_import') AND value_contact.active_until IS NULL AND value_contact.superseded_at IS NULL) OR (` + kind + `='email' AND EXISTS(SELECT 1 FROM message_recipients value_recipient JOIN messages value_message ON value_message.id=value_recipient.message_id WHERE value_recipient.participant_id=` + id + ` AND LOWER(value_recipient.email_address)=LOWER(` + value + `) AND ` + LiveMessagesWhere("value_message", true) + ` AND ` + FullMessageWhere("value_message") + `)) OR (` + kind + `='phone' AND EXISTS(SELECT 1 FROM participant_identifiers native_phone WHERE native_phone.participant_id=` + id + ` AND native_phone.identifier_value=` + value + ` AND native_phone.identifier_type IN ('imessage','whatsapp','sms','google_voice','google-voice','google_messages','google-messages') AND ` + nativeParticipantIdentifierHistoryWhere("native_phone") + `)))`
 }
 
 // Identifier classification is persisted by the existing provider normalizers.
@@ -356,13 +356,29 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
  OR (` + source + `.source_type='slackdump' AND ` + alias + `.identifier_type='slack')
  OR EXISTS(SELECT 1 FROM communication_services identifier_service WHERE identifier_service.id=` + alias + `.service_id AND identifier_service.slug=` + source + `.source_type))`
 	address := observation + `.normalized_value=` + alias + `.identifier_value AND ` + observation + `.address_kind=` + alias + `.identifier_type`
-	return `(NOT ` + participantChatProvenanceWhere(alias+".participant_id") + ` OR EXISTS(
+	return `(NOT ` + participantChatProvenanceWhere(alias+".participant_id") + ` OR ` + nativeParticipantIdentifierHistoryWhere(alias) + ` OR EXISTS(
  SELECT 1 FROM participant_contact_observations ` + observation + `
  LEFT JOIN sources ` + source + ` ON ` + source + `.id=` + observation + `.source_id
  WHERE ` + observation + `.participant_id=` + alias + `.participant_id
  AND ` + observation + `.active_until IS NULL AND ` + observation + `.superseded_at IS NULL
  AND ` + FullObservationWhere(observation) + `
  AND ((` + classification + ` AND ((` + beeper + `) OR (` + provider + `))) OR (` + address + `))))`
+}
+
+// Native import evidence is tied to one exact stored identifier and a message
+// from the corresponding non-chat provider. This uses existing archive rows so
+// older imports retain their independent phone/service support after a chat
+// room becomes Cold.
+func nativeParticipantIdentifierHistoryWhere(identifier string) string {
+	typeValue := identifier + `.identifier_type`
+	providerMatch := `(native_source.source_type=` + typeValue + `
+ OR (native_source.source_type IN ('synctech-sms','synctech_sms') AND ` + typeValue + `='sms')
+ OR (native_source.source_type IN ('google_messages','google-messages') AND ` + typeValue + ` IN ('google_messages','google-messages'))
+ OR EXISTS(SELECT 1 FROM communication_services native_service WHERE native_service.slug=native_source.source_type AND native_service.slug=` + typeValue + `))`
+	return `EXISTS(SELECT 1 FROM messages native_message JOIN sources native_source ON native_source.id=native_message.source_id
+ WHERE native_source.source_type IN ('imessage','whatsapp','sms','synctech-sms','synctech_sms','google_messages','google-messages','imazing_csv','google_voice','google-voice')
+ AND ` + providerMatch + `
+ AND (native_message.sender_id=` + identifier + `.participant_id OR EXISTS(SELECT 1 FROM message_recipients native_recipient WHERE native_recipient.message_id=native_message.id AND native_recipient.participant_id=` + identifier + `.participant_id)))`
 }
 
 // FullParticipantNameWhere returns the SQL predicate for using one exact raw

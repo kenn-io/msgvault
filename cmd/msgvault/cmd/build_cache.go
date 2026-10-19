@@ -2061,7 +2061,7 @@ func (s *cacheSourceSnapshot) prepareParticipantExportTables() error {
 		if table.name != cacheExportParticipants && table.name != cacheExportParticipantIdentifiers {
 			continue
 		}
-		querySQL := table.query
+		var querySQL string
 		if table.name == cacheExportParticipants {
 			querySQL = participantExportQuery(true)
 		} else {

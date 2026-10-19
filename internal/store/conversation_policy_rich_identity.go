@@ -60,7 +60,7 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 			// Beeper records richer phone evidence with its bridge and account
 			// scope in observationRecorder. Avoid a second, unclassified copy;
 			// other chat importers only have this room-scoped value.
-			if input.Phone != "" && sourceType != "beeper" {
+			if input.Phone != "" && sourceType != sourceTypeBeeper {
 				var serviceSlug *string
 				var scopeKind, scopeValue *string
 				if classification, ok := classifyParticipantIdentifier(input.IdentifierType, input.IdentifierValue); ok {
@@ -75,7 +75,7 @@ func (s *Store) ResolveConversationParticipantContext(ctx context.Context, room 
 					return err
 				}
 			}
-			if input.IdentifierType != "beeper" {
+			if input.IdentifierType != sourceTypeBeeper {
 				var serviceSlug *string
 				var scopeKind, scopeValue *string
 				if classification, ok := classifyParticipantIdentifier(input.IdentifierType, input.IdentifierValue); ok {

@@ -340,6 +340,9 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL WHERE conversation_id=?`, c.row.ConversationID); err != nil {
 			return result, err
 		}
+		if err := s.enqueueConversationActivityProjectionTx(ctx, tx, c.row.ConversationID); err != nil {
+			return result, fmt.Errorf("queue activity for policy conversation %d: %w", c.row.ConversationID, err)
+		}
 		result.ChangedConversationIDs = append(result.ChangedConversationIDs, c.row.ConversationID)
 		if tier == conversationpolicy.Full {
 			if err := s.reconcilePromotedConversationConflictsTx(ctx, tx, c.row.ConversationID); err != nil {
