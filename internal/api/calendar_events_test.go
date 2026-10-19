@@ -29,7 +29,15 @@ type calendarEventsTestStore struct {
 func (s *calendarEventsTestStore) ListCalendarOccurrencesContext(_ context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
 	s.calls++
 	s.query = query
-	return store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, Subject: "Planning", Start: query.From, End: query.To}}, Unexpandable: []store.CalendarUnexpandable{}}, s.err
+	asOf := query.From
+	return store.CalendarOccurrencePage{
+		Coverage: store.CalendarCoverage{
+			Complete: true, Notice: "Coverage fixture notice",
+			Sources: []store.CalendarSourceCoverage{{SourceID: 9, SourceType: "gcal", Status: "complete", AsOf: &asOf}},
+		},
+		Occurrences:  []store.CalendarOccurrence{{MessageID: 42, Subject: "Planning", Start: query.From, End: query.To}},
+		Unexpandable: []store.CalendarUnexpandable{},
+	}, s.err
 }
 func TestCalendarEventsRoute(t *testing.T) {
 	backend := &calendarEventsTestStore{mockStore: &mockStore{stats: &StoreStats{}}}
@@ -73,6 +81,8 @@ func TestCalendarEventsRoute(t *testing.T) {
 			if tc.name == "owner" {
 				assertions.Equal(new(7), backend.query.Limit)
 				assertions.Equal("next-page", backend.query.Cursor)
+				assertions.Contains(w.Body.String(), `"coverage":`)
+				assertions.Contains(w.Body.String(), "Coverage fixture notice")
 			}
 			if tc.status == 401 || tc.status == 403 {
 				assertions.Equal(before, backend.calls)

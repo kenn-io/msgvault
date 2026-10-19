@@ -39,21 +39,29 @@ func (f *calendarEventsFakeClient) ListCalendarOccurrencesContext(_ context.Cont
 func TestCalendarEventsCommand(t *testing.T) {
 	start, err := time.Parse(time.RFC3339, "2027-03-02T17:00:00Z")
 	require.NoError(t, err)
+	asOf := time.Date(2027, time.March, 1, 12, 0, 0, 0, time.UTC)
+	coverage := store.CalendarCoverage{
+		Complete: false,
+		Notice:   "Archived calendar data, not live availability.",
+		Sources: []store.CalendarSourceCoverage{{
+			SourceID: 42, SourceType: "gcal", Status: "stale", AsOf: &asOf, LatestRunStatus: "completed",
+		}},
+	}
 	for _, tc := range []struct {
-		name                       string
-		args                       []string
-		page                       store.CalendarOccurrencePage
-		version                    string
-		want, wantErr, wantWarning string
-		err                        error
+		name                                                               string
+		args                                                               []string
+		page                                                               store.CalendarOccurrencePage
+		version                                                            string
+		want, wantErr, wantWarning, wantCoverageNotice, wantCoverageSource string
+		err                                                                error
 	}{
-		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
+		{name: "table", page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)", wantCoverageNotice: "Coverage: Archived calendar data, not live availability.", wantCoverageSource: "coverage source 42 (gcal): stale"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
-		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
+		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
-		{name: "old daemon", version: "3.23.0", wantErr: "calendar events require daemon API schema 3.25.0 or newer"},
+		{name: "old daemon", version: "3.25.0", wantErr: "calendar events require daemon API schema 3.26.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
 		{name: "dry run", args: []string{"--dry-run"}, wantErr: "--dry-run is only valid"},
 		{name: "read only", args: []string{"--read-only"}, wantErr: "--read-only is only valid"},
@@ -90,10 +98,16 @@ func TestCalendarEventsCommand(t *testing.T) {
 			}
 			requirements.NoError(err)
 			assertions.Contains(out.String(), tc.want)
-			if tc.wantWarning == "" {
+			if tc.wantWarning == "" && tc.wantCoverageNotice == "" && tc.wantCoverageSource == "" {
 				assertions.Empty(stderr.String())
-			} else {
+			} else if tc.wantWarning != "" {
 				assertions.Contains(stderr.String(), tc.wantWarning)
+			}
+			if tc.wantCoverageNotice != "" {
+				assertions.Contains(stderr.String(), tc.wantCoverageNotice)
+			}
+			if tc.wantCoverageSource != "" {
+				assertions.Contains(stderr.String(), tc.wantCoverageSource)
 			}
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.Local), fake.query.From)
 			if tc.name == "terminal controls" {
@@ -114,6 +128,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Equal("Standup", page.Occurrences[0].Subject)
 				assertions.Equal(int64(378), page.Occurrences[0].MessageID)
 				assertions.Equal(int64(377), page.Occurrences[0].SeriesMessageID)
+				assertions.Equal(coverage, page.Coverage)
 			}
 		})
 	}

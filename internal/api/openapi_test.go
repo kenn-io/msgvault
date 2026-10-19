@@ -504,6 +504,22 @@ func TestOpenAPIClientImportJobStatusEnumNamesPreserveExistingConstants(t *testi
 	}, schema.Properties["status"].Extensions["x-enum-names"])
 }
 
+func TestOpenAPICalendarCoverageStatusEnumNamesAvoidExistingConstants(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	schema := openAPIClientDocument().Components.Schemas.Map()["CalendarSourceCoverage"]
+	requirements.NotNil(schema)
+	requirements.NotNil(schema.Properties["status"])
+	assertions.Equal([]any{
+		"CalendarSourceCoverageStatusComplete",
+		"CalendarSourceCoverageStatusStale",
+		"CalendarSourceCoverageStatusSyncFailed",
+		"CalendarSourceCoverageStatusNoBaseline",
+		"CalendarSourceCoverageStatusPartialEvidence",
+	}, schema.Properties["status"].Extensions["x-enum-names"])
+}
+
 func TestCLISearchOpenAPIDocumentsDeletionScope(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

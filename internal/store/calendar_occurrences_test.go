@@ -252,6 +252,70 @@ func TestListCalendarOccurrencesMultiDayExceptions(t *testing.T) {
 	}
 }
 
+func TestListCalendarOccurrencesSparseCancellationAfterSeriesShortening(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, end, original, wantStart, wantEnd string
+	}{
+		{
+			name:      "timed",
+			start:     `{"dateTime":"2027-03-01T09:00:00Z"}`,
+			end:       `{"dateTime":"2027-03-07T09:00:00Z"}`,
+			original:  `{"dateTime":"2027-03-07T12:00:00Z"}`,
+			wantStart: "2027-03-07T12:00:00Z",
+			wantEnd:   "2027-03-13T12:00:00Z",
+		},
+		{
+			name:      "all day",
+			start:     `{"date":"2027-03-01"}`,
+			end:       `{"date":"2027-03-07"}`,
+			original:  `{"date":"2027-03-07"}`,
+			wantStart: "2027-03-07T00:00:00Z",
+			wantEnd:   "2027-03-13T00:00:00Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","status":"confirmed","start":%s,"end":%s,"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`, tc.start, tc.end))
+			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original))
+
+			from := time.Date(2027, 3, 9, 12, 0, 0, 0, time.UTC)
+			var recurrenceEnd time.Time
+			requirements.NoError(st.db.QueryRow(`SELECT recurrence_end_at FROM calendar_events WHERE message_id = ?`, master).Scan(&recurrenceEnd))
+			assertions.True(recurrenceEnd.Before(from.Add(-calendarCandidateMargin)), "shortened master ends before candidate window")
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+			requirements.NoError(err)
+			requirements.Empty(page.Unexpandable)
+			requirements.Len(page.Occurrences, 1)
+			occurrence := page.Occurrences[0]
+			assertions.Equal(cancelled, occurrence.MessageID)
+			assertions.Equal(master, occurrence.SeriesMessageID)
+			assertions.Equal("cancelled", occurrence.Status)
+			assertions.Equal(tc.wantStart, occurrence.Start.UTC().Format(time.RFC3339))
+			assertions.Equal(tc.wantEnd, occurrence.End.UTC().Format(time.RFC3339))
+		})
+	}
+}
+
+func TestListCalendarOccurrencesSparseAllDayCancellationAfterMasterBecomesTimed(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL test database")
+	}
+	assertions, requirements := assert.New(t), require.New(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","status":"confirmed","start":{"date":"2027-03-01"},"end":{"date":"2027-03-02"},"recurrence":["RRULE:FREQ=DAILY;COUNT=8"]}`)
+	calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-07"},"status":"cancelled"}`)
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"weekly","status":"confirmed","start":{"dateTime":"2027-03-01T09:00:00Z"},"end":{"dateTime":"2027-03-02T09:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`), "gcal_json"))
+	rows := calendarRows(t, st, master)
+	requirements.Len(rows, 1)
+	assertions.False(rows[0].Event.AllDay)
+
+	from := time.Date(2027, 3, 9, 12, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+	requirements.NoError(err)
+	assertions.Empty(page.Occurrences)
+}
+
 func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, original, wantStart, wantEnd string

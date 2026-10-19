@@ -992,6 +992,7 @@ type searchMetadataResponse struct {
 	paginatedResponse[query.MessageSummary]
 
 	IndexState string `json:"index_state,omitempty"`
+	Hint       string `json:"hint,omitempty"`
 }
 type searchInMessageResponse paginatedResponse[messageMatch]
 type listMessagesResponse paginatedResponse[query.MessageSummary]

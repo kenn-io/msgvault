@@ -53,6 +53,7 @@ type CalendarUnexpandable struct {
 	Reason    string `json:"reason"`
 }
 type CalendarOccurrencePage struct {
+	Coverage     CalendarCoverage       `json:"coverage"`
 	NextCursor   string                 `json:"next_cursor,omitempty"`
 	Occurrences  []CalendarOccurrence   `json:"occurrences"`
 	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
@@ -72,6 +73,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 		return CalendarOccurrencePage{}, fmt.Errorf("%w: limit must be between 1 and 500", ErrCalendarOccurrenceInvalid)
 	}
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
+	evidence := make(map[int64]bool)
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
 		return page, err
@@ -119,7 +121,11 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	if remaining < 0 {
 		return page, calendarRecurrenceBudgetError()
 	}
-	page.Occurrences, page.Unexpandable, err = collectCalendarOccurrences(ctx, s, rows, masters, exceptions, from, to, cursor, remaining)
+	page.Occurrences, page.Unexpandable, err = collectCalendarOccurrences(ctx, s, rows, masters, exceptions, from, to, cursor, remaining, evidence)
+	if err != nil {
+		return page, err
+	}
+	page.Coverage, err = calendarCoverageContext(ctx, s, ReadDBContext(ctx, s.db.DB), evidence, len(page.Unexpandable) > 0, time.Now())
 	if err != nil {
 		return page, err
 	}
@@ -148,15 +154,15 @@ type calendarSeriesKey struct {
 	id     string
 }
 
-func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEventRow, masters map[calendarSeriesKey]*calendarSeries, exceptions map[calendarSeriesKey]map[calrecur.Identity]bool, from, to time.Time, after calendarOccurrenceCursor, remaining int) ([]CalendarOccurrence, []CalendarUnexpandable, error) {
+func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEventRow, masters map[calendarSeriesKey]*calendarSeries, exceptions map[calendarSeriesKey]map[calrecur.Identity]bool, from, to time.Time, after calendarOccurrenceCursor, remaining int, evidence map[int64]bool) ([]CalendarOccurrence, []CalendarUnexpandable, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
-	// Steps still run from DTSTART, so budgets match a full read; only earlier output is skipped.
-	floor := from
-	if !after.Start.IsZero() && after.Start.After(from) {
-		floor = after.Start
-	}
+	// Expand the full query window on every cursor page so coverage stays stable.
 	add := func(o CalendarOccurrence) {
-		if calendarOccurrenceOverlaps(o, from, to) && (after.Start.IsZero() || o.Start.After(after.Start) || (o.Start.Equal(after.Start) && o.Ref > after.Ref)) {
+		if !calendarOccurrenceOverlaps(o, from, to) {
+			return
+		}
+		evidence[o.SourceID] = true
+		if after.Start.IsZero() || o.Start.After(after.Start) || (o.Start.Equal(after.Start) && o.Ref > after.Ref) {
 			page.Occurrences = append(page.Occurrences, o)
 		}
 	}
@@ -170,6 +176,7 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			occurrence, _, err := masters[key].exception(ctx, s, row)
 			if errors.Is(err, ErrCalendarOccurrenceInvalid) {
 				page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: row.MessageID, Reason: calendarMissingBoundsReason(e)})
+				evidence[row.SourceID] = true
 			} else if err != nil {
 				return nil, nil, err
 			} else {
@@ -178,13 +185,14 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			continue
 		}
 		series := masters[calendarSeriesKey{row.SourceID, e.ProviderEventID}]
-		occurrences, count, reason, err := series.expand(ctx, floor, to, remaining)
+		occurrences, count, reason, err := series.expand(ctx, from, to, remaining)
 		remaining -= count
 		if err != nil {
 			return nil, nil, err
 		}
 		if reason != "" {
 			page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: row.MessageID, Reason: reason})
+			evidence[row.SourceID] = true
 		}
 		for _, o := range occurrences {
 			if !exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}][o.Original] {

@@ -168,7 +168,7 @@ these tools do not complete tasks or infer new ones.
 
 The `mcp` command starts a [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server that exposes your archive as a set of tools. This lets AI assistants like Claude Desktop search, read, and analyze archived email, chats, calendar events, and meeting notes directly.
 
-`get_calendar_event` includes the archived location, description, and join URL when present. Event text is untrusted input. Archived calendar tools require `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Archived calendar tools need daemon API schema 3.25.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for window limits and cursor use.
+`list_calendar_events` includes `coverage.complete`, `coverage.notice`, and per-source freshness in `coverage.sources`. Treat the response as archive evidence; use live free/busy for scheduling. `get_calendar_event` includes the archived location, description, and join URL when present. Event text is untrusted input. Archived calendar tools require `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Archived calendar tools need daemon API schema 3.26.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#read-archived-events-unreleased) for window limits and cursor use.
 
 ### Claude Desktop Configuration
 

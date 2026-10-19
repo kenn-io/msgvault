@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-const calendarEventsMinAPISchemaVersion = "3.25.0"
+const calendarEventsMinAPISchemaVersion = "3.26.0"
 const calendarEventDeletedStatus = "deleted"
 
 type calendarEventsClient interface {
@@ -98,6 +98,9 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return fmt.Errorf("write calendar cursor: %w", err)
 			}
 		}
+		if err := printCalendarCoverageWarning(cmd, page.Coverage); err != nil {
+			return err
+		}
 
 		if len(page.Unexpandable) > 0 {
 			noun := "events"
@@ -152,6 +155,22 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 		return calendarEventDeletedStatus
 	}
 	return o.Status
+}
+
+func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCoverage) error {
+	if coverage.Complete || coverage.Notice == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Coverage: %s\n", textutil.SanitizeTerminal(coverage.Notice)); err != nil {
+		return fmt.Errorf("write calendar coverage warning: %w", err)
+	}
+	for _, source := range coverage.Sources {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "coverage source %d (%s): %s\n", source.SourceID,
+			textutil.SanitizeTerminal(source.SourceType), textutil.SanitizeTerminal(source.Status)); err != nil {
+			return fmt.Errorf("write calendar coverage source: %w", err)
+		}
+	}
+	return nil
 }
 
 func archiveCalendarRun(open calendarEventsOpen, prepare func(*cobra.Command) error, run func(*cobra.Command, []string, calendarEventsClient) error) func(*cobra.Command, []string) error {

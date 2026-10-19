@@ -432,6 +432,9 @@ func newMCPServerWithPolicy(
 			(!allowWrites || !opts.AllowKataWrites) {
 			continue
 		}
+		if definition.name == ToolListCalendarEvents {
+			h.calendarEventsAdvertised = true
+		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))
 	}
 	if !opts.DelegatedOnly {

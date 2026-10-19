@@ -26,7 +26,10 @@ func (c *Client) ListCalendarOccurrencesContext(ctx context.Context, query store
 }
 
 func calendarOccurrencePageFromAPI(decoded *generated.ListCalendarEventsResponse) store.CalendarOccurrencePage {
-	page := store.CalendarOccurrencePage{NextCursor: stringValue(decoded.NextCursor)}
+	page := store.CalendarOccurrencePage{
+		Coverage:   calendarCoverageFromAPI(decoded.Coverage),
+		NextCursor: stringValue(decoded.NextCursor),
+	}
 	if decoded.Occurrences != nil {
 		page.Occurrences = make([]store.CalendarOccurrence, 0, len(decoded.Occurrences))
 		for _, o := range decoded.Occurrences {
@@ -40,6 +43,26 @@ func calendarOccurrencePageFromAPI(decoded *generated.ListCalendarEventsResponse
 		}
 	}
 	return page
+}
+
+func calendarCoverageFromAPI(decoded generated.CalendarCoverage) store.CalendarCoverage {
+	coverage := store.CalendarCoverage{Complete: decoded.Complete, Notice: decoded.Notice}
+	if decoded.Sources != nil {
+		coverage.Sources = make([]store.CalendarSourceCoverage, 0, len(decoded.Sources))
+		for _, source := range decoded.Sources {
+			row := store.CalendarSourceCoverage{
+				SourceID:   source.SourceID,
+				SourceType: source.SourceType,
+				Status:     string(source.Status),
+				AsOf:       source.AsOf,
+			}
+			if source.LatestRunStatus != nil {
+				row.LatestRunStatus = *source.LatestRunStatus
+			}
+			coverage.Sources = append(coverage.Sources, row)
+		}
+	}
+	return coverage
 }
 
 func (c *Client) GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error) {

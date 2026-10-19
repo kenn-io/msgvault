@@ -376,7 +376,8 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds archived calendar occurrence listing.
 // 3.25.0 adds archive calendar paging, detail, and source-scoped agent reads.
-const APISchemaVersion = "3.25.0"
+// 3.26.0 adds archive calendar coverage and freshness metadata.
+const APISchemaVersion = "3.26.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1440,6 +1441,11 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				"ImportJobResponseStatusDone",
 				"ImportJobResponseStatusFailed",
 			},
+		},
+		"CalendarSourceCoverage": {
+			"status": qualifiedEnumNames("CalendarSourceCoverageStatus", []string{
+				"complete", "stale", "sync_failed", "no_baseline", "partial_evidence",
+			}),
 		},
 		"ExploreSelection": {
 			"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"},

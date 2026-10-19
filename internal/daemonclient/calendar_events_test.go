@@ -20,6 +20,14 @@ func TestCalendarEventsClient(t *testing.T) {
 
 	from, err := time.Parse(time.RFC3339, "2027-03-01T17:00:00Z")
 	requirements.NoError(err)
+	asOf := time.Date(2027, time.March, 1, 12, 0, 0, 0, time.UTC)
+	coverage := store.CalendarCoverage{
+		Complete: false,
+		Notice:   "Archived calendar data, not live availability.",
+		Sources: []store.CalendarSourceCoverage{{
+			SourceID: 9, SourceType: "gcal", Status: "stale", AsOf: &asOf, LatestRunStatus: "completed",
+		}},
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assertions.Equal("/api/v1/calendar/events", r.URL.Path)
 		assertions.Equal("2027-03-01T17:00:00Z", r.URL.Query().Get("from"))
@@ -27,7 +35,7 @@ func TestCalendarEventsClient(t *testing.T) {
 		assertions.Equal("previous-page", r.URL.Query().Get("cursor"))
 		assertions.Equal("synthetic-owner-key", r.Header.Get("X-Api-Key"))
 		w.Header().Set("Content-Type", "application/json")
-		assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 42, SeriesMessageID: 40, Subject: "Edited event", Status: "cancelled", Attendees: []calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, Start: from, End: from.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}}))
+		assertions.NoError(json.MarshalWrite(w, store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{MessageID: 42, SeriesMessageID: 40, Subject: "Edited event", Status: "cancelled", Attendees: []calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, Start: from, End: from.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}}))
 	}))
 	t.Cleanup(server.Close)
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "synthetic-owner-key", AllowInsecure: true, HTTPClient: server.Client()})
@@ -42,4 +50,5 @@ func TestCalendarEventsClient(t *testing.T) {
 	assertions.Equal("cancelled", page.Occurrences[0].Status)
 	assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", DisplayName: "Guest", Role: "optional", RSVP: "declined", IsCopySelf: true}}, page.Occurrences[0].Attendees)
 	assertions.Equal([]store.CalendarUnexpandable{{MessageID: 50, Reason: "unsupported recurrence"}}, page.Unexpandable)
+	assertions.Equal(coverage, page.Coverage)
 }

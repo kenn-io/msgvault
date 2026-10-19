@@ -237,11 +237,11 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r *loggedDB, dialect D
 	// unrelated series or charging them against the series budget.
 	// Resolve source visibility by message ID so PostgreSQL can use the provider
 	// index first instead of scanning the source's messages for every exception.
-	timedEnd := `julianday(e.original_start_at) + (julianday(p.end_at) - julianday(p.start_at)) >= julianday(?)`
-	dateEnd := `julianday(e.original_start_date) + (julianday(p.end_date) - julianday(p.start_date)) >= julianday(?)`
+	timedEnd := `e.original_start_at IS NOT NULL AND NOT p.all_day AND p.start_at IS NOT NULL AND p.end_at IS NOT NULL AND julianday(e.original_start_at) + (julianday(p.end_at) - julianday(p.start_at)) >= julianday(?)`
+	dateEnd := `NULLIF(e.original_start_date, '') IS NOT NULL AND p.all_day AND NULLIF(p.start_date, '') IS NOT NULL AND NULLIF(p.end_date, '') IS NOT NULL AND julianday(NULLIF(e.original_start_date, '')) + (julianday(NULLIF(p.end_date, '')) - julianday(NULLIF(p.start_date, ''))) >= julianday(?)`
 	if dialect.DriverName() == postgresDriverName {
-		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
-		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
+		timedEnd = `e.original_start_at IS NOT NULL AND NOT p.all_day AND p.start_at IS NOT NULL AND p.end_at IS NOT NULL AND e.original_start_at + (p.end_at - p.start_at) >= ?`
+		dateEnd = `NULLIF(e.original_start_date, '') IS NOT NULL AND p.all_day AND NULLIF(p.start_date, '') IS NOT NULL AND NULLIF(p.end_date, '') IS NOT NULL AND NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
 	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
   (e.start_at IS NULL AND e.end_at >= ?) OR

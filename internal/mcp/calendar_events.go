@@ -25,7 +25,11 @@ func listCalendarEventsDefinition() toolDefinition {
 		"limit":  boundedIntegerWithDefault("Maximum occurrences", 1, 500, 100),
 		"cursor": stringSchema("next_cursor from the same window"),
 	}
-	d := readDefinition(ToolListCalendarEvents, untrustedCalendarContent+" List archived calendar occurrences. Requires calendar.event.read or message.read on their sources. Narrow the window if query_too_broad is returned.", closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
+	description := untrustedCalendarContent +
+		" List archived calendar occurrences. The response includes coverage.complete, coverage.notice, and coverage.sources." +
+		" Archived results do not establish free time; use live free/busy for scheduling." +
+		" Requires calendar.event.read or message.read on their sources. Narrow the window if query_too_broad is returned."
+	d := readDefinition(ToolListCalendarEvents, description, closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
 	d.availability = func(c catalogCapabilities) bool { return c.calEvents }
 	return d
 }
