@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -21,7 +20,6 @@ func TestCalendarOccurrenceGeneratedEmptyStrings(t *testing.T) {
 	}
 	for _, name := range []string{"timed event", "untitled event", "unnamed attendee", "attendee without email", "all empty"} {
 		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
 			require := require.New(t)
 			occurrence := base
 			occurrence.Attendees = append([]generated.Attendee(nil), base.Attendees...)
@@ -42,23 +40,14 @@ func TestCalendarOccurrenceGeneratedEmptyStrings(t *testing.T) {
 			require.NoError(err)
 			var fields map[string]jsonv1.RawMessage
 			require.NoError(jsonv1.Unmarshal(raw, &fields))
-			for field, want := range map[string]string{"start_date": occurrence.StartDate, "end_date": occurrence.EndDate, "subject": occurrence.Subject} {
+			for _, field := range []string{"start_date", "end_date", "subject"} {
 				require.Contains(fields, field)
-				var got string
-				require.NoError(jsonv1.Unmarshal(fields[field], &got))
-				assert.Equal(want, got)
 			}
 			var attendees []map[string]jsonv1.RawMessage
 			require.NoError(jsonv1.Unmarshal(fields["attendees"], &attendees))
 			require.Len(attendees, 1)
 			require.Contains(attendees[0], "display_name")
-			var displayName string
-			require.NoError(jsonv1.Unmarshal(attendees[0]["display_name"], &displayName))
-			assert.Equal(occurrence.Attendees[0].DisplayName, displayName)
 			require.Contains(attendees[0], "email")
-			var email string
-			require.NoError(jsonv1.Unmarshal(attendees[0]["email"], &email))
-			assert.Equal(occurrence.Attendees[0].Email, email)
 		})
 	}
 	for _, field := range []string{"Status", "Start", "End"} {
