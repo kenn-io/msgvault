@@ -31,7 +31,7 @@ func TestNativeContactNameRemainsEligibleAfterColdBeeperSighting(t *testing.T) {
 	require.NoError(err)
 
 	var participantID int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT id FROM participants WHERE phone_number=?`, "+15551234567").Scan(&participantID))
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT id FROM participants WHERE phone_number=?`), "+15551234567").Scan(&participantID))
 	nativeSource, err := f.Store.GetOrCreateSource(SourceType, "+15550000001")
 	require.NoError(err)
 	var nativeNameObservations int
