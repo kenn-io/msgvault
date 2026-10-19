@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -58,6 +59,45 @@ func TestEmailFamilyExportBytesProvenanceAndRevision(t *testing.T) {
 	assert.Equal(manifest.Members, saved.Members)
 	_, err = f.st.ExportEmailFamilyContext(t.Context(), a, family.Revision, store.EmailFamilyOptions{SourceIDs: []int64{}}, io.Discard)
 	require.ErrorIs(err, store.ErrNotFound)
+}
+
+func TestEmailFamilyExportManifestReplacesInvalidUTF8(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newAttrFixture(t, "imap", "invalid-export@example.test")
+	if f.st.IsPostgreSQL() {
+		t.Skip("PostgreSQL text rejects invalid UTF-8")
+	}
+	id := f.persist(attrMail{raw: "Message-ID: <invalid-export@example.test>\r\n\r\n"})
+	_, err := f.st.DB().Exec(f.st.Rebind(`UPDATE messages SET snippet=? WHERE id=?`), "damaged \xff snippet", id)
+	require.NoError(err)
+	family, err := f.st.EmailFamilyContext(t.Context(), id, store.EmailFamilyOptions{})
+	require.NoError(err)
+
+	var output bytes.Buffer
+	_, err = f.st.ExportEmailFamilyContext(t.Context(), id, family.Revision, store.EmailFamilyOptions{}, &output)
+	require.NoError(err)
+	archive, err := zip.NewReader(bytes.NewReader(output.Bytes()), int64(output.Len()))
+	require.NoError(err)
+	var manifestFile *zip.File
+	for _, file := range archive.File {
+		if file.Name == "manifest.json" {
+			manifestFile = file
+			break
+		}
+	}
+	require.NotNil(manifestFile)
+	reader, err := manifestFile.Open()
+	require.NoError(err)
+	data, err := io.ReadAll(reader)
+	require.NoError(err)
+	require.NoError(reader.Close())
+	assert.True(jsontext.Value(data).IsValid(), "manifest must contain valid UTF-8 JSON")
+
+	var saved store.EmailFamilyExportManifest
+	require.NoError(json.Unmarshal(data, &saved))
+	require.Len(saved.Members, 1)
+	assert.Equal("damaged \uFFFD snippet", saved.Members[0].Snippet)
 }
 
 func TestEmailFamilyExportPartialRawStates(t *testing.T) {

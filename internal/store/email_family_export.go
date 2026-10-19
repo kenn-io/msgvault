@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -110,7 +111,7 @@ func (s *Store) ExportEmailFamilyContext(ctx context.Context, id int64, expected
 		}
 		manifest.Members = append(manifest.Members, entry)
 	}
-	data, err := json.Marshal(manifest)
+	data, err := json.Marshal(manifest, jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return nil, err
 	}

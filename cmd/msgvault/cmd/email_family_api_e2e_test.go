@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -67,6 +68,12 @@ func TestEmailFamilyEndpointServesThroughProductionAdapter(t *testing.T) {
 		require.NoError(err)
 		return resp.StatusCode, responseBody
 	}
+	exportStatus, exportBody := post(fmt.Sprintf("/api/v1/messages/%d/family/export", messageID), api.EmailFamilyExportInput{
+		ExpectedFamilyRevision: family.Revision,
+	})
+	require.Equal(http.StatusOK, exportStatus, "the daemon adapter must expose family export")
+	assert.True(bytes.HasPrefix(exportBody, []byte("PK")), "family export response must be a ZIP archive")
+
 	input := store.EmailFamilyDecisionInput{
 		ActorKind:  "owner",
 		Kind:       "handled",

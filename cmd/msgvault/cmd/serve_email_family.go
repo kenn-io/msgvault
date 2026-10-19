@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"io"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/store"
@@ -9,6 +10,7 @@ import (
 
 var _ api.EmailFamilyStore = (*storeAPIAdapter)(nil)
 var _ api.EmailFamilyDecisionStore = (*storeAPIAdapter)(nil)
+var _ api.EmailFamilyExportStore = (*storeAPIAdapter)(nil)
 
 func (a *storeAPIAdapter) EmailFamilyContext(ctx context.Context, messageID int64, options store.EmailFamilyOptions) (*store.EmailFamily, error) {
 	return a.store.EmailFamilyContext(ctx, messageID, options)
@@ -32,4 +34,8 @@ func (a *storeAPIAdapter) UndoEmailFamilyDecisionContext(ctx context.Context, de
 
 func (a *storeAPIAdapter) ListEmailFamilyDecisionsContext(ctx context.Context, messageID int64, options store.EmailFamilyOptions) ([]store.EmailFamilyDecision, error) {
 	return a.store.ListEmailFamilyDecisionsContext(ctx, messageID, options)
+}
+
+func (a *storeAPIAdapter) ExportEmailFamilyContext(ctx context.Context, messageID int64, revision string, options store.EmailFamilyOptions, output io.Writer) (*store.EmailFamilyExportManifest, error) {
+	return a.store.ExportEmailFamilyContext(ctx, messageID, revision, options, output)
 }

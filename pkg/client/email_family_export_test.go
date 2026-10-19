@@ -10,22 +10,25 @@ import (
 )
 
 func TestEmailFamilyExportBodyPreservesEmptySourceSelection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	body := generated.ExportEmailFamilyBody{
 		ExpectedFamilyRevision: "revision",
 		SourceIds:              []int64{},
 	}
 
 	encoded, err := json.Marshal(body)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var decoded map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &decoded))
-	assert.Equal(t, []any{}, decoded["source_ids"])
+	require.NoError(json.Unmarshal(encoded, &decoded))
+	assert.Equal([]any{}, decoded["source_ids"])
 
 	body.SourceIds = nil
 	encoded, err = json.Marshal(body)
-	require.NoError(t, err)
+	require.NoError(err)
 	var omitted map[string]any
-	require.NoError(t, json.Unmarshal(encoded, &omitted))
-	assert.NotContains(t, omitted, "source_ids")
+	require.NoError(json.Unmarshal(encoded, &omitted))
+	assert.NotContains(omitted, "source_ids")
 }
