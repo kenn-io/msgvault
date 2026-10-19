@@ -112,6 +112,9 @@ func TestExactSearchDropsDeletedRevisionZeroVector(t *testing.T) {
 	ctx := t.Context()
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
 	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}))
+	var vectorRevision int64
+	require.NoError(t, b.db.QueryRowContext(ctx, `SELECT embedding_revision FROM embeddings WHERE generation_id=? AND message_id=?`, int64(gen), id).Scan(&vectorRevision))
+	require.Zero(t, vectorRevision, "the legacy vector fixture must use revision zero")
 	liveID, err := st.UpsertMessage(&store.Message{
 		SourceID: sourceID, ConversationID: 1, SourceMessageID: "live-message", MessageType: "beeper",
 		Subject: sql.NullString{String: "live policy needle", Valid: true},
@@ -122,9 +125,6 @@ func TestExactSearchDropsDeletedRevisionZeroVector(t *testing.T) {
 	require.NoError(t, b.Upsert(ctx, gen, []vector.Chunk{{
 		MessageID: liveID, Vector: []float32{0, 1, 0, 0}, EmbeddingRevision: liveRevision,
 	}}))
-	var revision int64
-	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), id).Scan(&revision))
-	require.Zero(t, revision, "the legacy vector fixture must use revision zero")
 	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
 	require.NoError(t, err)
 
