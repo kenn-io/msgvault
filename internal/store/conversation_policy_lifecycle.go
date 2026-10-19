@@ -210,7 +210,7 @@ func mapInt64Set(values []int64) map[int64]struct{} {
 func (s *Store) invalidateContextualParticipantMessagesTx(ctx context.Context, tx *loggedTx, participantIDs []int64) error {
 	participantIDs = sortedInt64Set(mapInt64Set(participantIDs))
 	return execInChunksContext(ctx, tx, participantIDs, nil, `
-		UPDATE messages SET embed_gen=NULL
+		UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1
 		WHERE message_type='beeper'
 		  AND EXISTS (
 			SELECT 1 FROM conversation_participants target_member

@@ -541,7 +541,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
-		COALESCE(c.conversation_type, '') AS conversation_type,
+		COALESCE(CAST(c.conversation_type AS VARCHAR), '') AS conversation_type,
 		COALESCE(c.title, '') AS conversation_title,
 		COALESCE(m.message_type, '') AS message_type,
 		m.list_id,

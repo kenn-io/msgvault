@@ -41,12 +41,20 @@ func newPolicyBackend(t *testing.T) (*Backend, *store.Store, int64, int64, vecto
 	return b, st, src.ID, id, gen, ctx
 }
 
+func policyChunk(t *testing.T, st *store.Store, messageID int64, values []float32) vector.Chunk {
+	t.Helper()
+	var revision int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&revision))
+	return vector.Chunk{MessageID: messageID, Vector: values, EmbeddingRevision: revision}
+}
+
 func TestPostgresColdPolicyPublicationWithOneConnection(t *testing.T) {
 	b, st, sourceID, id, gen, ctx := newPolicyBackend(t)
 	st.DB().SetMaxOpenConns(1)
 	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
 	require.ErrorIs(t, b.Upsert(ctx, gen, chunks), store.ErrConversationPolicyStale)
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	chunks = []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	admitted, err := st.CaptureConversationPolicyWork(ctx)
 	require.NoError(t, err)
 	require.NoError(t, b.Upsert(admitted, gen, chunks))
@@ -75,6 +83,7 @@ func TestPostgresColdPolicyPublicationWithOneConnection(t *testing.T) {
 	require.ErrorIs(t, b.PublishScopes(admitted, gen, scopes), store.ErrConversationPolicyStale)
 	fresh, err := st.CaptureConversationPolicyWork(ctx)
 	require.NoError(t, err)
+	chunks = []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(fresh, gen, chunks))
 	n, err := b.PruneIneligibleEmbeddings(ctx)
 	require.NoError(t, err)
@@ -94,7 +103,7 @@ func TestPostgresColdPolicyPublicationWithOneConnection(t *testing.T) {
 func TestPostgresLoadVectorRejectsColdConversationSeed(t *testing.T) {
 	b, st, sourceID, id, gen, ctx := newPolicyBackend(t)
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
 	got, err := b.LoadVector(ctx, id)
@@ -109,7 +118,7 @@ func TestPostgresLoadVectorRejectsColdConversationSeed(t *testing.T) {
 func TestPostgresContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
 	b, st, sourceID, id, gen, ctx := newPolicyBackend(t)
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	require.NoError(t, st.SetEmbedGen(ctx, []int64{id}, int64(gen)))
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
@@ -124,10 +133,10 @@ func TestPostgresContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) 
 	require.NoError(t, err)
 	assert.Len(t, chunksScored, 1)
 
-	_, err = st.DB().ExecContext(ctx, `UPDATE messages SET embed_gen=NULL WHERE id=$1`, id)
+	_, err = st.DB().ExecContext(ctx, `UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1 WHERE id=$1`, id)
 	require.NoError(t, err)
 	_, err = b.LoadVector(ctx, id)
-	assert.Error(t, err, "a stale embedding cannot seed a contextual query")
+	require.Error(t, err, "a stale embedding cannot seed a contextual query")
 	hits, err = b.Search(ctx, gen, chunks[0].Vector, 10, vector.Filter{})
 	require.NoError(t, err)
 	assert.Empty(t, hits, "an unstamped embedding cannot appear in vector search")
@@ -147,6 +156,34 @@ func TestPostgresContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) 
 	})
 	require.NoError(t, err)
 	assert.Empty(t, fused, "a vector-only fused query excludes stale embeddings")
+}
+
+func TestPostgresActiveGenerationVectorsSurvivePartialSameModelRebuild(t *testing.T) {
+	b, st, sourceID, firstID, active, ctx := newPolicyBackend(t)
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	room, err := st.EnsureConversation(sourceID, "room", "Room")
+	require.NoError(t, err)
+	secondID, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: room, SourceMessageID: "second", MessageType: "beeper", Subject: sql.NullString{String: "second policy message", Valid: true}})
+	require.NoError(t, err)
+	firstChunks := []vector.Chunk{policyChunk(t, st, firstID, []float32{1, 0, 0, 0})}
+	secondChunks := []vector.Chunk{policyChunk(t, st, secondID, []float32{0, 1, 0, 0})}
+	require.NoError(t, b.Upsert(ctx, active, firstChunks))
+	require.NoError(t, b.Upsert(ctx, active, secondChunks))
+	require.NoError(t, st.SetEmbedGen(ctx, []int64{firstID, secondID}, int64(active)))
+	require.NoError(t, b.ActivateGeneration(ctx, active, true))
+
+	building, err := b.CreateGeneration(ctx, "policy", 4, "")
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(ctx, building, firstChunks))
+	require.NoError(t, st.SetEmbedGen(ctx, []int64{firstID}, int64(building)))
+
+	loaded, err := b.LoadVector(ctx, firstID)
+	require.NoError(t, err)
+	assert.Equal(t, firstChunks[0].Vector, loaded)
+	hits, err := b.Search(ctx, active, []float32{1, 0, 0, 0}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.ElementsMatch(t, []int64{firstID, secondID}, []int64{hits[0].MessageID, hits[1].MessageID})
 }
 
 func TestPostgresColdPolicyTransitionSerializesNativePublication(t *testing.T) {
@@ -185,7 +222,7 @@ func TestPostgresColdPolicyTransitionSerializesNativePublication(t *testing.T) {
 	_, err = blocker.ExecContext(ctx, `SELECT id FROM index_generations WHERE id=$1 FOR UPDATE`, int64(gen))
 	require.NoError(t, err)
 	published := make(chan error, 1)
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	go func() { published <- b.Upsert(admitted, gen, chunks) }()
 	waitPolicyLock := func(granted bool, mode string) {
 		t.Helper()
@@ -224,10 +261,11 @@ func TestColdPolicyCleanupRetainsRepublishedPromotion(t *testing.T) {
 	b, st, sourceID, id, gen, ctx := newPolicyBackend(t)
 	st.DB().SetMaxOpenConns(1)
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Cold))
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	chunks = []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	n, err := b.PruneIneligibleEmbeddings(ctx)
 	require.NoError(t, err)

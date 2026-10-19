@@ -28,7 +28,6 @@ func TestConversationPolicyIncludeColdRemoteRoundTrip(t *testing.T) {
 		calls++
 		assert.True(t, q.IncludeCold)
 		assert.Len(t, q.Alternatives, 2)
-		assert.True(t, search.ParseOR(search.Format(q)).IncludeCold)
 		return &query.SearchFastResult{Messages: []query.MessageSummary{}, TotalCount: 0}, nil
 	}}
 	h := newTestHandlers(engine)

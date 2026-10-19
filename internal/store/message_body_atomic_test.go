@@ -46,6 +46,50 @@ func TestUpsertMessageBodyRollsBackWhenEmbeddingResetFails(t *testing.T) {
 	assert.Equal(t, sql.NullInt64{Int64: 42, Valid: true}, embedGen)
 }
 
+func TestUpsertMessageBodyInvalidatesChatHTMLFallbackRevision(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "html-fallback-revision")
+	require.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Chat")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "html-fallback",
+		MessageType: "beeper",
+	})
+	require.NoError(err)
+	blank := sql.NullString{String: " \t\n", Valid: true}
+	html := sql.NullString{
+		String: "<p>First fallback body</p>", Valid: true,
+	}
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{}, html))
+	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	var beforeRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&beforeRevision))
+
+	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, blank, html))
+	var afterPlainRevision int64
+	var embedGen sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&afterPlainRevision, &embedGen))
+	assert.Greater(afterPlainRevision, beforeRevision,
+		"changing blank body_text to whitespace can change ordinary embedding input")
+	assert.False(embedGen.Valid)
+
+	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, blank, sql.NullString{
+		String: "<p>Updated fallback body</p>", Valid: true,
+	}))
+	var afterRevision int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embedding_revision, embed_gen FROM messages WHERE id = ?`), id).Scan(&afterRevision, &embedGen))
+	assert.Greater(afterRevision, afterPlainRevision,
+		"chat HTML fallback changes must invalidate vectors even when body_text is whitespace")
+	assert.False(embedGen.Valid)
+}
+
 // A body write that waits behind a concurrent message write must compare
 // against the body that write committed. Otherwise it restores the earlier
 // text without invalidating the search document the other write built.

@@ -211,8 +211,9 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings
 			(generation_id, message_id, chunk_index, embedded_at, source_char_len,
-			 chunk_char_start, chunk_char_end, source_basis, truncated, dimension, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector)`)
+			 chunk_char_start, chunk_char_end, source_basis, truncated, dimension, embedding,
+			 embedding_revision)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::vector, $12)`)
 	if err != nil {
 		return fmt.Errorf("prepare document embedding insert: %w", err)
 	}
@@ -221,7 +222,7 @@ func (b *Backend) publishPGScope(ctx context.Context, tx *sql.Tx, gen vector.Gen
 		if _, err := stmt.ExecContext(ctx,
 			int64(gen), chunk.MessageID, chunk.ChunkIndex, now, chunk.SourceCharLen,
 			chunk.ChunkCharStart, chunk.ChunkCharEnd, int(chunk.SourceBasis), chunk.Truncated,
-			dim, vectorLiteral(chunk.Vector)); err != nil {
+			dim, vectorLiteral(chunk.Vector), chunk.EmbeddingRevision); err != nil {
 			return fmt.Errorf("insert document embedding (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
 		}
 	}

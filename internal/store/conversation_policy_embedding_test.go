@@ -73,11 +73,16 @@ func TestConversationPolicyChangeInvalidatesSharedParticipantContextEmbeddings(t
 	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&before))
 	assertions.True(before.Valid)
 	assertions.Equal(int64(37), before.Int64)
+	var beforeRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&beforeRevision))
 
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "changed", conversationpolicy.Cold))
 	var after sql.NullInt64
 	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), messageID).Scan(&after))
 	assertions.False(after.Valid, "a Full message with changed roster context must be re-embedded")
+	var afterRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&afterRevision))
+	assertions.Greater(afterRevision, beforeRevision, "a stale contextual vector must fail the publication revision check")
 	ids, err := s.ScanForEmbedding(t.Context(), 37, 0, 10)
 	requirements.NoError(err)
 	assertions.Contains(ids, messageID, "the invalidated message must be discoverable by the embed worker")

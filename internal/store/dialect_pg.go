@@ -723,6 +723,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		// correct — the scan-and-fill worker (and backstop) will embed and
 		// stamp them. No backfill.
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embed_gen BIGINT`, "embed_gen"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS embedding_revision BIGINT NOT NULL DEFAULT 0`, "embedding_revision"},
 		// last_modified: row-level last-modified watermark, the embed
 		// worker's optimistic-CAS token. Existing rows get the default
 		// (CURRENT_TIMESTAMP at the time the column is added); the triggers

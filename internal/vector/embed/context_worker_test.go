@@ -387,6 +387,37 @@ func TestContextWorker_FirstTickPublishesEachScopeOnce(t *testing.T) {
 	assert.Zero(t, f.missing())
 }
 
+func TestContextWorkerPublishesVectorsAtCurrentEmbeddingRevision(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	messageID := f.seed("beeper", f.chatID, time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), "revision-sensitive chat body")
+	var revision int64
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(),
+		f.store.Rebind(`SELECT embedding_revision FROM messages WHERE id = ?`), messageID).Scan(&revision))
+	require.Positive(t, revision, "the fixture body write must advance the embedding input revision")
+
+	result, err := f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	count, err := f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	beforeDocuments := f.client.Documents()
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET embedding_revision=embedding_revision+1, embed_gen=NULL WHERE id=?`), messageID)
+	require.NoError(t, err)
+
+	result, err = f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	assert.Equal(t, beforeDocuments+1, f.client.Documents(),
+		"a changed input revision must rebuild vectors even when rendered document text is unchanged")
+	count, err = f.backend.EmbeddedMessageCountForSnapshot(t.Context(), f.gen, []int64{messageID})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count, "published vectors must match the stamped input revision")
+}
+
 func TestContextWorker_BuildScopeNeverSubmitsExcludedBody(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

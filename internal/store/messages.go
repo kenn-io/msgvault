@@ -1376,8 +1376,15 @@ func upsertMessageSQL(now string) string {
 		last_modified = excluded.last_modified,
 		embed_gen = CASE
 			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '')
-				OR COALESCE(messages.message_type, '') <> COALESCE(excluded.message_type, '') THEN NULL
+				OR COALESCE(messages.message_type, '') <> COALESCE(excluded.message_type, '')
+				OR messages.conversation_id <> excluded.conversation_id THEN NULL
 			ELSE messages.embed_gen
+		END,
+		embedding_revision = messages.embedding_revision + CASE
+			WHEN COALESCE(messages.subject, '') <> COALESCE(excluded.subject, '')
+				OR COALESCE(messages.message_type, '') <> COALESCE(excluded.message_type, '')
+				OR messages.conversation_id <> excluded.conversation_id THEN 1
+			ELSE 0
 		END,
 		message_type = excluded.message_type,
 		conversation_id = excluded.conversation_id,
@@ -1711,7 +1718,7 @@ func upsertMessageBody(
 	if !embeddingChanged {
 		return nil
 	}
-	if _, err = q.Exec(`UPDATE messages SET embed_gen = NULL WHERE id = ? AND embed_gen IS NOT NULL`, messageID); err != nil {
+	if _, err = q.Exec(`UPDATE messages SET embed_gen = NULL, embedding_revision = embedding_revision + 1 WHERE id = ?`, messageID); err != nil {
 		return err
 	}
 	return coalesceLatestMessageChanges(q, dialect, messageID)
@@ -1727,14 +1734,27 @@ func messageBodyChanges(
 		SELECT body_text, body_html FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&oldText, &oldHTML)
 	if errors.Is(err, sql.ErrNoRows) {
-		return embeddingBodyValue(bodyText, bodyHTML) != "",
+		return embeddingRevisionBodyValue(bodyText, bodyHTML) != "",
 			nullStringValue(bodyText) != "", nil
 	}
 	if err != nil {
 		return false, false, err
 	}
-	return embeddingBodyValue(oldText, oldHTML) != embeddingBodyValue(bodyText, bodyHTML),
+	return embeddingRevisionBodyValue(oldText, oldHTML) != embeddingRevisionBodyValue(bodyText, bodyHTML),
 		nullStringValue(oldText) != nullStringValue(bodyText), nil
+}
+
+// embeddingRevisionBodyValue includes both the ordinary body selection and
+// the contextual chat fallback used when body_text contains only ASCII
+// whitespace. A change to either representation must invalidate old vectors.
+func embeddingRevisionBodyValue(bodyText, bodyHTML sql.NullString) string {
+	text := nullStringValue(bodyText)
+	ordinary := embeddingBodyValue(bodyText, bodyHTML)
+	contextual := ordinary
+	if strings.Trim(text, " \t\n\r") == "" {
+		contextual = mime.StripHTML(nullStringValue(bodyHTML))
+	}
+	return fmt.Sprintf("%d:%s%d:%s", len(ordinary), ordinary, len(contextual), contextual)
 }
 
 func embeddingBodyValue(bodyText, bodyHTML sql.NullString) string {

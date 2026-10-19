@@ -199,7 +199,7 @@ func (b *Backend) FusedSearch(ctx context.Context, req vector.FusedRequest) ([]v
 			annConstraint := "              JOIN filtered f ON f.id = e.message_id\n"
 			annLive := fmt.Sprintf(
 				"               AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND %s)\n",
-				b.embeddedMessageWhere("m", req.Generation))
+				b.embeddedMessageWhere("e"))
 			if emptyFilter {
 				annConstraint = ""
 			}
@@ -406,7 +406,7 @@ func (b *Backend) filteredChunkMessageCount(ctx context.Context, gen vector.Gene
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
 	}
-	clauses := append([]string{b.embeddedMessageWhere("m", gen)}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
 	query := `SELECT COUNT(DISTINCT e.message_id)
 	            FROM embeddings e
 	            JOIN messages m ON m.id = e.message_id

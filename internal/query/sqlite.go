@@ -502,7 +502,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 		) AND NOT EXISTS (
 			SELECT 1 FROM participants p_ds
 			WHERE p_ds.id = m.sender_id
-			  AND %s IS NOT NULL
+			  AND %s != ''
 		))`, eligibleRecipientNameExpr("mr_sn", "p_sn"), eligibleParticipantNameExpr("p_ds")))
 	}
 
@@ -2133,14 +2133,15 @@ func appendSQLiteAddressCondition(
 	for _, address := range addresses {
 		switch {
 		case strings.HasPrefix(address, "@"):
-			parts = append(parts, `LOWER(p_addr.email_address) LIKE ? ESCAPE '\'`)
+			parts = append(parts, `(LOWER(p_addr.email_address) LIKE ? ESCAPE '\' AND `+store.FullParticipantValueWhere("p_addr.id", "'email'", "p_addr.email_address")+`)`)
 			matchArgs = append(matchArgs, "%"+escapeSQLiteLike(strings.ToLower(address)))
 		case recipientType == "from":
-			parts = append(parts, "LOWER(p_addr.email_address) = LOWER(?)")
+			parts = append(parts, `(LOWER(p_addr.email_address) = LOWER(?) AND `+store.FullParticipantValueWhere("p_addr.id", "'email'", "p_addr.email_address")+`)`)
 			matchArgs = append(matchArgs, address)
 		default:
 			lower := strings.ToLower(address)
-			parts = append(parts, "(LOWER(p_addr.email_address) = ? OR p_addr.phone_number = ?)")
+			parts = append(parts, `((LOWER(p_addr.email_address) = ? AND `+store.FullParticipantValueWhere("p_addr.id", "'email'", "p_addr.email_address")+
+				`) OR (p_addr.phone_number = ? AND `+store.FullParticipantValueWhere("p_addr.id", "'phone'", "p_addr.phone_number")+`))`)
 			matchArgs = append(matchArgs, lower, lower)
 		}
 	}
@@ -2242,10 +2243,10 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 				JOIN participants p_meta ON p_meta.id = mr_meta.participant_id
 				WHERE mr_meta.message_id = m.id
 				  AND (
-					%s OR
-					%s OR
-					%s OR
-					%s
+					(%s AND %s) OR
+					(%s AND %s) OR
+					(%s AND %s) OR
+					(%s AND %s)
 				  )
 			) OR
 			EXISTS (
@@ -2253,21 +2254,28 @@ func (e *SQLiteEngine) buildMetadataSearchCriteria(ctx context.Context, q *searc
 				FROM participants p_direct_meta
 				WHERE p_direct_meta.id = m.sender_id
 				  AND (
-					%s OR
-					%s OR
-					%s
+					(%s AND %s) OR
+					(%s AND %s) OR
+					(%s AND %s)
 				  )
 			)
 		)`,
 			metadataContainsExpression(e.dialect, "m.subject"),
 			metadataContainsExpression(e.dialect, "m.snippet"),
 			metadataContainsExpression(e.dialect, "p_meta.email_address"),
+			store.FullParticipantValueWhere("p_meta.id", "'email'", "p_meta.email_address"),
 			metadataContainsExpression(e.dialect, "p_meta.display_name"),
+			store.FullParticipantNameWhere("p_meta.id", "p_meta.display_name"),
 			metadataContainsExpression(e.dialect, "p_meta.phone_number"),
+			store.FullParticipantValueWhere("p_meta.id", "'phone'", "p_meta.phone_number"),
 			metadataContainsExpression(e.dialect, "mr_meta.display_name"),
+			store.FullParticipantNameWhere("p_meta.id", "mr_meta.display_name"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.email_address"),
+			store.FullParticipantValueWhere("p_direct_meta.id", "'email'", "p_direct_meta.email_address"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.display_name"),
+			store.FullParticipantNameWhere("p_direct_meta.id", "p_direct_meta.display_name"),
 			metadataContainsExpression(e.dialect, "p_direct_meta.phone_number"),
+			store.FullParticipantValueWhere("p_direct_meta.id", "'phone'", "p_direct_meta.phone_number"),
 		))
 		for range 9 {
 			args = append(args, pattern)

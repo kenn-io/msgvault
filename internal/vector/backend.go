@@ -161,14 +161,19 @@ type Generation struct {
 // text identified by SourceBasis and are stored for debugging only — search
 // results do not currently surface "which chunk matched".
 type Chunk struct {
-	MessageID      int64
-	ChunkIndex     int
-	Vector         []float32
-	SourceCharLen  int
-	ChunkCharStart int
-	ChunkCharEnd   int
-	SourceBasis    SourceBasis
-	Truncated      bool
+	MessageID  int64
+	ChunkIndex int
+	Vector     []float32
+	// EmbeddingRevision is the message-input revision captured before this
+	// vector was built. Search compares it with the live archive revision so a
+	// still-valid active-generation vector remains visible during a rebuild of
+	// another generation.
+	EmbeddingRevision int64
+	SourceCharLen     int
+	ChunkCharStart    int
+	ChunkCharEnd      int
+	SourceBasis       SourceBasis
+	Truncated         bool
 }
 
 // Filter carries the structured filters pushed into both signal CTEs

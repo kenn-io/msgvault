@@ -127,8 +127,9 @@ func (s *Store) SetEmbedGen(ctx context.Context, ids []int64, target int64) erro
 // time.Time back. The WHERE comparison runs entirely server-side against the
 // stored value.
 type EmbedGenStamp struct {
-	ID           int64
-	LastModified any
+	ID                int64
+	LastModified      any
+	EmbeddingRevision int64
 }
 
 // EmbedGenMetadataVersion is the store-owned compare-and-set token for
@@ -238,10 +239,11 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 	}
 	newlyCovered := 0
 	for _, version := range orderedVersions {
-		query := fmt.Sprintf(`SELECT id, embed_gen FROM messages
+		query := fmt.Sprintf(`SELECT id, embed_gen, embedding_revision FROM messages
 			WHERE id = ? AND %s = ?
+			  AND embedding_revision = ?
 			  AND deleted_at IS NULL AND deleted_from_source_at IS NULL AND `+FullMessageWhere("messages"), lastModified)
-		args := []any{version.ID, version.LastModified}
+		args := []any{version.ID, version.LastModified, version.EmbeddingRevision}
 		if metadataVersion.ConversationID != 0 {
 			query += ` AND conversation_id = ?`
 			args = append(args, metadataVersion.ConversationID)
@@ -249,7 +251,8 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 		query += s.dialect.SelectForUpdate()
 		var id int64
 		var previousGen sql.NullInt64
-		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id, &previousGen)
+		var currentEmbeddingRevision int64
+		err := conn.QueryRowContext(ctx, s.dialect.Rebind(query), args...).Scan(&id, &previousGen, &currentEmbeddingRevision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, 0, nil
 		}
@@ -273,8 +276,8 @@ func (s *Store) SetEmbedGenGroupIfUnchanged(
 
 	for _, version := range orderedVersions {
 		res, err := conn.ExecContext(ctx, s.dialect.Rebind(
-			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`),
-			target, version.ID, version.LastModified)
+			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ?`),
+			target, version.ID, version.LastModified, version.EmbeddingRevision)
 		if err != nil {
 			return false, 0, fmt.Errorf("stamp embed_gen group member %d: %w", version.ID, err)
 		}
@@ -428,8 +431,8 @@ func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStam
 		attempt := &stampResult{}
 		err := s.withConversationPolicyPublication(ctx, func(tx *sql.Tx) error {
 			for _, it := range items {
-				q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND (embed_gen IS NULL OR embed_gen <> ?)` + " AND " + FullMessageWhere("messages")
-				res, err := tx.ExecContext(ctx, s.dialect.Rebind(q), target, it.ID, it.LastModified, target)
+				q := `UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ? AND (embed_gen IS NULL OR embed_gen <> ?)` + " AND " + FullMessageWhere("messages")
+				res, err := tx.ExecContext(ctx, s.dialect.Rebind(q), target, it.ID, it.LastModified, it.EmbeddingRevision, target)
 				if err != nil {
 					return fmt.Errorf("set embed_gen if unchanged (id=%d): %w", it.ID, err)
 				}
@@ -439,7 +442,7 @@ func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStam
 				}
 				if n == 0 {
 					var alreadyCovered bool
-					err := tx.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embed_gen = ? AND `+FullMessageWhere("messages")+`)`), it.ID, it.LastModified, target).Scan(&alreadyCovered)
+					err := tx.QueryRowContext(ctx, s.dialect.Rebind(`SELECT EXISTS(SELECT 1 FROM messages WHERE id = ? AND last_modified = ? AND embedding_revision = ? AND embed_gen = ? AND `+FullMessageWhere("messages")+`)`), it.ID, it.LastModified, it.EmbeddingRevision, target).Scan(&alreadyCovered)
 					if err != nil {
 						return fmt.Errorf("read existing embed_gen (id=%d): %w", it.ID, err)
 					}
@@ -482,7 +485,7 @@ func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		q := `UPDATE messages SET embed_gen = NULL WHERE id IN (` +
+		q := `UPDATE messages SET embed_gen = NULL, embedding_revision = embedding_revision + 1 WHERE id IN (` +
 			strings.Join(placeholders, ",") + `)`
 		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("reset embed_gen: %w", err)

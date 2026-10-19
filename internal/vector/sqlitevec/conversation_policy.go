@@ -5,10 +5,12 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"sort"
 
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 func (b *Backend) acquirePolicyPublication(ctx context.Context, ids []int64) (func(), error) {
@@ -37,19 +39,59 @@ func (b *Backend) liveMessageWhere(alias string) string {
 	return where
 }
 
-// embeddedMessageWhere hides vectors that no longer match the message's
-// current embed_gen watermark. Conversation-policy lifecycle changes clear
-// that watermark before a changed room roster can leave old contextual text
-// visible through vector search.
-func (b *Backend) embeddedMessageWhere(alias string, gen vector.GenerationID) string {
-	where := b.liveMessageWhere(alias)
-	if b.policyStore != nil {
-		if alias == "" {
-			alias = "messages"
-		}
-		where += fmt.Sprintf(" AND %s.embed_gen = %d", alias, int64(gen))
+// currentEmbeddingRevisions returns revisions for the requested messages that
+// are still live and eligible for vector search. SQLite stores archive rows
+// and vector rows in separate databases, so callers compare this result with
+// the revision captured on each vector row after reading it from vectors.db.
+func (b *Backend) currentEmbeddingRevisions(ctx context.Context, messageIDs []int64) (map[int64]int64, error) {
+	if len(messageIDs) == 0 {
+		return map[int64]int64{}, nil
 	}
-	return where
+	if b.mainDB == nil {
+		return nil, errors.New("current vector revisions require the main message database")
+	}
+	encoded, err := json.Marshal(messageIDs, json.Deterministic(true))
+	if err != nil {
+		return nil, fmt.Errorf("encode embedding revision message ids: %w", err)
+	}
+	rows, err := b.mainDB.QueryContext(ctx, `
+		SELECT m.id, m.embedding_revision
+		FROM messages m
+		WHERE m.id IN (SELECT value FROM json_each(?))
+		  AND `+b.liveMessageWhere("m"), string(encoded))
+	if err != nil {
+		return nil, fmt.Errorf("read current embedding revisions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	revisions := make(map[int64]int64, len(messageIDs))
+	for rows.Next() {
+		var id, revision int64
+		if err := rows.Scan(&id, &revision); err != nil {
+			return nil, fmt.Errorf("scan current embedding revision: %w", err)
+		}
+		revisions[id] = revision
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate current embedding revisions: %w", err)
+	}
+	return revisions, nil
+}
+
+func encodeEmbeddingRevisionPairs(revisions map[int64]int64) (string, error) {
+	ids := make([]int64, 0, len(revisions))
+	for id := range revisions {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	pairs := make([][2]int64, 0, len(ids))
+	for _, id := range ids {
+		pairs = append(pairs, [2]int64{id, revisions[id]})
+	}
+	encoded, err := json.Marshal(pairs, json.Deterministic(true))
+	if err != nil {
+		return "", fmt.Errorf("encode embedding revision pairs: %w", err)
+	}
+	return string(encoded), nil
 }
 
 // prunePolicyLedgerBatch bounds both member and document mutations, including

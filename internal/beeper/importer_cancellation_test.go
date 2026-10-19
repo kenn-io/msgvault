@@ -142,8 +142,9 @@ func TestEnsureConversationCancellation(t *testing.T) {
 			participants := make([]map[string]any, 0, count)
 			for i := range count {
 				participants = append(participants, map[string]any{
-					"id":       fmt.Sprintf("@telegram_member%d:beeper.local", i),
-					"fullName": fmt.Sprintf("Member %d", i),
+					"id":          fmt.Sprintf("@telegram_member%d:beeper.local", i),
+					"fullName":    fmt.Sprintf("Member %d", i),
+					"phoneNumber": fmt.Sprintf("+1202555%04d", i),
 				})
 			}
 			chat := observationChat(

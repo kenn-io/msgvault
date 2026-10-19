@@ -337,7 +337,7 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 		if err != nil {
 			return result, err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL WHERE conversation_id=?`, c.row.ConversationID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1 WHERE conversation_id=?`, c.row.ConversationID); err != nil {
 			return result, err
 		}
 		if err := s.enqueueConversationActivityProjectionTx(ctx, tx, c.row.ConversationID); err != nil {
@@ -392,6 +392,13 @@ func (s *Store) refreshConversationPolicyTx(ctx context.Context, tx *loggedTx, s
 	}
 	if len(result.ChangedConversationIDs) > 0 {
 		if err = s.invalidateConversationPolicyPeopleTx(ctx, tx, result.ChangedConversationIDs, result.Revision); err != nil {
+			return result, err
+		}
+		lifecycle, captureErr := s.captureConversationPolicyRoomsTx(ctx, tx, result.ChangedConversationIDs)
+		if captureErr != nil {
+			return result, captureErr
+		}
+		if err = s.invalidateContextualParticipantMessagesTx(ctx, tx, lifecycle.participants); err != nil {
 			return result, err
 		}
 	}

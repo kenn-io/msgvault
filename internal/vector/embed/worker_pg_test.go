@@ -72,13 +72,14 @@ func (s *pgWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int64
 }
 
 // SetEmbedGenIfUnchanged mirrors store.Store.SetEmbedGenIfUnchanged on the
-// PG test schema: a per-row optimistic-CAS stamp gated on last_modified.
+// PG test schema: a per-row optimistic-CAS stamp gated on last_modified and
+// the embedding input revision.
 // Returns the ids whose UPDATE matched 0 rows (CAS misses).
 func (s *pgWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
 	for _, it := range items {
 		res, err := s.db.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3`,
-			target, it.ID, it.LastModified)
+			`UPDATE messages SET embed_gen = $1 WHERE id = $2 AND last_modified = $3 AND embedding_revision = $4`,
+			target, it.ID, it.LastModified, it.EmbeddingRevision)
 		if err != nil {
 			return missed, covered, err
 		}
@@ -168,6 +169,7 @@ func openPGWorkerDB(t *testing.T, n int) *sql.DB {
 			deleted_at TIMESTAMPTZ,
 			deleted_from_source_at TIMESTAMPTZ,
 			embed_gen BIGINT,
+			embedding_revision BIGINT NOT NULL DEFAULT 0,
 			last_modified TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE message_bodies (

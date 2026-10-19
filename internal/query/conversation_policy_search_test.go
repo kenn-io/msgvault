@@ -151,7 +151,10 @@ func TestConversationPolicyAggregatesUseOnlyFullParticipantValues(t *testing.T) 
 		Email: "cold-only@hidden.test", DisplayName: "Cold Only Contact",
 	})
 	requirements.NoError(err)
-	visible, err := s.EnsureParticipant("visible@example.test", "Visible Contact", "example.test")
+	visible, err := s.ResolveConversationParticipantContext(t.Context(), targetRoom, store.ConversationParticipantIdentity{
+		IdentifierType: "slack", IdentifierValue: "SYNTHETIC:VISIBLE",
+		Email: "visible@example.test", DisplayName: "Visible Contact",
+	})
 	requirements.NoError(err)
 	when := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
 	message := func(sourceMessageID string, participantID int64) int64 {
@@ -167,7 +170,7 @@ func TestConversationPolicyAggregatesUseOnlyFullParticipantValues(t *testing.T) 
 		return id
 	}
 	coldOnlyMessage := message("cold-only", coldOnly.ParticipantID)
-	message("visible", visible)
+	message("visible", visible.ParticipantID)
 	requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "support", conversationpolicy.Cold))
 
 	e := query.NewEngine(s.DB(), s.IsPostgreSQL())
@@ -198,6 +201,16 @@ func TestConversationPolicyAggregatesUseOnlyFullParticipantValues(t *testing.T) 
 	searchResults, err := e.SearchByDomains(t.Context(), []string{"hidden.test"}, nil, nil, 20, 0, nil)
 	requirements.NoError(err)
 	assertions.Empty(searchResults)
+	for _, text := range []string{
+		"cold-only@hidden.test",
+		"Cold Only Contact",
+		"from:cold-only@hidden.test",
+		"to:cold-only@hidden.test",
+	} {
+		rows, err := e.SearchFast(t.Context(), search.Parse(text), query.MessageFilter{}, 20, 0)
+		requirements.NoError(err)
+		assertions.Empty(rows, "search %q must not match a Full message using Cold-only participant data", text)
+	}
 
 	hydrated, err := e.GetMessageSummariesByIDs(t.Context(), []int64{coldOnlyMessage})
 	requirements.NoError(err)

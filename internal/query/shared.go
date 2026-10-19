@@ -145,13 +145,6 @@ func recipientNameExpr(mrAlias, pAlias string) string {
 	)
 }
 
-// sqliteSenderNameExpr hydrates a message summary's FromName with the same
-// per-message display-name preference sender-name aggregation uses: the
-// message's own "from" recipient display_name (mr_from) wins over the
-// participant's sticky name, so drilling into a per-message sender-name bucket
-// shows the same name the bucket was keyed by. Pairs with sqliteSenderJoin.
-var sqliteSenderNameExpr = recipientNameExpr("mr_from", "p_sender")
-
 // sqliteSenderJoin binds a message's first "from" recipient row (mr_from) and
 // the resolved sender participant (p_sender), falling back to the direct
 // m.sender_id participant only when the message has no "from" recipient row.

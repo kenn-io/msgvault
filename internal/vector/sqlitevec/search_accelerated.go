@@ -27,6 +27,7 @@ var _ vector.MetadataSearchingBackend = (*Backend)(nil)
 type acceleratedCandidate struct {
 	embeddingID int64
 	messageID   int64
+	revision    int64
 }
 
 type acceleratedQueryer interface {
@@ -307,15 +308,40 @@ func (b *Backend) searchExactFilteredPopulation(
 	if err != nil {
 		return nil, fmt.Errorf("encode exact-filter message IDs: %w", err)
 	}
-	rows, err := queryer.QueryContext(ctx, `SELECT e.message_id,
+	freshRevisionSQL := ""
+	args := []any{float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob)}
+	if b.policyStore != nil {
+		revisions, err := b.currentEmbeddingRevisions(ctx, messageIDs)
+		if err != nil {
+			return nil, err
+		}
+		if len(revisions) == 0 {
+			return []vector.Hit{}, nil
+		}
+		revisionPairs, err := encodeEmbeddingRevisionPairs(revisions)
+		if err != nil {
+			return nil, err
+		}
+		freshRevisionSQL = `AND EXISTS (
+			SELECT 1 FROM json_each(?) pair
+			 WHERE json_extract(pair.value, '$[0]') = e.message_id
+			   AND json_extract(pair.value, '$[1]') = e.embedding_revision
+		)`
+		args = append(args, revisionPairs)
+	}
+	query := `SELECT e.message_id,
 		MIN(vec1_l2_distance(?, a.embedding)) AS distance
 		FROM embeddings e
-		JOIN `+accelerator.TableName+` a ON a.rowid = e.embedding_id
+		JOIN ` + accelerator.TableName + ` a ON a.rowid = e.embedding_id
 		WHERE e.generation_id = ?
 		  AND e.message_id IN (SELECT value FROM json_each(?))
+		  %s
 		GROUP BY e.message_id
 		ORDER BY distance ASC, e.message_id ASC
-		LIMIT ?`, float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob), k)
+		LIMIT ?`
+	query = fmt.Sprintf(query, freshRevisionSQL)
+	args = append(args, k)
+	rows, err := queryer.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query exact-filter population: %w", err)
 	}
@@ -354,7 +380,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("encode accelerator candidate IDs: %w", err)
 	}
-	rows, err := queryer.QueryContext(ctx, `SELECT embedding_id, message_id FROM embeddings
+	rows, err := queryer.QueryContext(ctx, `SELECT embedding_id, message_id, embedding_revision FROM embeddings
 		WHERE generation_id = ? AND embedding_id IN (SELECT value FROM json_each(?))`,
 		int64(accelerator.GenerationID), string(encoded))
 	if err != nil {
@@ -366,7 +392,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	seenMessages := make(map[int64]struct{}, len(rowIDs))
 	for rows.Next() {
 		var candidate acceleratedCandidate
-		if err := rows.Scan(&candidate.embeddingID, &candidate.messageID); err != nil {
+		if err := rows.Scan(&candidate.embeddingID, &candidate.messageID, &candidate.revision); err != nil {
 			return nil, fmt.Errorf("scan accelerator candidate mapping: %w", err)
 		}
 		candidates = append(candidates, candidate)
@@ -394,6 +420,13 @@ func (b *Backend) rerankAcceleratedCandidates(
 	for _, messageID := range liveIDs {
 		live[messageID] = struct{}{}
 	}
+	currentRevisions := map[int64]int64(nil)
+	if b.policyStore != nil {
+		currentRevisions, err = b.currentEmbeddingRevisions(ctx, liveIDs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	queryBlob := float32SliceBlob(queryVec)
 	stmt, err := queryer.PrepareContext(ctx, `SELECT vec1_l2_distance(?, embedding)
 		FROM `+accelerator.TableName+` WHERE rowid = ?`)
@@ -404,6 +437,9 @@ func (b *Backend) rerankAcceleratedCandidates(
 	best := make(map[int64]float64, len(live))
 	for _, candidate := range candidates {
 		if _, ok := live[candidate.messageID]; !ok {
+			continue
+		}
+		if b.policyStore != nil && currentRevisions[candidate.messageID] != candidate.revision {
 			continue
 		}
 		var distance float64

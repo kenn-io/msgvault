@@ -70,7 +70,9 @@ func (f *embedGenGroupFixture) snapshot() ([]store.EmbedGenStamp, store.EmbedGen
 		row, found, err := snapshot.Message(f.t.Context(), id)
 		require.NoError(f.t, err)
 		require.True(f.t, found)
-		versions = append(versions, store.EmbedGenStamp{ID: id, LastModified: row.LastModified})
+		versions = append(versions, store.EmbedGenStamp{
+			ID: id, LastModified: row.LastModified, EmbeddingRevision: row.EmbeddingRevision,
+		})
 	}
 	conversation, found, err := snapshot.Conversation(f.t.Context(), f.conversationID)
 	require.NoError(f.t, err)
@@ -240,6 +242,25 @@ func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
 	require.NoError(err)
 	assert.False(stamped)
 	assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens())
+}
+
+func TestSetEmbedGenGroupIfUnchanged_EmbeddingRevisionChangesStampNone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEmbedGenGroupFixture(t, 2)
+	versions, metadata := f.snapshot()
+	require.Len(versions, 2)
+
+	// Keep last_modified unchanged so this proves the source-input revision is
+	// independently part of the contextual publication compare-and-set.
+	f.exec(`UPDATE messages SET embedding_revision = embedding_revision + 1 WHERE id = ?`, f.messageIDs[1])
+	f.exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, versions[1].LastModified, f.messageIDs[1])
+
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	require.NoError(err)
+	assert.False(stamped)
+	assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens(),
+		"one changed source revision must prevent every member from being covered")
 }
 
 func TestSetEmbedGenGroupIfUnchanged_MissingDeletedAndDuplicateMembers(t *testing.T) {

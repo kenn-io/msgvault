@@ -397,7 +397,11 @@ func (b *Backend) fusedSearchExact(ctx context.Context, req vector.FusedRequest)
 		recipientAnyGroupSQL, toGroupSQL, ccGroupSQL, bccGroupSQL, labelGroupSQL, listIDSQL+"\n"+filenameSQL)
 	embeddingFreshSQL := ""
 	if b.policyStore != nil {
-		embeddingFreshSQL = `AND message_id IN (SELECT id FROM messages WHERE embed_gen = :gen)`
+		embeddingFreshSQL = `AND EXISTS (
+			SELECT 1 FROM messages m
+			 WHERE m.id = ve.message_id
+			   AND ve.embedding_revision = m.embedding_revision
+		)`
 	}
 	var accountArgs []any
 	if clauses := search.AccountScopeConditionsBound(req.Filter.AccountScopes, "m", func(v any) string {
@@ -440,9 +444,9 @@ WITH
      WHERE :query_vec IS NOT NULL
        AND v.generation_id = :gen
        AND v.embedding_id IN (
-            SELECT embedding_id FROM vec.embeddings
-             WHERE generation_id = :gen
-               AND message_id IN (SELECT id FROM filtered)
+            SELECT ve.embedding_id FROM vec.embeddings ve
+             WHERE ve.generation_id = :gen
+               AND ve.message_id IN (SELECT id FROM filtered)
                %s
        )
        AND v.embedding MATCH :query_vec

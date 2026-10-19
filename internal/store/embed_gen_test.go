@@ -62,6 +62,45 @@ func seedEmbedScopeFixture(t *testing.T, st *store.Store) embedScopeFixture {
 	return fx
 }
 
+func TestMessageEmbeddingRevisionBaselineMigration(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "embedding-revision-baseline")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(
+		source.ID, "revision-baseline", "email_thread", "Revision baseline")
+	requirements.NoError(err)
+	staleID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-unstamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	currentID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "legacy-stamped",
+		ConversationID: conversationID, MessageType: "email",
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetEmbedGen(t.Context(), []int64{currentID}, 7))
+	_, err = st.DB().Exec(st.Rebind(`DELETE FROM applied_migrations WHERE name = ?`),
+		"message_embedding_revision_baseline_v1")
+	requirements.NoError(err)
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	var staleRevision, currentRevision int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), currentID).Scan(&currentRevision))
+	assertions.Equal(int64(1), staleRevision, "legacy NULL stamps must invalidate pre-revision vectors")
+	assertions.Zero(currentRevision, "currently stamped vectors keep their original revision")
+
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id = ?`), staleID).Scan(&staleRevision))
+	assertions.Equal(int64(1), staleRevision, "the baseline migration must be idempotent")
+}
+
 func TestScanForEmbeddingScopedFiltersBySource(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

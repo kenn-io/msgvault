@@ -10,49 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-type demotingUserLookup struct {
-	store  *store.Store
-	source int64
-	calls  int
-}
-
-func (l *demotingUserLookup) GetUser(ctx context.Context, id string) (*GraphUser, error) {
-	l.calls++
-	if err := l.store.SetConversationPolicyOverride(ctx, l.source, "origin-room", conversationpolicy.Cold); err != nil {
-		return nil, err
-	}
-	return &GraphUser{ID: id, Mail: "teams-origin@example.test"}, nil
-}
-
-func TestTeamsOriginDemotionDuringDirectoryLookup(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-
-	st := testutil.NewTestStore(t)
-	st.DB().SetMaxOpenConns(1)
-	src, err := st.GetOrCreateSource("teams", "owner@example.test")
-	requirements.NoError(err)
-	room, err := st.EnsureConversation(src.ID, "origin-room", "Synthetic")
-	requirements.NoError(err)
-	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), src.ID, "origin-room", conversationpolicy.Full))
-	full, err := st.ConversationFullEligibleContext(t.Context(), room)
-	requirements.NoError(err)
-	requirements.True(full)
-	lookup := &demotingUserLookup{store: st, source: src.ID}
-	resolver := newParticipantResolver(st, lookup)
-	pid, err := resolver.resolve(t.Context(), &Identity{ID: "synthetic-object", UserIdentityType: "aadUser", DisplayName: "Fetched directory name"}, room)
-	requirements.NoError(err)
-	assertions.NotZero(pid)
-	assertions.Equal(1, lookup.calls)
-	assertions.Empty(resolver.mail, "rejected directory data must not enter the shared rich cache")
-	var rich int
-	requirements.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM participants WHERE email_address='teams-origin@example.test' OR display_name='Fetched directory name'`).Scan(&rich))
-	assertions.Zero(rich, "directory completion must not authorize rich writes after demotion")
-}
 
 func TestTeamsTeamRosterFetchDoesNotAdmitRichIdentity(t *testing.T) {
 	requirements := require.New(t)

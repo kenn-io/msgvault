@@ -154,7 +154,7 @@ func (s *Store) ReconcileConversationPolicyMissingVectors(ctx context.Context, s
 			scanned = len(ids)
 			for _, id := range ids {
 				afterMessage = id
-				if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL WHERE id=?`, id); err != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1 WHERE id=?`, id); err != nil {
 					return err
 				}
 			}

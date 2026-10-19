@@ -42,13 +42,20 @@ func newPolicyBackend(t *testing.T) (*Backend, *store.Store, int64, int64, vecto
 	return b, st, src.ID, id, gen
 }
 
+func policyChunk(t *testing.T, st *store.Store, messageID int64, values []float32) vector.Chunk {
+	t.Helper()
+	var revision int64
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&revision))
+	return vector.Chunk{MessageID: messageID, Vector: values, EmbeddingRevision: revision}
+}
+
 func TestBackendColdPolicySearchUpsertAndPrune(t *testing.T) {
 	b, st, sourceID, id, gen := newPolicyBackend(t)
 	require.ErrorIs(t, b.Upsert(t.Context(), gen, []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}), store.ErrConversationPolicyStale)
 	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "room", conversationpolicy.Full))
 	admitted, err := st.CaptureConversationPolicyWork(t.Context())
 	require.NoError(t, err)
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(admitted, gen, chunks))
 	scopes := []vector.DocumentScopePublication{{ScopeKey: "policy-scope", SourceSequence: 1, Documents: []vector.DocumentPublication{{Key: "policy-doc", Kind: "message", Revision: "one", SourceSequence: 1, Members: []int64{id}}}, Chunks: chunks}}
 	require.NoError(t, b.PublishScopes(admitted, gen, scopes))
@@ -88,7 +95,7 @@ func TestLoadVectorRejectsColdConversationSeed(t *testing.T) {
 	b, st, sourceID, id, gen := newPolicyBackend(t)
 	ctx := t.Context()
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
 	got, err := b.LoadVector(ctx, id)
@@ -104,7 +111,7 @@ func TestContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
 	b, st, sourceID, id, gen := newPolicyBackend(t)
 	ctx := t.Context()
 	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(ctx, gen, chunks))
 	require.NoError(t, st.SetEmbedGen(ctx, []int64{id}, int64(gen)))
 	require.NoError(t, b.ActivateGeneration(ctx, gen, true))
@@ -119,10 +126,10 @@ func TestContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, chunksScored, 1)
 
-	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET embed_gen=NULL WHERE id=?`), id)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1 WHERE id=?`), id)
 	require.NoError(t, err)
 	_, err = b.LoadVector(ctx, id)
-	assert.Error(t, err, "a stale embedding cannot seed a contextual query")
+	require.Error(t, err, "a stale embedding cannot seed a contextual query")
 	hits, err = b.Search(ctx, gen, chunks[0].Vector, 10, vector.Filter{})
 	require.NoError(t, err)
 	assert.Empty(t, hits, "an unstamped embedding cannot appear in vector search")
@@ -144,13 +151,43 @@ func TestContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
 	assert.Empty(t, fused, "a vector-only fused query excludes stale embeddings")
 }
 
+func TestActiveGenerationVectorsSurvivePartialSameModelRebuild(t *testing.T) {
+	b, st, sourceID, firstID, active := newPolicyBackend(t)
+	ctx := t.Context()
+	require.NoError(t, st.SetConversationPolicyOverride(ctx, sourceID, "room", conversationpolicy.Full))
+	room, err := st.EnsureConversation(sourceID, "room", "Room")
+	require.NoError(t, err)
+	secondID, err := st.UpsertMessage(&store.Message{SourceID: sourceID, ConversationID: room, SourceMessageID: "second", MessageType: "beeper", Subject: sql.NullString{String: "second policy message", Valid: true}})
+	require.NoError(t, err)
+	firstChunks := []vector.Chunk{policyChunk(t, st, firstID, []float32{1, 0, 0, 0})}
+	secondChunks := []vector.Chunk{policyChunk(t, st, secondID, []float32{0, 1, 0, 0})}
+	require.NoError(t, b.Upsert(ctx, active, firstChunks))
+	require.NoError(t, b.Upsert(ctx, active, secondChunks))
+	require.NoError(t, st.SetEmbedGen(ctx, []int64{firstID, secondID}, int64(active)))
+	require.NoError(t, b.ActivateGeneration(ctx, active, true))
+
+	building, err := b.CreateGeneration(ctx, "policy-test", 4, "")
+	require.NoError(t, err)
+	require.NoError(t, b.Upsert(ctx, building, firstChunks))
+	require.NoError(t, st.SetEmbedGen(ctx, []int64{firstID}, int64(building)))
+
+	loaded, err := b.LoadVector(ctx, firstID)
+	require.NoError(t, err)
+	assert.Equal(t, firstChunks[0].Vector, loaded)
+	hits, err := b.Search(ctx, active, []float32{1, 0, 0, 0}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.ElementsMatch(t, []int64{firstID, secondID}, []int64{hits[0].MessageID, hits[1].MessageID})
+}
+
 func TestColdPolicyCleanupRetainsRepublishedPromotion(t *testing.T) {
 	b, st, sourceID, id, gen := newPolicyBackend(t)
 	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(t.Context(), gen, chunks))
 	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "room", conversationpolicy.Cold))
 	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "room", conversationpolicy.Full))
+	chunks = []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(t.Context(), gen, chunks))
 	n, err := b.PruneIneligibleEmbeddings(t.Context())
 	require.NoError(t, err)
@@ -163,7 +200,7 @@ func TestColdPolicyCleanupRetainsRepublishedPromotion(t *testing.T) {
 func TestBackendColdPolicyAcceleratorPrune(t *testing.T) {
 	b, st, sourceID, id, gen := newPolicyBackend(t)
 	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), sourceID, "room", conversationpolicy.Full))
-	chunks := []vector.Chunk{{MessageID: id, Vector: []float32{1, 0, 0, 0}}}
+	chunks := []vector.Chunk{policyChunk(t, st, id, []float32{1, 0, 0, 0})}
 	require.NoError(t, b.Upsert(t.Context(), gen, chunks))
 	installReadyFlatAccelerator(t, b, gen, 4)
 	require.NoError(t, b.ActivateGeneration(t.Context(), gen, true))
@@ -237,7 +274,7 @@ func TestColdPolicyLedgerBatchReleasesForPromotion(t *testing.T) {
 	var ids []int64
 	for _, doc := range docs {
 		ids = append(ids, doc.Members[0])
-		chunks = append(chunks, vector.Chunk{MessageID: doc.Members[0], Vector: []float32{1, 0, 0, 0}})
+		chunks = append(chunks, policyChunk(t, st, doc.Members[0], []float32{1, 0, 0, 0}))
 	}
 	require.NoError(t, b.PublishScopes(ctx, gen, []vector.DocumentScopePublication{{ScopeKey: "zero-chunks", SourceSequence: 1, Documents: docs, Chunks: chunks}}))
 	require.NoError(t, b.Delete(ctx, gen, ids))

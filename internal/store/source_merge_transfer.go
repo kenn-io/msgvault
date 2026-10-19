@@ -59,6 +59,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if _, err := tx.ExecContext(ctx, incoming+`UPDATE messages SET source_id = ?,
  conversation_id = (SELECT conversation_id FROM incoming WHERE incoming.id = messages.id),
  source_message_id = (SELECT archival_id FROM incoming WHERE incoming.id = messages.id), embed_gen = NULL,
+ embedding_revision = embedding_revision + 1,
  deleted_at = CASE WHEN deleted_from_source_at IS NULL AND
  (SELECT survivor_id FROM incoming WHERE incoming.id = messages.id) IS NOT NULL
  THEN COALESCE(deleted_at, `+s.dialect.Now()+`) ELSE deleted_at END
@@ -332,7 +333,7 @@ func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, or
 		}
 	}
 
-	_, err = tx.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id),
+	_, err = tx.ExecContext(ctx, `UPDATE messages SET embed_gen = NULL, embedding_revision = embedding_revision + 1, attachment_count = (SELECT COUNT(*) FROM attachments WHERE message_id = messages.id),
  has_attachments = EXISTS (SELECT 1 FROM attachments WHERE message_id = messages.id) WHERE id = ?`, into)
 	return err
 }

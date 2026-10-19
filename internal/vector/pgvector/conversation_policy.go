@@ -32,19 +32,11 @@ func (b *Backend) liveMessageWhere(alias string) string {
 	return where
 }
 
-// embeddedMessageWhere hides vectors that no longer match the message's
-// current embed_gen watermark. Conversation-policy lifecycle changes clear
-// that watermark before a changed room roster can leave old contextual text
-// visible through vector search.
-func (b *Backend) embeddedMessageWhere(alias string, gen vector.GenerationID) string {
-	where := b.liveMessageWhere(alias)
-	if b.policyStore != nil {
-		if alias == "" {
-			alias = "messages"
-		}
-		where += fmt.Sprintf(" AND %s.embed_gen = %d", alias, int64(gen))
-	}
-	return where
+// embeddedMessageWhere admits only live, policy-eligible message vectors
+// whose input revision still matches the archive row. embed_gen tracks work
+// coverage for one build generation and is not a publication-validity token.
+func (b *Backend) embeddedMessageWhere(embeddingAlias string) string {
+	return b.liveMessageWhere("m") + fmt.Sprintf(" AND %s.embedding_revision = m.embedding_revision", embeddingAlias)
 }
 
 // prunePolicyLedgerBatch bounds both member and document mutations, including

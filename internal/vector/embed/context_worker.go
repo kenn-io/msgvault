@@ -1058,7 +1058,8 @@ func terminalBlankVersions(scope preparedScope) []store.EmbedGenStamp {
 		if _, ok := assembled[version.MessageID]; ok {
 			continue
 		}
-		blank = append(blank, store.EmbedGenStamp{ID: version.MessageID, LastModified: version.LastModified})
+		blank = append(blank, store.EmbedGenStamp{ID: version.MessageID,
+			LastModified: version.LastModified, EmbeddingRevision: version.EmbeddingRevision})
 	}
 	return blank
 }
@@ -1274,10 +1275,15 @@ func buildDocumentPublication(docs []Document, vectors [][][]float32, preserved 
 		for _, owned := range doc.Chunks {
 			sourceLengths[owned.MessageID] = max(sourceLengths[owned.MessageID], owned.SourceCharEnd)
 		}
+		embeddingRevisions := make(map[int64]int64, len(doc.Versions))
+		for _, version := range doc.Versions {
+			embeddingRevisions[version.MessageID] = version.EmbeddingRevision
+		}
 		for j, owned := range doc.Chunks {
 			chunks = append(chunks, vector.Chunk{MessageID: owned.MessageID,
 				ChunkIndex: owned.ChunkIndex, Vector: vectors[i][j],
-				SourceCharLen: sourceLengths[owned.MessageID], ChunkCharStart: owned.SourceCharStart,
+				EmbeddingRevision: embeddingRevisions[owned.MessageID],
+				SourceCharLen:     sourceLengths[owned.MessageID], ChunkCharStart: owned.SourceCharStart,
 				ChunkCharEnd: owned.SourceCharEnd, SourceBasis: owned.SourceBasis, Truncated: owned.Truncated})
 		}
 	}
@@ -1318,7 +1324,8 @@ func scopeCASTokens(docs []Document) ([]store.EmbedGenStamp, store.EmbedGenMetad
 				return nil, metadata, fmt.Errorf("contextual scope contains duplicate member %d", version.MessageID)
 			}
 			seen[version.MessageID] = struct{}{}
-			versions = append(versions, store.EmbedGenStamp{ID: version.MessageID, LastModified: version.LastModified})
+			versions = append(versions, store.EmbedGenStamp{ID: version.MessageID,
+				LastModified: version.LastModified, EmbeddingRevision: version.EmbeddingRevision})
 		}
 	}
 	sort.Slice(versions, func(i, j int) bool { return versions[i].ID < versions[j].ID })

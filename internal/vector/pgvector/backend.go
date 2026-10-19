@@ -779,8 +779,8 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO embeddings
 		  (generation_id, message_id, chunk_index, embedded_at, source_char_len,
-		   chunk_char_start, chunk_char_end, truncated, dimension, embedding, source_basis)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11)`)
+		   chunk_char_start, chunk_char_end, truncated, dimension, embedding, source_basis, embedding_revision)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::vector, $11, $12)`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
 	}
@@ -790,7 +790,7 @@ func (b *Backend) Upsert(ctx context.Context, gen vector.GenerationID, chunks []
 		if _, err := stmt.ExecContext(ctx,
 			int64(gen), c.MessageID, c.ChunkIndex, now, c.SourceCharLen,
 			c.ChunkCharStart, c.ChunkCharEnd, c.Truncated, dim,
-			vectorLiteral(c.Vector), int(c.SourceBasis),
+			vectorLiteral(c.Vector), int(c.SourceBasis), c.EmbeddingRevision,
 		); err != nil {
 			return fmt.Errorf("insert embedding for msg %d chunk %d: %w", c.MessageID, c.ChunkIndex, err)
 		}
@@ -969,7 +969,7 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// today) treats embeddings as message-level. Mirrors sqlitevec.
 	policyClause := ""
 	if b.policyStore != nil {
-		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = embeddings.message_id AND " + b.embeddedMessageWhere("m", active.ID) + ")"
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = embeddings.message_id AND " + b.embeddedMessageWhere("embeddings") + ")"
 	}
 	var lit string
 	err = q.QueryRowContext(ctx,
@@ -1103,7 +1103,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 			       ) ann
 			 GROUP BY ann.message_id
 			 ORDER BY distance, ann.message_id
-			 LIMIT $4`, dim, b.embeddedMessageWhere("m", gen))
+			 LIMIT $4`, dim, b.embeddedMessageWhere("e"))
 		// Empty-filter path: the candidate universe is the whole
 		// generation, so the inner-LIMIT ceiling is the generation chunk
 		// count and there is no separate distinct-message early exit
@@ -1195,7 +1195,7 @@ func (b *Backend) Search(ctx context.Context, gen vector.GenerationID, queryVec 
 // matching ids through Go. Filter values are bound via the supplied bind
 // closure; the live + filter clauses all reference the inner alias `m`. [V2].
 func (b *Backend) filterExistsClause(embedAlias string, f vector.Filter, gen vector.GenerationID, bind func(any) string) string {
-	clauses := append([]string{b.embeddedMessageWhere("m", gen)}, buildPGFilterClauses(f, bind)...)
+	clauses := append([]string{b.embeddedMessageWhere("e")}, buildPGFilterClauses(f, bind)...)
 	return fmt.Sprintf(
 		"EXISTS (SELECT 1 FROM messages m WHERE m.id = %s.message_id AND %s)",
 		embedAlias, strings.Join(clauses, " AND "))
@@ -1589,6 +1589,7 @@ func (b *Backend) Stats(ctx context.Context, gen vector.GenerationID) (vector.St
 func (b *Backend) EmbeddedMessageCount(ctx context.Context, gen vector.GenerationID) (int64, error) {
 	where := `e.generation_id = $1
 		    AND m.embed_gen = $1
+		    AND e.embedding_revision = m.embedding_revision
 		    AND ` + b.liveMessageWhere("m")
 	scopeWhere, scopeArgs := messageScopeWhere(b.scope, 2)
 	where += scopeWhere
@@ -1620,6 +1621,7 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		WHERE e.generation_id = $1
 		  AND e.message_id = ANY($2)
 		  AND m.embed_gen = $1
+		  AND e.embedding_revision = m.embedding_revision
 		  AND `+b.liveMessageWhere("m"),
 		int64(gen), messageIDs).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
@@ -1641,7 +1643,8 @@ func (b *Backend) EmbeddingCoverage(
 		       COUNT(*) FILTER (WHERE m.embed_gen = $1),
 		       COUNT(*) FILTER (WHERE m.embed_gen = $1 AND EXISTS (
 		           SELECT 1 FROM embeddings e
-		           WHERE e.generation_id = $1 AND e.message_id = m.id))
+		           WHERE e.generation_id = $1 AND e.message_id = m.id
+		             AND e.embedding_revision = m.embedding_revision))
 		FROM messages m
 		WHERE `+b.liveMessageWhere("m")+scopeWhere,
 		args...).Scan(&coverage.Live, &coverage.Stamped, &coverage.Embedded); err != nil {
@@ -1699,7 +1702,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 
 	policyClause := ""
 	if b.policyStore != nil {
-		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id=embeddings.message_id AND " + b.embeddedMessageWhere("m", gen) + ")"
+		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id=embeddings.message_id AND " + b.embeddedMessageWhere("embeddings") + ")"
 	}
 	stmt := fmt.Sprintf(`
 		SELECT chunk_index, chunk_char_start, chunk_char_end, source_basis,

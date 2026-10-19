@@ -44,8 +44,10 @@ func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing
 	requirements.NoError(err)
 	nativeSource, err := s.GetOrCreateSource("whatsapp", "synthetic-native-archive")
 	requirements.NoError(err)
+	nativeRoom, err := s.EnsureConversation(nativeSource.ID, "native-chat", "Synthetic native chat")
+	requirements.NoError(err)
 	_, err = s.UpsertMessageContext(ctx, &store.Message{
-		SourceID: nativeSource.ID, SourceMessageID: "native-phone-support", MessageType: "whatsapp",
+		SourceID: nativeSource.ID, ConversationID: nativeRoom, SourceMessageID: "native-phone-support", MessageType: "whatsapp",
 		SenderID: sql.NullInt64{Int64: nativeParticipant, Valid: true},
 	})
 	requirements.NoError(err)

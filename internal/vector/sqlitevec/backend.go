@@ -888,8 +888,8 @@ func insertMessageChunks(
 	}
 	embedStmt, err := tx.PrepareContext(ctx, `INSERT INTO embeddings
 		(generation_id, message_id, chunk_index, embedded_at,
-		 source_char_len, chunk_char_start, chunk_char_end, truncated, source_basis)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 source_char_len, chunk_char_start, chunk_char_end, truncated, source_basis, embedding_revision)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING embedding_id`)
 	if err != nil {
 		return fmt.Errorf("prepare embeddings insert: %w", err)
@@ -918,7 +918,7 @@ func insertMessageChunks(
 		if err := embedStmt.QueryRowContext(ctx,
 			int64(gen), chunk.MessageID, chunk.ChunkIndex, now,
 			chunk.SourceCharLen, chunk.ChunkCharStart, chunk.ChunkCharEnd,
-			truncated, int(chunk.SourceBasis),
+			truncated, int(chunk.SourceBasis), chunk.EmbeddingRevision,
 		).Scan(&embeddingID); err != nil {
 			return fmt.Errorf("insert embedding (msg %d chunk %d): %w", chunk.MessageID, chunk.ChunkIndex, err)
 		}
@@ -1069,14 +1069,21 @@ func blobToFloat32(b []byte, dim int) ([]float32, error) {
 // generation exists, or a descriptive error if the message is not
 // embedded in the active generation.
 func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, error) {
+	release, err := b.acquirePolicyPublication(ctx, []int64{messageID})
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	var currentRevision int64
 	if b.policyStore != nil {
-		release, err := b.policyStore.AcquireSQLiteConversationPolicyFence(ctx, store.ConversationPolicyShared)
+		revisions, err := b.currentEmbeddingRevisions(ctx, []int64{messageID})
 		if err != nil {
 			return nil, err
 		}
-		defer release()
-		if err := b.policyStore.CheckSQLiteConversationPolicyPublication(ctx, []int64{messageID}); err != nil {
-			return nil, err
+		var ok bool
+		currentRevision, ok = revisions[messageID]
+		if !ok {
+			return nil, fmt.Errorf("no eligible embedding for message %d", messageID)
 		}
 	}
 	active, err := b.ActiveGeneration(ctx)
@@ -1090,25 +1097,34 @@ func (b *Backend) LoadVector(ctx context.Context, messageID int64) ([]float32, e
 	// they treat embeddings as message-level. vecTable name derives
 	// from VectorTableName(active.Dimension) where dimension is sourced
 	// from index_generations; safe to interpolate.
-	policyClause := ""
-	if b.policyStore != nil {
-		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND " + b.embeddedMessageWhere("m", active.ID) + ")"
-	}
 	q := fmt.Sprintf(`
-		SELECT v.embedding
+		SELECT e.embedding_revision, v.embedding
 		  FROM %s v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id = ?
-		   AND e.chunk_index = 0`+policyClause,
+		   AND e.chunk_index = 0`,
 		VectorTableName(active.Dimension))
 	var blob []byte
-	err = b.db.QueryRowContext(ctx, q, int64(active.ID), messageID).Scan(&blob)
+	var vectorRevision int64
+	err = b.db.QueryRowContext(ctx, q, int64(active.ID), messageID).Scan(&vectorRevision, &blob)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no embedding for message %d in generation %d", messageID, active.ID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load vector for message %d: %w", messageID, err)
+	}
+	if b.policyStore != nil {
+		if vectorRevision != currentRevision {
+			return nil, fmt.Errorf("no current embedding for message %d in generation %d", messageID, active.ID)
+		}
+		latest, err := b.currentEmbeddingRevisions(ctx, []int64{messageID})
+		if err != nil {
+			return nil, err
+		}
+		if latest[messageID] != currentRevision {
+			return nil, fmt.Errorf("embedding inputs changed while loading message %d", messageID)
+		}
 	}
 	return blobToFloat32(blob, active.Dimension)
 }
@@ -1204,13 +1220,13 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		// rest. Order applies after the group, so the ranking is by
 		// best-chunk distance per message.
 		q := fmt.Sprintf(`
-			SELECT e.message_id, MIN(v.distance) AS distance
+			SELECT e.message_id, e.embedding_revision, MIN(v.distance) AS distance
 			  FROM %s v
 			  JOIN embeddings e ON e.embedding_id = v.embedding_id
 			 WHERE v.generation_id = ?
 			   AND v.embedding MATCH ?
 			   AND k = ?
-			 GROUP BY e.message_id
+			 GROUP BY e.message_id, e.embedding_revision
 			 ORDER BY distance ASC
 		`, vecTable)
 		// Start with room for ordinary chunk duplication and deletions.
@@ -1221,11 +1237,11 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 			if fetch > chunkCeiling {
 				fetch = chunkCeiling
 			}
-			hits, err := b.scanHits(ctx, q, int64(gen), float32SliceBlob(queryVec), fetch)
+			revisionHits, err := b.scanRevisionHits(ctx, q, int64(gen), float32SliceBlob(queryVec), fetch)
 			if err != nil {
 				return nil, err
 			}
-			filtered, err := b.dropDeletedFromSource(ctx, hits, gen)
+			filtered, err := b.filterCurrentRevisionHits(ctx, revisionHits)
 			if err != nil {
 				return nil, err
 			}
@@ -1288,14 +1304,14 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 	}
 
 	q := fmt.Sprintf(`
-		SELECT e.message_id, MIN(v.distance) AS distance
+		SELECT e.message_id, e.embedding_revision, MIN(v.distance) AS distance
 		  FROM %s v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = ?
 		   AND v.embedding MATCH ?
 		   AND k = ?
 		   %s
-		 GROUP BY e.message_id
+		 GROUP BY e.message_id, e.embedding_revision
 		 ORDER BY distance ASC
 	`, vecTable, idClause)
 
@@ -1308,7 +1324,11 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		allArgs = append(allArgs, int64(gen), float32SliceBlob(queryVec), fetch)
 		allArgs = append(allArgs, filterArgs...)
 
-		hits, err := b.scanHits(ctx, q, allArgs...)
+		revisionHits, err := b.scanRevisionHits(ctx, q, allArgs...)
+		if err != nil {
+			return nil, err
+		}
+		hits, err := b.filterCurrentRevisionHits(ctx, revisionHits)
 		if err != nil {
 			return nil, err
 		}
@@ -1339,28 +1359,69 @@ const chunkOverfetchFactor = 4
 // scanHits runs an ANN query and materializes hits in distance order
 // (higher score = better). Extracted so Search can share the scan
 // logic between its empty-filter fast path and the filtered path.
-func (b *Backend) scanHits(ctx context.Context, query string, args ...any) ([]vector.Hit, error) {
+type revisionHit struct {
+	messageID int64
+	revision  int64
+	score     float64
+}
+
+func (b *Backend) scanRevisionHits(ctx context.Context, query string, args ...any) ([]revisionHit, error) {
 	rows, err := b.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ann query: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var hits []vector.Hit
-	for i := 1; rows.Next(); i++ {
-		var id int64
+	var hits []revisionHit
+	for rows.Next() {
+		var hit revisionHit
 		var dist float64
-		if err := rows.Scan(&id, &dist); err != nil {
+		if err := rows.Scan(&hit.messageID, &hit.revision, &dist); err != nil {
 			return nil, fmt.Errorf("scan hit: %w", err)
 		}
-		hits = append(hits, vector.Hit{
-			MessageID: id,
-			Score:     1.0 - dist,
-			Rank:      i,
-		})
+		hit.score = 1.0 - dist
+		hits = append(hits, hit)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate hits: %w", err)
+	}
+	return hits, nil
+}
+
+// filterCurrentRevisionHits removes chunks built from stale message or
+// contextual inputs. The main archive and vectors.db are separate SQLite
+// databases, so compare the captured vector revision with the live archive
+// revision after retrieval and rerank the surviving message hits.
+func (b *Backend) filterCurrentRevisionHits(ctx context.Context, candidates []revisionHit) ([]vector.Hit, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, 0, len(candidates))
+	seen := make(map[int64]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := seen[candidate.messageID]; ok {
+			continue
+		}
+		seen[candidate.messageID] = struct{}{}
+		ids = append(ids, candidate.messageID)
+	}
+	var current map[int64]int64
+	var err error
+	if b.policyStore != nil {
+		current, err = b.currentEmbeddingRevisions(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+	}
+	hits := make([]vector.Hit, 0, len(candidates))
+	for _, candidate := range candidates {
+		if b.policyStore != nil && current[candidate.messageID] != candidate.revision {
+			continue
+		}
+		hits = append(hits, vector.Hit{MessageID: candidate.messageID, Score: candidate.score})
+	}
+	for i := range hits {
+		hits[i].Rank = i + 1
 	}
 	return hits, nil
 }
@@ -1428,7 +1489,7 @@ func (b *Backend) dropDeletedFromSource(ctx context.Context, hits []vector.Hit, 
 	}
 	q := `SELECT m.id FROM messages m
 	       WHERE id IN (SELECT value FROM json_each(?))
-	         AND ` + b.embeddedMessageWhere("m", gen)
+	         AND ` + b.liveMessageWhere("m")
 	rows, err := b.mainDB.QueryContext(ctx, q, string(blob))
 	if err != nil {
 		return nil, fmt.Errorf("live-hit filter: %w", err)
@@ -1486,9 +1547,6 @@ func (b *Backend) filteredMessageIDsLimitWithGeneration(ctx context.Context, f v
 		}
 	}
 	liveWhere := b.liveMessageWhere("m")
-	if gen != nil {
-		liveWhere = b.embeddedMessageWhere("m", *gen)
-	}
 	clauses := []string{liveWhere}
 	accountClauses, args := search.AccountScopeConditions(f.AccountScopes, "m")
 	clauses = append(clauses, accountClauses...)
@@ -2203,40 +2261,42 @@ func (b *Backend) EmbeddedMessageCountForIDs(ctx context.Context, gen vector.Gen
 		return 0, fmt.Errorf("encode coverage message ids: %w", err)
 	}
 	rows, err := b.mainDB.QueryContext(ctx, `
-		SELECT id
-		FROM messages
-		WHERE id IN (SELECT value FROM json_each(?))
-		  AND embed_gen = ?
-		  AND `+b.liveMessageWhere(""), string(encoded), int64(gen))
+		SELECT m.id, m.embedding_revision
+		FROM messages m
+		WHERE m.id IN (SELECT value FROM json_each(?))
+		  AND m.embed_gen = ?
+		  AND `+b.liveMessageWhere("m"), string(encoded), int64(gen))
 	if err != nil {
 		return 0, fmt.Errorf("list live stamped coverage messages: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	liveStampedIDs := make([]int64, 0, len(messageIDs))
+	revisions := make(map[int64]int64, len(messageIDs))
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var id, revision int64
+		if err := rows.Scan(&id, &revision); err != nil {
 			return 0, fmt.Errorf("scan live stamped coverage message: %w", err)
 		}
-		liveStampedIDs = append(liveStampedIDs, id)
+		revisions[id] = revision
 	}
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("iterate live stamped coverage messages: %w", err)
 	}
-	if len(liveStampedIDs) == 0 {
+	if len(revisions) == 0 {
 		return 0, nil
 	}
-	encoded, err = json.Marshal(liveStampedIDs, json.Deterministic(true))
+	revisionPairs, err := encodeEmbeddingRevisionPairs(revisions)
 	if err != nil {
-		return 0, fmt.Errorf("encode live stamped coverage ids: %w", err)
+		return 0, err
 	}
 	var count int64
 	if err := b.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT message_id)
-		FROM embeddings
-		WHERE generation_id = ?
-		  AND message_id IN (SELECT value FROM json_each(?))`,
-		int64(gen), string(encoded)).Scan(&count); err != nil {
+		SELECT COUNT(DISTINCT e.message_id)
+		FROM embeddings e
+		WHERE e.generation_id = ?
+		  AND EXISTS (SELECT 1 FROM json_each(?) pair
+		               WHERE json_extract(pair.value, '$[0]') = e.message_id
+		                 AND json_extract(pair.value, '$[1]') = e.embedding_revision)`,
+		int64(gen), revisionPairs).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count filtered embedded messages: %w", err)
 	}
 	return count, nil
@@ -2258,13 +2318,43 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 	if err != nil {
 		return 0, fmt.Errorf("encode coverage snapshot message ids: %w", err)
 	}
+	rows, err := b.mainDB.QueryContext(ctx, `
+		SELECT m.id, m.embedding_revision
+		FROM messages m
+		WHERE m.id IN (SELECT value FROM json_each(?))
+		  AND m.embed_gen = ?
+		  AND `+b.liveMessageWhere("m"), string(encoded), int64(gen))
+	if err != nil {
+		return 0, fmt.Errorf("list current snapshot coverage messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	revisions := make(map[int64]int64, len(stampedMessageIDs))
+	for rows.Next() {
+		var id, revision int64
+		if err := rows.Scan(&id, &revision); err != nil {
+			return 0, fmt.Errorf("scan current snapshot coverage message: %w", err)
+		}
+		revisions[id] = revision
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("iterate current snapshot coverage messages: %w", err)
+	}
+	if len(revisions) == 0 {
+		return 0, nil
+	}
+	revisionPairs, err := encodeEmbeddingRevisionPairs(revisions)
+	if err != nil {
+		return 0, err
+	}
 	var count int64
 	if err := b.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT message_id)
-		FROM embeddings
-		WHERE generation_id = ?
-		  AND message_id IN (SELECT value FROM json_each(?))`,
-		int64(gen), string(encoded)).Scan(&count); err != nil {
+		SELECT COUNT(DISTINCT e.message_id)
+		FROM embeddings e
+		WHERE e.generation_id = ?
+		  AND EXISTS (SELECT 1 FROM json_each(?) pair
+		               WHERE json_extract(pair.value, '$[0]') = e.message_id
+		                 AND json_extract(pair.value, '$[1]') = e.embedding_revision)`,
+		int64(gen), revisionPairs).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count snapshot embedded messages: %w", err)
 	}
 	return count, nil
@@ -2273,15 +2363,25 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 // ScoreMessageChunks scores every embedded chunk of messageID in gen
 // against queryVec. Results are sorted by score descending (best first).
 func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error) {
+	release, err := b.acquirePolicyPublication(ctx, []int64{messageID})
+	if errors.Is(err, store.ErrConversationPolicyStale) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	var currentRevision int64
 	if b.policyStore != nil {
-		release, err := b.acquirePolicyPublication(ctx, []int64{messageID})
-		if errors.Is(err, store.ErrConversationPolicyStale) {
-			return nil, nil
-		}
+		revisions, err := b.currentEmbeddingRevisions(ctx, []int64{messageID})
 		if err != nil {
 			return nil, err
 		}
-		defer release()
+		var ok bool
+		currentRevision, ok = revisions[messageID]
+		if !ok {
+			return nil, nil
+		}
 	}
 
 	if len(queryVec) == 0 {
@@ -2289,7 +2389,7 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 
 	var dim int
-	err := b.db.QueryRowContext(ctx,
+	err = b.db.QueryRowContext(ctx,
 		`SELECT dimension FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
@@ -2303,18 +2403,13 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 	vecTable := VectorTableName(dim)
 
-	policyClause := ""
-	if b.policyStore != nil {
-		policyClause = " AND EXISTS (SELECT 1 FROM messages m WHERE m.id = e.message_id AND " + b.embeddedMessageWhere("m", gen) + ")"
-	}
 	q := fmt.Sprintf(`
-		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis, v.embedding
+		SELECT e.embedding_revision, e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis, v.embedding
 		  FROM embeddings e
 		  JOIN %s v ON v.embedding_id = e.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id = ?
-		   %s
-		 ORDER BY e.chunk_index ASC`, vecTable, policyClause)
+		 ORDER BY e.chunk_index ASC`, vecTable)
 
 	rows, err := b.db.QueryContext(ctx, q, int64(gen), messageID)
 	if err != nil {
@@ -2324,11 +2419,15 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 
 	var hits []vector.ChunkHit
 	for rows.Next() {
+		var revision int64
 		var idx, start, end int
 		var basis vector.SourceBasis
 		var blob []byte
-		if err := rows.Scan(&idx, &start, &end, &basis, &blob); err != nil {
+		if err := rows.Scan(&revision, &idx, &start, &end, &basis, &blob); err != nil {
 			return nil, fmt.Errorf("scan chunk row: %w", err)
+		}
+		if b.policyStore != nil && revision != currentRevision {
+			continue
 		}
 		vec, err := blobToFloat32(blob, dim)
 		if err != nil {
@@ -2345,6 +2444,15 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate chunk rows: %w", err)
+	}
+	if b.policyStore != nil {
+		latest, err := b.currentEmbeddingRevisions(ctx, []int64{messageID})
+		if err != nil {
+			return nil, err
+		}
+		if latest[messageID] != currentRevision {
+			return nil, nil
+		}
 	}
 
 	sort.Slice(hits, func(i, j int) bool {
