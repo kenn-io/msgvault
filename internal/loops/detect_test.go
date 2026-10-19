@@ -267,6 +267,36 @@ func TestDetectDoesNotReuseStaleCounterpartyAfterSenderCorrection(t *testing.T) 
 	assertions.Nil(got.Open, "a stale saved counterparty must not reopen a muted corrected sender")
 }
 
+func TestDetectReconsidersUnmutedAnchorAfterRetainedAnchorIsSuppressed(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	oldSender := view.Participants[1]
+	mutedSender := LoopParticipant{ID: 3, PersonID: 8, Email: "blair@example.test", DisplayName: "Blair Example"}
+	unmutedSender := LoopParticipant{ID: 4, PersonID: 9, Email: "casey@example.test", DisplayName: "Casey Example"}
+	view.Participants = append(view.Participants, mutedSender, unmutedSender)
+	mutedAnchor := view.Messages[0]
+	mutedAnchor.ID, mutedAnchor.Sender = 10, mutedSender
+	mutedAnchor.OccurredAt = now.Add(-48 * time.Hour)
+	unmutedAnchor := mutedAnchor
+	unmutedAnchor.ID, unmutedAnchor.Sender = 11, unmutedSender
+	unmutedAnchor.OccurredAt = now.Add(-24 * time.Hour)
+	view.Messages = []LoopMessage{mutedAnchor, unmutedAnchor}
+	view.LastMessageAt = unmutedAnchor.OccurredAt
+	live := []LiveLoop{{
+		ID: 1, Kind: ReplyOwed, AnchorMessageID: mutedAnchor.ID,
+		CounterpartyParticipantID: oldSender.ID, CounterpartyPersonID: oldSender.PersonID,
+	}}
+
+	got := Detect(view, live, now, DefaultThresholds(), Suppressions{Participants: []int64{mutedSender.ID}})
+	requirements.NoError(got.Err)
+	requirements.Len(got.Close, 1)
+	assertions.Equal("muted", got.Close[0].Reason)
+	requirements.NotNil(got.Open)
+	assertions.Equal(unmutedAnchor.ID, got.Open.Anchor.ID)
+	assertions.Equal(unmutedSender.ID, got.Open.Counterparty.ID)
+}
+
 func TestDetectSkipsMutedCounterpartyWhenSelectingOutboundAnchor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

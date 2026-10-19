@@ -305,7 +305,35 @@ func (s *Store) transferSourceMergeLoopState(
 			return fmt.Errorf("transfer loops for conversation %d to %d: %w", conversation.id, conversation.destination, err)
 		}
 	}
+	closedDestinations := make(map[int64]struct{})
+	for _, conversation := range conversations {
+		for _, destinationConversationID := range destinationsByConversation[conversation.id] {
+			if _, seen := closedDestinations[destinationConversationID]; seen {
+				continue
+			}
+			closedDestinations[destinationConversationID] = struct{}{}
+			if err := s.closeMutedSourceMergeDestinationLoops(ctx, tx, destinationConversationID); err != nil {
+				return fmt.Errorf("close loops in muted source-merge destination %d: %w", destinationConversationID, err)
+			}
+		}
+	}
 	return nil
+}
+
+func (s *Store) closeMutedSourceMergeDestinationLoops(ctx context.Context, tx *loggedTx, conversationID int64) error {
+	var muted bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM loop_suppressions
+		WHERE target_kind = 'conversation' AND conversation_id = ?)`, conversationID).Scan(&muted); err != nil {
+		return err
+	}
+	if !muted {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE open_loops SET status = 'closed',
+		closed_at = `+s.dialect.Now()+`, closed_reason = 'muted', closed_by = 'user',
+		closed_message_id = NULL, updated_at = `+s.dialect.Now()+`
+		WHERE conversation_id = ? AND status <> 'closed'`, conversationID)
+	return err
 }
 
 func sourceMergeSurvivorConversationIDs(ctx context.Context, tx *loggedTx, messages []mergeMessage) (map[int64]int64, error) {

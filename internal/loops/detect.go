@@ -146,9 +146,20 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if anchorIndex < 0 {
 			continue
 		}
-		counterparty, ok := obligationCounterparty(settlementView, l.Kind, settlementView.Messages[anchorIndex])
+		var counterparty LoopParticipant
+		var ok bool
+		if l.Kind == AwaitingReply {
+			counterparty, ok = selectAwaitingReplyCounterparty(settlementView, turns,
+				&settlementView.Messages[anchorIndex], l.CounterpartyParticipantID)
+		} else {
+			counterparty, ok = obligationCounterparty(settlementView, l.Kind, settlementView.Messages[anchorIndex])
+		}
 		if ok && suppressed(counterparty, supp) {
 			closeLive(l, "muted")
+			if settled, ok := retained[l.Kind]; ok && settled.loop.ID == l.ID {
+				delete(retained, l.Kind)
+			}
+			delete(unprovenBulkAnchors, l.ID)
 		}
 	}
 	if len(turns) == 0 {
@@ -275,68 +286,14 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 				counterparty = candidateCounterparty
 			}
 		}
-		var candidates []LoopParticipant
-		if settlementView.ConversationType == "direct_chat" || settlementView.ConversationType == "group_chat" {
-			for _, participant := range settlementView.Participants {
-				if !participant.IsOwner {
-					candidates = append(candidates, participant)
-				}
-			}
-		} else if anchor != nil {
-			for _, recipient := range anchor.Recipients {
-				if recipient.Type == "to" && !recipient.IsOwner {
-					candidates = append(candidates, recipient.LoopParticipant)
-				}
-			}
+		preferredCounterpartyID := int64(0)
+		if settled, ok := retained[kind]; ok && settled.anchor != nil && anchor != nil && settled.anchor.ID == anchor.ID {
+			preferredCounterpartyID = settled.loop.CounterpartyParticipantID
 		}
-		counts := make(map[int64]int)
-		for _, turn := range turns {
-			for _, message := range turn.messages {
-				counts[message.Sender.ID]++
-			}
-		}
-		retainedCounterparty := false
-		if settled, ok := retained[kind]; ok && settled.anchor != nil && anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
-			for _, participant := range candidates {
-				if participant.ID == settled.loop.CounterpartyParticipantID {
-					counterparty = participant
-					retainedCounterparty = true
-					break
-				}
-			}
-		}
-		candidatePriorities := make(map[int64]int, len(candidates))
-		for _, participant := range candidates {
-			candidatePriorities[participant.ID] = 2
-		}
-		if anchor != nil {
-			for _, recipient := range anchor.Recipients {
-				priority, valid := counterpartyRecipientPriority(recipient.Type, settlementView.ConversationType)
-				if !valid || recipient.ID == 0 || recipient.IsOwner {
-					continue
-				}
-				if current, ok := candidatePriorities[recipient.ID]; ok && priority < current {
-					candidatePriorities[recipient.ID] = priority
-				}
-			}
-		}
-		bestPriority := 3
-		for _, participant := range candidates {
-			if priority := candidatePriorities[participant.ID]; priority < bestPriority {
-				bestPriority = priority
-			}
-		}
-		if !retainedCounterparty {
+		selectedCounterparty, hasCounterparty := selectAwaitingReplyCounterparty(settlementView, turns, anchor, preferredCounterpartyID)
+		counterparty = selectedCounterparty
+		if !hasCounterparty {
 			counterparty = LoopParticipant{}
-		}
-		for _, participant := range candidates {
-			if retainedCounterparty || candidatePriorities[participant.ID] != bestPriority {
-				continue
-			}
-			if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] ||
-				(counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
-				counterparty = participant
-			}
 		}
 		if suppressed(counterparty, supp) {
 			closeKept(kind, "muted")
@@ -347,7 +304,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			// has no recipient or has been withdrawn.
 			keepUncertain(kind)
 		}
-		if len(candidates) == 0 {
+		if !hasCounterparty {
 			if hasLiveCoverageGap(kind) {
 				return v
 			}
@@ -416,7 +373,7 @@ func eligibleConversation(v ConversationView, now time.Time, cfg Thresholds) boo
 	if !messageSourceTypes[v.SourceType] || nonOwnerCount(v.Participants) == 0 {
 		return false
 	}
-	return cfg.Lookback == 0 || !v.LastMessageAt.Before(now.Add(-cfg.Lookback))
+	return cfg.Lookback == 0 || v.LastMessageAt.IsZero() || !v.LastMessageAt.Before(now.Add(-cfg.Lookback))
 }
 
 func addressedToOwner(m LoopMessage, conversationType string, large bool) bool {
@@ -486,6 +443,68 @@ func obligationCounterparty(view ConversationView, kind string, anchor LoopMessa
 		}
 	}
 	return candidate, candidate.ID != 0
+}
+
+func selectAwaitingReplyCounterparty(view ConversationView, turns []turn, anchor *LoopMessage, preferredID int64) (LoopParticipant, bool) {
+	var candidates []LoopParticipant
+	if view.ConversationType == "direct_chat" || view.ConversationType == "group_chat" {
+		for _, participant := range view.Participants {
+			if !participant.IsOwner {
+				candidates = append(candidates, participant)
+			}
+		}
+	} else {
+		if anchor != nil {
+			for _, recipient := range anchor.Recipients {
+				if recipient.Type == "to" && !recipient.IsOwner {
+					candidates = append(candidates, recipient.LoopParticipant)
+				}
+			}
+		}
+	}
+	counts := make(map[int64]int)
+	for _, turn := range turns {
+		for _, message := range turn.messages {
+			counts[message.Sender.ID]++
+		}
+	}
+	for _, participant := range candidates {
+		if participant.ID == preferredID && preferredID != 0 {
+			return participant, true
+		}
+	}
+	candidatePriorities := make(map[int64]int, len(candidates))
+	for _, participant := range candidates {
+		candidatePriorities[participant.ID] = 2
+	}
+	if anchor != nil {
+		for _, recipient := range anchor.Recipients {
+			priority, valid := counterpartyRecipientPriority(recipient.Type, view.ConversationType)
+			if !valid || recipient.ID == 0 || recipient.IsOwner {
+				continue
+			}
+			if current, ok := candidatePriorities[recipient.ID]; ok && priority < current {
+				candidatePriorities[recipient.ID] = priority
+			}
+		}
+	}
+	bestPriority := 3
+	for _, participant := range candidates {
+		if priority := candidatePriorities[participant.ID]; priority < bestPriority {
+			bestPriority = priority
+		}
+	}
+	var counterparty LoopParticipant
+	for _, participant := range candidates {
+		if candidatePriorities[participant.ID] != bestPriority {
+			continue
+		}
+		if counterparty.ID == 0 || counts[participant.ID] > counts[counterparty.ID] ||
+			(counts[participant.ID] == counts[counterparty.ID] && participant.ID < counterparty.ID) {
+			counterparty = participant
+		}
+	}
+	return counterparty, counterparty.ID != 0
 }
 
 func counterpartyRecipientPriority(recipientType, conversationType string) (int, bool) {

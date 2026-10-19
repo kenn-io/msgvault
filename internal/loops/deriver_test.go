@@ -84,6 +84,7 @@ func TestDeriverUndatedLiveAnchorRetainsCoverageGap(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f, cfg, now := deriveFixture(t)
+	cfg.Lookback = config.DefaultLoopsConfig().Lookback
 	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
 	message := deriveInbound(t, f, now)
 	d, err := NewDeriver(f.Store, &cfg)
@@ -136,6 +137,74 @@ func TestDeriverRefreshesRetainedReplyOwedCounterpartyAfterSenderCorrection(t *t
 	requirements.NotNil(retained.CounterpartyParticipantID)
 	assertions.NotEqual(originalSender, *retained.CounterpartyParticipantID)
 	assertions.Equal(correctedSender, *retained.CounterpartyParticipantID)
+}
+
+func TestDeriverKeepsSnoozedAwaitingLoopWhenOtherRecipientIsMuted(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	mutedRecipient := f.EnsureParticipant("alex@example.test", "Alex", "example.test")
+	activeRecipient := f.EnsureParticipant("blair@example.test", "Blair", "example.test")
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	deriveExec(t, f, "UPDATE conversations SET conversation_type='group_chat',last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-time.Hour)), f.ConvID)
+	for _, participantID := range []int64{mutedRecipient, activeRecipient} {
+		deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, participantID)
+	}
+
+	priorMessageID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "prior-group-message",
+			MessageType: "email", SenderID: sql.NullInt64{Int64: activeRecipient, Valid: true},
+			SentAt: sql.NullTime{Time: now.Add(-2 * time.Hour), Valid: true}, Subject: sql.NullString{String: "Earlier update", Valid: true}},
+		BodyText: sql.NullString{String: "Here is the earlier update.", Valid: true},
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", priorMessageID, owner)
+	questionID, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "group-question",
+			MessageType: "email", SenderID: sql.NullInt64{Int64: owner, Valid: true}, IsFromMe: true,
+			SentAt: sql.NullTime{Time: now.Add(-time.Hour), Valid: true}, Subject: sql.NullString{String: "Review request", Valid: true}},
+		BodyText: sql.NullString{String: "Can you review this?", Valid: true},
+	})
+	requirements.NoError(err)
+	for _, participantID := range []int64{mutedRecipient, activeRecipient} {
+		deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", questionID, participantID)
+	}
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	loopID := live[0].ID
+	requirements.Equal("awaiting_reply", live[0].Kind)
+	requirements.NotNil(live[0].CounterpartyParticipantID)
+	assertions.Equal(activeRecipient, *live[0].CounterpartyParticipantID)
+	until := now.Add(24 * time.Hour)
+	_, err = f.Store.SnoozeLoopContext(t.Context(), loopID, until, now)
+	requirements.NoError(err)
+	_, err = f.Store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "participant", ParticipantID: &mutedRecipient,
+	}, now.Add(time.Minute))
+	requirements.NoError(err)
+	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "muted-other-recipient", now.Add(time.Minute)))
+	d.now = func() time.Time { return now.Add(2 * time.Minute) }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+
+	retained, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+	requirements.NoError(err)
+	assertions.Equal("held", retained.Status)
+	requirements.NotNil(retained.CounterpartyParticipantID)
+	assertions.Equal(activeRecipient, *retained.CounterpartyParticipantID)
+	requirements.NotNil(retained.SnoozedUntil)
+	assertions.True(until.Equal(*retained.SnoozedUntil))
+	afterRefresh, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(afterRefresh, 1)
+	assertions.Equal(loopID, afterRefresh[0].ID)
 }
 
 func TestStoredVerdictPreservesEvidenceJSONContract(t *testing.T) {
