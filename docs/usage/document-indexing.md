@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-18"
 title: Document Attachment Indexing
 description: Find words and topics inside archived documents, with explicit control over provider uploads.
 ---
@@ -450,7 +450,8 @@ ledger; later vector operations finish the cleanup.
 
 In v0.21.0, a failed build reports each document hash, reason code,
 and available local cause. For example, `invalid_local_source` can include
-`PDF structure is malformed`. Size mismatches and spool capacity
+`PDF structure is malformed`. Newer msgvault builds report
+`PDF structure could not be validated`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`
 shows those diagnostics later (omit `--capabilities` for Docling). `--json`
 includes `status.failures` and `status.failures_exhausted` (false when more than 20 failures remain).

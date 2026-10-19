@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -2136,8 +2136,9 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `sync_finished` after each successful manual archive sync, including no-change runs
   and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count
   on any surface. The daemon reports browser-started sync completions even
-  after you leave Sources. The CLI reports its own completions with a best-effort
-  250 ms bound. Delivery failures leave
+  after you leave Sources. The CLI sends its search, message-open, and sync reports
+  in the background and waits at most 50 ms in total for them at exit, so reports
+  to a slow or distant remote daemon may be lost. Delivery failures leave
   successful commands successful. CLI actions require a terminal on stdin, stdout,
   or stderr, so a person can pipe output while unattended runs stay excluded. Agent shells
   (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
@@ -2147,8 +2148,9 @@ features once published. No startup hook or entrypoint wrapper is required.
   terminal UI exits normally or after an interrupt. Browser sessions add visible
   time across tab switches;
   terminal sessions measure UI runtime. Returning after 30 minutes hidden starts
-  a fresh browser session. Delivery is best effort; terminal delivery has a
-  three-second request timeout. Terminal startup failures, forced termination,
+  a fresh browser session. Delivery is best effort; terminal exit waits at most
+  50 ms for the report, so a slow or distant remote daemon may miss it.
+  Terminal startup failures, forced termination,
   or crashes may send nothing.
   Time spent signed out doesn't count. Earlier signed-in time carries across
   signing in again, and a tab that closes or expires while signed out sends nothing.
@@ -2176,8 +2178,7 @@ that blocks storage, can also each send one. Each event carries only:
 - a random install ID kept in `telemetry-install.json` in the data directory, and
   the whole hours since it was created
 - metadata the PostHog Go library adds itself: library name and version (`$lib`,
-  `$lib_version`), OS name, Go version, and where available the OS version and
-  distribution
+  `$lib_version`)
 
 Events exclude message content, contact records, account or source identifiers,
 filenames, and search text. They ask PostHog to skip person profiles and location lookup. The
