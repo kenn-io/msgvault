@@ -150,6 +150,15 @@ describe('describeCron', () => {
     ['0 4 * * 8-1', 'At 04:00 Sunday to Monday'],
     ['0 4 28-0 * *', 'At 04:00 on the 28th, 29th, 30th, and 31st of the month'],
     ['70-5 * * * *', 'Never runs'],
+    // When both day fields are restricted the daemon runs on a day matching
+    // either one, so an empty range in one leaves the other in charge.
+    ['0 4 40-3 * mon', 'At 04:00 on Mondays'],
+    ['0 4 1 * 20-1', 'At 04:00 on the 1st of the month'],
+    ['0 4 40-3 * 0-7', 'At 04:00 every day'],
+    ['0 4 40-3 * *', 'Never runs'],
+    ['0 4 40-3 * */1', 'Never runs'],
+    ['0 4 * * 20-1', 'Never runs'],
+    ['0 4 40-3 * 20-1', 'Never runs'],
     ['CRON_TZ=America/New_York 0 3 * * *', 'At 03:00 every day, America/New York time'],
     ['TZ=UTC */15 * * * *', 'Every 15 minutes, UTC time'],
   ])('describes %s as %s', (expression, description) => {
