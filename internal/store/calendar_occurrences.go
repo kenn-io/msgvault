@@ -111,7 +111,10 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				continue
 			}
 			if e.Start != nil && e.End != nil {
-				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
+				key := seriesKey{row.SourceID, e.ProviderEventID}
+				if e.Kind != "single" || !calendarSingleStartHasException(e, exceptions[key]) {
+					add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
+				}
 			} else {
 				page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: row.MessageID, Reason: calendarMissingBoundsReason(e)})
 			}
@@ -142,6 +145,31 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
+}
+
+func calendarSingleStartHasException(event calevent.Event, exceptions []CalendarEventRow) bool {
+	var start calrecur.Identity
+	if event.AllDay {
+		if event.StartDate == "" {
+			return false
+		}
+		start = calrecur.Identity{Date: event.StartDate, AllDay: true}
+	} else {
+		if event.Start == nil {
+			return false
+		}
+		start = calrecur.Identity{Instant: *event.Start}
+	}
+	key := start.Key()
+	if key == "" {
+		return false
+	}
+	for _, exception := range exceptions {
+		if exception.Event.Original != nil && exception.Event.Original.Key() == key {
+			return true
+		}
+	}
+	return false
 }
 
 func calendarMissingBoundsReason(event calevent.Event) string {

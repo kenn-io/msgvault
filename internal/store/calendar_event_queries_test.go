@@ -269,3 +269,62 @@ func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 		})
 	}
 }
+
+func TestCalendarClearedMasterSuppressesFirstOccurrenceExceptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, exception, effectiveStart, effectiveEnd, status string
+		originalCount, effectiveCount                         int
+	}{
+		{
+			name:           "cancelled DTSTART",
+			exception:      `{"id":"cancelled","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00Z"},"status":"cancelled"}`,
+			effectiveStart: "2027-03-02T09:00:00Z",
+			effectiveEnd:   "2027-03-02T10:00:00Z",
+			status:         "cancelled",
+			originalCount:  1,
+		},
+		{
+			name:           "moved DTSTART",
+			exception:      `{"id":"moved","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00Z"},"start":{"dateTime":"2027-03-03T09:00:00Z"},"end":{"dateTime":"2027-03-03T10:00:00Z"}}`,
+			effectiveStart: "2027-03-03T09:00:00Z",
+			effectiveEnd:   "2027-03-03T10:00:00Z",
+			status:         "confirmed",
+			effectiveCount: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+			_, master := calendarFixture(t, st, "master", raw)
+			_, exception := calendarFixture(t, st, "exception", tc.exception)
+			cleared := strings.Replace(raw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]`, "", 1)
+			requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(cleared), "gcal_json"))
+
+			for _, window := range []struct {
+				name string
+				day  int
+				want int
+			}{
+				{name: "original date", day: 2, want: tc.originalCount},
+				{name: "effective date", day: 3, want: tc.effectiveCount},
+			} {
+				t.Run(window.name, func(t *testing.T) {
+					from := time.Date(2027, 3, window.day, 0, 0, 0, 0, time.UTC)
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+					require.NoError(t, err)
+					require.Len(t, page.Occurrences, window.want)
+					if window.want == 0 {
+						return
+					}
+					occurrence := page.Occurrences[0]
+					assertions.Equal(exception, occurrence.MessageID)
+					assertions.Equal(master, occurrence.SeriesMessageID)
+					assertions.Equal(tc.status, occurrence.Status)
+					assertions.Equal(tc.effectiveStart, occurrence.Start.Format(time.RFC3339))
+					assertions.Equal(tc.effectiveEnd, occurrence.End.Format(time.RFC3339))
+				})
+			}
+		})
+	}
+}
