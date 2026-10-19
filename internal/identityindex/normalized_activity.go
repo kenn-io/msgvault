@@ -132,8 +132,8 @@ facts AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NULL
 direct AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NOT NULL),
 canon AS NOT MATERIALIZED (
 	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	       coalesce(try_cast(c.canonical_id AS BIGINT), p.id::BIGINT) AS canonical_id,
+	       lower(coalesce(try_cast(p.domain AS VARCHAR), '')) AS participant_domain
 	FROM %[3]s p LEFT JOIN %[4]s c ON c.participant_id = p.id
 ), owner_canon AS NOT MATERIALIZED (
 	SELECT DISTINCT c.canonical_id FROM %[5]s o
