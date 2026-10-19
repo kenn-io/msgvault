@@ -125,13 +125,13 @@ func TestExactSearchDropsDeletedRevisionZeroVector(t *testing.T) {
 	var revision int64
 	require.NoError(t, st.DB().QueryRowContext(ctx, st.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), id).Scan(&revision))
 	require.Zero(t, revision, "the legacy vector fixture must use revision zero")
-	_, err := st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), id)
 	require.NoError(t, err)
 
 	hits, err := b.searchExact(ctx, gen, []float32{1, 0, 0, 0}, 2, vector.Filter{})
 	require.NoError(t, err)
 	require.Len(t, hits, 1)
-	assert.Equal(liveID, hits[0].MessageID, "a live revision-zero vector remains searchable")
+	assert.Equal(t, liveID, hits[0].MessageID, "a live revision-zero vector remains searchable")
 }
 
 func TestContextualVectorConsumersHideUnstampedEmbeddings(t *testing.T) {
