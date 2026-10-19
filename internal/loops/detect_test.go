@@ -1226,6 +1226,38 @@ func TestDetectAwaitingCounterpartyRanksEveryCandidate(t *testing.T) {
 	}
 }
 
+func TestDetectRetainedAwaitingReplyHonorsCurrentGroupMentionPriority(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	view.SourceType, view.ConversationType = "slack", "group_chat"
+	owner := view.Participants[0]
+	previousCounterparty := view.Participants[1]
+	currentMention := LoopParticipant{ID: 3, PersonID: 8, Email: "blair@example.test", DisplayName: "Blair Example"}
+	view.Participants = append(view.Participants, currentMention)
+	question := view.Messages[0]
+	question.Direction, question.Sender = Outbound, owner
+	question.Recipients = []LoopRecipient{
+		{LoopParticipant: previousCounterparty, Type: "member"},
+		{LoopParticipant: currentMention, Type: "mention"},
+	}
+	question.OccurredAt = now.Add(-96 * time.Hour)
+	view.Messages = []LoopMessage{question}
+	view.LastMessageAt = question.OccurredAt
+	view.BodyText = func(int64) (string, error) { return "Can you review this?", nil }
+	live := []LiveLoop{{
+		ID: 1, Kind: AwaitingReply, AnchorMessageID: question.ID,
+		CounterpartyParticipantID: previousCounterparty.ID,
+	}}
+
+	got := Detect(view, live, now, DefaultThresholds(), Suppressions{})
+	requirements.NoError(got.Err)
+	requirements.NotNil(got.Open)
+	assertions.Equal(AwaitingReply, got.Open.Kind)
+	assertions.Equal(currentMention.ID, got.Open.Counterparty.ID)
+	assertions.Empty(got.Close)
+}
+
 func TestDetectAwaitingReplySuppressesSelectedActivityCounterparty(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

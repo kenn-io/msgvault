@@ -479,11 +479,6 @@ func selectAwaitingReplyCounterparty(view ConversationView, turns []turn, anchor
 			counts[message.Sender.ID]++
 		}
 	}
-	for _, participant := range candidates {
-		if participant.ID == preferredID && preferredID != 0 {
-			return participant, true
-		}
-	}
 	candidatePriorities := make(map[int64]int, len(candidates))
 	for _, participant := range candidates {
 		candidatePriorities[participant.ID] = 2
@@ -503,6 +498,12 @@ func selectAwaitingReplyCounterparty(view ConversationView, turns []turn, anchor
 	for _, participant := range candidates {
 		if priority := candidatePriorities[participant.ID]; priority < bestPriority {
 			bestPriority = priority
+		}
+	}
+	// Keep the saved selection only when current recipient evidence leaves it at the best priority.
+	for _, participant := range candidates {
+		if participant.ID == preferredID && preferredID != 0 && candidatePriorities[participant.ID] == bestPriority {
+			return participant, true
 		}
 	}
 	var counterparty LoopParticipant
