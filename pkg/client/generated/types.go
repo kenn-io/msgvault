@@ -7719,7 +7719,7 @@ type MeetingRef struct {
 	SourceIdentifier string     `json:"source_identifier" validate:"required"`
 	SourceMessageID  string     `json:"source_message_id" validate:"required"`
 	SourceType       string     `json:"source_type" validate:"required"`
-	Title            string     `json:"title" validate:"required"`
+	Title            *string    `json:"title" validate:"required"`
 }
 
 func (m MeetingRef) Validate() error {

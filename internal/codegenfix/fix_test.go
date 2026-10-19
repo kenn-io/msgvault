@@ -98,6 +98,19 @@ func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing
 	requirements.NoError(err)
 	assertions.Contains(string(got), "Title *string `json:\"title\" validate:\"required\"`")
 	assertions.Contains(string(got), "SentAt *time.Time `json:\"sent_at\" validate:\"required\"`")
+	meetingRefStart := bytes.Index(got, []byte("type MeetingRef struct {"))
+	requirements.NotEqual(-1, meetingRefStart)
+	meetingRefEnd := bytes.Index(got[meetingRefStart:], []byte("\n}\n")) + meetingRefStart
+	requirements.Greater(meetingRefEnd, meetingRefStart)
+	var meetingRefTitle string
+	for _, line := range strings.Split(string(got[meetingRefStart:meetingRefEnd]), "\n") {
+		if strings.Contains(line, "Title") {
+			meetingRefTitle = line
+			break
+		}
+	}
+	assertions.Contains(meetingRefTitle, "*string")
+	assertions.Contains(meetingRefTitle, `json:"title" validate:"required"`)
 	for _, check := range []string{
 		`typesValidator.Var(m.Description, "required")`,
 		`typesValidator.Var(m.Location, "required")`,
@@ -241,7 +254,7 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 }
 
 func meetingRefNullableOccurredAtFixture() string {
-	return "type MeetingRef struct {\n\tOccurredAt       *time.Time `json:\"occurred_at,omitempty\" validate:\"required\"`\n}\n" +
+	return "type MeetingRef struct {\n\tOccurredAt       *time.Time `json:\"occurred_at,omitempty\" validate:\"required\"`\n\tTitle            string     `json:\"title\" validate:\"required\"`\n}\n" +
 		"func (m MeetingRef) Validate() error { return runtime.ConvertValidatorError(typesValidator.Struct(m)) }\n"
 }
 

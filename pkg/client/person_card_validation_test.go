@@ -38,14 +38,27 @@ func TestMeetingGeneratedValidationPreservesSparseRequiredFields(t *testing.T) {
 	requirements.NoError(err)
 	assertions.JSONEq(itemPayload, string(itemWire))
 
-	missingItemTitle := strings.Replace(itemPayload, `,"title":""`, "", 1)
-	var missingTitle generated.MeetingItem
-	requirements.NoError(json.Unmarshal([]byte(missingItemTitle), &missingTitle))
-	assertions.ErrorContains(missingTitle.Validate(), "Title is required")
-	missingItemTime := strings.Replace(itemPayload, `,"sent_at":"0001-01-01T00:00:00Z"`, "", 1)
-	var missingSentAt generated.MeetingItem
-	requirements.NoError(json.Unmarshal([]byte(missingItemTime), &missingSentAt))
-	assertions.ErrorContains(missingSentAt.Validate(), "SentAt is required")
+	for _, tc := range []struct {
+		name, payload, wantError string
+	}{
+		{
+			name:      "missing item title",
+			payload:   strings.Replace(itemPayload, `,"title":""`, "", 1),
+			wantError: "Title is required",
+		},
+		{
+			name:      "missing sent at",
+			payload:   strings.Replace(itemPayload, `,"sent_at":"0001-01-01T00:00:00Z"`, "", 1),
+			wantError: "SentAt is required",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			var missing generated.MeetingItem
+			requirements.NoError(json.Unmarshal([]byte(tc.payload), &missing))
+			requirements.ErrorContains(missing.Validate(), tc.wantError)
+		})
+	}
 
 	summaryPayload := `{"has_transcript":true,"item_count":1,"ref":"evt:1","start":"2026-10-18T00:00:00Z","title":""}`
 	var summary generated.MeetingRecordSummary
