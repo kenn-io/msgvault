@@ -7702,7 +7702,7 @@ func (m MeetingRecordSummary) Validate() error {
 type MeetingRecording struct {
 	AttachmentID    int64    `json:"attachment_id"`
 	DurationSeconds *float64 `json:"duration_seconds,omitempty"`
-	MimeType        string   `json:"mime_type" validate:"required"`
+	MimeType        *string  `json:"mime_type" validate:"required"`
 	Size            int64    `json:"size"`
 }
 

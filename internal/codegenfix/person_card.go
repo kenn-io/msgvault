@@ -25,6 +25,7 @@ var generatedRequiredEmptyStringFields = [][2]string{
 	{"PersonCardSourceFreshness", "SyncUnavailableReason"},
 	{"MeetingItem", "Title"},
 	{"MeetingRef", "Title"},
+	{"MeetingRecording", "MimeType"},
 	{"MeetingRecordSummary", "Title"},
 }
 

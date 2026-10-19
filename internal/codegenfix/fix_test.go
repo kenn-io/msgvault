@@ -98,6 +98,7 @@ func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing
 	requirements.NoError(err)
 	assertions.Contains(string(got), "Title *string `json:\"title\" validate:\"required\"`")
 	assertions.Contains(string(got), "SentAt *time.Time `json:\"sent_at\" validate:\"required\"`")
+	assertions.Contains(string(got), "MimeType *string `json:\"mime_type\" validate:\"required\"`")
 	meetingRefStart := bytes.Index(got, []byte("type MeetingRef struct {"))
 	requirements.NotEqual(-1, meetingRefStart)
 	meetingRefEnd := bytes.Index(got[meetingRefStart:], []byte("\n}\n")) + meetingRefStart
@@ -250,7 +251,12 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
 ` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() +
-		meetingResponseEmptyStringValidatorFixture() + meetingRefNullableOccurredAtFixture()
+		meetingResponseEmptyStringValidatorFixture() + meetingRefNullableOccurredAtFixture() + meetingRecordingEmptyMIMETypeValidatorFixture()
+}
+
+func meetingRecordingEmptyMIMETypeValidatorFixture() string {
+	return "type MeetingRecording struct {\n\tMimeType string `json:\"mime_type\" validate:\"required\"`\n}\n" +
+		"func (m MeetingRecording) Validate() error { return runtime.ConvertValidatorError(typesValidator.Struct(m)) }\n"
 }
 
 func meetingRefNullableOccurredAtFixture() string {
