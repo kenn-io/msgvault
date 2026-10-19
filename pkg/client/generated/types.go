@@ -4229,7 +4229,7 @@ func (e EmailFamilyEnvelope) Validate() error {
 
 type EmailFamilyExportInput struct {
 	ExpectedFamilyRevision string  `json:"expected_family_revision" validate:"required"`
-	SourceIds              []int64 `json:"source_ids,omitempty"`
+	SourceIds              []int64 `json:"source_ids,omitzero"`
 }
 
 func (e EmailFamilyExportInput) Validate() error {
