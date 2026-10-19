@@ -1066,7 +1066,7 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 	})
 	require.NoError(err)
 
-	got, err := f.Store.SourceMessageMetadata(f.Source.ID)
+	got, err := f.Store.SourceMessageMetadata(f.Source.ID, false)
 	require.NoError(err)
 	require.Len(got, 2)
 	assert.Equal(withMetadataID, got["smm-with-metadata"].ID)
@@ -1080,13 +1080,13 @@ func TestStore_SourceMessageMetadata(t *testing.T) {
 
 	// Each source's result stays scoped to that source, and a source with
 	// no archived messages yields an empty result.
-	other, err := f.Store.SourceMessageMetadata(otherSource.ID)
+	other, err := f.Store.SourceMessageMetadata(otherSource.ID, false)
 	require.NoError(err)
 	require.Len(other, 1)
 	assert.Contains(other, "smm-other-source")
 	emptySource, err := f.Store.GetOrCreateSource("imazing_csv", "+15550000008")
 	require.NoError(err)
-	empty, err := f.Store.SourceMessageMetadata(emptySource.ID)
+	empty, err := f.Store.SourceMessageMetadata(emptySource.ID, false)
 	require.NoError(err)
 	assert.Empty(empty)
 }

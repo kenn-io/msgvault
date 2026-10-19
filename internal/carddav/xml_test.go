@@ -200,3 +200,31 @@ func TestRequestBodiesUseDAVNamespaces(t *testing.T) {
 	_, err = PropfindBody([]PropertyName{{Namespace: "DAV:", Local: `getetag/><X:evil`}})
 	require.ErrorIs(err, ErrInvalidProperty)
 }
+
+func TestParseMultiStatusCalDAVProperties(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	body := `<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:response><D:href>/cal/</D:href><D:propstat><D:prop><C:calendar-home-set><D:href>/home/</D:href></C:calendar-home-set><C:calendar-data><![CDATA[BEGIN:VCALENDAR
+END:VCALENDAR]]></C:calendar-data><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>`
+	result, err := ParseMultiStatus([]byte(body), XMLLimits{})
+	requirements.NoError(err)
+	requirements.Len(result.Responses, 1)
+	requirements.Len(result.Responses[0].PropStats, 1)
+	p := result.Responses[0].PropStats[0].Properties
+	assertions.Equal([]string{"/home/"}, p.CalendarHomeSet)
+	assertions.Equal("BEGIN:VCALENDAR\nEND:VCALENDAR", p.CalendarData)
+	assertions.True(p.IsCalendar)
+	assertions.True(p.IsCollection)
+	assertions.True(p.SupportsMultiget)
+	for _, name := range []string{"calendar-home-set", "calendar-data", "calendar", "calendar-multiget"} {
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			wrong := strings.ReplaceAll(body, "C:"+name, "X:"+name)
+			if name == "calendar" {
+				wrong = strings.Replace(body, "<C:calendar/>", "<X:calendar/>", 1)
+			}
+			wrong = strings.Replace(wrong, "<D:multistatus ", `<D:multistatus xmlns:X="urn:example:wrong" `, 1)
+			_, err := ParseMultiStatus([]byte(wrong), XMLLimits{})
+			requirements.ErrorIs(err, ErrUnsafeXML)
+		})
+	}
+}

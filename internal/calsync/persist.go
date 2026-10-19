@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -59,16 +61,12 @@ type eventMetadata struct {
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
-	ev.Organizer.Email = normalizeParticipantEmail(ev.Organizer.Email)
-	for i := range ev.Attendees {
-		ev.Attendees[i].Email = normalizeParticipantEmail(ev.Attendees[i].Email)
-	}
-
+	ev.Organizer, ev.Attendees = MapParticipants(ev.Organizer, ev.Attendees, false)
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
 	var senderID int64
 	if ev.Organizer.Email != "" {
-		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
+		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, EmailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
 		}
@@ -83,7 +81,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		if a.Email == "" {
 			continue
 		}
-		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
+		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, EmailDomain(a.Email))
 		if err != nil {
 			return 0, fmt.Errorf("attendee participant: %w", err)
 		}
@@ -107,7 +105,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		return 0, fmt.Errorf("ensure conversation: %w", err)
 	}
 
-	body := serializeBody(ev)
+	body := SerializeBody(ev)
 	subject := ev.Summary
 	identityFromMe := !ev.Organizer.Self &&
 		ev.Organizer.Email != "" &&
@@ -235,10 +233,6 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 	return sql.NullString{String: string(b), Valid: true}, nil
 }
 
-func normalizeParticipantEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
 // deriveSourceMessageID is the idempotency key: a standalone event or series
 // master uses event.id; a recurring instance/exception/cancellation uses
 // recurringEventId|originalStartTime so each occurrence upserts independently
@@ -317,11 +311,11 @@ func dateTimeString(dt gcal.EventDateTime) string {
 	return ""
 }
 
-// serializeBody is the single body_text shared by FTS body and embeddings:
+// SerializeBody is the single body_text shared by FTS body and embeddings:
 // title, time range, location, description, and attendee DISPLAY NAMES. Raw
 // attendee email addresses are deliberately excluded (they reach FTS via the
 // toAddrs column only).
-func serializeBody(ev gcal.Event) string {
+func SerializeBody(ev gcal.Event) string {
 	var b strings.Builder
 	writeLine := func(s string) {
 		if s != "" {
@@ -376,4 +370,24 @@ func Snippet(body string) string {
 		end--
 	}
 	return body[:end]
+}
+
+// MapParticipants normalizes provider people. humanOnly excludes rooms and
+// resources and deduplicates explicit attendees for CalDAV recipients.
+func MapParticipants(organizer gcalmodel.Person, attendees []gcalmodel.Attendee, humanOnly bool) (gcalmodel.Person, []gcalmodel.Attendee) {
+	organizer.Email = gcalmodel.NormalizeParticipantEmail(organizer.Email)
+	if humanOnly && calevent.IsRoomAttendee(organizer.Email, false) {
+		organizer.Email = ""
+	}
+	var people []gcalmodel.Attendee
+	seen := map[string]bool{}
+	for _, a := range attendees {
+		a.Email = gcalmodel.NormalizeParticipantEmail(a.Email)
+		if humanOnly && (a.Email == "" || calevent.IsRoomAttendee(a.Email, a.Resource) || seen[a.Email]) {
+			continue
+		}
+		seen[a.Email] = true
+		people = append(people, a)
+	}
+	return organizer, people
 }

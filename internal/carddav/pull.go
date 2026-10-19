@@ -39,7 +39,7 @@ func NewService(st *store.Store, client *Client) *Service {
 	if client == nil {
 		return &Service{store: st}
 	}
-	return NewRemoteService(st, &davRemote{client: client})
+	return NewRemoteService(st, &davRemote{client: client, kind: AddressBookKind})
 }
 
 type SyncOptions struct {

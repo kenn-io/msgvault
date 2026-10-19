@@ -2474,3 +2474,64 @@ func TestEnsurePhoneParticipantContextCancelsBlockedNameBackfill(t *testing.T) {
 		participantID).Scan(&name))
 	assert.Empty(t, name, "cancelled name backfill must roll back")
 }
+
+func TestSourceMessageMetadataContextStopsWaitingForConnection(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	st.DB().SetMaxOpenConns(1)
+	conn, err := st.DB().Conn(t.Context())
+	require.NoError(err)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	initialWaitCount := st.DB().Stats().WaitCount
+	returned := false
+	go func() {
+		_, err := st.SourceMessageMetadataContext(ctx, 1, true)
+		done <- err
+	}()
+	defer func() {
+		cancel()
+		_ = conn.Close()
+		if !returned {
+			<-done
+		}
+	}()
+
+	require.Eventually(func() bool { return st.DB().Stats().WaitCount > initialWaitCount },
+		5*time.Second, 10*time.Millisecond, "metadata query must wait for the only connection")
+	cancel()
+	select {
+	case err := <-done:
+		returned = true
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		require.NoError(conn.Close())
+		<-done
+		returned = true
+		require.FailNow("metadata query kept waiting for the connection after cancellation")
+	}
+}
+
+func TestSourceMessageMetadataLiveOmitsMergedHistory(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("caldav", "history@example.test")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("caldav", "live@example.test")
+	requirements.NoError(err)
+	mergeFixtureMessage(t, st, from.ID, "calendar", "shared", "historical event", 0)
+	liveID, _ := mergeFixtureMessage(t, st, into.ID, "calendar", "shared", "live event", 0)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	mergeFixtureMessage(t, st, into.ID, "calendar", "provider-deleted", "deleted event", 0)
+	requirements.NoError(st.MarkMessageDeleted(into.ID, "provider-deleted"))
+	all, err := st.SourceMessageMetadata(into.ID, false)
+	requirements.NoError(err)
+	assertions.Len(all, 3)
+	live, err := st.SourceMessageMetadata(into.ID, true)
+	requirements.NoError(err)
+	assertions.Equal(map[string]store.MessageMetadataRecord{"shared": all["shared"]}, live)
+	assertions.NotContains(live, "provider-deleted")
+	assertions.Equal(liveID, live["shared"].ID)
+}

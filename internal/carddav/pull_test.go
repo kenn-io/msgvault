@@ -96,6 +96,69 @@ func TestPullBudgetChargesPartialBodiesOnResponseLimit(t *testing.T) {
 	assert.Equal(2, requests)
 }
 
+func TestCalendarMultigetSplitsOversizedResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		members       int
+		resourceBytes int
+		responseBytes int64
+		budgetBytes   int64
+		wantBatches   []int
+		wantErr       error
+	}{
+		{"split", 17, (2 << 20) - 512, defaultResponseBytes, 256 << 20, []int{17, 8, 9}, nil},
+		{"recursive split", 4, 700, 1024, 1 << 20, []int{4, 2, 1, 1, 2, 1, 1}, nil},
+		{"single resource", 1, 2048, 1024, 1 << 20, []int{1}, ErrResponseLimit},
+		{"shared budget", 2, 700, 1024, 1500, []int{2, 1}, ErrOperationLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:example@example.org\r\nDTSTART:20270314T130000Z\r\nDESCRIPTION:" + strings.Repeat("x", tc.resourceBytes-160) + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			var batches []int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Hrefs []string `xml:"href"`
+				}
+				if !assertions.NoError(xml.NewDecoder(r.Body).Decode(&request)) {
+					return
+				}
+				batches = append(batches, len(request.Hrefs))
+				var body strings.Builder
+				body.WriteString(`<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">`)
+				for _, href := range request.Hrefs {
+					body.WriteString(`<D:response><D:href>` + href + `</D:href><D:propstat><D:prop><D:getetag>"v1"</D:getetag><C:calendar-data><![CDATA[` + raw + `]]></C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`)
+				}
+				body.WriteString(`</D:multistatus>`)
+				w.WriteHeader(http.StatusMultiStatus)
+				_, _ = io.WriteString(w, body.String())
+			}))
+			t.Cleanup(server.Close)
+			collection := mustParseURL(t, server.URL+"/calendar/")
+			client, err := NewClient(ClientOptions{CredentialOrigin: collection, ResponseBytes: tc.responseBytes})
+			requirements.NoError(err)
+			client.allowPrivateOrigin = true
+			remote := &davRemote{client: client, kind: CalendarKind}
+			hrefs := make([]string, tc.members)
+			for i := range hrefs {
+				hrefs[i] = fmt.Sprintf("%s%d.ics", collection, i)
+			}
+			members, missing, err := remote.fetchMembers(t.Context(), Collection{SupportsMultiget: true}, collection, hrefs, NewBudget(tc.budgetBytes))
+			if tc.wantErr != nil {
+				requirements.ErrorIs(err, tc.wantErr)
+			} else {
+				requirements.NoError(err)
+				assertions.Empty(missing)
+				requirements.Len(members, tc.members)
+				for i, member := range members {
+					assertions.Equal(hrefs[i], member.Href)
+					assertions.Equal(raw, string(member.Body))
+				}
+			}
+			assertions.Equal(tc.wantBatches, batches)
+		})
+	}
+}
+
 func TestPullBudgetChargesRedirectResponseBodies(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -297,7 +360,7 @@ func syncRequestToken(body string) string {
 }
 
 func syncResponse(events, token string) string {
-	return `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` + events + `<D:sync-token>` + token + `</D:sync-token></D:multistatus>`
+	return testutil.DAVMultiStatus(events+`<D:sync-token>`+token+`</D:sync-token>`, cardDAVNamespace)
 }
 
 func changedResponse(href, etag string) string {
@@ -946,7 +1009,7 @@ type googleLikeState struct {
 }
 
 func multiStatusBody(responses string) string {
-	return `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">` + responses + `</D:multistatus>`
+	return testutil.DAVMultiStatus(responses, cardDAVNamespace)
 }
 
 // untaggedResponse is a member whose getetag is absent and whose resourcetype

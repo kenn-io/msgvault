@@ -563,6 +563,7 @@ type Config struct {
 	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
 	Accounts           []AccountSchedule               `toml:"accounts"`
 	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
+	CalDAV             CalDAVConfig                    `toml:"caldav"`
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
@@ -1153,6 +1154,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, errors.New("carddav.provider must be empty, \"google\" or \"microsoft\"")
 	}
 	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateCalDAV(); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateCardDAVConnections(); err != nil {
