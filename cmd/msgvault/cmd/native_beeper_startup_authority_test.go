@@ -40,7 +40,7 @@ func TestDaemonStartupPausesPersistedNativeBeeperAuthority(t *testing.T) {
 			require.NoError(err)
 			allowed, err := st.NativeSourceMessagePermission(t.Context(), source.ID)
 			require.NoError(err)
-			assert.False(allowed, "a new daemon must not inherit native permission from a prior process without observing its current selected credentials")
+			assert.Equal(!enabled, allowed, "only Events-enabled startup pauses persisted native permission")
 			current, err := st.GetMCPResource(t.Context(), "source", source.ID)
 			require.NoError(err)
 			assert.Equal(resource.Reference, current.Reference)

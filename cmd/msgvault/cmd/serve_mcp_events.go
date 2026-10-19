@@ -23,8 +23,10 @@ func newDaemonMCPEventsService(ctx context.Context, cfg *config.Config, st *stor
 	if err != nil {
 		return nil, err
 	}
-	if err := pausePersistedNativeMessageAuthority(ctx, st); err != nil {
-		return nil, fmt.Errorf("pause native source authority at startup: %w", err)
+	if opts.Enabled {
+		if err := pausePersistedNativeMessageAuthority(ctx, st); err != nil {
+			return nil, fmt.Errorf("pause native source authority at startup: %w", err)
+		}
 	}
 	opts.WithOperation = server.MCPEventsOperation
 	opts.WithDeliveryOperation = server.MCPEventsDeliveryOperation

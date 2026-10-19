@@ -172,10 +172,13 @@ func TestMCPEventsCallbackVerificationReleasesDaemonOperationGate(t *testing.T) 
 	assert.True(acquired, "daemon operation gate must be available during callback verification")
 }
 
-// The generic POST gate must not wrap discovery: the service acquires the
-// same real serial gate around its bounded Store operation.
-func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
+// Resource discovery bypasses generic request-gate admission while a manual
+// sync owns the archive gate.
+func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assert, require := Assert.New(t), Require.New(t)
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
 	f := storetest.New(t)
 	gate := NewSerialOperationGate()
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: testSessionAPIKey}}, Store: f.Store, Logger: testLogger(), OperationGate: gate})
@@ -183,8 +186,12 @@ func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
 	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{OwnerKey: testSessionAPIKey, WithOperation: srv.MCPEventsOperation})
 	require.NoError(err)
 	srv.SetMCPEvents(svc)
-	// Bound a wait for real request completion; double admission cannot finish
-	// until cancellation releases the outer gate.
+	// Hold the real archive gate. Discovery uses bounded Store operations and
+	// must finish through the real router without waiting for that gate again.
+	releaseArchive, held := gate.BeginLabeledWorkContext(t.Context(), "manual sync")
+	require.True(held)
+	t.Cleanup(releaseArchive)
+	assert.False(gate.HasRequestWaiters())
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp/events/resources", bytes.NewBufferString(`{"kind":"source"}`))
@@ -193,6 +200,9 @@ func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
 	response := httptest.NewRecorder()
 	srv.Router().ServeHTTP(response, req)
 	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	assert.False(gate.HasRequestWaiters(), "Events discovery must bypass generic operation-gate admission")
+	_, _, stillHeld := gate.Holder()
+	assert.True(stillHeld, "the manual sync must still own the archive gate")
 	var page mcpevents.ResourcePage
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &page))
 	require.Len(page.Resources, 1)

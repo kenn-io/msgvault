@@ -9,6 +9,47 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestMeetingImportBindingFailureFailsSyncWithoutPanic(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+
+	st := testutil.NewTestStore(t)
+	failImportRunBindingAfterAttempt(t, st)
+	importer := NewImporter(st, Hooks{})
+	var importErr error
+	panicValue := recoverImportPanic(func() {
+		_, importErr = importer.Import(t.Context(), validImportRequest(t))
+	})
+
+	assert.Nil(panicValue, "meeting import should return the binding error without panicking")
+	assert.ErrorContains(importErr, "bind meeting import: invalid_import_run")
+	var status string
+	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	assert.Equal(store.SyncStatusFailed, status)
+}
+
+func failImportRunBindingAfterAttempt(t *testing.T, st *store.Store) {
+	t.Helper()
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`CREATE FUNCTION fail_import_run_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN UPDATE import_runs SET completed=TRUE WHERE id=NEW.import_run_id; RETURN NEW; END $$`)
+		Require.NoError(t, err)
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_import_run_binding AFTER INSERT ON import_run_attempts
+			FOR EACH ROW EXECUTE FUNCTION fail_import_run_binding()`)
+		Require.NoError(t, err)
+		return
+	}
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_import_run_binding AFTER INSERT ON import_run_attempts
+		BEGIN UPDATE import_runs SET completed=TRUE WHERE id=NEW.import_run_id; END`)
+	Require.NoError(t, err)
+}
+
+func recoverImportPanic(run func()) (panicValue any) {
+	defer func() { panicValue = recover() }()
+	run()
+	return nil
+}
+
 func TestNativeMeetingImportOwnsFreshSilentLogicalRuns(t *testing.T) {
 	assert := Assert.New(t)
 

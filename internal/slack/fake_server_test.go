@@ -146,8 +146,17 @@ type fakeSlack struct {
 	failHistory map[string]bool
 	failReplies map[string]bool
 	failMembers map[string]bool
+	// credentialHistory / credentialReplies / credentialMembers answer the
+	// named fetch with an account-wide token revocation, after auth.test has
+	// already succeeded.
+	credentialHistory map[string]bool
+	credentialReplies map[string]bool
+	credentialMembers map[string]bool
 	// failSearch makes search.messages answer a method error.
 	failSearch bool
+	// credentialSearch makes search.messages answer an account-wide token
+	// revocation after auth.test has already succeeded.
+	credentialSearch bool
 	// searchMissingScope makes search.messages answer missing_scope (a
 	// token without search:read).
 	searchMissingScope bool
@@ -204,6 +213,7 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 		t: t, pageSize: 3,
 		scopes:      "channels:read,channels:history,groups:read,groups:history,im:read,im:history,mpim:read,mpim:history,users:read,users:read.email,files:read,search:read",
 		failHistory: map[string]bool{}, failReplies: map[string]bool{},
+		credentialHistory: map[string]bool{}, credentialReplies: map[string]bool{}, credentialMembers: map[string]bool{},
 		failMembers: map[string]bool{}, searchHidden: map[string]bool{},
 		searchTruncateDays:    map[string]bool{},
 		searchSnapshots:       map[string][]searchHit{},
@@ -356,6 +366,10 @@ func (f *fakeSlack) handleMembers(w http.ResponseWriter, r *http.Request) {
 		f.replyErr(w, "internal_error")
 		return
 	}
+	if f.credentialMembers[c.ID] {
+		f.replyErr(w, "token_revoked")
+		return
+	}
 	from, to, next := f.page(r, len(c.Members))
 	f.reply(w, map[string]any{
 		"members":           c.Members[from:to],
@@ -405,6 +419,10 @@ func (f *fakeSlack) handleHistory(w http.ResponseWriter, r *http.Request) {
 		f.replyErr(w, "internal_error")
 		return
 	}
+	if f.credentialHistory[c.ID] {
+		f.replyErr(w, "token_revoked")
+		return
+	}
 	if f.failHistoryContinuations && r.FormValue("cursor") != "" {
 		f.replyErr(w, "internal_error")
 		return
@@ -438,6 +456,10 @@ func (f *fakeSlack) handleReplies(w http.ResponseWriter, r *http.Request) {
 	rootTS := r.FormValue("ts")
 	if f.failReplies[rootTS] {
 		f.replyErr(w, "internal_error")
+		return
+	}
+	if f.credentialReplies[rootTS] {
+		f.replyErr(w, "token_revoked")
 		return
 	}
 	root := c.findRoot(rootTS)
@@ -499,6 +521,10 @@ func (f *fakeSlack) handleSearch(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	if f.failSearch {
 		f.replyErr(w, "fatal_error")
+		return
+	}
+	if f.credentialSearch {
+		f.replyErr(w, "token_revoked")
 		return
 	}
 	if f.searchMissingScope {

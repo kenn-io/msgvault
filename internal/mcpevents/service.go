@@ -137,6 +137,15 @@ func (s *Service) cleanupRetention(ctx context.Context, now time.Time) error {
 	}
 	return s.operation(ctx, func() error { return s.st.PruneMCPEvents(ctx, now, s.opts.Retention) })
 }
+
+func (s *Service) hasEventFamily(name string) bool {
+	for _, capability := range s.caps {
+		if capability.Family == name {
+			return true
+		}
+	}
+	return false
+}
 func (s *Service) authorize(principal string) error {
 	if !s.opts.Enabled || principal != s.principal {
 		return &Error{Code: -32012, Reason: "subscription_unavailable"}
@@ -181,6 +190,9 @@ func (s *Service) Subscribe(ctx context.Context, principal string, req Subscribe
 	}
 	if _, err := callbackURL(req.Delivery.URL); err != nil {
 		return result, err
+	}
+	if !s.hasEventFamily(req.Name) {
+		return result, &Error{Code: -32015, Reason: "events_unavailable"}
 	}
 	id := subscriptionID(principal, req.Name, args.bytes, req.Delivery.URL)
 	var old *store.MCPSubscription

@@ -235,11 +235,17 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (_ *Imp
 		return nil, fmt.Errorf("fbmessenger: begin import: %w", err)
 	}
 	summary.ImportRunID = logicalRun.ID
-	st, err = st.WithImportRun(ownershipCtx, logicalRun.ID)
+	importStore, err := st.WithImportRun(ownershipCtx, logicalRun.ID)
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fbmessenger: bind import: %w", err)
 	}
+	if importStore == nil {
+		err = errors.New("WithImportRun returned a nil Store")
+		syncErr = err
+		return nil, fmt.Errorf("fbmessenger: bind import: %w", err)
+	}
+	st = importStore
 	if recoveredSyncID != 0 {
 		// Native message IDs make a full recovery scan idempotent. A durable
 		// logical run, rather than best-effort progress, owns notification choice.

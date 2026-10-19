@@ -303,6 +303,13 @@ func (s *Store) ActivateMCPSubscription(ctx context.Context, a MCPActivation) (*
 	var result *MCPSubscription
 	truncated := false
 	err := s.withMCPEventTx(ctx, func(tx *sql.Tx, clock MCPEventClock) error {
+		current, err := root.mcpRuntimeCurrentTx(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return mcpStoreError("subscription_unavailable")
+		}
 		var args struct {
 			Kinds []string `json:"kinds"`
 		}

@@ -34,3 +34,43 @@ func TestImportMessengerFreshLogicalRunsDoNotInheritLiveMode(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
 	assert.Zero(events)
 }
+
+func TestMessengerImportBindingFailureFailsSyncWithoutPanic(t *testing.T) {
+	assert := Assert.New(t)
+	require := Require.New(t)
+
+	st := testutil.NewTestStore(t)
+	failMessengerImportRunBindingAfterAttempt(t, st)
+	var importErr error
+	panicValue := recoverMessengerImportPanic(func() {
+		_, importErr = ImportDYI(t.Context(), st, syntheticMessengerImport(t))
+	})
+
+	assert.Nil(panicValue, "Messenger import should return the binding error without panicking")
+	assert.ErrorContains(importErr, "fbmessenger: bind import: invalid_import_run")
+	var status string
+	require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+	assert.Equal(store.SyncStatusFailed, status)
+}
+
+func failMessengerImportRunBindingAfterAttempt(t *testing.T, st *store.Store) {
+	t.Helper()
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`CREATE FUNCTION fail_messenger_import_run_binding() RETURNS trigger LANGUAGE plpgsql AS $$
+			BEGIN UPDATE import_runs SET completed=TRUE WHERE id=NEW.import_run_id; RETURN NEW; END $$`)
+		Require.NoError(t, err)
+		_, err = st.DB().Exec(`CREATE TRIGGER fail_messenger_import_run_binding AFTER INSERT ON import_run_attempts
+			FOR EACH ROW EXECUTE FUNCTION fail_messenger_import_run_binding()`)
+		Require.NoError(t, err)
+		return
+	}
+	_, err := st.DB().Exec(`CREATE TRIGGER fail_messenger_import_run_binding AFTER INSERT ON import_run_attempts
+		BEGIN UPDATE import_runs SET completed=TRUE WHERE id=NEW.import_run_id; END`)
+	Require.NoError(t, err)
+}
+
+func recoverMessengerImportPanic(run func()) (panicValue any) {
+	defer func() { panicValue = recover() }()
+	run()
+	return nil
+}

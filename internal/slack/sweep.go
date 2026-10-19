@@ -2,6 +2,7 @@ package slack
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -249,7 +250,7 @@ func (imp *Importer) scheduleCanonicalThreadAudit(targets map[string]sweepTarget
 // day, capped at ceiling and never regressing below floor — so multi-day
 // catch-ups checkpoint per day. Discovery and fetch failures are recorded,
 // the boundary parks at the last safe point, and the sweep stops; only
-// store/context failures return an error.
+// store/context failures and credential revocation return an error.
 func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor string, searchEnd time.Time, ceiling string, targets map[string]sweepTarget, loc *time.Location, budget *sweepBudget, state *SyncState, sum *ImportSummary, commit func(certified string)) error {
 	queryFloor := overlapFloor(floor)
 	liveAfter := ""
@@ -312,6 +313,9 @@ func (imp *Importer) sweepRange(ctx context.Context, syncID int64, scope, floor 
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
+			}
+			if errors.Is(err, ErrCredentialRevoked) {
+				return err
 			}
 			// Charge a failed free-overlap attempt so the shared budget cannot
 			// repeat the same failing search once per lagging channel. A

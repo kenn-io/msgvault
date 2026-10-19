@@ -114,7 +114,7 @@ func (s *Server) mcpEventsOwner(w http.ResponseWriter, r *http.Request) (*mcpeve
 		writeMCPEventsError(w, s.mcpEventsUnavailable)
 		return nil, "", false
 	}
-	if s.mcpEvents == nil || len(s.mcpEvents.Catalog().Events) == 0 {
+	if s.mcpEvents == nil {
 		writeMCPEventsError(w, &mcpevents.Error{Code: -32015, Reason: "events_unavailable"})
 		return nil, "", false
 	}

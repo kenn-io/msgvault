@@ -104,11 +104,17 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 		return nil, fmt.Errorf("begin Android WhatsApp import: %w", err)
 	}
 	summary.ImportRunID = run.ID
-	imp.store, err = imp.store.WithImportRun(ownershipCtx, run.ID)
+	importStore, err := imp.store.WithImportRun(ownershipCtx, run.ID)
 	if err != nil {
 		syncErr = err
 		return summary, fmt.Errorf("bind Android WhatsApp import: %w", err)
 	}
+	if importStore == nil {
+		err = errors.New("WithImportRun returned a nil Store")
+		syncErr = err
+		return summary, fmt.Errorf("bind Android WhatsApp import: %w", err)
+	}
+	imp.store = importStore
 
 	imp.progress.OnStart()
 

@@ -107,6 +107,16 @@ func TestMCPEventsAPIClosedRequestsRejectForgedPrincipal(t *testing.T) {
 	assert.Empty(rows)
 }
 
+func TestMCPEventsAPISubscribeUnknownEventPreservesUnknownEventError(t *testing.T) {
+	assert := Assert.New(t)
+	srv, _ := newMCPEventsAPIFixture(t)
+	owner := http.Header{"Authorization": {"Bearer " + testSessionAPIKey}}
+	body := `{"name":"msgvault.unknown_event","arguments":{},"delivery":{"mode":"webhook","url":"https://receiver.example.net/hook","secret":"whsec_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`
+	response := mcpEventsAPIRequest(t, srv, "subscribe", body, owner)
+	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), `"reason":"unknown_event"`)
+}
+
 func TestMCPEventsAPIStatusOmitsCallbackSecretsAndPrincipal(t *testing.T) {
 	assert := Assert.New(t)
 	require := Require.New(t)
