@@ -22,6 +22,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/robfig/cron/v3"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
@@ -502,6 +503,7 @@ type MediaAccountConfig struct {
 //
 //nolint:recvcheck // ApplyDefaults mutates; MediaPolicy keeps the value receiver shared by the sibling provider configs
 type DiscordConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	MaxMediaBytes        int64                         `toml:"max_media_bytes"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
@@ -545,6 +547,7 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
+	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
 	OAuth              OAuthConfig                     `toml:"oauth"`
@@ -869,14 +872,15 @@ func NewDefaultConfig() *Config {
 			BatchSize:             500,
 			Schedule:              "17 * * * *",
 		},
-		Accounts:    []AccountSchedule{},
-		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
-		GCal:        []GCalSource{},
+		ConversationPolicy: ConversationPolicyConfig{ActivityWindowDays: conversationpolicy.DefaultActivityWindowDays},
+		Accounts:           []AccountSchedule{},
+		SynctechSMS:        SynctechSMSConfig{Sources: []SynctechSMSSource{}},
+		GCal:               []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
-		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
+		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
+		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
+		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants, MaxParticipants: conversationpolicy.DefaultMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -1112,6 +1116,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	// survived decode (e.g. `max_retries = 0` or an omitted timeout).
 	// Preprocess booleans are *bool so pointer-nil still means "default";
 	// an explicit false in the file stays false.
+	if err := cfg.validateConversationPolicy(); err != nil {
+		return nil, err
+	}
 	cfg.Vector.ApplyDefaults()
 	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
 		return metadata.IsDefined("attachments", "documents", field)
@@ -1594,6 +1601,7 @@ func (c *Config) GetAccountSchedule(email string) *AccountSchedule {
 // there is exactly one instance per machine and the daemon must be co-located
 // with it.
 type BeeperConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// URL is the Beeper Desktop API base URL. Empty means the default
 	// loopback address (http://localhost:23373).
 	URL string `toml:"url"`
@@ -1638,6 +1646,7 @@ type MatrixConfig struct {
 // One block covers every registered workspace: tokens are per-workspace
 // files, so no per-workspace config entries are needed.
 type SlackConfig struct {
+	MaxParticipants int `toml:"max_participants"`
 	// Enabled gates the daemon scheduler job.
 	Enabled bool `toml:"enabled"`
 	// Schedule is a 5-field cron expression; empty = not daemon-scheduled.
@@ -1671,6 +1680,7 @@ type SlackConfig struct {
 // MediaMaxParticipants follows the same omitted-versus-explicit-zero rule as
 // the other providers.
 type TeamsConfig struct {
+	MaxParticipants      int                           `toml:"max_participants"`
 	Media                *bool                         `toml:"media"`
 	MediaScope           string                        `toml:"media_scope"`
 	MediaMaxParticipants int                           `toml:"media_max_participants"`
