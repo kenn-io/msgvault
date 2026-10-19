@@ -277,11 +277,17 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 			uncertain = uncertain || !body.ok
 			if body.ok && asksQuestion(body.text) &&
 				(anchor == nil || messageBefore(m, *anchor)) {
-				candidateCounterparty, ok := obligationCounterparty(settlementView, kind, m)
+				candidate := m
+				preferredCounterpartyID := int64(0)
+				if settled, ok := retained[kind]; ok && settled.anchor != nil && settled.anchor.ID == candidate.ID {
+					preferredCounterpartyID = settled.loop.CounterpartyParticipantID
+				}
+				candidateCounterparty, ok := selectAwaitingReplyCounterparty(
+					settlementView, turns, &candidate, preferredCounterpartyID,
+				)
 				if !ok || suppressed(candidateCounterparty, supp) {
 					continue
 				}
-				candidate := m
 				anchor = &candidate
 				counterparty = candidateCounterparty
 			}

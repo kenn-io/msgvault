@@ -1226,6 +1226,37 @@ func TestDetectAwaitingCounterpartyRanksEveryCandidate(t *testing.T) {
 	}
 }
 
+func TestDetectAwaitingReplySuppressesSelectedActivityCounterparty(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	view, now := detectorFixture()
+	owner := view.Participants[0]
+	muted := view.Participants[1]
+	active := LoopParticipant{ID: 3, PersonID: 8, Email: "blair@example.test", DisplayName: "Blair Example"}
+	view.Participants = append(view.Participants, active)
+
+	previous := view.Messages[0]
+	previous.ID, previous.Direction, previous.Sender = 11, Inbound, active
+	previous.OccurredAt = now.Add(-2 * time.Hour)
+	question := previous
+	question.ID, question.Direction, question.Sender = 12, Outbound, owner
+	question.OccurredAt = now.Add(-time.Hour)
+	question.Recipients = []LoopRecipient{
+		{LoopParticipant: muted, Type: "to"},
+		{LoopParticipant: active, Type: "to"},
+	}
+	view.Messages = []LoopMessage{previous, question}
+	view.LastMessageAt = question.OccurredAt
+	view.BodyText = func(int64) (string, error) { return "Could you send the draft?", nil }
+
+	got := Detect(view, nil, now, DefaultThresholds(), Suppressions{Participants: []int64{muted.ID}})
+	requirements.NoError(got.Err)
+	requirements.NotNil(got.Open)
+	assertions.Equal(AwaitingReply, got.Open.Kind)
+	assertions.Equal(question.ID, got.Open.Anchor.ID)
+	assertions.Equal(active.ID, got.Open.Counterparty.ID)
+}
+
 func TestDetectCoverageGapDoesNotWithdrawMissingAddressedAnchor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
