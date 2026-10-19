@@ -221,6 +221,62 @@ func TestPersonMergeTransfersLoopDecisionsAndSplitRestoresThem(t *testing.T) {
 	assert.Equal("absorbed note", absorbedNote)
 }
 
+func TestPersonMergeUnmuteSurvivesSplitOfDeduplicatedSuppression(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	f := storetest.New(t)
+	survivorParticipant := f.EnsureParticipant("loop-unmute-survivor@example.test", "Survivor", "example.test")
+	absorbedParticipant := f.EnsureParticipant("loop-unmute-absorbed@example.test", "Absorbed", "example.test")
+	survivor, created, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+	requirements.NoError(err)
+	requirements.True(created)
+	absorbed, created, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+	requirements.NoError(err)
+	requirements.True(created)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+
+	survivorMute, err := f.Store.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+		TargetKind: "person", PersonID: &survivor.ID, Note: "survivor note",
+	}, now)
+	requirements.NoError(err)
+	requirements.NotNil(survivorMute.Suppression)
+	absorbedMute, err := f.Store.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+		TargetKind: "person", PersonID: &absorbed.ID, Note: "absorbed note",
+	}, now)
+	requirements.NoError(err)
+	requirements.NotNil(absorbedMute.Suppression)
+
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "merge-loop-unmute-split", Actor: "test",
+	})
+	requirements.NoError(err)
+	var (
+		action               string
+		currentSuppressionID sql.NullInt64
+	)
+	requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT action, current_row_id
+		FROM person_merge_rows WHERE merge_id=? AND table_name='loop_suppressions' AND original_row_id=?`),
+		merged.Merge.ID, absorbedMute.Suppression.ID).Scan(&action, &currentSuppressionID))
+	assertions.Equal("deduplicated", action)
+	assertions.True(currentSuppressionID.Valid)
+	assertions.Equal(survivorMute.Suppression.ID, currentSuppressionID.Int64)
+	requirements.NoError(f.Store.DeleteLoopSuppressionContext(ctx, survivorMute.Suppression.ID, 0, now))
+
+	_, err = f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: []int64{absorbedParticipant}, ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey: "split-loop-unmute-split", Actor: "test",
+	})
+	requirements.NoError(err)
+	var suppressionCount int
+	requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT COUNT(*)
+		FROM loop_suppressions WHERE target_kind=?`), string(store.AttributeObjectPerson)).Scan(&suppressionCount))
+	assertions.Zero(suppressionCount, "splitting must not restore a mute removed after merge")
+}
+
 func TestMergePersons_CardDAVState(t *testing.T) {
 	t.Run("resource binding follows exact split", func(t *testing.T) {
 		require := require.New(t)

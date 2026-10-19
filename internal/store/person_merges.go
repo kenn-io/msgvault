@@ -549,7 +549,8 @@ func (s *Store) reconcilePersonLoopDecisionsTx(
 			return fmt.Errorf("preserve merged person loop suppression note: %w", err)
 		}
 		if err := s.setPersonMergeRowDispositionTx(
-			ctx, tx, mergeID, "loop_suppressions", row.id, "deleted_snapshot", nil,
+			ctx, tx, mergeID, "loop_suppressions", row.id,
+			personMergeActionDeduplicated, &survivor.id,
 		); err != nil {
 			return err
 		}
