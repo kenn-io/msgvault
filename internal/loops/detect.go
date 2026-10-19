@@ -125,7 +125,7 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		if gap && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
 			v.CoverageGaps = append(v.CoverageGaps, l.ID)
 		}
-		if closed == nil {
+		if closed == nil && !slices.ContainsFunc(v.Close, func(decision CloseDecision) bool { return decision.ID == l.ID }) {
 			l.OwnerParticipationMessageID = ownerParticipationMessageID
 			retained[l.Kind] = settledLoop{loop: l, anchor: anchor}
 			if gap && l.Kind == ReplyOwed && ownerParticipationMessageID == 0 && anchor != nil && isBulkMessage(*anchor) {

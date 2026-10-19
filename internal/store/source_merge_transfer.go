@@ -258,16 +258,48 @@ func (s *Store) transferSourceMergeLoopState(
 	messages []mergeMessage,
 ) error {
 	survivors := make(map[int64]int64)
+	survivorConversationIDs, err := sourceMergeSurvivorConversationIDs(ctx, tx, messages)
+	if err != nil {
+		return fmt.Errorf("load surviving conversation IDs: %w", err)
+	}
+	destinationsByConversation := make(map[int64][]int64, len(conversations))
+	seenDestinations := make(map[int64]map[int64]struct{}, len(conversations))
+	activeUniqueMessages := make(map[int64]bool, len(conversations))
+	addDestination := func(sourceConversationID, destinationConversationID int64) {
+		if destinationConversationID <= 0 {
+			return
+		}
+		seen := seenDestinations[sourceConversationID]
+		if seen == nil {
+			seen = make(map[int64]struct{})
+			seenDestinations[sourceConversationID] = seen
+		}
+		if _, ok := seen[destinationConversationID]; ok {
+			return
+		}
+		seen[destinationConversationID] = struct{}{}
+		destinationsByConversation[sourceConversationID] = append(destinationsByConversation[sourceConversationID], destinationConversationID)
+	}
 	for _, message := range messages {
 		if message.survivor != 0 {
 			survivors[message.id] = message.survivor
+			destinationConversationID, ok := survivorConversationIDs[message.survivor]
+			if !ok {
+				return fmt.Errorf("surviving message %d has no conversation", message.survivor)
+			}
+			addDestination(message.conversationID, destinationConversationID)
+		} else if !message.archiveOnly && !message.deleted.Valid && !message.removed.Valid {
+			activeUniqueMessages[message.conversationID] = true
 		}
 	}
 	for _, conversation := range conversations {
-		if conversation.id != conversation.destination {
-			if err := s.transferSourceMergeConversationSuppression(ctx, tx, conversation.id, conversation.destination); err != nil {
-				return fmt.Errorf("transfer conversation mute %d to %d: %w", conversation.id, conversation.destination, err)
-			}
+		if conversation.destination != conversation.id || activeUniqueMessages[conversation.id] || len(destinationsByConversation[conversation.id]) == 0 {
+			addDestination(conversation.id, conversation.destination)
+		}
+	}
+	for _, conversation := range conversations {
+		if err := s.transferSourceMergeConversationSuppression(ctx, tx, conversation.id, destinationsByConversation[conversation.id]); err != nil {
+			return fmt.Errorf("transfer conversation mute from %d: %w", conversation.id, err)
 		}
 		if err := s.transferSourceMergeLoopReferences(ctx, tx, conversation.id, conversation.destination, destinationSourceID, survivors); err != nil {
 			return fmt.Errorf("transfer loops for conversation %d to %d: %w", conversation.id, conversation.destination, err)
@@ -276,10 +308,52 @@ func (s *Store) transferSourceMergeLoopState(
 	return nil
 }
 
+func sourceMergeSurvivorConversationIDs(ctx context.Context, tx *loggedTx, messages []mergeMessage) (map[int64]int64, error) {
+	var ids []int64
+	seen := make(map[int64]struct{})
+	for _, message := range messages {
+		if message.survivor == 0 {
+			continue
+		}
+		if _, ok := seen[message.survivor]; ok {
+			continue
+		}
+		seen[message.survivor] = struct{}{}
+		ids = append(ids, message.survivor)
+	}
+	conversationIDs := make(map[int64]int64, len(ids))
+	for start := 0; start < len(ids); start += 100 {
+		batch := ids[start:min(start+100, len(ids))]
+		placeholders := make([]string, len(batch))
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT id, conversation_id FROM messages WHERE id IN (`+strings.Join(placeholders, ",")+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var messageID, conversationID int64
+			if err := rows.Scan(&messageID, &conversationID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			conversationIDs[messageID] = conversationID
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+	}
+	return conversationIDs, nil
+}
+
 func (s *Store) transferSourceMergeConversationSuppression(
 	ctx context.Context,
 	tx *loggedTx,
-	sourceConversationID, destinationConversationID int64,
+	sourceConversationID int64,
+	destinationConversationIDs []int64,
 ) error {
 	var absorbed struct {
 		id        int64
@@ -295,31 +369,56 @@ func (s *Store) transferSourceMergeConversationSuppression(
 	if err != nil {
 		return err
 	}
-	var survivor struct {
-		id        int64
-		note      string
-		createdAt time.Time
+	if len(destinationConversationIDs) == 0 {
+		return nil
 	}
-	err = tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
-		WHERE target_kind = 'conversation' AND conversation_id = ?`, destinationConversationID).
-		Scan(&survivor.id, &survivor.note, &survivor.createdAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		_, err = tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id = ? WHERE id = ?`, destinationConversationID, absorbed.id)
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	createdAt := survivor.createdAt
-	if absorbed.createdAt.Before(createdAt) {
-		createdAt = absorbed.createdAt
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ?, created_at = ? WHERE id = ?`,
-		mergeLoopSuppressionNotes(survivor.note, absorbed.note), s.dialect.TimestampParam(createdAt), survivor.id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, absorbed.id); err != nil {
-		return err
+	sourceMuteIDAvailable := true
+	for _, destinationConversationID := range destinationConversationIDs {
+		var survivor struct {
+			id        int64
+			note      string
+			createdAt time.Time
+		}
+		err = tx.QueryRowContext(ctx, `SELECT id, note, created_at FROM loop_suppressions
+			WHERE target_kind = 'conversation' AND conversation_id = ?`, destinationConversationID).
+			Scan(&survivor.id, &survivor.note, &survivor.createdAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			if sourceMuteIDAvailable {
+				_, err = tx.ExecContext(ctx, `UPDATE loop_suppressions SET conversation_id = ? WHERE id = ?`, destinationConversationID, absorbed.id)
+				if err != nil {
+					return err
+				}
+			} else {
+				_, err = tx.ExecContext(ctx, `INSERT INTO loop_suppressions(target_kind, conversation_id, note, created_at)
+					VALUES ('conversation', ?, ?, ?)`, destinationConversationID, absorbed.note, s.dialect.TimestampParam(absorbed.createdAt))
+				if err != nil {
+					return err
+				}
+			}
+			sourceMuteIDAvailable = false
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if survivor.id == absorbed.id {
+			sourceMuteIDAvailable = false
+			continue
+		}
+		createdAt := survivor.createdAt
+		if absorbed.createdAt.Before(createdAt) {
+			createdAt = absorbed.createdAt
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE loop_suppressions SET note = ?, created_at = ? WHERE id = ?`,
+			mergeLoopSuppressionNotes(survivor.note, absorbed.note), s.dialect.TimestampParam(createdAt), survivor.id); err != nil {
+			return err
+		}
+		if sourceMuteIDAvailable {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM loop_suppressions WHERE id = ?`, absorbed.id); err != nil {
+				return err
+			}
+			sourceMuteIDAvailable = false
+		}
 	}
 	return nil
 }

@@ -383,6 +383,88 @@ func TestMergeSourcesTransfersEmailConversationMuteBeforeDerivation(t *testing.T
 	assertions.Equal(revision, processedRevision, "derivation must process the surviving thread")
 }
 
+func TestMergeSourcesTransfersEmailConversationMuteToEverySurvivingThread(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "history-email-source")
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live-email-source")
+	requirements.NoError(err)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+	hiddenFirst, hiddenConversation := emailMergeFixtureMessageInThread(t, st, from.ID, "history-thread", "history-1")
+	hiddenSecond, sameHiddenConversation := emailMergeFixtureMessageInThread(t, st, from.ID, "history-thread", "history-2")
+	survivorFirst, firstConversation := emailMergeFixtureMessageInThread(t, st, into.ID, "live-thread-one", "live-1")
+	survivorSecond, secondConversation := emailMergeFixtureMessageInThread(t, st, into.ID, "live-thread-two", "live-2")
+	requirements.Equal(hiddenConversation, sameHiddenConversation)
+	requirements.NotEqual(firstConversation, secondConversation)
+
+	for _, pair := range []struct {
+		hidden, survivor int64
+		body             string
+		at               time.Time
+	}{
+		{hidden: hiddenFirst, survivor: survivorFirst, body: "Can you review the first item?", at: now.Add(-72 * time.Hour)},
+		{hidden: hiddenSecond, survivor: survivorSecond, body: "Can you review the second item?", at: now.Add(-48 * time.Hour)},
+	} {
+		for _, messageID := range []int64{pair.hidden, pair.survivor} {
+			_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), pair.at, messageID)
+			requirements.NoError(err)
+			requirements.NoError(st.UpsertMessageBody(messageID, sql.NullString{String: pair.body, Valid: true}, sql.NullString{}))
+		}
+	}
+	requirements.NoError(st.AddAccountIdentity(from.ID, "recipient@example.test", "manual"))
+	requirements.NoError(st.AddAccountIdentity(into.ID, "recipient@example.test", "manual"))
+
+	open := sourceMergeLoopOpen(hiddenConversation, from.ID, hiddenFirst, "reply_owed", now)
+	open.Channel = "email"
+	requirements.NoError(st.ApplyLoopVerdictContext(t.Context(), store.LoopApply{
+		ConversationID: hiddenConversation, Now: now, Verdict: store.LoopVerdict{Open: &open},
+	}))
+	var sourceLoopID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM open_loops WHERE conversation_id=? AND anchor_message_id=?`), hiddenConversation, hiddenFirst).Scan(&sourceLoopID))
+	muted, err := st.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "conversation", ConversationID: &hiddenConversation, Note: "owner muted this thread",
+	}, now)
+	requirements.NoError(err)
+	requirements.NotNil(muted.Suppression)
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	assertions.Equal(int64(2), result.DuplicatesHidden)
+	var destinationSuppressionIDs []int64
+	for _, destination := range []int64{firstConversation, secondConversation} {
+		var suppressionID sql.NullInt64
+		var suppressionCount int
+		var suppressionNote sql.NullString
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT MIN(id), COUNT(*), MAX(note) FROM loop_suppressions
+			WHERE target_kind='conversation' AND conversation_id=?`), destination).Scan(&suppressionID, &suppressionCount, &suppressionNote))
+		assertions.Equal(1, suppressionCount, "the archived conversation mute follows every surviving thread")
+		assertions.Equal("owner muted this thread", suppressionNote.String)
+		destinationSuppressionIDs = append(destinationSuppressionIDs, suppressionID.Int64)
+	}
+	assertions.Contains(destinationSuppressionIDs, muted.Suppression.ID, "the original mute ID remains a valid handle")
+	assertions.NotEqual(destinationSuppressionIDs[0], destinationSuppressionIDs[1], "each surviving thread has an independently removable mute")
+	moved, err := st.GetOpenLoopContext(t.Context(), sourceLoopID)
+	requirements.NoError(err)
+	requirements.Equal(firstConversation, moved.ConversationID)
+	requirements.NotNil(moved.AnchorMessageID)
+	requirements.Equal(survivorFirst, *moved.AnchorMessageID)
+
+	cfg := config.DefaultLoopsConfig()
+	cfg.Lookback = 0
+	deriver, err := loops.NewDeriver(st, &cfg)
+	requirements.NoError(err)
+	_, err = deriver.RunOnce(t.Context())
+	requirements.NoError(err)
+	for _, destination := range []int64{firstConversation, secondConversation} {
+		live, err := st.ListLiveConversationLoopsContext(t.Context(), destination)
+		requirements.NoError(err)
+		assertions.Empty(live, "derivation must not reopen an obligation in any muted surviving thread")
+	}
+}
+
 func TestMergeSourcesRetainsTerminalHistoryForDuplicateLoopAnchor(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
