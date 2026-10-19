@@ -1330,7 +1330,7 @@ func TestContextWorker_UnchangedRevisionFencesDelayedPublication(t *testing.T) {
 	snapshot, err := BeginSourceSnapshot(t.Context(), f.store)
 	require.NoError(t, err)
 	staleDocuments, err := f.worker.deps.Assembler.AssembleScopes(t.Context(), snapshot,
-		[]AffectedScope{{Kind: "beeper", ConversationID: f.chatID}})
+		[]AffectedScope{chatDayContextScope(f.chatID, at).selector})
 	require.NoError(t, err)
 	staleSequence := snapshot.SourceSequence()
 	require.NoError(t, snapshot.Close())

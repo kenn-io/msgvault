@@ -199,6 +199,33 @@ func TestConversationPolicyRevisitsFutureActivityWhenEligible(t *testing.T) {
 	}
 }
 
+func TestConversationPolicyConfigurationChangeKeepsFutureActivityCheckpoint(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	f := newActivityFixture(t)
+	settings := conversationpolicy.DefaultSettings()
+	_, err := f.s.ConfigureConversationPolicy(t.Context(), settings, activityNow)
+	requirements.NoError(err)
+
+	future := activityNow.Add(time.Minute)
+	f.message(t, "future-signal", future, true)
+	_, err = f.s.RefreshConversationPolicy(t.Context(), []int64{f.room}, activityNow)
+	requirements.NoError(err)
+	assertions.Equal(conversationpolicy.Cold, f.tier(t))
+	assertions.True(f.activity(t, activityNow).IsZero())
+
+	// A settings change must not advance the expiry checkpoint past a signal
+	// that has just become eligible but was still in the future at its scan.
+	settings.ActivityWindowDays++
+	_, err = f.s.ConfigureConversationPolicy(t.Context(), settings, future.Add(time.Second))
+	requirements.NoError(err)
+	_, err = f.s.ExpireConversationPolicy(t.Context(), future.Add(2*time.Second))
+	requirements.NoError(err)
+	assertions.Equal(conversationpolicy.Full, f.tier(t))
+	assertions.Equal(future, f.activity(t, future.Add(2*time.Second)))
+}
+
 func TestConversationPolicyActivityNewestFirstReplyRepair(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

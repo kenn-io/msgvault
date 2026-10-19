@@ -636,6 +636,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'from'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -649,6 +650,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'to'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -662,6 +664,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'cc'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")
@@ -675,6 +678,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE mr2.message_id = m.id
 			AND mr2.recipient_type = 'bcc'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+			AND `+FullParticipantValueWhere("p2.id", "'email'", "p2.email_address")+`
 		)`)
 		args = append(args,
 			"%"+escapeLike(strings.ToLower(addr))+"%")

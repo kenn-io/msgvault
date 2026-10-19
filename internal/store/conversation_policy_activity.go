@@ -203,6 +203,70 @@ func (s *Store) refreshConversationActivityTx(ctx context.Context, tx *loggedTx,
 	return nil
 }
 
+func (s *Store) conversationPolicyActivityExpiryStartTx(
+	ctx context.Context, tx *loggedTx, now time.Time, window time.Duration,
+) (time.Time, error) {
+	var raw string
+	err := tx.QueryRowContext(ctx, s.Rebind("SELECT value FROM archive_metadata WHERE key=?"), conversationPolicyActivityExpiryKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return now.Add(-window).UTC(), nil
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read conversation activity expiry checkpoint: %w", err)
+	}
+	checkpoint, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse conversation activity expiry checkpoint: %w", err)
+	}
+	if checkpoint.After(now) {
+		return now.Add(-window).UTC(), nil
+	}
+	return checkpoint.UTC(), nil
+}
+
+// conversationPolicyActivityIDsInIntervalTx finds existing chat-policy rooms
+// with message timestamps that crossed during an expiry interval. A missing
+// checkpoint starts at the activity window boundary; later passes scan only
+// timestamps since the previous full expiry. The activity scanner applies the
+// exact own-message, mention, and reply rules before policy state changes.
+func (s *Store) conversationPolicyActivityIDsInIntervalTx(
+	ctx context.Context, tx *loggedTx, since, now time.Time,
+) ([]int64, error) {
+	timestamp := "COALESCE(m.sent_at,m.received_at,m.internal_date)"
+	startBound, endBound := "?", "?"
+	if !s.IsPostgreSQL() {
+		// Offset-bearing SQLite timestamps need instant comparison. Keep a one
+		// second cushion for julianday's millisecond precision; the activity
+		// scanner parses timestamps and applies the exact interval afterward.
+		timestamp = "julianday(" + timestamp + ")"
+		startBound = "julianday(?) - (1.0 / 86400.0)"
+		endBound = "julianday(?) + (1.0 / 86400.0)"
+	}
+	query := "SELECT c.id FROM conversations c" +
+		" JOIN sources src ON src.id=c.source_id" +
+		" JOIN conversation_policy policy ON policy.conversation_id=c.id" +
+		" WHERE src.source_type IN ('beeper','slack','slackdump','discord','teams')" +
+		" AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.source_id=c.source_id AND " + timestamp + " >= " + startBound + " AND " + timestamp + " <= " + endBound + ")" +
+		" ORDER BY c.id"
+	rows, err := tx.QueryContext(ctx, s.Rebind(query), since.UTC(), now.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("find conversation activity in expiry interval: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 type conversationPolicySelfIdentity struct {
 	SourceID       int64
 	Address        string

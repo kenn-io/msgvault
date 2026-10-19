@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	conversationPolicySettingsKey   = "conversation_policy_settings"
-	conversationPolicyCleanupKey    = "conversation_policy_cleanup_revision"
-	conversationPolicyCleanedKey    = "conversation_policy_cleaned_revision"
-	conversationPolicyRoomBatchSize = 256
+	conversationPolicySettingsKey       = "conversation_policy_settings"
+	conversationPolicyCleanupKey        = "conversation_policy_cleanup_revision"
+	conversationPolicyCleanedKey        = "conversation_policy_cleaned_revision"
+	conversationPolicyActivityExpiryKey = "conversation_policy_activity_expiry_checked_at"
+	conversationPolicyRoomBatchSize     = 256
 )
 
 type ConversationPolicyRefresh struct {
@@ -164,7 +165,13 @@ func (s *Store) configureConversationPolicyTx(ctx context.Context, tx *loggedTx,
 	if err != nil {
 		return err
 	}
-	return s.setConversationPolicyMetadataTx(ctx, tx, "conversation_policy_attribution_revision", attribution)
+	if err = s.setConversationPolicyMetadataTx(ctx, tx, "conversation_policy_attribution_revision", attribution); err != nil {
+		return err
+	}
+	if selfChanged {
+		return s.setConversationPolicyMetadataTx(ctx, tx, conversationPolicyActivityExpiryKey, now.UTC().Format(time.RFC3339Nano))
+	}
+	return nil
 }
 
 func (s *Store) RefreshConversationPolicy(ctx context.Context, ids []int64, now time.Time) (ConversationPolicyRefresh, error) {
@@ -191,8 +198,20 @@ func (s *Store) refreshConversationPolicy(ctx context.Context, ids []int64, now 
 				return drainErr
 			}
 			dirtyActivityIDs = dirty
-			if len(dirty) > 0 {
-				if err = s.refreshConversationActivityTx(ctx, tx, dirty, now); err != nil {
+			window := time.Duration(settings.ActivityWindowDays) * 24 * time.Hour
+			since, checkpointErr := s.conversationPolicyActivityExpiryStartTx(ctx, tx, now, window)
+			if checkpointErr != nil {
+				return checkpointErr
+			}
+			intervalIDs, intervalErr := s.conversationPolicyActivityIDsInIntervalTx(ctx, tx, since, now)
+			if intervalErr != nil {
+				return intervalErr
+			}
+			dirtyActivityIDs = append(dirtyActivityIDs, intervalIDs...)
+			slices.Sort(dirtyActivityIDs)
+			dirtyActivityIDs = slices.Compact(dirtyActivityIDs)
+			if len(dirtyActivityIDs) > 0 {
+				if err = s.refreshConversationActivityTx(ctx, tx, dirtyActivityIDs, now); err != nil {
 					return err
 				}
 			}
@@ -205,7 +224,13 @@ func (s *Store) refreshConversationPolicy(ctx context.Context, ids []int64, now 
 			}
 		}
 		result, err = s.refreshConversationPolicyTx(ctx, tx, settings, ids, now, false, dirtyActivityIDs...)
-		return err
+		if err != nil {
+			return err
+		}
+		if ids == nil {
+			return s.setConversationPolicyMetadataTx(ctx, tx, conversationPolicyActivityExpiryKey, now.UTC().Format(time.RFC3339Nano))
+		}
+		return nil
 	})
 	return result, err
 }
