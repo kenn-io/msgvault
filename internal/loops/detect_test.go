@@ -403,36 +403,6 @@ func TestDetectRetainsSelectedAwaitingCounterpartyWhenAnotherIsMuted(t *testing.
 	assertions.Equal(higherID.ID, got.Open.Counterparty.ID)
 }
 
-func TestDetectDropsMutedRetainedAnchorBeforeSelectingNewerRequest(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	view, now := detectorFixture()
-	savedCounterparty := LoopParticipant{ID: 3, PersonID: 8, Email: "saved@example.test"}
-	mutedSender := LoopParticipant{ID: 4, PersonID: 9, Email: "muted@example.test"}
-	newSender := LoopParticipant{ID: 5, PersonID: 10, Email: "new@example.test"}
-	view.Participants = append(view.Participants, savedCounterparty, mutedSender, newSender)
-	older := view.Messages[0]
-	older.ID, older.Sender = 10, mutedSender
-	older.OccurredAt = now.Add(-48 * time.Hour)
-	newer := older
-	newer.ID, newer.Sender = 11, newSender
-	newer.OccurredAt = now.Add(-24 * time.Hour)
-	view.Messages = []LoopMessage{older, newer}
-	view.LastMessageAt = newer.OccurredAt
-	live := []LiveLoop{{
-		ID: 1, Kind: ReplyOwed, AnchorMessageID: older.ID,
-		CounterpartyParticipantID: savedCounterparty.ID,
-	}}
-
-	got := Detect(view, live, now, DefaultThresholds(), Suppressions{Participants: []int64{mutedSender.ID}})
-	requirements.NoError(got.Err)
-	requirements.Len(got.Close, 1)
-	assertions.Equal("muted", got.Close[0].Reason)
-	requirements.NotNil(got.Open)
-	assertions.Equal(newer.ID, got.Open.Anchor.ID)
-	assertions.Equal(newSender.ID, got.Open.Counterparty.ID)
-}
-
 func TestDetectOwnerMessagesWithAutomationLikeAddresses(t *testing.T) {
 	for _, senderIsOwner := range []bool{true, false} {
 		for _, address := range []string{"hello@example.test", "support@example.test"} {

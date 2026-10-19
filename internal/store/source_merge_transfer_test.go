@@ -455,8 +455,9 @@ func TestMergeSourcesClosesMovedLoopForAlreadyMutedEmailDestination(t *testing.T
 	requirements.NoError(err)
 	requirements.NotNil(muted.Suppression)
 
-	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
 	requirements.NoError(err)
+	assertions.Equal(int64(1), result.DuplicatesHidden)
 	moved, err := st.GetOpenLoopContext(t.Context(), sourceLoopID)
 	requirements.NoError(err)
 	assertions.Equal(survivorConversation, moved.ConversationID)
@@ -1027,38 +1028,6 @@ func TestMergeSourcesTransfersLoopStateAndConversationSuppressions(t *testing.T)
 }
 
 func TestMergeSourcesClosesMutedEmailDestinationLoops(t *testing.T) {
-	t.Run("moves a live loop into an already muted destination", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		st := testutil.NewTestStore(t)
-		from, err := st.GetOrCreateSource("gmail", "history@example.test")
-		require.NoError(err)
-		into, err := st.GetOrCreateSource("gmail", "live@example.test")
-		require.NoError(err)
-		sourceMessage, sourceConversation := emailMergeFixtureMessageWithBodyInThread(t, st, from.ID, "muted-thread", "history-message", "shared payload", 1)
-		_, destinationConversation := emailMergeFixtureMessageWithBodyInThread(t, st, into.ID, "muted-thread", "live-message", "shared payload", 1)
-		now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-		destinationMute := store.LoopSuppressionRequest{TargetKind: "conversation", ConversationID: &destinationConversation, Note: "muted destination"}
-		_, err = st.CreateLoopSuppressionContext(t.Context(), destinationMute, now)
-		require.NoError(err)
-		loopID := mergeFixtureLoop(t, st, from.ID, sourceConversation, sourceMessage, "reply_owed", now)
-
-		result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
-		require.NoError(err)
-		assert.Equal(int64(1), result.DuplicatesHidden)
-		loop, err := st.GetOpenLoopContext(t.Context(), loopID)
-		require.NoError(err)
-		assert.Equal(destinationConversation, loop.ConversationID)
-		assert.Equal("closed", loop.Status)
-		require.NotNil(loop.ClosedReason)
-		assert.Equal("muted", *loop.ClosedReason)
-		require.NotNil(loop.ClosedBy)
-		assert.Equal("user", *loop.ClosedBy)
-		live, err := st.ListLiveConversationLoopsContext(t.Context(), destinationConversation)
-		require.NoError(err)
-		assert.Empty(live)
-	})
-
 	t.Run("transfers a source mute to every matched destination conversation", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
