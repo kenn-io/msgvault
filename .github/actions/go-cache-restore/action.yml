@@ -1,0 +1,47 @@
+name: Restore Go caches
+description: >-
+  Restore the newest main-saved Go build and module caches for one job group.
+  Pair with go-cache-save in the job that owns the group.
+inputs:
+  group:
+    description: Cache group, such as linux-cgo or windows-amd64
+    required: true
+  extra-path:
+    description: Additional cache directory owned by the group
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Select cache key and paths
+      shell: bash
+      env:
+        GROUP: ${{ inputs.group }}
+        EXTRA_PATH: ${{ inputs.extra-path }}
+        GO_SUM: ${{ hashFiles('go.sum') }}
+      run: |
+        # One key per group and day: main refreshes it daily instead of freezing on go.sum.
+        {
+          echo "GO_CACHE_KEY=go-${GROUP}-${GO_SUM}-$(date -u +%Y-%m-%d)"
+          echo "GO_CACHE_PREFIX=go-${GROUP}-${GO_SUM}-"
+          echo "GO_CACHE_GROUP_PREFIX=go-${GROUP}-"
+          echo "GO_CACHE_PATHS<<EOF"
+          go env GOCACHE
+          go env GOMODCACHE
+          if [ -n "$EXTRA_PATH" ]; then echo "$EXTRA_PATH"; fi
+          echo "EOF"
+        } >> "$GITHUB_ENV"
+
+    - name: Restore caches
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.GO_CACHE_PATHS }}
+        key: ${{ env.GO_CACHE_KEY }}
+        restore-keys: |
+          ${{ env.GO_CACHE_PREFIX }}
+          ${{ env.GO_CACHE_GROUP_PREFIX }}
+
+    - name: Record exact cache hit
+      shell: bash
+      run: echo "GO_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}" >> "$GITHUB_ENV"

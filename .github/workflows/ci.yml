@@ -89,7 +89,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-checks
+          extra-path: ~/.cache/golangci-lint
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -114,6 +120,9 @@ jobs:
       - name: Vulnerability check
         run: make vulncheck
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+
   test:
     runs-on: ubuntu-24.04
     steps:
@@ -122,7 +131,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-test
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -133,6 +147,9 @@ jobs:
 
       - name: Test build without vector backends
         run: go test -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
 
   # The packages in SHARDED_TEST_PKGS (Makefile) each hold thousands of tests
   # that run one at a time inside one binary, so whole they set the wall clock
@@ -158,7 +175,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-test
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -175,10 +197,18 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: macos
 
       - name: Test
         run: make test
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
 
   frontend:
     runs-on: ubuntu-24.04
@@ -212,7 +242,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-test
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -253,7 +288,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-test
 
       - name: Install container build tools
         # Mirror hiccups have hung plain apt-get for 15+ minutes; bounded
@@ -310,7 +350,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: macos
 
       - name: Run mixed-archive analytical reference benchmark
         run: |
@@ -345,7 +390,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: windows
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -413,6 +463,9 @@ jobs:
           name: msgvault-windows-amd64
           path: msgvault.exe
 
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
+
   test-windows-slow-packages:
     runs-on: windows-2025
     steps:
@@ -423,7 +476,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: windows
 
       - name: Install SQLite development headers
         shell: pwsh
@@ -473,7 +531,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: windows
 
       - name: Install SQLite development headers
         shell: pwsh
@@ -512,7 +575,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: windows
 
       - name: Install SQLite development headers
         shell: pwsh
@@ -569,7 +637,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-test
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -613,7 +686,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-postgres
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
@@ -631,6 +709,9 @@ jobs:
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
         run: make test-pg-shipped-unsharded
+
+      - name: Save Go caches
+        uses: ./.github/actions/go-cache-save
 
   # test-postgres for SHARDED_TEST_PKGS: the same shard script as test-sharded,
   # one package per job, each with its own PostgreSQL service so four shards'
@@ -672,7 +753,12 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache: 'true'
+          cache: false
+
+      - name: Restore Go caches
+        uses: ./.github/actions/go-cache-restore
+        with:
+          group: linux-postgres
 
       - name: Install SQLite development headers
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
