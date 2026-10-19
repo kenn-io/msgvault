@@ -11,22 +11,24 @@ import (
 )
 
 func TestParticipantChatProvenanceUsesSenderAndRecipientIndexes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
 	query := `EXPLAIN QUERY PLAN SELECT p.id FROM participants p WHERE ` +
 		store.FullParticipantNameWhere("p.id", "'Synthetic Name'")
 	rows, err := s.DB().QueryContext(t.Context(), query)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
 
 	var details []string
 	for rows.Next() {
 		var id, parent, notUsed int
 		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &notUsed, &detail))
+		require.NoError(rows.Scan(&id, &parent, &notUsed, &detail))
 		details = append(details, detail)
 	}
-	require.NoError(t, rows.Err())
+	require.NoError(rows.Err())
 	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "SEARCH policy_message USING INDEX idx_messages_sender")
-	assert.Contains(t, plan, "SEARCH policy_recipient USING INDEX idx_message_recipients_participant")
+	assert.Contains(plan, "SEARCH policy_message USING INDEX idx_messages_sender")
+	assert.Contains(plan, "SEARCH policy_recipient USING INDEX idx_message_recipients_participant")
 }

@@ -21,6 +21,7 @@ import (
 
 type exactFilteredQueryPlanDB struct {
 	*sql.DB
+
 	plan string
 }
 
@@ -29,25 +30,24 @@ func (db *exactFilteredQueryPlanDB) QueryContext(ctx context.Context, query stri
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 	var details []string
 	for rows.Next() {
 		var id, parent, notUsed int
 		var detail string
 		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
-			_ = rows.Close()
 			return nil, err
 		}
 		details = append(details, detail)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
 		return nil, err
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	db.plan = strings.Join(details, "\n")
-	return db.DB.QueryContext(ctx, query, args...)
+	return db.DB.QueryContext(ctx, query, args...) //nolint:sqlclosecheck // The caller owns the returned rows.
 }
 
 func TestPolicyExactFilteredSearchMaterializesCurrentRevisionsOnce(t *testing.T) {

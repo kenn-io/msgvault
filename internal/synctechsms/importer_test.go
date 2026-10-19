@@ -15,6 +15,8 @@ import (
 )
 
 func TestNativeContactNameRemainsEligibleAfterColdBeeperSighting(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">
@@ -26,41 +28,41 @@ func TestNativeContactNameRemainsEligibleAfterColdBeeperSighting(t *testing.T) {
 		IncludeSMS: true,
 	})
 	_, err := imp.ImportPath(dir)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var participantID int64
-	require.NoError(t, f.Store.DB().QueryRow(`SELECT id FROM participants WHERE phone_number=?`, "+15551234567").Scan(&participantID))
+	require.NoError(f.Store.DB().QueryRow(`SELECT id FROM participants WHERE phone_number=?`, "+15551234567").Scan(&participantID))
 	nativeSource, err := f.Store.GetOrCreateSource(SourceType, "+15550000001")
-	require.NoError(t, err)
+	require.NoError(err)
 	var nativeNameObservations int
-	require.NoError(t, f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM participant_contact_observations
+	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM participant_contact_observations
 		WHERE participant_id=? AND source_id=? AND address_kind='display_name' AND normalized_value=?`),
 		participantID, nativeSource.ID, "Native Contact").Scan(&nativeNameObservations))
-	require.Equal(t, 1, nativeNameObservations)
+	require.Equal(1, nativeNameObservations)
 
 	beeperSource, err := f.Store.GetOrCreateSource("beeper", "account")
-	require.NoError(t, err)
+	require.NoError(err)
 	roomID, err := f.Store.EnsureConversation(beeperSource.ID, "chat-room", "Chat room")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.SetConversationPolicyOverride(t.Context(), beeperSource.ID, "chat-room", conversationpolicy.Cold))
+	require.NoError(err)
+	require.NoError(f.Store.SetConversationPolicyOverride(t.Context(), beeperSource.ID, "chat-room", conversationpolicy.Cold))
 	messageID, err := f.Store.UpsertMessageContext(t.Context(), &store.Message{
 		SourceID: beeperSource.ID, ConversationID: roomID, SourceMessageID: "chat-sighting",
 		MessageType: "chat", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,display_name)
 		VALUES(?,?,'from',?)`), messageID, participantID, "Different Chat Name")
-	require.NoError(t, err)
+	require.NoError(err)
 
 	eligibleNameCount := func(value string) int {
 		var count int
 		err := f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+
 			store.FullParticipantNameWhere("p.id", "?")), participantID, value, value).Scan(&count)
-		require.NoError(t, err)
+		require.NoError(err)
 		return count
 	}
-	assert.Equal(t, 1, eligibleNameCount("Native Contact"))
-	assert.Zero(t, eligibleNameCount("Different Chat Name"))
+	assert.Equal(1, eligibleNameCount("Native Contact"))
+	assert.Zero(eligibleNameCount("Different Chat Name"))
 }
 
 func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
