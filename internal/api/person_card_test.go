@@ -325,6 +325,80 @@ func TestPersonCardFactFiltersNonTransitionsBeforeDecisionLimit(t *testing.T) {
 	assertions.Equal(personFactAPINow, in.Facts[0].ChangedAt)
 }
 
+func TestPersonCardFactHydratesSelectedClaimBeyondTargetPages(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	srv, st, id, targets := newPersonFactAPIFixtureWithoutClaims(t)
+	target := targets[store.AttributeSlugPrimaryChannel]
+	applyPersonFactAPIGeneration(t, st, id, target, "fact-page-original-transition", `"chat"`)
+
+	targetRef := personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}
+	initialClaims, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{
+		Target: &targetRef, AnyRevision: true, Limit: 10,
+	})
+	requirements.NoError(err)
+	requirements.Len(initialClaims, 1)
+	requirements.Len(initialClaims[0].EvidenceIDs, 1)
+	originalClaimKey := initialClaims[0].ClaimKey
+	originalEvidenceID := initialClaims[0].EvidenceIDs[0]
+
+	claims := make([]personfacts.ProposedClaim, 201)
+	for i := range claims {
+		resolvedAt := personFactAPINow.Add(time.Duration(i+1) * time.Minute)
+		claims[i] = personfacts.ProposedClaim{
+			Target: target, Relation: personfacts.RelationSupport,
+			SubmittedValue: json.RawMessage(fmt.Sprintf(`"rejected-%03d"`, i)),
+			Origin:         personfacts.OriginExtraction,
+			Confidence:     personfacts.ConfidenceInputs{ReportedScore: 900},
+			Evidence: []personfacts.EvidenceInput{{
+				PersonID: id, SourceClass: personfacts.EvidencePublic,
+				Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative,
+				SourceURL:       fmt.Sprintf("https://example.test/rejected/%03d", i),
+				SubjectPersonID: &id, SubjectRef: "synthetic-person",
+				Excerpt:       fmt.Sprintf("Synthetic rejected observation %03d", i),
+				SourceVersion: "source-v1", EventTime: resolvedAt.Add(-time.Hour),
+				RecordedTime: resolvedAt, IdentityScore: 990,
+			}},
+		}
+	}
+	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
+		PersonID: id,
+		SourceCursors: []personfacts.SourceCursor{{
+			Lane: "fixture", Start: "fact-page-rejected-bulk", End: "fact-page-rejected-bulk-end",
+		}},
+		ProgramID: "fixture-program", ProgramVersion: "v1",
+		ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture-catalog",
+		Provider: "fixture-provider-secret", ProviderVersion: "v1",
+		Model: "fixture-model", ModelVersion: "v1", ResolvedAt: personFactAPINow.Add(24 * time.Hour),
+		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture-policy"},
+		Claims: claims,
+	}, nil)
+	requirements.NoError(err)
+
+	claimPage, err := st.ListPersonFactClaimsContext(t.Context(), id, personfacts.ClaimFilter{
+		Target: &targetRef, AnyRevision: true, Limit: 200,
+	})
+	requirements.NoError(err)
+	requirements.Len(claimPage, 200)
+	for _, claim := range claimPage {
+		assertions.NotEqual(originalClaimKey, claim.ClaimKey)
+	}
+	evidencePage, err := st.ListPersonFactEvidenceContext(t.Context(), id, personfacts.EvidenceFilter{
+		Target: &targetRef, AnyRevision: true, Limit: 200,
+	})
+	requirements.NoError(err)
+	requirements.Len(evidencePage, 200)
+	for _, evidence := range evidencePage {
+		assertions.NotEqual(originalEvidenceID, evidence.ID)
+	}
+
+	now := personFactAPINow.Add(24 * time.Hour)
+	in := personcard.Inputs{CollectedAt: now, Person: personcard.Person{PersonID: id, Tracked: true}}
+	srv.personCardFacts(t.Context(), id, &in, personcard.Options{AsOf: now})
+	requirements.Len(in.Facts, 1, "the recent transition remains visible after 200 newer claims and evidence rows")
+	assertions.Equal(personFactAPINow, in.Facts[0].ChangedAt)
+}
+
 func TestPersonCardFactRendersRetiredRelation(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

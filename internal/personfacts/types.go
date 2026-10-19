@@ -85,7 +85,8 @@ type TargetRef struct {
 }
 
 type EvidenceFilter struct {
-	Target *TargetRef
+	Target      *TargetRef
+	EvidenceIDs []int64
 	// AnyRevision includes the target's history across catalog revisions.
 	AnyRevision bool
 	Limit       int
@@ -100,7 +101,8 @@ type EvidenceStatusFilter struct {
 }
 
 type ClaimFilter struct {
-	Target *TargetRef
+	Target    *TargetRef
+	ClaimKeys []string
 	// AnyRevision includes the target's history across catalog revisions.
 	AnyRevision bool
 	Limit       int

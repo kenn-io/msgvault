@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -523,7 +524,7 @@ func (s *Store) MergeDuplicates(
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
 		meetingEvidenceIDs := append([]int64{survivorID}, duplicateIDs...)
-		sort.Slice(meetingEvidenceIDs, func(i, j int) bool { return meetingEvidenceIDs[i] < meetingEvidenceIDs[j] })
+		slices.Sort(meetingEvidenceIDs)
 		for _, id := range meetingEvidenceIDs {
 			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
 				return fmt.Errorf("lock dedup meeting evidence for message %d: %w", id, err)

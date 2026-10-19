@@ -96,6 +96,8 @@ func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing
 	assertions, requirements := assert.New(t), require.New(t)
 	got, err := RewriteGeneratedValidators([]byte(generatedValidatorFixture()))
 	requirements.NoError(err)
+	assertions.Contains(string(got), "Title *string `json:\"title\" validate:\"required\"`")
+	assertions.Contains(string(got), "SentAt *time.Time `json:\"sent_at\" validate:\"required\"`")
 	for _, check := range []string{
 		`typesValidator.Var(m.Description, "required")`,
 		`typesValidator.Var(m.Location, "required")`,
@@ -105,6 +107,8 @@ func TestRewriteGeneratedValidatorsAllowsSparseMeetingResponseStrings(t *testing
 	} {
 		assertions.NotContains(string(got), check)
 	}
+	assertions.Contains(string(got), `typesValidator.Var(m.Title, "required")`)
+	assertions.Contains(string(got), `typesValidator.Var(m.SentAt, "required")`)
 }
 
 func TestRewriteRunQueryClientPreservesSynchronousResultType(t *testing.T) {
@@ -246,10 +250,15 @@ func meetingResponseEmptyStringValidatorFixture() string {
 		"func (m MeetingEventDetail) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(m.Description, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Description\", err)\n\t}\n" +
 		"\tif err := typesValidator.Var(m.Location, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Location\", err)\n\t}\n\treturn errors\n}\n" +
-		"type MeetingItem struct {\n\tBasis string\n\tOrigin string\n}\n" +
+		"type MeetingItem struct {\n\tBasis string\n\tOrigin string\n\tTitle string `json:\"title\" validate:\"required\"`\n\tSentAt time.Time `json:\"sent_at\" validate:\"required\"`\n}\n" +
 		"func (m MeetingItem) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(m.Basis, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Basis\", err)\n\t}\n" +
-		"\tif err := typesValidator.Var(m.Origin, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Origin\", err)\n\t}\n\treturn errors\n}\n" +
+		"\tif err := typesValidator.Var(m.Origin, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Origin\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.SentAt, \"required\"); err != nil {\n\t\terrors = errors.Append(\"SentAt\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(m.Title, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Title\", err)\n\t}\n\treturn errors\n}\n" +
+		"type MeetingRecordSummary struct {\n\tTitle string `json:\"title\" validate:\"required\"`\n}\n" +
+		"func (m MeetingRecordSummary) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(m.Title, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Title\", err)\n\t}\n\treturn errors\n}\n" +
 		"type MeetingRecord struct {\n\tOwnerRsvp string\n}\n" +
 		"func (m MeetingRecord) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
 		"\tif err := typesValidator.Var(m.OwnerRsvp, \"required\"); err != nil {\n\t\terrors = errors.Append(\"OwnerRsvp\", err)\n\t}\n\treturn errors\n}\n"

@@ -14,6 +14,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+const personCardFactReadPageSize = 200
+
 // Facts are joined locally; neither raw evidence excerpts nor sensitive targets
 // enter the pure card inputs. Each target is read once with a bounded page.
 type personCardFactEvidence struct {
@@ -75,13 +77,19 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 	if len(relevant) == 0 {
 		return
 	}
+	claimKeys := make([]string, 0, len(relevant))
+	for claimKey := range relevant {
+		claimKeys = append(claimKeys, claimKey)
+	}
+	slices.Sort(claimKeys)
 	pendingFacts := make([]personCardFactEvidence, 0, len(relevant))
 	messageIDs := make([]int64, 0)
 	seenMessageIDs := make(map[int64]struct{})
 	flushPending := func() error {
 		sourceByMessageID := make(map[int64]int64, len(messageIDs))
-		if len(messageIDs) > 0 {
-			summaries, err := s.getMessagesSummariesByIDs(ctx, messageIDs)
+		for start := 0; start < len(messageIDs); start += personCardFactReadPageSize {
+			end := min(start+personCardFactReadPageSize, len(messageIDs))
+			summaries, err := s.getMessagesSummariesByIDs(ctx, messageIDs[start:end])
 			if err != nil {
 				return err
 			}
@@ -115,7 +123,9 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 			continue
 		}
 		ref := personfacts.TargetRef{Kind: target.Kind, Key: target.Key, Revision: target.Revision}
-		claims, err := b.ListPersonFactClaimsContext(ctx, id, personfacts.ClaimFilter{Target: &ref, Limit: 200, AnyRevision: true})
+		claims, err := b.ListPersonFactClaimsContext(ctx, id, personfacts.ClaimFilter{
+			Target: &ref, ClaimKeys: claimKeys, Limit: personCardFactReadPageSize, AnyRevision: true,
+		})
 		if err != nil {
 			gapWithPending(err)
 			return
@@ -130,14 +140,30 @@ func (s *Server) personCardFacts(ctx context.Context, id int64, in *personcard.I
 			continue
 		}
 		// The store hydrates Supported and LatestStatus from the newest status event.
-		evidence, err := b.ListPersonFactEvidenceContext(ctx, id, personfacts.EvidenceFilter{Target: &ref, Limit: 200, AnyRevision: true})
-		if err != nil {
-			gapWithPending(err)
-			return
-		}
 		byID := map[int64]personfacts.Evidence{}
-		for _, e := range evidence {
-			byID[e.ID] = e
+		evidenceIDs := make([]int64, 0)
+		seenEvidenceIDs := make(map[int64]struct{})
+		for _, claim := range selected {
+			for _, evidenceID := range claim.EvidenceIDs {
+				if _, seen := seenEvidenceIDs[evidenceID]; seen {
+					continue
+				}
+				seenEvidenceIDs[evidenceID] = struct{}{}
+				evidenceIDs = append(evidenceIDs, evidenceID)
+			}
+		}
+		for start := 0; start < len(evidenceIDs); start += personCardFactReadPageSize {
+			end := min(start+personCardFactReadPageSize, len(evidenceIDs))
+			evidence, err := b.ListPersonFactEvidenceContext(ctx, id, personfacts.EvidenceFilter{
+				EvidenceIDs: evidenceIDs[start:end], Limit: personCardFactReadPageSize,
+			})
+			if err != nil {
+				gapWithPending(err)
+				return
+			}
+			for _, e := range evidence {
+				byID[e.ID] = e
+			}
 		}
 		for _, claim := range selected {
 			decision := relevant[claim.ClaimKey]

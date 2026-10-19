@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-var personCardEmptyStringFields = [][2]string{
+var generatedRequiredEmptyStringFields = [][2]string{
 	{"PersonCardBriefText", "Text"},
 	{"PersonCardCandidateText", "DisplayName"},
 	{"PersonCardCite", "WebURL"},
@@ -23,6 +23,13 @@ var personCardEmptyStringFields = [][2]string{
 	{"PersonCardPersonText", "Title"},
 	{"PersonCardSourceFreshness", "SyncCommand"},
 	{"PersonCardSourceFreshness", "SyncUnavailableReason"},
+	{"MeetingItem", "Title"},
+	{"MeetingRecordSummary", "Title"},
+}
+
+var generatedRequiredZeroTimeFields = [][2]string{
+	{"PersonCardLastInteraction", "ProjectionComputedAt"},
+	{"MeetingItem", "SentAt"},
 }
 
 func rewriteRequiredStringFieldPointer(source []byte, typeName, fieldName string) ([]byte, error) {
@@ -75,6 +82,33 @@ func rewriteRequiredFieldPointer(source []byte, typeName, fieldName, fieldType s
 	return result, nil
 }
 
+// RewriteGeneratedRequiredFieldPointers preserves required fields that may
+// carry empty strings or zero timestamps while keeping presence validation.
+func RewriteGeneratedRequiredFieldPointers(source []byte) ([]byte, error) {
+	result := append([]byte(nil), source...)
+	for _, field := range generatedRequiredEmptyStringFields {
+		if !bytes.Contains(result, []byte("type "+field[0]+" struct {")) {
+			continue
+		}
+		var err error
+		result, err = rewriteRequiredStringFieldPointer(result, field[0], field[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	for _, field := range generatedRequiredZeroTimeFields {
+		if !bytes.Contains(result, []byte("type "+field[0]+" struct {")) {
+			continue
+		}
+		var err error
+		result, err = rewriteRequiredTimeFieldPointer(result, field[0], field[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 // RewritePersonCardNulls preserves required person-card values that may be
 // empty or zero. It also repairs nullable object and map validation that the
 // generator cannot express correctly on the generated Go types.
@@ -83,17 +117,6 @@ func RewritePersonCardNulls(source []byte) ([]byte, error) {
 		return source, nil
 	}
 	result := source
-	for _, field := range personCardEmptyStringFields {
-		var err error
-		result, err = rewriteRequiredStringFieldPointer(result, field[0], field[1])
-		if err != nil {
-			return nil, err
-		}
-	}
-	result, err := rewriteRequiredTimeFieldPointer(result, "PersonCardLastInteraction", "ProjectionComputedAt")
-	if err != nil {
-		return nil, err
-	}
 	for name, fields := range map[string][]string{
 		"PersonCardResult": {"card"},
 		"PersonCard":       {"brief", "last_interaction"},

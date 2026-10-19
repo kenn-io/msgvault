@@ -7455,9 +7455,9 @@ type MeetingItem struct {
 	MessageID         int64              `json:"message_id"`
 	Origin            string             `json:"origin" validate:"omitempty"`
 	Recordings        []MeetingRecording `json:"recordings" validate:"required"`
-	SentAt            time.Time          `json:"sent_at" validate:"required"`
+	SentAt            *time.Time         `json:"sent_at" validate:"required"`
 	SourceID          int64              `json:"source_id"`
-	Title             string             `json:"title" validate:"required"`
+	Title             *string            `json:"title" validate:"required"`
 }
 
 func (m MeetingItem) Validate() error {
@@ -7672,7 +7672,7 @@ type MeetingRecordSummary struct {
 	Occurrence    *CalendarOccurrence `json:"occurrence,omitempty"`
 	Ref           string              `json:"ref" validate:"required"`
 	Start         time.Time           `json:"start" validate:"required"`
-	Title         string              `json:"title" validate:"required"`
+	Title         *string             `json:"title" validate:"required"`
 }
 
 func (m MeetingRecordSummary) Validate() error {

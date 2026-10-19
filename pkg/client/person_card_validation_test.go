@@ -23,6 +23,46 @@ func TestPersonCardGeneratedValidationAllowsPresentEmptyStrings(t *testing.T) {
 	requirements.ErrorContains(withoutPrimaryChannel.Validate(), "PrimaryChannel is required")
 }
 
+func TestMeetingGeneratedValidationPreservesSparseRequiredFields(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	itemPayload := `{"basis":"","content_omitted":false,"deleted_from_source":false,"follow_up":"reviewed","message_id":1,"origin":"","recordings":[],"sent_at":"0001-01-01T00:00:00Z","source_id":2,"title":""}`
+	var item generated.MeetingItem
+	requirements.NoError(json.Unmarshal([]byte(itemPayload), &item))
+	requirements.NotNil(item.Title)
+	requirements.Empty(*item.Title)
+	requirements.NotNil(item.SentAt)
+	requirements.True(item.SentAt.IsZero())
+	requirements.NoError(item.Validate())
+	itemWire, err := json.Marshal(item)
+	requirements.NoError(err)
+	assertions.JSONEq(itemPayload, string(itemWire))
+
+	missingItemTitle := strings.Replace(itemPayload, `,"title":""`, "", 1)
+	var missingTitle generated.MeetingItem
+	requirements.NoError(json.Unmarshal([]byte(missingItemTitle), &missingTitle))
+	assertions.ErrorContains(missingTitle.Validate(), "Title is required")
+	missingItemTime := strings.Replace(itemPayload, `,"sent_at":"0001-01-01T00:00:00Z"`, "", 1)
+	var missingSentAt generated.MeetingItem
+	requirements.NoError(json.Unmarshal([]byte(missingItemTime), &missingSentAt))
+	assertions.ErrorContains(missingSentAt.Validate(), "SentAt is required")
+
+	summaryPayload := `{"has_transcript":true,"item_count":1,"ref":"evt:1","start":"2026-10-18T00:00:00Z","title":""}`
+	var summary generated.MeetingRecordSummary
+	requirements.NoError(json.Unmarshal([]byte(summaryPayload), &summary))
+	requirements.NotNil(summary.Title)
+	requirements.Empty(*summary.Title)
+	requirements.NoError(summary.Validate())
+	summaryWire, err := json.Marshal(summary)
+	requirements.NoError(err)
+	assertions.JSONEq(summaryPayload, string(summaryWire))
+
+	missingSummaryTitle := strings.Replace(summaryPayload, `,"title":""`, "", 1)
+	var missingSummary generated.MeetingRecordSummary
+	requirements.NoError(json.Unmarshal([]byte(missingSummaryTitle), &missingSummary))
+	assertions.ErrorContains(missingSummary.Validate(), "Title is required")
+}
+
 func TestPersonCardGeneratedProjectionAcceptsExtraValues(t *testing.T) {
 	var projection generated.ProjectionFreshness
 	err := json.Unmarshal([]byte(`{"computed_at":null,"age_seconds":null,"stale":false,"extra":{"queue_depth":2,"rescan_reason":"identity"}}`), &projection)

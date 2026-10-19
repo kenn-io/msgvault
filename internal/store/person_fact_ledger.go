@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -500,7 +501,8 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, AnyRevision: filter.AnyRevision, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{Target: filter.Target, EvidenceIDs: filter.EvidenceIDs,
+				AnyRevision: filter.AnyRevision, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -597,6 +599,12 @@ func (s *Store) queryPersonFactEvidenceTx(
 			args = append(args, filter.Target.Revision)
 		}
 		query += `)`
+	}
+	if len(filter.EvidenceIDs) > 0 {
+		query += ` AND e.id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.EvidenceIDs)), ",") + `)`
+		for _, id := range filter.EvidenceIDs {
+			args = append(args, id)
+		}
 	}
 	query += ` ORDER BY e.id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
@@ -746,6 +754,12 @@ func (s *Store) listPersonFactClaimsTx(
 		if !filter.AnyRevision {
 			query += ` AND c.target_revision = ?`
 			args = append(args, filter.Target.Revision)
+		}
+	}
+	if len(filter.ClaimKeys) > 0 {
+		query += ` AND c.claim_key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.ClaimKeys)), ",") + `)`
+		for _, claimKey := range filter.ClaimKeys {
+			args = append(args, claimKey)
 		}
 	}
 	if extraPredicate != "" {

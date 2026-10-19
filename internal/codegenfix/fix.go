@@ -78,6 +78,9 @@ var requiredPointerValidators = [][3]string{
 	{"PersonFactEvidence", "SourceVersion", "p"},
 	{"PersonFactEvidence", "SubjectRef", "p"},
 	{"PersonFactEvidence", "Excerpt", "p"},
+	{"MeetingItem", "Title", "m"},
+	{"MeetingItem", "SentAt", "m"},
+	{"MeetingRecordSummary", "Title", "m"},
 }
 
 // RewriteGeneratedValidators preserves required-but-empty or zero response fields as
@@ -229,6 +232,10 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 	case bytes.Count(result, generatedMeetingRefOccurredAt) == 0 && bytes.Count(result, fixedMeetingRefOccurredAt) == 1:
 	default:
 		return nil, errors.New("generated MeetingRef.OccurredAt shape changed")
+	}
+	result, err := RewriteGeneratedRequiredFieldPointers(result)
+	if err != nil {
+		return nil, err
 	}
 	return RewritePersonCardNulls(result)
 }
