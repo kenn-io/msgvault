@@ -154,7 +154,7 @@ func (b *Backend) searchAccelerator(
 	if k > b.annWorkCeiling {
 		return nil, vector.SearchMetadata{}, nil
 	}
-	hits, metadata, err := b.searchAccelerated(ctx, tx, *accelerator, queryVec, k, filter)
+	hits, metadata, err := b.searchAccelerated(ctx, tx, *accelerator, gen, queryVec, k, filter)
 	if err == nil {
 		if err := tx.Commit(); err != nil {
 			return nil, vector.SearchMetadata{}, fmt.Errorf("finish accelerated read: %w", err)
@@ -181,6 +181,7 @@ func (b *Backend) searchAccelerated(
 	ctx context.Context,
 	queryer acceleratedQueryer,
 	accelerator AcceleratorStatus,
+	gen vector.GenerationID,
 	queryVec []float32,
 	k int,
 	filter vector.Filter,

@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func (b *Backend) checkPolicyPublicationTx(ctx context.Context, tx *sql.Tx, ids []int64) error {
