@@ -208,7 +208,12 @@ func Detect(view ConversationView, live []LiveLoop, now time.Time, cfg Threshold
 		}
 		if anchor != nil {
 			if counterparty.ID == 0 {
-				if settled, ok := retained[ReplyOwed]; ok && settled.anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
+				// Sender attribution can be corrected after the live row was saved.
+				// Prefer the current anchor identity; retain the saved one only when
+				// the current anchor has no attributable sender.
+				if anchor.Sender.ID != 0 && !anchor.Sender.IsOwner {
+					counterparty = anchor.Sender
+				} else if settled, ok := retained[ReplyOwed]; ok && settled.anchor != nil && settled.anchor.ID == anchor.ID && settled.loop.CounterpartyParticipantID != 0 {
 					counterparty = LoopParticipant{ID: settled.loop.CounterpartyParticipantID, PersonID: settled.loop.CounterpartyPersonID}
 				} else {
 					counterparty = anchor.Sender
