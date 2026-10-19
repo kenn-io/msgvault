@@ -141,6 +141,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 		{count: 0, name: "missing bounds", state: "missing bounds"},
 		{count: 2, name: "plain generated"},
 		{count: 1, name: "plain single", state: "single"},
+		{count: 1, name: "single with undecodable event", state: "single damaged"},
 		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
@@ -179,7 +180,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 			switch tc.state {
 			case "missing bounds":
 				raw = `{"id":"missing-bounds"}`
-			case "single":
+			case "single", "single damaged":
 				raw = strings.Replace(raw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]`, "", 1)
 			case "unsupported":
 				raw = strings.ReplaceAll(raw, "FREQ=WEEKLY", "FREQ=HOURLY")
@@ -192,6 +193,9 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				raw = strings.Replace(raw, `"start":{"dateTime":`, `"start":{"timeZone":"America/New_York","dateTime":`, 1)
 			}
 			_, master := calendarFixture(t, st, "master", raw)
+			if tc.state == "single damaged" {
+				calendarFixture(t, st, "damaged", `{`)
+			}
 			exception := int64(-1)
 			original := `{"dateTime":"2027-03-09T17:00:00Z"}`
 			if tc.state == "fractional original" || tc.state == "unresolvable" {
@@ -306,6 +310,10 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
 				requirements.NoError(err)
 				assertions.Equal(listed, detail.CalendarOccurrence)
+				if tc.state == "single damaged" {
+					assertions.Zero(listed.SeriesMessageID)
+					assertions.Zero(detail.SeriesMessageID)
+				}
 				if listed.MessageID == exception {
 					assertions.Equal(fmt.Sprintf("evt:%d", exception), listed.Ref)
 					if tc.name == "sparse cancellation under unsupported master" {

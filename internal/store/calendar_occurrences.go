@@ -104,7 +104,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	exceptions := map[calendarSeriesKey]map[calrecur.Identity]bool{}
 	masters := map[calendarSeriesKey]*calendarSeries{}
 	for _, row := range rows {
-		if row.Event.Kind == "series" || row.Event.Kind == "single" {
+		if row.Event.ProviderEventID != "" && (row.Event.Kind == "series" || row.Event.Kind == "single") {
 			masters[calendarSeriesKey{row.SourceID, row.Event.ProviderEventID}] = newCalendarSeries(row)
 		}
 		if row.Event.Kind == "exception" && row.Event.Original != nil {
