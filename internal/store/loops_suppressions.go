@@ -55,8 +55,8 @@ func loopSuppressionPredicate(request LoopSuppressionRequest) (string, []any) {
 	case "participant":
 		return "counterparty_participant_id=?", []any{request.ParticipantID}
 	case string(AttributeObjectPerson):
-		// Person links can be newer than a quiet loop's derived person snapshot.
-		return "(counterparty_person_id=? OR EXISTS(SELECT 1 FROM person_participants pp WHERE pp." + personMergePersonIDColumn + "=? AND pp.participant_id=open_loops.counterparty_participant_id))", []any{request.PersonID, request.PersonID}
+		// Current participant ownership supersedes the saved person ID after a split.
+		return "COALESCE((SELECT pp.person_id FROM person_participants pp WHERE pp.participant_id=open_loops.counterparty_participant_id),open_loops.counterparty_person_id)=?", []any{request.PersonID}
 	default:
 		return "conversation_id=?", []any{request.ConversationID}
 	}

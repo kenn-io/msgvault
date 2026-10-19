@@ -277,6 +277,93 @@ func TestPersonMergeUnmuteSurvivesSplitOfDeduplicatedSuppression(t *testing.T) {
 	assertions.Zero(suppressionCount, "splitting must not restore a mute removed after merge")
 }
 
+func TestPersonSuppressionUsesCurrentMembershipAfterSplit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	f := storetest.New(t)
+	survivorParticipant := f.EnsureParticipant("split-mute-survivor@example.test", "Survivor", "example.test")
+	absorbedParticipant := f.EnsureParticipant("split-mute-absorbed@example.test", "Absorbed", "example.test")
+	survivor, created, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+	requirements.NoError(err)
+	requirements.True(created)
+	absorbed, created, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+	requirements.NoError(err)
+	requirements.True(created)
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey: "merge-loop-created-before-split", Actor: "test",
+	})
+	requirements.NoError(err)
+
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	message := f.CreateMessage("loop-created-before-split")
+	loopExec(t, f.Store, "UPDATE messages SET sender_id=? WHERE id=?", absorbedParticipant, message)
+	open := loopOpen(t, f, message, message, now)
+	open.CounterpartyParticipantID = &absorbedParticipant
+	open.CounterpartyPersonID = &merged.Person.ID
+	applyLoop(t, f, open, now)
+	live, err := f.Store.ListLiveConversationLoopsContext(ctx, f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	snoozedUntil := now.Add(24 * time.Hour)
+	_, err = f.Store.SnoozeLoopContext(ctx, live[0].ID, snoozedUntil, now)
+	requirements.NoError(err)
+
+	split, err := f.Store.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: merged.Person.ID, MergeID: merged.Merge.ID,
+		ParticipantIDs: []int64{absorbedParticipant}, ExpectedSourceRevision: merged.Person.Revision,
+		IdempotencyKey: "split-loop-created-before-split", Actor: "test",
+	})
+	requirements.NoError(err)
+	got, err := f.Store.GetOpenLoopContext(ctx, live[0].ID)
+	requirements.NoError(err)
+	requirements.NotNil(got.CounterpartyPersonID)
+	assertions.Equal(split.NewPerson.ID, *got.CounterpartyPersonID)
+
+	mute, err := f.Store.CreateLoopSuppressionContext(ctx, store.LoopSuppressionRequest{
+		TargetKind: "person", PersonID: &merged.Person.ID,
+	}, now.Add(time.Minute))
+	requirements.NoError(err)
+	requirements.NotNil(mute.Suppression)
+	assertions.Zero(mute.WouldClose, "a mute for the former person must not close a loop for the split participant")
+
+	got, err = f.Store.GetOpenLoopContext(ctx, live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	requirements.NotNil(got.SnoozedUntil)
+	assertions.True(snoozedUntil.Equal(*got.SnoozedUntil))
+}
+
+func TestPersonSuppressionFallsBackToSavedPersonWithoutCurrentMembership(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	targetParticipant := f.EnsureParticipant("saved-person-target@example.test", "Target", "example.test")
+	counterparty := f.EnsureParticipant("saved-person-counterparty@example.test", "Counterparty", "example.test")
+	person, created, err := f.Store.CreatePersonFromParticipant(targetParticipant)
+	requirements.NoError(err)
+	requirements.True(created)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	message := f.CreateMessage("saved-person-fallback")
+	loopExec(t, f.Store, "UPDATE messages SET sender_id=? WHERE id=?", counterparty, message)
+	open := loopOpen(t, f, message, message, now)
+	open.CounterpartyParticipantID = &counterparty
+	open.CounterpartyPersonID = &person.ID
+	applyLoop(t, f, open, now)
+
+	mute, err := f.Store.CreateLoopSuppressionContext(t.Context(), store.LoopSuppressionRequest{
+		TargetKind: "person", PersonID: &person.ID,
+	}, now)
+	requirements.NoError(err)
+	requirements.NotNil(mute.Suppression)
+	assertions.Equal(int64(1), mute.WouldClose)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	assertions.Empty(live)
+}
+
 func TestMergePersons_CardDAVState(t *testing.T) {
 	t.Run("resource binding follows exact split", func(t *testing.T) {
 		require := require.New(t)
