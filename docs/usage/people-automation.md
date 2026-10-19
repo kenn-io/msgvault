@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-10-17"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -18,18 +18,144 @@ Two other features have separate controls:
 
 ## Choose people to maintain
 
-Create a [saved profile](/docs/usage/people/#promote-a-durable-person), then turn
-tracking on for that person:
+You can choose each person manually or let archived interaction patterns select
+which saved profiles receive maintenance. Tier commands described here are
+unreleased functionality on `main`.
+
+For a manual choice, create a [saved profile](people.md#promote-a-durable-person)
+and turn tracking on:
 
 ```bash
 msgvault person track 7
 msgvault person untrack 7
 ```
 
-Tracking makes a profile eligible for automatic maintenance. It does not itself
-grant provider consent, enable a provider, or enroll a person in briefs.
-Untracking stops that person from being selected for future maintenance and
-keeps their saved profile.
+Tracking makes a profile eligible for sweeps. It does not grant provider consent
+or enable a provider. Untracking keeps the saved profile, removes any brief
+enrollment, and records tracking and brief opt-outs so automation respects your
+choice. `person tiers opt-in` can clear either opt-out.
+
+### Preview selection from interaction patterns
+
+Tiers use resolved participants and the activity spine's dates, directions,
+roles, and channels. They do not search names, subjects, snippets, message text,
+or transcripts. An unlinked high-signal participant appears in a review list;
+automation never creates or links profiles for them.
+
+| Tier | Default maintenance |
+|---|---|
+| 1 | Track the profile, enroll briefs, and allow scheduled external enrichment |
+| 2 | Track the profile for sweeps |
+| 3 | Keep the profile and timeline without automatic maintenance grants |
+
+These are maintenance labels inferred from the archive. They do not judge a
+person or grant permission to contact them. Every provider still requires its
+own consent, configured scope, and remaining budget.
+
+Start with a read-only preview and inspect individual decisions:
+
+```bash
+msgvault person tiers preview
+msgvault person tiers explain 7
+msgvault person tiers candidates
+```
+
+`explain` shows the observed counts, thresholds, excluded events, manual choices,
+projection readiness, pending demotion date, effective enrichment eligibility,
+and recent decisions. `candidates` labels its counts
+`participant_approximation`, names any pending identity match, and gives an
+explicit `person promote` command for review. It changes nothing.
+
+By default, Tier 1 needs at least two messages in each direction during the last
+90 calendar days. It also needs six active days, or three active days plus either
+two channels during the last year or two meeting days. Tier 2 needs a message in
+each direction and three active days during the last year, or two meeting days.
+Meetings contribute days and breadth; invitations do not count as exchanged
+messages. Windows include both boundary dates in the activity projector's
+configured timezone, and exclude future dates.
+
+Only direct, owner-relative evidence counts. Mailing-list messages are excluded
+by default. Large inbound audiences are excluded too: chats count conversation
+members; email counts distinct `to`/`cc`/`bcc` participants. Confirmed owner
+identities do not count toward either audience. Owner profiles, calendar-room
+addresses, and profiles with only matching automated addresses cannot be
+promoted above Tier 3. Phone or chat identifiers prevent the automated-address
+exclusion. See [tier configuration](../configuration.md#people-tiers) for exact
+settings.
+
+### Apply and schedule tier decisions
+
+Review a bounded dry run before granting automatic maintenance:
+
+```bash
+msgvault person tiers apply --dry-run --limit 50
+msgvault person tiers apply --yes --max 50
+```
+
+Apply shares the preview planner and rechecks manual choices when committing
+each person. Without `--yes`, it first previews to stderr, then asks on a TTY or
+refuses a noninteractive invocation. It reports committed changes and failures. Page continuations keep
+one run ID, evaluation date, timezone, and rule configuration.
+
+To record scheduled decisions without changing maintenance grants, configure
+this on the daemon host and restart it:
+
+```toml
+[people.tiers]
+enabled = true
+apply = false
+schedule = "45 1 * * *"
+```
+
+The `people-tiers` job evaluates up to 500 profiles per page and yields between
+pages. Each pass has a two-minute runtime limit that starts after the job
+acquires the daemon's operation gate; time waiting for admission does not count.
+Scheduled runs save progress with each committed profile, so an interrupted
+page resumes after its last committed profile. The run keeps its frozen
+configuration; edits, including `apply`, take effect on the next run. The job
+never starts activity projection itself. Promotions can use an incomplete
+spine, but demotions wait until the projection queue, transitions, identity
+revisions, and live-message watermark are ready.
+
+Set `apply = true` after reviewing the recorded history. Promotions take effect
+on the next apply. Demotions wait 30 calendar days by default while the person
+stays below their applied tier; returning to the applied tier clears the pending
+demotion. Changes to the rule configuration restart that grace period.
+
+Setting `apply = false` later freezes applied tiers and existing automatic
+maintenance grants. Sweeps, briefs, and enrichment can still use those grants.
+To remove them explicitly, run:
+
+```bash
+msgvault person tiers reset --yes
+```
+
+Reset preserves manual grants, opt-outs, and decision history. It reports people
+whose open manual enrichment work prevents removal, so you can retry after that
+work finishes. Starting a manual apply or reset supersedes older scheduled work;
+a queued continuation stops until the next cron trigger. If scheduling and apply
+stay enabled, a later run can grant automatic maintenance again. Use lane
+opt-outs for a lasting per-person choice.
+
+### Keep a manual decision
+
+A manual tracking or brief grant always wins over tier automation. Tracking a
+person upgrades an automatic grant to manual; enrolling briefs also makes
+tracking manual. Legacy grants are manual with an unknown actor when the
+archive did not record one.
+
+```bash
+msgvault person tiers opt-out 7 --lane enrichment --reason "No scheduled lookups"
+msgvault person tiers opt-in 7 --lane enrichment
+msgvault person tiers history --person 7
+```
+
+Lane opt-outs block automation immediately. A tracking or brief opt-out refuses
+an existing manual grant; use `person untrack` or `person brief unenroll` first.
+A tracking opt-out also refuses while an exact manual enrichment target is open.
+An enrichment opt-out applies to manual and automatic tracking, and cancels only
+scheduled provider work. A separately requested, consented manual enrichment run
+can still finish.
 
 ## Configure a provider
 

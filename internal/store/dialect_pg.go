@@ -784,6 +784,9 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS dispatch_authorized_at TIMESTAMPTZ`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN IF NOT EXISTS has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE person_tracking ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto'))`, "person_tracking.provenance"},
+		{`ALTER TABLE person_tracking ADD COLUMN IF NOT EXISTS actor TEXT NOT NULL DEFAULT ''`, "person_tracking.actor"},
+		{`ALTER TABLE person_brief_enrollments ADD COLUMN IF NOT EXISTS provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto'))`, "person_brief_enrollments.provenance"},
 	}
 }
 

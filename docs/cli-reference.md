@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -2874,6 +2874,49 @@ scope exceeding the bounds returns `filename_scope_too_large`. The command
 reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
+
+### person tiers
+
+Select maintenance for saved profiles from archived interaction patterns. These
+commands are unreleased functionality on `main` and require a daemon exposing
+API schema 3.24.0 or newer. They use dedicated HTTP routes; they cannot be sent through
+`cli run`. `--json` is supported throughout.
+
+| Command | Behavior |
+|---|---|
+| `person tiers preview [--tier N] [--changes-only] [--limit 200] [--cursor <c>]` | Read-only decision page with counts, rule, lane actions, readiness, and pending demotion. `--tier` accepts 1–3; limits are 1–500. |
+| `person tiers explain <person-id>` | Counts, observed thresholds, exclusions, manual grants and actors, opt-outs, eligibility, readiness, and five recent events. |
+| `person tiers apply [--dry-run] [--limit 500] [--yes] [--max N]` | Apply pages under one frozen run ID; `--max` bounds profiles considered and defaults to 0 (unbounded). Without `--yes`, preview to stderr before asking on a TTY or refusing a noninteractive invocation. `--dry-run` fetches one read-only preview page. |
+| `person tiers reset --yes` | Remove automatic grants and applied tier state, preserve manual grants, opt-outs, and events, and report open manual enrichment work that prevents removal. |
+| `person tiers history [--person <id>] [--limit 20] [--offset 0]` | Read decision history. History limits are 1–200. |
+| `person tiers candidates [--limit 50] [--cursor <c>]` | Read unlinked participant groups with two-way signal. Labels counts `participant_approximation`; returns an explicit promotion command and any pending identity match. Limits are 1–500. |
+| `person tiers opt-out <person-id> --lane tracking\|briefs\|enrichment [--reason <text>]` | Block that automation lane and reconcile its automatic grants or scheduled work immediately. |
+| `person tiers opt-in <person-id> --lane tracking\|briefs\|enrichment` | Clear that lane's opt-out. Enrichment publishes work only if eligibility is gained. |
+
+Apply summaries count `created`, `removed`, and `blocked` lane actions; one
+person can change several lanes. `evaluated`, `deferred`, `failed`, and
+`superseded` count people. `--max` bounds people considered. With `--json`,
+apply emits a stream of unchanged daemon pages rather than one aggregate object.
+Other commands forward one daemon response; a trailing newline is added only
+when missing.
+
+Preview and candidate cursors advance through scanned profiles or participant
+groups. Filtering can leave an empty page with a `next_cursor`; continue with
+that cursor. Treat cursor strings as opaque. Apply continuations preserve the
+run's clock and semantic rules. A superseded manual continuation returns a
+conflict; start a new apply rather than replaying an old cursor.
+
+Manual grants always win. `person track` upgrades tracking to manual and clears
+its opt-out. Brief enrollment upgrades tracking to manual too. `person untrack`
+removes any brief enrollment and records tracking and brief opt-outs;
+`person brief unenroll` records a brief opt-out. Tracking or brief lane opt-out
+refuses an existing manual grant. Tracking opt-out also refuses an open exact
+manual enrichment target. Enrichment opt-out applies to either provenance and
+preserves separately requested manual enrichment work.
+
+See [profile automation](usage/people-automation.md) for thresholds, rollout,
+apply-off behavior, and reset, and [configuration](configuration.md#people-tiers)
+for exact settings.
 
 ### person track, provider, sweep, and facts
 

@@ -361,7 +361,8 @@ func (s *Store) claimWorkOnce(
 			FROM person_enrichment_work w
 			JOIN person_enrichment_profiles p ON p.fingerprint = w.profile_fingerprint
 			WHERE p.provider_name = ? AND w.profile_fingerprint = ?
-			  AND (w.run_id = ? OR w.run_id IS NULL)
+			  AND (w.run_id = ? OR (w.run_id IS NULL AND ` +
+			personEnrichmentScheduledAuthoritySQL("w.person_id") + `))
 			  AND w.due_at <= ?
 			  AND (w.lease_owner IS NULL OR w.lease_until <= ?)
 			ORDER BY CASE WHEN w.run_id = ? THEN 0 ELSE 1 END, w.due_at, w.person_id
@@ -1046,8 +1047,12 @@ func (s *Store) AuthorizeAttemptPoll(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			JOIN person_enrichment_work w ON w.person_id = tracked.person_id
+			  AND w.profile_fingerprint = consent.fingerprint
+			WHERE tracked.person_id = ? AND w.run_id = ?
+			  AND (`+personEnrichmentExactManualTargetSQL("w")+` OR `+
+			personEnrichmentScheduledAuthoritySQL("tracked.person_id")+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment poll authority: %w", err)
 		}
 		if !active {
@@ -1113,8 +1118,12 @@ func (s *Store) AuthorizeAttemptDispatch(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			JOIN person_enrichment_work w ON w.person_id = tracked.person_id
+			  AND w.profile_fingerprint = consent.fingerprint
+			WHERE tracked.person_id = ? AND w.run_id = ?
+			  AND (`+personEnrichmentExactManualTargetSQL("w")+` OR `+
+			personEnrichmentScheduledAuthoritySQL("tracked.person_id")+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment dispatch authority: %w", err)
 		}
 		if !active {

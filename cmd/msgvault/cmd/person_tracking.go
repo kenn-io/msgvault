@@ -62,7 +62,10 @@ func newPersonTrackingCommand(action string, tracked bool) *cobra.Command {
 			if _, err = fmt.Fprintf(cmd.OutOrStdout(), "Person %d: %s\n", personID, state); err != nil {
 				return fmt.Errorf("write person tracking state: %w", err)
 			}
-			return nil
+			if response.JSON200.Tracked {
+				return writePersonTierManualGrant(cmd.OutOrStdout(), response.JSON200.Provenance, response.JSON200.Actor)
+			}
+			return writePersonTierRemoval(cmd.OutOrStdout(), response.Body, personID, "tracking", "briefs")
 		},
 	}
 }

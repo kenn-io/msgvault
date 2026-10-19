@@ -464,6 +464,17 @@ func (a AppendPersonNoteRequest) Validate() error {
 	return errors
 }
 
+type ApplyPersonTiersRequest struct {
+	Cursor *string `json:"cursor,omitzero"`
+	DryRun *bool   `json:"dry_run,omitempty"`
+	Limit  *int64  `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+	RunID  *string `json:"run_id,omitzero"`
+}
+
+func (a ApplyPersonTiersRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AttachmentInfo struct {
 	ContentHash *string                `json:"content_hash,omitzero"`
 	Docbank     []DocbankAttachmentRef `json:"docbank,omitempty"`
@@ -3146,6 +3157,64 @@ func (d DecidePersonMergeCandidateRequest) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Decision", err)
 		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type Decision struct {
+	ActivityReady      bool              `json:"activity_ready"`
+	AppliedLanes       []string          `json:"applied_lanes" validate:"required"`
+	CandidateSince     string            `json:"candidate_since" validate:"required"`
+	CandidateTier      int64             `json:"candidate_tier"`
+	ComputedTier       int64             `json:"computed_tier"`
+	ConfigFingerprint  string            `json:"config_fingerprint" validate:"required"`
+	DeferredReason     string            `json:"deferred_reason" validate:"required"`
+	DemotionDue        string            `json:"demotion_due" validate:"required"`
+	EnrichmentEligible bool              `json:"enrichment_eligible"`
+	Lanes              map[string]string `json:"lanes"`
+	Reason             string            `json:"reason" validate:"required"`
+	Rule               string            `json:"rule" validate:"required"`
+	RuleVersion        int64             `json:"rule_version"`
+	Thresholds         []ThresholdCheck  `json:"thresholds" validate:"required"`
+	Tier               int64             `json:"tier"`
+	TierSince          string            `json:"tier_since" validate:"required"`
+}
+
+func (d Decision) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.AppliedLanes, "required"); err != nil {
+		errors = errors.Append("AppliedLanes", err)
+	}
+	if err := typesValidator.Var(d.CandidateSince, "required"); err != nil {
+		errors = errors.Append("CandidateSince", err)
+	}
+	if err := typesValidator.Var(d.ConfigFingerprint, "required"); err != nil {
+		errors = errors.Append("ConfigFingerprint", err)
+	}
+	if err := typesValidator.Var(d.DeferredReason, "required"); err != nil {
+		errors = errors.Append("DeferredReason", err)
+	}
+	if err := typesValidator.Var(d.DemotionDue, "required"); err != nil {
+		errors = errors.Append("DemotionDue", err)
+	}
+	if err := typesValidator.Var(d.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if err := typesValidator.Var(d.Rule, "required"); err != nil {
+		errors = errors.Append("Rule", err)
+	}
+	for i, item := range d.Thresholds {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Thresholds[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(d.TierSince, "required"); err != nil {
+		errors = errors.Append("TierSince", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -6880,6 +6949,17 @@ func (m Manifest) Validate() error {
 	return errors
 }
 
+type ManualState struct {
+	BriefsProvenance   string   `json:"briefs_provenance" validate:"required"`
+	OpenManualRunID    string   `json:"open_manual_run_id" validate:"required"`
+	OptOuts            []string `json:"opt_outs" validate:"required"`
+	TrackingProvenance string   `json:"tracking_provenance" validate:"required"`
+}
+
+func (m ManualState) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type MatchSummary struct {
 	LexicalMatchCount *int64   `json:"lexical_match_count,omitempty"`
 	SemanticScore     *float64 `json:"semantic_score,omitempty"`
@@ -10131,10 +10211,11 @@ func (p PersonBrief) Validate() error {
 }
 
 type PersonBriefEnrollment struct {
-	Actor     string     `json:"actor" validate:"required"`
-	EnabledAt *time.Time `json:"enabled_at" validate:"omitempty"`
-	Enrolled  bool       `json:"enrolled"`
-	PersonID  int64      `json:"person_id"`
+	Actor      string     `json:"actor" validate:"required"`
+	EnabledAt  *time.Time `json:"enabled_at" validate:"omitempty"`
+	Enrolled   bool       `json:"enrolled"`
+	PersonID   int64      `json:"person_id"`
+	Provenance string     `json:"provenance" validate:"required"`
 }
 
 func (p PersonBriefEnrollment) Validate() error {
@@ -12610,10 +12691,385 @@ func (p PersonSummary) Validate() error {
 	return errors
 }
 
+type PersonTierCandidate struct {
+	ActiveDaysShort          int64   `json:"active_days_short"`
+	Basis                    string  `json:"basis" validate:"required"`
+	CanonicalID              *string `json:"canonical_id,omitzero"`
+	IdentityMatchCandidateID *int64  `json:"identity_match_candidate_id,omitempty"`
+	InboundShort             int64   `json:"inbound_short"`
+	OutboundShort            int64   `json:"outbound_short"`
+	ParticipantID            int64   `json:"participant_id"`
+	SuggestedCommand         string  `json:"suggested_command" validate:"required"`
+}
+
+func (p PersonTierCandidate) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonTierCandidatePage struct {
+	Candidates []PersonTierCandidate `json:"candidates" validate:"required"`
+	NextCursor *string               `json:"next_cursor,omitzero"`
+}
+
+func (p PersonTierCandidatePage) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Candidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierEvent struct {
+	Actor              string              `json:"actor" validate:"required"`
+	CreatedAt          time.Time           `json:"created_at" validate:"required"`
+	FromTier           int64               `json:"from_tier"`
+	ID                 int64               `json:"id"`
+	Lanes              map[string]string   `json:"lanes"`
+	MergedFromPersonID int64               `json:"merged_from_person_id"`
+	Mode               string              `json:"mode" validate:"required"`
+	PersonID           int64               `json:"person_id"`
+	Readiness          PersonTierReadiness `json:"readiness"`
+	Reason             string              `json:"reason" validate:"required"`
+	Rule               string              `json:"rule" validate:"required"`
+	RuleVersion        int64               `json:"rule_version"`
+	RunID              string              `json:"run_id" validate:"required"`
+	Signals            Signals             `json:"signals"`
+	ToTier             int64               `json:"to_tier"`
+}
+
+func (p PersonTierEvent) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Actor, "required"); err != nil {
+		errors = errors.Append("Actor", err)
+	}
+	if err := typesValidator.Var(p.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(p.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if v, ok := any(p.Readiness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Readiness", err)
+		}
+	}
+	if err := typesValidator.Var(p.Reason, "required"); err != nil {
+		errors = errors.Append("Reason", err)
+	}
+	if err := typesValidator.Var(p.Rule, "required"); err != nil {
+		errors = errors.Append("Rule", err)
+	}
+	if err := typesValidator.Var(p.RunID, "required"); err != nil {
+		errors = errors.Append("RunID", err)
+	}
+	if v, ok := any(p.Signals).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Signals", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierExplanation struct {
+	AsOf               time.Time             `json:"as_of" validate:"required"`
+	Briefs             PersonBriefEnrollment `json:"briefs"`
+	Decision           Decision              `json:"decision"`
+	EnrichmentConsent  bool                  `json:"enrichment_consent"`
+	EnrichmentEligible bool                  `json:"enrichment_eligible"`
+	KnownSuppression   bool                  `json:"known_suppression"`
+	LinkedParticipants int64                 `json:"linked_participants"`
+	Manual             ManualState           `json:"manual"`
+	Name               string                `json:"name" validate:"required"`
+	OptOuts            []PersonTierOptOut    `json:"opt_outs" validate:"required"`
+	PersonID           int64                 `json:"person_id"`
+	Prior              Prior                 `json:"prior"`
+	Readiness          PersonTierReadiness   `json:"readiness"`
+	RecentEvents       []PersonTierEvent     `json:"recent_events" validate:"required"`
+	SignalNote         string                `json:"signal_note" validate:"required"`
+	Signals            Signals               `json:"signals"`
+	SuppressionNote    string                `json:"suppression_note" validate:"required"`
+	Tracking           PersonTracking        `json:"tracking"`
+}
+
+func (p PersonTierExplanation) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if v, ok := any(p.Briefs).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Briefs", err)
+		}
+	}
+	if v, ok := any(p.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if v, ok := any(p.Manual).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Manual", err)
+		}
+	}
+	if err := typesValidator.Var(p.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	for i, item := range p.OptOuts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("OptOuts[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Prior).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Prior", err)
+		}
+	}
+	if v, ok := any(p.Readiness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Readiness", err)
+		}
+	}
+	for i, item := range p.RecentEvents {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("RecentEvents[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.SignalNote, "required"); err != nil {
+		errors = errors.Append("SignalNote", err)
+	}
+	if v, ok := any(p.Signals).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Signals", err)
+		}
+	}
+	if err := typesValidator.Var(p.SuppressionNote, "required"); err != nil {
+		errors = errors.Append("SuppressionNote", err)
+	}
+	if v, ok := any(p.Tracking).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Tracking", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierHistoryResponse struct {
+	Events []PersonTierEvent `json:"events" validate:"required"`
+}
+
+func (p PersonTierHistoryResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Events {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Events[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierInput struct {
+	Briefs    PersonBriefEnrollment `json:"briefs"`
+	Decision  Decision              `json:"decision"`
+	Manual    ManualState           `json:"manual"`
+	Name      string                `json:"name" validate:"required"`
+	OptOuts   []PersonTierOptOut    `json:"opt_outs" validate:"required"`
+	PersonID  int64                 `json:"person_id"`
+	Prior     Prior                 `json:"prior"`
+	Readiness PersonTierReadiness   `json:"readiness"`
+	Signals   Signals               `json:"signals"`
+	Tracking  PersonTracking        `json:"tracking"`
+}
+
+func (p PersonTierInput) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Briefs).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Briefs", err)
+		}
+	}
+	if v, ok := any(p.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if v, ok := any(p.Manual).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Manual", err)
+		}
+	}
+	if err := typesValidator.Var(p.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	for i, item := range p.OptOuts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("OptOuts[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Prior).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Prior", err)
+		}
+	}
+	if v, ok := any(p.Readiness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Readiness", err)
+		}
+	}
+	if v, ok := any(p.Signals).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Signals", err)
+		}
+	}
+	if v, ok := any(p.Tracking).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Tracking", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierOptOut struct {
+	Actor     string    `json:"actor" validate:"required"`
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        int64     `json:"id"`
+	Lane      string    `json:"lane" validate:"required"`
+	PersonID  int64     `json:"person_id"`
+	Reason    string    `json:"reason" validate:"required"`
+}
+
+func (p PersonTierOptOut) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonTierOptOutsResponse struct {
+	OptOuts  []PersonTierOptOut `json:"opt_outs" validate:"required"`
+	PersonID int64              `json:"person_id"`
+}
+
+func (p PersonTierOptOutsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.OptOuts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("OptOuts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierPage struct {
+	AsOf       time.Time           `json:"as_of" validate:"required"`
+	Counts     map[string]int64    `json:"counts"`
+	NextCursor string              `json:"next_cursor" validate:"required"`
+	People     []PersonTierInput   `json:"people" validate:"required"`
+	Readiness  PersonTierReadiness `json:"readiness"`
+	RunID      string              `json:"run_id" validate:"required"`
+}
+
+func (p PersonTierPage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AsOf, "required"); err != nil {
+		errors = errors.Append("AsOf", err)
+	}
+	if err := typesValidator.Var(p.NextCursor, "required"); err != nil {
+		errors = errors.Append("NextCursor", err)
+	}
+	for i, item := range p.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(p.Readiness).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Readiness", err)
+		}
+	}
+	if err := typesValidator.Var(p.RunID, "required"); err != nil {
+		errors = errors.Append("RunID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type PersonTierReadiness struct {
+	Ready   bool     `json:"ready"`
+	Reasons []string `json:"reasons" validate:"required"`
+}
+
+func (p PersonTierReadiness) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonTierResetDeferral struct {
+	PersonID int64  `json:"person_id"`
+	RunID    string `json:"run_id" validate:"required"`
+}
+
+func (p PersonTierResetDeferral) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PersonTierResetResult struct {
+	Cleared  int64                     `json:"cleared"`
+	Deferred []PersonTierResetDeferral `json:"deferred" validate:"required"`
+}
+
+func (p PersonTierResetResult) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range p.Deferred {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Deferred[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PersonTracking struct {
-	PersonID  int64      `json:"person_id"`
-	Tracked   bool       `json:"tracked"`
-	TrackedAt *time.Time `json:"tracked_at" validate:"omitempty"`
+	Actor      string     `json:"actor" validate:"required"`
+	PersonID   int64      `json:"person_id"`
+	Provenance string     `json:"provenance" validate:"required"`
+	Tracked    bool       `json:"tracked"`
+	TrackedAt  *time.Time `json:"tracked_at" validate:"omitempty"`
 }
 
 func (p PersonTracking) Validate() error {
@@ -12645,6 +13101,19 @@ type PingInfo struct {
 	Pid     *int64  `json:"pid,omitempty"`
 	Service *string `json:"service,omitzero"`
 	Version *string `json:"version,omitzero"`
+}
+
+type Prior struct {
+	CandidateSince    string `json:"candidate_since" validate:"required"`
+	CandidateTier     int64  `json:"candidate_tier"`
+	ConfigFingerprint string `json:"config_fingerprint" validate:"required"`
+	RuleVersion       int64  `json:"rule_version"`
+	Tier              int64  `json:"tier"`
+	TierSince         string `json:"tier_since" validate:"required"`
+}
+
+func (p Prior) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
 type Progress struct {
@@ -12732,6 +13201,25 @@ type ProviderUsage struct {
 type PutPersonBriefEnrollmentRequest struct {
 	Enrolled bool  `json:"enrolled"`
 	Track    *bool `json:"track,omitempty"`
+}
+
+type PutPersonTierOptOutRequest struct {
+	Lane     PutPersonTierOptOutRequestLane `json:"lane" validate:"required"`
+	OptedOut bool                           `json:"opted_out"`
+	Reason   *string                        `json:"reason,omitzero"`
+}
+
+func (p PutPersonTierOptOutRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.Lane).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Lane", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PutPersonTrackingRequest struct {
@@ -13262,6 +13750,10 @@ func (r RemoveResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ResetPersonTiersRequest struct {
+	Confirm bool `json:"confirm"`
 }
 
 type Result struct {
@@ -14195,6 +14687,26 @@ func (s SettingsResponse) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Signals struct {
+	ActiveDaysLong             int64      `json:"active_days_long"`
+	ActiveDaysShort            int64      `json:"active_days_short"`
+	ChannelsLong               int64      `json:"channels_long"`
+	CoPresenceEvents           int64      `json:"co_presence_events"`
+	ExcludedListEvents         int64      `json:"excluded_list_events"`
+	InboundLong                int64      `json:"inbound_long"`
+	InboundShort               int64      `json:"inbound_short"`
+	LargeAudienceInboundEvents int64      `json:"large_audience_inbound_events"`
+	LastDirectAt               *time.Time `json:"last_direct_at,omitempty" validate:"required"`
+	MeetingDaysLong            int64      `json:"meeting_days_long"`
+	ObservedEvents             int64      `json:"observed_events"`
+	OutboundLong               int64      `json:"outbound_long"`
+	OutboundShort              int64      `json:"outbound_short"`
+}
+
+func (s Signals) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
 type SimilarSearchResponse struct {
@@ -15251,6 +15763,18 @@ func (t ThreadPage) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ThresholdCheck struct {
+	Enabled  bool   `json:"enabled"`
+	Met      bool   `json:"met"`
+	Name     string `json:"name" validate:"required"`
+	Observed int64  `json:"observed"`
+	Required int64  `json:"required"`
+}
+
+func (t ThresholdCheck) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(t))
 }
 
 type TimelineRow struct {

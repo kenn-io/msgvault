@@ -865,6 +865,39 @@ type ListOrganizationEmploymentsQuery struct {
 	Offset *int64 `json:"offset,omitempty"`
 }
 
+type ListPersonTierCandidatesQuery struct {
+	// Limit Maximum participant groups (default 50, max 500)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Decimal participant group continuation ID
+	Cursor *string `json:"cursor,omitempty"`
+}
+
+type ListPersonTierEventsQuery struct {
+	// PersonID Filter by a durable person ID
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// Limit Maximum events (default 20, max 200)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Offset Events to skip
+	Offset *int64 `json:"offset,omitempty"`
+}
+
+type PreviewPersonTiersQuery struct {
+	// Tier Only return this tier (1..3)
+	Tier *int64 `json:"tier,omitempty"`
+
+	// ChangesOnly Only return changed decisions
+	ChangesOnly *bool `json:"changes_only,omitempty"`
+
+	// Limit Maximum people (default 200, max 500)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Opaque continuation cursor
+	Cursor *string `json:"cursor,omitempty"`
+}
+
 type GetPersonByUIDQuery struct {
 	// UID Exact vCard UID or CardDAV resource UID
 	UID string `json:"uid" validate:"required,min=1"`

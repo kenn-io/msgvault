@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-17"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -708,6 +708,48 @@ Invalid depths return `400`; an unknown durable person returns `404`. The
 projection has no ETag because it is not a mutation resource.
 
 ---
+
+### People maintenance tiers
+
+Unreleased on `main`, API schema 3.24.0 adds the routes below. Every response
+carries `Cache-Control: no-store`. Collection routes use `people-tiers`;
+individual explanations and opt-outs use saved person IDs. See
+[profile automation](usage/people-automation.md) for decision semantics.
+
+| Method and route | Request and result |
+|---|---|
+| `GET /api/v1/people-tiers/preview` | Query `tier` (1–3), `changes_only`, `limit` (1–500, default 200), and `cursor`. Returns a read-only plan, counts, `as_of`, readiness, and `next_cursor`. |
+| `POST /api/v1/people-tiers/apply` | JSON `dry_run`, `limit` (1–500, default 500), `cursor`, and `run_id`. The first page omits run and cursor; subsequent pages pass both returned values. Returns committed counts, run ID, and next cursor. `dry_run` writes nothing. |
+| `POST /api/v1/people-tiers/reset` | JSON `{"confirm":true}`. Returns cleared profiles and deferrals naming open exact manual enrichment runs. |
+| `GET /api/v1/people-tiers/history` | Query `person_id` (optional), `limit` (1–200, default 20), and `offset` (nonnegative, default 0). Returns applied and scheduled preview events. |
+| `GET /api/v1/people-tiers/candidates` | Query `limit` (1–500, default 50) and `cursor`. Returns unlinked participant approximations, promotion next steps, pending identity-match context, and `next_cursor`. |
+| `GET /api/v1/people/{id}/tier` | Return observed counts and threshold checks, exclusion reasons, manual rows and actors, opt-outs, readiness, effective enrichment eligibility, pending demotion, and five recent events. Missing saved person returns 404. |
+| `PUT /api/v1/people/{id}/tier/opt-outs` | JSON `lane` (`tracking`, `briefs`, or `enrichment`), required `opted_out` boolean, and optional `reason`. Reconcile the selected lane immediately and record the request actor. |
+
+`counts.created`, `counts.removed`, and `counts.blocked` count lane actions;
+`evaluated`, `deferred`, `failed`, and `superseded` count people. A person can
+change several lanes in one evaluation.
+
+Write routes use the daemon operation gate. Apply pages contain at most 500
+profiles and recheck manual state in each person's transaction. The stored run
+freezes its evaluation clock, timezone, direct-counterpart limit, and semantic
+configuration across pages. A mismatched or superseded run ID or cursor returns
+409; malformed input returns 400. Starting a new manual apply supersedes older
+scheduled work. Reset requires explicit confirmation and supersedes old runs.
+
+Tracking and brief enrollment responses gain `provenance` (`manual` or `auto`);
+tracking also reports `actor`. Legacy tracking actor is an empty string. An
+explicit untrack removes brief enrollment and records tracking and brief
+opt-outs. A lane opt-out against a manual tracking or brief grant returns a
+conflict; use the corresponding manual removal first. Tracking opt-out also
+refuses an open exact manual enrichment target and names the run.
+
+Tier apply may create maintenance rows while a lane's worker is globally
+disabled. Provider consent, suppression, fact pins, and request limits still
+apply. Scheduled enrichment reads persisted eligibility; it never reads live
+tier lane configuration. An enrichment opt-out cancels scheduled work while
+preserving exact manual targets. The read-only MCP `get_person_tier` tool uses
+the explanation route; there is no MCP apply tool.
 
 ### Person brief enrollment {#get-apiv1peopleidbrief-enrollment}
 

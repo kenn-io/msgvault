@@ -524,6 +524,21 @@ components:
       required:
         - text
       type: object
+    ApplyPersonTiersRequest:
+      additionalProperties: false
+      properties:
+        cursor:
+          type: string
+        dry_run:
+          type: boolean
+        limit:
+          format: int64
+          maximum: 500
+          minimum: 1
+          type: integer
+        run_id:
+          type: string
+      type: object
     AttachmentInfo:
       additionalProperties: true
       properties:
@@ -3400,6 +3415,69 @@ components:
       required:
         - person_id
         - decision
+      type: object
+    Decision:
+      additionalProperties: true
+      properties:
+        activity_ready:
+          type: boolean
+        applied_lanes:
+          items:
+            type: string
+          type: array
+        candidate_since:
+          type: string
+        candidate_tier:
+          format: int64
+          type: integer
+        computed_tier:
+          format: int64
+          type: integer
+        config_fingerprint:
+          type: string
+        deferred_reason:
+          type: string
+        demotion_due:
+          type: string
+        enrichment_eligible:
+          type: boolean
+        lanes:
+          additionalProperties:
+            type: string
+          type: object
+        reason:
+          type: string
+        rule:
+          type: string
+        rule_version:
+          format: int64
+          type: integer
+        thresholds:
+          items:
+            $ref: "#/components/schemas/ThresholdCheck"
+          type: array
+        tier:
+          format: int64
+          type: integer
+        tier_since:
+          type: string
+      required:
+        - computed_tier
+        - rule
+        - reason
+        - deferred_reason
+        - demotion_due
+        - activity_ready
+        - lanes
+        - applied_lanes
+        - enrichment_eligible
+        - thresholds
+        - tier
+        - tier_since
+        - candidate_tier
+        - candidate_since
+        - rule_version
+        - config_fingerprint
       type: object
     DeepSearchResponse:
       additionalProperties: true
@@ -7343,6 +7421,25 @@ components:
         - gmail_ids
         - status
       type: object
+    ManualState:
+      additionalProperties: true
+      properties:
+        briefs_provenance:
+          type: string
+        open_manual_run_id:
+          type: string
+        opt_outs:
+          items:
+            type: string
+          type: array
+        tracking_provenance:
+          type: string
+      required:
+        - tracking_provenance
+        - briefs_provenance
+        - opt_outs
+        - open_manual_run_id
+      type: object
     MatchSummary:
       additionalProperties: true
       properties:
@@ -10975,11 +11072,14 @@ components:
         person_id:
           format: int64
           type: integer
+        provenance:
+          type: string
       required:
         - person_id
         - enrolled
         - enabled_at
         - actor
+        - provenance
       type: object
     PersonBriefEvidencePointer:
       additionalProperties: true
@@ -13333,12 +13433,345 @@ components:
         - last_at
         - cache_revision
       type: object
-    PersonTracking:
+    PersonTierCandidate:
+      additionalProperties: true
+      properties:
+        active_days_short:
+          format: int64
+          type: integer
+        basis:
+          type: string
+        canonical_id:
+          type: string
+        identity_match_candidate_id:
+          format: int64
+          type: integer
+        inbound_short:
+          format: int64
+          type: integer
+        outbound_short:
+          format: int64
+          type: integer
+        participant_id:
+          format: int64
+          type: integer
+        suggested_command:
+          type: string
+      required:
+        - participant_id
+        - basis
+        - suggested_command
+        - outbound_short
+        - inbound_short
+        - active_days_short
+      type: object
+    PersonTierCandidatePage:
+      additionalProperties: true
+      properties:
+        candidates:
+          items:
+            $ref: "#/components/schemas/PersonTierCandidate"
+          type: array
+        next_cursor:
+          type: string
+      required:
+        - candidates
+      type: object
+    PersonTierEvent:
+      additionalProperties: true
+      properties:
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        from_tier:
+          format: int64
+          type:
+            - integer
+            - "null"
+        id:
+          format: int64
+          type: integer
+        lanes:
+          additionalProperties:
+            type: string
+          type: object
+        merged_from_person_id:
+          format: int64
+          type:
+            - integer
+            - "null"
+        mode:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+        reason:
+          type: string
+        rule:
+          type: string
+        rule_version:
+          format: int64
+          type: integer
+        run_id:
+          type: string
+        signals:
+          $ref: "#/components/schemas/Signals"
+        to_tier:
+          format: int64
+          type: integer
+      required:
+        - id
+        - person_id
+        - merged_from_person_id
+        - from_tier
+        - to_tier
+        - reason
+        - mode
+        - lanes
+        - signals
+        - readiness
+        - rule
+        - rule_version
+        - actor
+        - run_id
+        - created_at
+      type: object
+    PersonTierExplanation:
+      additionalProperties: true
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        briefs:
+          $ref: "#/components/schemas/PersonBriefEnrollment"
+        decision:
+          $ref: "#/components/schemas/Decision"
+        enrichment_consent:
+          type: boolean
+        enrichment_eligible:
+          type: boolean
+        known_suppression:
+          type: boolean
+        linked_participants:
+          format: int64
+          type: integer
+        manual:
+          $ref: "#/components/schemas/ManualState"
+        name:
+          type: string
+        opt_outs:
+          items:
+            $ref: "#/components/schemas/PersonTierOptOut"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        prior:
+          $ref: "#/components/schemas/Prior"
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+        recent_events:
+          items:
+            $ref: "#/components/schemas/PersonTierEvent"
+          type: array
+        signal_note:
+          type: string
+        signals:
+          $ref: "#/components/schemas/Signals"
+        suppression_note:
+          type: string
+        tracking:
+          $ref: "#/components/schemas/PersonTracking"
+      required:
+        - linked_participants
+        - signal_note
+        - known_suppression
+        - suppression_note
+        - as_of
+        - enrichment_eligible
+        - enrichment_consent
+        - recent_events
+        - person_id
+        - name
+        - signals
+        - prior
+        - manual
+        - readiness
+        - decision
+        - tracking
+        - briefs
+        - opt_outs
+      type: object
+    PersonTierHistoryResponse:
+      additionalProperties: true
+      properties:
+        events:
+          items:
+            $ref: "#/components/schemas/PersonTierEvent"
+          type: array
+      required:
+        - events
+      type: object
+    PersonTierInput:
+      additionalProperties: true
+      properties:
+        briefs:
+          $ref: "#/components/schemas/PersonBriefEnrollment"
+        decision:
+          $ref: "#/components/schemas/Decision"
+        manual:
+          $ref: "#/components/schemas/ManualState"
+        name:
+          type: string
+        opt_outs:
+          items:
+            $ref: "#/components/schemas/PersonTierOptOut"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+        prior:
+          $ref: "#/components/schemas/Prior"
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+        signals:
+          $ref: "#/components/schemas/Signals"
+        tracking:
+          $ref: "#/components/schemas/PersonTracking"
+      required:
+        - person_id
+        - name
+        - signals
+        - prior
+        - manual
+        - readiness
+        - decision
+        - tracking
+        - briefs
+        - opt_outs
+      type: object
+    PersonTierOptOut:
+      additionalProperties: true
+      properties:
+        actor:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        lane:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+      required:
+        - id
+        - person_id
+        - lane
+        - actor
+        - reason
+        - created_at
+      type: object
+    PersonTierOptOutsResponse:
+      additionalProperties: true
+      properties:
+        opt_outs:
+          items:
+            $ref: "#/components/schemas/PersonTierOptOut"
+          type: array
+        person_id:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - opt_outs
+      type: object
+    PersonTierPage:
+      additionalProperties: true
+      properties:
+        as_of:
+          format: date-time
+          type: string
+        counts:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        next_cursor:
+          type: string
+        people:
+          items:
+            $ref: "#/components/schemas/PersonTierInput"
+          type: array
+        readiness:
+          $ref: "#/components/schemas/PersonTierReadiness"
+        run_id:
+          type: string
+      required:
+        - people
+        - next_cursor
+        - run_id
+        - as_of
+        - readiness
+        - counts
+      type: object
+    PersonTierReadiness:
+      additionalProperties: true
+      properties:
+        ready:
+          type: boolean
+        reasons:
+          items:
+            type: string
+          type: array
+      required:
+        - ready
+        - reasons
+      type: object
+    PersonTierResetDeferral:
       additionalProperties: true
       properties:
         person_id:
           format: int64
           type: integer
+        run_id:
+          type: string
+      required:
+        - person_id
+        - run_id
+      type: object
+    PersonTierResetResult:
+      additionalProperties: true
+      properties:
+        cleared:
+          format: int64
+          type: integer
+        deferred:
+          items:
+            $ref: "#/components/schemas/PersonTierResetDeferral"
+          type: array
+      required:
+        - cleared
+        - deferred
+      type: object
+    PersonTracking:
+      additionalProperties: true
+      properties:
+        actor:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        provenance:
+          type: string
         tracked:
           type: boolean
         tracked_at:
@@ -13350,6 +13783,8 @@ components:
         - person_id
         - tracked
         - tracked_at
+        - provenance
+        - actor
       type: object
     PinState:
       additionalProperties: true
@@ -13381,6 +13816,32 @@ components:
           type: string
       required:
         - ok
+      type: object
+    Prior:
+      additionalProperties: true
+      properties:
+        candidate_since:
+          type: string
+        candidate_tier:
+          format: int64
+          type: integer
+        config_fingerprint:
+          type: string
+        rule_version:
+          format: int64
+          type: integer
+        tier:
+          format: int64
+          type: integer
+        tier_since:
+          type: string
+      required:
+        - tier
+        - tier_since
+        - candidate_tier
+        - candidate_since
+        - rule_version
+        - config_fingerprint
       type: object
     Progress:
       additionalProperties: true
@@ -13490,6 +13951,23 @@ components:
           type: boolean
       required:
         - enrolled
+      type: object
+    PutPersonTierOptOutRequest:
+      additionalProperties: false
+      properties:
+        lane:
+          enum:
+            - tracking
+            - briefs
+            - enrichment
+          type: string
+        opted_out:
+          type: boolean
+        reason:
+          type: string
+      required:
+        - lane
+        - opted_out
       type: object
     PutPersonTrackingRequest:
       additionalProperties: false
@@ -14029,6 +14507,14 @@ components:
         - account
         - identifier
         - removed
+      type: object
+    ResetPersonTiersRequest:
+      additionalProperties: false
+      properties:
+        confirm:
+          type: boolean
+      required:
+        - confirm
       type: object
     Result:
       additionalProperties: true
@@ -14912,6 +15398,65 @@ components:
         - settings
         - credential_etag
         - pending_restart
+      type: object
+    Signals:
+      additionalProperties: true
+      properties:
+        active_days_long:
+          format: int64
+          type: integer
+        active_days_short:
+          format: int64
+          type: integer
+        channels_long:
+          format: int64
+          type: integer
+        co_presence_events:
+          format: int64
+          type: integer
+        excluded_list_events:
+          format: int64
+          type: integer
+        inbound_long:
+          format: int64
+          type: integer
+        inbound_short:
+          format: int64
+          type: integer
+        large_audience_inbound_events:
+          format: int64
+          type: integer
+        last_direct_at:
+          format: date-time
+          type:
+            - string
+            - "null"
+        meeting_days_long:
+          format: int64
+          type: integer
+        observed_events:
+          format: int64
+          type: integer
+        outbound_long:
+          format: int64
+          type: integer
+        outbound_short:
+          format: int64
+          type: integer
+      required:
+        - outbound_short
+        - outbound_long
+        - inbound_short
+        - inbound_long
+        - active_days_short
+        - active_days_long
+        - meeting_days_long
+        - channels_long
+        - last_direct_at
+        - excluded_list_events
+        - large_audience_inbound_events
+        - co_presence_events
+        - observed_events
       type: object
     SimilarSearchResponse:
       additionalProperties: true
@@ -16068,6 +16613,28 @@ components:
         - account
         - source_type
       type: object
+    ThresholdCheck:
+      additionalProperties: true
+      properties:
+        enabled:
+          type: boolean
+        met:
+          type: boolean
+        name:
+          type: string
+        observed:
+          format: int64
+          type: integer
+        required:
+          format: int64
+          type: integer
+      required:
+        - name
+        - observed
+        - required
+        - enabled
+        - met
+      type: object
     TimelineRow:
       additionalProperties: true
       properties:
@@ -16525,7 +17092,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -26376,6 +26943,297 @@ paths:
       summary: Promote a participant cluster to a durable person
       tags:
         - API
+  /api/v1/people-tiers/apply:
+    post:
+      operationId: applyPersonTiers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyPersonTiersRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply one page of automatic people tiers
+      tags:
+        - API
+  /api/v1/people-tiers/candidates:
+    get:
+      operationId: listPersonTierCandidates
+      parameters:
+        - description: Maximum participant groups (default 50, max 500)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Decimal participant group continuation ID
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierCandidatePage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List participants to review for person profiles
+      tags:
+        - API
+  /api/v1/people-tiers/history:
+    get:
+      operationId: listPersonTierEvents
+      parameters:
+        - description: Filter by a durable person ID
+          in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - description: Maximum events (default 20, max 200)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Events to skip
+          in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierHistoryResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List people tier events
+      tags:
+        - API
+  /api/v1/people-tiers/preview:
+    get:
+      operationId: previewPersonTiers
+      parameters:
+        - description: Only return this tier (1..3)
+          in: query
+          name: tier
+          schema:
+            format: int64
+            type: integer
+        - description: Only return changed decisions
+          in: query
+          name: changes_only
+          schema:
+            type: boolean
+        - description: Maximum people (default 200, max 500)
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Opaque continuation cursor
+          in: query
+          name: cursor
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierPage"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview automatic people tiers
+      tags:
+        - API
+  /api/v1/people-tiers/reset:
+    post:
+      operationId: resetPersonTiers
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPersonTiersRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierResetResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Reset automatic people tier grants and state
+      tags:
+        - API
   /api/v1/people/by-uid:
     get:
       description: Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
@@ -29330,6 +30188,118 @@ paths:
       security:
         - apiKey: []
       summary: Split absorbed participant lineage into a new person
+      tags:
+        - API
+  /api/v1/people/{id}/tier:
+    get:
+      operationId: getPersonTier
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierExplanation"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Explain a person's automatic tier
+      tags:
+        - API
+  /api/v1/people/{id}/tier/opt-outs:
+    put:
+      operationId: setPersonTierOptOut
+      parameters:
+        - description: Durable person ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutPersonTierOptOutRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonTierOptOutsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Replace one people tier automation preference
       tags:
         - API
   /api/v1/people/{id}/tracking:

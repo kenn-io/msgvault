@@ -12,6 +12,7 @@ import type {
   AppendPersonNoteParams,
   AppendPersonNotePathParameters,
   AppendPersonNoteRequest,
+  ApplyPersonTiersRequest,
   ApproveCardDAVPublicationPathParameters,
   AttachmentInfo,
   AttributeDefinition,
@@ -193,6 +194,7 @@ import type {
   GetPersonProfilePathParameters,
   GetPersonRelationshipPathParameters,
   GetPersonStructuredProfilePathParameters,
+  GetPersonTierPathParameters,
   GetPersonTrackingPathParameters,
   GetRelationshipTypePathParameters,
   GetSavedViewPathParameters,
@@ -269,6 +271,8 @@ import type {
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
+  ListPersonTierCandidatesParams,
+  ListPersonTierEventsParams,
   ListSourceIdentitiesPathParameters,
   ListSourceStatusParams,
   ListTextConversationMessagesParams,
@@ -373,13 +377,21 @@ import type {
   PersonSearchResponse,
   PersonSplitResult,
   PersonSummary,
+  PersonTierCandidatePage,
+  PersonTierExplanation,
+  PersonTierHistoryResponse,
+  PersonTierOptOutsResponse,
+  PersonTierPage,
+  PersonTierResetResult,
   PersonTracking,
   PreviewCardDAVPublicationPathParameters,
+  PreviewPersonTiersParams,
   ProviderCredentialResponse,
   ProviderCredentialWriteRequest,
   PublishCardDAVPersonPathParameters,
   PutOrganizationProfilePathParameters,
   PutPersonBriefEnrollmentRequest,
+  PutPersonTierOptOutRequest,
   PutPersonTrackingRequest,
   PutSettingsPeopleCodexProfilePathParameters,
   PutSettingsPeopleInferenceKeyPathParameters,
@@ -394,6 +406,7 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  ResetPersonTiersRequest,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -424,6 +437,7 @@ import type {
   SetPersonBriefEnrollmentPathParameters,
   SetPersonFactPinPathParameters,
   SetPersonFactPinRequest,
+  SetPersonTierOptOutPathParameters,
   SetPersonTrackingPathParameters,
   SetPrimaryEmploymentPathParameters,
   SettingsPatchRequest,
@@ -2775,6 +2789,76 @@ export const createPerson = (
   );
 };
 /**
+ * @summary Apply one page of automatic people tiers
+ */
+export const applyPersonTiers = (
+  applyPersonTiersRequest: ApplyPersonTiersRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonTierPage>>,
+) => {
+  return orvalFetch<PersonTierPage>(
+    {
+      url: `/api/v1/people-tiers/apply`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: applyPersonTiersRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary List participants to review for person profiles
+ */
+export const listPersonTierCandidates = (
+  params?: ListPersonTierCandidatesParams,
+  options?: SecondParameter<typeof orvalFetch<PersonTierCandidatePage>>,
+) => {
+  return orvalFetch<PersonTierCandidatePage>(
+    { url: `/api/v1/people-tiers/candidates`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List people tier events
+ */
+export const listPersonTierEvents = (
+  params?: ListPersonTierEventsParams,
+  options?: SecondParameter<typeof orvalFetch<PersonTierHistoryResponse>>,
+) => {
+  return orvalFetch<PersonTierHistoryResponse>(
+    { url: `/api/v1/people-tiers/history`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Preview automatic people tiers
+ */
+export const previewPersonTiers = (
+  params?: PreviewPersonTiersParams,
+  options?: SecondParameter<typeof orvalFetch<PersonTierPage>>,
+) => {
+  return orvalFetch<PersonTierPage>(
+    { url: `/api/v1/people-tiers/preview`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Reset automatic people tier grants and state
+ */
+export const resetPersonTiers = (
+  resetPersonTiersRequest: ResetPersonTiersRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonTierResetResult>>,
+) => {
+  return orvalFetch<PersonTierResetResult>(
+    {
+      url: `/api/v1/people-tiers/reset`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: resetPersonTiersRequest,
+    },
+    options,
+  );
+};
+/**
  * Resolves the person's current vCard UID, a retired UID that still aliases the person, or the UID of a CardDAV resource mapped to the person. Returns a conflict when one remote UID maps to different people.
  * @summary Look up a durable person by vCard or CardDAV UID
  */
@@ -3481,6 +3565,39 @@ export const splitPersonMerge = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: splitPersonRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Explain a person's automatic tier
+ */
+export const getPersonTier = (
+  { id }: GetPersonTierPathParameters,
+  options?: SecondParameter<typeof orvalFetch<PersonTierExplanation>>,
+) => {
+  return orvalFetch<PersonTierExplanation>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/tier`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Replace one people tier automation preference
+ */
+export const setPersonTierOptOut = (
+  { id }: SetPersonTierOptOutPathParameters,
+  putPersonTierOptOutRequest: PutPersonTierOptOutRequest,
+  options?: SecondParameter<typeof orvalFetch<PersonTierOptOutsResponse>>,
+) => {
+  return orvalFetch<PersonTierOptOutsResponse>(
+    {
+      url: `/api/v1/people/${encodeURIComponent(String(id))}/tier/opt-outs`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: putPersonTierOptOutRequest,
     },
     options,
   );
