@@ -126,8 +126,13 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
 	}
+	// Absolute, normalized paths keep the long-path check below meaningful.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
 	var missing []string
-	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+	for p := abs; ; p = filepath.Dir(p) {
 		info, err := os.Stat(p)
 		if err == nil {
 			if !info.IsDir() {
@@ -155,7 +160,7 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	for _, dir := range slices.Backward(missing) {
 		createPath := dir
 		// Like os, prefix only long paths: the prefix also disables normalization.
-		if len(dir) >= 248 && filepath.IsAbs(dir) && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
+		if len(dir) >= 248 && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
 			if strings.HasPrefix(dir, `\\`) {
 				createPath = `\\?\UNC\` + dir[2:]
 			} else {
