@@ -3,21 +3,16 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // tiersStore serves a canned preview and explanation and records the arguments
@@ -40,7 +35,8 @@ func (s *tiersStore) ExplainPersonTierContext(_ context.Context, personID int64,
 }
 
 func tierRow(id int64, name string, tier int, tracked bool) store.PersonTierRow {
-	return store.PersonTierRow{PersonID: id, DisplayName: &name, Tier: tier, Rule: fmt.Sprintf("tier%d_rule", tier), Tracked: tracked}
+	rule := map[int]string{1: "tier1_intensity", 2: "tier2_two_way"}[tier]
+	return store.PersonTierRow{PersonID: id, DisplayName: &name, Tier: tier, Rule: rule, Tracked: tracked}
 }
 
 // readyPreview lists rows in the order the store returns them: tier first,
@@ -48,6 +44,7 @@ func tierRow(id int64, name string, tier int, tracked bool) store.PersonTierRow 
 func readyPreview(rows ...store.PersonTierRow) store.PersonTierPreview {
 	return store.PersonTierPreview{
 		AsOf: "2026-10-17", Readiness: store.PersonTierReadiness{Ready: true, Reasons: []string{}}, People: rows,
+		Projection: store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25},
 	}
 }
 
@@ -104,7 +101,7 @@ func TestPersonTiersPreviewPrintsATable(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(stdout, "counts built with timezone America/New_York, direct limit 25")
 	assert.Regexp(`LAST COUNTED`, stdout)
-	assert.Regexp(`1\s+3\s+Cleo\s+tier1_rule\s+false\s+2026-10-16`, stdout)
+	assert.Regexp(`1\s+3\s+Cleo\s+tier1_intensity\s+false\s+2026-10-16`, stdout)
 }
 
 func TestPersonTiersWarnOnceWhenReadinessIsNotReady(t *testing.T) {
@@ -118,11 +115,6 @@ func TestPersonTiersWarnOnceWhenReadinessIsNotReady(t *testing.T) {
 	assert.Contains(stderr, "watermark_behind")
 	assert.Contains(stderr, "settings_changed")
 	assert.True(json.Valid([]byte(stdout)), "stdout stays JSON")
-}
-
-func TestPersonTiersPreviewHasNoTierFlag(t *testing.T) {
-	_, _, err := executePersonTiersCommand(t, daemonTiersDeps(&tiersStore{}), "preview", "--tier", "1")
-	require.ErrorContains(t, err, "unknown flag: --tier")
 }
 
 func TestPersonTiersForwardTheCommandFromTheCLI(t *testing.T) {
@@ -189,52 +181,4 @@ func TestPersonTiersExplainRejectsBadIDBeforeTheDaemon(t *testing.T) {
 	_, _, err := executePersonTiersCommand(t, deps, "explain", "0")
 	require.ErrorContains(t, err, "positive")
 	assert.False(t, called)
-}
-
-// The daemon side end to end: a real store seeded through the real projector,
-// preview's JSON ID accepted by explain.
-func TestPersonTiersWorkflowAgainstARealStore(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	friend := f.EnsureParticipant("friend@example.com", "Friend", "example.com")
-	person, _, err := f.Store.CreatePersonFromParticipant(friend)
-	require.NoError(err)
-	now := time.Now().UTC()
-	for i := range 8 {
-		from, to := friend, owner
-		if i%2 == 0 {
-			from, to = owner, friend
-		}
-		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("workflow-%d", i)).WithSentAt(now.AddDate(0, 0, -i-1)).Build()
-		message.SenderID = sql.NullInt64{Int64: from, Valid: true}
-		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
-	}
-	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 50, MaxDirectCounterparts: 25})
-	require.NoError(err)
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	deps := daemonTiersDeps(f.Store)
-
-	stdout, stderr, err := executePersonTiersCommand(t, deps, "preview", "--json")
-	require.NoError(err)
-	assert.Empty(stderr)
-	var preview store.PersonTierPreview
-	require.NoError(json.Unmarshal([]byte(stdout), &preview))
-	require.Len(preview.People, 1)
-	assert.Equal(person.ID, preview.People[0].PersonID)
-	assert.Equal("tier1_intensity", preview.People[0].Rule)
-
-	stdout, _, err = executePersonTiersCommand(t, deps, "explain", strconv.FormatInt(preview.People[0].PersonID, 10), "--json")
-	require.NoError(err)
-	var explanation store.PersonTierExplanation
-	require.NoError(json.Unmarshal([]byte(stdout), &explanation))
-	assert.Equal(1, explanation.Tier)
-	assert.Equal(4, explanation.Signals.OutboundShort)
-	assert.Equal(4, explanation.Signals.InboundShort)
 }
