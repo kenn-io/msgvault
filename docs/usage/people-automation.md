@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-09-15"
+last_edited: "2026-10-19"
 title: Profile Automation
 description: Maintain tracked people's profile facts from archive evidence and inspect why a value changed.
 ---
@@ -25,6 +25,37 @@ tracking on for that person:
 msgvault person track 7
 msgvault person untrack 7
 ```
+
+To find people worth tracking, list the saved people you have exchanged
+messages with:
+
+```bash
+msgvault person tiers preview
+msgvault person tiers explain 7
+```
+
+Preview lists tier 1 (at least two messages each way and six days of contact in
+the last 90 days, or at least two messages each way and three days of contact
+plus a second channel or repeated meetings) and tier 2 (messages both ways and
+three days of contact in the last year, or repeated meetings). Each row shows
+the rule that put the person there, the last contact date, and whether they are
+already tracked. A header line names the timezone and direct limit the counts
+were built under. `explain` shows every count against its threshold, so you can
+see why someone is missing. If the activity projection is still catching up,
+preview warns that counts may be too low. Change the windows and thresholds in
+[`[people.tiers]`](/docs/configuration/#people-tiers).
+
+Preview changes nothing. To track everyone in tier 1 who is not tracked yet,
+pass the IDs from `--json` to `person track`:
+
+```bash
+msgvault person tiers preview --tier 1 --json \
+  | jq -r '.people[] | select(.tracked | not) | .person_id' \
+  | xargs -n1 msgvault person track
+```
+
+msgvault keeps no record of `person untrack`, so someone you untracked earlier
+shows as untracked here. Read the list and pick the IDs yourself.
 
 Tracking makes a profile eligible for automatic maintenance. It does not itself
 grant provider consent, enable a provider, or enroll a person in briefs.
