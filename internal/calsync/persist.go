@@ -387,12 +387,17 @@ func MapParticipants(organizer gcalmodel.Person, attendees []gcalmodel.Attendee,
 	var people []gcalmodel.Attendee
 	seen := map[string]bool{}
 	nonhuman := map[string]bool{}
+	if humanOnly {
+		for _, a := range attendees {
+			email := gcalmodel.NormalizeParticipantEmail(a.Email)
+			if email != "" && calevent.IsRoomAttendee(email, a.Resource) {
+				nonhuman[email] = true
+			}
+		}
+	}
 	for _, a := range attendees {
 		a.Email = gcalmodel.NormalizeParticipantEmail(a.Email)
 		if humanOnly {
-			if a.Email != "" && calevent.IsRoomAttendee(a.Email, a.Resource) {
-				nonhuman[a.Email] = true
-			}
 			if a.Email == "" || nonhuman[a.Email] || seen[a.Email] {
 				continue
 			}
