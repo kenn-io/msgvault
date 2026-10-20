@@ -99,14 +99,14 @@ func TestListCalendarOccurrencesMasterChangesValueType(t *testing.T) {
 			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.oldStart, tc.oldEnd))
 			_, edit := calendarFixture(t, st, "edit", fmt.Sprintf(`{"id":"edited","recurringEventId":"weekly","originalStartTime":%s,"start":%s,"end":%s}`, tc.original, tc.editStart, tc.editEnd))
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			require.NoError(err)
 			require.Len(page.Occurrences, 3)
 			assert.Empty(page.Unexpandable)
 
 			// A later master sync leaves the archived edit's immutable original intact.
 			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.newStart, tc.newEnd)), "gcal_json"))
-			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			require.NoError(err)
 			assert.Empty(page.Unexpandable)
 			var starts []string
