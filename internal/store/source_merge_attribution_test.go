@@ -122,6 +122,7 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 	for _, sentEvidence := range []string{"none", "label", "origin"} {
 		t.Run(sentEvidence, func(t *testing.T) {
 			require := require.New(t)
+			assert := assert.New(t)
 			live := newAttrFixture(t, "imap", "imaps://live%40example.test@mail.example.test:993")
 			history := newAttrFixtureOn(t, live.st, "imap", "imaps://history%40example.test@mail.example.test:993")
 			id := history.persist(attrMail{from: []string{"history@example.test"}, to: []string{"recipient@example.test"}})
@@ -145,6 +146,8 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 			require.NoError(err)
 			require.Len(before, 1)
 			require.Equal(sentEvidence == "none", before[0].Unsent)
+			var originalIsSent sql.NullBool
+			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&originalIsSent))
 
 			_, err = live.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
 				FromSourceID: history.source.ID, IntoSourceID: live.source.ID,
@@ -153,9 +156,25 @@ func TestMergeSourcesPreservesUnsentDraft(t *testing.T) {
 			after, err := live.st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
 			require.NoError(err)
 			require.Len(after, 1)
-			assert.Equal(t, live.source.ID, after[0].SourceID)
-			assert.Equal(t, sentEvidence == "none", after[0].Unsent)
-			assert.Equal(t, sentEvidence != "none", after[0].Eligible)
+			assert.Equal(live.source.ID, after[0].SourceID)
+			assert.Equal(sentEvidence == "none", after[0].Unsent)
+			assert.Equal(sentEvidence != "none", after[0].Eligible)
+			var isSent sql.NullBool
+			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
+			assert.Equal(originalIsSent, isSent)
+
+			labels, err := live.st.EnsureLabelsBatch(live.source.ID, map[string]store.LabelInfo{
+				"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(live.st.AddMessageLabels(id, []int64{labels["sent"]}))
+			after, err = live.st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.False(after[0].Unsent)
+			assert.True(after[0].Eligible, "Sent evidence makes the former draft contact activity")
+			require.NoError(activityQueryRow(live.st, `SELECT is_sent FROM messages WHERE id = ?`, id).Scan(&isSent))
+			assert.Equal(originalIsSent, isSent)
 		})
 	}
 }

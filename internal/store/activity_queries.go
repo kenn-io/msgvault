@@ -129,16 +129,6 @@ func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
 		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
 }
 
-// preserveActivityUnsentSQL keeps effective unsent status when an operation
-// drops draft evidence. schema and selection are internal SQL fragments.
-func preserveActivityUnsentSQL(dialect Dialect, schema, selection string) string {
-	return `UPDATE messages SET is_sent = FALSE
-		WHERE COALESCE(is_sent, TRUE) AND id IN (
-			SELECT m.id FROM ` + schema + `messages m
-			LEFT JOIN ` + schema + `sources src ON src.id = m.source_id
-			WHERE (` + selection + `) AND ` + activityUnsentInSchemaSQL(dialect, schema) + `)`
-}
-
 func (s *Store) activityCandidateColumns() string {
 	return `
 	m.id, m.source_id, m.conversation_id,

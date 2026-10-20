@@ -5427,6 +5427,7 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 	for _, sentEvidence := range []string{"none", "label", "origin"} {
 		t.Run(sentEvidence, func(t *testing.T) {
 			require := require.New(t)
+			assert := assert.New(t)
 			srcDB := createTestSourceDB(t, t.TempDir(), 1)
 			src, err := Open(srcDB)
 			require.NoError(err)
@@ -5450,6 +5451,8 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 			require.NoError(err)
 			require.Len(before, 1)
 			require.Equal(sentEvidence == "none", before[0].Unsent)
+			var originalIsSent sql.NullBool
+			require.NoError(src.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&originalIsSent))
 			require.NoError(src.Close())
 
 			dstDir := filepath.Join(t.TempDir(), "dst")
@@ -5461,8 +5464,24 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 			after, err := dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
 			require.NoError(err)
 			require.Len(after, 1)
-			assert.Equal(t, sentEvidence == "none", after[0].Unsent)
-			assert.Equal(t, sentEvidence != "none", after[0].Eligible)
+			assert.Equal(sentEvidence == "none", after[0].Unsent)
+			assert.Equal(sentEvidence != "none", after[0].Eligible)
+			var isSent sql.NullBool
+			require.NoError(dst.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+			assert.Equal(originalIsSent, isSent)
+
+			labels, err := dst.EnsureLabelsBatch(1, map[string]LabelInfo{
+				"sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(dst.AddMessageLabels(1, []int64{labels["sent"]}))
+			after, err = dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.False(after[0].Unsent)
+			assert.True(after[0].Eligible, "Sent evidence makes the former draft contact activity")
+			require.NoError(dst.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+			assert.Equal(originalIsSent, isSent)
 		})
 	}
 }
