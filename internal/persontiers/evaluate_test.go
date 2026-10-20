@@ -2,14 +2,12 @@ package persontiers
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEvaluateRules(t *testing.T) {
-	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name    string
 		signals Signals
@@ -27,8 +25,7 @@ func TestEvaluateRules(t *testing.T) {
 		{"large group and two DMs", Signals{OutboundShort: 2, OutboundLong: 2, ActiveDaysShort: 2, ActiveDaysLong: 2, LargeAudienceInboundEvents: 58}, 3, "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := Evaluate(tc.signals, DefaultConfig(), Prior{}, ManualState{}, asOf, true)
-			assert.Equal(t, tc.tier, d.ComputedTier)
+			d := Evaluate(tc.signals, DefaultConfig())
 			assert.Equal(t, tc.tier, d.Tier)
 			assert.Equal(t, tc.rule, d.Rule)
 		})
@@ -58,45 +55,51 @@ func TestEvaluateThresholds(t *testing.T) {
 			for _, delta := range []int{-1, 0, 1} {
 				s := tc.base
 				tc.set(&s, tc.threshold+delta)
-				d := Evaluate(s, DefaultConfig(), Prior{}, ManualState{}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), true)
+				d := Evaluate(s, DefaultConfig())
 				if delta < 0 {
-					assert.Greater(t, d.ComputedTier, tc.wantTier)
+					assert.Greater(t, d.Tier, tc.wantTier)
 				} else {
-					assert.Equal(t, tc.wantTier, d.ComputedTier)
+					assert.Equal(t, tc.wantTier, d.Tier)
 				}
 			}
 		})
 	}
 }
 
-func TestExclusionsAndMinimum(t *testing.T) {
+func TestExclusionsForceTierThree(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ExcludeDomainPatterns = []string{"rooms.example.com"}
-	cfg.MinimumTier = 2
+	// Two-way contact that would reach tier 2 without an exclusion.
+	active := Signals{OutboundLong: 2, InboundLong: 2, ActiveDaysLong: 4}
 	for _, tc := range []struct {
-		name string
-		s    Signals
-		tier int
-		rule string
+		name      string
+		owner     bool
+		emails    []string
+		phone     bool
+		tier      int
+		exclusion string
 	}{
-		{"unbound saved", Signals{}, 2, "minimum_tier"},
-		{"owner", Signals{Owner: true}, 3, "owner"},
-		{"automated", Signals{Emails: []string{"noreply@example.com", "mailer-daemon@example.org"}}, 3, "automated_address"},
-		{"mixed", Signals{Emails: []string{"noreply@example.com", "alex@example.org"}}, 2, "minimum_tier"},
-		{"phone defeats automated exclusion", Signals{Emails: []string{"noreply@example.com"}, HasPhoneOrChat: true}, 2, "minimum_tier"},
-		{"phone only", Signals{HasPhoneOrChat: true}, 2, "minimum_tier"},
-		{"room", Signals{Emails: []string{"room@rooms.example.com"}}, 3, "calendar_room"},
-		{"human plus room", Signals{Emails: []string{"room@rooms.example.com", "alex@example.com"}}, 2, "minimum_tier"},
+		{"unbound saved", false, nil, false, 2, ""},
+		{"owner", true, nil, false, 3, "owner"},
+		{"automated", false, []string{"noreply@example.com", "mailer-daemon@example.org"}, false, 3, "automated_address"},
+		{"mixed", false, []string{"noreply@example.com", "alex@example.org"}, false, 2, ""},
+		{"phone defeats automated exclusion", false, []string{"noreply@example.com"}, true, 2, ""},
+		{"phone only", false, nil, true, 2, ""},
+		{"room", false, []string{"room@rooms.example.com"}, false, 3, "calendar_room"},
+		{"human plus room", false, []string{"room@rooms.example.com", "alex@example.com"}, false, 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := Evaluate(tc.s, cfg, Prior{}, ManualState{}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), true)
-			assert.Equal(t, tc.tier, d.ComputedTier)
-			assert.Equal(t, tc.rule, d.Rule)
+			s := active
+			s.Owner, s.Emails, s.HasPhoneOrChat = tc.owner, tc.emails, tc.phone
+			d := Evaluate(s, cfg)
+			assert.Equal(t, tc.tier, d.Tier)
+			assert.Equal(t, tc.exclusion, d.Exclusion)
+			assert.Equal(t, "tier2_two_way", d.Rule, "the matching rule stays visible for explain")
 		})
 	}
 	cfg.ExcludeAddressPatterns = []string{"alerts*"}
-	assert.Equal(t, "automated_address", Evaluate(Signals{Emails: []string{"ALERTS-weekly@example.com"}}, cfg, Prior{}, ManualState{}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), true).Rule)
-	assert.Equal(t, "minimum_tier", Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg, Prior{}, ManualState{}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), true).Rule)
+	assert.Equal(t, "automated_address", Evaluate(Signals{Emails: []string{"ALERTS-weekly@example.com"}}, cfg).Exclusion)
+	assert.Empty(t, Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg).Exclusion)
 }
 
 func TestDisabledAlternatives(t *testing.T) {
@@ -105,32 +108,17 @@ func TestDisabledAlternatives(t *testing.T) {
 	cfg.Tier1.BreadthMinMeetingDaysLong = 0
 	cfg.Tier2.MinMeetingDaysLong = 0
 	require.NoError(t, cfg.Validate())
-	d := Evaluate(Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3, MeetingDaysLong: 100, ChannelsLong: 100}, cfg, Prior{}, ManualState{}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), true)
-	assert.Equal(t, 3, d.ComputedTier)
+	d := Evaluate(Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3, MeetingDaysLong: 100, ChannelsLong: 100}, cfg)
+	assert.Equal(t, 3, d.Tier)
 }
 
-func TestLaneConfigChangePreservesActivityDeferralWithOpenManualTarget(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+func TestEvaluateReportsEveryThresholdCheck(t *testing.T) {
+	d := Evaluate(Signals{OutboundShort: 1, InboundShort: 2}, DefaultConfig())
+	require.Len(t, d.Thresholds, 10)
+	assert.Equal(t, ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
+	assert.Equal(t, ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
 	cfg := DefaultConfig()
-	// Zero grace makes the demotion due even when a new lane configuration
-	// restarts its candidate date. Readiness remains the first deferral.
-	cfg.DemotionGraceDays = 0
-	prior := Prior{
-		Tier: 1, CandidateTier: 3, CandidateSince: "2026-09-01",
-		RuleVersion: RuleVersion, ConfigFingerprint: cfg.Fingerprint(),
-	}
-	cfg.Tier1Lanes = []string{}
-	cfg.Tier2Lanes = []string{}
-	require.NoError(cfg.Validate())
-	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	manual := ManualState{TrackingProvenance: "auto", OpenManualRunID: "synthetic-manual-run"}
-
-	decision := Evaluate(Signals{}, cfg, prior, manual, asOf, false)
-
-	assert.Equal(1, decision.Tier)
-	assert.Equal(3, decision.ComputedTier)
-	assert.Equal("2026-10-17", decision.DemotionDue)
-	assert.Equal("kept", decision.Lanes["tracking"])
-	assert.Equal("activity_not_ready", decision.DeferredReason)
+	cfg.Tier2.MinMeetingDaysLong = 0
+	d = Evaluate(Signals{MeetingDaysLong: 9}, cfg)
+	assert.Equal(t, ThresholdCheck{Name: "tier2.min_meeting_days_long", Observed: 9}, d.Thresholds[9])
 }
