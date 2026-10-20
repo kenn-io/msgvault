@@ -413,6 +413,30 @@ func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
 	assert.Empty(t, got.UnsavedContacts, "keyword hits with zero or missing vectors do not count")
 }
 
+func TestFindReportsFullVectorPoolDespiteLowKeywordCosine(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	for i := range 101 {
+		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+	}
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	keyword := scaled(topic, .3)
+	keyword[off] = float32(math.Sqrt(1 - .3*.3))
+	keywordID := f.post(t, "keyword@example.net", "zeppelin mooring", keyword)
+	hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	require.True(t, meta.PoolSaturated)
+	i := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == keywordID })
+	require.NotEqual(t, -1, i)
+	require.True(t, math.IsNaN(hits[i].VectorScore))
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
+}
+
 func TestFindHasNoPoolLimitWhenOnlyTheBestVectorClearsTheFloor(t *testing.T) {
 	f := newEvalFixture(t)
 	topic := embedWords("zeppelin mooring")

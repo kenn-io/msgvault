@@ -145,8 +145,10 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 	}
 	counted := similarities(scores.Scores, hits, p.MinScore)
 	lowest := math.Inf(1)
-	for _, score := range scores.Scores {
-		lowest = math.Min(lowest, score)
+	for _, hit := range hits {
+		if score, ok := scores.Scores[hit.MessageID]; ok && !math.IsNaN(hit.VectorScore) {
+			lowest = math.Min(lowest, score)
+		}
 	}
 	result := searchResult{generation: meta.Generation.ID}
 	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 && lowest >= p.MinScore || !scores.UnitLength)
