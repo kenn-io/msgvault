@@ -1013,10 +1013,10 @@ func TestMistralWorkerReportsMalformedPDFCauseWithoutUpload(t *testing.T) {
 		AttachmentID: 1, CanonicalBlobHash: hex.EncodeToString(digest[:]),
 		MIMEType: "application/pdf", Size: int64(len(content)), MessageType: "email",
 	})
-	require.ErrorContains(err, "PDF structure is malformed")
+	require.ErrorContains(err, "PDF structure could not be validated")
 	require.NotNil(catalog.failure)
 	assert.Equal("invalid_local_source", catalog.failure.ReasonCode)
-	assert.Contains(catalog.failure.Detail, "PDF structure is malformed")
+	assert.Contains(catalog.failure.Detail, "PDF structure could not be validated")
 	assert.Equal(catalog.failure.Detail, result.FailureDetail)
 	assert.Zero(processor.calls)
 }

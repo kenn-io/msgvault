@@ -482,42 +482,28 @@ func (b *Backend) CleanupDocumentJournalIfUnused(ctx context.Context) error {
 		return fmt.Errorf("open coordinated contextual journal cleanup: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	dbConn, err := conn.Conn(ctx)
-	if err != nil {
-		return fmt.Errorf("acquire contextual journal cleanup connection: %w", err)
-	}
-	defer func() { _ = dbConn.Close() }()
-	// Reserve the SQLite writer slot before any reads so a concurrent journal
-	// append cannot make this cleanup transaction fail while upgrading snapshots.
-	if _, err := dbConn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("begin contextual journal cleanup: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = dbConn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
-		}
-	}()
 
+	// Inspect outside the transaction so its first statement can wait for the writer lock.
 	var schemaReady int
-	if err := dbConn.QueryRowContext(ctx, `
+	if err := conn.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_change_clock')
 		   AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_changes')`).Scan(&schemaReady); err != nil {
 		return fmt.Errorf("inspect contextual journal schema: %w", err)
 	}
 	if schemaReady == 0 {
-		if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
-			return fmt.Errorf("commit contextual journal cleanup: %w", err)
-		}
-		committed = true
 		return nil
 	}
-	if _, err := dbConn.ExecContext(ctx,
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin contextual journal cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
 		return fmt.Errorf("lock contextual journal for cleanup: %w", err)
 	}
 	var tracked int
-	if err := dbConn.QueryRowContext(ctx, `
+	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			  FROM vec.embedding_document_progress p
@@ -527,22 +513,17 @@ func (b *Backend) CleanupDocumentJournalIfUnused(ctx context.Context) error {
 		return fmt.Errorf("recheck live contextual generations: %w", err)
 	}
 	if tracked != 0 {
-		if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
-			return fmt.Errorf("commit contextual journal cleanup: %w", err)
-		}
-		committed = true
-		return nil
+		return tx.Commit()
 	}
-	if _, err := dbConn.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE embedding_change_clock SET enabled = FALSE WHERE singleton = 1`); err != nil {
 		return fmt.Errorf("disable unused contextual journal: %w", err)
 	}
-	if _, err := dbConn.ExecContext(ctx, `DELETE FROM embedding_changes`); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM embedding_changes`); err != nil {
 		return fmt.Errorf("prune unused contextual journal: %w", err)
 	}
-	if _, err := dbConn.ExecContext(ctx, "COMMIT"); err != nil {
+	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit contextual journal cleanup: %w", err)
 	}
-	committed = true
 	return nil
 }

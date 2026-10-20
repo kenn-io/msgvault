@@ -163,21 +163,27 @@ HTTP Mode:
 }
 
 func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
+	inv := invocationFromContext(ctx)
+	if inv == nil {
+		return
+	}
 	clientConfig := daemonclient.Config{URL: info.URL, APIKey: httpStoreAPIKey(info, cfg), AllowInsecure: true}
 	if info.Kind == HTTPStoreConfiguredRemote {
 		clientConfig.AllowInsecure = cfg.Remote.AllowInsecure
 	}
-	client, err := newDaemonCLIClient(ctx, clientConfig)
-	if err != nil {
-		return
-	}
-	defer func() { _ = client.Close() }()
-	// daemonclient.New already built and cached the generated client.
-	generated, _ := client.GeneratedClient()
-	_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
-		Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
+	inv.sends.Go(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		client, err := newDaemonCLIClient(ctx, clientConfig)
+		if err != nil {
+			return
+		}
+		defer func() { _ = client.Close() }()
+		// daemonclient.New already built and cached the generated client.
+		generated, _ := client.GeneratedClient()
+		_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
+			Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
+		})
 	})
 }
 

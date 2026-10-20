@@ -11,6 +11,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -377,6 +378,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	// os.Exit (which skips remaining defers), it closes logResult
 	// itself before exiting. Do not reorder these defers.
 	defer func() {
+		inv.sends.Wait(50 * time.Millisecond)
 		if inv.logResult != nil {
 			inv.logResult.Close()
 			inv.logResult = nil
