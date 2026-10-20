@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -221,4 +222,104 @@ func TestICalendarBoundedCancellationKeepsSupersededSnapshot(t *testing.T) {
 	assertions.Equal("cancelled", page.Occurrences[0].Status)
 	assertions.Equal("Accepted exception", page.Occurrences[0].Subject)
 	assertions.Equal("2027-03-03T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+}
+
+func attendeeEmails(attendees []calevent.Attendee) []string {
+	var emails []string
+	for _, a := range attendees {
+		emails = append(emails, a.Email)
+	}
+	return emails
+}
+
+func TestCalendarNewerSparseCancellationReplacesTombstoneInvitees(t *testing.T) {
+	const series = "DTSTAMP:20270301T090000Z\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Series\r\nORGANIZER:mailto:owner@example.com\r\nATTENDEE:mailto:guest@example.com"
+	cancel := func(recurrence string, sequence int, invitee string) []byte {
+		props := recurrence + fmt.Sprintf("SEQUENCE:%d\r\nDTSTAMP:2027030%dT120000Z\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:owner@example.com", sequence, sequence)
+		if invitee != "" {
+			props += "\r\nATTENDEE:mailto:" + invitee
+		}
+		return calendarDocument("CANCEL", props)
+	}
+	for _, tc := range []struct {
+		name, recurrence string
+		email            bool
+	}{
+		{name: "ics exception", recurrence: "RECURRENCE-ID:20270303T120000Z\r\n"},
+		{name: "email exception", recurrence: "RECURRENCE-ID:20270303T120000Z\r\n", email: true},
+		{name: "ics standalone"},
+		{name: "email standalone", email: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			var source int64
+			persist := func(key string, raw []byte) {
+				t.Helper()
+				if tc.email {
+					_, source = persistInviteEmail(t, st, key, inviteEmail(raw))
+					return
+				}
+				source = icsSource(t, st)
+				_, err := st.PersistICalendarContext(t.Context(), source, raw)
+				requirements.NoError(err)
+			}
+			events := func() []int64 {
+				if tc.email {
+					return emailEvents(t, st, source)
+				}
+				rows, err := st.db.Query(`SELECT id FROM messages WHERE source_id=? AND message_type='calendar_event' ORDER BY id`, source)
+				requirements.NoError(err)
+				defer func() { _ = rows.Close() }()
+				var ids []int64
+				for rows.Next() {
+					var id int64
+					requirements.NoError(rows.Scan(&id))
+					ids = append(ids, id)
+				}
+				requirements.NoError(rows.Err())
+				return ids
+			}
+			if tc.recurrence != "" {
+				persist("series", calendarDocument("REQUEST", series))
+			}
+			emails := func() []string {
+				ids := events()
+				requirements.NotEmpty(ids)
+				tombstone := ids[len(ids)-1]
+				if tc.recurrence != "" {
+					from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+					requirements.NoError(err)
+					requirements.Len(page.Occurrences, 1)
+					assertions.Equal("cancelled", page.Occurrences[0].Status)
+					return attendeeEmails(page.Occurrences[0].Attendees)
+				}
+				stored, err := st.GetMessageRaw(tombstone)
+				requirements.NoError(err)
+				rows := calendarRows(t, st, tombstone)
+				requirements.Len(rows, 1)
+				assertions.Contains(string(stored), "UID:family@example.com")
+				return attendeeEmails(rows[0].Event.Attendees)
+			}
+			persist("a", cancel(tc.recurrence, 1, "a@example.com"))
+			assertions.Contains(emails(), "a@example.com")
+			persist("b", cancel(tc.recurrence, 2, "b@example.com"))
+			got := emails()
+			assertions.Contains(got, "b@example.com")
+			assertions.NotContains(got, "a@example.com")
+			ids := events()
+			stored, err := st.GetMessageRaw(ids[len(ids)-1])
+			requirements.NoError(err)
+			assertions.Contains(string(stored), "b@example.com")
+			assertions.NotContains(string(stored), "a@example.com")
+
+			// Older and equal revisions leave the newer evidence untouched.
+			persist("stale", cancel(tc.recurrence, 1, "a@example.com"))
+			persist("equal", cancel(tc.recurrence, 2, "a@example.com"))
+			got = emails()
+			assertions.Contains(got, "b@example.com")
+			assertions.NotContains(got, "a@example.com")
+		})
+	}
 }

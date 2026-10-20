@@ -231,8 +231,9 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			return err
 		}
 		fillTombstone := false
-		if exists && e.Status == SyncStatusCancelled && old.Status == SyncStatusCancelled && icsEventHasBounds(e) {
-			// A later cancellation completes a sparse tombstone; an accepted snapshot stays untouched.
+		if exists && e.Status == SyncStatusCancelled && old.Status == SyncStatusCancelled {
+			// A later cancellation replaces a sparse tombstone's evidence, whether it
+			// fills the dates or only restates invitees; an accepted snapshot stays untouched.
 			if fillTombstone, err = icsTombstoneLacksBounds(ctx, tx, id); err != nil {
 				return err
 			}
