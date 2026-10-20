@@ -6,12 +6,11 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -139,12 +138,14 @@ endpoint = "://invalid"
 
 // writeRunningDaemon records a running daemon of the given version in home. It
 // points at a helper process so a wrongly issued stop cannot signal the test binary.
-func writeRunningDaemon(t *testing.T, home, version string) *exec.Cmd {
+func writeRunningDaemon(t *testing.T, home, version string) <-chan struct{} {
 	t.Helper()
 	require := require.New(t)
 	helper := helperProcessCommand(t.Context(), "block")
 	require.NoError(helper.Start())
 	t.Cleanup(func() { _ = helper.Process.Kill() })
+	exited := make(chan struct{})
+	go func() { _ = helper.Wait(); close(exited) }()
 	created, ok := processCreateTimeMillis(helper.Process.Pid)
 	require.True(ok)
 	ping := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
@@ -168,7 +169,7 @@ func writeRunningDaemon(t *testing.T, home, version string) *exec.Cmd {
 		},
 	})
 	require.NoError(err)
-	return helper
+	return exited
 }
 
 func loadInvalidKataConfig(t *testing.T, home string) *config.Config {
@@ -207,7 +208,7 @@ func TestInvalidDaemonConfigLeavesRunningDaemonAlone(t *testing.T) {
 			require := require.New(t)
 			withTestVersion(t, "v1.1.0")
 			home := t.TempDir()
-			helper := writeRunningDaemon(t, home, tc.daemonVersion)
+			exited := writeRunningDaemon(t, home, tc.daemonVersion)
 			cfg := loadInvalidKataConfig(t, home)
 			cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNewer
 
@@ -219,7 +220,14 @@ func TestInvalidDaemonConfigLeavesRunningDaemonAlone(t *testing.T) {
 			}
 			require.ErrorContains(err, "daemon config invalid")
 			require.ErrorContains(err, "[integrations.kata]")
-			require.NoError(helper.Process.Signal(syscall.Signal(0)), "daemon must still be running")
+			require.Never(func() bool {
+				select {
+				case <-exited:
+					return true
+				default:
+					return false
+				}
+			}, 200*time.Millisecond, 20*time.Millisecond, "daemon must still be running")
 		})
 	}
 }

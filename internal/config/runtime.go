@@ -168,7 +168,7 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		c.Server.APIPort = *o.APIPort
 	} else if v, ok := os.LookupEnv("MSGVAULT_API_PORT"); ok {
 		if port, err := strconv.Atoi(v); err != nil {
-			c.deferEnvError(errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535"))
+			c.deferDaemonError(errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535"))
 		} else {
 			c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
 			c.Server.APIPort = port
@@ -202,7 +202,7 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 				if entry.destination == &c.Remote.AllowInsecure {
 					return err
 				}
-				c.deferEnvError(err)
+				c.deferDaemonError(err)
 				continue
 			}
 			entry.record.capture(*entry.destination, value)
@@ -241,7 +241,7 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 // overrideBindAddr applies a bind address, or records an error for an empty one.
 func (c *Config) overrideBindAddr(addr, source string) {
 	if strings.TrimSpace(addr) == "" {
-		c.deferEnvError(fmt.Errorf("%s: server bind address is empty", source))
+		c.deferDaemonError(fmt.Errorf("%s: server bind address is empty", source))
 		return
 	}
 	c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, addr)

@@ -109,11 +109,11 @@ func TestFastmailSourceForReturnsFastmailConfigError(t *testing.T) {
 	require.ErrorContains(err, "api_token is required")
 }
 
-func TestSaveRefusesLenientConfigThatWouldLoseFileContent(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
+func TestSaveRefusesConfigWithRecordedDaemonErrors(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
 	for _, tc := range []struct{ name, content, env, want string }{
 		{name: "unknown key", content: "[people.identity_scoring]\nbatch_size = 5\nbatch_siz = 3\n", want: "batch_siz"},
 		{name: "explicit zero", content: "[people.identity_scoring]\nbatch_size = 0\n", want: "identity_scoring.batch_size"},
-		{name: "environment only", env: "invalid"},
+		{name: "environment", env: "invalid", want: "MSGVAULT_API_PORT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -127,10 +127,6 @@ func TestSaveRefusesLenientConfigThatWouldLoseFileContent(t *testing.T) { //noli
 			require.NoError(err)
 
 			err = cfg.Save()
-			if tc.want == "" {
-				require.NoError(err)
-				return
-			}
 			require.ErrorContains(err, "refusing to save config")
 			require.ErrorContains(err, tc.want)
 			after, err := os.ReadFile(path)

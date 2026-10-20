@@ -631,45 +631,6 @@ func (c *Config) deferDaemonError(err error) {
 	}
 }
 
-// envConfigError tags a daemon error that comes from a MSGVAULT_* override or
-// flag rather than the file, so it never blocks a save.
-type envConfigError struct{ error }
-
-func (e envConfigError) Unwrap() error { return e.error }
-
-func (c *Config) deferEnvError(err error) {
-	if err != nil {
-		c.deferDaemonError(envConfigError{err})
-	}
-}
-
-// deferServerError records a [server] error, tagged as env-derived when the
-// file's own values would have passed.
-func (c *Config) deferServerError() {
-	err := c.Server.validateDaemonSettings()
-	if err == nil {
-		return
-	}
-	file := *c
-	c.runtimeConfigState.restore(&file)
-	if file.Server.validateDaemonSettings() == nil {
-		c.deferEnvError(err)
-		return
-	}
-	c.deferDaemonError(err)
-}
-
-// fileConfigError joins the recorded daemon errors that come from the file.
-func (c *Config) fileConfigError() error {
-	var errs []error
-	for _, err := range c.daemonErrs {
-		if _, ok := errors.AsType[envConfigError](err); !ok {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
 // DaemonConfigErrors lists invalid settings that only the daemon reads, as
 // recorded by LoadClientWithOverrides.
 func (c *Config) DaemonConfigErrors() []error {
@@ -1023,7 +984,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
 			return nil, err
 		}
-		cfg.deferServerError()
+		cfg.deferDaemonError(cfg.Server.Validate())
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
@@ -1093,7 +1054,7 @@ func loadConfigFileLenient(snapshot ConfigFile, homeDir string, overrides *Runti
 			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
 				return nil, err
 			}
-			cfg.deferServerError()
+			cfg.deferDaemonError(cfg.Server.Validate())
 		}
 		return cfg, nil
 	}
@@ -1244,7 +1205,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Server.validateDaemonAutoRestart(); err != nil {
 		return nil, err
 	}
-	cfg.deferServerError()
+	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
@@ -1593,7 +1554,7 @@ func (c *Config) Save() error {
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 	// Saving rewrites the file from the decoded struct, which drops unknown
 	// keys and replaces explicit zeros that a lenient load deferred.
-	if err := c.fileConfigError(); err != nil {
+	if err := c.DaemonConfigError(); err != nil {
 		return fmt.Errorf("refusing to save config: invalid daemon config: %w", err)
 	}
 	// Ensure home directory exists
