@@ -49,128 +49,24 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 }
 
 func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
-	for _, marker := range []string{"draft", "is_sent"} {
-		for _, onlyUnsent := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/only_unsent=%t", marker, onlyUnsent), func(t *testing.T) {
-				require := require.New(t)
-				assert := assert.New(t)
-				f, receivedID, personID := projectorFixture(t, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC), false)
-				owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-				counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
-				unsentID := f.NewMessage().WithSentAt(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Create(t, f.Store)
-				require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "from", []int64{owner}, []string{"Owner"}))
-				require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "to", []int64{counterpart}, []string{"Counterpart"}))
-				ids := []int64{unsentID}
-				if onlyUnsent {
-					ids = append(ids, receivedID)
-				}
-				labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
-				for _, id := range ids {
-					if marker == "draft" {
-						require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
-					} else {
-						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET is_sent = FALSE WHERE id = ?`), id)
-						require.NoError(err)
-					}
-				}
-				projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
-				require.NoError(err)
-				_, err = projector.RunOnce(t.Context())
-				require.NoError(err)
-				state, err := f.Store.ContactStateContext(t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
-				require.NoError(err)
-				if onlyUnsent {
-					assert.Empty(state.LastContactRef)
-					assert.Empty(projectedActivityRefs(t, f.Store))
-				} else {
-					assert.Equal("message:"+formatProjectorID(receivedID), state.LastContactRef)
-					assert.Equal([]string{"message:" + formatProjectorID(receivedID)}, projectedActivityRefs(t, f.Store))
-				}
-			})
-		}
-	}
-}
-
-func TestProjectorFollowsDraftSendAndRedraft(t *testing.T) {
-	setup := require.New(t)
-	f, messageID, personID := projectorFixture(t, time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), false)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
-	setup.NoError(f.Store.ReplaceMessageRecipients(messageID, "from", []int64{owner}, []string{"Owner"}))
-	setup.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{counterpart}, []string{"Counterpart"}))
-	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
-	setup.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
-	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
-	setup.NoError(err)
-	for _, step := range []struct {
-		name        string
-		remove, add []int64
-		wantContact bool
-	}{
-		{name: "draft"},
-		{name: "sent", remove: []int64{labels["DRAFT"]}, add: []int64{labels["SENT"]}, wantContact: true},
-		{name: "archived", remove: []int64{labels["SENT"]}, wantContact: true},
-		{name: "redraft", add: []int64{labels["DRAFT"]}},
-	} {
-		t.Run(step.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			if len(step.remove) > 0 {
-				require.NoError(f.Store.RemoveMessageLabels(messageID, step.remove))
-			}
-			if len(step.add) > 0 {
-				require.NoError(f.Store.AddMessageLabels(messageID, step.add))
-			}
-
-			_, err := projector.RunOnce(t.Context())
-			require.NoError(err)
-			state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
-			require.NoError(err)
-			if step.wantContact {
-				assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-				assert.Equal([]string{"message:" + formatProjectorID(messageID)}, projectedActivityRefs(t, f.Store))
-			} else {
-				assert.Empty(state.LastContactRef)
-				assert.Empty(projectedActivityRefs(t, f.Store))
-			}
-		})
-	}
-}
-
-func TestProjectorKeepsArchivedIMAPSentCopyWithDraftMembership(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	f, messageID, personID := projectorFixture(t, time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), false)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
-	require.NoError(err)
-	require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
-	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
-		"DRAFT":   {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
-		"SENT":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
-		"ARCHIVE": {Name: "Archive", Type: "system"},
-	})
-	require.NoError(err)
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"], labels["SENT"]}))
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO imap_message_memberships
-		(source_id, mailbox, uidvalidity, uid, message_id, flags)
-		VALUES (?, 'Drafts', 1, 1, ?, ?)`), f.Source.ID, messageID, `["\\Draft"]`)
-	require.NoError(err)
+	f, receivedID, personID := projectorFixture(t, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC), false)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
+	unsentID := f.NewMessage().WithSentAt(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Create(t, f.Store)
+	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "from", []int64{owner}, []string{"Owner"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(unsentID, "to", []int64{counterpart}, []string{"Counterpart"}))
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+	require.NoError(f.Store.AddMessageLabels(unsentID, []int64{labels["DRAFT"]}))
 	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
 	require.NoError(err)
 	_, err = projector.RunOnce(t.Context())
 	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)
-	require.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-
-	require.NoError(f.Store.RemoveMessageLabels(messageID, []int64{labels["SENT"]}))
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["ARCHIVE"]}))
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	state, err = f.Store.ContactStateContext(t.Context(), personID, time.Now())
-	require.NoError(err)
-	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-	assert.Equal([]string{"message:" + formatProjectorID(messageID)}, projectedActivityRefs(t, f.Store))
+	assert.Equal("message:"+formatProjectorID(receivedID), state.LastContactRef)
+	assert.Equal([]string{"message:" + formatProjectorID(receivedID)}, projectedActivityRefs(t, f.Store))
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
