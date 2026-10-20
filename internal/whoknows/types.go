@@ -31,8 +31,8 @@ const (
 	// more messages beyond it may match.
 	LimitPoolFull = "pool_full"
 	// LimitPartialIndex means the vector index leaves out some message types
-	// with authors or some accounts, or has not embedded a message keyword
-	// search found, so some messages were not searched.
+	// with authors or some accounts, or, for an empty answer, some message
+	// still waits for its vector, so some messages were not searched.
 	LimitPartialIndex = "partial_index"
 	// LimitDeclaredTruncated means more declared topics exist than one
 	// request reads, so some were not searched.

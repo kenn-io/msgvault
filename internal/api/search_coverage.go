@@ -75,37 +75,17 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreFilterError(w, err, "invalid_filter")
 		return
 	}
+	_, backend, cfg := s.vectorComponents()
+	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
 	explorer, ok := s.queryEngineForContext(r.Context()).(query.Explorer)
 	if !ok {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
-	response, err := s.searchCoverage(r.Context(), explorer, ctx)
-	switch {
-	case errors.Is(err, errCoverageGenerationChanged):
-		writeError(w, http.StatusServiceUnavailable, "vector_generation_changed",
-			"Vector generation changed while coverage was computed; retry")
-	case err != nil:
-		s.writeExploreError(r.Context(), w, err)
-	default:
-		writeJSON(w, http.StatusOK, response)
-	}
-}
-
-// errCoverageGenerationChanged reports that the vector generation changed
-// while coverage was computed.
-var errCoverageGenerationChanged = errors.New("vector generation changed while coverage was computed")
-
-// searchCoverage counts the messages in analytical context ctx, narrowed to
-// the embedding scope, and how many of them have a vector, from the coverage
-// cache when it holds them.
-func (s *Server) searchCoverage(rctx context.Context, explorer query.Explorer, ctx query.Context) (SearchCoverageResponse, error) {
-	_, backend, cfg := s.vectorComponents()
-	ctx = semanticCoverageContext(ctx, cfg.Embed.Scope.BuildScope())
 	response := SearchCoverageResponse{
 		Actions: make([]SearchCoverageAction, 0),
 	}
-	coverage := s.resolveSearchCoverageState(rctx, backend, cfg)
+	coverage := s.resolveSearchCoverageState(r.Context(), backend, cfg)
 	generation := coverage.generation
 	if generation == nil {
 		// Without a usable generation there is nothing to intersect: report
@@ -113,7 +93,8 @@ func (s *Server) searchCoverage(rctx context.Context, explorer query.Explorer, c
 		// this endpoint while semantic search is disabled or initializing).
 		response.Status, response.Detail = coverage.status, coverage.detail
 		response.Actions = s.searchCoverageActions(coverage.status, coverage.fullBuildAvailable)
-		return response, nil
+		writeJSON(w, http.StatusOK, response)
+		return
 	}
 	counter, _ := backend.(vector.FilteredCoverageBackend)
 	generationID := int64(generation.ID)
@@ -125,24 +106,26 @@ func (s *Server) searchCoverage(rctx context.Context, explorer query.Explorer, c
 		state = newExploreServerState(time.Now)
 		s.exploreState = state
 	}
-	probe, err := explorer.ExploreSelectionStats(rctx, query.ExploreSelectionRequest{
+	probe, err := explorer.ExploreSelectionStats(r.Context(), query.ExploreSelectionRequest{
 		Explore: query.ExploreRequest{Context: ctx}, IncludedKeys: []string{},
 	})
 	if err != nil {
-		return response, err
+		s.writeExploreError(r.Context(), w, err)
+		return
 	}
 	contextHash := searchCoverageContextHash(ctx)
 	if entry, found := state.getCoverage(searchCoverageCacheKey(contextHash, probe.CacheRevision, *generation)); found {
 		response.EligibleCount, response.EmbeddedCount = entry.EligibleCount, entry.EmbeddedCount
 		response.CacheRevision = probe.CacheRevision
-		return s.finishSearchCoverageCounts(response, coverage), nil
+		s.writeSearchCoverageCounts(w, response, coverage)
+		return
 	}
 
 	countFailed := false
-	result, err := explorer.ExploreCoverage(rctx, query.ExploreCoverageRequest{
+	result, err := explorer.ExploreCoverage(r.Context(), query.ExploreCoverageRequest{
 		Context: ctx, BatchSize: vector.FilteredCoverageBatchSize,
 	}, func(messageIDs []int64) error {
-		count, countErr := counter.EmbeddedMessageCountForIDs(rctx, generation.ID, messageIDs)
+		count, countErr := counter.EmbeddedMessageCountForIDs(r.Context(), generation.ID, messageIDs)
 		if countErr != nil {
 			countFailed = true
 			return countErr
@@ -156,15 +139,19 @@ func (s *Server) searchCoverage(rctx context.Context, explorer query.Explorer, c
 			response.Status = SearchCoverageUnavailable
 			response.Detail = "Filtered semantic coverage could not be read"
 			response.Actions = s.searchCoverageActions(SearchCoverageUnavailable, false)
-			return response, nil
+			writeJSON(w, http.StatusOK, response)
+			return
 		}
-		return response, err
+		s.writeExploreError(r.Context(), w, err)
+		return
 	}
 	currentStatus, _, current, _ := s.resolveSearchCoverageGeneration(
-		rctx, backend, cfg, coverage.resolvedStatus, coverage.detail,
+		r.Context(), backend, cfg, coverage.resolvedStatus, coverage.detail,
 	)
 	if !sameCoverageGeneration(coverage.resolvedStatus, *generation, currentStatus, current) {
-		return response, errCoverageGenerationChanged
+		writeError(w, http.StatusServiceUnavailable, "vector_generation_changed",
+			"Vector generation changed while coverage was computed; retry")
+		return
 	}
 	response.EligibleCount = result.EligibleCount
 	response.CacheRevision = result.CacheRevision
@@ -172,7 +159,7 @@ func (s *Server) searchCoverage(rctx context.Context, explorer query.Explorer, c
 		searchCoverageCacheKey(contextHash, result.CacheRevision, *generation),
 		result.EligibleCount, response.EmbeddedCount,
 	)
-	return s.finishSearchCoverageCounts(response, coverage), nil
+	s.writeSearchCoverageCounts(w, response, coverage)
 }
 
 // searchCoverageState is the resolved vector-side half of one coverage
@@ -216,12 +203,13 @@ func (s *Server) resolveSearchCoverageState(
 	return state
 }
 
-// finishSearchCoverageCounts finalizes a coverage response that was computed
-// (or served from cache) against a usable vector generation.
-func (s *Server) finishSearchCoverageCounts(
+// writeSearchCoverageCounts finalizes and writes a coverage response that
+// was computed (or served from cache) against a usable vector generation.
+func (s *Server) writeSearchCoverageCounts(
+	w http.ResponseWriter,
 	response SearchCoverageResponse,
 	coverage searchCoverageState,
-) SearchCoverageResponse {
+) {
 	response.Percentage = coveragePercentage(response.EmbeddedCount, response.EligibleCount)
 	response.Status, response.Detail = coverage.status, coverage.detail
 	if coverage.status != SearchCoverageStale && response.EmbeddedCount < response.EligibleCount {
@@ -230,7 +218,7 @@ func (s *Server) finishSearchCoverageCounts(
 		response.Status = SearchCoverageReady
 	}
 	response.Actions = s.searchCoverageActions(response.Status, coverage.fullBuildAvailable)
-	return response
+	writeJSON(w, http.StatusOK, response)
 }
 
 // searchCoverageCacheKey identifies one coverage computation: the canonical

@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -20,7 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/eval"
-	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -224,9 +224,7 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	return &evalFixture{
 		service: &Service{
 			Retriever: evalEngine(st, backend, bagOfWordsEmbedder{}), Data: st, Index: backend,
-			// The fixture embeds every message.
-			Unembedded: func(context.Context, query.Context) (bool, error) { return false, nil },
-			Now:        func() time.Time { return evalNow },
+			Now: func() time.Time { return evalNow },
 		},
 		emails: emails, store: st, backend: backend,
 		generation: generation, source: source.ID, conversation: conversation,
@@ -375,4 +373,38 @@ func TestFindReportsAFullPoolOfVectorsThatAreNotUnitLength(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.UnsavedContacts)
 	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
+}
+
+// failingCount is an archive whose embedding coverage count fails.
+type failingCount struct{ *store.Store }
+
+func (failingCount) CoverageCountsScoped(context.Context, int64, []string, []int64) (int64, int64, int64, int64, error) {
+	return 0, 0, 0, 0, errors.New("count failed")
+}
+
+// The search finds only messages with a vector or a keyword hit, so an empty
+// answer reports partial_index while a message waits for its vector, or when
+// the wait can't be counted.
+func TestFindReportsAPartialIndexWhileAMessageWaitsForAVector(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEvalFixture(t)
+	find := func() []string {
+		got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+		require.NoError(err)
+		require.Empty(got.UnsavedContacts)
+		return got.Limits
+	}
+	assert.Empty(find(), "every message has its vector")
+
+	f.service.Data = failingCount{f.store}
+	assert.Equal([]string{LimitPartialIndex}, find())
+	f.service.Data = f.store
+
+	_, err := f.store.UpsertMessage(&store.Message{
+		ConversationID: f.conversation, SourceID: f.source, SourceMessageID: "waiting", MessageType: "email",
+		Subject: sql.NullString{String: "airship tethering", Valid: true},
+	})
+	require.NoError(err)
+	assert.Equal([]string{LimitPartialIndex}, find())
 }

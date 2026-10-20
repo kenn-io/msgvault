@@ -326,8 +326,8 @@ or in place of "nobody":
 - `The vector index doesn't cover all your mail and chat yet, so some messages
   weren't searched.` The `[vector.embed.scope]` settings leave out a message
   type with authors, such as chat, or some accounts, or, when nobody matched,
-  msgvault can't confirm that every message in the searched dates is
-  embedded. Declared topics are still listed.
+  some message is still waiting for its vector or msgvault couldn't count
+  them. Declared topics are still listed.
   Check progress with `msgvault embeddings status`.
 - `Declared topics were searched only in part.` More than 5,000 declared values
   exist, and only the first 5,000 were read.

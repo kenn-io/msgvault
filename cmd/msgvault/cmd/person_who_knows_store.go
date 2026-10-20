@@ -20,3 +20,7 @@ func (a *storeAPIAdapter) TopicAuthorsContext(ctx context.Context, ids, owner []
 func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]store.PersonAskMeAbout, bool, error) {
 	return a.store.AskMeAboutValuesContext(ctx, owner)
 }
+
+func (a *storeAPIAdapter) CoverageCountsScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (live, stamped, blank, missing int64, err error) {
+	return a.store.CoverageCountsScoped(ctx, activeGen, messageTypes, sourceIDs)
+}

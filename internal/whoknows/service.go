@@ -27,12 +27,13 @@ type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
 }
 
-// DataReader reads the owner's participants, who wrote each message, and what
-// people say to ask them about.
+// DataReader reads the owner's participants, who wrote each message, what
+// people say to ask them about, and how many messages wait for a vector.
 type DataReader interface {
 	OwnerFamilyContext(ctx context.Context) ([]int64, error)
 	TopicAuthorsContext(ctx context.Context, messageIDs, owner []int64) (map[int64]store.TopicAuthor, error)
 	AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]store.PersonAskMeAbout, bool, error)
+	CoverageCountsScoped(ctx context.Context, activeGen int64, messageTypes []string, sourceIDs []int64) (live, stamped, blank, missing int64, err error)
 }
 
 type Service struct {
@@ -41,10 +42,6 @@ type Service struct {
 	// Index is the vector backend the search reads.
 	Index      vector.Backend
 	BuildScope vector.BuildScope
-	// Unembedded reports that some message in scope has no vector. The
-	// search returns only messages with a vector or a keyword hit, so Find
-	// asks before answering that nobody wrote about the topic.
-	Unembedded func(ctx context.Context, scope query.Context) (bool, error)
 	Now        func() time.Time
 }
 
@@ -66,10 +63,12 @@ func searchTypes(scope vector.BuildScope) (types []string, narrowed bool) {
 	return types, len(types) < len(allowed) || len(scope.SourceIDs) > 0
 }
 
-// searchResult is what one search found and whether it filled its pool.
+// searchResult is what one search found, whether it filled its pool, and
+// the index generation it read.
 type searchResult struct {
 	candidates []Candidate
 	poolFull   bool
+	generation vector.GenerationID
 }
 
 // Find retrieves messages about the topic, keeps those whose cosine
@@ -101,10 +100,7 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	}
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
 	if !partial && len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
-		partial, err = s.Unembedded(ctx, query.Context{After: p.After, Before: p.Before, MessageTypes: types})
-		if err != nil {
-			return out, err
-		}
+		partial = s.unembedded(ctx, found.generation, types)
 	}
 	if found.poolFull {
 		out.Limits = append(out.Limits, LimitPoolFull)
@@ -146,10 +142,19 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		return searchResult{}, err
 	}
 	counted := similarities(scores.Scores, hits, p.MinScore)
-	var result searchResult
+	result := searchResult{generation: meta.Generation.ID}
 	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength)
 	result.candidates, err = s.attribute(ctx, counted, owner)
 	return result, err
+}
+
+// unembedded reports that a message of the searched types still waits for
+// its vector in generation gen, or that the wait can't be counted. The search
+// returns only messages with a vector or a keyword hit, so either way an
+// empty answer can't say that nobody wrote about the topic.
+func (s *Service) unembedded(ctx context.Context, gen vector.GenerationID, types []string) bool {
+	_, _, _, missing, err := s.Data.CoverageCountsScoped(ctx, int64(gen), types, nil)
+	return err != nil || missing > 0
 }
 
 type scoredHit struct {
