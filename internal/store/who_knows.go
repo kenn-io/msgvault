@@ -270,12 +270,30 @@ const (
 // carrying both "user" and "bot_id" under the user, so only the payload
 // shows it. An unreadable payload leaves the message counted.
 func (s *Store) dropSlackBotPayloads(ctx context.Context, authors map[int64]TopicAuthor, senders map[int64]int64, ids []int64) error {
+	bots, err := s.slackBotPayloadsContext(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for id := range bots {
+		a := authors[id]
+		a.Counts = false
+		authors[id] = a
+		delete(senders, id)
+	}
+	return nil
+}
+
+// slackBotPayloadsContext returns which Slack messages of ids have an
+// archived payload that carries a bot_id or the bot_message subtype. An
+// unreadable payload is not a bot's.
+func (s *Store) slackBotPayloadsContext(ctx context.Context, ids []int64) (map[int64]bool, error) {
+	out := map[int64]bool{}
 	if len(ids) == 0 {
-		return nil
+		return out, nil
 	}
 	raws, err := s.GetMessageRawsContext(ctx, ids)
 	if err != nil {
-		return fmt.Errorf("read Slack payloads: %w", err)
+		return nil, fmt.Errorf("read Slack payloads: %w", err)
 	}
 	for id, raw := range raws {
 		var payload struct {
@@ -283,13 +301,10 @@ func (s *Store) dropSlackBotPayloads(ctx context.Context, authors map[int64]Topi
 			Subtype string `json:"subtype"`
 		}
 		if json.Unmarshal(raw, &payload) == nil && (payload.BotID != "" || payload.Subtype == "bot_message") {
-			a := authors[id]
-			a.Counts = false
-			authors[id] = a
-			delete(senders, id)
+			out[id] = true
 		}
 	}
-	return nil
+	return out, nil
 }
 
 // topicContactsContext maps each sender to its identity family. Promotion,
@@ -371,7 +386,8 @@ const DeclaredValueLimit = 5000
 // ask-me-about values the user typed or an address-book import supplied, in
 // person order, and whether more exist. Inferred and superseded values are
 // left out, and so are people bound to a participant in owner, the
-// OwnerFamilyContext set, or to an automated participant. The caller matches
+// OwnerFamilyContext set, or to an automated participant, including a Slack
+// user whose latest message is a bot's. The caller matches
 // topics in Go, so matching is not limited to what SQL can case-fold.
 func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]PersonAskMeAbout, bool, error) {
 	args := []any{AttributeUniversalIDAskMeAbout}
@@ -420,8 +436,73 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]P
 	if err != nil {
 		return nil, false, err
 	}
-	out = slices.DeleteFunc(out, func(v PersonAskMeAbout) bool { return automated[v.PersonID] })
+	bots, err := s.personsPostingAsSlackBotsContext(ctx, out)
+	if err != nil {
+		return nil, false, err
+	}
+	out = slices.DeleteFunc(out, func(v PersonAskMeAbout) bool { return automated[v.PersonID] || bots[v.PersonID] })
 	return out, truncated, nil
+}
+
+// personsPostingAsSlackBotsContext reports which persons of values, which
+// are in person order, are bound to a participant whose latest Slack message
+// has a bot's payload. The importer files a bot user under a plain user
+// identifier, so only the payload shows it.
+func (s *Store) personsPostingAsSlackBotsContext(ctx context.Context, values []PersonAskMeAbout) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	persons := distinctPersons(values)
+	if len(persons) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT pp.person_id, (
+		         SELECT m.id FROM messages m
+		          WHERE m.sender_id = pp.participant_id AND m.message_type = '`+slackMessageType+`'
+		            AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		          ORDER BY CASE WHEN m.sent_at IS NULL THEN 1 ELSE 0 END, m.sent_at DESC, m.id DESC
+		          LIMIT 1)
+		FROM person_participants pp
+		WHERE pp.person_id IN (`+directoryPlaceholders(len(persons))+`)`), appendInt64Args(nil, persons)...)
+	if err != nil {
+		return nil, fmt.Errorf("read declared persons' Slack messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	byMessage := map[int64]int64{}
+	var latest []int64
+	for rows.Next() {
+		var person int64
+		var message sql.NullInt64
+		if err := rows.Scan(&person, &message); err != nil {
+			return nil, fmt.Errorf("scan declared person's Slack message: %w", err)
+		}
+		if message.Valid {
+			byMessage[message.Int64] = person
+			latest = append(latest, message.Int64)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read declared persons' Slack messages: %w", err)
+	}
+	bots, err := s.slackBotPayloadsContext(ctx, latest)
+	if err != nil {
+		return nil, err
+	}
+	for id := range bots {
+		out[byMessage[id]] = true
+	}
+	return out, nil
+}
+
+// distinctPersons returns the person IDs of values, which are in person
+// order, once each.
+func distinctPersons(values []PersonAskMeAbout) []int64 {
+	var persons []int64
+	for _, v := range values {
+		if len(persons) == 0 || persons[len(persons)-1] != v.PersonID {
+			persons = append(persons, v.PersonID)
+		}
+	}
+	return persons
 }
 
 // personsWithAutomatedAddressContext reports which persons of values, which
@@ -429,12 +510,7 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]P
 // system sender.
 func (s *Store) personsWithAutomatedAddressContext(ctx context.Context, values []PersonAskMeAbout) (map[int64]bool, error) {
 	out := map[int64]bool{}
-	var persons []int64
-	for _, v := range values {
-		if len(persons) == 0 || persons[len(persons)-1] != v.PersonID {
-			persons = append(persons, v.PersonID)
-		}
-	}
+	persons := distinctPersons(values)
 	if len(persons) == 0 {
 		return out, nil
 	}

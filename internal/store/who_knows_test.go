@@ -443,3 +443,54 @@ func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 	assert.True(truncated)
 	assert.Len(got, store.DeclaredValueLimit)
 }
+
+// Slack's export marks a bot user is_bot, and the importer files it under a
+// plain user identifier, so only its posts' payloads show the bot.
+func TestAskMeAboutValuesLeaveOutSlackBotUsers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	export := t.TempDir()
+	write := func(name, body string) {
+		path := filepath.Join(export, name)
+		require.NoError(os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(os.WriteFile(path, []byte(body), 0o600))
+	}
+	write("users.json", `[
+		{"id":"UOWNER","team_id":"T1","name":"owner","profile":{"email":"owner@example.net"}},
+		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}},
+		{"id":"UBOT","team_id":"T1","name":"deploys","is_bot":true,"profile":{"real_name":"Deploys"}}]`)
+	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA","UBOT"]}]`)
+	write("general/2026-10-01.json", `[
+		{"type":"message","ts":"1790000000.000001","user":"UANA","text":"pod networking notes"},
+		{"type":"message","ts":"1790000000.000002","user":"UBOT","bot_id":"B1","text":"deploy finished"}]`)
+	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
+	require.NoError(err)
+
+	personFor := func(ts string) int64 {
+		var sender int64
+		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+			`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+			summary.SourceID, "C1:"+ts).Scan(&sender))
+		person, _, err := f.Store.CreatePersonFromParticipant(sender)
+		require.NoError(err)
+		topic := "deploys"
+		_, err = f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+			PersonID:       person.ID,
+			DefinitionSlug: store.AttributeSlugAskMeAbout,
+			Ordinal:        new(int64),
+			Value:          store.AttributeValue{Type: store.AttributeValueText, Text: &topic},
+			Source:         store.ProvenanceUser,
+		})
+		require.NoError(err)
+		return person.ID
+	}
+	ana := personFor("1790000000.000001")
+	personFor("1790000000.000002")
+
+	got, _, err := f.Store.AskMeAboutValuesContext(ctx, ownerOf(f))
+	require.NoError(err)
+	assert.Equal([]store.PersonAskMeAbout{{PersonID: ana, PersonName: "ana", Value: "deploys"}}, got,
+		"the bot user is left out")
+}
