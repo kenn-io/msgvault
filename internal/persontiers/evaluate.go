@@ -1,50 +1,27 @@
 package persontiers
 
-import (
-	"slices"
-	"strings"
-	"time"
-)
+import "strings"
 
-// Signals counts only events already filtered by the activity rules. Emails
-// and identifier flags are ephemeral exclusion inputs, never audit content.
+// Signals counts only events already filtered by the activity rules. Owner,
+// Emails and HasPhoneOrChat feed the exclusions and stay out of the output.
 type Signals struct {
-	OutboundShort              int        `json:"outbound_short"`
-	OutboundLong               int        `json:"outbound_long"`
-	InboundShort               int        `json:"inbound_short"`
-	InboundLong                int        `json:"inbound_long"`
-	ActiveDaysShort            int        `json:"active_days_short"`
-	ActiveDaysLong             int        `json:"active_days_long"`
-	MeetingDaysLong            int        `json:"meeting_days_long"`
-	ChannelsLong               int        `json:"channels_long"`
-	LastDirectAt               *time.Time `json:"last_direct_at"`
-	ExcludedListEvents         int        `json:"excluded_list_events"`
-	LargeAudienceInboundEvents int        `json:"large_audience_inbound_events"`
-	CoPresenceEvents           int        `json:"co_presence_events"`
-	ObservedEvents             int        `json:"observed_events"`
-	Owner                      bool       `json:"-"`
-	Emails                     []string   `json:"-"`
-	HasPhoneOrChat             bool       `json:"-"`
+	OutboundShort              int      `json:"outbound_short"`
+	OutboundLong               int      `json:"outbound_long"`
+	InboundShort               int      `json:"inbound_short"`
+	InboundLong                int      `json:"inbound_long"`
+	ActiveDaysShort            int      `json:"active_days_short"`
+	ActiveDaysLong             int      `json:"active_days_long"`
+	MeetingDaysLong            int      `json:"meeting_days_long"`
+	ChannelsLong               int      `json:"channels_long"`
+	ExcludedListEvents         int      `json:"excluded_list_events"`
+	LargeAudienceInboundEvents int      `json:"large_audience_inbound_events"`
+	Owner                      bool     `json:"-"`
+	Emails                     []string `json:"-"`
+	HasPhoneOrChat             bool     `json:"-"`
 }
 
-// Prior is applied authority. Observational shadow state is evaluated through
-// a separate Prior; it must never seed the applied evaluator.
-type Prior struct {
-	Tier              int    `json:"tier"`
-	TierSince         string `json:"tier_since"`
-	CandidateTier     int    `json:"candidate_tier"`
-	CandidateSince    string `json:"candidate_since"`
-	RuleVersion       int    `json:"rule_version"`
-	ConfigFingerprint string `json:"config_fingerprint"`
-}
-
-type ManualState struct {
-	TrackingProvenance string   `json:"tracking_provenance"`
-	BriefsProvenance   string   `json:"briefs_provenance"`
-	OptOuts            []string `json:"opt_outs"`
-	OpenManualRunID    string   `json:"open_manual_run_id"`
-}
-
+// ThresholdCheck compares one count with its configured threshold. A zero
+// threshold is disabled and never met.
 type ThresholdCheck struct {
 	Name     string `json:"name"`
 	Observed int    `json:"observed"`
@@ -53,29 +30,19 @@ type ThresholdCheck struct {
 	Met      bool   `json:"met"`
 }
 
+// Decision is the tier for one person and the rule behind it. Rule names the
+// matching rule even when an exclusion then forces tier 3, and is "none" when
+// no rule matched.
 type Decision struct {
-	Prior
-
-	ComputedTier       int               `json:"computed_tier"`
-	Rule               string            `json:"rule"`
-	Reason             string            `json:"reason"`
-	DeferredReason     string            `json:"deferred_reason"`
-	DemotionDue        string            `json:"demotion_due"`
-	ActivityReady      bool              `json:"activity_ready"`
-	Lanes              map[string]string `json:"lanes"`
-	AppliedLanes       []string          `json:"applied_lanes"`
-	EnrichmentEligible bool              `json:"enrichment_eligible"`
-	Thresholds         []ThresholdCheck  `json:"thresholds"`
+	Tier       int              `json:"tier"`
+	Rule       string           `json:"rule"`
+	Exclusion  string           `json:"exclusion"`
+	Thresholds []ThresholdCheck `json:"thresholds"`
 }
 
-// AppliedPrior returns only hysteresis authority, without explanation fields.
-func (d *Decision) AppliedPrior() Prior { return d.Prior }
-
-// Evaluate is pure: callers validate config and provide asOf in the projector's
-// timezone. It plans metadata changes; Store must recheck manual state and
-// stale-run fences inside the apply transaction.
-func Evaluate(s Signals, c Config, prior Prior, m ManualState, asOf time.Time, ready bool) Decision {
-	d := Decision{Prior: prior, ComputedTier: 3, Rule: "none", ActivityReady: ready, Lanes: map[string]string{}}
+// Evaluate is pure. Callers validate the config first.
+func Evaluate(s Signals, c Config) Decision {
+	d := Decision{Tier: 3, Rule: "none"}
 	check := func(name string, got, want int) bool {
 		enabled := want > 0
 		met := enabled && got >= want
@@ -94,74 +61,16 @@ func Evaluate(s Signals, c Config, prior Prior, m ManualState, asOf time.Time, r
 	meetings := check("tier2.min_meeting_days_long", s.MeetingDaysLong, c.Tier2.MinMeetingDaysLong)
 	switch {
 	case shortOut && shortIn && intensity:
-		d.ComputedTier = 1
-		d.Rule = "tier1_intensity"
+		d.Tier, d.Rule = 1, "tier1_intensity"
 	case shortOut && shortIn && breadthDays && (breadthChannels || breadthMeetings):
-		d.ComputedTier = 1
-		d.Rule = "tier1_breadth"
+		d.Tier, d.Rule = 1, "tier1_breadth"
 	case longOut && longIn && longDays:
-		d.ComputedTier = 2
-		d.Rule = "tier2_two_way"
+		d.Tier, d.Rule = 2, "tier2_two_way"
 	case meetings:
-		d.ComputedTier = 2
-		d.Rule = "tier2_meetings"
+		d.Tier, d.Rule = 2, "tier2_meetings"
 	}
-	if d.ComputedTier > c.MinimumTier {
-		d.ComputedTier = c.MinimumTier
-		d.Rule = "minimum_tier"
-	}
-	if exclusion := excluded(s, c); exclusion != "" {
-		d.ComputedTier = 3
-		d.Rule = exclusion
-	}
-	d.transition(c, prior, m, asOf, ready)
-	switch d.Tier {
-	case 1:
-		d.AppliedLanes = slices.Clone(c.Tier1Lanes)
-	case 2:
-		d.AppliedLanes = slices.Clone(c.Tier2Lanes)
-	default:
-		d.AppliedLanes = []string{}
-	}
-	tracking := m.TrackingProvenance == "manual" || (slices.Contains(d.AppliedLanes, "tracking") && !slices.Contains(m.OptOuts, "tracking"))
-	// A lane edit can remove tracking without changing the tier. Preserve an
-	// existing auto row for exact human-requested work on that path too.
-	holdTracking := !tracking && m.TrackingProvenance == "auto" && m.OpenManualRunID != ""
-	if holdTracking && d.DeferredReason == "" {
-		d.DeferredReason = "manual_enrichment_run"
-	}
-	for _, lane := range []string{"tracking", "briefs"} {
-		provenance := m.TrackingProvenance
-		if lane == "briefs" {
-			provenance = m.BriefsProvenance
-		}
-		wanted := slices.Contains(d.AppliedLanes, lane)
-		blocked := slices.Contains(m.OptOuts, lane) || (lane == "briefs" && wanted && !tracking)
-		switch {
-		case provenance == "manual":
-			d.Lanes[lane] = "blocked_manual"
-		case lane == "tracking" && holdTracking:
-			d.Lanes[lane] = "kept"
-		case provenance == "auto" && (!wanted || blocked):
-			d.Lanes[lane] = "removed"
-		case blocked:
-			d.Lanes[lane] = "blocked_opt_out"
-		case wanted && provenance == "auto":
-			d.Lanes[lane] = "kept"
-		case wanted:
-			d.Lanes[lane] = "created"
-		case provenance == "auto":
-			d.Lanes[lane] = "removed"
-		default:
-			d.Lanes[lane] = "unchanged"
-		}
-	}
-	d.EnrichmentEligible = tracking && !slices.Contains(m.OptOuts, "enrichment") && (m.TrackingProvenance == "manual" || slices.Contains(d.AppliedLanes, "enrichment"))
-	d.Lanes["enrichment"] = "unchanged"
-	if slices.Contains(m.OptOuts, "enrichment") {
-		d.Lanes["enrichment"] = "blocked_opt_out"
-	} else if d.EnrichmentEligible {
-		d.Lanes["enrichment"] = "eligible"
+	if d.Exclusion = excluded(s, c); d.Exclusion != "" {
+		d.Tier = 3
 	}
 	return d
 }
