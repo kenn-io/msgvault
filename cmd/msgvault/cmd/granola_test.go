@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -346,4 +348,34 @@ func TestManualGranolaPrevalidatesAllSourcesBeforeImport(t *testing.T) {
 	assert.Zero(constructed, "all selected sources must validate before any client or import starts")
 	_, statErr := os.Stat(testCfg.DatabaseDSN())
 	assert.ErrorIs(statErr, os.ErrNotExist, "invalid configuration must not create or write the archive")
+}
+
+func TestGranolaCacheFailureDoesNotStartOutage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := newGranolaSyncTestServer(t, true, false)
+	installGranolaClientFactory(t, server.URL)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(granola.SourceType, "work")
+	require.NoError(err)
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+	ctx := withInvocation(t.Context(), state)
+	refresh := rebuildGranolaCacheAfterScheduledSync
+	t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = refresh })
+	cacheErr := errors.New("cache unavailable")
+	rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) error { return cacheErr }
+
+	err = runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"})
+
+	require.ErrorIs(err, cacheErr)
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
+	assert.Positive(count)
+	assert.Zero(events)
+	failing := newGranolaSyncTestServer(t, false, true)
+	installGranolaClientFactory(t, failing.URL)
+	require.Error(runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"}))
+	assert.Equal(1, events, "provider failures still count after a failed cache refresh")
 }

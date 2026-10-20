@@ -324,7 +324,7 @@ describe('ExploreLoader', () => {
     let calls = 0;
     const fetchFn = vi.fn<typeof fetch>(async () => {
       calls += 1;
-      if (calls === 1) {
+      if (calls <= 2) {
         return Response.json({
           error: 'analytical_cache_unavailable',
           message: 'The analytical cache is being prepared',
@@ -332,21 +332,24 @@ describe('ExploreLoader', () => {
           recovery_action: ''
         }, { status: 503 });
       }
-      return Response.json(exploreResponse({ rows: [entry(1)] }));
+      return Response.json(exploreResponse());
     });
     const state = new ExploreState(window);
-    const { loader, cleanup } = setup(fetchFn, state);
+    const onSearchAccepted = vi.fn();
+    const { loader, cleanup } = setup(fetchFn, state, { onSearchAccepted });
+    loader.submitted = true;
+    state.commitSearch('missing', 'full_text'); flushSync();
     try {
       await vi.advanceTimersByTimeAsync(0);
-      expect(calls).toBe(1);
+      expect(calls).toBe(2);
       expect(loader.unavailable?.readiness).toBe('building');
 
       await vi.advanceTimersByTimeAsync(1_000);
       flushSync();
       await vi.advanceTimersByTimeAsync(0);
 
-      expect(calls).toBe(2);
-      expect(loader.rows.map((row) => row.key)).toEqual(['message:1']);
+      expect(calls).toBe(3);
+      expect(onSearchAccepted).toHaveBeenLastCalledWith('missing', 'full_text', expect.any(AbortSignal), 0);
       expect(loader.unavailable).toBeUndefined();
     } finally {
       cleanup();

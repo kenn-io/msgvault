@@ -37,6 +37,22 @@ describe('KataFileIssueAction', () => {
     ]));
   });
 
+  it('reports a failed passage search', async () => {
+    const events: unknown[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (path.endsWith('/telemetry/events')) { events.push(await request.json()); return Response.json({ status: 'queued' }, { status: 202 }); }
+      if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example', message: 'Ready' });
+      return Response.json({ message: 'Search unavailable' }, { status: 500 });
+    });
+    render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
+    await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'needle' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }]));
+  });
+
   it('opens the citation window at a search excerpt late in a transcript', async () => {
     const requests: Request[] = [];
     const excerpt = '🙂 we agreed to ship the draft next week';

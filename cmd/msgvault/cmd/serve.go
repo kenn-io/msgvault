@@ -16,7 +16,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -438,7 +437,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// Create and configure scheduler
 	state.syncFailures = &telemetry.SyncFailures{Capture: telemetryReporter.Capture}
 	sched, mediaSched := newServeSchedulers(syncFunc, logger, idleTracker, operationGate, telemetryReporter.Capture)
-	sched.WithJobResults(syncJobResults(s, state))
 	sched.WithAccountPreemptionPolicy(func(identifier string) bool {
 		return scheduledSyncPreemptible(s, identifier, logger)
 	})
@@ -447,7 +445,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name)
+		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state)
 	})
 	if err := cardDAVController.ReconcileSchedule(ctx); err != nil {
 		return err
@@ -1141,7 +1139,7 @@ func snapshotBeeperDraftPolicy(cfg *config.Config) []config.GmailDraftSource {
 	return append([]config.GmailDraftSource(nil), cfg.Beeper.Drafts...)
 }
 
-func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string) error {
+func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations, logger *slog.Logger, name string, state *invocation) error {
 	jobName := api.CardDAVJobNameForConnection(name)
 	if !cardDAVConfig.Enabled || cardDAVConfig.Schedule == "" {
 		sched.RemoveJob(jobName)
@@ -1166,10 +1164,11 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 	}
 	if err := sched.AddJob(scheduler.Job{
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
-		Run: func(ctx context.Context) error {
+		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
+			recordSyncAttempt(ctx, "carddav", name, err)
 			return err
-		},
+		}),
 	}); err != nil {
 		return fmt.Errorf("schedule CardDAV connection %s: %w", name, err)
 	}
@@ -4078,32 +4077,6 @@ func (a *schedulerAdapter) StartJob(name string, manual bool) (scheduler.JobDisp
 	return a.jobScheduler(name).StartJob(name, manual)
 }
 
-func syncJobResults(s *store.Store, state *invocation) func(context.Context, string) (context.Context, func(error)) {
-	return func(ctx context.Context, name string) (context.Context, func(error)) {
-		recorded := new(atomic.Bool)
-		return context.WithValue(ctx, syncAttemptKey{}, recorded), func(err error) {
-			if sourceType, ok := api.SyncSourceForJob(name); ok {
-				switch sourceType {
-				case sourceTypeCalendar, "chatwoot":
-					// These providers report setup failures for their selected sources.
-				case sourceTypeMatrix, sourceTypeBeeper, sourceTypeSlack:
-					if !recorded.Load() && err != nil {
-						sources, _ := s.ListSources(sourceType)
-						_, account, scoped := strings.Cut(name, ":")
-						for _, source := range sources {
-							if source.MergedIntoSourceID == 0 && (!scoped || source.Identifier == account || strings.HasPrefix(source.Identifier, account+"/")) {
-								state.syncFailures.Record(sourceType, source.Identifier, err)
-							}
-						}
-					}
-				default:
-					state.syncFailures.Record(sourceType, name, err)
-				}
-			}
-		}
-	}
-}
-
 // runScheduledSync performs a sync for a scheduled account. It resolves
 // ALL syncable source rows for the identifier (gmail, imap, teams, discord) and
 // dispatches each in turn. When no source row matches, it falls back to
@@ -4404,7 +4377,7 @@ func newDaemonGmailClient(
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing,
 					fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email))
 			}
-			if isAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
+			if syncerr.IsAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(ctx, oauthMgr, email))))
 			}
 			return nil, false, fmt.Errorf("get token source: %w", tsErr)

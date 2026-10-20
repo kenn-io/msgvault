@@ -138,6 +138,7 @@ func (r meetingSyncRun) finishScheduled(
 	cacheKey string,
 	refreshCache func(context.Context, string) error,
 ) error {
+	recordSyncAttempt(ctx, strings.ReplaceAll(r.provider, " ", "_"), r.identifier, errors.Join(r.err, r.canceled))
 	refreshCtx := context.WithoutCancel(ctx)
 	refresh := func() error {
 		if refreshCache == nil {

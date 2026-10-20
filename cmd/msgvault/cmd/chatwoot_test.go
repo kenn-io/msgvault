@@ -108,14 +108,12 @@ func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
 				events++
 				return nil
 			}}
-			job, ok := api.ChatwootJobNameForAccount(src.URL, src.AccountID)
-			require.True(ok)
-			results := syncJobResults(st, state)
+			ctx := withInvocation(t.Context(), state)
+
 			for range 2 {
-				runCtx, report := results(withInvocation(t.Context(), state), job)
-				err := runConfiguredChatwootSync(runCtx, st, src)
+				err := runConfiguredChatwootSync(ctx, st, src)
 				require.ErrorContains(err, message)
-				report(err)
+
 				assert.Equal(want, events, "only selected inboxes enter failure, once per outage")
 			}
 		})

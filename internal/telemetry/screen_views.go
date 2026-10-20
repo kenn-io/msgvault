@@ -68,7 +68,7 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
-	if req.Event == EventSearchEmpty || req.Event == EventErrorShown || req.Event == EventSyncFailed {
+	if req.Event == EventErrorShown || req.Event == EventSyncFailed {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
@@ -101,7 +101,7 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		claim, _ = req.Properties["screen"].(string)
-	case EventSearchRun:
+	case EventSearchRun, EventSearchEmpty:
 		searchType, _ := req.Properties["search_type"].(string)
 		claim = req.Event + ":" + surface + ":" + searchType
 	default: // EventMessageOpened

@@ -53,7 +53,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
 	if os.Getenv("MSGVAULT_OUTCOMES_TEST") != "" {
-		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir))
+		exerciseOutcomes(t, CaptureHandler(reporter, opts.DataDir), reporter)
 		require.NoError(reporter.Close())
 		return
 	}

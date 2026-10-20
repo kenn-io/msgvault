@@ -156,8 +156,11 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 		t.Run(tc.kind, func(t *testing.T) {
 			m := NewBuilder().Build()
 			m.width, m.height = 100, 24
-			if tc.kind == "other" {
+			switch tc.kind {
+			case "other":
 				m.mode = modeTexts
+			case "search":
+				m.searchQuery = "needle"
 			}
 			var kinds []string
 			m.reportAction = func(_ context.Context, event, property, value string) error {
@@ -176,4 +179,19 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 			assert.Equal(t, []string{tc.kind}, kinds)
 		})
 	}
+}
+
+func TestBrowseLoadErrorKind(t *testing.T) {
+	m := NewBuilder().Build()
+	m.width, m.height = 100, 24
+	var kinds []string
+	m.reportAction = func(_ context.Context, event, _, value string) error {
+		if event == "error_shown" {
+			kinds = append(kinds, value)
+		}
+		return nil
+	}
+	_, cmd := m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, err: errors.New("browse unavailable")})
+	_ = runBatchCommand(t, cmd)
+	assert.Equal(t, []string{"other"}, kinds)
 }

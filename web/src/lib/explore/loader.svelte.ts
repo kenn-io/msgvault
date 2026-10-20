@@ -209,6 +209,7 @@ export class ExploreLoader {
             this.cacheBuildRetry = setTimeout(() => {
               this.cacheBuildRetry = undefined;
               if (generation === this.requestGeneration && !controller.signal.aborted) {
+                this.submitted = submitted;
                 this.#retryRevision += 1;
               }
             }, CACHE_BUILD_RETRY_DELAY_MS);

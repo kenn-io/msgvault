@@ -14,7 +14,7 @@ type SyncFailures struct {
 	failing sync.Map
 }
 
-// Record clears a recovered source or reports its first failure.
+// Record clears a recovered source or reports its first observed failure, including a new source.
 func (s *SyncFailures) Record(sourceType, identifier string, err error) {
 	if s == nil || errors.Is(err, context.Canceled) {
 		return

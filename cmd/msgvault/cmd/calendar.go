@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/syncerr"
 )
 
 const calScopeEscalationConfirmedFlag = "scope-escalation-confirmed"
@@ -930,7 +931,7 @@ func calendarTokenExpiredOrRevoked(ctx context.Context, mgr calendarTokenRefresh
 		return false
 	}
 	if err := mgr.ForceRefresh(ctx, email); err != nil {
-		return isAuthInvalidError(err)
+		return syncerr.IsAuthInvalidError(err)
 	}
 	return false
 }

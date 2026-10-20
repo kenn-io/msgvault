@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/syncerr"
 	extOAuth2 "golang.org/x/oauth2"
 )
 
@@ -363,8 +364,8 @@ func TestIsAuthInvalidError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isAuthInvalidError(tt.err)
-			assert.Equal(t, tt.want, got, "isAuthInvalidError()")
+			got := syncerr.IsAuthInvalidError(tt.err)
+			assert.Equal(t, tt.want, got, "syncerr.IsAuthInvalidError()")
 		})
 	}
 }

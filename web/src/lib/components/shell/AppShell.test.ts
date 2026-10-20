@@ -89,6 +89,22 @@ describe('AppShell', () => {
     };
   }
 
+  it.each(['', 'needle'])('labels an Everything load failure for query %s', async (query) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
+    const events: unknown[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (path.endsWith('/telemetry/events')) { const event = await request.json(); if (event.event === 'error_shown') events.push(event); return Response.json({ status: 'queued' }, { status: 202 }); }
+      if (path.endsWith('/explore')) return Response.json({ message: 'Browse unavailable' }, { status: 500 });
+      return Response.json({});
+    });
+    const state = new ExploreState(window);
+    render(AppShell, { client, state });
+    await screen.findByText('Browse unavailable');
+    state.destroy();
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
+  });
+
   it('focuses search with slash and leaves Escape to the search input', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);

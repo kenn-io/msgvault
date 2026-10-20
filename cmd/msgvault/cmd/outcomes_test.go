@@ -66,16 +66,16 @@ func TestCalendarPreLoopFailureRecordsOnlySelectedSources(t *testing.T) {
 				client.ListCalendarsErr = wantErr
 				buildClient = func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return client, nil }
 			}
-			results := syncJobResults(st.Store, state)
+
 			for run := range 3 {
 				if run == 2 {
 					state.syncFailures.Record("gcal", "user@example.com/first", nil)
 				}
-				runCtx, report := results(ctx, "gcal:user@example.com")
-				err := runConfiguredGCalSyncWithClientBuilder(runCtx, st.Store,
+
+				err := runConfiguredGCalSyncWithClientBuilder(ctx, st.Store,
 					config.GCalSource{Email: "user@example.com", Calendars: tc.calendars}, buildClient)
 				require.ErrorIs(err, wantErr)
-				report(err)
+
 				if run < 2 {
 					assert.Equal(tc.want, events, "repeat failures do not start new outages")
 				} else {

@@ -75,19 +75,17 @@ func TestScheduledBeeperMissingTokenRecordsOnlyEligibleAccountFailures(t *testin
 		return nil
 	}}
 	ctx := withInvocation(t.Context(), state)
-	results := syncJobResults(st, state)
+
 	for range 2 {
-		runCtx, report := results(ctx, "beeper")
-		err := runConfiguredBeeperSync(runCtx, st)
+		err := runConfiguredBeeperSync(ctx, st)
 		require.ErrorContains(err, "no Beeper Desktop token found")
-		report(err)
 	}
 	assert.Equal([]map[string]any{{"sync_source": "beeper", "reason": "other"}, {"sync_source": "beeper", "reason": "other"}}, events)
 	state.syncFailures.Record(sourceTypeBeeper, "signal", nil)
-	runCtx, report := results(ctx, "beeper")
-	err := runConfiguredBeeperSync(runCtx, st)
+
+	err := runConfiguredBeeperSync(ctx, st)
 	require.Error(err)
-	report(err)
+
 	assert.Len(events, 3, "recovery clears only that account's outage")
 }
 

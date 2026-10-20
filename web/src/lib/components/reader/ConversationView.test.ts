@@ -390,6 +390,23 @@ describe('ConversationView', () => {
     ]));
   });
 
+  it('reports each failed body while earlier errors stay expanded', async () => {
+    const client = createAPIClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.includes('/messages/')) return Response.json({ message: 'Body unavailable' }, { status: 500 });
+      return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1), omittedMessage(2)], has_before: false, has_after: false, total: 2 });
+    });
+    render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+    await screen.findByRole('alert');
+    await waitFor(() => expect(telemetryEvents).toHaveLength(1));
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2));
+    await waitFor(() => expect(telemetryEvents).toEqual([
+      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+    ]));
+  });
+
   it('keeps omitted-body messages as snippet cards without fetching their bodies', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

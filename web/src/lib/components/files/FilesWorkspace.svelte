@@ -176,7 +176,7 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
-  $effect(() => { if (error || pageError) return reportError(client, 'search'); });
+  $effect(() => { if (error || pageError) return reportError(client, predicate.query?.trim() || visualQuery || visualImageBase64 ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
@@ -511,7 +511,7 @@
         if (responseError.readiness === 'building') {
           cacheBuildRetry = setTimeout(() => {
             cacheBuildRetry = undefined;
-            if (currentGeneration === generation && !signal.aborted) reloadListing();
+            if (currentGeneration === generation && !signal.aborted) { submitted = searchSubmitted; reloadListing(); }
           }, 1000);
         }
       } else if (response.status === 503) error = message;
@@ -852,6 +852,7 @@
           ariaLabel="Search attachment pixels"
           placeholder="Describe what is visible"
           oninput={commitVisualQuery}
+          onkeydown={(event) => { if (event.key === 'Enter' && visualQueryDraft.trim()) { clearTimeout(visualQueryDebounce); submitted = true; visualQuery = visualQueryDraft.trim(); } }}
         />
       </label>
       <label>

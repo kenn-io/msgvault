@@ -18,6 +18,9 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 )
 
+// ErrUnauthorized identifies a rejected Calendar credential.
+var ErrUnauthorized = errors.New("unauthorized (401): token may be invalid")
+
 const (
 	defaultBaseURL = "https://www.googleapis.com/calendar/v3"
 	maxRetries     = 12  // ~10 minutes of network outages, matching the Gmail client
@@ -201,7 +204,7 @@ func (c *Client) request(ctx context.Context, op gmail.Operation, path string) (
 			return nil, fmt.Errorf("server error (%d)", resp.StatusCode)
 
 		case http.StatusUnauthorized:
-			return nil, backoff.Permanent(errors.New("unauthorized (401): token may be invalid"))
+			return nil, backoff.Permanent(ErrUnauthorized)
 
 		case http.StatusGone:
 			return nil, backoff.Permanent(&GoneError{Path: path})

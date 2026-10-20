@@ -383,6 +383,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	mgr := circleback.NewManager(src.Endpoint, state.cfg.TokensDir(), state.logger)
 	session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 	if err != nil {
+		recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
 		return err
 	}
 	defer func() { _ = session.Close() }()

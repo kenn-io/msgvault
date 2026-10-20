@@ -157,19 +157,12 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.
 func isSourceSyncJobName(name string) bool {
-	_, ok := SyncSourceForJob(name)
-	return ok
-}
-
-// SyncSourceForJob returns the registered source type for a generic sync job.
-func SyncSourceForJob(name string) (string, bool) {
 	kind, _, _ := strings.Cut(name, ":")
-	sourceType := strings.ReplaceAll(kind, "-", "_")
-	if kind == CardDAVJobName || kind == chatwoot.SourceType {
-		return sourceType, true
+	if kind == CardDAVJobName {
+		return true
 	}
-	_, ok := SchedulerJobNameForSource(sourceType, "source/calendar")
-	return sourceType, ok
+	_, ok := SchedulerJobNameForSource(strings.ReplaceAll(kind, "-", "_"), "source/calendar")
+	return ok
 }
 
 // gcalJobName builds the scheduler job name for a gcal account from its

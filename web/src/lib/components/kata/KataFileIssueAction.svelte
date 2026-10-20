@@ -7,7 +7,7 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_WINDOW, type EvidenceSelector } from '../../kata/evidence';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
-  import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
   let { client, attachmentID, messageID, filename }: {
@@ -21,6 +21,7 @@
   let busy = $state(false);
   let searched = $state(false);
   let error = $state('');
+  $effect(() => { if (open && !selected && error) return reportError(client, 'search'); });
   let generation = 0;
   let controller: AbortController | undefined;
   onDestroy(close);

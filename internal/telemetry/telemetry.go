@@ -80,7 +80,7 @@ func newReporterOrDisabled(opts Options, endpoint string, logger *slog.Logger) *
 
 // CaptureHandler serves usage events and persists daily screen and action claims in dataDir.
 func CaptureHandler(reporter *posthog.Reporter, dataDir string) http.Handler {
-	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter), captureEvent: reporter.Capture, dir: dataDir, now: time.Now}
+	return &screenCaptureHandler{reporter: reporter, capture: posthog.NewCaptureHandler(reporter, posthog.RejectEvents(EventSyncFailed)), captureEvent: reporter.Capture, dir: dataDir, now: time.Now}
 }
 
 // Enabled applies the environment overrides to the configured telemetry choice.

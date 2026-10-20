@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"sync/atomic"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -56,7 +55,6 @@ type invocation struct {
 }
 
 type invocationContextKey struct{}
-type syncAttemptKey struct{}
 
 func newInvocation() *invocation {
 	return &invocation{
@@ -87,9 +85,6 @@ func invocationFromContext(ctx context.Context) *invocation {
 }
 
 func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) {
-	if recorded, ok := ctx.Value(syncAttemptKey{}).(*atomic.Bool); ok {
-		recorded.Store(true)
-	}
 	if state := invocationFromContext(ctx); state != nil {
 		state.syncFailures.Record(sourceType, identifier, err)
 	}

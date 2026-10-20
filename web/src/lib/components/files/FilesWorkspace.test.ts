@@ -47,7 +47,7 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
-  it.each(['submitted', 'preview', 'image'])('counts only submitted empty %s searches', async (kind) => {
+  it.each(['submitted', 'preview', 'image', 'visual'])('counts only submitted empty %s searches', async (kind) => {
     const events: Array<{ event: string; properties: { search_type: string } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
@@ -58,11 +58,19 @@ describe('FilesWorkspace', () => {
     });
     const rendered = render(FilesWorkspace, {
       client: createAPIClient(fetchFn),
-      predicate: { query: kind === 'image' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
+      predicate: { query: kind === 'image' || kind === 'visual' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
       submitted: kind === 'submitted',
     });
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    if (kind === 'visual') {
+      await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+      const query = screen.getByRole('searchbox', { name: 'Search attachment pixels' });
+      await fireEvent.input(query, { target: { value: 'blue sky' } });
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+      await fireEvent.keyDown(query, { key: 'Enter' });
+    }
     if (kind === 'image') {
       await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
       await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
@@ -199,26 +207,29 @@ describe('FilesWorkspace', () => {
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
 
-  it('retries a building analytical cache and renders files when it becomes ready', async () => {
+  it('preserves an empty search submission through cache preparation', async () => {
     vi.useFakeTimers();
     let calls = 0;
-    const fetchFn = vi.fn<typeof fetch>(async () => {
+    const events: Array<{ event: string }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) { events.push(await (input as Request).json()); return Response.json({ status: 'queued' }, { status: 202 }); }
       calls += 1;
       if (calls === 1) return Response.json({
         error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
         readiness: 'building', recovery_action: ''
       }, { status: 503 });
-      return Response.json(response());
+      return Response.json({ ...response(), files: [], total_count: 0 });
     });
     const rendered = render(FilesWorkspace, {
-      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
+      client: createAPIClient(fetchFn), submitted: true, predicate: { query: 'missing', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
 
     expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
     expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(await screen.findByText('fixture.pdf')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1);
     expect(calls).toBe(2);
 
     rendered.unmount();
