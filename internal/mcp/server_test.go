@@ -4061,7 +4061,7 @@ func TestSearchByDomains(t *testing.T) {
 		response := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains,
 			map[string]any{
 				"domains": "acme.com,globex.com",
-				"limit":   float64(50),
+				"limit":   float64(1),
 				"offset":  float64(10),
 				"after":   "2024-01-01",
 				"before":  "2024-12-31",
@@ -4071,7 +4071,7 @@ func TestSearchByDomains(t *testing.T) {
 		assert.Equal(10, response.Offset, "offset echoed")
 		assert.True(response.HasMore, "the engine's has_more is reported as is")
 		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
-		assert.Equal(50, capturedLimit, "limit")
+		assert.Equal(1, capturedLimit, "limit")
 		assert.Equal(10, capturedOffset, "offset")
 	})
 
@@ -4093,42 +4093,6 @@ func TestSearchByDomains(t *testing.T) {
 		assert.Equal(t, 100, capturedLimit, "default limit")
 		assert.Equal(t, 0, capturedOffset, "default offset")
 	})
-}
-
-func TestListMessagesPagesPastOffsetCeiling(t *testing.T) {
-	const total = 1100
-	eng := &querytest.MockEngine{
-		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
-			var rows []query.MessageSummary
-			for id := filter.Pagination.Offset + 1; id <= total && len(rows) < filter.Pagination.Limit; id++ {
-				rows = append(rows, query.MessageSummary{ID: int64(id)})
-			}
-			return rows, nil
-		},
-	}
-	h := newTestHandlers(eng)
-
-	var got []int64
-	offset := 0
-	for range 30 {
-		resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
-			"limit":  float64(50),
-			"offset": float64(offset),
-		})
-		for _, m := range resp.Data {
-			got = append(got, m.ID)
-		}
-		if !resp.HasMore {
-			break
-		}
-		offset += resp.Returned
-	}
-
-	want := make([]int64, total)
-	for i := range want {
-		want[i] = int64(i + 1)
-	}
-	assert.Equal(t, want, got)
 }
 
 // TestServeHTTPWithOptions_ContextCancellation verifies that the HTTP

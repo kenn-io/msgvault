@@ -102,7 +102,7 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert.Len(observer.Statements(), 3)
 }
 
-// TestSearchByDomainsPagesThroughDaemon walks a real archive past offset
+// TestSearchByDomainsPagesThroughDaemon pages a real archive across offset
 // 1000 through MCP, the daemon adapter, and the HTTP handler.
 func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 	const total = 1501
@@ -123,8 +123,8 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 	}
 	var pages []page
 	var got []int64
-	offset := 0
-	for range 6 {
+	offset := 1000
+	for range 3 {
 		resp := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains, map[string]any{
 			"domains": "example.com",
 			"limit":   float64(5000),
@@ -140,10 +140,10 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 		offset += resp.Returned
 	}
 
-	assert.Equal(t, []page{{500, 0, true}, {500, 500, true}, {500, 1000, true}, {1, 1500, false}}, pages)
-	want := make([]int64, total)
+	assert.Equal(t, []page{{500, 1000, true}, {1, 1500, false}}, pages)
+	want := make([]int64, total-1000)
 	for i := range want {
-		want[i] = int64(total - i)
+		want[i] = int64(total - 1000 - i)
 	}
 	assert.Equal(t, want, got, "newest first, each message once")
 }

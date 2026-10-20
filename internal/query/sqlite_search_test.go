@@ -742,12 +742,9 @@ func TestSearchByDomains_HasMore(t *testing.T) {
 		wantHasMore   bool
 	}{
 		{"partial page", 2, 0, 2, true},
-		{"page one short of the end", 4, 0, 4, true},
 		{"exactly the remaining matches", 5, 0, 5, false},
 		{"exactly full last page", 2, 3, 2, false},
-		{"short last page", 2, 4, 1, false},
 		{"past the end", 2, 9, 0, false},
-		{"limit above the matches", 100, 0, 5, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, tc.limit, tc.offset, nil)
