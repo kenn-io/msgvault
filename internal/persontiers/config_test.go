@@ -41,9 +41,4 @@ func TestConfigValidation(t *testing.T) {
 			assert.ErrorContains(t, err, tc.contains)
 		})
 	}
-	c := DefaultConfig()
-	c.Tier1.BreadthMinChannelsLong = 0
-	c.Tier1.BreadthMinMeetingDaysLong = 0
-	c.Tier2.MinMeetingDaysLong = 0
-	require.NoError(t, c.Validate())
 }

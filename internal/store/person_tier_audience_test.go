@@ -54,11 +54,6 @@ func (a audienceFixture) message(t *testing.T, key string, days int, conv int64,
 	return id
 }
 
-func (a audienceFixture) signals(t *testing.T) persontiers.Signals {
-	t.Helper()
-	return tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
-}
-
 // An inbound meeting for more people than the limit is an all-hands, not a
 // meeting day.
 func TestPersonTierSignalsAllHandsMeetingGivesNoMeetingDay(t *testing.T) {
@@ -71,7 +66,7 @@ func TestPersonTierSignalsAllHandsMeetingGivesNoMeetingDay(t *testing.T) {
 	a.message(t, "small-meeting", -2, a.f.ConvID, "calendar_event", a.owner)
 	projectTierSignals(t, a.f, "UTC", 2)
 
-	signals := a.signals(t)
+	signals := tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
 
 	assert.Equal(t, 1, signals.MeetingDaysLong, "only the small meeting counts")
 	assert.Equal(t, 1, signals.LargeAudienceInboundEvents)

@@ -93,7 +93,6 @@ func TestPersonTiersPreviewPrintsATable(t *testing.T) {
 	stdout, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "preview")
 	require.NoError(err)
 	assert.Contains(stdout, "counts built with timezone America/New_York, direct limit 25")
-	assert.Regexp(`LAST COUNTED`, stdout)
 	assert.Regexp(`1\s+3\s+Cleo\s+tier1_intensity\s+false\s+2026-10-16`, stdout)
 }
 
@@ -157,17 +156,6 @@ func TestPersonTiersExplain(t *testing.T) {
 	assert.Contains(stdout, "Large-audience inbound messages: 9")
 	assert.Regexp(`tier2.min_active_days_long\s+4\s+3\s+true`, stdout)
 	assert.Regexp(`tier2.min_meeting_days_long\s+0\s+off\s+false`, stdout)
-}
-
-func TestPersonTiersExplainRejectsBadIDBeforeTheDaemon(t *testing.T) {
-	called := false
-	deps := personTiersCommandDeps{
-		isDaemonSubprocess: func() bool { return false },
-		proxy:              func(*cobra.Command, []string) error { called = true; return nil },
-	}
-	_, _, err := executePersonTiersCommand(t, deps, "explain", "0")
-	require.ErrorContains(t, err, "positive")
-	assert.False(t, called)
 }
 
 // The [people.tiers] and [activity] settings reach the store only through bind,

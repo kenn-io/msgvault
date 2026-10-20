@@ -151,8 +151,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	// Drafts and other unsent texts are owner-authored, so they stay on the
-	// owner's side of the conversation.
+	// Unsent texts are owner-authored and stay on the owner's side.
 	fromMe := sendstate.SMSFromOwner(sms.Type)
 	senderID := remoteID
 	recipientIDs := []int64{ownerID}

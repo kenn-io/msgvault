@@ -40,5 +40,5 @@ func TestTierTallyExcludesListsAndBroadcastsOnceEach(t *testing.T) {
 func tallyTierRows(rows []tierSignalRow, broadcast map[int64]bool, cfg persontiers.Config, asOf time.Time) map[int64]persontiers.Signals {
 	tally := newTierTally(cfg, asOf)
 	tally.add(rows, broadcast)
-	return tally.signals()
+	return tally.result
 }

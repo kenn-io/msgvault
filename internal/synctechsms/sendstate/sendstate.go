@@ -1,6 +1,5 @@
-// Package sendstate holds the Android SMS types and MMS boxes a Synctech backup
-// records, and decides which texts the owner wrote and which ever left the
-// phone. The importer and the store migration share it.
+// Package sendstate names the Android SMS types and MMS boxes in a Synctech
+// backup and says which texts the owner wrote and which never left the phone.
 package sendstate
 
 type SMSType int
@@ -24,18 +23,16 @@ const (
 	MMSBoxFailed MMSBox = 5
 )
 
-// SMSUnsent reports whether a text is a draft, outbox, failed, or queued one.
+// SMSUnsent and MMSUnsent report drafts, outbox, queued, and failed texts.
 func SMSUnsent(t SMSType) bool {
 	return t == SMSTypeDraft || t == SMSTypeOutbox || t == SMSTypeFailed || t == SMSTypeQueued
 }
 
-// MMSUnsent reports whether a message is in the drafts, outbox, or failed box.
 func MMSUnsent(box MMSBox) bool {
 	return box == MMSBoxDraft || box == MMSBoxOutbox || box == MMSBoxFailed
 }
 
-// SMSFromOwner reports whether the owner wrote a text: sent or never sent.
+// SMSFromOwner and MMSFromOwner report texts the owner wrote, sent or not.
 func SMSFromOwner(t SMSType) bool { return t == SMSTypeSent || SMSUnsent(t) }
 
-// MMSFromOwner reports whether the owner wrote a message: sent or never sent.
 func MMSFromOwner(box MMSBox) bool { return box == MMSBoxSent || MMSUnsent(box) }

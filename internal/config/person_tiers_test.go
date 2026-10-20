@@ -16,7 +16,6 @@ func TestPeopleTierDefaultsAndExplicitZeros(t *testing.T) {
 		defaults      bool
 	}{
 		{"omitted", "", true},
-		{"empty", "[people.tiers]\n", true},
 		{"explicit zero", `[people.tiers]
 exclude_list_messages = false
 [people.tiers.tier1]

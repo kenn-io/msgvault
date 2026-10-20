@@ -30,14 +30,8 @@ func TestInitSchemaMarksUnsentSynctechTexts(t *testing.T) {
   <sms address="+15551234567" date="1717214401000" type="2" body="sent" read="1" status="-1" />
   <sms address="+15551234567" date="1717214402000" type="3" body="draft" read="1" status="-1" />
   <sms address="+15551234567" date="1717214403000" type="5" body="no record" read="1" status="-1" />
-  <mms date="1717214405000" msg_box="3" read="1" m_id="mms-draft" sub="null">
-    <parts><part seq="0" ct="text/plain" text="mms draft" /></parts>
-    <addrs><addr address="+15550000001" type="137" charset="106" /><addr address="+15551234567" type="151" charset="106" /></addrs>
-  </mms>
-  <mms date="1717214407000" msg_box="5" read="1" m_id="mms-failed" sub="null">
-    <parts><part seq="0" ct="text/plain" text="mms failed" /></parts>
-    <addrs><addr address="+15550000001" type="137" charset="106" /><addr address="+15551234567" type="151" charset="106" /></addrs>
-  </mms>
+  <mms date="1717214405000" msg_box="3" read="1" m_id="mms-draft" sub="null"><parts><part seq="0" ct="text/plain" text="mms draft" /></parts><addrs><addr address="+15550000001" type="137" charset="106" /><addr address="+15551234567" type="151" charset="106" /></addrs></mms>
+  <mms date="1717214407000" msg_box="5" read="1" m_id="mms-failed" sub="null"><parts><part seq="0" ct="text/plain" text="mms failed" /></parts><addrs><addr address="+15550000001" type="137" charset="106" /><addr address="+15551234567" type="151" charset="106" /></addrs></mms>
 </smses>`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "calls.xml"), []byte(`<calls>
   <call number="+15551234567" duration="0" date="1717214406000" type="2" presentation="1" />
