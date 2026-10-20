@@ -276,8 +276,12 @@ func sentGmailLabelSQL(l, src string) string {
 // mail the account wrote rather than received: a Sent or Drafts folder role,
 // or Gmail's SENT or DRAFT system label.
 func outboundEvidenceLabelSQL(l, src string) string {
-	return "(" + l + ".system_role IN ('" + LabelSystemRoleSent + "', '" + LabelSystemRoleDrafts + "') OR (" +
-		src + ".source_type = 'gmail' AND " + l + ".source_label_id IN ('SENT', 'DRAFT')))"
+	return "(" + sentEvidenceLabelSQL(l, src) + " OR " + l + ".system_role = '" + LabelSystemRoleDrafts + "' OR (" +
+		src + ".source_type = 'gmail' AND " + l + ".source_label_id = 'DRAFT'))"
+}
+
+func sentEvidenceLabelSQL(l, src string) string {
+	return "(" + sentFolderLabelSQL(l) + " OR " + sentGmailLabelSQL(l, src) + ")"
 }
 
 // draftEvidenceSQL is true when message m is a draft: a Drafts folder role,
@@ -515,6 +519,11 @@ func (s *Store) refreshAccountAttributionTx(
 	if draft && !authored {
 		if err := markDraftAuthoredTx(ctx, tx, id); err != nil {
 			return malformed, err
+		}
+	}
+	if draft || authored {
+		if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`SELECT id, 1, CURRENT_TIMESTAMP FROM messages WHERE id = ?`), id); err != nil {
+			return malformed, fmt.Errorf("requeue draft activity for message %d: %w", id, err)
 		}
 	}
 
@@ -803,16 +812,21 @@ func (s *Store) refreshAccountAttributionIfOutboundChangedTx(
 		return err
 	}
 	var path sql.NullString
-	var outbound bool
+	var outbound, authored bool
 	err := tx.QueryRowContext(ctx, `
-		SELECT m.account_path, `+outboundEvidenceExistsSQL("m", "src")+`
+		SELECT m.account_path, `+outboundEvidenceExistsSQL("m", "src")+`, m.draft_authored
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ?`, messageID).Scan(&path, &outbound)
+		WHERE m.id = ?`, messageID).Scan(&path, &outbound, &authored)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read outbound evidence for message %d: %w", messageID, err)
+	}
+	if authored {
+		if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`SELECT id, 1, CURRENT_TIMESTAMP FROM messages WHERE id = ?`), messageID); err != nil {
+			return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
+		}
 	}
 	if !path.Valid || (path.String != accountPathInbound && path.String != accountPathSent) ||
 		(path.String == accountPathSent) == outbound {

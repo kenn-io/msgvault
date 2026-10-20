@@ -67,6 +67,7 @@ type activityCandidateRow struct {
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
+	unsent              bool
 }
 
 const activityCandidateStateCTE = `
@@ -110,12 +111,21 @@ const activityCandidateStateCTE = `
 		)
 	)`
 
-const activityCandidateColumns = `
+// activityUnsentSQL keeps sent copies eligible even when dedup retained draft
+// evidence. draft_authored preserves unsent status after draft evidence retires.
+func activityUnsentSQL() string {
+	return `(NOT COALESCE(m.is_sent, TRUE) OR ((` + draftEvidenceSQL("m", "src") + ` OR m.draft_authored)
+		AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+		WHERE ml.message_id = m.id AND l.source_id = m.source_id
+		  AND ` + sentEvidenceLabelSQL("l", "src") + `)))`
+}
+
+var activityCandidateColumns = `
 	m.id, m.source_id, m.conversation_id,
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
 	m.deleted_at, m.deleted_from_source_at, m.metadata,
-	COALESCE(m.source_is_from_me, FALSE),
+	COALESCE(m.source_is_from_me, FALSE), ` + activityUnsentSQL() + `,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`
@@ -135,6 +145,7 @@ func (s *Store) LoadQueuedActivityCandidatesContext(
 		       1 AS queue_exists, q.revision, q.processed_revision
 		FROM activity_projection_queue q
 		JOIN messages m ON m.id = q.message_id
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		CROSS JOIN activity_current_state r
 		WHERE q.revision > q.processed_revision
@@ -169,6 +180,7 @@ func (s *Store) ScanForActivityProjectionContext(
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_events ae ON ae.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
@@ -215,6 +227,7 @@ func (s *Store) ScanAllActivityCandidatesContext(
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
@@ -280,6 +293,7 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 		       CASE WHEN q.message_id IS NULL THEN 0 ELSE 1 END AS queue_exists,
 		       COALESCE(q.revision, 0), COALESCE(q.processed_revision, 0)
 		FROM messages m
+		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
@@ -319,6 +333,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.deletedFromSourceAt,
 			&row.metadata,
 			&row.candidate.SourceIsFromMe,
+			&row.unsent,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
 			&timezoneActive,
@@ -373,7 +388,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
-		!cancelled
+		!cancelled && !row.unsent
 }
 
 func activityUsableTime(value *time.Time) bool {
