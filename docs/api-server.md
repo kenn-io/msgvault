@@ -179,8 +179,7 @@ contact. A citation's `sender_authenticated` is true only when the source sets
 the sender; an email From address is not a verified identity.
 
 A topic with no free text returns `400 missing_free_text`. Vector search
-failures keep their usual `503` errors, and a store without the reads returns
-`503 who_knows_unavailable`. See
+failures keep their usual `503` errors. See
 [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
 
 ## API compatibility

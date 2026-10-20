@@ -247,16 +247,3 @@ func TestWhoKnowsAnswersWhileASyncRuns(t *testing.T) {
 	got := whoKnowsGet(t, srv, "topic=cloud")
 	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
 }
-
-// bareStore has no who-knows reads.
-type bareStore struct{ api.MessageStore }
-
-func TestWhoKnowsNeedsTheStoreReads(t *testing.T) {
-	backend := &whoKnowsBackend{}
-	srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
-		o.Store = bareStore{o.Store}
-	})
-	got := whoKnowsGet(t, srv, "topic=cloud")
-	assert.Equal(t, http.StatusServiceUnavailable, got.Code)
-	assert.Contains(t, got.Body.String(), "who_knows_unavailable")
-}

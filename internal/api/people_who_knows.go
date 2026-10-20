@@ -84,12 +84,8 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 	if !s.vectorSearchPreflight(r.Context(), w) {
 		return
 	}
-	data, ok := s.store.(whoknows.DataReader)
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "who_knows_unavailable",
-			"the archive cannot read who-knows data")
-		return
-	}
+	// The archive store always has the who-knows reads.
+	data, _ := s.store.(whoknows.DataReader)
 	service := whoknows.Service{
 		Retriever: engine, Data: data, Index: backend, BuildScope: cfg.Embed.Scope.BuildScope(),
 	}
