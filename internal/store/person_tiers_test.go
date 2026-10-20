@@ -275,10 +275,12 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 }
 
 // The projector keeps an all-day meeting on its own date. Converting a
-// timestamp into the projection timezone would show the day before.
+// timestamp into the projection timezone would show the day before. An
+// all-day event is stored at midnight UTC, which is still the 16th in New York.
 func TestPersonTiersKeepTheDateOfAnAllDayMeeting(t *testing.T) {
 	require := require.New(t)
 	a := newAudienceFixture(t)
+	a.asOf = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	id := a.message(t, "all-day", 0, a.f.ConvID, "calendar_event", a.owner)
 	require.NoError(a.f.Store.SetMessageMetadata(id,
 		sql.NullString{String: `{"all_day":true}`, Valid: true}))
