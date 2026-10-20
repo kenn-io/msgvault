@@ -42,9 +42,9 @@ func TestMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
 	}})
 	suggestions, err := observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10)
 	requirements.NoError(err)
-	requirements.Len(suggestions, 3)
+	requirements.Len(suggestions.Suggestions, 3)
 	assertions.Equal(int64(1), queries.Load())
-	for _, suggestion := range suggestions {
+	for _, suggestion := range suggestions.Suggestions {
 		assertions.Equal(30, suggestion.OverlapMinutes)
 		assertions.Equal(1, suggestion.SharedAttendees)
 	}
@@ -52,16 +52,16 @@ func TestMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
 	assertions.Empty(linkedMeetingRefs(t, st, notes[0])[notes[0]])
 	reverse, err := observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: notes[0]}, 1)
 	requirements.NoError(err)
-	requirements.Len(reverse, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", event), reverse[0].Ref)
+	requirements.Len(reverse.Suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), reverse.Suggestions[0].Ref)
 	assertions.Equal(int64(2), queries.Load())
 	requirements.NoError(st.UpsertMessageRawWithFormat(event, []byte(`{"id":"event","status":"cancelled","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`), "gcal_json"))
 	suggestions, err = observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10)
 	requirements.NoError(err)
-	assertions.Empty(suggestions)
+	assertions.Empty(suggestions.Suggestions)
 	reverse, err = observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: notes[0]}, 10)
 	requirements.NoError(err)
-	assertions.Empty(reverse)
+	assertions.Empty(reverse.Suggestions)
 	var count int
 	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
 	assertions.Zero(count)
@@ -115,7 +115,7 @@ func TestMeetingLinksSuggestionsTimeWindow(t *testing.T) {
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 100)
 	requirements.NoError(err)
 	var got []int64
-	for _, suggestion := range suggestions {
+	for _, suggestion := range suggestions.Suggestions {
 		got = append(got, suggestion.MemberMessageID)
 		if suggestion.MemberMessageID == uidless {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), suggestion.Ref)
@@ -125,10 +125,10 @@ func TestMeetingLinksSuggestionsTimeWindow(t *testing.T) {
 	assertions.ElementsMatch(want, got)
 	suggestions, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: uidless}, 10)
 	requirements.NoError(err)
-	requirements.Len(suggestions, 1)
-	assertions.Equal(uidless, suggestions[0].MemberMessageID)
-	assertions.Equal(fmt.Sprintf("evt:%d", event), suggestions[0].Ref)
-	assertions.Equal(30, suggestions[0].OverlapMinutes)
+	requirements.Len(suggestions.Suggestions, 1)
+	assertions.Equal(uidless, suggestions.Suggestions[0].MemberMessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), suggestions.Suggestions[0].Ref)
+	assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 	assertions.Empty(linkedMeetingRefs(t, st, uidless)[uidless])
 }
 
@@ -146,10 +146,10 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 					assert, require := assert.New(t), require.New(t)
 					suggestions, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
 					require.NoError(err)
-					if assert.Len(suggestions, 1) {
-						assert.Equal(fmt.Sprintf("evt:%d", event), suggestions[0].Ref)
-						assert.Equal(note, suggestions[0].MemberMessageID)
-						assert.Equal(30, suggestions[0].OverlapMinutes)
+					if assert.Len(suggestions.Suggestions, 1) {
+						assert.Equal(fmt.Sprintf("evt:%d", event), suggestions.Suggestions[0].Ref)
+						assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
+						assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 					}
 				})
 			}
@@ -179,17 +179,17 @@ func TestMeetingLinksAllDayExceptionUsesSeriesZone(t *testing.T) {
 		assert.True(listed.End.Equal(links[0].End), "resolved end must match the calendar listing")
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref}, 10)
 		require.NoError(err)
-		if assert.Len(suggestions, 1) {
-			assert.Equal(note, suggestions[0].MemberMessageID)
-			assert.Equal(listed.Ref, suggestions[0].Ref)
-			assert.Equal(30, suggestions[0].OverlapMinutes)
+		if assert.Len(suggestions.Suggestions, 1) {
+			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
+			assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		}
 	}
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	if assert.Len(suggestions, 1) {
-		assert.Equal(listed.Ref, suggestions[0].Ref)
-		assert.Equal(30, suggestions[0].OverlapMinutes)
+	if assert.Len(suggestions.Suggestions, 1) {
+		assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+		assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 	}
 }
 
@@ -228,10 +228,10 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 			require.NoError(err)
-			require.Len(suggestions, 1)
-			assert.Equal(listed.Ref, suggestions[0].Ref)
-			assert.Equal(note, suggestions[0].MemberMessageID)
-			assert.Equal(30, suggestions[0].OverlapMinutes)
+			require.Len(suggestions.Suggestions, 1)
+			assert.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assert.Equal(note, suggestions.Suggestions[0].MemberMessageID)
+			assert.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		})
 	}
 	for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
@@ -272,6 +272,6 @@ func TestMeetingSuggestionsUnidentifiedExceptionInheritMasterCancellation(t *tes
 	} {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
 		requirements.NoError(err)
-		assertions.Empty(suggestions, "cancelled master occurrences must not be suggested for %s", ref.Kind)
+		assertions.Empty(suggestions.Suggestions, "cancelled master occurrences must not be suggested for %s", ref.Kind)
 	}
 }

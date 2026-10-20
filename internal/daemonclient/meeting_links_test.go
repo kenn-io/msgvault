@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func TestMeetingLinksClient(t *testing.T) {
@@ -57,7 +58,7 @@ func TestMeetingLinksClient(t *testing.T) {
 			return
 		}
 		assertions.Equal("evt:81@20270314T100000Z", r.URL.Query().Get("ref"))
-		_, err := w.Write([]byte(`{"suggestions":[{"ref":"evt:81@20270314T100000Z","member_message_id":42,"overlap_minutes":30,"shared_attendees":1,"title_tokens":2,"reasons":["time_overlap"]}]}`))
+		_, err := w.Write([]byte(`{"suggestions":[{"ref":"evt:81@20270314T100000Z","member_message_id":42,"overlap_minutes":30,"shared_attendees":1,"title_tokens":2,"reasons":["time_overlap"]}],"unexpandable":[{"message_id":77,"reason":"unsupported recurrence"}]}`))
 		assertions.NoError(err)
 	}))
 	t.Cleanup(server.Close)
@@ -70,12 +71,13 @@ func TestMeetingLinksClient(t *testing.T) {
 	assertions.Equal([]string{"link", "unlink"}, decisions)
 	suggestions, err := client.SuggestMeetingLinks(t.Context(), "evt:81@20270314T100000Z")
 	requirements.NoError(err)
-	requirements.Len(suggestions, 1)
-	assertions.Equal(int64(42), suggestions[0].MemberMessageID)
-	assertions.Equal(30, suggestions[0].OverlapMinutes)
-	assertions.Equal(1, suggestions[0].SharedAttendees)
-	assertions.Equal(2, suggestions[0].TitleTokens)
-	assertions.Equal([]string{"time_overlap"}, suggestions[0].Reasons)
+	requirements.Len(suggestions.Suggestions, 1)
+	assertions.Equal(int64(42), suggestions.Suggestions[0].MemberMessageID)
+	assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
+	assertions.Equal(1, suggestions.Suggestions[0].SharedAttendees)
+	assertions.Equal(2, suggestions.Suggestions[0].TitleTokens)
+	assertions.Equal([]string{"time_overlap"}, suggestions.Suggestions[0].Reasons)
+	assertions.Equal([]store.CalendarUnexpandable{{MessageID: 77, Reason: "unsupported recurrence"}}, suggestions.Unexpandable)
 	_, err = client.SuggestMeetingLinks(t.Context(), "msg:404")
 	var apiError *daemonclient.APIError
 	requirements.ErrorAs(err, &apiError)

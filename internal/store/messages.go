@@ -965,8 +965,24 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
+		if calendarMetadataStatus(metadata) == meetingCancelledStatus {
+			return s.refreshCalendarEventProjectionFromCancellationMetadataWith(ctx, tx, messageID)
+		}
 		return s.refreshCalendarEventProjectionFromProviderWith(ctx, tx, messageID)
 	})
+}
+
+func calendarMetadataStatus(metadata sql.NullString) string {
+	if !metadata.Valid {
+		return ""
+	}
+	var value struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal([]byte(metadata.String), &value); err != nil {
+		return ""
+	}
+	return value.Status
 }
 
 func setMessageMetadataWith(q querier, dialect Dialect, messageID int64, metadata sql.NullString) error {

@@ -42,7 +42,7 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 			requirements.NoError(err)
-			assertions.Empty(suggestions, "cancelled meetings are excluded in both directions")
+			assertions.Empty(suggestions.Suggestions, "cancelled meetings are excluded in both directions")
 		})
 	}
 	for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
@@ -86,10 +86,10 @@ func TestMeetingLinksAllDayExceptionOverSeriesBudget(t *testing.T) {
 	for _, target := range []MeetingLinkRef{{Kind: "evt", MessageID: master, Key: "20270314"}, {Kind: "msg", MessageID: note}} {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
-		if assertions.Len(suggestions, 1) {
-			assertions.Equal(listed.Ref, suggestions[0].Ref)
-			assertions.Equal(note, suggestions[0].MemberMessageID)
-			assertions.Equal(30, suggestions[0].OverlapMinutes)
+		if assertions.Len(suggestions.Suggestions, 1) {
+			assertions.Equal(listed.Ref, suggestions.Suggestions[0].Ref)
+			assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
+			assertions.Equal(30, suggestions.Suggestions[0].OverlapMinutes)
 		}
 	}
 }

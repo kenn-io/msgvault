@@ -17,7 +17,7 @@ type MeetingLinkStore interface {
 	MeetingLinksContext(ctx context.Context, messageID int64) ([]store.MeetingLink, error)
 	LinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error
 	UnlinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error
-	SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) ([]store.MeetingSuggestion, error)
+	SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) (store.MeetingSuggestionPage, error)
 }
 
 type MeetingLinkDecisionRequest struct {
@@ -33,7 +33,8 @@ type MeetingLinkDecisionResponse struct {
 }
 
 type MeetingSuggestionsResponse struct {
-	Suggestions []store.MeetingSuggestion `json:"suggestions"`
+	Suggestions  []store.MeetingSuggestion    `json:"suggestions"`
+	Unexpandable []store.CalendarUnexpandable `json:"unexpandable"`
 }
 
 type MeetingLinksResponse struct {
@@ -120,10 +121,13 @@ func (s *Server) handleMeetingLinkSuggestions(w http.ResponseWriter, r *http.Req
 		s.writeMeetingLinkError(w, err)
 		return
 	}
-	if suggestions == nil {
-		suggestions = []store.MeetingSuggestion{}
+	if suggestions.Suggestions == nil {
+		suggestions.Suggestions = []store.MeetingSuggestion{}
 	}
-	writeJSON(w, 200, MeetingSuggestionsResponse{Suggestions: suggestions})
+	if suggestions.Unexpandable == nil {
+		suggestions.Unexpandable = []store.CalendarUnexpandable{}
+	}
+	writeJSON(w, 200, MeetingSuggestionsResponse{Suggestions: suggestions.Suggestions, Unexpandable: suggestions.Unexpandable})
 }
 
 func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {

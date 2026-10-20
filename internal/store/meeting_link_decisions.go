@@ -106,7 +106,11 @@ func resolveMeetingDecisionTarget(ctx context.Context, r reboundReader, memberID
 	if len(rows) != 1 {
 		return linkOccurrence{}, sql.ErrNoRows
 	}
-	target = occurrenceFromRow(rows[0], ref.Key)
+	key := ref.Key
+	if key == "" && rows[0].Event.Kind == meetingExceptionKind && rows[0].Event.Original != nil {
+		key = rows[0].Event.Original.Key()
+	}
+	target = occurrenceFromRow(rows[0], key)
 	var found int
 	err = r.QueryRowContext(ctx, `SELECT 1 FROM meeting_link_decisions WHERE member_message_id = ? AND target_ical_uid = ? AND COALESCE(target_message_id,0) = ? AND occurrence_key = ?`, memberID, target.Identity.ICalUID, target.Identity.EventMessageID, target.Identity.OccurrenceKey).Scan(&found)
 	return target, err

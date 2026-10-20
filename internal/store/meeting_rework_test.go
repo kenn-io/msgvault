@@ -121,7 +121,7 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	}})
 	suggestions, err := observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10)
 	requirements.NoError(err)
-	requirements.Len(suggestions, 1)
+	requirements.Len(suggestions.Suggestions, 1)
 	requirements.NotEmpty(query)
 	explain := "EXPLAIN QUERY PLAN "
 	if st.IsPostgreSQL() {
@@ -160,7 +160,7 @@ func TestMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	require.NoError(err)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	assert.Empty(t, suggestions)
+	assert.Empty(t, suggestions.Suggestions)
 }
 
 func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
@@ -171,9 +171,10 @@ func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	if assert.Len(suggestions, 1) {
-		assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), suggestions[0].Ref)
+	if assert.Len(suggestions.Suggestions, 1) {
+		assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), suggestions.Suggestions[0].Ref)
 	}
+	assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, suggestions.Unexpandable)
 	assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), linkedMeetingRefs(t, st, note)[note])
 	from := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
@@ -258,8 +259,8 @@ func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	require.Len(suggestions, 1)
-	assert.Equal(fmt.Sprintf("evt:%d", exception), suggestions[0].Ref)
+	require.Len(suggestions.Suggestions, 1)
+	assert.Equal(fmt.Sprintf("evt:%d", exception), suggestions.Suggestions[0].Ref)
 	assert.Equal(fmt.Sprintf("evt:%d", exception), linkedMeetingRefs(t, st, note)[note])
 }
 

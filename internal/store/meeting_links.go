@@ -560,6 +560,9 @@ func (s *Store) meetingSplitIdentities(ctx context.Context, r reboundReader, ide
 			continue
 		}
 		target, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, ErrQueryTooBroad) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}

@@ -36,7 +36,7 @@ func (a *storeAPIAdapter) UnlinkMeetingContext(ctx context.Context, memberID int
 	return a.store.UnlinkMeetingContext(ctx, memberID, ref)
 }
 
-func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) ([]store.MeetingSuggestion, error) {
+func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) (store.MeetingSuggestionPage, error) {
 	return a.store.SuggestMeetingLinksContext(ctx, ref, limit)
 }
 

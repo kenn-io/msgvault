@@ -7963,8 +7963,13 @@ components:
           items:
             $ref: "#/components/schemas/MeetingSuggestion"
           type: array
+        unexpandable:
+          items:
+            $ref: "#/components/schemas/CalendarUnexpandable"
+          type: array
       required:
         - suggestions
+        - unexpandable
       type: object
     MergeOrganizationBody:
       additionalProperties: false

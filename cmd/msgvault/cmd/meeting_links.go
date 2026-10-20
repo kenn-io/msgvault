@@ -19,7 +19,7 @@ const meetingLinksMinAPISchemaVersion = "3.26.0"
 type meetingLinkClient interface {
 	MeetingLinks(ctx context.Context, messageID int64) ([]store.MeetingLink, error)
 	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error
-	SuggestMeetingLinks(ctx context.Context, ref string) ([]store.MeetingSuggestion, error)
+	SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error)
 	APISchemaVersion(ctx context.Context) (string, error)
 }
 
@@ -89,11 +89,21 @@ func newMeetingSuggestCommand(open meetingLinkOpen) *cobra.Command {
 		if jsonOutput {
 			return json.MarshalWrite(cmd.OutOrStdout(), suggestions)
 		}
+		if len(suggestions.Unexpandable) > 0 {
+			if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Warning: some calendar entries could not be fully expanded; suggestions may omit occurrences:"); err != nil {
+				return fmt.Errorf("write meeting suggestion warning: %w", err)
+			}
+			for _, entry := range suggestions.Unexpandable {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "  event %d: %s\n", entry.MessageID, entry.Reason); err != nil {
+					return fmt.Errorf("write meeting suggestion warning: %w", err)
+				}
+			}
+		}
 		writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		if _, err := fmt.Fprintln(writer, "EVENT\tNOTE\tOVERLAP (MIN)\tSHARED ATTENDEES\tTITLE TOKENS"); err != nil {
 			return fmt.Errorf("write meeting suggestions: %w", err)
 		}
-		for _, suggestion := range suggestions {
+		for _, suggestion := range suggestions.Suggestions {
 			if _, err := fmt.Fprintf(writer, "%s\t%d\t%d\t%d\t%d\n", suggestion.Ref, suggestion.MemberMessageID, suggestion.OverlapMinutes, suggestion.SharedAttendees, suggestion.TitleTokens); err != nil {
 				return fmt.Errorf("write meeting suggestions: %w", err)
 			}

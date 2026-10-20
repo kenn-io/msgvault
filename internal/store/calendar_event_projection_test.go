@@ -144,6 +144,61 @@ func TestCalendarEventProjectionRebuildPreservesSnapshotFreshness(t *testing.T) 
 	assertions.True(after.Equal(before), "projection rebuilds must not replace provider freshness")
 }
 
+func TestSparseCancellationUsesFreshestExceptionAliasDetails(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	firstRaw := `{"id":"instance","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"},"summary":"Stale summary","attendees":[{"email":"stale@example.org"}]}`
+	secondRaw := `{"id":"instance","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00-04:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"summary":"Fresh summary","attendees":[{"email":"fresh@example.org"}]}`
+	_, first := calendarFixture(t, st, "instance", firstRaw)
+	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
+	older := time.Now().UTC().Add(-2 * time.Minute)
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older, first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older.Add(time.Minute), second)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, "Stale summary", first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, "Fresh summary", second)
+	requirements.NoError(err)
+	_, note := projectionFixture(t, st, "cancellation-note", "plaud_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second}))
+
+	metadata, err := st.GetMessageMetadata(first)
+	requirements.NoError(err)
+	var fields map[string]any
+	requirements.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+	fields["status"] = "cancelled"
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(first, sql.NullString{String: string(encoded), Valid: true}))
+
+	rows := calendarRows(t, st, first)
+	requirements.Len(rows, 1)
+	assertions.Equal("cancelled", rows[0].Event.Status)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2027, 3, 14, 15, 0, 0, 0, time.UTC), *rows[0].Event.End)
+	requirements.Len(rows[0].Event.Attendees, 1)
+	assertions.Equal("fresh@example.org", rows[0].Event.Attendees[0].Email)
+
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(first, page.Occurrences[0].MessageID)
+	assertions.Equal("Fresh summary", page.Occurrences[0].Subject)
+	assertions.Equal(from.Add(14*time.Hour), page.Occurrences[0].Start)
+	assertions.Equal("cancelled", page.Occurrences[0].Status)
+
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", first), links[0].Ref)
+	assertions.Equal(from.Add(14*time.Hour), links[0].Start)
+	assertions.Equal(from.Add(15*time.Hour), links[0].End)
+}
+
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

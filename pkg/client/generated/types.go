@@ -7510,7 +7510,8 @@ func (m MeetingSuggestion) Validate() error {
 }
 
 type MeetingSuggestionsResponse struct {
-	Suggestions []MeetingSuggestion `json:"suggestions" validate:"required"`
+	Suggestions  []MeetingSuggestion    `json:"suggestions" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
 }
 
 func (m MeetingSuggestionsResponse) Validate() error {
@@ -7519,6 +7520,13 @@ func (m MeetingSuggestionsResponse) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range m.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
 			}
 		}
 	}

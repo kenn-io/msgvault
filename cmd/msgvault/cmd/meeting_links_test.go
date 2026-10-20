@@ -15,6 +15,7 @@ type meetingLinkFakeClient struct {
 	version, event, decision, ref string
 	id                            int64
 	calls                         int
+	unexpandable                  bool
 }
 
 func (f *meetingLinkFakeClient) APISchemaVersion(context.Context) (string, error) {
@@ -25,10 +26,14 @@ func (f *meetingLinkFakeClient) DecideMeetingLink(_ context.Context, id int64, e
 	f.id, f.event, f.decision = id, event, decision
 	return nil
 }
-func (f *meetingLinkFakeClient) SuggestMeetingLinks(_ context.Context, ref string) ([]store.MeetingSuggestion, error) {
+func (f *meetingLinkFakeClient) SuggestMeetingLinks(_ context.Context, ref string) (store.MeetingSuggestionPage, error) {
 	f.calls++
 	f.ref = ref
-	return []store.MeetingSuggestion{{Ref: "evt:81@20270314T100000Z", MemberMessageID: 42, OverlapMinutes: 30}}, nil
+	page := store.MeetingSuggestionPage{Suggestions: []store.MeetingSuggestion{{Ref: "evt:81@20270314T100000Z", MemberMessageID: 42, OverlapMinutes: 30}}}
+	if f.unexpandable {
+		page.Unexpandable = []store.CalendarUnexpandable{{MessageID: 99, Reason: "unsupported recurrence"}}
+	}
+	return page, nil
 }
 
 func (f *meetingLinkFakeClient) MeetingLinks(_ context.Context, id int64) ([]store.MeetingLink, error) {
@@ -45,24 +50,26 @@ func TestMeetingLinkCommands(t *testing.T) {
 		name                   string
 		args                   []string
 		version, wantErr, want string
+		unexpandable, warning  bool
 	}{
-		{"links", []string{"links", "42"}, "", "", "Planning"},
-		{"links json", []string{"links", "42", "--json"}, "", "", `"ref":"evt:81"`},
-		{"old daemon links", []string{"links", "42"}, "3.24.0", "upgrade the daemon", ""},
-		{"invalid links ID", []string{"links", "0"}, "", "positive message ID", ""},
-		{"link", []string{"link", "42", "--event", "evt:81@20270314T100000Z"}, "", "", ""},
-		{"unlink", []string{"unlink", "42", "--event", "evt:81@20270314T100000Z"}, "", "", ""},
-		{"suggest note", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z"},
-		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"member_message_id":42`},
-		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", ""},
-		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", ""},
-		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", ""},
-		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", ""},
+		{"links", []string{"links", "42"}, "", "", "Planning", false, false},
+		{"links json", []string{"links", "42", "--json"}, "", "", `"ref":"evt:81"`, false, false},
+		{"old daemon links", []string{"links", "42"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"invalid links ID", []string{"links", "0"}, "", "positive message ID", "", false, false},
+		{"link", []string{"link", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
+		{"unlink", []string{"unlink", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
+		{"suggest note", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", false, false},
+		{"suggest warning", []string{"suggest", "msg:42"}, "", "", "evt:81@20270314T100000Z", true, true},
+		{"suggest event", []string{"suggest", "evt:81@20270314T100000Z", "--json"}, "", "", `"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]`, true, false},
+		{"old daemon link", []string{"link", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"old daemon unlink", []string{"unlink", "42", "--event", "evt:81"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"old daemon suggest", []string{"suggest", "msg:42"}, "3.24.0", "upgrade the daemon", "", false, false},
+		{"invalid note", []string{"link", "0", "--event", "evt:81"}, "", "positive message ID", "", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			fake := &meetingLinkFakeClient{version: tc.version}
+			fake := &meetingLinkFakeClient{version: tc.version, unexpandable: tc.unexpandable}
 			if fake.version == "" {
 				fake.version = meetingLinksMinAPISchemaVersion
 			}
@@ -76,8 +83,9 @@ func TestMeetingLinkCommands(t *testing.T) {
 			}
 			root.AddCommand(newMeetingLinkDecisionCommand("link", open), newMeetingLinkDecisionCommand("unlink", open), newMeetingSuggestCommand(open), newMeetingLinksCommand(open))
 			var out bytes.Buffer
+			var errOut bytes.Buffer
 			root.SetOut(&out)
-			root.SetErr(&out)
+			root.SetErr(&errOut)
 			root.SetArgs(tc.args)
 			err := root.Execute()
 			if tc.wantErr != "" {
@@ -95,6 +103,12 @@ func TestMeetingLinkCommands(t *testing.T) {
 			case "suggest":
 				assertions.Equal(tc.args[1], fake.ref)
 				assertions.Contains(out.String(), tc.want)
+				if tc.warning {
+					assertions.Contains(errOut.String(), "some calendar entries could not be fully expanded")
+					assertions.Contains(errOut.String(), "event 99: unsupported recurrence")
+				} else {
+					assertions.Empty(errOut.String())
+				}
 			case "links":
 				assertions.Equal(int64(42), fake.id)
 				assertions.Contains(out.String(), tc.want)

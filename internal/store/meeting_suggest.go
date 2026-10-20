@@ -23,6 +23,13 @@ type MeetingSuggestion struct {
 	Reasons         []string `json:"reasons"`
 }
 
+// MeetingSuggestionPage includes readable matches and calendar entries that
+// could not be fully expanded within the request's supported recurrence bounds.
+type MeetingSuggestionPage struct {
+	Suggestions  []MeetingSuggestion    `json:"suggestions"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
+}
+
 type suggestMember struct {
 	ID         int64
 	Title      string
@@ -145,49 +152,50 @@ type MeetingLinkRef struct {
 }
 
 // SuggestMeetingLinksContext ranks overlapping events or transcripts.
-func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int) ([]MeetingSuggestion, error) {
+func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int) (MeetingSuggestionPage, error) {
+	pageResult := MeetingSuggestionPage{Suggestions: []MeetingSuggestion{}, Unexpandable: []CalendarUnexpandable{}}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
-		return nil, err
+		return pageResult, err
 	}
 	defer release()
 	budget := calrecur.RequestReadBudget
-	var out []MeetingSuggestion
 	if ref.Kind == "msg" {
 		members, err := suggestionMembers(ctx, s.meetingReader(ctx), []int64{ref.MessageID})
 		if err != nil {
-			return nil, err
+			return pageResult, err
 		}
 		if len(members) == 0 {
-			return nil, sql.ErrNoRows
+			return pageResult, sql.ErrNoRows
 		}
 		member := members[0]
 		// Include adjacent civil dates; ranking checks the actual instant overlap.
 		page, err := s.ListCalendarOccurrencesContext(ctx, member.Start.Add(-24*time.Hour), member.End.Add(24*time.Hour))
 		if err != nil {
-			return nil, err
+			return pageResult, err
 		}
+		pageResult.Unexpandable = page.Unexpandable
 		for _, event := range page.Occurrences {
 			o := linkOccurrence{Start: event.Start, End: event.End, Row: CalendarEventRow{Subject: event.Subject, Event: calevent.Event{Status: event.Status, Attendees: event.Attendees}}}
 			if suggestion, ok := rankMeetingSuggestion(member, o); ok {
 				suggestion.Ref = event.Ref
-				out = append(out, suggestion)
+				pageResult.Suggestions = append(pageResult.Suggestions, suggestion)
 			}
 		}
 	} else {
 		target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), ref.OccurrenceRef, &budget)
 		if err != nil {
-			return nil, err
+			return pageResult, err
 		}
 		if target.Row.Event.Status == meetingCancelledStatus {
-			return []MeetingSuggestion{}, nil
+			return pageResult, nil
 		}
 		r := s.meetingReader(ctx)
 		// Use the longest archived duration to bound the start window without
 		// excluding a long recording that still overlaps the event.
 		var longest float64
 		if err := r.QueryRowContext(ctx, `SELECT COALESCE(MAX(duration_seconds),1800) FROM meeting_details`).Scan(&longest); err != nil {
-			return nil, err
+			return pageResult, err
 		}
 		lower := target.Start.Add(-time.Duration(max(1800, longest) * float64(time.Second)))
 		scheduledStart, messageStart := "scheduled_at", "COALESCE(sent_at,received_at,internal_date)"
@@ -216,36 +224,36 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
  WHERE m.message_type = 'meeting_transcript' AND m.deleted_at IS NULL)
  SELECT id FROM candidates WHERE `+filter+` ORDER BY id LIMIT 2001`, lower, target.End, lower, target.End, target.End, target.Start)
 		if err != nil {
-			return nil, err
+			return pageResult, err
 		}
 		defer func() { _ = rows.Close() }()
 		var ids []int64
 		for rows.Next() {
 			var id int64
 			if err := rows.Scan(&id); err != nil {
-				return nil, err
+				return pageResult, err
 			}
 			ids = append(ids, id)
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return nil, err
+			return pageResult, err
 		}
 		if len(ids) > 2000 {
-			return nil, ErrQueryTooBroad
+			return pageResult, ErrQueryTooBroad
 		}
 		for start := 0; start < len(ids); start += 500 {
 			members, err := suggestionMembers(ctx, s.meetingReader(ctx), ids[start:min(start+500, len(ids))])
 			if err != nil {
-				return nil, err
+				return pageResult, err
 			}
 			for _, member := range members {
 				if suggestion, ok := rankMeetingSuggestion(member, target); ok {
-					out = append(out, suggestion)
+					pageResult.Suggestions = append(pageResult.Suggestions, suggestion)
 				}
 			}
 		}
 	}
-	slices.SortFunc(out, func(a, b MeetingSuggestion) int {
+	slices.SortFunc(pageResult.Suggestions, func(a, b MeetingSuggestion) int {
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes
 		}
@@ -270,8 +278,8 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		limit = 10
 	}
 	limit = min(limit, 100)
-	if len(out) > limit {
-		out = out[:limit]
+	if len(pageResult.Suggestions) > limit {
+		pageResult.Suggestions = pageResult.Suggestions[:limit]
 	}
-	return out, nil
+	return pageResult, nil
 }

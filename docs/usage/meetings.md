@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-08"
+last_edited: "2026-10-20"
 title: Meeting Transcripts
 description: Archive call recordings, AI meeting notes, and transcripts from Chatwoot, Omi, Twilio, Granola, Plaud, Circleback, Notion, Muesli, and Twenty into your searchable local archive.
 ---
@@ -57,6 +57,12 @@ msgvault meetings unlink 42 --event evt:100
 ```
 
 `suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, and stops a UID match from linking the note again.
+
+Some recurring series or exceptions cannot be fully expanded because their
+recurrence is unsupported, exceeds request bounds, or lacks an original start.
+Plain output warns on stderr and still lists readable candidates. JSON includes
+an `unexpandable` array with each affected calendar entry's message ID and
+reason; check it before treating an empty or partial result as complete.
 
 Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
 

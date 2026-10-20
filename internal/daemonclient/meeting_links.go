@@ -22,23 +22,27 @@ func (c *Client) DecideMeetingLink(ctx context.Context, messageID int64, event, 
 	return nil
 }
 
-func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string) ([]store.MeetingSuggestion, error) {
+func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error) {
 	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.SuggestMeetingLinksResp, error) {
 		return client.SuggestMeetingLinksWithResponse(ctx, &generated.SuggestMeetingLinksRequestOptions{Query: &generated.SuggestMeetingLinksQuery{Ref: ref}})
 	})
 	if err != nil {
-		return nil, err
+		return store.MeetingSuggestionPage{}, err
 	}
 	if response.JSON200 == nil {
-		return nil, errors.New("meeting suggestions: empty response")
+		return store.MeetingSuggestionPage{}, errors.New("meeting suggestions: empty response")
 	}
-	decoded, err := decodeMeetingResponse[struct {
-		Suggestions []store.MeetingSuggestion `json:"suggestions"`
-	}]("meeting suggestions", response.Body)
+	decoded, err := decodeMeetingResponse[store.MeetingSuggestionPage]("meeting suggestions", response.Body)
 	if err != nil {
-		return nil, err
+		return store.MeetingSuggestionPage{}, err
 	}
-	return decoded.Suggestions, nil
+	if decoded.Suggestions == nil {
+		decoded.Suggestions = []store.MeetingSuggestion{}
+	}
+	if decoded.Unexpandable == nil {
+		decoded.Unexpandable = []store.CalendarUnexpandable{}
+	}
+	return *decoded, nil
 }
 
 func (c *Client) MeetingLinks(ctx context.Context, messageID int64) ([]store.MeetingLink, error) {

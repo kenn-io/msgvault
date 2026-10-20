@@ -524,21 +524,13 @@ func TestUnsupportedCalendarFallbackUsesNewestExceptionSnapshot(t *testing.T) {
 	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, now.Add(-time.Minute), second)
 	requirements.NoError(err)
 
-	rows := calendarRows(t, st, master, first, second)
-	byID := make(map[int64]CalendarEventRow, len(rows))
-	for _, row := range rows {
-		byID[row.MessageID] = row
-	}
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-	requirements.NoError(err)
-	defer release()
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	occurrences, _, reason, err := expandCalendarSeries(ctx, byID[master], []CalendarEventRow{byID[second], byID[first]}, from, from.AddDate(0, 0, 1), 100)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
-	assertions.Equal("unsupported recurrence", reason)
-	requirements.Len(occurrences, 1)
-	assertions.Equal(first, occurrences[0].ExceptionRef)
-	assertions.Equal(from.Add(12*time.Hour), occurrences[0].Start)
+	requirements.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(first, page.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(12*time.Hour), page.Occurrences[0].Start)
 }
 
 func TestListCalendarOccurrencesUnexpandableKeepsCancelledExceptions(t *testing.T) {

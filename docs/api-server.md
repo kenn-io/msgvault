@@ -2217,7 +2217,7 @@ for the user workflow and coverage meanings.
 |---|---|
 | `GET /api/v1/meetings/links?message_id=42` | Returns linked event references, titles, and times for one note |
 | `POST /api/v1/meetings/links/decisions` | Accepts `message_id`, an `event` reference, and `decision: "link"` or `"unlink"`; returns the saved decision |
-| `GET /api/v1/meetings/suggestions?ref=msg:42` | Returns overlapping events for a note, or notes for an `evt:<id>[@occurrence key]`, with ranking reasons |
+| `GET /api/v1/meetings/suggestions?ref=msg:42` | Returns overlapping events for a note, or notes for an `evt:<id>[@occurrence key]`, with ranking reasons and an `unexpandable` array of affected calendar message IDs and reasons |
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |

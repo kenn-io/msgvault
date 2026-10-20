@@ -38,10 +38,13 @@ func (s *meetingLinksTestStore) UnlinkMeetingContext(_ context.Context, id int64
 	s.member, s.event, s.decision = id, ref, "unlink"
 	return s.err
 }
-func (s *meetingLinksTestStore) SuggestMeetingLinksContext(_ context.Context, ref store.MeetingLinkRef, _ int) ([]store.MeetingSuggestion, error) {
+func (s *meetingLinksTestStore) SuggestMeetingLinksContext(_ context.Context, ref store.MeetingLinkRef, _ int) (store.MeetingSuggestionPage, error) {
 	s.calls++
 	s.ref = ref
-	return []store.MeetingSuggestion{{Ref: "evt:81@20270314T100000Z", MemberMessageID: 42, OverlapMinutes: 30, SharedAttendees: 1, TitleTokens: 2, Reasons: []string{"time_overlap", "shared_attendees", "title_tokens"}}}, s.err
+	return store.MeetingSuggestionPage{
+		Suggestions:  []store.MeetingSuggestion{{Ref: "evt:81@20270314T100000Z", MemberMessageID: 42, OverlapMinutes: 30, SharedAttendees: 1, TitleTokens: 2, Reasons: []string{"time_overlap", "shared_attendees", "title_tokens"}}},
+		Unexpandable: []store.CalendarUnexpandable{{MessageID: 99, Reason: "unsupported recurrence"}},
+	}, s.err
 }
 func (s *meetingLinksTestStore) MeetingLinksContext(_ context.Context, id int64) ([]store.MeetingLink, error) {
 	s.calls++
@@ -119,7 +122,7 @@ func TestMeetingLinkRoutes(t *testing.T) {
 					want = store.MeetingLinkRef{Kind: "evt", MessageID: 81, Key: "20270314T100000Z"}
 				}
 				assertions.Equal(want, backend.ref)
-				assertions.JSONEq(`{"suggestions":[{"ref":"evt:81@20270314T100000Z","member_message_id":42,"overlap_minutes":30,"shared_attendees":1,"title_tokens":2,"reasons":["time_overlap","shared_attendees","title_tokens"]}]}`, w.Body.String())
+				assertions.JSONEq(`{"suggestions":[{"ref":"evt:81@20270314T100000Z","member_message_id":42,"overlap_minutes":30,"shared_attendees":1,"title_tokens":2,"reasons":["time_overlap","shared_attendees","title_tokens"]}],"unexpandable":[{"message_id":99,"reason":"unsupported recurrence"}]}`, w.Body.String())
 			}
 		})
 	}
