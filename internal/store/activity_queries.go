@@ -112,9 +112,11 @@ const activityCandidateStateCTE = `
 	)`
 
 // activityUnsentSQL keeps sent copies eligible even when dedup retained draft
-// evidence. draft_authored preserves unsent status after draft evidence retires.
+// evidence. Saved IMAP Sent content remains sent after a move to Archive.
+// draft_authored preserves unsent status after draft evidence retires.
 func activityUnsentSQL() string {
-	return `(NOT COALESCE(m.is_sent, TRUE) OR ((` + draftEvidenceSQL("m", "src") + ` OR m.draft_authored)
+	return `(NOT COALESCE(m.is_sent, TRUE) OR ((m.draft_authored OR ` + draftEvidenceSQL("m", "src") + `)
+		AND COALESCE(m.metadata ->> 'imap_content_origin', '') <> 'sent'
 		AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
 		  AND ` + sentEvidenceLabelSQL("l", "src") + `)))`
