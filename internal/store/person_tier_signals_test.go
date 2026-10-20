@@ -63,7 +63,7 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 	assert.Equal(2, s.ActiveDaysShort)
 	assert.Equal(3, s.ActiveDaysLong)
 	assert.Equal(1, s.MeetingDaysLong)
-	assert.Equal(2, s.ChannelsLong)
+	assert.Equal(1, s.ChannelsLong, "a meeting day is not a message channel")
 	assert.Equal(1, s.ExcludedListEvents)
 }
 
@@ -116,7 +116,7 @@ func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.T
 
 func tierReadiness(t *testing.T, f *storetest.Fixture) store.PersonTierReadiness {
 	t.Helper()
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), store.PersonTierOptions{Config: persontiers.DefaultConfig()})
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.NoError(t, err)
 	return preview.Readiness
 }
