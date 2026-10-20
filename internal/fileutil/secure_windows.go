@@ -154,8 +154,8 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	}
 	for _, dir := range slices.Backward(missing) {
 		createPath := dir
-		// CreateDirectory needs the extended prefix to accept long absolute paths.
-		if filepath.IsAbs(dir) && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
+		// Like os, prefix only long paths: the prefix also disables normalization.
+		if len(dir) >= 248 && filepath.IsAbs(dir) && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
 			if strings.HasPrefix(dir, `\\`) {
 				createPath = `\\?\UNC\` + dir[2:]
 			} else {

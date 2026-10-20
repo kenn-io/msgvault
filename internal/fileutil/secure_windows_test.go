@@ -134,6 +134,13 @@ func TestSecureMkdirAllLongPath(t *testing.T) {
 	}
 }
 
+func TestSecureMkdirAllTrailingDotMatchesLaterAccess(t *testing.T) {
+	require := require.New(t)
+	dir := filepath.Join(t.TempDir(), "out.")
+	require.NoError(SecureMkdirAll(dir, 0o700))
+	require.NoError(os.WriteFile(filepath.Join(dir, "message.eml"), []byte("x"), 0o600))
+}
+
 func TestSecureMkdirAllRejectsFileComponent(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "file")
