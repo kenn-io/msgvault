@@ -342,16 +342,21 @@ func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
 	}
 }
 
-func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
-	f := newEvalFixture(t)
-	topic := embedWords("zeppelin mooring")
-	for i := range 99 {
+func (f *evalFixture) fillOwnerPool(t *testing.T, topic []float32, count int) {
+	t.Helper()
+	for i := range count {
 		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
 	}
 	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id =
 		(SELECT id FROM participants WHERE email_address = 'owner@example.net')
 		WHERE subject = 'airship tethering'`)
 	require.NoError(t, err)
+}
+
+func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	f.fillOwnerPool(t, topic, 99)
 	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
 	match := scaled(topic, .9)
 	match[off] = float32(math.Sqrt(1 - .9*.9))
@@ -379,13 +384,7 @@ func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
 func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
 	f := newEvalFixture(t)
 	topic := embedWords("zeppelin mooring")
-	for i := range 100 {
-		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
-	}
-	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id =
-		(SELECT id FROM participants WHERE email_address = 'owner@example.net')
-		WHERE subject = 'airship tethering'`)
-	require.NoError(t, err)
+	f.fillOwnerPool(t, topic, 100)
 	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
 	match := scaled(topic, .8)
 	match[off] = .6
@@ -413,69 +412,78 @@ func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
 	assert.Empty(t, got.UnsavedContacts, "keyword hits with zero or missing vectors do not count")
 }
 
-func TestFindReportsFullVectorPoolDespiteLowKeywordCosine(t *testing.T) {
-	f := newEvalFixture(t)
-	topic := embedWords("zeppelin mooring")
-	for i := range 101 {
-		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+func TestFindReportsVectorPoolLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		setup        func(*testing.T, *evalFixture, []float32)
+		wantContacts *int
+		wantLimits   []string
+	}{
+		{
+			name: "full vector pool despite low keyword cosine",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				for i := range 101 {
+					f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+				}
+				off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+				keyword := scaled(topic, .3)
+				keyword[off] = float32(math.Sqrt(1 - .3*.3))
+				keywordID := f.post(t, "keyword@example.net", "zeppelin mooring", keyword)
+				hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+					Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+				})
+				require.NoError(t, err)
+				require.True(t, meta.PoolSaturated)
+				i := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == keywordID })
+				require.NotEqual(t, -1, i)
+				require.True(t, math.IsNaN(hits[i].VectorScore))
+			},
+			wantLimits: []string{LimitPoolFull},
+		},
+		{
+			name: "only the best vector clears the floor",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				f.fillPool(t, topic, 1)
+				off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+				match := scaled(topic, .9)
+				match[off] = float32(math.Sqrt(1 - .9*.9))
+				f.post(t, "captain@example.net", "airship tethering", match)
+			},
+			wantContacts: new(1),
+			wantLimits:   []string{},
+		},
+		{
+			name: "full pool of vectors that are not unit length",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				if f.store.IsPostgreSQL() {
+					t.Skip("pgvector ranks by cosine distance")
+				}
+				// sqlite-vec ranks by L2, so a full pool of long vectors
+				// can hide a match even when no filler clears the floor.
+				f.fillPool(t, topic, 3)
+				f.post(t, "captain@example.net", "airship tethering", scaled(topic, 100))
+				f.service.Retriever = evalEngine(f.store, f.backend, scaledEmbedder{3})
+			},
+			wantContacts: new(0),
+			wantLimits:   []string{LimitPoolFull},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEvalFixture(t)
+			tc.setup(t, f, embedWords("zeppelin mooring"))
+			got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantLimits, got.Limits)
+			if tc.wantContacts != nil {
+				require.Len(t, got.UnsavedContacts, *tc.wantContacts)
+			}
+			if tc.wantContacts != nil && *tc.wantContacts == 1 {
+				assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
+				assert.Equal(t, 1, got.UnsavedContacts[0].AuthoredMessages)
+			}
+		})
 	}
-	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
-	keyword := scaled(topic, .3)
-	keyword[off] = float32(math.Sqrt(1 - .3*.3))
-	keywordID := f.post(t, "keyword@example.net", "zeppelin mooring", keyword)
-	hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
-		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
-	})
-	require.NoError(t, err)
-	require.True(t, meta.PoolSaturated)
-	i := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == keywordID })
-	require.NotEqual(t, -1, i)
-	require.True(t, math.IsNaN(hits[i].VectorScore))
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
-}
-
-func TestFindHasNoPoolLimitWhenOnlyTheBestVectorClearsTheFloor(t *testing.T) {
-	f := newEvalFixture(t)
-	topic := embedWords("zeppelin mooring")
-	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
-	filler := scaled(topic, .3)
-	filler[off] = float32(math.Sqrt(1 - .3*.3))
-	for i := range 150 {
-		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
-	}
-	match := scaled(topic, .9)
-	match[off] = float32(math.Sqrt(1 - .9*.9))
-	f.post(t, "captain@example.net", "airship tethering", match)
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	require.Len(t, got.UnsavedContacts, 1)
-	assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
-	assert.Equal(t, 1, got.UnsavedContacts[0].AuthoredMessages)
-	assert.Empty(t, got.Limits)
-}
-
-// sqlite-vec ranks the pool by L2 distance, which follows cosine order only
-// for unit-length vectors. With a provider that does not normalize, a full
-// pool where nothing reached the floor can hide a message that would, so the
-// result says the pool was full rather than that nobody wrote.
-func TestFindReportsAFullPoolOfVectorsThatAreNotUnitLength(t *testing.T) {
-	f := newEvalFixture(t)
-	if f.store.IsPostgreSQL() {
-		t.Skip("pgvector ranks by cosine distance")
-	}
-	topic := embedWords("zeppelin mooring")
-	f.fillPool(t, topic, 3)
-	// The answer points the topic's way but is 100 units long, so it sits
-	// past every filler by L2 and outside the pool.
-	f.post(t, "captain@example.net", "airship tethering", scaled(topic, 100))
-	f.service.Retriever = evalEngine(f.store, f.backend, scaledEmbedder{3})
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	assert.Empty(t, got.UnsavedContacts)
-	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
 }

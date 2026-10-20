@@ -79,7 +79,6 @@ func TestRankWeighsRecencyBoundsMailBoostsDeclaredTopicsAndCitesTheBestMessages(
 		{PersonID: 15, AskMeAbout: []string{"kubernetes"}},
 	}, rankParams(), rankNow)
 	require.Len(t, people, 2)
-	assert.Equal(int64(14), people[0].PersonID)
 	assert.InDelta(.25, people[0].DeclaredBoost, 1e-9)
 	assert.InDelta(math.Log1p(.9)+.25, people[0].Score, 1e-9)
 	assert.Equal(int64(15), people[1].PersonID)

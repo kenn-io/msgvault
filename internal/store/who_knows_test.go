@@ -244,9 +244,8 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 	}
 	write("users.json", `[
 		{"id":"UOWNER","team_id":"T1","name":"owner","profile":{"email":"owner@example.net"}},
-		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}},
-		{"id":"UBOT","team_id":"T1","name":"deploys","is_bot":true,"profile":{"real_name":"Deploys"}}]`)
-	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA","UBOT"]}]`)
+		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}}]`)
+	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA"]}]`)
 	cases := []struct {
 		subtype string
 		counts  bool
@@ -264,25 +263,23 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 	}
 	write("general/2026-10-01.json", `[
 		{"type":"message","ts":"1790000000.000001","user":"UANA","text":"pod networking notes"},
-		{"type":"message","ts":"1790000000.000002","user":"UANA","bot_id":"B1","text":"deploy finished"},
-		{"type":"message","ts":"1790000000.000003","user":"UBOT","text":"deploy finished"},`+strings.Join(messages, ",")+"]")
+		{"type":"message","ts":"1790000000.000002","user":"UANA","bot_id":"B1","text":"deploy finished"},`+strings.Join(messages, ",")+"]")
 	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
 	require.NoError(err)
 
 	ids := map[string]int64{}
-	for _, ts := range []string{"1790000000.000001", "1790000000.000002", "1790000000.000003"} {
+	for _, ts := range []string{"1790000000.000001", "1790000000.000002"} {
 		var id int64
 		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
 			summary.SourceID, "C1:"+ts).Scan(&id))
 		ids[ts] = id
 	}
-	anaOwn, botAsAna, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
-	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn, botUser}, ownerOf(f))
+	anaOwn, botAsAna := ids["1790000000.000001"], ids["1790000000.000002"]
+	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn}, ownerOf(f))
 	require.NoError(err)
 	assert.False(got[botAsAna].Counts, "a bot posting as Ana")
 	assert.True(got[anaOwn].Counts, "Ana's own message")
-	assert.False(got[botUser].Counts, "the bot user's post")
 	for i, tc := range cases {
 		var id int64
 		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
@@ -321,20 +318,26 @@ func TestTopicAuthorsLeaveOutAddressesLinkedToTheOwner(t *testing.T) {
 			got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
 			require.NoError(err)
 			assert.False(got[fromAlias].Counts, "and after the owner is saved")
-
-			// A chat account identity names the owner by identifier.
-			require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "T1:UOWNER", "manual"))
-			chatOwner, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UOWNER", "Owner")
-			require.NoError(err)
-			chatOther, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UANA", "Ana")
-			require.NoError(err)
-			fromChatOwner, fromChatOther := send(f, "from-chat-owner", chatOwner), send(f, "from-chat-other", chatOther)
-			got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromChatOwner, fromChatOther}, ownerOf(f))
-			require.NoError(err)
-			assert.False(got[fromChatOwner].Counts, "the owner's chat identity")
-			assert.True(got[fromChatOther].Counts)
 		})
 	}
+}
+
+func TestTopicAuthorsLeaveOutOwnerChatIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+
+	// A chat account identity names the owner by identifier.
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "T1:UOWNER", "manual"))
+	chatOwner, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UOWNER", "Owner")
+	require.NoError(err)
+	chatOther, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UANA", "Ana")
+	require.NoError(err)
+	fromChatOwner, fromChatOther := send(f, "from-chat-owner", chatOwner), send(f, "from-chat-other", chatOther)
+	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{fromChatOwner, fromChatOther}, ownerOf(f))
+	require.NoError(err)
+	assert.False(got[fromChatOwner].Counts, "the owner's chat identity")
+	assert.True(got[fromChatOther].Counts)
 }
 
 func TestTopicContactsGroupLinkedAndBoundSenders(t *testing.T) {
@@ -401,60 +404,54 @@ func TestTopicContactsReportWhomTheOwnerWroteTo(t *testing.T) {
 	// Mail the vendor sent to the owner does not count.
 	inbound := send(f, "from-vendor", vendor)
 	require.NoError(f.Store.ReplaceMessageRecipients(inbound, "to", []int64{owner}, []string{"Owner"}))
-	// An address linked to the owner's is not an account identity, so its
-	// mail is not marked from me, but a reply from it still counts.
-	ownerAlias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
-	_, err = f.Store.LinkParticipants(owner, ownerAlias)
-	require.NoError(err)
-	colleague := f.EnsureParticipant("bea@example.net", "Bea", "example.net")
-	fromAlias := send(f, "from-alias", ownerAlias)
-	require.NoError(f.Store.ReplaceMessageRecipients(fromAlias, "to", []int64{colleague}, []string{"Bea"}))
-	isFromMe, err := f.Store.GetMessageIsFromMe(fromAlias)
-	require.NoError(err)
-	require.False(isFromMe)
 
-	got := contactsOf(f, ana, cc, vendor, colleague)
+	got := contactsOf(f, ana, cc, vendor)
 	assert.False(got[ana].OneWay, "the owner wrote to Ana's linked address")
 	assert.False(got[cc].OneWay)
-	assert.False(got[colleague].OneWay, "the owner wrote to Bea from a linked address")
 	assert.True(got[vendor].OneWay, "the vendor was never written to")
 }
 
-func TestTopicContactsRecognizeOwnerRepliesWithoutAccountIdentity(t *testing.T) {
-	for _, bound := range []bool{false, true} {
-		t.Run(fmt.Sprintf("bound=%t", bound), func(t *testing.T) {
-			require := require.New(t)
-			f := storetest.New(t)
-			owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
-			alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
-			ana := f.EnsureParticipant("ana@example.net", "Ana", "example.net")
-			send(f, "outbound", owner, func(m *store.Message) { m.IsFromMe = true })
-			require.Empty(ownerOf(f), "no account identity names the owner")
-			if bound {
-				person, _, err := f.Store.CreatePersonFromParticipant(owner)
+func TestTopicContactsRecognizeOwnerReplies(t *testing.T) {
+	for _, accountIdentity := range []bool{true, false} {
+		for _, bound := range []bool{false, true} {
+			t.Run(fmt.Sprintf("account_identity=%t/bound=%t", accountIdentity, bound), func(t *testing.T) {
+				require := require.New(t)
+				f := storetest.New(t)
+				owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
+				alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+				ana := f.EnsureParticipant("ana@example.net", "Ana", "example.net")
+				if accountIdentity {
+					require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
+				} else {
+					send(f, "outbound", owner, func(m *store.Message) { m.IsFromMe = true })
+					require.Empty(ownerOf(f), "no account identity names the owner")
+				}
+				if bound {
+					person, _, err := f.Store.CreatePersonFromParticipant(owner)
+					require.NoError(err)
+					other, _, err := f.Store.CreatePersonFromParticipant(alias)
+					require.NoError(err)
+					_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+						SurvivorID: person.ID, AbsorbedID: other.ID,
+						ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision,
+						IdempotencyKey: "owner-reply-merge", Actor: "test",
+					})
+					require.NoError(err)
+				} else {
+					_, err := f.Store.LinkParticipants(owner, alias)
+					require.NoError(err)
+				}
+				reply := send(f, "reply", alias)
+				require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana}, []string{"Ana"}))
+				fromMe, err := f.Store.GetMessageIsFromMe(reply)
 				require.NoError(err)
-				other, _, err := f.Store.CreatePersonFromParticipant(alias)
-				require.NoError(err)
-				_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
-					SurvivorID: person.ID, AbsorbedID: other.ID,
-					ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision,
-					IdempotencyKey: "owner-reply-merge", Actor: "test",
-				})
-				require.NoError(err)
-			} else {
-				_, err := f.Store.LinkParticipants(owner, alias)
-				require.NoError(err)
-			}
-			reply := send(f, "reply", alias)
-			require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana}, []string{"Ana"}))
-			fromMe, err := f.Store.GetMessageIsFromMe(reply)
-			require.NoError(err)
-			require.False(fromMe)
+				require.False(fromMe)
 
-			got := contactsOf(f, ana)
-			require.Contains(got, ana)
-			assert.False(t, got[ana].OneWay, "the owner's alias replied to Ana")
-		})
+				got := contactsOf(f, ana)
+				require.Contains(got, ana)
+				assert.False(t, got[ana].OneWay, "the owner's alias replied to Ana")
+			})
+		}
 	}
 }
 

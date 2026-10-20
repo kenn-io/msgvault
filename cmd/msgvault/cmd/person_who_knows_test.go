@@ -43,17 +43,6 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 	}
 }
 
-func TestWriteWhoKnowsIdentifiesNamelessDeclaredPerson(t *testing.T) {
-	var out bytes.Buffer
-	require.NoError(t, writeWhoKnows(&out, generated.WhoKnowsResponse{
-		Topic: "kubernetes", People: []generated.WhoKnowsEntry{{
-			Rank: 1, PersonID: new(int64(7)), Score: .75, DeclaredBoost: .75,
-			AskMeAbout: []string{"kubernetes"},
-		}},
-	}, .5))
-	assert.Equal(t, "#1   (person 7)  score 0.75 (messages 0.00, declared 0.75)  declared, no messages  declared: kubernetes\n", out.String())
-}
-
 func TestWriteWhoKnowsListsCitationsDeclaredWordsAndPromoteHint(t *testing.T) {
 	sent := time.Date(2026, 9, 12, 15, 4, 0, 0, time.UTC)
 	var out bytes.Buffer
@@ -73,6 +62,10 @@ func TestWriteWhoKnowsListsCitationsDeclaredWordsAndPromoteHint(t *testing.T) {
 				Rank: 2, PersonID: new(int64(8)), DisplayName: new("Lou Lurker"), Score: .75, DeclaredBoost: .75,
 				AskMeAbout: []string{"kubernetes networking and ingress"}, Citations: []generated.WhoKnowsCitation{},
 			},
+			{
+				Rank: 3, PersonID: new(int64(7)), Score: .75, DeclaredBoost: .75,
+				AskMeAbout: []string{"kubernetes"},
+			},
 		},
 		UnsavedContacts: []generated.WhoKnowsEntry{{
 			Rank: 1, ParticipantID: new(int64(9)), EmailAddress: new("dee@example.net"), Score: .62, MessageScore: .62, AuthoredMessages: 2,
@@ -83,6 +76,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredWordsAndPromoteHint(t *testing.T) {
     2026-09-12  email  Re: pod networking in staging  msgvault show-message 4812
     undated  chat  try the policy  msgvault show-message 4813
 #2  Lou Lurker (person 8)  score 0.75 (messages 0.00, declared 0.75)  declared, no messages  declared: kubernetes networking and ingress
+#3   (person 7)  score 0.75 (messages 0.00, declared 0.75)  declared, no messages  declared: kubernetes
 Unsaved contacts
 #1  dee@example.net  score 0.62  2 authored  msgvault person promote 9
     2026-09-12  email  ingress  msgvault show-message 90

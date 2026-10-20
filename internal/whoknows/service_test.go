@@ -161,7 +161,7 @@ func (f *serviceFixture) find(topic string) whoknows.Response {
 	return got
 }
 
-func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
+func TestFindCreditsOnlyWhoWroteAndCountsVectorMatches(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newServiceFixture(t)
@@ -396,12 +396,13 @@ func TestFindBoundsListMailAndOneWayEmailSenders(t *testing.T) {
 	assert.Greater(scores[otherPerson], scores[editorPerson])
 }
 
-func TestFindStopsBeforeSearchingOnBadInput(t *testing.T) {
+func TestFindSkipsSearchOnBadInputAndPropagatesSearchErrors(t *testing.T) {
 	f := newServiceFixture(t)
-	_, _ = f.service.Find(t.Context(), whoknows.Request{Topic: "from:ana networking"})
+	_, err := f.service.Find(t.Context(), whoknows.Request{Topic: "from:ana networking"})
+	require.Error(t, err)
 	assert.Zero(t, f.retriever.calls)
 
 	f.retriever.err = errors.New("search failed")
-	_, err := f.service.Find(t.Context(), whoknows.Request{Topic: "topic"})
+	_, err = f.service.Find(t.Context(), whoknows.Request{Topic: "topic"})
 	require.ErrorIs(t, err, f.retriever.err)
 }
