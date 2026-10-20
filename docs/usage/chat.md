@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-18"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -71,6 +71,40 @@ Calendar tools instruct assistants to treat archived event text and attendee
 content as data, never as instructions or permission to write. The write opt-in
 exposes mutation tools; the user must request each change and confirm each
 non-dry-run plan through client elicitation.
+
+## Archived calendar events (unreleased)
+
+Daemon API schema 3.24.0 adds two archive read tools:
+
+| Tool | Input | Result |
+|---|---|---|
+| `list_calendar_events` | Required RFC3339 `from` and `to`; optional `source_ids`, `attendee`, `include_cancelled`, `limit`, and `cursor` | Expanded occurrences, unexpandable series, and a continuation cursor |
+| `get_calendar_event` | An occurrence `ref` from the list | One archived occurrence with its effective time and attendees |
+
+Delegated callers need `message.read` on the calendar sources. The tools use the
+caller's granted sources; `source_ids` further narrows them. Older daemons omit
+both tools. The seven live calendar control tools retain their existing access
+rules.
+
+[Calendar occurrence reads](calendar.md#read-archived-occurrences-unreleased)
+owns the window, page, recurrence limits, cancellation behavior, and CLI usage.
+
+## Meeting records (unreleased)
+
+Daemon API schema 3.25.0 adds three meeting read tools:
+
+| Tool | Input | Result |
+|---|---|---|
+| `get_meeting` | Required `ref`: `evt:<id>[@<original-key>]` or `msg:<id>` | Occurrence, permitted note packets, actions, recording attachments, and previous evidence |
+| `list_person_meetings` | Required `ref`: numeric person ID, `person:<id>`, or `participant:<id>`; optional RFC3339 `from`/`to`, `limit` (1–500, default 100), and `cursor` | Chronological `items` and optional `next_cursor` |
+| `suggest_meeting_links` | Required meeting `ref`; optional `limit` (1–100, default 10) | Possible links in `items`; leaves links unchanged |
+
+Each tool requires `message.read` on the sources it uses. Daemons older than
+3.25.0 omit these tools while retaining supported calendar occurrence reads.
+Owners make link decisions through the CLI or HTTP API.
+
+[Meeting records](calendar.md#read-a-meeting-record-unreleased) owns the
+reference syntax, provenance, content bounds, default window and cursor rules.
 
 ## Draft tools
 

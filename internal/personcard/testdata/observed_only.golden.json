@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "status": "observed_only",
+  "ref": "email:alex@example.com",
+  "as_of": "2026-10-17T12:00:00Z",
+  "collected_at": "2026-10-17T12:00:00Z",
+  "format": "json",
+  "card": null,
+  "content": null,
+  "content_bytes": 0,
+  "truncated": false,
+  "omitted": {
+    "brief": false,
+    "items": 0,
+    "meetings": 0,
+    "sources": 0
+  },
+  "freshness": {
+    "as_of": "2026-10-17T12:00:00Z",
+    "stale_after_seconds": 86400,
+    "stale": false,
+    "stale_reasons": [],
+    "warnings": [],
+    "projections": {
+      "activity": null,
+      "brief": null,
+      "open_loops": null
+    },
+    "sources": [],
+    "collected_at": "2026-10-17T12:00:00Z",
+    "sources_omitted": 0
+  },
+  "gaps": [
+    "not_a_saved_profile"
+  ],
+  "participant_id": 22,
+  "candidates": []
+}

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-10-18"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -86,6 +86,102 @@ only what changed. Interrupted full syncs resume from a checkpoint; pass
 
 The first argument can be an account email or the `name` of a `[[gcal]]` entry in
 `config.toml` (see [Scheduled sync](#scheduled-sync-daemon) below).
+
+## Read archived occurrences (unreleased)
+
+List the meetings scheduled in an archive window, including ordinary instances
+of recurring events:
+
+```bash
+msgvault calendar events --from 2027-03-01T00:00:00Z --to 2027-04-01T00:00:00Z --json
+msgvault calendar events --from 2027-03-01T00:00:00Z --to 2027-04-01T00:00:00Z --source 42 --attendee invited@example.com
+msgvault calendar event 'evt:123@20270301T100000Z' --json
+```
+
+The daemon expands series when you read them. Edited instances replace the
+series time and attendees. All-day events keep their civil dates in the
+calendar's current time zone. Cancelled instances are hidden unless you pass
+`--include-cancelled`. Events removed at the provider remain readable with
+`deleted_from_source:true`; locally deleted messages are excluded.
+
+The window uses RFC3339 timestamps and must be positive and at most 400 days.
+`--source` accepts archive source IDs and can be repeated. `--attendee` matches
+an exact effective attendee email. The page limit defaults to 100 and cannot
+exceed 500. Use the returned `next_cursor` with `--cursor` and the same filters
+to continue in start-time and ref order.
+
+The page reports series that cannot be expanded in `unexpandable`, with reasons
+`budget`, `recurrence_error`, or `unsupported`. It includes at most 50 entries;
+`unexpandable_more:true` means more exist. A request exceeding 2,000 candidate
+series, 20,000 exception rows, or the total recurrence budget fails with
+`query_too_broad`. Narrow the window or sources before retrying.
+
+Archived reads require daemon API schema 3.24.0 or newer. Delegated callers need
+`message.read` on the calendar sources. `--source` narrows that grant.
+`calendar.read` permits live availability only. The HTTP routes are
+`GET /api/v1/calendar/events` and `GET /api/v1/calendar/events/{ref}`.
+The MCP tools are described in [MCP Server](chat.md#archived-calendar-events-unreleased).
+
+## Read a meeting record (unreleased)
+
+Read an archived occurrence with its linked notes, transcripts, actions and
+recording attachments:
+
+```bash
+msgvault meetings show evt:42 --json
+msgvault meetings show msg:73 --json
+msgvault person meetings person:7 --from 2027-03-01T00:00:00Z \
+  --to 2027-04-01T00:00:00Z --json
+```
+
+`evt:<id>` identifies a calendar event. Recurring occurrences add the original
+occurrence key returned by `calendar events`, including when an exception moves
+the meeting. `msg:<id>` identifies a meeting note or transcript. A linked note
+opens the corresponding occurrence; an unlinked note remains a standalone record.
+
+The record separates invited people and rooms from participant evidence. Each
+participant carries provenance, so an invitation does not assert attendance.
+`owner_rsvp` matches confirmed account identities, falling back to the configured
+primary email. An empty value means unknown. Recording entries contain archived
+attachment IDs and metadata. Each note includes a `follow_up` message endpoint.
+
+Records contain at most ten notes ordered by sent time and ID. The first three
+include full content packets; the remaining notes carry summary packets and
+`content_omitted=true`. Packets retain their coverage and truncation fields.
+Each full packet is capped at 131072 bytes; summary packets are capped at 16384.
+The serialized record is at most 1048576 bytes. Attendee and participant lists
+are capped at 500 entries, and each note has at most 100 recording attachments.
+An earlier occurrence with permitted note evidence can supply `previous` and
+its open actions. A response that cannot fit the record bounds fails explicitly.
+
+Person history combines invitations with note evidence, including contacts with
+only email addresses and participants with only phone identities. It accepts a
+numeric saved-person ID, `person:<id>`, or `participant:<id>`. The default window
+is the previous 365 days ending now. Windows must be positive and at most 400
+days; `--limit` defaults to 100 and accepts 1–500. Continue with `--cursor` and
+the same identity and window; omitted dates reuse the first page's resolved
+window. Unsupported recurrence and overly broad queries return errors rather
+than partial histories.
+
+Owners can inspect link suggestions and make explicit archive link decisions:
+
+```bash
+msgvault meetings suggest evt:42 --json
+msgvault meetings link evt:42 73 --json
+msgvault meetings unlink evt:42 73 --json
+```
+
+Suggestions do not change links. Link and unlink target an `evt:` occurrence and
+return its updated record. They require the owner's API key or an admitted
+library caller; browser sessions, plain loopback requests and delegated tokens
+cannot write links. These decisions change the archive, without changing the
+provider's calendar event.
+
+HTTP reads and the three MCP read tools require `message.read` on each source.
+Hidden calendar copies, notes and participant evidence never contribute to the
+result. A permitted note with an ungranted calendar remains a `msg:` record.
+The tools require daemon API 3.25.0 or newer. See
+[the MCP tool contracts](chat.md#meeting-records-unreleased).
 
 ## Control events (unreleased)
 

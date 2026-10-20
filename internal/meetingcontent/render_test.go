@@ -39,6 +39,25 @@ func TestRenderSummaryOnly(t *testing.T) {
 	assertions.Contains(result.Content, "omitted_by_request")
 }
 
+func TestRenderMarkdownParticipantProvenance(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	result, err := Render("synthetic-archive", []Entry{{
+		Meeting: MeetingRef{MessageID: 12, Title: "Planning", ArchivePath: "/api/v1/messages/12"},
+		Participants: []Participant{
+			{Name: "Guest Example", Email: "guest@example.org", Role: "to", Provenance: "invited"},
+			{Name: "Host Example", Email: "host@example.com", Role: "from", Provenance: "provider_attendee"},
+		},
+		Content: Content{
+			Summary: Section{State: StateEmpty}, Notes: Section{State: StateEmpty},
+			Transcript: Transcript{State: StateEmpty}, Actions: []Action{}, ActionCoverage: CoverageUnsupported,
+		},
+	}}, PacketOptions{Format: FormatMarkdown, MaxBytes: 4096})
+	requirements.NoError(err)
+	assertions.Contains(result.Content, "- to: Guest Example <guest@example.org> (invited)")
+	assertions.Contains(result.Content, "- from: Host Example <host@example.com> (provider_attendee)")
+}
+
 func TestRenderDeterministicallySortsAndMergesParticipants(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

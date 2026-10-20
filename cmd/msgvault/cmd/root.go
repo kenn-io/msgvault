@@ -269,6 +269,19 @@ func agentDelegatedCapable(cmd *cobra.Command) bool {
 			return true
 		}
 	}
+	parent := cmd.Parent()
+	if parent != nil && parent.Parent() == cmd.Root() {
+		switch parent.Name() {
+		case "meetings":
+			if cmd.Name() == "show" || cmd.Name() == "suggest" {
+				return true
+			}
+		case "person":
+			if cmd.Name() == "meetings" {
+				return true
+			}
+		}
+	}
 	return agentDelegatedCommand(cmd.Name()) && (!cmd.HasParent() || cmd.Parent() == cmd.Root())
 }
 

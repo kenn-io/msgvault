@@ -2146,6 +2146,24 @@ func (p PeopleInferencePresetCreateRequestPresetID) Validate() error {
 	}
 }
 
+type PersonCardItemRelation string
+
+const (
+	Contradict PersonCardItemRelation = "contradict"
+	Supersede  PersonCardItemRelation = "supersede"
+	Support    PersonCardItemRelation = "support"
+)
+
+// Validate checks if the PersonCardItemRelation value is valid
+func (p PersonCardItemRelation) Validate() error {
+	switch p {
+	case Contradict, Supersede, Support:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid PersonCardItemRelation value, got: %v", p))
+	}
+}
+
 type PersonEnrichmentProviderSettingKind string
 
 const (
@@ -2934,6 +2952,24 @@ func (t TelemetryEventResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
+type UnexpandableSeriesReason string
+
+const (
+	RecurrenceError                UnexpandableSeriesReason = "recurrence_error"
+	UnexpandableSeriesReasonBudget UnexpandableSeriesReason = "budget"
+	Unsupported                    UnexpandableSeriesReason = "unsupported"
+)
+
+// Validate checks if the UnexpandableSeriesReason value is valid
+func (u UnexpandableSeriesReason) Validate() error {
+	switch u {
+	case RecurrenceError, UnexpandableSeriesReasonBudget, Unsupported:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid UnexpandableSeriesReason value, got: %v", u))
 	}
 }
 

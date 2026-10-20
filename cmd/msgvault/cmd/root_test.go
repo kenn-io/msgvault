@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -732,6 +733,47 @@ func TestAgentDelegatedNonCapableCommandReturnsError(t *testing.T) {
 			}
 			err := rootCmd.PersistentPreRunE(cmd, nil)
 			require.ErrorContains(t, err, tc.name+" is not available in agent-delegated mode")
+		})
+	}
+}
+
+func TestAgentDelegatedMeetingCommandsThroughRoot(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "meetings show", args: []string{"meetings", "show", "msg:42"}},
+		{name: "meetings suggest", args: []string{"meetings", "suggest", "msg:42"}},
+		{name: "person meetings", args: []string{"person", "meetings", "person:42"}},
+		{name: "meetings link remains owner-only", args: []string{"meetings", "link", "evt:1", "42"}, wantErr: "link is not available in agent-delegated mode"},
+		{name: "meetings unlink remains owner-only", args: []string{"meetings", "unlink", "evt:1", "42"}, wantErr: "unlink is not available in agent-delegated mode"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := newRootCommand()
+			meetings := newMeetingsCommand(meetingCommandDeps{})
+			person := &cobra.Command{Use: "person"}
+			person.AddCommand(newPersonMeetingsCommand(meetingRecordsCommandDeps{}))
+			root.AddCommand(meetings, person)
+			root.SetOut(io.Discard)
+			root.SetErr(io.Discard)
+
+			command, _, err := root.Find(tc.args)
+			require.NoError(t, err)
+			command.RunE = func(*cobra.Command, []string) error { return nil }
+
+			root.SetArgs(append([]string{
+				"--agent-url", "http://daemon.example",
+				"--agent-token-file", "/tmp/token",
+			}, tc.args...))
+			err = root.Execute()
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
 		})
 	}
 }

@@ -382,6 +382,15 @@ func applyPersonFactAPIGeneration(
 	suffix, submitted string,
 ) {
 	t.Helper()
+	applyPersonFactAPIGenerationWithRelation(t, st, personID, target, suffix, submitted,
+		personfacts.RelationSupport, 900, personFactAPINow)
+}
+
+func applyPersonFactAPIGenerationWithRelation(
+	t *testing.T, st *store.Store, personID int64, target personfacts.TargetDescriptor,
+	suffix, submitted string, relation personfacts.ClaimRelation, score int, resolvedAt time.Time,
+) {
+	t.Helper()
 	subject := personID
 	_, err := st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{
 		PersonID: personID,
@@ -391,19 +400,19 @@ func applyPersonFactAPIGeneration(
 		ProgramID: "fixture-program", ProgramVersion: "v1",
 		ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture-catalog",
 		Provider: "fixture-provider-secret", ProviderVersion: "v1",
-		Model: "fixture-model", ModelVersion: "v1", ResolvedAt: personFactAPINow,
+		Model: "fixture-model", ModelVersion: "v1", ResolvedAt: resolvedAt,
 		Policy: personfacts.PolicyContext{ProviderPolicyFingerprint: "fixture-policy"},
 		Claims: []personfacts.ProposedClaim{{
-			Target: target, Relation: personfacts.RelationSupport,
+			Target: target, Relation: relation,
 			SubmittedValue: json.RawMessage(submitted), Origin: personfacts.OriginExtraction,
-			Confidence: personfacts.ConfidenceInputs{ReportedScore: 900},
+			Confidence: personfacts.ConfidenceInputs{ReportedScore: score},
 			Evidence: []personfacts.EvidenceInput{{
 				PersonID: personID, SourceClass: personfacts.EvidencePublic,
 				Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative,
 				SourceURL: "https://example.test/" + suffix, SubjectPersonID: &subject,
 				SubjectRef: "synthetic-person", Excerpt: "Synthetic archive payload " + suffix,
-				SourceVersion: "source-v1", EventTime: personFactAPINow.Add(-time.Hour),
-				RecordedTime: personFactAPINow, IdentityScore: 990,
+				SourceVersion: "source-v1", EventTime: resolvedAt.Add(-time.Hour),
+				RecordedTime: resolvedAt, IdentityScore: 990,
 			}},
 		}},
 	}, nil)

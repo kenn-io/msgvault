@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -522,6 +523,13 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		meetingEvidenceIDs := append([]int64{survivorID}, duplicateIDs...)
+		slices.Sort(meetingEvidenceIDs)
+		for _, id := range meetingEvidenceIDs {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return fmt.Errorf("lock dedup meeting evidence for message %d: %w", id, err)
+			}
+		}
 		preserved, err := duplicateMergePreservesHistory(ctx, tx, survivorID, duplicateIDs)
 		if err != nil {
 			return err
@@ -530,6 +538,9 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
+			if err := s.mergeMeetingLinkDecisionsForDedupWith(ctx, tx, dupID, survivorID); err != nil {
+				return fmt.Errorf("merge meeting decisions from duplicate %d: %w", dupID, err)
+			}
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {
 				return fmt.Errorf("union labels from %d: %w", dupID, err)
@@ -569,6 +580,12 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if err := s.refreshMeetingProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, survivorID); err != nil {
+				return err
+			}
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}

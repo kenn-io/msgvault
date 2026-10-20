@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personfacts"
@@ -500,7 +501,8 @@ func (s *Store) ListPersonFactEvidenceContext(
 	evidence := make([]personfacts.Evidence, 0)
 	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		evidence, err = s.queryPersonFactEvidenceTx(ctx, tx, personID,
-			personfacts.EvidenceFilter{Target: filter.Target, Limit: limit, Offset: offset})
+			personfacts.EvidenceFilter{Target: filter.Target, EvidenceIDs: filter.EvidenceIDs,
+				AnyRevision: filter.AnyRevision, Limit: limit, Offset: offset})
 		if err != nil {
 			return err
 		}
@@ -590,8 +592,19 @@ func (s *Store) queryPersonFactEvidenceTx(
 			SELECT 1 FROM person_fact_claim_evidence ce
 			JOIN person_fact_claims c ON c.id = ce.claim_id
 			WHERE ce.evidence_id = e.id AND c.person_id = e.person_id
-			  AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?)`
-		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+			  AND c.target_kind = ? AND c.target_key = ?`
+		args = append(args, filter.Target.Kind, filter.Target.Key)
+		if !filter.AnyRevision {
+			query += ` AND c.target_revision = ?`
+			args = append(args, filter.Target.Revision)
+		}
+		query += `)`
+	}
+	if len(filter.EvidenceIDs) > 0 {
+		query += ` AND e.id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.EvidenceIDs)), ",") + `)`
+		for _, id := range filter.EvidenceIDs {
+			args = append(args, id)
+		}
 	}
 	query += ` ORDER BY e.id DESC LIMIT ? OFFSET ?`
 	args = append(args, filter.Limit, filter.Offset)
@@ -736,8 +749,18 @@ func (s *Store) listPersonFactClaimsTx(
 		FROM person_fact_claims c WHERE c.person_id = ?`
 	args := []any{personID}
 	if filter.Target != nil {
-		query += ` AND c.target_kind = ? AND c.target_key = ? AND c.target_revision = ?`
-		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+		query += ` AND c.target_kind = ? AND c.target_key = ?`
+		args = append(args, filter.Target.Kind, filter.Target.Key)
+		if !filter.AnyRevision {
+			query += ` AND c.target_revision = ?`
+			args = append(args, filter.Target.Revision)
+		}
+	}
+	if len(filter.ClaimKeys) > 0 {
+		query += ` AND c.claim_key IN (` + strings.TrimSuffix(strings.Repeat("?,", len(filter.ClaimKeys)), ",") + `)`
+		for _, claimKey := range filter.ClaimKeys {
+			args = append(args, claimKey)
+		}
 	}
 	if extraPredicate != "" {
 		query += ` AND ` + extraPredicate
@@ -795,6 +818,10 @@ func (s *Store) listPersonFactDecisionsTx(
 	if filter.Target != nil {
 		query += ` AND r.target_kind = ? AND r.target_key = ? AND r.target_revision = ?`
 		args = append(args, filter.Target.Kind, filter.Target.Key, filter.Target.Revision)
+	}
+	if filter.ProjectionTransitionsOnly {
+		query += ` AND d.action = ? AND d.projection_kind IS NOT NULL`
+		args = append(args, personfacts.DecisionApplied)
 	}
 	query += ` ORDER BY d.id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
@@ -922,7 +949,8 @@ func scanPersonFactStatusEvent(row scanner) (personfacts.EvidenceStatusEvent, er
 
 const personFactDecisionColumns = `d.id, d.person_id, d.resolution_id, d.decision_key,
 	COALESCE(c.claim_key, ''), d.action, d.reason, CAST(d.score_json AS TEXT),
-	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at`
+	COALESCE(competing.claim_key, ''), d.projection_kind, d.projection_row_id, d.created_at,
+	r.resolved_at`
 
 func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var decision personfacts.Decision
@@ -930,10 +958,11 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 	var projectionKind sql.NullString
 	var projectionRowID sql.NullInt64
 	var createdAt personFactTimestamp
+	var resolvedAt personFactTimestamp
 	err := row.Scan(
 		&decision.ID, &decision.PersonID, &decision.ResolutionID, &decision.DecisionKey,
 		&decision.ClaimKey, &decision.Action, &decision.Reason, &scoreJSON,
-		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt,
+		&decision.CompetingClaimKey, &projectionKind, &projectionRowID, &createdAt, &resolvedAt,
 	)
 	if err != nil {
 		return personfacts.Decision{}, err
@@ -945,6 +974,7 @@ func scanPersonFactDecision(row scanner) (personfacts.Decision, error) {
 		decision.Projection = &personfacts.ProjectionRef{Kind: projectionKind.String, RowID: projectionRowID.Int64}
 	}
 	decision.CreatedAt = createdAt.Time
+	decision.ResolvedAt = resolvedAt.Time
 	return decision, nil
 }
 
@@ -1119,6 +1149,7 @@ func (s *Store) hydratePersonFactResolutionTx(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.resolution_id = ?
@@ -1161,6 +1192,7 @@ func loadPersonFactDecisionByKeyTx(
 	decision, err := scanPersonFactDecision(tx.QueryRowContext(ctx, `
 		SELECT `+personFactDecisionColumns+`
 		FROM person_fact_decisions d
+		JOIN person_fact_resolutions r ON r.id = d.resolution_id
 		LEFT JOIN person_fact_claims c ON c.id = d.claim_id
 		LEFT JOIN person_fact_claims competing ON competing.id = d.competing_claim_id
 		WHERE d.person_id = ? AND d.decision_key = ?`, personID, decisionKey))

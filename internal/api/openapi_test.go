@@ -408,6 +408,25 @@ func TestGeneratedMeetingMetricsPreserveNullableResponseValues(t *testing.T) {
 	assertions.JSONEq(rawMetrics, string(encoded))
 }
 
+func TestGeneratedMeetingContentPreservesUnknownDuration(t *testing.T) {
+	t.Parallel()
+	assertions, requirements := assert.New(t), require.New(t)
+	clientSchema := openAPIClientDocument().Components.Schemas.Map()["Content"]
+	requirements.NotNil(clientSchema)
+	assertions.True(clientSchema.Properties["duration_seconds"].Nullable)
+	assertions.Contains(clientSchema.Required, "duration_seconds")
+	durationField, ok := reflect.TypeFor[generated.Content]().FieldByName("DurationSeconds")
+	requirements.True(ok)
+	assertions.Equal(reflect.TypeFor[*float64](), durationField.Type)
+
+	raw := `{"action_coverage":"unsupported","actions":[],"duration_seconds":null,"notes":{"state":"unsupported"},"summary":{"state":"unsupported"},"transcript":{"state":"unsupported"}}`
+	var content generated.Content
+	requirements.NoError(json.Unmarshal([]byte(raw), &content))
+	encoded, err := json.Marshal(content)
+	requirements.NoError(err)
+	assertions.JSONEq(raw, string(encoded))
+}
+
 func TestGeneratedMeetingStatusKeepsRelationshipReviewPendingCompatibility(t *testing.T) {
 	t.Parallel()
 	status := generated.Pending

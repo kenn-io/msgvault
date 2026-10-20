@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -30,9 +30,9 @@ appear in full under Inherited Flags.
 
 ## meetings
 
-Read archived meeting evidence through the selected daemon. Requires API schema
-2.27.0 or newer. See the [meeting workflow](usage/meetings.md) for coverage and
-source limits.
+Read archived meeting evidence through the selected daemon. Context, actions
+and metrics require API schema 2.27.0 or newer. Meeting records require 3.25.0. See the
+[meeting workflow](usage/meetings.md) for coverage and source limits.
 
 ```bash
 msgvault meetings context --id 42 --id 43 --format markdown --output context.md
@@ -84,6 +84,27 @@ JavaScript-safe integers. Locally deleted records are always excluded.
 
 Actions reflect the current archived source snapshot. Keep filters unchanged
 when continuing a page; refresh from page one to see newer evidence.
+
+### Meeting records (unreleased)
+
+| Command | Contract |
+|---|---|
+| `meetings show <ref>` | Read a meeting record; `--json` includes its bounded content packets |
+| `meetings suggest <ref>` | Inspect possible links; `--limit` accepts 1–100 (default 10); `--json` prints the suggestions |
+| `meetings link <evt-ref> <message-id>` | Record an owner link decision; `--json` prints the updated record |
+| `meetings unlink <evt-ref> <message-id>` | Record an owner split decision; `--json` prints the updated record |
+| `person meetings <person-ref>` | List invited occurrences and note evidence; optional RFC3339 `--from`/`--to`, `--limit` (1–500, default 100), `--cursor`, and `--json` |
+
+Meeting refs use `evt:<id>[@<original-key>]` or `msg:<id>`. Person refs accept a
+numeric saved-person ID, `person:<id>`, or `participant:<id>`. IDs must be positive
+JavaScript-safe integers. Person history defaults to the past 365 days; windows
+are positive and at most 400 days. Continue with the same ref and cursor;
+omitted dates reuse the first page's resolved window.
+
+Link and unlink require an owner API key or admitted library caller. Reads use
+`message.read` on the selected daemon's granted sources. See
+[meeting records](usage/calendar.md#read-a-meeting-record-unreleased) for content
+bounds, provenance, recordings and previous evidence.
 
 ## Global Flags
 
@@ -1735,13 +1756,19 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
-for consent and source permissions. Calendar IDs can be `primary`, a calendar
-ID, or an alias from `config.toml`.
+Read archived occurrences from synced calendar messages and control live Google
+Calendar events through the daemon. Both features are unreleased. Delegated
+archived reads require `message.read` on the selected calendar sources. Follow
+[Read archived occurrences](usage/calendar.md#read-archived-occurrences-unreleased)
+for recurrence, query budgets, and pagination. Follow
+[Calendar event setup](usage/calendar.md#control-events-unreleased) for live
+write consent and source permissions. Live calendar IDs can be `primary`, a
+calendar ID, or an alias from `config.toml`.
 
 | Command | Purpose |
 |---|---|
+| `calendar events` | List archived occurrences in a time window |
+| `calendar event <ref>` | Read one archived occurrence by its `evt:` reference |
 | `calendar create` | Create an event on a calendar |
 | `calendar update` | Update an event's fields, guests, or recurrence |
 | `calendar delete` | Delete an event or recurring occurrences |
@@ -1751,6 +1778,8 @@ ID, or an alias from `config.toml`.
 | `calendar conflicts` | Find overlapping events in a time range |
 
 ```bash
+msgvault calendar events --from <start> --to <end> [flags]
+msgvault calendar event <evt-ref> [--json]
 msgvault calendar create <calendar-id> --account <name|email> --summary <title> --from <start> --to <end>
 msgvault calendar update <calendar-id> <event-id> --account <name|email> [field flags]
 msgvault calendar delete <calendar-id> <event-id> --account <name|email>
@@ -1759,6 +1788,17 @@ msgvault calendar respond <calendar-id> <event-id> --account <name|email> --stat
 msgvault calendar freebusy <calendar-id> --account <name|email> --from <start> --to <end>
 msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> --to <end> --calendars <ids>
 ```
+
+| Flag | Applies to | Default | Contract |
+|---|---|---|---|
+| `--from` | `calendar events` | required | Inclusive RFC3339 window start |
+| `--to` | `calendar events` | required | Exclusive RFC3339 window end |
+| `--source` | `calendar events` | none | Repeatable archive source ID; narrows the delegated source grant |
+| `--attendee` | `calendar events` | none | Exact effective attendee email |
+| `--include-cancelled` | `calendar events` | `false` | Include cancelled occurrences |
+| `--limit` | `calendar events` | `100` | Page size from 1 to 500 occurrences |
+| `--cursor` | `calendar events` | none | Opaque continuation cursor for the same query filters |
+| `--json` | Both archived-read commands | `false` | Print the complete page or occurrence as JSON |
 
 | Flag | Applies to | Contract |
 |---|---|---|
