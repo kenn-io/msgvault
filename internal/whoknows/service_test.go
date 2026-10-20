@@ -139,7 +139,7 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	ben := f.EnsureParticipant("ben@example.net", "Ben Contractor", "example.net")
 	dana, _ := f.saved("dana@example.net")
 	robot := f.EnsureParticipant("no_reply@example.net", "Robot", "example.net")
-	botUser := f.EnsureParticipant("bot@example.net", "Chat Bot", "example.net")
+	relay := f.EnsureParticipant("relay@example.net", "Chat Relay", "example.net")
 	erin := f.EnsureParticipant("erin@example.net", "Erin", "example.net")
 	frank := f.EnsureParticipant("frank@example.net", "Frank", "example.net")
 	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
@@ -156,7 +156,7 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	f.message("outbound", f.owner, 1, .95)
 	f.message("alias", alias, 1, .95)
 	f.message("robot", robot, 1, .95)
-	bot := f.message("bot", botUser, 1, .95, inRoom)
+	bot := f.message("bot", relay, 1, .95, inRoom)
 	require.NoError(f.Store.SetMessageMetadata(bot, sql.NullString{String: `{"automated":true}`, Valid: true}))
 	f.message("no vector", erin, 1, 0)
 	f.message("weak", frank, 1, .49)
@@ -345,9 +345,9 @@ func TestFindBoundsListMailAndOneWaySenders(t *testing.T) {
 	editor, editorPerson := f.saved("editor@example.net")
 	other, otherPerson := f.saved("other@example.net")
 
-	// The owner has written to Ana and Other, never to the vendor or the editor.
+	// The owner has written to Ana, Other, and the editor, never to the vendor.
 	reply := f.message("reply-to-ana", f.owner, 40, 0)
-	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana, other}, []string{"Ana", "Other"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana, other, editor}, []string{"Ana", "Other", "Editor"}))
 	f.retriever.hits = nil
 	for i := range 10 {
 		f.message(fmt.Sprintf("ana-%d", i), ana, 3+i, .8)
