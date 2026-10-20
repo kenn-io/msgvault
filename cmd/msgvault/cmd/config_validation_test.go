@@ -138,16 +138,18 @@ func TestInvalidDaemonConfigIsNotRepeatedAfterProxiedChildFailure(t *testing.T) 
 }
 
 func TestInvalidDaemonConfigStillWarnsAfterUnrelatedProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	assert := assert.New(t)
+	require := require.New(t)
 	childStderr, err := json.Marshal(api.CLIRunEvent{Type: "stderr", Data: "Error: invalid --start timestamp\n"})
-	require.NoError(t, err)
+	require.NoError(err)
 	childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
-	require.NoError(t, err)
+	require.NoError(err)
 	server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
 	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
 
 	_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-	require.ErrorIs(t, err, errCLISubprocessProxied)
-	assert.Equal(t, 1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
+	require.ErrorIs(err, errCLISubprocessProxied)
+	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 }
 
 func TestAddSynctechSMSDriveFailsAtLoadOnInvalidDaemonConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
