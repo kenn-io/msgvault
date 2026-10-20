@@ -3861,21 +3861,12 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 		ToAddrs:   toAddrs,
 		CcAddrs:   ccAddrs,
 	}
-	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
-				return err
-			}
-			if !s.fts5Available {
-				return nil
-			}
-			return s.dialect.FTSUpsert(boundQuerier{ctx: ctx, q: tx}, doc)
-		})
-	}
-	if !s.fts5Available {
-		return nil
-	}
-	return s.dialect.FTSUpsert(boundQuerier{ctx: ctx, q: s.db}, doc)
+	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
+		if !s.fts5Available {
+			return nil
+		}
+		return s.dialect.FTSUpsert(q, doc)
+	})
 }
 
 // BackfillFTS populates the FTS table from existing message data.
