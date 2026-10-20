@@ -175,9 +175,6 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 		if e.Kind == "exception" && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
-		if e.Kind == "single" && calendarSingleStartHasException(e, exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}]) {
-			continue
-		}
 		key := calendarSeriesKey{row.SourceID, e.SeriesProviderID}
 		if e.Kind != "series" {
 			occurrence, _, err := masters[key].exception(ctx, s, row)
@@ -206,37 +203,6 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 		}
 	}
 	return page.Occurrences, page.Unexpandable, nil
-}
-
-func calendarSingleStartHasException(event calevent.Event, exceptions map[calrecur.Identity]bool) bool {
-	var start calrecur.Identity
-	if event.AllDay {
-		if event.StartDate == "" {
-			return false
-		}
-		start = calrecur.Identity{Date: event.StartDate, AllDay: true}
-	} else {
-		if event.Start == nil {
-			return false
-		}
-		start = calrecur.Identity{Instant: *event.Start}
-	}
-	for original := range exceptions {
-		if sameCalendarOccurrenceIdentity(start, original) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameCalendarOccurrenceIdentity(left, right calrecur.Identity) bool {
-	if left.AllDay != right.AllDay {
-		return false
-	}
-	if left.AllDay {
-		return left.Date != "" && left.Date == right.Date
-	}
-	return !left.Instant.IsZero() && !right.Instant.IsZero() && left.Instant.Equal(right.Instant)
 }
 
 func calendarEventStartIdentity(event calevent.Event) calrecur.Identity {
