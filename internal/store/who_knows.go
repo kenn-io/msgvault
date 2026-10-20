@@ -84,6 +84,15 @@ func ownerParticipantMatch(op string) string {
 		                         AND ` + ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", noPrimaryEmail) + `))`
 }
 
+// messageSender is the participant that sent message alias m: its
+// sender_id, else its lowest 'from' recipient.
+func messageSender(m string) string {
+	return `COALESCE(` + m + `.sender_id, (
+		       SELECT MIN(fr.participant_id) FROM message_recipients fr
+		       WHERE fr.message_id = ` + m + `.id AND LOWER(fr.recipient_type) = 'from'
+		         AND fr.participant_id IS NOT NULL))`
+}
+
 // TopicAuthorsContext reads the sender of each message at request time, so
 // mail synced since the last activity build still counts. A message's sender
 // is messages.sender_id, else its lowest 'from' recipient. Deleted messages
@@ -104,10 +113,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 		       p.id, COALESCE(p.email_address, ''), COALESCE(p.display_name, '')
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id
-		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, (
-		       SELECT MIN(mr.participant_id) FROM message_recipients mr
-		       WHERE mr.message_id = m.id AND LOWER(mr.recipient_type) = 'from'
-		         AND mr.participant_id IS NOT NULL))
+		LEFT JOIN participants p ON p.id = ` + messageSender("m") + `
 		WHERE m.id IN (` + directoryPlaceholders(len(messageIDs)) + `)
 		  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
@@ -185,16 +191,39 @@ func (s *Store) AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) 
 	if len(senderIDs) == 0 {
 		return out, nil
 	}
-	families, err := s.authorPersonsContext(ctx, senderIDs)
-	if err != nil {
-		return nil, err
-	}
 	clusters, err := s.ParticipantClustersContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	unsavedRoots := map[int64]bool{}
+	families, err := s.identityFamiliesContext(ctx, senderIDs, clusters)
+	if err != nil {
+		return nil, err
+	}
+	owners, err := s.ownerFamiliesContext(ctx, clusters)
+	if err != nil {
+		return nil, err
+	}
+	byKey, err := s.authorFlagsContext(ctx, families, owners)
+	if err != nil {
+		return nil, err
+	}
 	for _, id := range senderIDs {
+		out[id] = byKey[families[id].Key]
+	}
+	return out, nil
+}
+
+// identityFamiliesContext maps every member of each listed participant's
+// identity family to that family's identity.
+func (s *Store) identityFamiliesContext(
+	ctx context.Context, ids []int64, clusters map[int64]int64,
+) (map[int64]AuthorIdentity, error) {
+	families, err := s.authorPersonsContext(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	unsavedRoots := map[int64]bool{}
+	for _, id := range ids {
 		if _, saved := families[id]; !saved {
 			root := cmp.Or(clusters[id], id)
 			unsavedRoots[root] = true
@@ -206,14 +235,37 @@ func (s *Store) AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) 
 			families[member] = AuthorIdentity{Key: root}
 		}
 	}
-	byKey, err := s.authorFlagsContext(ctx, families)
+	return families, nil
+}
+
+// ownerFamiliesContext returns every member of the identity families of the
+// owner's account identities. A linked or bound alias that is not itself an
+// account identity is the owner too.
+func (s *Store) ownerFamiliesContext(ctx context.Context, clusters map[int64]int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT p.id FROM participants p WHERE `+ownerParticipantMatch("p"))
+	if err != nil {
+		return nil, fmt.Errorf("read owner participants: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan owner participant: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read owner participants: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	families, err := s.identityFamiliesContext(ctx, ids, clusters)
 	if err != nil {
 		return nil, err
 	}
-	for _, id := range senderIDs {
-		out[id] = byKey[families[id].Key]
-	}
-	return out, nil
+	return slices.Sorted(maps.Keys(families)), nil
 }
 
 // authorPersonsContext maps every participant bound to a sender's saved
@@ -254,22 +306,33 @@ func (s *Store) authorPersonsContext(ctx context.Context, senderIDs []int64) (ma
 	return families, nil
 }
 
-// authorFlagsContext reads the owner and owner-wrote-to flags of every family
-// member and returns each family's identity by key.
-func (s *Store) authorFlagsContext(ctx context.Context, families map[int64]AuthorIdentity) (map[int64]AuthorIdentity, error) {
+// authorFlagsContext marks each family that has a member in owners, or that
+// the owner wrote to, and returns each family's identity by key. A message
+// is the owner's when it is marked from me or an owner member sent it.
+func (s *Store) authorFlagsContext(
+	ctx context.Context, families map[int64]AuthorIdentity, owners []int64,
+) (map[int64]AuthorIdentity, error) {
 	members := slices.Sorted(maps.Keys(families))
-	args := make([]any, len(members))
 	byKey := map[int64]AuthorIdentity{}
-	for i, id := range members {
-		args[i] = id
+	for _, id := range members {
 		byKey[families[id].Key] = families[id]
+	}
+	ownerSent := "m.is_from_me"
+	if len(owners) > 0 {
+		ownerSent = "(m.is_from_me OR " + messageSender("m") + " IN (" + directoryPlaceholders(len(owners)) + "))"
 	}
 	ownerWrote := func(where string) string {
 		return `EXISTS (SELECT 1 FROM ` + where + `
-		         AND m.is_from_me AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
+		         AND ` + ownerSent + ` AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
+	}
+	var args []any
+	for _, ids := range [][]int64{owners, owners, members} {
+		for _, id := range ids {
+			args = append(args, id)
+		}
 	}
 	flags, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT p.id, `+ownerParticipantMatch("p")+`,
+		SELECT p.id,
 		       `+ownerWrote(`message_recipients mr JOIN messages m ON m.id = mr.message_id
 		         WHERE mr.participant_id = p.id AND LOWER(mr.recipient_type) IN ('to', 'cc', 'bcc')`)+`
 		       OR `+ownerWrote(`conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id
@@ -282,12 +345,12 @@ func (s *Store) authorFlagsContext(ctx context.Context, families map[int64]Autho
 	defer func() { _ = flags.Close() }()
 	for flags.Next() {
 		var id int64
-		var owner, addressed bool
-		if err := flags.Scan(&id, &owner, &addressed); err != nil {
+		var addressed bool
+		if err := flags.Scan(&id, &addressed); err != nil {
 			return nil, fmt.Errorf("scan author identity: %w", err)
 		}
 		family := byKey[families[id].Key]
-		family.Owner = family.Owner || owner
+		family.Owner = family.Owner || slices.Contains(owners, id)
 		family.Addressed = family.Addressed || addressed
 		byKey[family.Key] = family
 	}

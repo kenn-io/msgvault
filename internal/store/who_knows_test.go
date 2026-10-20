@@ -211,12 +211,24 @@ func TestAuthorIdentitiesReportWhomTheOwnerWroteTo(t *testing.T) {
 	require.NoError(err)
 	require.NoError(f.Store.EnsureConversationParticipant(chat, chatty, "member"))
 	send(f, "chat-post", owner, func(m *store.Message) { m.ConversationID = chat; m.MessageType = "chat" })
+	// An address linked to the owner's is not an account identity, so its
+	// mail is not marked from me, but a reply from it still counts.
+	ownerAlias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+	_, err = f.Store.LinkParticipants(owner, ownerAlias)
+	require.NoError(err)
+	colleague := f.EnsureParticipant("bea@example.net", "Bea", "example.net")
+	fromAlias := send(f, "from-alias", ownerAlias)
+	require.NoError(f.Store.ReplaceMessageRecipients(fromAlias, "to", []int64{colleague}, []string{"Bea"}))
+	isFromMe, err := f.Store.GetMessageIsFromMe(fromAlias)
+	require.NoError(err)
+	require.False(isFromMe)
 
-	got, err := f.Store.AuthorIdentitiesContext(t.Context(), []int64{ana, cc, vendor, chatty})
+	got, err := f.Store.AuthorIdentitiesContext(t.Context(), []int64{ana, cc, vendor, chatty, colleague})
 	require.NoError(err)
 	assert.True(got[ana].Addressed, "the owner wrote to Ana's linked address")
 	assert.True(got[cc].Addressed)
 	assert.True(got[chatty].Addressed)
+	assert.True(got[colleague].Addressed, "the owner wrote to Bea from a linked address")
 	assert.False(got[vendor].Addressed, "the vendor was never written to")
 }
 
