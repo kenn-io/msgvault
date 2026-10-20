@@ -3,6 +3,8 @@ package synctechsms
 import (
 	"database/sql"
 	"time"
+
+	"go.kenn.io/msgvault/internal/synctechsms/sendstate"
 )
 
 const (
@@ -24,10 +26,10 @@ type SMSType int
 const (
 	SMSTypeInbox  SMSType = 1
 	SMSTypeSent   SMSType = 2
-	SMSTypeDraft  SMSType = 3
-	SMSTypeOutbox SMSType = 4
-	SMSTypeFailed SMSType = 5
-	SMSTypeQueued SMSType = 6
+	SMSTypeDraft  SMSType = sendstate.SMSDraft
+	SMSTypeOutbox SMSType = sendstate.SMSOutbox
+	SMSTypeFailed SMSType = sendstate.SMSFailed
+	SMSTypeQueued SMSType = sendstate.SMSQueued
 )
 
 type MMSBox int
@@ -35,8 +37,8 @@ type MMSBox int
 const (
 	MMSBoxInbox  MMSBox = 1
 	MMSBoxSent   MMSBox = 2
-	MMSBoxDraft  MMSBox = 3
-	MMSBoxOutbox MMSBox = 4
+	MMSBoxDraft  MMSBox = sendstate.MMSDraft
+	MMSBoxOutbox MMSBox = sendstate.MMSOutbox
 )
 
 type MMSAddressType int

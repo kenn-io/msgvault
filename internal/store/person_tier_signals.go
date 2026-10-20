@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -89,8 +90,10 @@ type tierSignalRow struct {
 }
 
 // personTierRows reads the direct links in the long window for the page. The
-// WHERE clause is the counting rule: messages the person sent to the owner or
-// the owner sent to the person, and meetings in either direction.
+// WHERE clause is the counting rule: email and chat messages the person sent
+// to the owner or the owner sent to the person, and meetings in either
+// direction. Drafts, texts that never left the phone, and call or voicemail
+// records are not exchanged messages.
 func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
@@ -103,13 +106,17 @@ func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf t
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
  JOIN messages m ON m.id=ae.message_id
+ JOIN conversations c ON c.id=m.conversation_id
+ JOIN sources src ON src.id=m.source_id
  WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND aep.evidence='direct'
  AND aep.local_date BETWEEN ? AND ?
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
  AND ae.direction IN ('inbound','outbound') AND (
  (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
  (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
- (ae.direction='outbound' AND aep.role IN ('addressed','member')))))`, args...)
+ (ae.direction='outbound' AND aep.role IN ('addressed','member')))
+ AND (COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
+ AND COALESCE(m.is_sent,TRUE) AND NOT `+draftEvidenceSQL("m", "src")+`))`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
 	}

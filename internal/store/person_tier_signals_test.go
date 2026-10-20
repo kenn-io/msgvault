@@ -245,3 +245,33 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 	assert.Equal(1, signals.InboundLong, "this account's projection still counts the person")
 	assert.True(signals.Owner)
 }
+
+// A draft the owner has not sent is not contact with the person it is
+// addressed to.
+func TestPersonTierSignalsSkipEmailDrafts(t *testing.T) {
+	require := require.New(t)
+	f, personID := newActivityQueryFixture(t)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	var counterpart int64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&counterpart))
+	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{"DRAFT": {Name: "DRAFT", Type: "system"}})
+	require.NoError(err)
+	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	for i, draft := range []bool{false, true} {
+		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("tier-draft-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i-1)).Build()
+		message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
+		id, err := f.Store.UpsertMessage(message)
+		require.NoError(err)
+		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{"Owner"}))
+		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{counterpart}, []string{"Counterpart"}))
+		if draft {
+			require.NoError(f.Store.ReplaceMessageLabels(id, []int64{labels["DRAFT"]}))
+		}
+	}
+	projectTierSignals(t, f, "UTC", 25)
+
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+
+	assert.Equal(t, 1, signals.OutboundLong, "only the sent message counts")
+	assert.Equal(t, 1, signals.ActiveDaysLong)
+}
