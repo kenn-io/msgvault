@@ -589,6 +589,22 @@ func (s SearchMediaQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type GetMeetingLinksQuery struct {
+	MessageID int64 `json:"message_id" validate:"gte=1,lte=9007199254740991"`
+}
+
+func (g GetMeetingLinksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type ListMessagesQuery struct {
 	// Page One-based page number (default 1; values below 1 are clamped to 1). Non-numeric values are rejected with 400.
 	Page *int64 `json:"page,omitempty"`

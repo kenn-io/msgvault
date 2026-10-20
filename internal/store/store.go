@@ -1045,6 +1045,24 @@ const messagesAccountIndexDefinition = "ON messages(account_address, account_pat
 // rows without scanning the source; it holds only rows awaiting attribution.
 const messagesAccountPendingIndexDefinition = "ON messages(source_id, id) WHERE " + accountPendingPredicate
 
+// Every index on a table that can already be large in an existing archive
+// belongs here rather than inline in schema_pg.sql, where it would build
+// under the pool-wide statement_timeout and could fail InitSchema outright.
+var concurrentIndexes = []struct{ name, definition string }{
+	{"idx_messages_source_id", "ON messages(source_id, id)"},
+	{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
+	{"idx_messages_account", messagesAccountIndexDefinition},
+	{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
+	{rfc822CanonicalIndexName, (&PostgreSQLDialect{}).RFC822CanonicalIDIndexDefinition()},
+	{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
+	{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
+	{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
+	{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
+	{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
+	{"idx_messages_calendar_ical_uid", "ON messages((metadata ->> 'ical_uid')) WHERE message_type = 'calendar_event'"},
+	{"idx_messages_meeting_start", "ON messages(COALESCE(sent_at,received_at,internal_date)) WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL"},
+}
+
 // The first SQLite index build can take minutes, so log its start and finish.
 func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	const name = "idx_message_recipients_email_from"
@@ -1120,21 +1138,6 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		}
 	}()
 
-	// Every index on a table that can already be large in an existing archive
-	// belongs here rather than inline in schema_pg.sql, where it would build
-	// under the pool-wide statement_timeout and could fail InitSchema outright.
-	concurrentIndexes := []struct{ name, definition string }{
-		{"idx_messages_source_id", "ON messages(source_id, id)"},
-		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
-		{"idx_messages_account", messagesAccountIndexDefinition},
-		{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
-		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
-		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
-		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
-		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
-		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
-		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
-	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
 			slog.Warn("drop invalid leftover index failed", "index", index.name, "error", dropErr.Error())
@@ -1632,6 +1635,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
+		}
+	}
+	// The SQLite meeting index needs deleted_at, which old archives gain above.
+	// PostgreSQL builds it concurrently below.
+	if !s.IsPostgreSQL() {
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_meeting_start ON messages(julianday(COALESCE(sent_at,received_at,internal_date))) WHERE message_type = 'meeting_transcript' AND deleted_at IS NULL`)
+			return err
+		}); err != nil {
+			return fmt.Errorf("create meeting start index: %w", err)
 		}
 	}
 	// account: and received: filter on the account columns, and each sync

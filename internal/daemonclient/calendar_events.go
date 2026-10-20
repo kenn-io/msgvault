@@ -28,7 +28,7 @@ func (c *Client) ListCalendarOccurrencesContext(ctx context.Context, from, to ti
 		for _, a := range o.Attendees {
 			attendees = append(attendees, calevent.Attendee{Email: a.Email, DisplayName: a.DisplayName, Role: a.Role, RSVP: a.Rsvp, IsCopySelf: a.IsSelf})
 		}
-		page.Occurrences = append(page.Occurrences, store.CalendarOccurrence{MessageID: o.MessageID, SeriesMessageID: o.SeriesMessageID, SourceID: o.SourceID, Subject: o.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: attendees})
+		page.Occurrences = append(page.Occurrences, store.CalendarOccurrence{Ref: o.Ref, MessageID: o.MessageID, SeriesMessageID: o.SeriesMessageID, SourceID: o.SourceID, Subject: o.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: attendees})
 	}
 	for _, u := range decoded.Unexpandable {
 		page.Unexpandable = append(page.Unexpandable, store.CalendarUnexpandable(u))

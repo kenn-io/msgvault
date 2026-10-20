@@ -29,7 +29,7 @@ Search and read:
   list-labels   List all labels with message counts
   list-senders  List top senders by message count
   media         Search recording transcripts
-  meetings      Read archived meeting context, actions, and metrics
+  meetings      Read and link archived meetings
   query         Run a SQL query against the analytics cache
   search        Search messages using Gmail-like query syntax
   show-message  Show full message details

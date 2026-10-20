@@ -959,6 +959,14 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
 
+	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions SELECT d.* FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND (d.target_message_id IN (SELECT id FROM messages) OR (d.target_ical_uid <> '' AND EXISTS (SELECT 1 FROM messages m WHERE m.message_type = 'calendar_event' AND CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.ical_uid') END = d.target_ical_uid)))`); err != nil {
+			return nil, fmt.Errorf("copy meeting decisions: %w", err)
+		}
+	}
+
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
 	if _, err := tx.Exec(`UPDATE sources SET sync_cursor = NULL WHERE source_type = 'matrix'`); err != nil {

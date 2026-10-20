@@ -2376,6 +2376,7 @@ var exclusiveLockTables = []string{
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
 	"calendar_events", "calendar_event_attendees",
+	"meeting_link_key", "meeting_link_decisions",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,

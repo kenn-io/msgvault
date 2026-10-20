@@ -578,9 +578,18 @@ func sourceIdentityKeysTx(ctx context.Context, tx *loggedTx, sourceID int64) ([]
 }
 
 type calendarSourceConfig struct {
+	TimeZone     string `json:"time_zone"`
 	AccountEmail string `json:"account_email"`
 	CalendarID   string `json:"calendar_id"`
 	Primary      bool   `json:"primary"`
+}
+
+func decodeCalendarSourceConfig(config sql.NullString) calendarSourceConfig {
+	var value calendarSourceConfig
+	if json.Unmarshal([]byte(config.String), &value) != nil {
+		return calendarSourceConfig{}
+	}
+	return value
 }
 
 // calendarMailbox maps a calendar source to the mailbox it belongs to: the
@@ -590,10 +599,7 @@ func calendarMailbox(syncConfig sql.NullString) string {
 	if !syncConfig.Valid || strings.TrimSpace(syncConfig.String) == "" {
 		return ""
 	}
-	var cfg calendarSourceConfig
-	if err := json.Unmarshal([]byte(syncConfig.String), &cfg); err != nil {
-		return ""
-	}
+	cfg := decodeCalendarSourceConfig(syncConfig)
 	address := cfg.CalendarID
 	if cfg.Primary || cfg.CalendarID == "primary" {
 		address = cfg.AccountEmail

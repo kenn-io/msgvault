@@ -260,6 +260,9 @@ const missingMergedAttachmentPredicate = `(
 ) OR COALESCE(a.content_hash, '') = ''`
 
 func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, originalSource int64) error {
+	if err := copyMeetingLinkDecisionsTx(ctx, tx, from, into); err != nil {
+		return err
+	}
 	for _, statement := range []string{
 		`INSERT INTO message_labels(message_id, label_id) SELECT ?, label_id FROM message_labels WHERE message_id = ? ON CONFLICT (message_id, label_id) DO NOTHING`,
 		`INSERT INTO message_recipients(message_id, participant_id, recipient_type, display_name, email_address) SELECT ?, participant_id, recipient_type, display_name, email_address FROM message_recipients WHERE message_id = ? ON CONFLICT DO NOTHING`,

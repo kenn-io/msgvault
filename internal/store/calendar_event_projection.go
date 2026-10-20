@@ -196,11 +196,5 @@ func (s *Store) refreshSourceCalendarEventsTx(ctx context.Context, tx *loggedTx,
 	}
 }
 func calendarConfigZone(config sql.NullString) string {
-	var value struct {
-		Zone string `json:"time_zone"`
-	}
-	if json.Unmarshal([]byte(config.String), &value) != nil {
-		return ""
-	}
-	return value.Zone
+	return decodeCalendarSourceConfig(config).TimeZone
 }

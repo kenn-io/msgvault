@@ -2215,9 +2215,14 @@ for the user workflow and coverage meanings.
 
 | Endpoint | Request and result |
 |---|---|
+| `GET /api/v1/meetings/links?message_id=42` | Returns linked event references, titles, and times for one note |
+| `POST /api/v1/meetings/links/decisions` | Accepts `message_id`, an `event` reference, and `decision: "link"` or `"unlink"`; returns the saved decision |
+| `GET /api/v1/meetings/suggestions?ref=msg:42` | Returns overlapping events for a note, or notes for an `evt:<id>[@occurrence key]`, with ranking reasons |
 | `POST /api/v1/meetings/context` | Exactly one of `message_ids` or an Explore `selection`; returns a context packet envelope |
 | `POST /api/v1/meetings/actions` | Optional `scope` or `explore`, plus action filters; returns rows, coverage, count, and cursor |
 | `POST /api/v1/meetings/metrics` | Optional `scope` or `explore`; returns totals, duration bases, monthly rows, and undated count |
+
+Link reads, decisions, and suggestions require owner access. Suggestions leave links unchanged; saved decisions survive reimport. See [connecting notes to calendar events](usage/meetings.md#connect-notes-to-calendar-events) for references and examples. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
 
 Context accepts 1–100 meetings, `format: "json"` or `"markdown"`,
 `include_transcript` (default false), and `max_bytes` (default 131072, range

@@ -45,6 +45,23 @@ matches. Meetings mode does not offer selection or deletion.
 Unscoped search includes meetings and chats. Email-specific CLI and TUI
 aggregates remain email-only unless you choose another message type.
 
+## Connect notes to calendar events
+
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; calendar copies can appear as separate rows.
+
+```bash
+msgvault meetings links 42
+msgvault meetings suggest msg:42
+msgvault meetings link 42 --event evt:100
+msgvault meetings unlink 42 --event evt:100
+```
+
+`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport.
+
+Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
+
+These commands require owner access. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
+
 ## Export context and read follow-ups
 
 In Everything, select meeting rows and choose **Export meeting context**. You

@@ -27,3 +27,21 @@ func (a *storeAPIAdapter) GetMeetingMetricsContext(
 }
 
 var _ api.MeetingStore = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) LinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error {
+	return a.store.LinkMeetingContext(ctx, memberID, ref)
+}
+
+func (a *storeAPIAdapter) UnlinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error {
+	return a.store.UnlinkMeetingContext(ctx, memberID, ref)
+}
+
+func (a *storeAPIAdapter) SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) ([]store.MeetingSuggestion, error) {
+	return a.store.SuggestMeetingLinksContext(ctx, ref, limit)
+}
+
+var _ api.MeetingLinkStore = (*storeAPIAdapter)(nil)
+
+func (a *storeAPIAdapter) MeetingLinksContext(ctx context.Context, messageID int64) ([]store.MeetingLink, error) {
+	return a.store.MeetingLinksContext(ctx, messageID)
+}

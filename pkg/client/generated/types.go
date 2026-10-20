@@ -1146,6 +1146,7 @@ type CalendarOccurrence struct {
 	End               time.Time  `json:"end" validate:"required"`
 	EndDate           string     `json:"end_date" validate:"omitempty"`
 	MessageID         int64      `json:"message_id"`
+	Ref               string     `json:"ref" validate:"required"`
 	SeriesMessageID   int64      `json:"series_message_id"`
 	SourceID          int64      `json:"source_id"`
 	Start             time.Time  `json:"start" validate:"required"`
@@ -1165,6 +1166,9 @@ func (c CalendarOccurrence) Validate() error {
 	}
 	if err := typesValidator.Var(c.End, "required"); err != nil {
 		errors = errors.Append("End", err)
+	}
+	if err := typesValidator.Var(c.Ref, "required"); err != nil {
+		errors = errors.Append("Ref", err)
 	}
 	if err := typesValidator.Var(c.Start, "required"); err != nil {
 		errors = errors.Append("Start", err)
@@ -7317,6 +7321,71 @@ func (m MeetingImportResponse) Validate() error {
 	return errors
 }
 
+type MeetingLink struct {
+	End     time.Time `json:"end" validate:"required"`
+	Ref     string    `json:"ref" validate:"required"`
+	Start   time.Time `json:"start" validate:"required"`
+	Subject *string   `json:"subject,omitzero"`
+}
+
+func (m MeetingLink) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingLinkDecisionRequest struct {
+	Decision  MeetingLinkDecisionRequestDecision `json:"decision" validate:"required"`
+	Event     string                             `json:"event" validate:"required"`
+	MessageID int64                              `json:"message_id" validate:"gte=1,lte=9007199254740991"`
+}
+
+func (m MeetingLinkDecisionRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(m.Decision).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Decision", err)
+		}
+	}
+	if err := typesValidator.Var(m.Event, "required"); err != nil {
+		errors = errors.Append("Event", err)
+	}
+	if err := typesValidator.Var(m.MessageID, "gte=1,lte=9007199254740991"); err != nil {
+		errors = errors.Append("MessageID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingLinkDecisionResponse struct {
+	Decision  string `json:"decision" validate:"required"`
+	Event     string `json:"event" validate:"required"`
+	MessageID int64  `json:"message_id"`
+}
+
+func (m MeetingLinkDecisionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingLinksResponse struct {
+	Links []MeetingLink `json:"links" validate:"required"`
+}
+
+func (m MeetingLinksResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Links {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MeetingMetricsRequest struct {
 	Explore *MeetingExploreScope `json:"explore,omitempty"`
 	Scope   *MeetingScopeRequest `json:"scope,omitempty"`
@@ -7419,6 +7488,38 @@ func (m MeetingScopeRequest) Validate() error {
 	for i, item := range m.SourceIds {
 		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
 			errors = errors.Append(fmt.Sprintf("SourceIds[%d]", i), err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type MeetingSuggestion struct {
+	MemberMessageID int64    `json:"member_message_id"`
+	OverlapMinutes  int64    `json:"overlap_minutes"`
+	Reasons         []string `json:"reasons" validate:"required"`
+	Ref             string   `json:"ref" validate:"required"`
+	SharedAttendees int64    `json:"shared_attendees"`
+	TitleTokens     int64    `json:"title_tokens"`
+}
+
+func (m MeetingSuggestion) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingSuggestionsResponse struct {
+	Suggestions []MeetingSuggestion `json:"suggestions" validate:"required"`
+}
+
+func (m MeetingSuggestionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range m.Suggestions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Suggestions[%d]", i), err)
+			}
 		}
 	}
 	if len(errors) == 0 {
