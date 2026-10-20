@@ -61,7 +61,7 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		Args:   cobra.NoArgs,
 	}
 	if name == "start" || name == "restart" {
-		cmd.Annotations = map[string]string{strictConfigAnnotation: "required"}
+		markStrictConfig(cmd)
 	}
 	switch name {
 	case "start":

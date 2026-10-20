@@ -242,7 +242,8 @@ Output and exit status:
 	return root
 }
 
-// strictConfigAnnotation marks the commands that start or replace a daemon.
+// strictConfigAnnotation marks the commands that start or replace a daemon,
+// and setup commands that must fail before an OAuth browser flow.
 const strictConfigAnnotation = "msgvault/strict-config"
 
 // requiresStrictConfig reports whether cmd must fail on invalid settings that
@@ -250,6 +251,15 @@ const strictConfigAnnotation = "msgvault/strict-config"
 // so it can still reach a running daemon.
 func requiresStrictConfig(cmd *cobra.Command) bool {
 	return cmd.Annotations[strictConfigAnnotation] != ""
+}
+
+// markStrictConfig makes cmd fail at load on an invalid daemon-only setting.
+func markStrictConfig(cmd *cobra.Command) *cobra.Command {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[strictConfigAnnotation] = "required"
+	return cmd
 }
 
 // warnDaemonConfigError prints each invalid daemon-only setting once, after
