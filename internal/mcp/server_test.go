@@ -3409,25 +3409,80 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, resultText(t, r), "matches multiple sources")
 	})
 
-	t.Run("structured filter limit enforced", func(t *testing.T) {
-		dataDir := t.TempDir()
-		var capturedFilter query.MessageFilter
-		eng := &querytest.MockEngine{
-			GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
-				capturedFilter = f
-				return []query.DeletionTarget{{
-					MessageID: 200, SourceID: 1, SourceType: "gmail",
-					SourceIdentifier: "test@gmail.com", SourceMessageID: "gmail-200",
-				}}, nil
-			},
+	accounts := []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"}}
+	page := func(from, n int) []query.MessageSummary {
+		rows := make([]query.MessageSummary, n)
+		for i := range rows {
+			id := int64(from + i)
+			rows[i] = query.MessageSummary{ID: id, SourceID: 1, SourceMessageID: fmt.Sprintf("gmail-%d", id)}
 		}
-		h := &handlers{engine: eng, dataDir: dataDir}
+		return rows
+	}
 
-		runTool[stageDeletionResponse](
-			t, "stage_deletion", h.stageDeletion,
-			map[string]any{"domain": "example.com"},
-		)
-		assert.Equal(t, maxStageDeletionResults, capturedFilter.Pagination.Limit, "limit")
+	t.Run("selection over the limit is refused without a batch", func(t *testing.T) {
+		var fetches int
+		for name, tc := range map[string]struct {
+			engine *querytest.MockEngine
+			args   map[string]any
+		}{
+			"query": {
+				&querytest.MockEngine{Accounts: accounts, SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
+					fetches++
+					return page(offset+1, limit), nil
+				}},
+				map[string]any{"query": "from:news"},
+			},
+			"filter": {
+				&querytest.MockEngine{GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
+					targets := make([]query.DeletionTarget, f.Pagination.Limit)
+					for i := range targets {
+						targets[i] = query.DeletionTarget{MessageID: int64(i + 1), SourceID: 1, SourceType: "gmail", SourceIdentifier: "alice@gmail.com", SourceMessageID: fmt.Sprintf("gmail-%d", i)}
+					}
+					return targets, nil
+				}},
+				map[string]any{"domain": "example.com"},
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				saver := &captureDeletionManifestSaver{}
+				h := &handlers{engine: tc.engine, manifestSaver: saver}
+				result := runToolExpectError(t, "stage_deletion", h.stageDeletion, tc.args)
+				assert.Contains(t, resultText(t, result), "before:/after: or account")
+				assert.Nil(t, saver.manifest)
+			})
+		}
+		assert.LessOrEqual(t, fetches, maxStageDeletionResults/stageDeletionPageSize+1)
+	})
+
+	t.Run("message on two pages is staged once", func(t *testing.T) {
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: &querytest.MockEngine{Accounts: accounts, SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
+			if offset == 0 {
+				return page(1, limit), nil
+			}
+			return page(limit, 2), nil
+		}}, manifestSaver: saver}
+		resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		assert.Equal(t, stageDeletionPageSize+1, resp.MessageCount)
+		require.NotNil(t, saver.manifest)
+		assert.Len(t, saver.manifest.GmailIDs, stageDeletionPageSize+1)
+	})
+
+	t.Run("match removed between pages is refused without a batch", func(t *testing.T) {
+		// A sync drops the label from message 1 after page one, so page two
+		// starts at message 502 and message 501 is never returned.
+		matching := page(1, 600)
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: &querytest.MockEngine{Accounts: accounts, SearchFastFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, limit, offset int) ([]query.MessageSummary, error) {
+			rows := matching[min(offset, len(matching)):min(offset+limit, len(matching))]
+			if matching[0].ID == 1 {
+				matching = matching[1:]
+			}
+			return rows, nil
+		}}, manifestSaver: saver}
+		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "label:X"})
+		assert.Contains(t, resultText(t, result), "archive changed during staging")
+		assert.Nil(t, saver.manifest)
 	})
 }
 

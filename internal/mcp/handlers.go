@@ -2339,6 +2339,55 @@ func stringArrayArg(args map[string]any, key string) ([]string, error) {
 // maxStageDeletionResults limits how many messages can be staged in one call.
 const maxStageDeletionResults = 100000
 
+// stageDeletionPageSize matches the daemon API's 500-row cap on fast and deep
+// search pages (internal/api maxPageSize).
+const stageDeletionPageSize = 500
+
+// searchAllForDeletion walks the search pages twice and refuses when the walks
+// differ: a row that stops matching between page requests shifts later offsets
+// and can hide a message that matched throughout.
+func searchAllForDeletion(page func(limit, offset int) ([]query.MessageSummary, error)) ([]query.MessageSummary, error) {
+	first, ids, err := walkDeletionPages(page)
+	if err != nil || len(first) > maxStageDeletionResults {
+		return first, err
+	}
+	second, _, err := walkDeletionPages(page)
+	if err != nil {
+		return nil, err
+	}
+	changed := len(second) != len(first)
+	for _, row := range second {
+		changed = changed || !ids[row.ID]
+	}
+	if changed {
+		return nil, &expectedHandlerError{message: "the archive changed during staging; retry stage_deletion"}
+	}
+	return first, nil
+}
+
+// walkDeletionPages fetches search pages at increasing offsets, keeping each
+// message once, until a short page or more than maxStageDeletionResults rows.
+func walkDeletionPages(page func(limit, offset int) ([]query.MessageSummary, error)) ([]query.MessageSummary, map[int64]bool, error) {
+	var results []query.MessageSummary
+	seen := make(map[int64]bool)
+	for offset := 0; len(results) <= maxStageDeletionResults; offset += stageDeletionPageSize {
+		rows, err := page(stageDeletionPageSize, offset)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, row := range rows {
+			if !seen[row.ID] {
+				seen[row.ID] = true
+				results = append(results, row)
+			}
+		}
+		if len(rows) < stageDeletionPageSize {
+			break
+		}
+	}
+	return results, seen, nil
+}
+
 func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
@@ -2407,19 +2456,24 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			return toolErrorResult(err.Error()), nil
 		}
 
+		deep := func(limit, offset int) ([]query.MessageSummary, error) {
+			return h.engine.Search(ctx, q, limit, offset)
+		}
 		var results []query.MessageSummary
 		if q.HasOR() && q.HasTextTerms() {
-			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+			results, err = searchAllForDeletion(deep)
 			searchNote = "Full-text OR search includes body matches. "
 		} else {
 			filter := query.MessageFilter{SourceID: sourceID}
-			results, err = h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
+			results, err = searchAllForDeletion(func(limit, offset int) ([]query.MessageSummary, error) {
+				return h.engine.SearchFast(ctx, q, filter, limit, offset)
+			})
 			if err == nil && len(results) == 0 && q.HasTextTerms() {
-				results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+				results, err = searchAllForDeletion(deep)
 			}
 		}
 		if err != nil {
-			return nil, newInternalError("search messages for deletion", err)
+			return dependencyError("search messages for deletion", err)
 		}
 
 		for _, msg := range results {
@@ -2453,7 +2507,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			After:               afterDate,
 			Before:              beforeDate,
 			Pagination: query.Pagination{
-				Limit: maxStageDeletionResults,
+				Limit: maxStageDeletionResults + 1,
 			},
 		}
 		selection.applyToFilter(&filter)
@@ -2490,6 +2544,9 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 	}
 
+	if len(targets) > maxStageDeletionResults {
+		return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
+	}
 	if len(targets) == 0 {
 		return toolErrorResult("no messages match the specified criteria"), nil
 	}

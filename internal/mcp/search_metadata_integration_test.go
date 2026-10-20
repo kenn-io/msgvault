@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -18,7 +19,9 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func seedMetadataSearch(t *testing.T, db *sql.DB) {
@@ -36,12 +39,17 @@ func seedMetadataSearch(t *testing.T, db *sql.DB) {
 	require.NoError(t, err)
 }
 
-func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32) *daemonclient.Engine {
+// metadataDaemon serves engine over HTTP. A store lets the daemon list accounts.
+func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32, st ...*store.Store) *daemonclient.Engine {
 	t.Helper()
-	server := api.NewServerWithOptions(api.ServerOptions{
+	opts := api.ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
 		Engine: engine, Logger: slog.New(slog.DiscardHandler),
-	})
+	}
+	if len(st) > 0 {
+		opts.Store = st[0]
+	}
+	server := api.NewServerWithOptions(opts)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/search/fast" {
 			requests.Add(1)
@@ -100,4 +108,49 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert.Len(messages, 3, "SearchFast keeps its default page; only the combined API uses zero for count-only")
 	assert.Equal(int32(1), requests.Load())
 	assert.Len(observer.Statements(), 3)
+}
+
+func TestStageDeletionThroughDaemonStagesEveryMatch(t *testing.T) {
+	f := storetest.New(t)
+	st := f.Store
+	persist := func(key, subject, body string) {
+		conversation, err := st.EnsureConversation(f.Source.ID, key, "Synthetic selection")
+		require.NoError(t, err)
+		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, ConversationID: conversation, SourceMessageID: key,
+				MessageType: "email", Subject: sql.NullString{String: subject, Valid: true},
+			},
+			BodyText: sql.NullString{String: body, Valid: true},
+			FTS:      &store.FTSDoc{Subject: subject, Body: body},
+			RawMIME:  []byte("Subject: " + subject + "\r\n\r\n" + body),
+		})
+		require.NoError(t, err)
+	}
+	for i := range 600 {
+		persist(fmt.Sprintf("meta-%03d", i), "selectionmarker", "filler")
+	}
+	for i := range 150 {
+		persist(fmt.Sprintf("body-%03d", i), "plain", "bodyneedle")
+	}
+	var requests atomic.Int32
+	daemon := metadataDaemon(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests, st)
+
+	stage := func(t *testing.T, args map[string]any) *captureDeletionManifestSaver {
+		t.Helper()
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: daemon, manifestSaver: saver}
+		runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, args)
+		require.NotNil(t, saver.manifest)
+		return saver
+	}
+
+	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
+		saver := stage(t, map[string]any{"query": "subject:selectionmarker"})
+		assert.Len(t, saver.manifest.GmailIDs, 600)
+	})
+	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
+		saver := stage(t, map[string]any{"query": "bodyneedle"})
+		assert.Len(t, saver.manifest.GmailIDs, 150)
+	})
 }
