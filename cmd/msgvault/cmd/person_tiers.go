@@ -80,10 +80,11 @@ func newPersonTiersPreviewCommand(deps personTiersCommandDeps) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "preview",
 		Short: "List saved people in tier 1 or 2",
-		Long: `List saved people in tier 1 (sustained two-way contact in the last 90 days)
-or tier 2 (two-way contact or meetings in the last year), with the rule that
-put each there, whether they are tracked, and their last contact date. Windows
-and thresholds come from [people.tiers]. Counts follow the timezone and direct
+		Long: `List saved people in tier 1 (sustained two-way contact in the short window,
+90 days by default) or tier 2 (two-way contact or meetings in the long window,
+a year by default), with the rule that put each there, whether they are
+tracked, and their last contact date. Windows and thresholds come from
+[people.tiers]. Counts follow the timezone and direct
 limit the activity projection was built under. Nothing is written; pass the
 IDs from --json to "person track".`,
 		Args: cobra.NoArgs,
