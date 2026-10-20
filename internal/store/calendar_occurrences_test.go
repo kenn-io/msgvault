@@ -152,7 +152,7 @@ func TestListCalendarOccurrencesMasterChangesValueTypeSparseCancellation(t *test
 			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","status":"confirmed","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.oldStart, tc.oldEnd))
 			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original))
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			require.NoError(err)
 			require.Len(page.Occurrences, 3)
 			assert.Equal(cancelled, page.Occurrences[1].MessageID)
@@ -160,9 +160,9 @@ func TestListCalendarOccurrencesMasterChangesValueTypeSparseCancellation(t *test
 			assert.Empty(page.Unexpandable)
 
 			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(fmt.Sprintf(`{"id":"weekly","status":"confirmed","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.newStart, tc.newEnd)), "gcal_json"))
-			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			require.NoError(err)
-			assert.Equal([]CalendarUnexpandable{{MessageID: cancelled, Reason: "exception original type differs from series and event bounds are missing"}}, page.Unexpandable)
+			assert.Equal([]CalendarUnexpandable{{MessageID: cancelled, Reason: "missing series master and event bounds"}}, page.Unexpandable)
 			require.Len(page.Occurrences, 3, "the current series must remain visible after its type changes")
 			for i, occurrence := range page.Occurrences {
 				assert.Equal(master, occurrence.MessageID)
