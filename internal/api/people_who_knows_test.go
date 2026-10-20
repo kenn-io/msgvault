@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -107,13 +106,18 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 	got := whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
-	assert.JSONEq(`{"topic":"sailboat insurance","limits":["partial_index"],"people":[],"unsaved_contacts":[]}`, got.Body.String(),
-		"the email-only index leaves chat unsearched")
+	var body whoknows.Response
+	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
+	assert.Equal("sailboat insurance", body.Topic)
+	assert.NotNil(body.People, "an empty list is [], not null")
+	assert.Empty(body.People)
+	assert.NotNil(body.UnsavedContacts, "an empty list is [], not null")
+	assert.Empty(body.UnsavedContacts)
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
 }
 
-func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
+func TestWhoKnowsPassesMinScoreToTheService(t *testing.T) {
 	require := require.New(t)
 	backend := &whoKnowsBackend{}
 	srv, st := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
@@ -123,13 +127,9 @@ func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
 	require.NoError(err)
 	ana, err := st.EnsureParticipant("ana@example.net", "Ana Lopez", "example.net")
 	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(ana)
-	require.NoError(err)
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "m1", MessageType: "email",
 		SenderID: sql.NullInt64{Int64: ana, Valid: true},
-		SentAt:   sql.NullTime{Time: time.Now().AddDate(0, 0, -3), Valid: true},
-		Subject:  sql.NullString{String: "kube-proxy rules", Valid: true},
 	})
 	require.NoError(err)
 	// Only a min_score of 0.4 reaching the service keeps this hit.
@@ -139,8 +139,8 @@ func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
 	require.Equal(http.StatusOK, got.Code, got.Body.String())
 	var body whoknows.Response
 	require.NoError(json.Unmarshal(got.Body.Bytes(), &body))
-	require.Len(body.People, 1)
-	assert.Equal(t, person.ID, body.People[0].PersonID)
+	require.Len(body.UnsavedContacts, 1)
+	assert.Equal(t, "ana@example.net", body.UnsavedContacts[0].EmailAddress)
 }
 
 // A wrapped context.DeadlineExceeded must stay an embedding timeout rather

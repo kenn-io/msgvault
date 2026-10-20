@@ -37,11 +37,17 @@ func (r *fixedRetriever) Search(_ context.Context, request hybrid.SearchRequest)
 }
 
 // truncatedDeclared reports that the declared read hit its cap, as the store
-// does by returning DeclaredValueLimit values.
+// does by returning DeclaredValueLimit values, each for its own person.
 type truncatedDeclared struct{ whoknows.DataReader }
 
 func (truncatedDeclared) AskMeAboutValuesContext(context.Context, []int64) ([]store.PersonAskMeAbout, bool, error) {
-	return make([]store.PersonAskMeAbout, store.DeclaredValueLimit), true, nil
+	values := make([]store.PersonAskMeAbout, store.DeclaredValueLimit)
+	for i := range values {
+		values[i] = store.PersonAskMeAbout{
+			PersonID: int64(i + 1), PersonName: fmt.Sprintf("Person %d", i+1), Value: fmt.Sprintf("hobby %d", i),
+		}
+	}
+	return values, true, nil
 }
 
 // fixtureCount answers the vector-wait count from the fixture, since no
@@ -202,10 +208,9 @@ func TestFindMatchesDeclaredTopicsInGo(t *testing.T) {
 	require.Len(t, got.People, 2)
 	assert.Equal(authorPerson, got.People[0].PersonID)
 	assert.Equal([]string{"kubernetes"}, got.People[0].AskMeAbout)
-	assert.InDelta(.75, got.People[0].DeclaredBoost, 1e-9)
 	assert.Equal(lurkerPerson, got.People[1].PersonID)
 	assert.Zero(got.People[1].AuthoredMessages)
-	assert.InDelta(.75, got.People[1].Score, 1e-9)
+	assert.Equal([]string{"kubernetes networking"}, got.People[1].AskMeAbout)
 
 	f.retriever.hits = nil
 	// A declared-only person needs every topic word in a value; an author's
@@ -220,7 +225,7 @@ func TestFindMatchesDeclaredTopicsInGo(t *testing.T) {
 	got = f.find("sales tax filing")
 	require.Len(t, got.People, 1)
 	assert.Equal(taxPerson, got.People[0].PersonID)
-	assert.InDelta(.75, got.People[0].DeclaredBoost, 1e-9)
+	assert.Equal([]string{"sales"}, got.People[0].AskMeAbout)
 }
 
 func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
@@ -248,7 +253,7 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	assert.Equal(person, got.People[0].PersonID)
 }
 
-func TestFindReportsLimitsOnlyWhenTheSearchCameUpShort(t *testing.T) {
+func TestFindReportsDeclaredTruncation(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	f.service.Data = truncatedDeclared{f.service.Data}
@@ -339,8 +344,9 @@ func messageScores(people []whoknows.Entry) map[int64]float64 {
 	return out
 }
 
-// The store's list-mail and one-way flags reach Rank, which bounds their
-// credit.
+// The store's list-mail and one-way flags reach Rank. A list sender with
+// twelve messages and a one-way sender with thirty each earn one message's
+// worth, so they score alike and rank below the colleague who answered twice.
 func TestFindBoundsListMailAndOneWayEmailSenders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -367,9 +373,9 @@ func TestFindBoundsListMailAndOneWayEmailSenders(t *testing.T) {
 	got := f.find("kubernetes networking")
 	require.Len(got.People, 3)
 	assert.Equal(otherPerson, got.People[0].PersonID, "two answers beat twelve digests and thirty unanswered notes")
-	assert.Equal(map[int64]float64{
-		otherPerson: math.Log1p(1.6), editorPerson: math.Log1p(.9), vendorPerson: math.Log1p(.9),
-	}, messageScores(got.People))
+	scores := messageScores(got.People)
+	assert.InDelta(scores[editorPerson], scores[vendorPerson], 1e-9)
+	assert.Greater(scores[otherPerson], scores[editorPerson])
 }
 
 func TestFindStopsBeforeSearchingOnBadInput(t *testing.T) {

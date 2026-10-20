@@ -71,6 +71,20 @@ func TestRankWeighsRecencyAndCitesTheBestMessages(t *testing.T) {
 	assert.InDelta(math.Log1p(.9), scores[11], 1e-9, "one-way email counts once")
 	assert.InDelta(math.Log1p(3*.9), scores[12], 1e-9, "one-way chat keeps every message")
 	assert.InDelta(math.Log1p(3*.9), scores[13], 1e-9, "two-way email keeps every message")
+
+	// A matching ask-me-about value adds a fixed boost to an author and
+	// stands alone for a person with no messages.
+	people, _ = Rank([]Candidate{
+		{PersonID: 14, Messages: []Authored{authored(41, 0, .9)}, AskMeAbout: []string{"kubernetes"}},
+		{PersonID: 15, AskMeAbout: []string{"kubernetes"}},
+	}, rankParams(), rankNow)
+	require.Len(t, people, 2)
+	assert.Equal(int64(14), people[0].PersonID)
+	assert.InDelta(.75, people[0].DeclaredBoost, 1e-9)
+	assert.InDelta(math.Log1p(.9)+.75, people[0].Score, 1e-9)
+	assert.Equal(int64(15), people[1].PersonID)
+	assert.Zero(people[1].AuthoredMessages)
+	assert.InDelta(.75, people[1].Score, 1e-9)
 }
 
 func TestRankTiesAreDeterministic(t *testing.T) {

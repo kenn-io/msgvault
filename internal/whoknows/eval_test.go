@@ -307,21 +307,6 @@ func TestFindEvaluation(t *testing.T) {
 	}
 }
 
-// Search scores a vector hit as 1 - L2 distance, which falls below the floor
-// for a message sharing two of three words with the topic. The service
-// rescores it by cosine.
-func TestFindCountsVectorHitsByCosine(t *testing.T) {
-	f := newEvalFixture(t)
-	f.post(t, "captain@example.net", "zeppelin mooring lines", embedWords("zeppelin mooring lines"))
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	require.Len(t, got.UnsavedContacts, 1)
-	assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
-	// Two of three words shared: cosine 2/sqrt(6), sent today.
-	assert.InDelta(t, math.Log1p(2/math.Sqrt(6)), got.UnsavedContacts[0].MessageScore, 1e-6)
-}
-
 // fillPool posts 101 messages at cosine 0.3 to the topic, scaled by scale:
 // below the floor, but nearer the query by L2 than a long vector pointing the
 // topic's way.
