@@ -16,7 +16,7 @@ import (
 var tierAsOf = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 
 func tierOptions() store.PersonTierOptions {
-	return store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: tierAsOf}
+	return store.PersonTierOptions{Config: persontiers.DefaultConfig()}
 }
 
 // seedTierMail writes one message per entry. A negative day offset is that
@@ -85,7 +85,7 @@ func newTierPeople(t *testing.T) tierPeople {
 
 func previewTiers(t *testing.T, p tierPeople) *store.PersonTierPreview {
 	t.Helper()
-	preview, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
+	preview, err := store.PreviewPersonTiersAt(t.Context(), p.f.Store, tierOptions(), tierAsOf)
 	require.NoError(t, err)
 	return preview
 }
@@ -134,7 +134,7 @@ func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
 	late := mustPromotedPerson(t, f.Store, "late@example.com", "late")
 	seedTierMail(t, f, late.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
+	preview, err := store.PreviewPersonTiersAt(t.Context(), f.Store, tierOptions(), tierAsOf)
 	require.NoError(err)
 	require.Len(preview.People, 1)
 	assert.Equal(late.ID, preview.People[0].PersonID)
@@ -153,7 +153,7 @@ func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	p := newTierPeople(t)
-	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
+	explanation, err := store.ExplainPersonTierAt(t.Context(), p.f.Store, p.regular, tierOptions(), tierAsOf)
 	require.NoError(err)
 	assert.Equal(2, explanation.Tier)
 	assert.Equal("tier2_two_way", explanation.Rule)
@@ -175,7 +175,7 @@ func TestExplainPersonTierReportsDormantPersonWithNoCountedDay(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	p := newTierPeople(t)
-	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.old, tierOptions())
+	explanation, err := store.ExplainPersonTierAt(t.Context(), p.f.Store, p.old, tierOptions(), tierAsOf)
 	require.NoError(err)
 	assert.Equal(3, explanation.Tier)
 	assert.Equal("none", explanation.Rule)
@@ -191,7 +191,7 @@ func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
 	person := mustPromotedPerson(t, f.Store, "noreply@example.com", "noreply")
 	seedTierMail(t, f, person.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
-	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+	explanation, err := store.ExplainPersonTierAt(t.Context(), f.Store, person.ID, tierOptions(), tierAsOf)
 	require.NoError(err)
 	assert.Equal(3, explanation.Tier)
 	assert.Equal("tier1_intensity", explanation.Rule)
@@ -200,7 +200,7 @@ func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
 
 func TestExplainPersonTierRejectsUnknownPeople(t *testing.T) {
 	p := newTierPeople(t)
-	_, err := p.f.Store.ExplainPersonTierContext(t.Context(), 99999, tierOptions())
+	_, err := store.ExplainPersonTierAt(t.Context(), p.f.Store, 99999, tierOptions(), tierAsOf)
 	require.ErrorIs(t, err, store.ErrPersonNotFound)
 }
 
@@ -213,15 +213,15 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 	a.message(t, "stored-limit", -1, a.f.ConvID, "", a.owner, x, y)
 	projectTierSignals(t, a.f, "UTC", 25)
 	options := store.PersonTierOptions{
-		Config: persontiers.DefaultConfig(), AsOf: tierAsOf, ActivityTimezone: "UTC", ActivityMaxDirect: 25,
+		Config: persontiers.DefaultConfig(), ActivityTimezone: "UTC", ActivityMaxDirect: 25,
 	}
 
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
+	explanation, err := store.ExplainPersonTierAt(t.Context(), a.f.Store, a.personID, options, tierAsOf)
 	require.NoError(err)
 	assert.True(explanation.Readiness.Ready)
 
 	options.ActivityMaxDirect = 1
-	explanation, err = a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
+	explanation, err = store.ExplainPersonTierAt(t.Context(), a.f.Store, a.personID, options, tierAsOf)
 	require.NoError(err)
 	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, explanation.Projection)
 	assert.False(explanation.Readiness.Ready)
@@ -230,7 +230,7 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 	assert.Equal(1, explanation.Signals.InboundLong, "a limit of 1 would have dropped this message")
 	assert.Zero(explanation.Signals.LargeAudienceInboundEvents)
 
-	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options)
+	preview, err := store.PreviewPersonTiersAt(t.Context(), a.f.Store, options, tierAsOf)
 	require.NoError(err)
 	assert.Contains(preview.Readiness.Reasons[0], "settings_changed")
 	assert.Equal(25, preview.Projection.MaxDirect)
@@ -247,7 +247,7 @@ func TestPersonTiersReportTheLastCountedDayInTheProjectionTimezone(t *testing.T)
 	require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{a.owner}, nil))
 	projectTierSignals(t, a.f, "America/New_York", 25)
 
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+	explanation, err := store.ExplainPersonTierAt(t.Context(), a.f.Store, a.personID, tierOptions(), tierAsOf)
 
 	require.NoError(err)
 	assert.Equal("America/New_York", explanation.Projection.Timezone)
@@ -263,7 +263,7 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 	options := tierOptions()
 	options.ActivityTimezone, options.ActivityMaxDirect = "America/New_York", 10
 
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), options)
+	preview, err := store.PreviewPersonTiersAt(t.Context(), f.Store, options, tierAsOf)
 
 	require.NoError(err)
 	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, preview.Projection)
@@ -286,7 +286,7 @@ func TestPersonTiersKeepTheDateOfAnAllDayMeeting(t *testing.T) {
 		sql.NullString{String: `{"all_day":true}`, Valid: true}))
 	projectTierSignals(t, a.f, "America/New_York", 25)
 
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+	explanation, err := store.ExplainPersonTierAt(t.Context(), a.f.Store, a.personID, tierOptions(), tierAsOf)
 
 	require.NoError(err)
 	require.NotNil(explanation.LastContactDate)
@@ -305,9 +305,9 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 
 	_, err := p.f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
 	require.NoError(err)
-	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
+	_, err = store.PreviewPersonTiersAt(t.Context(), p.f.Store, tierOptions(), tierAsOf)
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
-	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), p.frequent, tierOptions())
+	_, err = store.ExplainPersonTierAt(t.Context(), p.f.Store, p.frequent, tierOptions(), tierAsOf)
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 
 	projectTierSignals(t, p.f, "America/New_York", 25)
@@ -317,7 +317,7 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 
 	_, err = p.f.Store.ClaimActivityDirectLimitTransitionContext(t.Context(), 10)
 	require.NoError(err)
-	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
+	_, err = store.PreviewPersonTiersAt(t.Context(), p.f.Store, tierOptions(), tierAsOf)
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	projectTierSignals(t, p.f, "America/New_York", 10)
 	assert.Equal(10, previewTiers(t, p).Projection.MaxDirect)

@@ -367,3 +367,14 @@ var (
 	OwnerIdentifierMatch = ownerIdentifierMatch
 	SenderOwnerFallback  = senderOwnerFallback
 )
+
+// PreviewPersonTiersAt previews tiers as of a fixed date, so tests do not
+// depend on the day they run.
+func PreviewPersonTiersAt(ctx context.Context, s *Store, options PersonTierOptions, asOf time.Time) (*PersonTierPreview, error) {
+	return s.previewPersonTiers(ctx, options, asOf)
+}
+
+// ExplainPersonTierAt explains one person's tier as of a fixed date.
+func ExplainPersonTierAt(ctx context.Context, s *Store, personID int64, options PersonTierOptions, asOf time.Time) (*PersonTierExplanation, error) {
+	return s.explainPersonTier(ctx, personID, options, asOf)
+}
