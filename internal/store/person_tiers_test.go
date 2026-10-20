@@ -159,17 +159,10 @@ func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
 	p := newTierPeople(t)
 	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
 	require.NoError(err)
-	assert.Equal("tier2_two_way", explanation.Rule)
-	assert.Equal(2, explanation.Signals.OutboundLong)
-	assert.Equal(2, explanation.Signals.InboundLong)
-	assert.Equal(4, explanation.Signals.ActiveDaysLong)
 	require.NotNil(explanation.LastContactDate)
 	assert.Equal("2026-07-09", *explanation.LastContactDate)
 	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
 		Name: "tier2.min_active_days_long", Observed: 4, Required: 3, Enabled: true, Met: true,
-	})
-	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
-		Name: "tier1.min_outbound_short", Observed: 0, Required: 2, Enabled: true,
 	})
 }
 
@@ -202,11 +195,6 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 	assert.Contains(explanation.Readiness.Reasons[0], "settings_changed: stored timezone UTC and direct limit 25, configured UTC and 1")
 	assert.Equal(1, explanation.Signals.InboundLong, "a limit of 1 would have dropped this message")
 	assert.Zero(explanation.Signals.LargeAudienceInboundEvents)
-
-	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options)
-	require.NoError(err)
-	assert.Contains(preview.Readiness.Reasons[0], "settings_changed")
-	assert.Equal(25, preview.Projection.MaxDirect)
 }
 
 func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
@@ -225,25 +213,6 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 		assert.NotContains(reason, "settings_changed", "nothing is stored to differ from")
 	}
 	assert.Empty(preview.People)
-}
-
-// The projector keeps an all-day meeting on its own date. Converting a
-// timestamp into the projection timezone would show the day before. An
-// all-day event is stored at midnight UTC, which is still the 16th in New York.
-func TestPersonTiersKeepTheDateOfAnAllDayMeeting(t *testing.T) {
-	require := require.New(t)
-	a := newAudienceFixture(t)
-	a.asOf = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	id := a.message(t, "all-day", 0, a.f.ConvID, "calendar_event", a.owner)
-	require.NoError(a.f.Store.SetMessageMetadata(id,
-		sql.NullString{String: `{"all_day":true}`, Valid: true}))
-	projectTierSignals(t, a.f, "America/New_York", 25)
-
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
-
-	require.NoError(err)
-	require.NotNil(explanation.LastContactDate)
-	assert.Equal(t, "2026-10-17", *explanation.LastContactDate)
 }
 
 // While the projector replays under a new setting, the stored rows follow

@@ -43,8 +43,6 @@ func tierRow(id int64, name string, tier int, tracked bool) store.PersonTierRow 
 	return store.PersonTierRow{PersonID: id, DisplayName: &name, Tier: tier, Rule: rule, Tracked: tracked}
 }
 
-// readyPreview lists rows in the order the store returns them: tier first,
-// then newest counted day, so the IDs here are deliberately not ascending.
 func readyPreview(rows ...store.PersonTierRow) store.PersonTierPreview {
 	return store.PersonTierPreview{
 		AsOf: "2026-10-17", Readiness: store.PersonTierReadiness{Ready: true, Reasons: []string{}}, People: rows,
@@ -140,7 +138,10 @@ func TestPersonTiersExplain(t *testing.T) {
 		PersonID: 7, DisplayName: &name, Tier: 2, Rule: "tier2_two_way", Tracked: true, AsOf: "2026-10-17",
 		LastContactDate: &last,
 		Projection:      store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25},
-		Signals:         persontiers.Signals{ExcludedListEvents: 4, LargeAudienceInboundEvents: 9},
+		Signals: persontiers.Signals{
+			OutboundLong: 2, InboundLong: 2, ActiveDaysLong: 4,
+			ExcludedListEvents: 4, LargeAudienceInboundEvents: 9,
+		},
 		Thresholds: []persontiers.ThresholdCheck{
 			{Name: "tier2.min_active_days_long", Observed: 4, Required: 3, Enabled: true, Met: true},
 			{Name: "tier2.min_meeting_days_long", Observed: 0, Required: 0},
