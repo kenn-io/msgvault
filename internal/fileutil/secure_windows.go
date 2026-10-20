@@ -164,12 +164,24 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 				}
 			}
 		}
-		if err := os.Mkdir(dir, perm); err != nil {
+		if err := secureMkdirFallback(dir, perm); err != nil {
 			return err
 		}
-		if err := restrictToCurrentUser(dir); err != nil {
-			slog.Warn("fileutil: best-effort DACL failed", "path", dir, "err", err)
+	}
+	return nil
+}
+
+func secureMkdirFallback(path string, perm os.FileMode) error {
+	if err := os.Mkdir(path, perm); err != nil {
+		if os.IsExist(err) {
+			if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+				return nil
+			}
 		}
+		return err
+	}
+	if err := restrictToCurrentUser(path); err != nil {
+		slog.Warn("fileutil: best-effort DACL failed", "path", path, "err", err)
 	}
 	return nil
 }

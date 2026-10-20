@@ -118,6 +118,15 @@ func TestSecureMkdirAllConcurrentCreation(t *testing.T) {
 	require.True(info.IsDir())
 }
 
+func TestSecureMkdirFallbackExistingPath(t *testing.T) {
+	require := require.New(t)
+	dir := t.TempDir()
+	require.NoError(secureMkdirFallback(dir, 0o700))
+	file := filepath.Join(dir, "file")
+	require.NoError(os.WriteFile(file, nil, 0o600))
+	require.Error(secureMkdirFallback(file, 0o700))
+}
+
 func TestSecureMkdirAllRejectsFileComponent(t *testing.T) {
 	require := require.New(t)
 	path := filepath.Join(t.TempDir(), "file")
