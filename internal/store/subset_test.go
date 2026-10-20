@@ -5423,6 +5423,50 @@ func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
 	assert.Equal(accountPathSent, path.String, "a copied draft is written, not received")
 }
 
+func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
+	for _, sentEvidence := range []string{"none", "label", "origin"} {
+		t.Run(sentEvidence, func(t *testing.T) {
+			require := require.New(t)
+			srcDB := createTestSourceDB(t, t.TempDir(), 1)
+			src, err := Open(srcDB)
+			require.NoError(err)
+			_, err = src.DB().Exec(`UPDATE sources SET source_type = 'imap'`)
+			require.NoError(err)
+			_, err = src.DB().Exec(`INSERT INTO imap_message_memberships
+				(source_id, mailbox, uidvalidity, uid, message_id, flags)
+				VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
+			require.NoError(err)
+			if sentEvidence == "label" {
+				labels, err := src.EnsureLabelsBatch(1, map[string]LabelInfo{
+					"sent": {Name: "Sent", Type: "system", SystemRole: LabelSystemRoleSent},
+				})
+				require.NoError(err)
+				require.NoError(src.AddMessageLabels(1, []int64{labels["sent"]}))
+			}
+			if sentEvidence == "origin" {
+				require.NoError(src.SetMessageMetadata(1, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
+			}
+			before, err := src.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(before, 1)
+			require.Equal(sentEvidence == "none", before[0].Unsent)
+			require.NoError(src.Close())
+
+			dstDir := filepath.Join(t.TempDir(), "dst")
+			_, err = CopySubset(srcDB, dstDir, 1, false)
+			require.NoError(err)
+			dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { _ = dst.Close() })
+			after, err := dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.Equal(t, sentEvidence == "none", after[0].Unsent)
+			assert.Equal(t, sentEvidence != "none", after[0].Eligible)
+		})
+	}
+}
+
 func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	requirements := require.New(t)
 	sourcePath := createTestSourceDB(t, t.TempDir(), 1)

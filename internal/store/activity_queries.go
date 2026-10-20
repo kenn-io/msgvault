@@ -114,15 +114,29 @@ const activityCandidateStateCTE = `
 // activityUnsentSQL keeps sent copies eligible even when dedup retained draft
 // evidence. Saved IMAP Sent origin survives moves out of Sent.
 func (s *Store) activityUnsentSQL() string {
+	return activityUnsentInSchemaSQL(s.dialect, "")
+}
+
+func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
 	origin := `m.metadata ->> 'imap_content_origin'`
-	if s.dialect.DriverName() != postgresDriverName {
+	if dialect.DriverName() != postgresDriverName {
 		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 	}
-	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceSQL("m", "src") + `
+	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
 		AND COALESCE(` + origin + `, '') <> 'sent'
-		AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
+		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
 		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
+}
+
+// preserveActivityUnsentSQL keeps effective unsent status when an operation
+// drops draft evidence. schema and selection are internal SQL fragments.
+func preserveActivityUnsentSQL(dialect Dialect, schema, selection string) string {
+	return `UPDATE messages SET is_sent = FALSE
+		WHERE COALESCE(is_sent, TRUE) AND id IN (
+			SELECT m.id FROM ` + schema + `messages m
+			LEFT JOIN ` + schema + `sources src ON src.id = m.source_id
+			WHERE (` + selection + `) AND ` + activityUnsentInSchemaSQL(dialect, schema) + `)`
 }
 
 func (s *Store) activityCandidateColumns() string {

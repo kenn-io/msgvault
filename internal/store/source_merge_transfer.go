@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	if _, err := tx.ExecContext(ctx, preserveActivityUnsentSQL(s.dialect, "", `m.source_id = ?`), from); err != nil {
+		return fmt.Errorf("preserve merged source unsent status: %w", err)
+	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {

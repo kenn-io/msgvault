@@ -3003,6 +3003,10 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 // records. A message the source has not yet derived would otherwise lose it,
 // and deriving it in the subset could count the draft as received mail.
 func markSubsetDraftsAuthored(tx *sql.Tx) error {
+	if _, err := tx.Exec(preserveActivityUnsentSQL(&SQLiteDialect{}, "src.",
+		`m.id IN (SELECT id FROM selected_messages)`)); err != nil {
+		return fmt.Errorf("preserve subset unsent status: %w", err)
+	}
 	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
 		WHERE draft_authored = FALSE AND id IN (
 			SELECT m.id FROM src.messages m JOIN src.sources s ON s.id = m.source_id
