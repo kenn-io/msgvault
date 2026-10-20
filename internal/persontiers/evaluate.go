@@ -5,19 +5,21 @@ import "strings"
 // Signals counts only events already filtered by the activity rules. Owner,
 // Emails and HasPhoneOrChat feed the exclusions and stay out of the output.
 type Signals struct {
-	OutboundShort              int      `json:"outbound_short"`
-	OutboundLong               int      `json:"outbound_long"`
-	InboundShort               int      `json:"inbound_short"`
-	InboundLong                int      `json:"inbound_long"`
-	ActiveDaysShort            int      `json:"active_days_short"`
-	ActiveDaysLong             int      `json:"active_days_long"`
-	MeetingDaysLong            int      `json:"meeting_days_long"`
-	ChannelsLong               int      `json:"channels_long"`
-	ExcludedListEvents         int      `json:"excluded_list_events"`
-	LargeAudienceInboundEvents int      `json:"large_audience_inbound_events"`
-	Owner                      bool     `json:"-"`
-	Emails                     []string `json:"-"`
-	HasPhoneOrChat             bool     `json:"-"`
+	OutboundShort              int `json:"outbound_short"`
+	OutboundLong               int `json:"outbound_long"`
+	InboundShort               int `json:"inbound_short"`
+	InboundLong                int `json:"inbound_long"`
+	ActiveDaysShort            int `json:"active_days_short"`
+	ActiveDaysLong             int `json:"active_days_long"`
+	MeetingDaysLong            int `json:"meeting_days_long"`
+	ChannelsLong               int `json:"channels_long"`
+	ExcludedListEvents         int `json:"excluded_list_events"`
+	LargeAudienceInboundEvents int `json:"large_audience_inbound_events"`
+	// LastDate is the latest local date of a counted event, or empty.
+	LastDate       string   `json:"last_counted_date"`
+	Owner          bool     `json:"-"`
+	Emails         []string `json:"-"`
+	HasPhoneOrChat bool     `json:"-"`
 }
 
 // ThresholdCheck compares one count with its configured threshold. A zero
