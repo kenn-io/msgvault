@@ -496,7 +496,11 @@ func TestContextDiagnosticsSizeRejection(t *testing.T) {
 				inputs = []DocumentInput{{Chunks: []string{strings.Repeat("é", 2048)}}}
 			}
 			d.beginBatch(len(inputs), time.Now())
-			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), inputs)
+			policyInputs := make([]contextualDocumentInput, len(inputs))
+			for i, input := range inputs {
+				policyInputs[i] = contextualDocumentInput{input: input}
+			}
+			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), policyInputs)
 			require.NoError(err, "an oversized document is recovered or left uncovered without failing the pass")
 			require.Len(results, len(inputs))
 			d.finish(nil)

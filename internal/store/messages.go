@@ -1207,6 +1207,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				}
 			}
 
+			if err := invalidateEnvelopeContextWith(tx, "support.source_id=? AND support.conversation_id=? AND support.source_message_id=?", sourceID, conversationID, legacySourceMessageID); err != nil {
+				return err
+			}
 			_, err = tx.Exec(
 				`DELETE FROM messages
 				 WHERE source_id = ? AND conversation_id = ? AND source_message_id = ?`,
@@ -1484,6 +1487,11 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 	if !journalCandidate {
 		err := q.QueryRow(`SELECT conversation_id FROM messages WHERE source_id=? AND source_message_id=?`, msg.SourceID, msg.SourceMessageID).Scan(&prior.conversationID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, err
+		}
+	}
+	if prior.conversationID.Valid && prior.conversationID.Int64 != msg.ConversationID {
+		if err := invalidateEnvelopeContextWith(q, "support.source_id=? AND support.source_message_id=?", msg.SourceID, msg.SourceMessageID); err != nil {
 			return 0, err
 		}
 	}
@@ -2715,7 +2723,16 @@ func (s *Store) lockMessageForRecipientWrite(q querier, messageID int64) error {
 }
 
 func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) error {
-	_, err := tx.Exec(`
+	unchanged, err := messageRecipientEnvelopeUnchangedWith(tx, messageID, rs)
+	if err != nil {
+		return err
+	}
+	if !unchanged {
+		if err := invalidateEnvelopeContextWith(tx, "support.id=? AND mr.recipient_type=?", messageID, rs.Type); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(`
 		DELETE FROM message_recipients WHERE message_id = ? AND recipient_type = ?
 	`, messageID, rs.Type)
 	if err != nil {
@@ -3530,18 +3547,9 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(fmt.Sprintf(`
-			UPDATE messages
-			SET deleted_from_source_at = %s
-			WHERE source_id = ? AND source_message_id = ? AND deleted_from_source_at IS NULL
-		`, s.dialect.Now()), sourceID, sourceMessageID)
-		return err
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.source_id=? AND support.source_message_id=? AND support.deleted_from_source_at IS NULL", sourceID, sourceMessageID)
+	})
 }
 
 // ClearMessageDeletedFromSource clears the upstream tombstone when a message
@@ -3577,14 +3585,9 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q chunkQuerier) error {
-		return execInChunks(q, sourceMessageIDs, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now()))
-	}
-	if s.syncGeneration == nil {
-		return write(s.db)
-	}
-	return s.withTx(func(tx *loggedTx) error { return write(tx) })
+	return s.withTx(func(tx *loggedTx) error {
+		return tombstoneSourceEnvelopesWith(tx, s.dialect.Now(), sourceID, sourceMessageIDs)
+	})
 }
 
 // ReconcileSourceMessageSnapshot tombstones locally live messages that are
@@ -3636,8 +3639,7 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 		if len(missing) == 0 {
 			return nil
 		}
-		if err := execInChunksContext(ctx, tx, missing, []any{sourceID},
-			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+		if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, missing); err != nil {
 			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
 		}
 		return nil
@@ -3672,8 +3674,7 @@ func (s *Store) MarkMessagesDeletedFromReaderContext(ctx context.Context, source
 			if len(batch) == 0 {
 				return nil
 			}
-			if err := execInChunksContext(ctx, tx, batch, []any{sourceID},
-				fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
+			if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, batch); err != nil {
 				return err
 			}
 			batch = batch[:0]
@@ -3722,15 +3723,12 @@ func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, _ bool, gmai
 	sourceClause := ""
 	args := []any{gmailID}
 	if sourceID > 0 {
-		sourceClause = " AND source_id = ?"
+		sourceClause = " AND support.source_id = ?"
 		args = append(args, sourceID)
 	}
-	_, err := s.db.Exec(fmt.Sprintf(`
-		UPDATE messages
-		SET deleted_from_source_at = %s
-		WHERE source_message_id = ?%s AND deleted_from_source_at IS NULL
-	`, s.dialect.Now(), sourceClause), args...)
-	return err
+	return s.withTx(func(tx *loggedTx) error {
+		return tombstoneEnvelopeMessagesWith(tx, s.dialect.Now(), "support.source_message_id = ?"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+	})
 }
 
 // MarkMessagesDeletedByGmailIDBatch marks multiple messages as deleted by their Gmail IDs
@@ -3769,15 +3767,14 @@ func (s *Store) MarkMessagesDeletedBySourceMessageIDBatch(sourceID int64, gmailI
 		}
 		sourceClause := ""
 		if sourceID > 0 {
-			sourceClause = " AND source_id = ?"
+			sourceClause = " AND support.source_id = ?"
 			args = append(args, sourceID)
 		}
 
-		query := fmt.Sprintf(
-			`UPDATE messages SET deleted_from_source_at = %s WHERE source_message_id IN (%s)%s AND deleted_from_source_at IS NULL`,
-			s.dialect.Now(), strings.Join(placeholders, ","), sourceClause)
-
-		if _, err := s.db.Exec(query, args...); err != nil {
+		err := s.withTx(func(tx *loggedTx) error {
+			return tombstoneEnvelopeMessagesWith(tx, s.dialect.Now(), "support.source_message_id IN ("+strings.Join(placeholders, ",")+")"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+		})
+		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}

@@ -2343,6 +2343,24 @@ func (e *DuckDBEngine) getMessageByQuery(ctx context.Context, whereClause string
 	return getMessageByQueryShared(ctx, e.db, noopRebind, "sqlite_db.", whereClause, args...)
 }
 
+// scannerPolicySQL qualifies the canonical archive predicates for DuckDB's
+// SQLite attachment. Keep predicates direct: sqlite_scanner cannot reliably
+// inline repeated policy CTEs when a source table is empty.
+func scannerPolicySQL(expression string) string {
+	tables := []string{
+		"conversations", "conversation_policy", "sources", "conversation_participants",
+		"participant_identifiers", "participant_contact_observations", "messages",
+		"message_recipients", "person_participants", "person_contact_points",
+		"participant_contact_observation_conversations", "communication_services",
+	}
+	replacements := make([]string, 0, len(tables)*4)
+	for _, table := range tables {
+		replacements = append(replacements, "FROM "+table+" ", "FROM sqlite_db."+table+" ",
+			"JOIN "+table+" ", "JOIN sqlite_db."+table+" ")
+	}
+	return strings.NewReplacer(replacements...).Replace(expression)
+}
+
 // Search performs a Gmail-style search query.
 // Uses direct SQLite connection for FTS5 support when available,
 // falls back to LIKE queries via sqlite_scan otherwise.
@@ -2371,13 +2389,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	var args []any
 	var joins []string
 
-	// Qualify the canonical predicate directly: sqlite_scanner cannot reliably
-	// inline repeated policy CTEs when a source table is empty.
-	policyWhere := strings.NewReplacer(
-		"FROM conversations ", "FROM sqlite_db.conversations ",
-		"FROM conversation_policy ", "FROM sqlite_db.conversation_policy ",
-		"FROM sources ", "FROM sqlite_db.sources ",
-	).Replace(store.LexicalMessageWhere("m", q.IncludeCold))
+	policyWhere := scannerPolicySQL(store.LexicalMessageWhere("m", q.IncludeCold))
 	conditions = append(conditions, searchMessageVisibilityWhere("m", q), policyWhere)
 
 	// From filter
@@ -2391,7 +2403,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			placeholders[i] = "?"
 			args = append(args, addr)
 		}
-		conditions = append(conditions, fmt.Sprintf("LOWER(p_from.email_address) IN (%s)", strings.Join(placeholders, ",")))
+		conditions = append(conditions, fmt.Sprintf("LOWER(p_from.email_address) IN (%s)", strings.Join(placeholders, ",")),
+			scannerPolicySQL(store.FullParticipantValueWhere("p_from.id", "'email'", "p_from.email_address")))
 	}
 
 	// To filter
@@ -2405,7 +2418,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			placeholders[i] = "?"
 			args = append(args, addr)
 		}
-		conditions = append(conditions, fmt.Sprintf("LOWER(p_to.email_address) IN (%s)", strings.Join(placeholders, ",")))
+		conditions = append(conditions, fmt.Sprintf("LOWER(p_to.email_address) IN (%s)", strings.Join(placeholders, ",")),
+			scannerPolicySQL(store.FullParticipantValueWhere("p_to.id", "'email'", "p_to.email_address")))
 	}
 
 	// Label filter
@@ -2512,8 +2526,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			COALESCE(conv.source_conversation_id, ''),
 			COALESCE(m.subject, ''),
 			COALESCE(m.snippet, ''),
-			COALESCE(p_sender.email_address, ''),
-			COALESCE(p_sender.display_name, ''),
+			%s,
+			%s,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
@@ -2528,7 +2542,8 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 		WHERE %s
 		ORDER BY m.sent_at DESC
 		LIMIT ? OFFSET ?
-	`, strings.Join(joins, "\n"), strings.Join(conditions, " AND "))
+	`, scannerPolicySQL(eligibleParticipantEmailExpr("p_sender")), scannerPolicySQL(eligibleRecipientNameExpr("mr_sender", "p_sender")),
+		strings.Join(joins, "\n"), strings.Join(conditions, " AND "))
 
 	args = append(args, limit, offset)
 

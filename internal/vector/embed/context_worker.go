@@ -751,7 +751,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		diagnostics.completeBatch()
 	}()
 	plans := make([]preparedScopePublication, 0, len(scopes))
-	inputs := make([]DocumentInput, 0)
+	inputs := make([]contextualDocumentInput, 0)
 	targets := make([]preparedDocumentTarget, 0)
 	budget, _ := ctx.Value(contextRunBudgetKey{}).(*contextRunBudget)
 	budgetExhausted := false
@@ -791,7 +791,7 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 		plan.failedDocs = make([]bool, len(scope.docs))
 		plan.preserved = make([]bool, len(scope.docs))
 		plan.resolved = make([]bool, len(scope.docs))
-		scopeInputs := make([]DocumentInput, 0, len(scope.docs))
+		scopeInputs := make([]contextualDocumentInput, 0, len(scope.docs))
 		scopeTargets := make([]preparedDocumentTarget, 0, len(scope.docs))
 		for docIndex, doc := range scope.docs {
 			if record, ok := existingByKey[doc.Key]; ok && record.Kind == doc.Kind &&
@@ -804,7 +804,9 @@ func (w *ContextWorker) publishPreparedScopes(ctx context.Context, gen vector.Ge
 			for chunkIndex, chunk := range doc.Chunks {
 				input.Chunks[chunkIndex] = chunk.Text
 			}
-			scopeInputs = append(scopeInputs, input)
+			scopeInputs = append(scopeInputs, contextualDocumentInput{
+				input: input, messageIDs: documentMembers(doc),
+			})
 			scopeTargets = append(scopeTargets, preparedDocumentTarget{docIndex: docIndex})
 		}
 		scopeIndex := len(plans)
@@ -1100,16 +1102,31 @@ type contextualDocumentEmbedding struct {
 	embeddedChunks []string
 }
 
+// contextualDocumentInput carries the source messages whose text appears in a
+// provider request. Keep the IDs beside the document while requests are packed,
+// split after size rejections, or retried with truncated input.
+type contextualDocumentInput struct {
+	input      DocumentInput
+	messageIDs []int64
+}
+
 // truncatedContextualDocumentFloorUTF8Bytes is the smallest chunk-text budget
 // the singleton truncation fallback will try before declaring a document
 // permanently too large. Any real document embeds well before this floor.
 const truncatedContextualDocumentFloorUTF8Bytes = 1024
 
-func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []DocumentInput) ([]contextualDocumentEmbedding, error) {
+func (w *ContextWorker) embedDocuments(ctx context.Context, inputs []contextualDocumentInput) ([]contextualDocumentEmbedding, error) {
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	vectors, err := w.embedDocumentsMeasured(ctx, inputs)
+	documents := make([]DocumentInput, len(inputs))
+	messageIDs := make([]int64, 0)
+	for i, input := range inputs {
+		documents[i] = input.input
+		messageIDs = append(messageIDs, input.messageIDs...)
+	}
+	requestCtx := store.WithConversationPolicyMessageIDs(ctx, messageIDs)
+	vectors, err := w.embedDocumentsMeasured(requestCtx, documents)
 	if len(vectors) > len(inputs) || (err == nil && len(vectors) != len(inputs)) {
 		return nil, fmt.Errorf("contextual batched vector document count mismatch: got %d, expected %d", len(vectors), len(inputs))
 	}
@@ -1156,19 +1173,20 @@ func isSizeRejection(err error) bool {
 	return rejected || errors.Is(err, ErrDocumentTooLarge)
 }
 
-func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input DocumentInput) ([]contextualDocumentEmbedding, error) {
+func (w *ContextWorker) embedTruncatedDocument(ctx context.Context, input contextualDocumentInput) ([]contextualDocumentEmbedding, error) {
 	budget := 0
-	for _, chunk := range input.Chunks {
+	for _, chunk := range input.input.Chunks {
 		budget += len(chunk)
 	}
 	for budget/2 >= truncatedContextualDocumentFloorUTF8Bytes {
 		budget /= 2
-		truncated := truncateDocumentInput(input, budget)
-		vectors, err := w.embedDocumentsMeasured(ctx, []DocumentInput{truncated})
+		truncated := truncateDocumentInput(input.input, budget)
+		requestCtx := store.WithConversationPolicyMessageIDs(ctx, input.messageIDs)
+		vectors, err := w.embedDocumentsMeasured(requestCtx, []DocumentInput{truncated})
 		if err == nil {
-			if len(vectors) != 1 || len(vectors[0]) != len(input.Chunks) {
+			if len(vectors) != 1 || len(vectors[0]) != len(input.input.Chunks) {
 				return nil, fmt.Errorf("contextual truncated document chunk count mismatch: got %d, expected %d",
-					len(vectors), len(input.Chunks))
+					len(vectors), len(input.input.Chunks))
 			}
 			return []contextualDocumentEmbedding{{vectors: vectors[0], embeddedChunks: truncated.Chunks}}, nil
 		}

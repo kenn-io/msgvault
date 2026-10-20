@@ -410,3 +410,75 @@ func FullParticipantDisplaySQL(alias string) string {
 	phone := `CASE WHEN ` + FullParticipantValueWhere(alias+`.id`, `'phone'`, alias+`.phone_number`) + ` THEN ` + alias + `.phone_number END`
 	return `COALESCE(NULLIF(TRIM(` + name + `), ''), NULLIF(` + email + `, ''), NULLIF(` + phone + `, ''), '')`
 }
+
+// Envelope support is shared by contextual blocks in every Full room. Revoke
+// their stamps before removing support, inside the same write transaction.
+// Selection fragments are fixed SQL supplied by Store mutation paths.
+func invalidateEnvelopeContextWith(q querier, selection string, args ...any) error {
+	_, err := q.Exec(`WITH affected_participants AS (
+ SELECT mr.participant_id FROM message_recipients mr
+ JOIN messages support ON support.id=mr.message_id
+ WHERE `+selection+` AND `+LiveMessagesWhere("support", true)+` AND `+FullMessageWhere("support")+`
+ ), affected_rooms AS (
+ SELECT conversation_id FROM conversation_participants WHERE participant_id IN (SELECT participant_id FROM affected_participants)
+ UNION SELECT conversation_id FROM messages WHERE sender_id IN (SELECT participant_id FROM affected_participants)
+ )
+ UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1
+ WHERE message_type='beeper' AND conversation_id IN (SELECT conversation_id FROM affected_rooms)
+ AND `+FullMessageWhere("messages"), args...)
+	return err
+}
+
+// tombstoneEnvelopeMessagesWith covers provider tombstones and dedup hiding.
+// Keeping invalidation next to the UPDATE also covers compatibility writers.
+func tombstoneEnvelopeMessagesWith(q querier, now, selection string, args ...any) error {
+	if err := invalidateEnvelopeContextWith(q, selection, args...); err != nil {
+		return err
+	}
+	_, err := q.Exec(`UPDATE messages SET deleted_from_source_at=`+now+` WHERE `+strings.ReplaceAll(selection, "support.", ""), args...)
+	return err
+}
+
+func tombstoneSourceEnvelopesWith(q querier, now string, sourceID int64, ids []string) error {
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		args := []any{sourceID}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		if err := tombstoneEnvelopeMessagesWith(q, now, "support.source_id=? AND support.source_message_id IN ("+sqlPlaceholders(len(chunk))+") AND support.deleted_from_source_at IS NULL", args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Exact replays retain their existing contextual stamps. Compare in bounded
+// chunks so large provider envelopes retain the insert path's parameter bound.
+func messageRecipientEnvelopeUnchangedWith(q querier, messageID int64, rs RecipientSet) (bool, error) {
+	rows := normalizedMessageRecipients(rs)
+	var count int
+	if err := q.QueryRow(`SELECT COUNT(*) FROM message_recipients WHERE message_id=? AND recipient_type=?`, messageID, rs.Type).Scan(&count); err != nil {
+		return false, err
+	}
+	if count != len(rows) {
+		return false, nil
+	}
+	for start := 0; start < len(rows); start += 300 {
+		chunk := rows[start:min(start+300, len(rows))]
+		args := []any{messageID, rs.Type}
+		pairs := make([]string, len(chunk))
+		for i, row := range chunk {
+			pairs[i] = "(CAST(? AS BIGINT),CAST(? AS TEXT),CAST(? AS TEXT))"
+			args = append(args, row.participantID, row.displayName, row.email)
+		}
+		var matched int
+		if err := q.QueryRow(`SELECT COUNT(*) FROM message_recipients WHERE message_id=? AND recipient_type=? AND (participant_id,COALESCE(display_name,''),COALESCE(email_address,'')) IN (VALUES `+strings.Join(pairs, ",")+`)`, args...).Scan(&matched); err != nil {
+			return false, err
+		}
+		if matched != len(chunk) {
+			return false, nil
+		}
+	}
+	return true, nil
+}

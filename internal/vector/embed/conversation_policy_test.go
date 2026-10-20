@@ -312,6 +312,77 @@ func TestContextWorkerColdPolicyDelayedResponseAfterPromotion(t *testing.T) {
 	assert.Nil(t, stamp)
 }
 
+func TestContextWorkerColdPolicyRejectsHTTPRetry(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource("beeper", "context-request-policy")
+	require.NoError(t, err)
+	fullRoom, err := st.EnsureConversation(src.ID, "full-room", "Full room")
+	require.NoError(t, err)
+	coldRoom, err := st.EnsureConversation(src.ID, "cold-room", "Cold room")
+	require.NoError(t, err)
+	id, err := st.UpsertMessage(&store.Message{
+		SourceID: src.ID, ConversationID: fullRoom, SourceMessageID: "message",
+		MessageType: "beeper", Subject: sql.NullString{String: "Synthetic request input", Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: "Synthetic contextual body", Valid: true}, sql.NullString{}))
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "full-room", conversationpolicy.Full))
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), src.ID, "cold-room", conversationpolicy.Cold))
+	beforeRevision, err := st.ConversationPolicyRevision(t.Context())
+	require.NoError(t, err)
+
+	var mainPath string
+	require.NoError(t, st.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&mainPath))
+	b, err := sqlitevec.Open(t.Context(), sqlitevec.Options{
+		Path: filepath.Join(t.TempDir(), "vectors.db"), MainPath: mainPath,
+		MainDB: st.DB(), PolicyStore: st, Dimension: 4,
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, b.Close()) }()
+	gen, err := b.CreateGeneration(t.Context(), "context-request-policy", 4, "")
+	require.NoError(t, err)
+
+	var providerRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if providerRequests.Add(1) == 1 {
+			_, err := st.DB().ExecContext(r.Context(), st.Rebind(`UPDATE messages SET conversation_id=? WHERE id=?`), coldRoom, id)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		w.Header().Set("Retry-After", "0")
+		http.Error(w, "retry contextual request", http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := NewVoyageClient(VoyageConfig{
+		Endpoint: server.URL, Model: "synthetic-context", Dimension: 4, MaxRetries: 3,
+	})
+	w := NewContextWorker(ContextWorkerDeps{
+		Store: st, Backend: b, Publisher: b, Client: client,
+		Assembler: CompositeAssembler{
+			Policy: AssemblyPolicy{MaxChunkRunes: 200},
+			Chat:   ChatWindowAssembler{Policy: AssemblyPolicy{MaxChunkRunes: 200}},
+		},
+		Recorder: newTestOperationRecorder(),
+	})
+	_, err = w.RunOnce(t.Context(), gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, store.ErrConversationPolicyStale)
+	assert.Equal(t, int32(1), providerRequests.Load(), "the retry must not send a message after it moves to a Cold room")
+	var conversationID int64
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), id).Scan(&conversationID))
+	assert.Equal(t, coldRoom, conversationID)
+	afterRevision, err := st.ConversationPolicyRevision(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, beforeRevision, afterRevision, "moving a message does not change the global policy revision")
+	stats, err := b.Stats(t.Context(), gen)
+	require.NoError(t, err)
+	assert.Zero(t, stats.EmbeddingCount)
+	var stamp any
+	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), id).Scan(&stamp))
+	assert.Nil(t, stamp)
+}
+
 type pausedPolicyProgressPublisher struct {
 	vector.DocumentPublisher
 

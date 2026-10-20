@@ -347,10 +347,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 				return fmt.Errorf("replace labels for IMAP message %d: %w", messageID, err)
 			}
 			if len(mailboxes) == 0 {
-				if _, err := tx.Exec(fmt.Sprintf(`
-					UPDATE messages SET deleted_from_source_at = %s
-					WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NULL
-				`, s.dialect.Now()), messageID, sourceID); err != nil {
+				if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
 			} else if _, err := tx.Exec(`
