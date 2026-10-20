@@ -284,7 +284,6 @@ func personTierBindings(ctx context.Context, tx *loggedTx, marks string, args []
 				signal.Emails = append(signal.Emails, address)
 			}
 		}
-		slices.Sort(signal.Emails)
 		signals[id] = signal
 	}
 	if err = rows.Err(); err != nil {
