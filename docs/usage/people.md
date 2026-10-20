@@ -278,7 +278,8 @@ with `msgvault show-message <id>`. Unsaved contacts are senders bound to no
 saved person; promote one with `msgvault person promote <participant-id>`.
 The topic is plain words. Search operators such as `from:` are refused.
 
-The search reads the 200 closest messages. A message counts when its cosine
+The search reads up to 200 messages that match the topic by keyword or by
+meaning, ranked by both together. A message counts when its cosine
 similarity to the topic reaches `--min-score` (default 0.5). On SQLite the
 vector index scores by distance, so the command computes cosine similarity
 from each hit's stored vectors, whatever their length. A message found only by
@@ -314,12 +315,13 @@ to keeps every message. Chat has no direction, so a chat sender keeps every
 message even if you only read their channel.
 
 A topic nobody wrote about prints `Nobody in your archive has written about
-"..."`. When the search came up short, the output says how, under the results
-or in place of "nobody":
+"..." (minimum similarity 0.50)`, naming the `--min-score` in use. When the
+search came up short, the output says how, under the results or in place of
+"nobody":
 
-- `Searched the 200 closest messages; more may match.` A matching message was
-  among a full pool, so others may lie beyond it. Narrow with `--after` or
-  `--before`. The SQLite vector index ranks by distance, which matches meaning
+- `The search hit its result limit, so more messages may match.` A matching
+  message was among a full result pool, so others may lie beyond it. Narrow
+  with `--after` or `--before`. The SQLite vector index ranks by distance, which matches meaning
   only for unit-length vectors. When the topic's vector or a stored vector in
   the pool isn't unit length, a full pool reports this even when nothing in it
   matched.

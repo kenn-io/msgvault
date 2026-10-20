@@ -166,8 +166,8 @@ YYYY-MM-DD), as in the [CLI options](cli-reference.md#person-who-knows). The
 topic is plain words; search operators return `400 invalid_parameter`.
 
 The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
-lists each way the search came up short: `pool_full` when the search returned
-its full pool of 200 and a message matched, or the SQLite vector index ranked
+lists each way the search came up short: `pool_full` when the search hit its
+result limit and a message matched, or the SQLite vector index ranked
 vectors that are not unit length; `partial_index` when the vector index leaves
 out some message types with authors or some accounts, or, for an empty
 answer, some message still waits for its vector; and `declared_truncated` when more than 5,000

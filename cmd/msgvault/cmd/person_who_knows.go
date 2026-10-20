@@ -92,7 +92,7 @@ unlike your messages.`,
 				_, err = cmd.OutOrStdout().Write(response.Body)
 				return err
 			}
-			return writeWhoKnows(cmd.OutOrStdout(), *response.JSON200)
+			return writeWhoKnows(cmd.OutOrStdout(), *response.JSON200, minScore)
 		},
 	}
 	f := command.Flags()
@@ -105,9 +105,9 @@ unlike your messages.`,
 	return command
 }
 
-func writeWhoKnows(w io.Writer, response generated.WhoKnowsResponse) error {
+func writeWhoKnows(w io.Writer, response generated.WhoKnowsResponse, minScore float64) error {
 	var out strings.Builder
-	renderWhoKnows(&out, response)
+	renderWhoKnows(&out, response, minScore)
 	if _, err := io.WriteString(w, out.String()); err != nil {
 		return fmt.Errorf("write who-knows output: %w", err)
 	}
@@ -116,13 +116,12 @@ func writeWhoKnows(w io.Writer, response generated.WhoKnowsResponse) error {
 
 // whoKnowsLimitLines say how each limit left the search short.
 var whoKnowsLimitLines = map[generated.WhoKnowsResponseLimits]string{
-	generated.PoolFull: fmt.Sprintf("Searched the %d closest messages; more may match. Narrow with --after or --before.",
-		whoknows.SearchPool),
+	generated.PoolFull:          "The search hit its result limit, so more messages may match. Narrow with --after or --before.",
 	generated.PartialIndex:      "The vector index doesn't cover all your mail and chat yet, so some messages weren't searched.",
 	generated.DeclaredTruncated: "Declared topics were searched only in part.",
 }
 
-func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse) {
+func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse, minScore float64) {
 	safe := textutil.SanitizeTerminal
 	switch {
 	case len(response.People) > 0 || len(response.UnsavedContacts) > 0:
@@ -130,7 +129,7 @@ func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse) {
 	case len(response.Limits) > 0:
 		fmt.Fprintf(out, "No one turned up for %q.\n", safe(response.Topic))
 	default:
-		fmt.Fprintf(out, "Nobody in your archive has written about %q.\n", safe(response.Topic))
+		fmt.Fprintf(out, "Nobody in your archive has written about %q (minimum similarity %.2f).\n", safe(response.Topic), minScore)
 	}
 	for _, limit := range response.Limits {
 		fmt.Fprintln(out, cmp.Or(whoKnowsLimitLines[limit], safe(string(limit))))

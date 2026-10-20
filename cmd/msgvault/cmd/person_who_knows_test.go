@@ -21,12 +21,12 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 	}{
 		"nobody": {
 			generated.WhoKnowsResponse{Topic: "sailboat insurance"},
-			"Nobody in your archive has written about \"sailboat insurance\".\n",
+			"Nobody in your archive has written about \"sailboat insurance\" (minimum similarity 0.50).\n",
 		},
 		"full pool": {
 			generated.WhoKnowsResponse{Topic: "kubernetes", Limits: []generated.WhoKnowsResponseLimits{generated.PoolFull}},
 			"No one turned up for \"kubernetes\".\n" +
-				"Searched the 200 closest messages; more may match. Narrow with --after or --before.\n",
+				"The search hit its result limit, so more messages may match. Narrow with --after or --before.\n",
 		},
 		"partial index and declared in part": {
 			generated.WhoKnowsResponse{Topic: "kubernetes", Limits: []generated.WhoKnowsResponseLimits{
@@ -38,7 +38,7 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 		},
 	} {
 		var out bytes.Buffer
-		require.NoError(t, writeWhoKnows(&out, tc.response), name)
+		require.NoError(t, writeWhoKnows(&out, tc.response, .5), name)
 		assert.Equal(t, tc.want, out.String(), name)
 	}
 }
@@ -67,7 +67,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredWordsAndPromoteHint(t *testing.T) {
 			Rank: 1, ParticipantID: new(int64(9)), EmailAddress: new("dee@example.net"), Score: .62, MessageScore: .62, AuthoredMessages: 2,
 			Citations: []generated.WhoKnowsCitation{{MessageID: 90, SentAt: &sent, MessageType: "email", Subject: new("ingress")}},
 		}},
-	}))
+	}, .5))
 	assert.Equal(t, `#1  Ana Lopez  score 1.20 (messages 0.45, declared 0.75)  3 authored  declared: kubernetes networking
     2026-09-12  email  Re: pod networking in staging  msgvault show-message 4812
     undated  chat  try the policy  msgvault show-message 4813
@@ -75,7 +75,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredWordsAndPromoteHint(t *testing.T) {
 Unsaved contacts
 #1  dee@example.net  score 0.62  2 authored  msgvault person promote 9
     2026-09-12  email  ingress  msgvault show-message 90
-Searched the 200 closest messages; more may match. Narrow with --after or --before.
+The search hit its result limit, so more messages may match. Narrow with --after or --before.
 `, out.String())
 }
 
@@ -117,6 +117,15 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
 		"before": {"2026-01-01T00:00:00.25Z"},
 	}, query, "a subsecond bound keeps its fraction")
+}
+
+func TestWhoKnowsCommandNamesTheThresholdWhenNobodyWrote(t *testing.T) {
+	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"topic":"sailboat insurance","limits":[],"people":[],"unsaved_contacts":[]}`))
+	}, "sailboat", "insurance", "--min-score", "0.4")
+	require.NoError(t, err)
+	assert.Equal(t, "Nobody in your archive has written about \"sailboat insurance\" (minimum similarity 0.40).\n", out)
 }
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {
