@@ -20,8 +20,8 @@ import (
 	"go.kenn.io/msgvault/internal/whoknows"
 )
 
-// fixedRetriever returns its hits cut to the request limit, saturated when
-// the cut dropped any, as the hybrid engine does for a full pool.
+// fixedRetriever caps each signal's hits and the fused pool, reporting
+// saturation when either cap drops hits.
 type fixedRetriever struct {
 	hits    []vector.FusedHit
 	err     error
@@ -32,7 +32,25 @@ type fixedRetriever struct {
 func (r *fixedRetriever) Search(_ context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error) {
 	r.calls++
 	r.request = request
-	hits := r.hits[:min(len(r.hits), request.Limit)]
+	var hits []vector.FusedHit
+	var vectorHits, keywordHits int
+	for _, hit := range r.hits {
+		if !math.IsNaN(hit.VectorScore) {
+			vectorHits++
+			if vectorHits > request.KPerSignal {
+				hit.VectorScore = math.NaN()
+			}
+		}
+		if !math.IsNaN(hit.BM25Score) {
+			keywordHits++
+			if keywordHits > request.KPerSignal {
+				hit.BM25Score = math.NaN()
+			}
+		}
+		if len(hits) < request.Limit && (!math.IsNaN(hit.VectorScore) || !math.IsNaN(hit.BM25Score)) {
+			hits = append(hits, hit)
+		}
+	}
 	return hits, hybrid.ResultMeta{PoolSaturated: len(hits) < len(r.hits)}, r.err
 }
 
@@ -299,7 +317,7 @@ func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	ana, anaPerson := f.saved("ana@example.net")
-	for i := range 150 {
+	for i := range 50 {
 		f.message(fmt.Sprintf("mine-%d", i), f.owner, 1, .9)
 	}
 	answer := f.message("answer", ana, 2, .8)
@@ -309,8 +327,8 @@ func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
 	assert.Equal(answer, got.People[0].Citations[0].MessageID)
 	assert.Empty(got.Limits)
 
-	// 300 owner messages ahead of the same answer push it out of the pool.
-	for i := 150; i < 300; i++ {
+	// More than 100 owner vector hits push the answer out of that signal's pool.
+	for i := 50; i < 150; i++ {
 		f.message(fmt.Sprintf("mine-%d", i), f.owner, 1, .9)
 	}
 	f.retriever.hits = append(
