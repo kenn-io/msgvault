@@ -15581,11 +15581,11 @@ func (w WhoKnowsPerson) Validate() error {
 }
 
 type WhoKnowsRequest struct {
-	// After YYYY-MM-DD or RFC3339; messages at or after this instant
-	After *string `json:"after,omitzero"`
+	// After Messages at or after this instant
+	After *time.Time `json:"after,omitempty"`
 
-	// Before YYYY-MM-DD or RFC3339; messages before this instant
-	Before *string `json:"before,omitzero"`
+	// Before Messages before this instant
+	Before *time.Time `json:"before,omitempty"`
 
 	// Evidence Citations per person; default 3
 	Evidence *int64 `json:"evidence,omitempty" validate:"omitempty,gte=1,lte=10"`

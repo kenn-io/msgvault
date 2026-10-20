@@ -313,16 +313,20 @@ func TestFindKeywordOnlyHitsDoNotCount(t *testing.T) {
 
 func TestFindDateWindow(t *testing.T) {
 	f := newEvalFixture(t)
-	got, err := f.service.Find(t.Context(), Request{Topic: "certificate rotation", After: "2025-01-01"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"recent@example.net"}, f.ranked(got))
+	day := func(s string) *time.Time {
+		at, err := time.Parse(time.DateOnly, s)
+		require.NoError(t, err)
+		return &at
+	}
+	find := func(after, before *time.Time) Response {
+		got, err := f.service.Find(t.Context(), Request{Topic: "certificate rotation", After: after, Before: before})
+		require.NoError(t, err)
+		return got
+	}
+	assert.Equal(t, []string{"recent@example.net"}, f.ranked(find(day("2025-01-01"), nil)))
+	assert.Equal(t, []string{"old@example.net"}, f.ranked(find(nil, day("2025-01-01"))))
 
-	got, err = f.service.Find(t.Context(), Request{Topic: "certificate rotation", Before: "2025-01-01"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"old@example.net"}, f.ranked(got))
-
-	got, err = f.service.Find(t.Context(), Request{Topic: "certificate rotation", After: "2025-01-01", Before: "2026-10-02"})
-	require.NoError(t, err)
+	got := find(day("2025-01-01"), day("2026-10-02"))
 	assert.Empty(t, got.People, "before is exclusive: the 2026-10-02 message is outside")
 	assert.Equal(t, ReasonNoEvidence, got.Reason)
 }

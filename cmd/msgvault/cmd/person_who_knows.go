@@ -41,23 +41,23 @@ A message counts when its meaning similarity to the topic is at least
   msgvault person who-knows "tax filing" --after 2026-01-01 --json`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			request := whoknows.Request{
-				Topic:  strings.Join(args, " "),
-				After:  after,
-				Before: before,
-			}
+			body := generated.FindPeopleWhoKnowBody{Topic: strings.Join(args, " ")}
 			flags := cmd.Flags()
 			if flags.Changed("limit") {
-				request.Limit = &limit
+				body.Limit = new(int64(limit))
 			}
 			if flags.Changed("evidence") {
-				request.Evidence = &evidence
+				body.Evidence = new(int64(evidence))
 			}
 			if flags.Changed("min-score") {
-				request.MinScore = &minScore
+				body.MinScore = &minScore
 			}
-			if _, err := request.Resolve(); err != nil {
-				return usageErr(cmd, err)
+			var err error
+			if body.After, err = parseDocumentSearchDate(after); err != nil {
+				return usageErr(cmd, fmt.Errorf("--after %w", err))
+			}
+			if body.Before, err = parseDocumentSearchDate(before); err != nil {
+				return usageErr(cmd, fmt.Errorf("--before %w", err))
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
@@ -66,16 +66,6 @@ A message counts when its meaning similarity to the topic is at least
 			defer func() { _ = client.Close() }()
 			if err := client.RequireWhoKnows(cmd.Context()); err != nil {
 				return fmt.Errorf("who-knows: %w", err)
-			}
-			body := generated.FindPeopleWhoKnowBody{Topic: request.Topic}
-			body.Limit = int64Pointer(request.Limit)
-			body.Evidence = int64Pointer(request.Evidence)
-			body.MinScore = request.MinScore
-			if after != "" {
-				body.After = &after
-			}
-			if before != "" {
-				body.Before = &before
 			}
 			response, err := daemonclient.APIResponse(client,
 				func(api *apiclient.Client) (*generated.FindPeopleWhoKnowResp, error) {
@@ -107,14 +97,6 @@ A message counts when its meaning similarity to the topic is at least
 	f.StringVar(&before, "before", "", "Only messages before this YYYY-MM-DD or RFC3339 time")
 	f.BoolVar(&jsonOutput, flagJSON, false, "Output the API JSON")
 	return command
-}
-
-func int64Pointer(v *int) *int64 {
-	if v == nil {
-		return nil
-	}
-	n := int64(*v)
-	return &n
 }
 
 func writeWhoKnows(w io.Writer, response whoknows.Response) error {

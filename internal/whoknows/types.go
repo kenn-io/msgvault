@@ -31,21 +31,21 @@ const (
 	ReasonSearchLimit = "search_limit"
 )
 
-// WhoKnowsRequest asks who in the archive has written about a topic.
+// Request asks who in the archive has written about a topic.
 // Omitted limit, evidence, and min_score take their defaults.
-type WhoKnowsRequest struct {
-	Topic    string   `json:"topic" minLength:"1" doc:"Plain words; search operators are refused"`
-	Limit    *int     `json:"limit,omitempty" minimum:"1" maximum:"50" doc:"Saved people to return; default 10"`
-	Evidence *int     `json:"evidence,omitempty" minimum:"1" maximum:"10" doc:"Citations per person; default 3"`
-	MinScore *float64 `json:"min_score,omitempty" exclusiveMinimum:"0" maximum:"1" doc:"Lowest cosine similarity a message needs to count; default 0.5"`
-	After    string   `json:"after,omitempty" doc:"YYYY-MM-DD or RFC3339; messages at or after this instant"`
-	Before   string   `json:"before,omitempty" doc:"YYYY-MM-DD or RFC3339; messages before this instant"`
+type Request struct {
+	Topic    string     `json:"topic" minLength:"1" doc:"Plain words; search operators are refused"`
+	Limit    *int       `json:"limit,omitempty" minimum:"1" maximum:"50" doc:"Saved people to return; default 10"`
+	Evidence *int       `json:"evidence,omitempty" minimum:"1" maximum:"10" doc:"Citations per person; default 3"`
+	MinScore *float64   `json:"min_score,omitempty" exclusiveMinimum:"0" maximum:"1" doc:"Lowest cosine similarity a message needs to count; default 0.5"`
+	After    *time.Time `json:"after,omitempty" doc:"Messages at or after this instant"`
+	Before   *time.Time `json:"before,omitempty" doc:"Messages before this instant"`
 }
 
-// WhoKnowsCitation is one message a person wrote about the topic.
+// Citation is one message a person wrote about the topic.
 // SenderAuthenticated is false for sources, such as email, where the From
 // header is an assertion rather than a verified identity.
-type WhoKnowsCitation struct {
+type Citation struct {
 	MessageID           int64      `json:"message_id"`
 	SentAt              *time.Time `json:"sent_at,omitempty"`
 	MessageType         string     `json:"message_type"`
@@ -54,56 +54,49 @@ type WhoKnowsCitation struct {
 	SenderAuthenticated bool       `json:"sender_authenticated"`
 }
 
-// WhoKnowsPerson is a saved person ranked for the topic. Score is
+// Person is a saved person ranked for the topic. Score is
 // MessageScore plus DeclaredBoost. A person with a matching ask_me_about value
 // and no matching messages has zero AuthoredMessages and MessageScore.
-type WhoKnowsPerson struct {
-	Rank             int                `json:"rank"`
-	PersonID         int64              `json:"person_id"`
-	DisplayName      string             `json:"display_name,omitempty"`
-	Score            float64            `json:"score"`
-	MessageScore     float64            `json:"message_score"`
-	DeclaredBoost    float64            `json:"declared_boost"`
-	AuthoredMessages int                `json:"authored_messages"`
-	AskMeAbout       []string           `json:"ask_me_about,omitempty"`
-	Citations        []WhoKnowsCitation `json:"citations"`
+type Person struct {
+	Rank             int        `json:"rank"`
+	PersonID         int64      `json:"person_id"`
+	DisplayName      string     `json:"display_name,omitempty"`
+	Score            float64    `json:"score"`
+	MessageScore     float64    `json:"message_score"`
+	DeclaredBoost    float64    `json:"declared_boost"`
+	AuthoredMessages int        `json:"authored_messages"`
+	AskMeAbout       []string   `json:"ask_me_about,omitempty"`
+	Citations        []Citation `json:"citations"`
 }
 
-// WhoKnowsContact is a sender bound to no saved person. Promote it with
+// Contact is a sender bound to no saved person. Promote it with
 // "msgvault person promote <participant_id>".
-type WhoKnowsContact struct {
-	Rank             int                `json:"rank"`
-	ParticipantID    int64              `json:"participant_id"`
-	DisplayName      string             `json:"display_name,omitempty"`
-	EmailAddress     string             `json:"email_address,omitempty"`
-	Score            float64            `json:"score"`
-	MessageScore     float64            `json:"message_score"`
-	AuthoredMessages int                `json:"authored_messages"`
-	Citations        []WhoKnowsCitation `json:"citations"`
+type Contact struct {
+	Rank             int        `json:"rank"`
+	ParticipantID    int64      `json:"participant_id"`
+	DisplayName      string     `json:"display_name,omitempty"`
+	EmailAddress     string     `json:"email_address,omitempty"`
+	Score            float64    `json:"score"`
+	MessageScore     float64    `json:"message_score"`
+	AuthoredMessages int        `json:"authored_messages"`
+	Citations        []Citation `json:"citations"`
 }
 
-// WhoKnowsResponse lists people first, then unsaved contacts. Reason is set
+// Response lists people first, then unsaved contacts. Reason is set
 // when both lists are empty. SearchedMessages is how many messages the search
 // returned.
-type WhoKnowsResponse struct {
-	Topic            string            `json:"topic"`
-	Reason           string            `json:"reason,omitempty"`
-	SearchedMessages int               `json:"searched_messages"`
-	People           []WhoKnowsPerson  `json:"people"`
-	UnsavedContacts  []WhoKnowsContact `json:"unsaved_contacts"`
+type Response struct {
+	Topic            string    `json:"topic"`
+	Reason           string    `json:"reason,omitempty"`
+	SearchedMessages int       `json:"searched_messages"`
+	People           []Person  `json:"people"`
+	UnsavedContacts  []Contact `json:"unsaved_contacts"`
 }
-
-type (
-	Request  = WhoKnowsRequest
-	Response = WhoKnowsResponse
-	Person   = WhoKnowsPerson
-	Contact  = WhoKnowsContact
-	Citation = WhoKnowsCitation
-)
 
 // Params is a validated Request with its defaults applied.
 type Params struct {
 	Topic    string
+	Terms    []string
 	FreeText string
 	Limit    int
 	Evidence int
@@ -126,7 +119,8 @@ func (r Request) Resolve() (Params, error) {
 	if query.HasOperators() || query.Err() != nil || len(query.UnsupportedOperators) > 0 {
 		return p, fmt.Errorf("%w: topic must be plain words, without search operators", ErrInvalidParameter)
 	}
-	p.FreeText = strings.Join(query.TextTerms, " ")
+	p.Terms = query.TextTerms
+	p.FreeText = strings.Join(p.Terms, " ")
 	if strings.TrimSpace(p.FreeText) == "" {
 		return p, ErrMissingFreeText
 	}
@@ -148,33 +142,9 @@ func (r Request) Resolve() (Params, error) {
 	if math.IsNaN(p.MinScore) || p.MinScore <= 0 || p.MinScore > 1 {
 		return p, fmt.Errorf("%w: min_score must be greater than 0 and at most 1", ErrInvalidParameter)
 	}
-	var err error
-	if p.After, err = ParseDate(r.After); err != nil {
-		return p, fmt.Errorf("%w: after: %w", ErrInvalidParameter, err)
-	}
-	if p.Before, err = ParseDate(r.Before); err != nil {
-		return p, fmt.Errorf("%w: before: %w", ErrInvalidParameter, err)
-	}
+	p.After, p.Before = r.After, r.Before
 	if p.After != nil && p.Before != nil && !p.After.Before(*p.Before) {
 		return p, fmt.Errorf("%w: after must precede before", ErrInvalidParameter)
 	}
 	return p, nil
-}
-
-// ParseDate reads YYYY-MM-DD or RFC3339. An empty string means no bound.
-// Like the search operators, a date-only value is midnight UTC, so a window
-// includes its after instant and excludes its before instant.
-func ParseDate(raw string) (*time.Time, error) {
-	if raw == "" {
-		return nil, nil //nolint:nilnil // An omitted date leaves the filter unbounded.
-	}
-	layout := time.RFC3339
-	if len(raw) == len(time.DateOnly) {
-		layout = time.DateOnly
-	}
-	v, err := time.Parse(layout, raw)
-	if err != nil {
-		return nil, fmt.Errorf("date must be YYYY-MM-DD or RFC3339: %w", err)
-	}
-	return &v, nil
 }

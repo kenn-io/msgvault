@@ -16618,10 +16618,12 @@ components:
       additionalProperties: false
       properties:
         after:
-          description: YYYY-MM-DD or RFC3339; messages at or after this instant
+          description: Messages at or after this instant
+          format: date-time
           type: string
         before:
-          description: YYYY-MM-DD or RFC3339; messages before this instant
+          description: Messages before this instant
+          format: date-time
           type: string
         evidence:
           description: Citations per person; default 3

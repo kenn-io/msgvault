@@ -3,9 +3,9 @@
  */
 
 export interface WhoKnowsRequest {
-  /** YYYY-MM-DD or RFC3339; messages at or after this instant */
+  /** Messages at or after this instant */
   after?: string;
-  /** YYYY-MM-DD or RFC3339; messages before this instant */
+  /** Messages before this instant */
   before?: string;
   /**
    * Citations per person; default 3

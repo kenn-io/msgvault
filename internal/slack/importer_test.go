@@ -3700,3 +3700,29 @@ func dropReactionsTable(db *sql.DB) error {
 	_, err := db.Exec(`DROP TABLE reactions`)
 	return err
 }
+
+// who-knows leaves bots out of its authors. Slack stores no automation flag
+// on the message: the importer namespaces bot senders as "<team>:bot:<id>"
+// participant identifiers, and the store reads that marker.
+func TestImportedBotMessagesAreAutomatedTopicAuthors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := testWorkspace(t)
+	imp, opts := testImporter(t, f)
+	st := imp.store
+	_, err := imp.Import(context.Background(), opts)
+	require.NoError(err)
+
+	messageID := func(sourceMessageID string) int64 {
+		var id int64
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
+		return id
+	}
+	bot, person := messageID("C01:"+ts(4)), messageID("C01:"+ts(0))
+	authors, err := st.TopicAuthorsContext(context.Background(), []int64{bot, person})
+	require.NoError(err)
+	assert.True(authors[bot].Automated, "deploybot is a bot")
+	assert.False(authors[person].Automated)
+	assert.True(authors[bot].SenderAuthenticated, "Slack sets the sender")
+}

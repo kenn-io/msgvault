@@ -17,6 +17,6 @@ func (a *storeAPIAdapter) OwnerAddressedContext(ctx context.Context, ids []int64
 	return a.store.OwnerAddressedContext(ctx, ids)
 }
 
-func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, error) {
-	return a.store.AskMeAboutValuesContext(ctx)
+func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context, words []string) ([]store.PersonAskMeAbout, error) {
+	return a.store.AskMeAboutValuesContext(ctx, words)
 }

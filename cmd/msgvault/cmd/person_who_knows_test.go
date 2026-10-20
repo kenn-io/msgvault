@@ -92,7 +92,7 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	}, "kubernetes", "networking", "--limit", "3", "--min-score", "0.4", "--after", "2026-01-01")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{
-		"topic": "kubernetes networking", "limit": float64(3), "min_score": 0.4, "after": "2026-01-01",
+		"topic": "kubernetes networking", "limit": float64(3), "min_score": 0.4, "after": "2026-01-01T00:00:00Z",
 	}, body)
 	assert.Equal(t, "Nobody in your archive has written about \"kubernetes networking\".\n", out)
 }
@@ -107,18 +107,13 @@ func TestWhoKnowsCommandJSONPreservesDaemonBody(t *testing.T) {
 	assert.Equal(t, body, out) //nolint:testifylint // The CLI must pass the daemon's bytes through unchanged.
 }
 
-func TestWhoKnowsCommandRejectsBadFlagsBeforeConnecting(t *testing.T) {
-	for _, args := range [][]string{
-		{"cloud", "--min-score", "0"},
-		{"cloud", "--min-score", "1.5"},
-		{"cloud", "--limit", "51"},
-		{"cloud", "--evidence", "0"},
-		{"cloud", "--after", "2026-02-01", "--before", "2026-01-01"},
-	} {
+func TestWhoKnowsCommandRejectsUnreadableDatesBeforeConnecting(t *testing.T) {
+	for _, args := range [][]string{{"cloud", "--after", "yesterday"}, {"cloud", "--before", "2026-13-01"}} {
 		_, err := runWhoKnows(t, "3.24.0", func(http.ResponseWriter, *http.Request) {
 			assert.Fail(t, "the command must not reach the daemon", args)
 		}, args...)
-		assert.ErrorIs(t, err, whoknows.ErrInvalidParameter, args)
+		require.Error(t, err, args)
+		assert.Contains(t, err.Error(), "must be YYYY-MM-DD or RFC3339", args)
 	}
 }
 

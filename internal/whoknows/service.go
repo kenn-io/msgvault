@@ -41,7 +41,7 @@ type ChunkScorer interface {
 type DataReader interface {
 	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
 	OwnerAddressedContext(ctx context.Context, participantIDs []int64) (map[int64]bool, error)
-	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, error)
+	AskMeAboutValuesContext(ctx context.Context, words []string) ([]store.PersonAskMeAbout, error)
 }
 
 type Service struct {
@@ -83,33 +83,34 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	if s.Scorer == nil {
 		return out, ErrChunkScoringUnavailable
 	}
-	types, empty := searchTypes(s.BuildScope)
-	if empty {
-		out.Reason = ReasonNoEvidence
-		return out, nil
-	}
-	request := hybrid.SearchRequest{
-		Mode:     hybrid.ModeHybrid,
-		FreeText: p.FreeText,
-		Limit:    retrieveLimit,
-		Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
-	}
-	for _, term := range search.Parse(p.Topic).TextTerms {
-		request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
-	}
-	hits, meta, err := s.Retriever.Search(ctx, request)
-	if err != nil {
-		return out, err
-	}
-	out.SearchedMessages = len(hits)
-
-	similarity, err := s.similarities(ctx, hits, meta, p.MinScore)
-	if err != nil {
-		return out, err
-	}
-	candidates, err := s.attribute(ctx, hits, similarity)
-	if err != nil {
-		return out, err
+	var (
+		similarity map[int64]float64
+		candidates []Candidate
+		meta       hybrid.ResultMeta
+	)
+	// An index limited to transcripts and calendar entries has no authors to
+	// search, but people can still declare the topic.
+	if types, empty := searchTypes(s.BuildScope); !empty {
+		request := hybrid.SearchRequest{
+			Mode:     hybrid.ModeHybrid,
+			FreeText: p.FreeText,
+			Limit:    retrieveLimit,
+			Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
+		}
+		for _, term := range p.Terms {
+			request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
+		}
+		var hits []vector.FusedHit
+		if hits, meta, err = s.Retriever.Search(ctx, request); err != nil {
+			return out, err
+		}
+		out.SearchedMessages = len(hits)
+		if similarity, err = s.similarities(ctx, hits, meta, p.MinScore); err != nil {
+			return out, err
+		}
+		if candidates, err = s.attribute(ctx, hits, similarity); err != nil {
+			return out, err
+		}
 	}
 	candidates, err = s.addDeclared(ctx, candidates, p.FreeText)
 	if err != nil {
@@ -122,7 +123,7 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
 	if len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
 		out.Reason = ReasonNoEvidence
-		if len(similarity) > 0 && (meta.PoolSaturated || len(hits) >= retrieveLimit) {
+		if len(similarity) > 0 && (meta.PoolSaturated || out.SearchedMessages >= retrieveLimit) {
 			out.Reason = ReasonSearchLimit
 		}
 	}
@@ -175,7 +176,7 @@ func (s *Service) attribute(
 	for _, hit := range hits {
 		a, ok := authors[hit.MessageID]
 		sim, counted := similarity[hit.MessageID]
-		if !ok || !counted || a.IsFromMe || a.SenderID == 0 || a.Automated || Automated(a.SenderEmail) {
+		if !ok || !counted || a.IsFromMe || a.OwnerLinked || a.SenderID == 0 || a.Automated || Automated(a.SenderEmail) {
 			continue
 		}
 		key := candidateKey{id: a.SenderID}
@@ -222,7 +223,7 @@ func (s *Service) attribute(
 // addDeclared adds each ask-me-about value that matches the topic to its
 // person. A person with a match and no messages joins the candidates.
 func (s *Service) addDeclared(ctx context.Context, candidates []Candidate, freeText string) ([]Candidate, error) {
-	values, err := s.Data.AskMeAboutValuesContext(ctx)
+	values, err := s.Data.AskMeAboutValuesContext(ctx, Tokens(freeText))
 	if err != nil {
 		return nil, err
 	}

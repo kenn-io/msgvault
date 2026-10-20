@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // TopicAuthor is one message with the participant that sent it and the
@@ -12,6 +14,7 @@ import (
 type TopicAuthor struct {
 	MessageID   int64
 	IsFromMe    bool
+	OwnerLinked bool
 	ListMail    bool
 	Automated   bool
 	MessageType string
@@ -38,19 +41,42 @@ type PersonAskMeAbout struct {
 	Value      string
 }
 
-// automatedMetadata is true when the producer marked the message's author as
-// a bot, webhook, or other automation (Discord does this in messages.metadata).
-func (s *Store) automatedMetadata() string {
+// automatedAuthor is true when the producer marked the message's author as
+// automation: Discord stores a flag in messages.metadata, Slack namespaces
+// bots as "<team>:bot:<id>" participant identifiers, and Chatwoot keeps bots
+// and assistants under their own path segment. Importers write no other
+// marker.
+func (s *Store) automatedAuthor() string {
+	flag := "COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.automated') = 1 END, FALSE)"
 	if s.IsPostgreSQL() {
-		return "COALESCE(m.metadata ->> 'automated' = 'true', FALSE)"
+		flag = "COALESCE(m.metadata ->> 'automated' = 'true', FALSE)"
 	}
-	return "COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.automated') = 1 END, FALSE)"
+	return `(` + flag + ` OR EXISTS (
+		         SELECT 1 FROM participant_identifiers bi
+		          WHERE bi.participant_id = p.id AND (
+		                (bi.identifier_type = 'slack' AND bi.identifier_value LIKE '%:bot:%')
+		             OR (bi.identifier_type = 'chatwoot' AND (
+		                    bi.identifier_value LIKE '%/agent\_bot/%' ESCAPE '\'
+		                 OR bi.identifier_value LIKE '%/captain\_assistant/%' ESCAPE '\'))))) `
+}
+
+// ownerParticipantMatch is true when participant alias op is one of the
+// archive owner's account identities, by address or by identifier, as the
+// activity projector decides it.
+func ownerParticipantMatch(op string) string {
+	noPrimaryEmail := " AND (" + op + ".email_address IS NULL OR TRIM(" + op + ".email_address) = '')"
+	return `EXISTS (SELECT 1 FROM account_identities ai
+		         WHERE (` + ownerEmailMatch(op+".email_address", "ai.address") + `)
+		            OR EXISTS (SELECT 1 FROM participant_identifiers oi
+		                       WHERE oi.participant_id = ` + op + `.id
+		                         AND ` + ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", noPrimaryEmail) + `))`
 }
 
 // TopicAuthorsContext reads the sender of each message at request time, so
 // mail synced since the last activity build still counts. A message's sender
-// is messages.sender_id, else its lowest 'from' recipient. Deleted messages
-// are left out of the result.
+// is messages.sender_id, else its lowest 'from' recipient. OwnerLinked reports
+// that the sender, or any participant bound to the sender's person, is one of
+// the owner's account identities. Deleted messages are left out of the result.
 func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]TopicAuthor, error) {
 	out := map[int64]TopicAuthor{}
 	if len(messageIDs) == 0 {
@@ -61,8 +87,14 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 		args[i] = id
 	}
 	query := `
-		SELECT m.id, COALESCE(m.is_from_me, FALSE), COALESCE(m.list_id, '') <> '',
-		       ` + s.automatedMetadata() + `, m.message_type,
+		SELECT m.id, COALESCE(m.is_from_me, FALSE),
+		       EXISTS (SELECT 1 FROM participants op
+		                WHERE (op.id = p.id OR op.id IN (
+		                        SELECT bound.participant_id FROM person_participants bound
+		                         WHERE bound.person_id = pp.person_id))
+		                  AND ` + ownerParticipantMatch("op") + `),
+		       COALESCE(m.list_id, '') <> '',
+		       ` + s.automatedAuthor() + `, m.message_type,
 		       m.sent_at, COALESCE(m.subject, ''), COALESCE(m.snippet, ''), src.source_type,
 		       p.id, COALESCE(p.email_address, ''), COALESCE(p.display_name, ''),
 		       pp.person_id, COALESCE(per.display_name, '')
@@ -89,7 +121,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 			personID   sql.NullInt64
 			sourceType string
 		)
-		if err := rows.Scan(&a.MessageID, &a.IsFromMe, &a.ListMail, &a.Automated, &a.MessageType,
+		if err := rows.Scan(&a.MessageID, &a.IsFromMe, &a.OwnerLinked, &a.ListMail, &a.Automated, &a.MessageType,
 			&sentAt, &a.Subject, &a.Snippet, &sourceType,
 			&sender, &a.SenderEmail, &a.SenderName,
 			&personID, &a.PersonName); err != nil {
@@ -167,10 +199,35 @@ func (s *Store) OwnerAddressedContext(ctx context.Context, participantIDs []int6
 	return out, nil
 }
 
-// AskMeAboutValuesContext returns every current ask-me-about value the user
-// typed or an address-book import supplied. Inferred and superseded values
-// are left out, and so are people who have sent mail as the archive owner.
-func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout, error) {
+// AskMeAboutValuesContext returns the current ask-me-about values the user
+// typed or an address-book import supplied that contain at least one of the
+// given lower-case words, so the caller can match whole topics in Go without
+// reading every value. Inferred and superseded values are left out, and so
+// are people bound to one of the owner's account identities. A word with
+// non-ASCII letters cannot be matched case-insensitively in SQL, so it turns
+// the word filter off.
+func (s *Store) AskMeAboutValuesContext(ctx context.Context, words []string) ([]PersonAskMeAbout, error) {
+	if len(words) == 0 {
+		return nil, nil
+	}
+	args := []any{AttributeUniversalIDAskMeAbout}
+	var likes []string
+	filter := true
+	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	for _, word := range words {
+		if strings.IndexFunc(word, func(r rune) bool { return r > unicode.MaxASCII }) >= 0 {
+			filter = false
+			break
+		}
+		likes = append(likes, `LOWER(v.value_text) LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+escape.Replace(word)+"%")
+	}
+	wordFilter := ""
+	if filter {
+		wordFilter = "AND (" + strings.Join(likes, " OR ") + ")"
+	} else {
+		args = args[:1]
+	}
 	query := `
 		SELECT v.person_id, COALESCE(per.display_name, ''), v.value_text
 		FROM person_attribute_values v
@@ -178,13 +235,13 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout
 		JOIN persons per ON per.id = v.person_id
 		WHERE d.universal_id = ? AND v.active_until IS NULL AND v.superseded_at IS NULL
 		  AND v.source IN ('user', 'carddav_import', 'vcard_import')
+		  ` + wordFilter + `
 		  AND NOT EXISTS (
-		    SELECT 1 FROM person_participants pp
-		      JOIN messages m ON m.sender_id = pp.participant_id
-		     WHERE pp.person_id = v.person_id AND m.is_from_me
-		       AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)
+		    SELECT 1 FROM person_participants bound
+		      JOIN participants op ON op.id = bound.participant_id
+		     WHERE bound.person_id = v.person_id AND ` + ownerParticipantMatch("op") + `)
 		ORDER BY v.person_id, v.ordinal`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), AttributeUniversalIDAskMeAbout)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read ask-me-about values: %w", err)
 	}

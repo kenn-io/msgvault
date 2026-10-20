@@ -127,6 +127,11 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	botUser := f.EnsureParticipant("bot@example.net", "Chat Bot", "example.net")
 	erin := f.EnsureParticipant("erin@example.net", "Erin", "example.net")
 	frank := f.EnsureParticipant("frank@example.net", "Frank", "example.net")
+	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+	_, err = f.Store.LinkParticipants(f.owner, alias)
+	require.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(f.owner)
+	require.NoError(err)
 	_ = dana
 
 	answered := f.message("answered", ana, 5, .9)
@@ -135,17 +140,19 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	copied := f.message("copied", ana, 2, .7)
 	require.NoError(f.Store.ReplaceMessageRecipients(copied, "cc", []int64{dana}, []string{"Dana"}))
 	f.message("outbound", f.owner, 1, .95)
+	f.message("alias", alias, 1, .95)
 	f.message("robot", robot, 1, .95)
 	bot := f.message("bot", botUser, 1, .95, func(m *store.Message) { m.SourceID, m.ConversationID = slack.ID, room })
 	require.NoError(f.Store.SetMessageMetadata(bot, sql.NullString{String: `{"author_kind":"bot","automated":true}`, Valid: true}))
 	f.message("no vector", erin, 1, 0)
 	f.message("weak", frank, 1, .49)
 
-	got, err := f.service.Find(t.Context(), whoknows.Request{Topic: "Kubernetes   networking", After: "2026-01-01"})
+	after := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	got, err := f.service.Find(t.Context(), whoknows.Request{Topic: "Kubernetes   networking", After: &after})
 	require.NoError(err)
 
 	assert.Equal("Kubernetes   networking", got.Topic)
-	assert.Equal(9, got.SearchedMessages)
+	assert.Equal(10, got.SearchedMessages)
 	assert.Empty(got.Reason)
 	require.Len(got.People, 1)
 	person := got.People[0]
@@ -187,6 +194,29 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(f.retriever.calls, "an index with only transcripts and events has no authors to search")
 	assert.Equal(whoknows.ReasonNoEvidence, got.Reason)
+}
+
+func TestFindStillListsDeclaredPeopleWhenTheIndexHasNoAuthors(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	_, person := f.saved("lurker@example.net")
+	topic := "kubernetes networking"
+	_, err := f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+		PersonID: person, DefinitionSlug: store.AttributeSlugAskMeAbout, Ordinal: new(int64),
+		Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &topic},
+		Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	f.service.BuildScope = vector.NewBuildScope([]string{"meeting_transcript"}, nil)
+
+	got, err := f.service.Find(t.Context(), whoknows.Request{Topic: topic})
+	require.NoError(err)
+	assert.Zero(f.retriever.calls)
+	assert.Empty(got.Reason)
+	require.Len(got.People, 1)
+	assert.Equal(person, got.People[0].PersonID)
+	assert.Zero(got.People[0].AuthoredMessages)
 }
 
 func TestFindListsDeclaredOnlyPeopleAndBoostsAuthors(t *testing.T) {

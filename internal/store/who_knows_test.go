@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -37,20 +38,26 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	ana := f.EnsureParticipant("ana@example.net", "Ana Sender", "example.net")
 	ben := f.EnsureParticipant("ben@example.net", "Ben Contractor", "example.net")
 	owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
+	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+	_, err := f.Store.LinkParticipants(owner, alias)
+	require.NoError(err)
+	ownerPerson, _, err := f.Store.CreatePersonFromParticipant(owner)
+	require.NoError(err)
 	anaPerson, _, err := f.Store.CreatePersonFromParticipant(ana)
 	require.NoError(err)
 
 	saved := send(f, "saved", ana)
 	unsaved := send(f, "unsaved", ben, func(m *store.Message) { m.ListID = sql.NullString{String: "<list.example.net>", Valid: true} })
 	outbound := send(f, "outbound", owner)
+	aliased := send(f, "aliased", alias)
 	byEnvelope := send(f, "envelope", 0)
 	require.NoError(f.Store.ReplaceMessageRecipients(byEnvelope, "from", []int64{ben, ana}, []string{"Ben", "Ana"}))
 	deleted := send(f, "deleted", ana)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, "deleted"))
 
-	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, unsaved, outbound, byEnvelope, deleted, 999999})
+	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, unsaved, outbound, aliased, byEnvelope, deleted, 999999})
 	require.NoError(err)
-	assert.Len(got, 4, "deleted and missing messages are left out")
+	assert.Len(got, 5, "deleted and missing messages are left out")
 
 	// Saved sender, with no activity index built.
 	a := got[saved]
@@ -75,7 +82,16 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	assert.Equal(ben, b.SenderID)
 	assert.True(b.ListMail)
 
+	// The owner's own mail, and mail from an address bound to the owner's
+	// person that no account identity lists.
 	assert.True(got[outbound].IsFromMe)
+	assert.True(got[outbound].OwnerLinked)
+	assert.False(got[aliased].IsFromMe)
+	assert.True(got[aliased].OwnerLinked)
+	require.NotNil(got[aliased].PersonID)
+	assert.Equal(ownerPerson.ID, *got[aliased].PersonID)
+	assert.False(got[saved].OwnerLinked)
+	assert.False(got[unsaved].OwnerLinked)
 
 	// With no sender_id, the lowest 'from' recipient is the sender.
 	assert.Equal(min(ben, ana), got[byEnvelope].SenderID)
@@ -180,18 +196,64 @@ func TestAskMeAboutValuesReadsUserValuesForNonOwners(t *testing.T) {
 	_, asked := newPerson("asked@example.net")
 	_, inferred := newPerson("inferred@example.net")
 	_, superseded := newPerson("superseded@example.net")
+	_, unrelated := newPerson("unrelated@example.net")
 	ownerParticipant, owner := newPerson("owner@example.net")
-	setValue(asked, "kubernetes", store.ProvenanceUser)
-	setValue(inferred, "robotics", store.ProvenanceEnrichment)
+	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+	_, err := f.Store.LinkParticipants(ownerParticipant, alias)
+	require.NoError(err)
+	setValue(asked, "Kubernetes networking", store.ProvenanceUser)
+	setValue(inferred, "kubernetes robotics", store.ProvenanceEnrichment)
 	setValue(superseded, "old topic", store.ProvenanceUser)
-	setValue(superseded, "new topic", store.ProvenanceUser)
-	setValue(owner, "my own topic", store.ProvenanceUser)
-	send(f, "mine", ownerParticipant)
+	setValue(superseded, "new kubernetes topic", store.ProvenanceUser)
+	setValue(unrelated, "billing", store.ProvenanceUser)
+	setValue(owner, "my own kubernetes topic", store.ProvenanceUser)
 
-	got, err := f.Store.AskMeAboutValuesContext(ctx)
+	got, err := f.Store.AskMeAboutValuesContext(ctx, []string{"kubernetes", "networking"})
 	require.NoError(err)
 	assert.Equal([]store.PersonAskMeAbout{
-		{PersonID: asked, PersonName: "asked@example.net", Value: "kubernetes"},
-		{PersonID: superseded, PersonName: "superseded@example.net", Value: "new topic"},
-	}, got, "inferred values, superseded values, and the owner are left out")
+		{PersonID: asked, PersonName: "asked@example.net", Value: "Kubernetes networking"},
+		{PersonID: superseded, PersonName: "superseded@example.net", Value: "new kubernetes topic"},
+	}, got, "values without a topic word, inferred and superseded values, and the owner's own person are left out")
+
+	got, err = f.Store.AskMeAboutValuesContext(ctx, []string{"billing"})
+	require.NoError(err)
+	require.Len(got, 1)
+	assert.Equal(unrelated, got[0].PersonID)
+
+	none, err := f.Store.AskMeAboutValuesContext(ctx, nil)
+	require.NoError(err)
+	assert.Empty(none)
+}
+
+func TestAskMeAboutValuesHandlesWildcardsAndNonASCIIWords(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	var people []int64
+	for i, text := range []string{"100% uptime", "a_b", "CAFÉ roasting", "plain"} {
+		participant := f.EnsureParticipant(fmt.Sprintf("p%d@example.net", i), "P", "example.net")
+		person, _, err := f.Store.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+		_, err = f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+			PersonID: person.ID, DefinitionSlug: store.AttributeSlugAskMeAbout, Ordinal: new(int64),
+			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &text},
+			Source: store.ProvenanceUser,
+		})
+		require.NoError(err)
+		people = append(people, person.ID)
+	}
+	ids := func(words ...string) []int64 {
+		got, err := f.Store.AskMeAboutValuesContext(ctx, words)
+		require.NoError(err)
+		var out []int64
+		for _, v := range got {
+			out = append(out, v.PersonID)
+		}
+		return out
+	}
+	assert.Equal([]int64{people[0]}, ids("100%"), "a percent sign is not a wildcard")
+	assert.Equal([]int64{people[1]}, ids("a_b"), "an underscore is not a wildcard")
+	assert.Empty(ids("a%b"))
+	assert.Equal(people, ids("café", "plain"), "a non-ASCII word reads every value and leaves matching to the caller")
 }

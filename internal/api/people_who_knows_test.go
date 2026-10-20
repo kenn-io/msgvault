@@ -41,16 +41,16 @@ func whoKnowsPost(t *testing.T, srv *api.Server, body string, headers ...string)
 func TestWhoKnowsRejectsInvalidRequests(t *testing.T) {
 	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{})
 	for body, code := range map[string]string{
-		`{"topic":"   "}`:                                          "missing_free_text",
-		`{"topic":"x","limit":0}`:                                  "invalid_parameter",
-		`{"topic":"x","limit":51}`:                                 "invalid_parameter",
-		`{"topic":"x","evidence":11}`:                              "invalid_parameter",
-		`{"topic":"x","min_score":0}`:                              "invalid_parameter",
-		`{"topic":"x","min_score":1.5}`:                            "invalid_parameter",
-		`{"topic":"x","after":"yesterday"}`:                        "invalid_parameter",
-		`{"topic":"x","after":"2026-02-01","before":"2026-01-01"}`: "invalid_parameter",
-		`{"topic":"from:ana networking"}`:                          "invalid_parameter",
-		`{"topic":"x","unknown":1}`:                                "bad_request",
+		`{"topic":"   "}`:                   "missing_free_text",
+		`{"topic":"x","limit":0}`:           "invalid_parameter",
+		`{"topic":"x","limit":51}`:          "invalid_parameter",
+		`{"topic":"x","evidence":11}`:       "invalid_parameter",
+		`{"topic":"x","min_score":0}`:       "invalid_parameter",
+		`{"topic":"x","min_score":1.5}`:     "invalid_parameter",
+		`{"topic":"x","after":"yesterday"}`: "bad_request",
+		`{"topic":"x","after":"2026-02-01T00:00:00Z","before":"2026-01-01T00:00:00Z"}`: "invalid_parameter",
+		`{"topic":"from:ana networking"}`:                                              "invalid_parameter",
+		`{"topic":"x","unknown":1}`:                                                    "bad_request",
 	} {
 		got := whoKnowsPost(t, srv, body)
 		assert.Equal(t, http.StatusBadRequest, got.Code, body)
@@ -121,7 +121,7 @@ func TestWhoKnowsReturnsEmptyListsWithReason(t *testing.T) {
 	assert := assert.New(t)
 	backend := &whoKnowsBackend{}
 	srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
-	got := whoKnowsPost(t, srv, `{"topic":"sailboat insurance","after":"2026-01-01"}`)
+	got := whoKnowsPost(t, srv, `{"topic":"sailboat insurance","after":"2026-01-01T00:00:00Z"}`)
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
 	assert.JSONEq(`{"topic":"sailboat insurance","reason":"no_relevant_evidence","searched_messages":0,"people":[],"unsaved_contacts":[]}`, got.Body.String())
