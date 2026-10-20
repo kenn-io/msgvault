@@ -60,11 +60,11 @@ func writeInvalidKataHome(t *testing.T, extra string) string {
 // serveRunningDaemon records a running daemon of version in home, answering
 // pings as the stand-in process and CLI runs with the given events. The stop
 // seam fails the test if anything tries to stop it.
-func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, events ...string) (pid int, requests *atomic.Int32) {
+func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, events ...string) (requests *atomic.Int32) {
 	t.Helper()
 	require := require.New(t)
 	standIn := startBlockingDaemonStandIn(t)
-	pid = standIn.Process.Pid
+	pid := standIn.Process.Pid
 	created, ok := processCreateTimeMillis(pid)
 	require.True(ok)
 	requests = &atomic.Int32{}
@@ -86,7 +86,7 @@ func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, even
 		require.FailNow("a daemon must not be stopped while the config is invalid")
 		return errors.New("unreachable")
 	})
-	return pid, requests
+	return requests
 }
 
 func TestInvalidDaemonConfigWarnsOnceAndExportReachesDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
@@ -109,7 +109,7 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	require := require.New(t)
 	withTestVersion(t, "v1.1.0")
 	home := writeInvalidKataHome(t, "")
-	pid, requests := serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion, exportCompleteEvents)
+	requests := serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion, exportCompleteEvents)
 	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
 		require.FailNow("a running daemon must be reused")
 		return nil, errors.New("unreachable")
@@ -119,7 +119,6 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	require.NoError(err, stderr)
 	assert.Equal(int32(1), requests.Load())
 	assert.Contains(stdout, `"record_type":"complete"`)
-	assert.True(daemon.ProcessAlive(pid), "the older daemon must keep running")
 }
 
 func TestInvalidDaemonConfigIsNotRepeatedAfterProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
