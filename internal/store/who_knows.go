@@ -72,12 +72,10 @@ func automatedAddress(email string) bool {
 	local, _, _ := strings.Cut(strings.ToLower(email), "@")
 	local, _, _ = strings.Cut(local, "+")
 	local = strings.ReplaceAll(local, "_", "-")
+	// A dot often separates a person's name, as in alert.sam, so only a
+	// hyphen marks a system sender's suffix.
 	for _, pattern := range automatedPatterns {
-		if local == pattern {
-			return true
-		}
-		if strings.HasPrefix(local, pattern) && len(local) > len(pattern) &&
-			strings.ContainsRune("-.", rune(local[len(pattern)])) {
+		if local == pattern || strings.HasPrefix(local, pattern+"-") {
 			return true
 		}
 	}

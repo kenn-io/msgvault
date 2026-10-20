@@ -147,6 +147,9 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 		"unreadable":     post("unreadable@example.net", "", "", ""),
 		"newsome":        post("newsome@example.net", "", "", ""),
 		"botanist":       post("botanist@example.net", "", "", ""),
+		"alert.sam":      post("alert.sam@example.net", "", "", ""),
+		"bot.lee":        post("bot.lee@example.net", "", "", ""),
+		"digest.ann":     post("digest.ann@example.net", "", "", ""),
 		"jira":           post("jira@example.net", "", "", ""),
 		"plain":          post("plain@example.net", "", "", ""),
 	}
