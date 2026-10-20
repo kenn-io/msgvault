@@ -1906,6 +1906,18 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Synctech imports used to record drafts and other texts that never left
+	// the phone with no send state. Person tiers count only sent texts, so
+	// mark the existing ones from their retained backup record.
+	if err := s.runOnceMigration(
+		ctx, migrationSynctechUnsentTexts, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, markSynctechUnsentTexts)
+		},
+	); err != nil {
+		return err
+	}
+
 	// Initialize explicit attribution provenance for every legacy message once
 	// under the maintenance timeout escape hatch. Granola and Circleback
 	// historically derived is_from_me from confirmed organizer identities.
