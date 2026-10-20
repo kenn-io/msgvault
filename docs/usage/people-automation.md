@@ -34,15 +34,18 @@ msgvault person tiers preview
 msgvault person tiers explain 7
 ```
 
-Preview lists tier 1 (at least two messages each way and six days of contact in
-the last 90 days, or at least two messages each way and three days of contact
-plus a second channel or repeated meetings) and tier 2 (messages both ways and
-three days of contact in the last year, or repeated meetings). Each row shows
-the rule that put the person there, the last contact date, and whether they are
-already tracked. A header line names the timezone and direct limit the counts
-were built under. `explain` shows every count against its threshold, so you can
-see why someone is missing. If the activity projection is still catching up,
-preview warns that counts may be too low. Change the windows and thresholds in
+By default, preview lists tier 1 (at least two messages each way and six days
+of contact in the last 90 days, or at least two messages each way and three
+days of contact plus a second channel or repeated meetings) and tier 2
+(messages both ways and three days of contact in the last year, or repeated
+meetings). Each row shows the rule that put the person there, the last contact
+date, and whether they are already tracked. A header line names the timezone
+and direct limit the counts were built under. `explain` shows every count
+against its threshold, so you can see why someone is missing. If the activity
+projection is still catching up, preview warns that counts may be too low. While
+it rebuilds after a change to `[activity] timezone` or `max_direct_counterparts`,
+both commands ask you to retry once it finishes. Change the windows and
+thresholds in
 [`[people.tiers]`](/docs/configuration/#people-tiers).
 
 Preview changes nothing. To track everyone in tier 1 who is not tracked yet,

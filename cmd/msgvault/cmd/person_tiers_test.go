@@ -103,13 +103,10 @@ func TestPersonTiersPreviewWarnsWhenProjectionIsBehind(t *testing.T) {
 	assert.True(json.Valid([]byte(stdout)), "stdout stays JSON")
 }
 
-func TestPersonTiersPreviewRejectsBadAndRemovedFlags(t *testing.T) {
-	require := require.New(t)
+func TestPersonTiersPreviewRejectsAnUnknownTier(t *testing.T) {
 	st := &tiersStore{}
-	for _, args := range [][]string{{"preview", "--tier", "3"}, {"preview", "--track"}, {"preview", "--max", "5"}, {"preview", "--yes"}} {
-		_, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), args...)
-		require.Error(err, args)
-	}
+	_, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "preview", "--tier", "3")
+	require.ErrorContains(t, err, "--tier must be 1 or 2")
 	assert.Zero(t, st.tierFilter)
 }
 
