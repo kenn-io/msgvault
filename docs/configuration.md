@@ -137,7 +137,7 @@ min_meeting_days_long = 2
 | `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
 | `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
 | `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
-| `tier1.breadth_min_channels_long` | `2` | Channels (email, chat, meetings) in the long window for the breadth path. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_channels_long` | `2` | Message channels (email, chat) in the long window for the breadth path. Meetings count under the next key instead. `0` turns it off; `1` is invalid. |
 | `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
 | `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
