@@ -225,13 +225,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	if set == nil {
 		return nil, bounded, nil
 	}
-	overrides := make(map[string]CalendarEventRow, len(rows))
-	for _, row := range rows {
-		if row.Event.Original != nil {
-			overrides[row.Event.Original.Key()] = row
-		}
-	}
-	for _, exception := range overrides {
+	for _, exception := range calendarExceptionOverrides(rows) {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
 		}
@@ -248,6 +242,17 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 		set.ExDates = append(set.ExDates, *exception.Event.Original)
 	}
 	return resolved, bounded, nil
+}
+
+// Rows arrive in message ID order; the last archived row wins for each original.
+func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
+	overrides := make(map[string]CalendarEventRow, len(rows))
+	for _, row := range rows {
+		if row.Event.Original != nil {
+			overrides[row.Event.Original.Key()] = row
+		}
+	}
+	return overrides
 }
 
 func calendarRecurrenceBudgetError() error {

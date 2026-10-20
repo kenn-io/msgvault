@@ -131,18 +131,6 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 			return linkOccurrence{}, err
 		}
 		if len(masters) == 1 {
-			if row.Event.Start != nil && row.Event.End != nil {
-				o := occurrenceFromRow(masters[0], row.Event.Original.Key())
-				o.Start, o.End, err = seriesExceptionBounds(masters[0], row)
-				if err != nil {
-					return linkOccurrence{}, err
-				}
-				o.Row = row
-				if masters[0].Event.Status == meetingCancelledStatus {
-					o.Row.Event.Status = meetingCancelledStatus
-				}
-				return o, nil
-			}
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
 			if row.Event.Start == nil || row.Event.End == nil {
@@ -189,7 +177,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	for _, x := range moved {
+	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)

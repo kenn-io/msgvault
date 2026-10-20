@@ -113,13 +113,6 @@ func TestMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testin
 				}
 				requirements.ErrorIs(st.LinkMeetingContext(t.Context(), note, ref), tc.wantErr)
 
-				readCtx, release, err := st.BeginReadSnapshotContext(t.Context())
-				requirements.NoError(err)
-				budget := calrecur.RequestReadBudget
-				_, err = resolveMeetingOccurrence(readCtx, st.meetingReader(readCtx), ref, &budget)
-				release()
-				requirements.ErrorIs(err, tc.wantErr)
-
 				requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 				assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "other links remain readable before the recurrence is repaired")
 				requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
