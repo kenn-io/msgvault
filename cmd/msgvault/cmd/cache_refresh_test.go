@@ -1256,6 +1256,96 @@ func TestRecipientSupportRefreshRestagesParticipantProjection(t *testing.T) {
 	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
 }
 
+func TestRecipientOnlyRefreshRestagesParticipantIdentifiers(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	ctx := t.Context()
+	c, st := policyCacheFixture(t)
+	participantID, err := st.EnsureParticipantByPhone(
+		"+15550100991", "Synthetic Native Recipient", "whatsapp",
+	)
+	requirements.NoError(err)
+	requirements.NoError(st.EnsureConversationParticipantContext(ctx, 2, participantID, "member"))
+	nativeSource, err := st.GetOrCreateSource("whatsapp", "native-archive@example.test")
+	requirements.NoError(err)
+	nativeConversationID, err := st.EnsureConversation(
+		nativeSource.ID, "native-room", "Synthetic native room",
+	)
+	requirements.NoError(err)
+	nativeMessageID, err := st.UpsertMessageContext(ctx, &store.Message{
+		SourceID: nativeSource.ID, SourceMessageID: "native-message-1",
+		ConversationID: nativeConversationID, MessageType: "whatsapp",
+		SentAt: sql.NullTime{Time: time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipientsContext(
+		ctx, nativeMessageID, "to", []int64{participantID}, []string{"Synthetic Native Recipient"},
+	))
+	identifierRevision, err := st.ParticipantIdentifierRevisionContext(ctx)
+	requirements.NoError(err)
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	var eligible int
+	requirements.NoError(st.DB().QueryRowContext(ctx, st.Rebind(`SELECT COUNT(*)
+		FROM participant_identifiers pi
+		WHERE pi.participant_id=? AND pi.identifier_type='whatsapp'
+		  AND pi.identifier_value='+15550100991' AND `+identifierWhere),
+		participantID).Scan(&eligible))
+	assertions.Equal(1, eligible,
+		"the native recipient message supports the identifier while the chat room is Cold")
+
+	analyticsDir := c.AnalyticsDir()
+	_, err = buildCache(c.DatabaseDSN(), analyticsDir, true)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+	duckDB, err := duckdbutil.Open(
+		ctx,
+		duckdbutil.BuilderPolicy(filepath.Join(c.Data.DataDir, "recipient-identifier-refresh-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(duckDB.Close()) }()
+	identifierCount := func() int {
+		var count int
+		requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+			WHERE participant_id=? AND identifier_type='whatsapp'
+			  AND identifier_value='+15550100991'`,
+			filepath.Join(analyticsDir, tableParticipantIdentifiers, "*.parquet"), participantID).Scan(&count))
+		return count
+	}
+	assertions.Equal(1, identifierCount(),
+		"the full cache initially publishes the natively supported identifier")
+	var searchableCount int
+	requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+		WHERE list_contains(search_values, '+15550100991')`,
+		filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchableCount))
+	assertions.Equal(1, searchableCount, "the identity directory initially searches the native identifier")
+
+	requirements.NoError(st.ReplaceMessageRecipientsContext(ctx, nativeMessageID, "to", nil, nil))
+	afterRevision, err := st.ParticipantIdentifierRevisionContext(ctx)
+	requirements.NoError(err)
+	assertions.Equal(identifierRevision, afterRevision,
+		"removing the last native recipient reference does not change the identifier mapping revision")
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasRelatedRowDrift)
+	assertions.False(staleness.HasParticipantIdentifierDrift)
+
+	result, err := buildCacheAuto(c.DatabaseDSN(), analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Zero(result.ExportedCount,
+		"recipient-only repair must not re-export message facts")
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"recipient-only repair leaves message facts untouched")
+	assertions.Zero(identifierCount(),
+		"derived refresh must withdraw identifiers that no longer pass native history eligibility")
+	requirements.NoError(duckDB.QueryRow(`SELECT COUNT(*) FROM read_parquet(?)
+		WHERE list_contains(search_values, '+15550100991')`,
+		filepath.Join(analyticsDir, identityindex.DatasetPeople, "*.parquet")).Scan(&searchableCount))
+	assertions.Zero(searchableCount,
+		"relationship_people search values must drop the identifier after its last Full support is removed")
+	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
+}
+
 // TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh pins the
 // staleness contract for identifier-mapping changes without message
 // activity: SetParticipantIdentifier alone must surface as derived-only

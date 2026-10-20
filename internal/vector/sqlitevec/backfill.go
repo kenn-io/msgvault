@@ -152,9 +152,21 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 		return fmt.Errorf("backfill: read current message revisions: %w", err)
 	}
 	eligibleRevisions := make(map[int64]int64, len(currentRevisions))
+	baselineIDs := make([]int64, 0)
 	for id, revision := range currentRevisions {
 		if _, exists := vectorRevisions[id][revision]; exists {
 			eligibleRevisions[id] = revision
+			continue
+		}
+		// Store upgrade baselines legacy unstamped messages at revision 1.
+		// A revision-zero active vector is still current when that is the only
+		// difference: source changes after the upgrade advance beyond 1, and
+		// legacy pending_embeddings rows below preserve the old re-embed signal.
+		if revision == 1 {
+			if _, exists := vectorRevisions[id][0]; exists {
+				eligibleRevisions[id] = 0
+				baselineIDs = append(baselineIDs, id)
+			}
 		}
 	}
 
@@ -172,8 +184,19 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	pendingSet := make(map[int64]struct{}, len(pendingIDs))
 	for _, id := range pendingIDs {
+		pendingSet[id] = struct{}{}
 		delete(eligibleRevisions, id)
+	}
+	if len(pendingSet) > 0 {
+		remaining := baselineIDs[:0]
+		for _, id := range baselineIDs {
+			if _, pending := pendingSet[id]; !pending {
+				remaining = append(remaining, id)
+			}
+		}
+		baselineIDs = remaining
 	}
 
 	// Atomicity (Codex 129d #2/#3): the embed_gen stamp UPDATE(s) and the
@@ -202,6 +225,28 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 			_ = tx.Rollback()
 		}
 	}()
+	// Restore the pre-upgrade revision for current active-generation vectors.
+	// Rows with a legacy pending re-embed signal were removed from baselineIDs,
+	// so their revision remains 1 and their stale vector stays hidden.
+	for start := 0; start < len(baselineIDs); start += backfillStampChunk {
+		end := min(start+backfillStampChunk, len(baselineIDs))
+		chunk := baselineIDs[start:end]
+		placeholders := make([]string, len(chunk))
+		args := make([]any, 0, len(chunk))
+		for i, id := range chunk {
+			placeholders[i] = "?"
+			args = append(args, id)
+		}
+		q := `UPDATE messages SET embedding_revision = 0
+		      WHERE embed_gen IS NULL AND embedding_revision = 1
+		        AND id IN (` + strings.Join(placeholders, ",") + `)`
+		if b.policyStore != nil {
+			q += " AND " + store.FullMessageWhere("messages")
+		}
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("backfill: restore legacy embedding revision baseline: %w", err)
+		}
+	}
 
 	// Stamp embed_gen=active only for message revisions represented by an
 	// active-generation vector. The revision predicate also protects against

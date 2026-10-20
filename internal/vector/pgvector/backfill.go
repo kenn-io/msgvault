@@ -164,6 +164,28 @@ func (b *Backend) BackfillEmbedGenForUpgrade(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Store upgrade baselines legacy unstamped messages at revision 1. Restore
+	// revision 0 only when the active generation already has the matching old
+	// vector and there is no pending re-embed signal. A post-upgrade input
+	// change advances past 1, while pending rows keep stale vectors hidden.
+	restoreBaseline := `UPDATE messages SET embedding_revision = 0
+		WHERE embed_gen IS NULL AND embedding_revision = 1
+		  AND EXISTS (
+		      SELECT 1 FROM embeddings e
+		       WHERE e.message_id = messages.id
+		         AND e.generation_id = $1
+		         AND e.embedding_revision = 0)`
+	if b.policyStore != nil {
+		restoreBaseline += " AND " + store.FullMessageWhere("messages")
+	}
+	if pendingExists {
+		restoreBaseline += `
+		  AND messages.id NOT IN (
+		      SELECT message_id FROM pending_embeddings WHERE generation_id = $1)`
+	}
+	if _, err := tx.ExecContext(ctx, restoreBaseline, int64(active.ID)); err != nil {
+		return fmt.Errorf("backfill: restore legacy embedding revision baseline: %w", err)
+	}
 	stamp := `UPDATE messages SET embed_gen = $1
 		  WHERE embed_gen IS NULL
 		    AND EXISTS (

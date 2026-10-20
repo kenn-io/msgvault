@@ -320,20 +320,22 @@ func refreshDerivedDatasetsOnly(
 			return nil, fmt.Errorf("export derived conversation participants: %w", err)
 		}
 	}
-	identifiersChanged :=
-		participantIdentifierRevision != state.ParticipantIdentifierRevision
-	if identifiersChanged {
+	identifierProjectionChanged :=
+		participantIdentifierRevision != state.ParticipantIdentifierRevision ||
+			(repairRelated && relatedKinds.recipients)
+	if identifierProjectionChanged {
 		// The directory rebuild reads identifier values from the
 		// participant_identifiers base dataset (relationship_people search
-		// values and label fallbacks), so a changed mapping must be re-staged
-		// and republished alongside the derived index.
+		// values and label fallbacks). Recipient history also controls native
+		// identifier eligibility, so a recipient-only repair must re-stage this
+		// projection even when the identifier mapping revision did not change.
 		if err := derivedCopy(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL()); err != nil {
 			return nil, fmt.Errorf("export derived participant identifiers: %w", err)
 		}
 	}
 	displayNamesChanged :=
 		participantDisplayNameRevision != state.ParticipantDisplayNameRevision
-	participantProjectionChanged := identifiersChanged || displayNamesChanged ||
+	participantProjectionChanged := identifierProjectionChanged || displayNamesChanged ||
 		(repairRelated && relatedKinds.recipients)
 	if participantProjectionChanged {
 		// Participant identifiers can create participant rows, and display-name
@@ -406,7 +408,7 @@ func refreshDerivedDatasetsOnly(
 	plan := derivedCachePublishPlan(
 		conversationChanged,
 		typesChanged,
-		identifiersChanged,
+		identifierProjectionChanged,
 		participantProjectionChanged,
 		personDisplayNamesChanged || identityChanged,
 	)
