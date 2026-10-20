@@ -98,6 +98,30 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	assert.Equal(ana, got[byEnvelope].Contact.Key)
 }
 
+func TestTopicAuthorsReadLegacyEmailWithNullType(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	// Only SQLite archives from before the NOT NULL constraint hold a NULL
+	// type, and the vector index still finds them as email.
+	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+	ana, err := st.EnsureParticipant("ana@example.net", "Ana Sender", "example.net")
+	require.NoError(err)
+	legacy, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversationID, SourceMessageID: "legacy",
+		MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: ana, Valid: true},
+	})
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE messages SET message_type = NULL WHERE id = ?`, legacy)
+	require.NoError(err)
+
+	got, err := st.TopicAuthorsContext(t.Context(), []int64{legacy}, nil)
+	require.NoError(err)
+	a := got[legacy]
+	assert.True(a.Counts)
+	assert.Equal(ana, a.Contact.Key)
+	assert.True(store.IsEmailMessageType(a.MessageType), "a legacy row with no type is email")
+}
+
 func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

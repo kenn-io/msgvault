@@ -200,7 +200,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs, owner []int
 	}
 	query := `SELECT m.id, COALESCE(m.is_from_me, FALSE), COALESCE(m.list_id, '') <> '',
 		       ` + s.automatedMessage("m", "p") + `, ` + s.discordSystemMessage("m") + `,
-		       m.message_type, m.sent_at, COALESCE(m.subject, ''), src.source_type,
+		       COALESCE(m.message_type, ''), m.sent_at, COALESCE(m.subject, ''), src.source_type,
 		       p.id, COALESCE(p.email_address, '')
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id
