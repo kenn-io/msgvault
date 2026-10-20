@@ -32,7 +32,7 @@ func TestAcceleratedSearchReranksFiltersAndDeduplicates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, []int64{1, 2}, []int64{hits[0].MessageID, hits[1].MessageID})
-	assert.InDelta(t, 1-math.Sqrt(0.08), hits[1].Score, 0.0001, "scores retain the exact-search L2 scale")
+	assert.InDelta(t, 0.8/math.Sqrt(0.68), hits[1].Score, 0.0001, "scores are cosine similarities, as in pgvector")
 	assert.Equal(t, acceleratorKind, meta.Accelerator)
 	assert.True(t, meta.PoolSaturated)
 
