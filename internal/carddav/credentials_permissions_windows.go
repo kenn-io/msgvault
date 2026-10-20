@@ -14,8 +14,6 @@ import (
 
 type nativeCredentialPermissions struct{}
 
-const cardDAVFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
-
 func (nativeCredentialPermissions) secureDirectory(path string) error {
 	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
@@ -129,7 +127,7 @@ func verifyCardDAVHandleOwnerOnly(handle windows.Handle, user *windows.SID) erro
 		return fmt.Errorf("read CardDAV owner ACE: %w", err)
 	}
 	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-		(ace.Mask != windows.GENERIC_ALL && ace.Mask != cardDAVFileAllAccess) {
+		(ace.Mask != windows.GENERIC_ALL && ace.Mask != fileutil.FileAllAccess) {
 		return errors.New("CardDAV DACL does not grant exactly full control")
 	}
 	if ace.Header.AceFlags&windows.INHERITED_ACE != 0 {

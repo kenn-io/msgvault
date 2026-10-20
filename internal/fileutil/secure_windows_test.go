@@ -91,7 +91,7 @@ func assertProtectedDirectory(t *testing.T, path string) {
 	require.NoError(windows.GetAce(dacl, 0, &ace))
 	assert.Equal(uint8(windows.ACCESS_ALLOWED_ACE_TYPE), ace.Header.AceType)
 	assert.Zero(ace.Header.AceFlags & windows.INHERITED_ACE)
-	assert.Equal(uint32(0x1F01FF), ace.Mask, "FILE_ALL_ACCESS")
+	assert.Equal(uint32(FileAllAccess), ace.Mask)
 	// #nosec G103 -- GetAce supplies an access-allowed ACE with a contiguous SID at SidStart.
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	assert.True(aceSID.Equals(user.User.Sid))

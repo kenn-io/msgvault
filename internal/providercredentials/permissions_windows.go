@@ -16,8 +16,6 @@ import (
 
 type nativePermissions struct{}
 
-const providerCredentialFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
-
 func (nativePermissions) prepareDirectory(path string) error {
 	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
@@ -174,7 +172,7 @@ func verifyOwnerOnlyHandleForUser(handle windows.Handle, user *windows.SID, allo
 	if err := windows.GetAce(dacl, 0, &ace); err != nil {
 		return fmt.Errorf("read provider credential ACE: %w", err)
 	}
-	fullControl := ace.Mask == windows.GENERIC_ALL || ace.Mask == providerCredentialFileAllAccess
+	fullControl := ace.Mask == windows.GENERIC_ALL || ace.Mask == fileutil.FileAllAccess
 	readOnly := allowReadOnly && (ace.Mask == windows.GENERIC_READ || ace.Mask == windows.FILE_GENERIC_READ)
 	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || (!fullControl && !readOnly) ||
 		ace.Header.AceFlags&windows.INHERITED_ACE != 0 {

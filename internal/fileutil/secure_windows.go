@@ -14,6 +14,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// FileAllAccess is FILE_ALL_ACCESS. Owner-only ACEs use it instead of
+// GENERIC_ALL because Windows splits an inheritable generic ACE in two.
+const FileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
+
 // isOwnerOnly returns true if the permission mode grants nothing to group or other.
 func isOwnerOnly(perm os.FileMode) bool {
 	return perm&0077 == 0
@@ -60,11 +64,9 @@ func currentUserACL(path string, inherit uint32) (*windows.ACL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("fileutil: get current user SID for %s: %w", path, err)
 	}
-	// FILE_ALL_ACCESS avoids Windows splitting generic inheritable ACEs.
-	const fileAllAccess = 0x1F01FF
 	ea := []windows.EXPLICIT_ACCESS{
 		{
-			AccessPermissions: fileAllAccess,
+			AccessPermissions: FileAllAccess,
 			AccessMode:        windows.SET_ACCESS,
 			Inheritance:       inherit,
 			Trustee: windows.TRUSTEE{
@@ -149,6 +151,8 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 			Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
 			SecurityDescriptor: descriptor,
 		}
+	} else {
+		slog.Warn("fileutil: protected directory creation unavailable", "path", path, "err", err)
 	}
 	for _, dir := range slices.Backward(missing) {
 		if attributes != nil {
@@ -162,6 +166,7 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 						continue
 					}
 				}
+				slog.Warn("fileutil: protected directory creation failed", "path", dir, "err", err)
 			}
 		}
 		if err := secureMkdirFallback(dir, perm); err != nil {
