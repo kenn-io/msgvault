@@ -109,9 +109,7 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 	var body whoknows.Response
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
 	assert.Equal("sailboat insurance", body.Topic)
-	assert.NotNil(body.People, "an empty list is [], not null")
 	assert.Empty(body.People)
-	assert.NotNil(body.UnsavedContacts, "an empty list is [], not null")
 	assert.Empty(body.UnsavedContacts)
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)

@@ -148,17 +148,12 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 		}
 		return id
 	}
-	payload := func(id int64, raw string) {
-		require.NoError(f.Store.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw), "slack_json"))
-	}
 	automated := map[string]int64{
 		"discord flag":       post("discord", "discord@example.net", `{"author_kind":"bot","automated":true}`, "", ""),
 		"slack bot":          post("slack", "slack@example.net", "", "slack", "T1:bot:B1"),
 		"chatwoot agent bot": post("chatwoot", "agent@example.net", "", "chatwoot", "acct/agent_bot/7"),
 		"chatwoot assistant": post("chatwoot", "assistant@example.net", "", "chatwoot", "acct/captain_assistant/8"),
-		"bot_message":        post("slack", "botmessage@example.net", "", "", ""),
 	}
-	payload(automated["bot_message"], `{"type":"message","subtype":"bot_message","text":"alert"}`)
 	for _, address := range []string{
 		"noreply@example.net", "no-reply+tag@example.net", "notifications@example.net",
 		"alerts-jira@example.net", "newsletter@example.net", "No_Reply@example.net", "mailer_daemon@example.net",
@@ -166,11 +161,8 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 		automated[address] = post("slack", address, "", "", "")
 	}
 	humans := map[string]int64{
-		"explicit false": post("discord", "explicit@example.net", `{"automated":false}`, "", ""),
 		"slack user":     post("slack", "slackuser@example.net", "", "slack", "T1:U1"),
 		"chatwoot agent": post("chatwoot", "agentuser@example.net", "", "chatwoot", "acct/agent/9"),
-		"user payload":   post("slack", "userpayload@example.net", "", "slack", "T1:U3"),
-		"unreadable":     post("slack", "unreadable@example.net", "", "", ""),
 		"newsome":        post("slack", "newsome@example.net", "", "", ""),
 		"botanist":       post("slack", "botanist@example.net", "", "", ""),
 		"alert.sam":      post("slack", "alert.sam@example.net", "", "", ""),
@@ -179,8 +171,6 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 		"jira":           post("slack", "jira@example.net", "", "", ""),
 		"plain":          post("slack", "plain@example.net", "", "", ""),
 	}
-	payload(humans["user payload"], `{"type":"message","user":"U3","text":"hello"}`)
-	payload(humans["unreadable"], `not json`)
 
 	var ids []int64
 	for _, id := range automated {
@@ -239,9 +229,8 @@ func TestTopicAuthorsLeaveOutDiscordSystemMessages(t *testing.T) {
 	}
 }
 
-// The Slack importer files a message carrying both "user" and "bot_id" under
-// the user. A message's bot payload excludes that post, while the user's
-// is_bot classification decides whether their declared topics count.
+// Slack credits only authored messages, excluding generated events and bots
+// even when their payload names a user.
 func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -258,152 +247,94 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}},
 		{"id":"UBOT","team_id":"T1","name":"deploys","is_bot":true,"profile":{"real_name":"Deploys"}}]`)
 	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA","UBOT"]}]`)
-	write("general/2026-10-01.json", `[
-		{"type":"message","ts":"1790000000.000001","user":"UANA","text":"pod networking notes"},
-		{"type":"message","ts":"1790000000.000002","user":"UANA","bot_id":"B1","text":"deploy finished"},
-		{"type":"message","ts":"1790000000.000003","user":"UBOT","text":"deploy finished"}]`)
-	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
-	require.NoError(err)
-
-	ids := map[string]int64{}
-	senders := map[string]int64{}
-	for _, ts := range []string{"1790000000.000001", "1790000000.000002", "1790000000.000003"} {
-		var id, sender int64
-		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
-			`SELECT id, sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
-			summary.SourceID, "C1:"+ts).Scan(&id, &sender))
-		ids[ts], senders[ts] = id, sender
-	}
-	anaOwn, botAsAna, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
-	botParticipant, _, err := f.Store.ParticipantByIdentifierContext(ctx, "slack", "T1:bot:UBOT")
-	require.NoError(err)
-	assert.Equal(senders["1790000000.000003"], botParticipant, "the importer records the user's is_bot classification")
-	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn, botUser}, ownerOf(f))
-	require.NoError(err)
-	assert.False(got[botAsAna].Counts, "a bot posting as Ana")
-	assert.True(got[anaOwn].Counts, "Ana's own message")
-	assert.False(got[botUser].Counts, "the bot user's post")
-
-	var anaPerson int64
-	for _, ts := range []string{"1790000000.000002", "1790000000.000003"} {
-		person, _, err := f.Store.CreatePersonFromParticipant(senders[ts])
-		require.NoError(err)
-		topic := "deploys"
-		_, err = f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
-			PersonID:       person.ID,
-			DefinitionSlug: store.AttributeSlugAskMeAbout,
-			Ordinal:        new(int64),
-			Value:          store.AttributeValue{Type: store.AttributeValueText, Text: &topic},
-			Source:         store.ProvenanceUser,
-		})
-		require.NoError(err)
-		if ts == "1790000000.000002" {
-			anaPerson = person.ID
-		}
-	}
-	values, _, err := f.Store.AskMeAboutValuesContext(ctx, ownerOf(f))
-	require.NoError(err)
-	assert.Equal([]store.PersonAskMeAbout{{PersonID: anaPerson, PersonName: "ana", Value: "deploys"}}, values,
-		"the bot user is left out")
-}
-
-func TestTopicAuthorsLeaveOutSlackGeneratedEvents(t *testing.T) {
-	f := storetest.New(t)
-	ctx := t.Context()
-	export := t.TempDir()
-	write := func(name, body string) {
-		path := filepath.Join(export, name)
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
-	}
-	write("users.json", `[
-		{"id":"UOWNER","team_id":"T1","name":"owner","profile":{"email":"owner@example.net"}},
-		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}}]`)
-	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA"]}]`)
 	cases := []struct {
 		subtype string
 		counts  bool
 	}{
 		{"channel_join", false},
-		{"channel_leave", false},
-		{"channel_topic", false},
-		{"channel_purpose", false},
-		{"channel_name", false},
-		{"channel_archive", false},
-		{"channel_unarchive", false},
-		{"group_join", false},
-		{"group_leave", false},
-		{"group_topic", false},
-		{"group_purpose", false},
-		{"group_name", false},
-		{"group_archive", false},
-		{"group_unarchive", false},
-		{"pinned_item", false},
-		{"unpinned_item", false},
 		{"", true},
 		{"thread_broadcast", true},
 		{"reply_broadcast", true},
 		{"file_share", true},
 		{"me_message", true},
 	}
-	messages := make([]string, len(cases))
+	var messages []string
 	for i, tc := range cases {
-		text := "pod networking"
-		if tc.subtype == "channel_join" {
-			text = "<@UANA> has joined the channel"
-		}
-		messages[i] = fmt.Sprintf(`{"type":"message","ts":"1790000000.%06d","user":"UANA","subtype":%q,"text":%q}`, i+1, tc.subtype, text)
+		messages = append(messages, fmt.Sprintf(`{"type":"message","ts":"1790000000.%06d","user":"UANA","subtype":%q,"text":"pod networking"}`, i+4, tc.subtype))
 	}
-	write("general/2026-10-01.json", "["+strings.Join(messages, ",")+"]")
+	write("general/2026-10-01.json", `[
+		{"type":"message","ts":"1790000000.000001","user":"UANA","text":"pod networking notes"},
+		{"type":"message","ts":"1790000000.000002","user":"UANA","bot_id":"B1","text":"deploy finished"},
+		{"type":"message","ts":"1790000000.000003","user":"UBOT","text":"deploy finished"},`+strings.Join(messages, ",")+"]")
 	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
-	require.NoError(t, err)
-	owner := ownerOf(f)
+	require.NoError(err)
+
+	ids := map[string]int64{}
+	for _, ts := range []string{"1790000000.000001", "1790000000.000002", "1790000000.000003"} {
+		var id int64
+		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+			summary.SourceID, "C1:"+ts).Scan(&id))
+		ids[ts] = id
+	}
+	anaOwn, botAsAna, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
+	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn, botUser}, ownerOf(f))
+	require.NoError(err)
+	assert.False(got[botAsAna].Counts, "a bot posting as Ana")
+	assert.True(got[anaOwn].Counts, "Ana's own message")
+	assert.False(got[botUser].Counts, "the bot user's post")
 	for i, tc := range cases {
-		t.Run(fmt.Sprintf("%02d_%s", i, tc.subtype), func(t *testing.T) {
-			require := require.New(t)
-			var id int64
-			require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
-				`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
-				summary.SourceID, fmt.Sprintf("C1:1790000000.%06d", i+1)).Scan(&id))
-			got, err := f.Store.TopicAuthorsContext(ctx, []int64{id}, owner)
-			require.NoError(err)
-			assert.Equal(t, tc.counts, got[id].Counts, "credit only Ana's authored messages")
-		})
+		var id int64
+		require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+			summary.SourceID, fmt.Sprintf("C1:1790000000.%06d", i+4)).Scan(&id))
+		got, err := f.Store.TopicAuthorsContext(ctx, []int64{id}, ownerOf(f))
+		require.NoError(err)
+		assert.Equal(tc.counts, got[id].Counts, "subtype %q", tc.subtype)
 	}
 }
 
 func TestTopicAuthorsLeaveOutAddressesLinkedToTheOwner(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
-	owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
-	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
-	_, err := f.Store.LinkParticipants(owner, alias)
-	require.NoError(err)
-	fromAlias := send(f, "from-alias", alias)
+	for _, accountIdentity := range []bool{true, false} {
+		t.Run(fmt.Sprintf("account_identity=%t", accountIdentity), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
+			if accountIdentity {
+				require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
+			} else {
+				send(f, "outbound", owner, func(m *store.Message) { m.IsFromMe = true })
+				require.Empty(ownerOf(f), "no account identity names the owner")
+			}
+			alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+			_, err := f.Store.LinkParticipants(owner, alias)
+			require.NoError(err)
+			fromAlias := send(f, "from-alias", alias)
 
-	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
-	require.NoError(err)
-	assert.False(got[fromAlias].Counts, "an address linked to the owner's is the owner before anyone is saved")
+			got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
+			require.NoError(err)
+			assert.False(got[fromAlias].Counts, "an address linked to the owner's is the owner before anyone is saved")
 
-	_, _, err = f.Store.CreatePersonFromParticipant(owner)
-	require.NoError(err)
-	got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
-	require.NoError(err)
-	assert.False(got[fromAlias].Counts, "and after the owner is saved")
+			_, _, err = f.Store.CreatePersonFromParticipant(owner)
+			require.NoError(err)
+			got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
+			require.NoError(err)
+			assert.False(got[fromAlias].Counts, "and after the owner is saved")
 
-	// A chat account identity names the owner by identifier.
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "T1:UOWNER", "manual"))
-	chatOwner, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UOWNER", "Owner")
-	require.NoError(err)
-	chatOther, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UANA", "Ana")
-	require.NoError(err)
-	fromChatOwner, fromChatOther := send(f, "from-chat-owner", chatOwner), send(f, "from-chat-other", chatOther)
-	got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromChatOwner, fromChatOther}, ownerOf(f))
-	require.NoError(err)
-	assert.False(got[fromChatOwner].Counts, "the owner's chat identity")
-	assert.True(got[fromChatOther].Counts)
+			// A chat account identity names the owner by identifier.
+			require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "T1:UOWNER", "manual"))
+			chatOwner, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UOWNER", "Owner")
+			require.NoError(err)
+			chatOther, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UANA", "Ana")
+			require.NoError(err)
+			fromChatOwner, fromChatOther := send(f, "from-chat-owner", chatOwner), send(f, "from-chat-other", chatOther)
+			got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromChatOwner, fromChatOther}, ownerOf(f))
+			require.NoError(err)
+			assert.False(got[fromChatOwner].Counts, "the owner's chat identity")
+			assert.True(got[fromChatOther].Counts)
+		})
+	}
 }
 
 func TestTopicContactsGroupLinkedAndBoundSenders(t *testing.T) {

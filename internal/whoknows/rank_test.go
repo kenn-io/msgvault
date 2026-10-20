@@ -26,7 +26,7 @@ func person(id int64, messages ...Authored) Candidate {
 
 func rankParams() Params { return Params{Limit: 10, Evidence: 3, MinScore: .5} }
 
-func TestRankWeighsRecencyAndCitesTheBestMessages(t *testing.T) {
+func TestRankWeighsRecencyBoundsMailBoostsDeclaredTopicsAndCitesTheBestMessages(t *testing.T) {
 	assert := assert.New(t)
 	people, _ := Rank([]Candidate{
 		person(1, authored(1, 720, .9), authored(2, 700, .9)),

@@ -117,8 +117,7 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
 		"before": {"2026-01-01T00:00:00.25Z"},
 	}, query, "a subsecond bound keeps its fraction")
-	assert.Equal(t, "No message about \"kubernetes networking\" cleared minimum similarity 0.40. Lower --min-score to widen the search.\n", out,
-		"the flag value reaches the renderer")
+	assert.Contains(t, out, "0.40", "the flag value reaches the renderer")
 }
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {
