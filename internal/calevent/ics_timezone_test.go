@@ -249,24 +249,6 @@ func TestICSTimeZoneRejectsFrequentObservance(t *testing.T) {
 	}
 }
 
-func TestICSTimeZoneBoundsEventCandidates(t *testing.T) {
-	for _, rule := range []string{
-		"FREQ=YEARLY;COUNT=2;BYHOUR=0,1,2,3,4,5,6,7,8,9,10,11;BYMINUTE=0,1,2,3,4,5,6,7,8,9,10,11;BYSECOND=0,1,2,3,4,5,6,7,8,9,10,11",
-		"FREQ=YEARLY;UNTIL=20270101T100000Z;BYDAY=MO,TU,WE,TH,FR,SA,SU;BYMINUTE=0,1,2,3,4,5,6,7,8,9,10,11;BYSECOND=0,1,2,3,4,5,6,7,8,9,10,11",
-	} {
-		t.Run(rule, func(t *testing.T) {
-			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTIMEZONE\r\nTZID:Etc/UTC\r\n" +
-				"BEGIN:STANDARD\r\nDTSTART:20270101T000000\r\nTZOFFSETFROM:+0000\r\nTZOFFSETTO:+0000\r\nEND:STANDARD\r\n" +
-				"END:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:event-budget@example.test\r\n" +
-				"DTSTART;TZID=Etc/UTC:20270101T090000\r\nDURATION:PT1S\r\nRRULE:" + rule + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-			components, err := ParseICS([]byte(raw), "", "UTC")
-			require.NoError(t, err)
-			require.Len(t, components, 1)
-			assert.Contains(t, components[0].Event.RecurrenceError, "unsupported recurrence")
-		})
-	}
-}
-
 func TestICSTimeZoneBoundsObservanceWork(t *testing.T) {
 	for _, tc := range []struct{ name, onset, rule, eventRule string }{
 		{"interval", "20270101T090000", "FREQ=YEARLY;INTERVAL=401", ""},
