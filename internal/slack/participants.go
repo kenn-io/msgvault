@@ -10,7 +10,8 @@ import (
 
 // participantIdentifierType namespaces Slack user IDs in
 // participant_identifiers. IDs are only unique per workspace, so the stored
-// identifier value is "<team_id>:<user_id>".
+// identifier value is "<team_id>:<user_id>", with an additional
+// "<team_id>:bot:<user_id>" identifier for is_bot users.
 const participantIdentifierType = "slack"
 
 // participantResolver resolves Slack user IDs to msgvault participant IDs,

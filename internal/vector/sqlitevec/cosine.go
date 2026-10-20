@@ -13,7 +13,7 @@ import (
 
 // MessageCosines returns, for each listed message embedded in gen, the
 // cosine similarity of its closest chunk to queryVec. Search scores a hit as
-// 1 - L2 distance, which matches cosine only for unit-length vectors, and the
+// 1 - L2 distance, whose ordering matches cosine for unit-length vectors. The
 // embedding client stores provider vectors as they come. UnitLength reports
 // that queryVec and every chunk read have length 1. A zero vector scores 0.
 // Messages with no chunk in gen are left out. queryVec must have gen's
