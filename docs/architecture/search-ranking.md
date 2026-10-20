@@ -111,6 +111,21 @@ For non-normalized vectors, L2 and cosine can order neighbors differently. Full
 metric parity would require switching sqlite-vec tables to cosine distance and
 rebuilding existing vector tables. That migration is not implemented today.
 
+### Score scales on SQLite
+
+The score of a message in search results, including the per-signal scores
+`--explain` prints, is `1 - L2 distance` on SQLite and `1 - cosine distance` on
+PostgreSQL. Scores that look inside one message are `1 - cosine distance` on
+both: the chunk scores behind excerpts, the `min_score` filter on search
+excerpts, and `person who-knows`. A message's `--explain` score on SQLite and
+the score of its best excerpt therefore use different scales. For unit-length
+vectors both are monotonic in the same distance, but a cosine score is higher.
+
+Tools that choose a winning chunk from these scores can pick a different chunk
+for non-normalized vectors than they did when SQLite scored chunks by L2. The
+contextual-retrieval-eval arms read the winning chunk this way, so rerun a
+baseline before comparing arm results across this change.
+
 ## Practical Guidance
 
 - Expect the same matching messages for most normal queries.

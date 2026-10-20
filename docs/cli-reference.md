@@ -2887,7 +2887,7 @@ msgvault person who-knows <topic words...> [flags]
 |---|---|---|
 | `--limit` | `10` | Saved people, 1-50 |
 | `--evidence` | `3` | Citations per person, 1-10 |
-| `--min-score` | `0.5` | Lowest cosine similarity a message needs to count, above 0 and at most 1 |
+| `--min-score` | `0.5` | Lowest cosine similarity a message needs to count, above 0 and at most 1. The default is not calibrated for real embedding models; adjust it |
 | `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after is inclusive, before is exclusive |
 | `--json` | false | Return the API JSON |
 

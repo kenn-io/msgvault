@@ -299,8 +299,10 @@ A topic nobody wrote about prints `Nobody in your archive has written about
 from you or automated senders, the command says so and suggests `--after` or
 `--before`, because the answer may lie beyond the pool.
 
-The cosine scale depends on your embedding model. If a topic worded unlike your
-mail finds nobody, lower `--min-score`. Vector search must be ready, and the
+The 0.5 default is a starting point. It has not been calibrated for any real
+embedding model, and the cosine scale differs between models. If a topic worded
+unlike your mail finds nobody, lower `--min-score`; if unrelated people appear,
+raise it. Vector search must be ready, and the
 topic goes to the configured embedding endpoint once, like semantic message
 search. Senders are read when you run the command, so newly synced mail counts
 without an activity build. A citation's `sender_authenticated` is true when the

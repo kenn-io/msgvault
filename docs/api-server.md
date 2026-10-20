@@ -160,7 +160,8 @@ about a topic. The route is owner-only and returns `Cache-Control: no-store`.
 Restricted agent tokens cannot use it.
 
 The JSON body takes `topic` (required) and optional `limit` (1-50), `evidence`
-(1-10), `min_score` (above 0, at most 1), `after`, and `before`, as in the
+(1-10), `min_score` (above 0, at most 1; the 0.5 default is not calibrated for
+real embedding models), and RFC3339 `after` and `before`, as in the
 [CLI options](cli-reference.md#person-who-knows). The topic is plain words;
 search operators return `400 invalid_parameter`. The response holds `topic`,
 `searched_messages`, `people`, `unsaved_contacts`, and a `reason` when both
