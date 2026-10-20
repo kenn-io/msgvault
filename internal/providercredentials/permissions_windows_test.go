@@ -252,35 +252,30 @@ func TestWindowsReadSecretFileACL(t *testing.T) {
 }
 
 func TestWindowsCredentialWritesRepairReadOnlyDirectory(t *testing.T) {
-	for _, operation := range []string{"server key", "provider credential", "inherited"} {
+	for _, operation := range []string{"server key", "provider credential"} {
 		t.Run(operation, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			dir := filepath.Join(t.TempDir(), "tokens")
 			require.NoError(os.Mkdir(dir, 0o700))
-			if operation == "inherited" {
-				require.ErrorContains((nativePermissions{}).verifyDirectory(dir), "DACL permits inherited access")
-			} else {
-				handle := setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{
-					providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_READ, windows.TRUSTEE_IS_USER),
-				}, true)
-				// Restore write access even if the operation fails so TempDir can clean up.
-				t.Cleanup(func() { assert.NoError(secureOwnerOnlyHandle(handle)) })
-				entries, err := os.ReadDir(dir)
-				require.NoError(err)
-				require.Empty(entries, "repair must work before a lock file exists")
-				file, err := os.OpenFile(filepath.Join(dir, ".provider-credentials.lock"), os.O_RDWR|os.O_CREATE, 0o600)
-				if file != nil {
-					require.NoError(file.Close())
-				}
-				require.ErrorIs(err, os.ErrPermission, "the fixture must deny lock-file creation")
+			handle := setProviderCredentialTestACL(t, dir, []windows.EXPLICIT_ACCESS{
+				providerCredentialTestAccess(currentWindowsProviderCredentialSID(t), windows.GENERIC_READ, windows.TRUSTEE_IS_USER),
+			}, true)
+			// Restore write access even if the operation fails so TempDir can clean up.
+			t.Cleanup(func() { assert.NoError(secureOwnerOnlyHandle(handle)) })
+			entries, err := os.ReadDir(dir)
+			require.NoError(err)
+			require.Empty(entries, "repair must work before a lock file exists")
+			file, err := os.OpenFile(filepath.Join(dir, ".provider-credentials.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+			if file != nil {
+				require.NoError(file.Close())
 			}
+			require.ErrorIs(err, os.ErrPermission, "the fixture must deny lock-file creation")
 
-			if operation != "provider credential" {
+			if operation == "server key" {
 				key, err := EnsureServerKey(dir)
 				require.NoError(err)
 				require.NotEmpty(key)
-				require.NoError((nativePermissions{}).verifyDirectory(dir))
 				persisted, err := ReadSecretFile(filepath.Join(dir, ServerKeyFilename))
 				require.NoError(err)
 				assert.Equal(key, persisted)

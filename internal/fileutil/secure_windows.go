@@ -19,22 +19,13 @@ func isOwnerOnly(perm os.FileMode) bool {
 	return perm&0077 == 0
 }
 
-// restrictToCurrentUser sets a DACL on path that grants GENERIC_ALL only to
+// restrictToCurrentUser sets a DACL on path that grants full control only to
 // the current user and blocks inherited ACEs. For directories, the DACL
 // includes CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE so that child files
 // and subdirectories automatically inherit the restriction. Errors are
 // returned to the caller; the file was already created with the requested
 // Unix mode, so callers may treat DACL failures as non-fatal warnings.
 func restrictToCurrentUser(path string) error {
-	token := windows.GetCurrentProcessToken()
-
-	user, err := token.GetTokenUser()
-	if err != nil {
-		return fmt.Errorf("fileutil: get current user SID for %s: %w", path, err)
-	}
-
-	trustee := windows.TrusteeValueFromSID(user.User.Sid)
-
 	// For directories, enable inheritance so children get the same restriction.
 	// For files, NO_INHERITANCE is correct (files don't have children).
 	var inherit uint32 = windows.NO_INHERITANCE
@@ -43,22 +34,9 @@ func restrictToCurrentUser(path string) error {
 		inherit = windows.CONTAINER_INHERIT_ACE | windows.OBJECT_INHERIT_ACE
 	}
 
-	ea := []windows.EXPLICIT_ACCESS{
-		{
-			AccessPermissions: windows.GENERIC_ALL,
-			AccessMode:        windows.SET_ACCESS,
-			Inheritance:       inherit,
-			Trustee: windows.TRUSTEE{
-				TrusteeForm:  windows.TRUSTEE_IS_SID,
-				TrusteeType:  windows.TRUSTEE_IS_USER,
-				TrusteeValue: trustee,
-			},
-		},
-	}
-
-	acl, err := windows.ACLFromEntries(ea, nil)
+	acl, err := currentUserACL(path, inherit)
 	if err != nil {
-		return fmt.Errorf("fileutil: build ACL for %s: %w", path, err)
+		return err
 	}
 
 	secInfo := windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION
@@ -75,6 +53,52 @@ func restrictToCurrentUser(path string) error {
 		return fmt.Errorf("fileutil: set DACL on %s: %w", path, err)
 	}
 	return nil
+}
+
+func currentUserACL(path string, inherit uint32) (*windows.ACL, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, fmt.Errorf("fileutil: get current user SID for %s: %w", path, err)
+	}
+	// FILE_ALL_ACCESS avoids Windows splitting generic inheritable ACEs.
+	const fileAllAccess = 0x1F01FF
+	ea := []windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: fileAllAccess,
+			AccessMode:        windows.SET_ACCESS,
+			Inheritance:       inherit,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm:  windows.TRUSTEE_IS_SID,
+				TrusteeType:  windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid),
+			},
+		},
+	}
+
+	acl, err := windows.ACLFromEntries(ea, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fileutil: build ACL for %s: %w", path, err)
+	}
+
+	return acl, nil
+}
+
+func protectedDirectoryDescriptor(path string) (*windows.SECURITY_DESCRIPTOR, error) {
+	acl, err := currentUserACL(path, windows.CONTAINER_INHERIT_ACE|windows.OBJECT_INHERIT_ACE)
+	if err != nil {
+		return nil, err
+	}
+	descriptor, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return nil, err
+	}
+	if err := descriptor.SetDACL(acl, true, false); err != nil {
+		return nil, err
+	}
+	if err := descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
+		return nil, err
+	}
+	return descriptor, nil
 }
 
 // SecureWriteFile writes data to the named file, creating it if necessary.
@@ -95,6 +119,8 @@ func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
 // SecureMkdirAll creates a directory path and all parents that do not yet exist.
 // For owner-only modes, every new directory is created with a protected DACL
 // granting access only to the current user. Existing directories are unchanged.
+// If protected creation fails, creation falls back to os.Mkdir and best-effort
+// DACL restriction. Restriction failures are logged as warnings.
 func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
@@ -117,30 +143,32 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 		return nil
 	}
 
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		return fmt.Errorf("fileutil: get current user SID for %s: %w", path, err)
-	}
-	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
-	if err != nil {
-		return fmt.Errorf("fileutil: build directory security descriptor for %s: %w", path, err)
-	}
-	attributes := &windows.SecurityAttributes{
-		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
-		SecurityDescriptor: descriptor,
+	var attributes *windows.SecurityAttributes
+	if descriptor, err := protectedDirectoryDescriptor(path); err == nil {
+		attributes = &windows.SecurityAttributes{
+			Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+			SecurityDescriptor: descriptor,
+		}
 	}
 	for _, dir := range slices.Backward(missing) {
-		path16, err := windows.UTF16PtrFromString(dir)
-		if err != nil {
-			return fmt.Errorf("fileutil: encode directory path %s: %w", dir, err)
-		}
-		if err := windows.CreateDirectory(path16, attributes); err != nil {
-			if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-				if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+		if attributes != nil {
+			if path16, err := windows.UTF16PtrFromString(dir); err == nil {
+				err = windows.CreateDirectory(path16, attributes)
+				if err == nil {
 					continue
 				}
+				if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+					if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+						continue
+					}
+				}
 			}
-			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+		}
+		if err := os.Mkdir(dir, perm); err != nil {
+			return err
+		}
+		if err := restrictToCurrentUser(dir); err != nil {
+			slog.Warn("fileutil: best-effort DACL failed", "path", dir, "err", err)
 		}
 	}
 	return nil
