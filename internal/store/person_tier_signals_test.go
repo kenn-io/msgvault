@@ -399,3 +399,25 @@ func TestPersonTierSignalsCountResolvedPeopleOncePerAudience(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(2, signals[personID].LargeAudienceInboundEvents, "the limit still applies")
 }
+
+// The projection drops the owner's own addresses only within a message's
+// account. A person who is your address in another account is still excluded.
+func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, personID := newActivityQueryFixture(t)
+	other, err := f.Store.GetOrCreateSource("gmail", "other-account@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(other.ID, "counterpart@example.com", "manual"))
+	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	seedProjectedActivity(t, f, personID, []time.Time{asOf})
+
+	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
+
+	require.NoError(err)
+	assert.Equal(1, signals[personID].InboundLong, "this account's projection still counts the person")
+	assert.True(signals[personID].Owner)
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: asOf})
+	require.NoError(err)
+	assert.Equal("owner", explanation.Exclusion)
+}

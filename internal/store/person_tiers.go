@@ -16,6 +16,11 @@ import (
 // timezone, config, or person ID.
 var ErrInvalidPersonTierRequest = errors.New("invalid people tier request")
 
+// ErrPersonTierRebuilding means the activity projection is replaying under a
+// new timezone or direct limit, so its stored rows do not yet match either
+// setting and no counts can be trusted.
+var ErrPersonTierRebuilding = errors.New("the activity projection is rebuilding under new settings; retry once it finishes")
+
 // PersonTierOptions chooses the rules and the date the counts are read at.
 // The timezone and direct-contact limit come from the projection, since the
 // stored rows were built under them. ActivityTimezone and ActivityMaxDirect are
@@ -84,49 +89,57 @@ func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTie
 	if tier < 0 || tier > 2 {
 		return nil, fmt.Errorf("%w: tier must be 1 or 2", ErrInvalidPersonTierRequest)
 	}
-	plan, err := s.planPersonTiersContext(ctx, options)
-	if err != nil {
-		return nil, err
-	}
-	readiness, err := s.PersonTierReadinessContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	preview := &PersonTierPreview{
-		People: []PersonTierRow{}, AsOf: plan.asOf.Format(time.DateOnly), Readiness: readiness,
-		Projection: plan.projection, Provisional: plan.provisional,
-	}
-	for afterID := int64(0); ; {
-		ids, names, err := s.personTierPageContext(ctx, afterID)
+	var preview *PersonTierPreview
+	// One snapshot keeps the projection settings and every page of rows from the
+	// same moment, so a rebuild that starts mid-read cannot mix generations.
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		plan, err := s.planPersonTiersTx(ctx, tx, options)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if len(ids) == 0 {
-			break
-		}
-		afterID = ids[len(ids)-1]
-		signals, err := s.PersonTierSignalsContext(ctx, ids, plan.asOf, options.Config, plan.projection.MaxDirect)
+		readiness, err := s.personTierReadinessTx(ctx, tx)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		lastContacts, err := s.personTierLastContactsContext(ctx, ids, plan.location)
-		if err != nil {
-			return nil, err
+		preview = &PersonTierPreview{
+			People: []PersonTierRow{}, AsOf: plan.asOf.Format(time.DateOnly), Readiness: readiness,
+			Projection: plan.projection, Provisional: plan.provisional,
 		}
-		tracked, err := s.trackedPersonIDsContext(ctx, ids)
-		if err != nil {
-			return nil, err
-		}
-		for _, id := range ids {
-			d := persontiers.Evaluate(signals[id], options.Config)
-			if d.Tier == 3 || (tier != 0 && d.Tier != tier) {
-				continue
+		for afterID := int64(0); ; {
+			ids, names, err := personTierPageContext(ctx, tx, afterID)
+			if err != nil {
+				return err
 			}
-			preview.People = append(preview.People, PersonTierRow{
-				PersonID: id, DisplayName: names[id], Tier: d.Tier, Rule: d.Rule,
-				Tracked: tracked[id], LastContactDate: lastContacts[id],
-			})
+			if len(ids) == 0 {
+				return nil
+			}
+			afterID = ids[len(ids)-1]
+			signals, err := s.personTierSignalsTx(ctx, tx, ids, plan.asOf, options.Config, plan.projection.MaxDirect)
+			if err != nil {
+				return err
+			}
+			lastContacts, err := personTierLastContactsContext(ctx, tx, ids)
+			if err != nil {
+				return err
+			}
+			tracked, err := trackedPersonIDsContext(ctx, tx, ids)
+			if err != nil {
+				return err
+			}
+			for _, id := range ids {
+				d := persontiers.Evaluate(signals[id], options.Config)
+				if d.Tier == 3 || (tier != 0 && d.Tier != tier) {
+					continue
+				}
+				preview.People = append(preview.People, PersonTierRow{
+					PersonID: id, DisplayName: names[id], Tier: d.Tier, Rule: d.Rule,
+					Tracked: tracked[id], LastContactDate: lastContacts[id],
+				})
+			}
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	slices.SortStableFunc(preview.People, comparePersonTierRows)
 	return preview, nil
@@ -149,8 +162,8 @@ func comparePersonTierRows(a, b PersonTierRow) int {
 
 // personTierPageContext returns the next saved people after afterID, in ID
 // order, with their display names.
-func (s *Store) personTierPageContext(ctx context.Context, afterID int64) ([]int64, map[int64]*string, error) {
-	rows, err := s.db.QueryContext(ctx,
+func personTierPageContext(ctx context.Context, tx *loggedTx, afterID int64) ([]int64, map[int64]*string, error) {
+	rows, err := tx.QueryContext(ctx,
 		`SELECT id,display_name FROM persons WHERE id>? ORDER BY id LIMIT ?`, afterID, personTierSignalPageSize)
 	if err != nil {
 		return nil, nil, fmt.Errorf("page people for tiers: %w", err)
@@ -181,46 +194,54 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 	if personID <= 0 {
 		return nil, fmt.Errorf("%w: person ID must be positive", ErrInvalidPersonTierRequest)
 	}
-	plan, err := s.planPersonTiersContext(ctx, options)
+	var explanation *PersonTierExplanation
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		plan, err := s.planPersonTiersTx(ctx, tx, options)
+		if err != nil {
+			return err
+		}
+		explanation = &PersonTierExplanation{
+			PersonID: personID, AsOf: plan.asOf.Format(time.DateOnly),
+			Projection: plan.projection, Provisional: plan.provisional,
+		}
+		var name sql.NullString
+		err = tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id=?`, personID).Scan(&name)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("explain person %d: %w", personID, ErrPersonNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("read person for tier explanation: %w", err)
+		}
+		if name.Valid {
+			explanation.DisplayName = &name.String
+		}
+		if explanation.Readiness, err = s.personTierReadinessTx(ctx, tx); err != nil {
+			return err
+		}
+		ids := []int64{personID}
+		signals, err := s.personTierSignalsTx(ctx, tx, ids, plan.asOf, options.Config, plan.projection.MaxDirect)
+		if err != nil {
+			return err
+		}
+		lastContacts, err := personTierLastContactsContext(ctx, tx, ids)
+		if err != nil {
+			return err
+		}
+		tracked, err := trackedPersonIDsContext(ctx, tx, ids)
+		if err != nil {
+			return err
+		}
+		d := persontiers.Evaluate(signals[personID], options.Config)
+		explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, d.Exclusion
+		explanation.Thresholds = d.Thresholds
+		explanation.Signals = signals[personID]
+		explanation.Tracked = tracked[personID]
+		explanation.LastContactDate = lastContacts[personID]
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	explanation := &PersonTierExplanation{
-		PersonID: personID, AsOf: plan.asOf.Format(time.DateOnly),
-		Projection: plan.projection, Provisional: plan.provisional,
-	}
-	var name sql.NullString
-	err = s.db.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id=?`, personID).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("explain person %d: %w", personID, ErrPersonNotFound)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read person for tier explanation: %w", err)
-	}
-	if name.Valid {
-		explanation.DisplayName = &name.String
-	}
-	if explanation.Readiness, err = s.PersonTierReadinessContext(ctx); err != nil {
-		return nil, err
-	}
-	signals, err := s.PersonTierSignalsContext(ctx, []int64{personID}, plan.asOf, options.Config, plan.projection.MaxDirect)
-	if err != nil {
-		return nil, err
-	}
-	lastContacts, err := s.personTierLastContactsContext(ctx, []int64{personID}, plan.location)
-	if err != nil {
-		return nil, err
-	}
-	tracked, err := s.trackedPersonIDsContext(ctx, []int64{personID})
-	if err != nil {
-		return nil, err
-	}
-	d := persontiers.Evaluate(signals[personID], options.Config)
-	explanation.Tier, explanation.Rule, explanation.Exclusion = d.Tier, d.Rule, d.Exclusion
-	explanation.Thresholds = d.Thresholds
-	explanation.Signals = signals[personID]
-	explanation.Tracked = tracked[personID]
-	explanation.LastContactDate = lastContacts[personID]
 	return explanation, nil
 }
 
@@ -228,25 +249,29 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 // as-of date and the settings the stored counts were built under.
 type personTierPlan struct {
 	asOf        time.Time
-	location    *time.Location
 	projection  PersonTierProjection
 	provisional bool
 }
 
-// planPersonTiersContext validates the config once and reads the projection
-// timezone and direct limit. A missing timezone means nothing is projected
-// yet; readiness reports that, and counts use UTC and the default limit.
-func (s *Store) planPersonTiersContext(ctx context.Context, options PersonTierOptions) (personTierPlan, error) {
+// planPersonTiersTx validates the config once and reads the projection
+// timezone and direct limit. While either is changing, the stored rows follow
+// neither the old nor the new value, so it refuses. A missing timezone means
+// nothing is projected yet; readiness reports that, and counts use UTC and the
+// default limit.
+func (s *Store) planPersonTiersTx(ctx context.Context, tx *loggedTx, options PersonTierOptions) (personTierPlan, error) {
 	if err := options.Config.Validate(); err != nil {
 		return personTierPlan{}, fmt.Errorf("%w: %w", ErrInvalidPersonTierRequest, err)
 	}
-	zone, err := s.ActivityTimezoneTransitionContext(ctx)
+	zone, err := s.activityTimezoneTransitionQueryContext(ctx, tx)
 	if err != nil {
 		return personTierPlan{}, err
 	}
-	limit, err := s.ActivityDirectLimitTransitionContext(ctx)
+	limit, err := s.activityDirectLimitTransitionQueryContext(ctx, tx)
 	if err != nil {
 		return personTierPlan{}, err
+	}
+	if zone.Active || limit.Active {
+		return personTierPlan{}, ErrPersonTierRebuilding
 	}
 	plan := personTierPlan{projection: PersonTierProjection{Timezone: zone.Target, MaxDirect: limit.Target}}
 	if plan.projection.Timezone == "" {
@@ -255,7 +280,8 @@ func (s *Store) planPersonTiersContext(ctx context.Context, options PersonTierOp
 	if plan.projection.MaxDirect <= 0 {
 		plan.projection.MaxDirect = DefaultMaxDirectActivityCounterparts
 	}
-	if plan.location, err = time.LoadLocation(plan.projection.Timezone); err != nil {
+	location, err := time.LoadLocation(plan.projection.Timezone)
+	if err != nil {
 		return personTierPlan{}, fmt.Errorf("load projection timezone: %w", err)
 	}
 	plan.provisional = (zone.Target != "" && options.ActivityTimezone != "" && options.ActivityTimezone != zone.Target) ||
@@ -264,32 +290,31 @@ func (s *Store) planPersonTiersContext(ctx context.Context, options PersonTierOp
 	if at.IsZero() {
 		at = time.Now()
 	}
-	local := at.In(plan.location)
-	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, plan.location)
+	local := at.In(location)
+	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
 	return plan, nil
 }
 
-// personTierLastContactsContext returns each person's last contact as a date in
-// the projection timezone, the same calendar the windows use.
-func (s *Store) personTierLastContactsContext(ctx context.Context, ids []int64, loc *time.Location) (map[int64]*string, error) {
+// personTierLastContactsContext returns the date the projection stored for each
+// person's last contact event. It is not converted from a timestamp, so an
+// all-day meeting keeps its own date.
+func personTierLastContactsContext(ctx context.Context, tx *loggedTx, ids []int64) (map[int64]*string, error) {
 	result := make(map[int64]*string, len(ids))
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT person_id,last_contact_at FROM person_contact_state WHERE person_id IN (`+
-			int64Placeholders(len(ids))+`)`, personMergeSnapshotIDArgs(ids)...)
+	rows, err := tx.QueryContext(ctx,
+		`SELECT pcs.person_id,ae.local_date FROM person_contact_state pcs
+ JOIN activity_events ae ON ae.message_id=pcs.last_contact_message_id
+ WHERE pcs.person_id IN (`+int64Placeholders(len(ids))+`)`, personMergeSnapshotIDArgs(ids)...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier contact state: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
-		var last nullableTimestamp
-		if err = rows.Scan(&id, &last); err != nil {
+		var date string
+		if err = rows.Scan(&id, &date); err != nil {
 			return nil, fmt.Errorf("scan person tier contact state: %w", err)
 		}
-		if at := nullableTimePointer(last); at != nil {
-			date := at.In(loc).Format(time.DateOnly)
-			result[id] = &date
-		}
+		result[id] = &date
 	}
 	if err = rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate person tier contact state: %w", err)
@@ -297,9 +322,9 @@ func (s *Store) personTierLastContactsContext(ctx context.Context, ids []int64, 
 	return result, nil
 }
 
-func (s *Store) trackedPersonIDsContext(ctx context.Context, ids []int64) (map[int64]bool, error) {
+func trackedPersonIDsContext(ctx context.Context, tx *loggedTx, ids []int64) (map[int64]bool, error) {
 	result := make(map[int64]bool, len(ids))
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := tx.QueryContext(ctx,
 		`SELECT person_id FROM person_tracking WHERE person_id IN (`+int64Placeholders(len(ids))+`)`,
 		personMergeSnapshotIDArgs(ids)...)
 	if err != nil {
