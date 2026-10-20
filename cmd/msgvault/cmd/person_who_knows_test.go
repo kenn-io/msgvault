@@ -19,9 +19,9 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 		response generated.WhoKnowsResponse
 		want     string
 	}{
-		"nobody": {
+		"below minimum similarity": {
 			generated.WhoKnowsResponse{Topic: "sailboat insurance"},
-			"Nobody in your archive has written about \"sailboat insurance\" (minimum similarity 0.50).\n",
+			"No message about \"sailboat insurance\" cleared minimum similarity 0.50. Lower --min-score to widen the search.\n",
 		},
 		"full pool": {
 			generated.WhoKnowsResponse{Topic: "kubernetes", Limits: []generated.WhoKnowsResponseLimits{generated.PoolFull}},
@@ -117,7 +117,7 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
 		"before": {"2026-01-01T00:00:00.25Z"},
 	}, query, "a subsecond bound keeps its fraction")
-	assert.Equal(t, "Nobody in your archive has written about \"kubernetes networking\" (minimum similarity 0.40).\n", out,
+	assert.Equal(t, "No message about \"kubernetes networking\" cleared minimum similarity 0.40. Lower --min-score to widen the search.\n", out,
 		"the flag value reaches the renderer")
 }
 

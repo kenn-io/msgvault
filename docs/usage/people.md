@@ -316,10 +316,10 @@ to, such as a vendor who sends many unanswered messages. A colleague you write
 to keeps every message. Chat has no direction, so a chat sender keeps every
 message even if you only read their channel.
 
-A topic nobody wrote about prints `Nobody in your archive has written about
-"..." (minimum similarity 0.50)`, naming the `--min-score` in use. When the
-search came up short, the output says how, under the results or in place of
-"nobody":
+An empty result with no limits prints `No message about "..." cleared minimum similarity 0.50. Lower --min-score to widen the search.`,
+naming the `--min-score` in use. It means no message cleared that floor;
+people may still have written about the topic. When the search came up short,
+the output says how, under the results or alongside the empty result:
 
 - `The search hit its result limit, so more messages may match.` A matching
   message was among a full result pool, so others may lie beyond it. Narrow

@@ -16,9 +16,9 @@ func (s *Server) registerWhoKnowsRoutes(api huma.API) {
 	op.Description = "Ranks saved people, then unsaved contacts, by how many matching messages they wrote " +
 		"and how recent those are. Each entry cites its messages. limits lists each way the search came up " +
 		"short: pool_full when more messages may match beyond the search pool, partial_index when the " +
-		"vector index leaves out some message types or accounts or has not embedded a message yet, and " +
+		"vector index leaves out some message types or accounts or, for an empty answer, has not embedded a message yet, and " +
 		"declared_truncated when declared topics were searched only in part. Both lists empty with no " +
-		"limits means nobody wrote about the topic. " +
+		"limits means no message cleared min_score. Lower min_score to widen the search. " +
 		"A message's From address is not a verified identity unless its citation has sender_authenticated."
 	op.Parameters = []*huma.Param{
 		queryStringParam("topic", "Plain words; search operators are refused", true),

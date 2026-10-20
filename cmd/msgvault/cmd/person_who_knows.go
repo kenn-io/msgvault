@@ -129,7 +129,7 @@ func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse, m
 	case len(response.Limits) > 0:
 		fmt.Fprintf(out, "No one turned up for %q.\n", safe(response.Topic))
 	default:
-		fmt.Fprintf(out, "Nobody in your archive has written about %q (minimum similarity %.2f).\n", safe(response.Topic), minScore)
+		fmt.Fprintf(out, "No message about %q cleared minimum similarity %.2f. Lower --min-score to widen the search.\n", safe(response.Topic), minScore)
 	}
 	for _, limit := range response.Limits {
 		fmt.Fprintln(out, cmp.Or(whoKnowsLimitLines[limit], safe(string(limit))))

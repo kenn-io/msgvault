@@ -23,8 +23,8 @@ const (
 	DefaultMinScore = 0.5
 )
 
-// Limits name the ways a search came up short, so an empty result that lists
-// one never means nobody wrote about the topic.
+// Limits name the ways a search came up short beyond the minimum similarity
+// required for a message to count.
 const (
 	// LimitPoolFull means the search returned its full pool and a message
 	// cleared the floor, or the pool's order may not follow cosine order, so
@@ -81,8 +81,8 @@ type Entry struct {
 }
 
 // Response lists people first, then unsaved contacts. Limits lists each way
-// the search came up short; both lists empty with no limits means nobody in
-// the archive wrote about the topic.
+// the search came up short; both lists empty with no limits means no message
+// cleared the minimum similarity. Lower min_score to widen the search.
 type Response struct {
 	Topic           string   `json:"topic"`
 	Limits          []string `json:"limits" enum:"pool_full,partial_index,declared_truncated"`
