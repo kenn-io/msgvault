@@ -20,8 +20,8 @@ import (
 )
 
 // SearchPool caps how many fused hits one search reads. The hybrid engine
-// draws at most k_per_signal (default 100) hits from each of keyword and
-// vector search, so at most that many hits carry a vector score.
+// draws at most SearchPool/2 hits from each of keyword and vector search,
+// bounded further by k_per_signal, so both signals fit before fusion.
 const SearchPool = 200
 
 // Retriever runs the hybrid (keyword plus meaning) message search.
@@ -127,10 +127,11 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		return searchResult{}, nil
 	}
 	request := hybrid.SearchRequest{
-		Mode:     hybrid.ModeHybrid,
-		FreeText: p.FreeText,
-		Limit:    SearchPool,
-		Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
+		Mode:       hybrid.ModeHybrid,
+		FreeText:   p.FreeText,
+		Limit:      SearchPool,
+		KPerSignal: SearchPool / 2,
+		Filter:     vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
 	}
 	for _, term := range p.Terms {
 		request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))

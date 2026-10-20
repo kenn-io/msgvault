@@ -321,6 +321,40 @@ func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
 	}
 }
 
+func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	for i := range 99 {
+		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+	}
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id =
+		(SELECT id FROM participants WHERE email_address = 'owner@example.net')
+		WHERE subject = 'airship tethering'`)
+	require.NoError(t, err)
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	match := scaled(topic, .9)
+	match[off] = float32(math.Sqrt(1 - .9*.9))
+	f.post(t, "captain@example.net", "airship tethering", match)
+	lexical := make([]float32, embedDimension)
+	lexical[off] = 1
+	for i := range 150 {
+		f.post(t, fmt.Sprintf("lexical%d@example.net", i), "zeppelin mooring", lexical)
+	}
+	f.service.Retriever = hybrid.NewEngine(f.backend, f.store.DB(), bagOfWordsEmbedder{},
+		hybrid.Config{KPerSignal: 150, RRFK: 60, SubjectBoost: 100, Rebind: f.store.Rebind})
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	var captain *Entry
+	for i := range got.UnsavedContacts {
+		if got.UnsavedContacts[i].EmailAddress == "captain@example.net" {
+			captain = &got.UnsavedContacts[i]
+		}
+	}
+	require.NotNil(t, captain, "boosted keyword-only hits must leave room for the vector match")
+	assert.Equal(t, 1, captain.AuthoredMessages)
+}
+
 // sqlite-vec ranks the pool by L2 distance, which follows cosine order only
 // for unit-length vectors. With a provider that does not normalize, a full
 // pool where nothing reached the floor can hide a message that would, so the
