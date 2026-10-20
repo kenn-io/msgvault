@@ -162,8 +162,14 @@ func TestMCPLocalDaemonKeyLifecycle(t *testing.T) { //nolint:paralleltest // pro
 				command := &cobra.Command{Use: "serve"}
 				command.SetContext(testInvocationContext(daemonCtx, owner, invocationOptions{}))
 				started = true
-				go func() { daemonDone <- runServe(command, nil) }()
-				return &backgroundServeProcess{PID: os.Getpid(), Wait: daemonDone}, nil
+				// Keep launcher exit checks from consuming cleanup's daemon result.
+				launched := make(chan error, 1)
+				go func() {
+					err := runServe(command, nil)
+					launched <- err
+					daemonDone <- err
+				}()
+				return &backgroundServeProcess{PID: os.Getpid(), Wait: launched}, nil
 			}
 			t.Cleanup(func() {
 				stopDaemon()
@@ -183,9 +189,10 @@ func TestMCPLocalDaemonKeyLifecycle(t *testing.T) { //nolint:paralleltest // pro
 					return startDaemon()
 				})
 			} else {
-				_, err = startDaemon()
+				var process *backgroundServeProcess
+				process, err = startDaemon()
 				require.NoError(err)
-				waitForServeHealthBounded(t, port, daemonDone)
+				waitForServeHealthBounded(t, port, process.Wait)
 			}
 			setMCPTokenTestFlags(t, nil)
 			mcpHTTPAddr = tc.address

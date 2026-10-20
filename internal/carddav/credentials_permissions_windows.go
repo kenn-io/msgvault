@@ -8,6 +8,7 @@ import (
 	"os"
 	"unsafe"
 
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/sys/windows"
 )
 
@@ -16,7 +17,7 @@ type nativeCredentialPermissions struct{}
 const cardDAVFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
 
 func (nativeCredentialPermissions) secureDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
 	}
 	handle, err := openCardDAVSecurityHandle(path, true, windows.READ_CONTROL|windows.WRITE_DAC)

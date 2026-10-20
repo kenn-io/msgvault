@@ -3,10 +3,13 @@
 package fileutil
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -90,34 +93,54 @@ func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // SecureMkdirAll creates a directory path and all parents that do not yet exist.
-// For owner-only modes, a DACL restricting access to the current user is applied
-// to the leaf directory and every intermediate directory that was created.
+// For owner-only modes, every new directory is created with a protected DACL
+// granting access only to the current user. Existing directories are unchanged.
 func SecureMkdirAll(path string, perm os.FileMode) error {
-	// Determine which directories already exist before creating.
-	var toSecure []string
-	if isOwnerOnly(perm) {
-		p := filepath.Clean(path)
-		for p != "" && p != "." && p != string(filepath.Separator) {
-			if _, err := os.Stat(p); err == nil {
-				break // already exists, stop climbing
+	if !isOwnerOnly(perm) || path == "" {
+		return os.MkdirAll(path, perm)
+	}
+	var missing []string
+	for p := filepath.Clean(path); ; p = filepath.Dir(p) {
+		info, err := os.Stat(p)
+		if err == nil {
+			if !info.IsDir() {
+				return &os.PathError{Op: "mkdir", Path: p, Err: windows.ERROR_DIRECTORY}
 			}
-			toSecure = append(toSecure, p)
-			parent := filepath.Dir(p)
-			if parent == p {
-				break
-			}
-			p = parent
+			break
 		}
+		if !os.IsNotExist(err) || filepath.Dir(p) == p {
+			return err
+		}
+		missing = append(missing, p)
+	}
+	if len(missing) == 0 {
+		return nil
 	}
 
-	if err := os.MkdirAll(path, perm); err != nil {
-		return err
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return fmt.Errorf("fileutil: get current user SID for %s: %w", path, err)
 	}
-
-	// Secure all newly created directories (leaf-first order, but order doesn't matter).
-	for _, dir := range toSecure {
-		if err := restrictToCurrentUser(dir); err != nil {
-			slog.Warn("fileutil: best-effort DACL failed", "path", dir, "err", err)
+	descriptor, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")")
+	if err != nil {
+		return fmt.Errorf("fileutil: build directory security descriptor for %s: %w", path, err)
+	}
+	attributes := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+	}
+	for _, dir := range slices.Backward(missing) {
+		path16, err := windows.UTF16PtrFromString(dir)
+		if err != nil {
+			return fmt.Errorf("fileutil: encode directory path %s: %w", dir, err)
+		}
+		if err := windows.CreateDirectory(path16, attributes); err != nil {
+			if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+				if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+					continue
+				}
+			}
+			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
 		}
 	}
 	return nil

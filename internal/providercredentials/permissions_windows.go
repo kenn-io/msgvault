@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"unsafe"
 
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/sys/windows"
 )
 
@@ -18,7 +19,7 @@ type nativePermissions struct{}
 const providerCredentialFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
 
 func (nativePermissions) prepareDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
 	}
 	handle, err := openSecurityHandle(path, true, windows.READ_CONTROL)
@@ -42,7 +43,7 @@ func (nativePermissions) prepareDirectory(path string) error {
 }
 
 func (nativePermissions) secureDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
 	}
 	handle, err := openSecurityHandle(path, true, windows.READ_CONTROL|windows.WRITE_DAC)
