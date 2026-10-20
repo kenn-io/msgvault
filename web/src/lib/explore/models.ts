@@ -205,9 +205,30 @@ export function isEmailMessageType(messageType: string): boolean {
   return messageType === '' || messageType === 'email';
 }
 
+const GO_SPACE = '\\t-\\r \\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const GO_TRIM = new RegExp(`^[${GO_SPACE}]+|[${GO_SPACE}]+$`, 'g');
+
+/** Trims like Go's strings.TrimSpace, which differs from String.trim at U+0085 and U+FEFF. */
+export function trimSpace(value: string): string {
+  return value.replace(GO_TRIM, '');
+}
+
+/** Reads a saved identity direction the way the API does; undefined when it is not one. */
+export function identityDirection(value: string | undefined): IdentityDirection | undefined {
+  const direction = value === undefined ? '' : trimSpace(value).toLowerCase();
+  return direction === 'any' || direction === 'sender' || direction === 'recipient' ? direction : undefined;
+}
+
+/** Returns the stored value of the one source filter whose trimmed values are all equal. */
+export function singleSourceValue(filters: ExploreFilter[]): string | undefined {
+  const sources = filters.filter((filter) => filter.dimension === 'source');
+  const values = sources.length === 1 ? sources[0]!.values : [];
+  return values.length > 0 && values.every((value) => trimSpace(value) === trimSpace(values[0]!)) ? values[0] : undefined;
+}
+
 /** Reads a filter ID the way the API does: trimmed, positive int64, "01" and "+1" allowed. */
 export function filterID(value: string | undefined): bigint | undefined {
-  const text = value?.trim();
+  const text = value === undefined ? undefined : trimSpace(value);
   if (text === undefined || !/^\+?\d+$/.test(text)) return undefined;
   const id = BigInt(text);
   return id > 0n && id <= 9223372036854775807n ? id : undefined;

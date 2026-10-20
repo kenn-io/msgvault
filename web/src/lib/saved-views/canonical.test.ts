@@ -47,14 +47,17 @@ describe('saved-view canonical state', () => {
   it.each([
     [' 1', '1 ', 'SENDER'],
     ['01', '+1', 'any'],
-    ['9223372036854775807', '+09223372036854775807', ' recipient ']
+    ['9223372036854775807', '+09223372036854775807', ' recipient '],
+    ['\u00851', '1', 'any'],
+    [['1', ' 1'], '1', 'sender']
   ])('keeps identity %j/%j/%j on open and URL-only reload', (source, identity, direction) => {
+    const sources = [source].flat();
     const saved: CanonicalState = { filters: [
-      { field: 'source', operator: 'in', values: [source] },
+      { field: 'source', operator: 'in', values: sources },
       { field: 'identity', operator: 'in', values: [identity, 'person@example.com', direction] }
     ] };
     const expected = [
-      { dimension: 'source', values: [source] },
+      { dimension: 'source', values: sources },
       { dimension: 'identity', values: [identity, 'person@example.com', direction] }
     ];
     expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });

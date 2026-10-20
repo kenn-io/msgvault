@@ -4,7 +4,7 @@
   import { onDestroy } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, IdentityDirection, SourceIdentityResponse } from '../../explore/models';
-  import { filterID, sameFilterID } from '../../explore/models';
+  import { filterID, identityDirection, sameFilterID, singleSourceValue, trimSpace } from '../../explore/models';
   let {
     client,
     filters,
@@ -21,8 +21,9 @@
   let requestController: AbortController | undefined;
   const sourceID = $derived(singleSourceID(filters));
   const selectedIdentity = $derived(validIdentityFilter(filters, sourceID));
-  const identifier = $derived(selectedIdentity?.values[1] ?? '');
-  const direction = $derived(identityDirection(selectedIdentity?.values[2]));
+  const storedIdentifier = $derived(selectedIdentity?.values[1] ?? '');
+  const identifier = $derived(trimSpace(storedIdentifier));
+  const direction = $derived(identityDirection(selectedIdentity?.values[2]) ?? 'any');
   const identityOptions = $derived([
     { value: '', label: 'Any confirmed identity' },
     ...(identifier && !loading && !identities.some((identity) => identity.identifier === identifier)
@@ -39,7 +40,7 @@
     const currentFilters = filters;
     const currentSourceID = singleSourceID(currentFilters);
     const identity = currentFilters.find((filter) => filter.dimension === 'identity');
-    if (identity && validIdentityFilter(currentFilters, currentSourceID) === undefined) {
+    if (identity && (currentSourceID === undefined || !sameFilterID(identity.values[0], currentSourceID))) {
       onChange(withoutIdentity(currentFilters));
     }
   });
@@ -54,10 +55,11 @@
       loading = false;
       return;
     }
-    const numericSourceID = Number(requestedSourceID);
+    const bigSourceID = filterID(requestedSourceID);
+    const numericSourceID = Number(bigSourceID);
     // The catalog client takes a JSON-number ID. Keep the restored filter
     // usable without requesting a different source through a rounded number.
-    if (!Number.isSafeInteger(numericSourceID)) {
+    if (!Number.isSafeInteger(numericSourceID) || BigInt(numericSourceID) !== bigSourceID) {
       loading = false;
       error = 'Unable to load confirmed identities.';
       return;
@@ -94,9 +96,7 @@
     requestController?.abort();
   });
   function singleSourceID(currentFilters: ExploreFilter[]): string | undefined {
-    const sources = currentFilters.filter((filter) => filter.dimension === 'source');
-    const source = sources.length === 1 ? sources[0] : undefined;
-    const value = source?.values.length === 1 ? source.values[0] : undefined;
+    const value = singleSourceValue(currentFilters);
     return filterID(value) === undefined ? undefined : value;
   }
   function validIdentityFilter(
@@ -105,10 +105,6 @@
   ): ExploreFilter | undefined {
     const identity = currentFilters.find((filter) => filter.dimension === 'identity');
     return identity?.values.length === 3 && sameFilterID(identity.values[0], currentSourceID) ? identity : undefined;
-  }
-  function identityDirection(value: string | undefined): IdentityDirection {
-    const normalized = value?.trim().toLowerCase();
-    return normalized === 'sender' || normalized === 'recipient' ? normalized : 'any';
   }
   function withoutIdentity(currentFilters: ExploreFilter[]): ExploreFilter[] {
     return currentFilters.filter((filter) => filter.dimension !== 'identity');
@@ -141,7 +137,7 @@
         value={direction}
         options={directionOptions}
         disabled={!identifier}
-        onchange={(value) => replaceIdentity(identifier, value as IdentityDirection)}
+        onchange={(value) => replaceIdentity(storedIdentifier, value as IdentityDirection)}
       />
     </label>
     {#if loading}

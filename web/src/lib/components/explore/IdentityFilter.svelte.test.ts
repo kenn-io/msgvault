@@ -22,15 +22,18 @@ describe('IdentityFilter', () => {
   it.each([
     ['+14', '014', 'SENDER'],
     ['14', '+14', 'recipient'],
-    ['9007199254740993', '+09007199254740993', 'sender']
-  ])('keeps restored source %s and identity %s selected', async (source, identitySource, direction) => {
+    ['9007199254740993', '+09007199254740993', 'sender'],
+    ['\u00851', '1', 'any'],
+    [['1', ' 1'], '1', 'any'],
+    ['1', '1', 'any', ' shop@example.test ']
+  ])('keeps restored source %j and identity %j selected', async (source, identitySource, direction, identifier = 'shop@example.test') => {
     const onChange = vi.fn<(filters: ExploreFilter[]) => void>();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
     render(IdentityFilter, {
       client: createAPIClient(fetchFn),
       filters: [
-        { dimension: 'source', values: [source] },
-        { dimension: 'identity', values: [identitySource, 'shop@example.test', direction] }
+        { dimension: 'source', values: [source].flat() },
+        { dimension: 'identity', values: [identitySource, identifier, direction] }
       ],
       onChange
     });
@@ -38,9 +41,11 @@ describe('IdentityFilter', () => {
     const identity = await screen.findByRole('combobox', { name: /^Identity: shop@example\.test/ });
     await waitFor(() => expect(identity).toHaveProperty('disabled', false));
     expect(onChange).not.toHaveBeenCalled();
-    if (!Number.isSafeInteger(Number(source))) {
+    if (identitySource.includes('9007199254740993')) {
       // The catalog endpoint takes a JSON-number ID; never request a rounded source.
       expect(fetchFn).not.toHaveBeenCalled();
+    } else {
+      expect(identity.getAttribute('aria-label')).not.toContain('unavailable');
     }
   });
 

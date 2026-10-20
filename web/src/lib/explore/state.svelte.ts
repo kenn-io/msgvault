@@ -24,7 +24,7 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS, sameFilterID } from './models';
+import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue, trimSpace } from './models';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
@@ -236,18 +236,15 @@ function isFilter(value: unknown): value is ExploreFilter {
 function filters(value: unknown): ExploreFilter[] {
   if (!Array.isArray(value) || !value.every(isFilter)) return [];
   const copied = value.map((filter) => ({ ...filter, values: [...filter.values] }));
-  const sourceFilters = copied.filter((filter) => filter.dimension === 'source');
-  const sourceValue = sourceFilters.length === 1 && sourceFilters[0]?.values.length === 1
-    ? sourceFilters[0].values[0]
-    : undefined;
+  const sourceValue = singleSourceValue(copied);
   const identityFilters = copied.filter((filter) => filter.dimension === 'identity');
   const identity = identityFilters.length === 1 ? identityFilters[0] : undefined;
   // The API trims values and lower-cases the direction, so match that here.
   const validIdentity = identity !== undefined &&
     identity.values.length === 3 &&
     sameFilterID(identity.values[0], sourceValue) &&
-    identity.values[1]!.trim() !== '' &&
-    ['any', 'sender', 'recipient'].includes(identity.values[2]!.trim().toLowerCase());
+    trimSpace(identity.values[1]!) !== '' &&
+    identityDirection(identity.values[2]) !== undefined;
   return copied.filter((filter) => filter.dimension !== 'identity' || validIdentity);
 }
 
