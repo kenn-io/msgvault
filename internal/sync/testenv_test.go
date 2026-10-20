@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const testEmail = "test@example.com"
@@ -27,14 +28,11 @@ type TestEnv struct {
 func newTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-
-	dbPath := filepath.Join(tmpDir, "test.db")
-	st, err := store.Open(dbPath)
-	require.NoError(t, err, "open store")
-	t.Cleanup(func() { _ = st.Close() })
-
-	require.NoError(t, st.InitSchema(), "init schema")
+	st := testutil.NewSQLiteTestStore(t)
+	var sequence int
+	var database, dbPath string
+	require.NoError(t, st.DB().QueryRow(`PRAGMA database_list`).Scan(&sequence, &database, &dbPath))
+	tmpDir := filepath.Dir(dbPath)
 
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{
