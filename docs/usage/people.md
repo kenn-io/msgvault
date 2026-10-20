@@ -311,7 +311,8 @@ Discord system messages, such as a channel rename or a new thread, don't count
 for the member they name. Meeting transcripts and calendar entries are not
 searched. Declared topics on your own profile, or on a profile bound to a
 Slack or Chatwoot bot, a Discord webhook or application, or a system address
-such as `noreply@`, are ignored too. Two kinds of mail earn the weight
+such as `noreply@`, are ignored too. In older archives, Slack bot users get
+this classification the next time a sync sees them. Two kinds of mail earn the weight
 of their best message only: list mail, and email from a sender you never wrote
 to, such as a vendor who sends many unanswered messages. A colleague you write
 to keeps every message. Chat has no direction, so a chat sender keeps every
