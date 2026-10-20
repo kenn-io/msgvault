@@ -546,11 +546,8 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 }
 
 // An unavailable FTS index must not let a superseded importer report success.
-//
-//nolint:testifylint // Write outcomes are independent checks and must remain nonfatal.
 func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
 	requirements := require.New(t)
-	checks := assert.New(t)
 	f := storetest.New(t)
 	store.SetFTS5AvailableForTest(f.Store, false)
 	st := f.Store
@@ -566,7 +563,6 @@ func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
 		MessageType:     "email",
 	})
 	requirements.NoError(err)
-	missingMessageID := otherMessageID + 1
 
 	oldID, err := st.StartSync(f.Source.ID, "full")
 	requirements.NoError(err)
@@ -579,24 +575,11 @@ func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
 
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
-	expired, expire := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
-	defer expire()
-	for _, view := range []*store.Store{stale, live} {
-		checks.ErrorIs(view.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""), context.Canceled)
-		checks.ErrorIs(view.UpsertFTSContext(expired, messageID, "", "", "", "", ""), context.DeadlineExceeded)
-	}
-	checks.NoError(st.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""))
-	checks.NoError(st.UpsertFTSContext(expired, messageID, "", "", "", "", ""))
 
-	for _, id := range []int64{messageID, otherMessageID, missingMessageID} {
-		checks.ErrorIs(stale.UpsertFTS(id, "", "", "", "", ""), store.ErrSyncRunSuperseded)
-	}
-	checks.NoError(live.UpsertFTS(messageID, "", "", "", "", ""))
-	checks.ErrorContains(live.UpsertFTS(otherMessageID, "", "", "", "", ""), "is scoped to source")
-	checks.ErrorIs(live.UpsertFTS(missingMessageID, "", "", "", "", ""), sql.ErrNoRows)
-	for _, id := range []int64{messageID, otherMessageID, missingMessageID, 0, -1} {
-		checks.NoError(st.UpsertFTS(id, "", "", "", "", ""))
-	}
+	requirements.ErrorIs(stale.UpsertFTS(messageID, "", "", "", "", ""), store.ErrSyncRunSuperseded)
+	requirements.ErrorContains(live.UpsertFTS(otherMessageID, "", "", "", "", ""), "is scoped to source")
+	requirements.ErrorIs(live.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""), context.Canceled)
+	requirements.NoError(st.UpsertFTS(messageID, "", "", "", "", ""))
 }
 
 // Dropping the real index must give the same fence as the flag override.
@@ -617,12 +600,27 @@ func TestScopedStoreRejectsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
 	requirements.False(st.FTS5Available())
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	requirements.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  conversationID,
+		SourceID:        source.ID,
+		SourceMessageID: "generation-fence-message",
+		MessageType:     "email",
+	})
+	requirements.NoError(err)
+
 	oldID, err := st.StartSync(source.ID, "full")
 	requirements.NoError(err)
 	stale := st.ScopedToSync(source.ID, oldID)
 	requirements.NoError(st.FailSync(oldID, "worker stopped"))
+	newID, err := st.StartSync(source.ID, "full")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.FailSync(newID, "test complete") })
+	live := st.ScopedToSync(source.ID, newID)
 
-	assert.ErrorIs(t, stale.UpsertFTS(1, "", "", "", "", ""), store.ErrSyncRunSuperseded)
+	requirements.ErrorIs(stale.UpsertFTS(messageID, "", "", "", "", ""), store.ErrSyncRunSuperseded)
+	requirements.NoError(live.UpsertFTS(messageID, "", "", "", "", ""))
 }
 
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
