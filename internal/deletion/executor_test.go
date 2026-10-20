@@ -591,6 +591,20 @@ func TestExecutor_WithProgress(t *testing.T) {
 	assert.Same(t, progress, exec.progress, "WithProgress did not set progress")
 }
 
+func TestExecutor_Execute_ZeroBatchSize(t *testing.T) {
+	tc := NewTestContext(t)
+	ids := msgIDs(3)
+	manifest := tc.CreateManifest("zero batch size", ids)
+	opts := trashOpts(0)
+
+	require.NoError(t, tc.ExecuteWithOpts(manifest.ID, opts))
+	tc.AssertCompleted()
+	tc.AssertCompletedCount(1)
+	tc.AssertResult(3, 0)
+	assert.Equal(t, ids, tc.MockAPI.TrashCalls)
+	assert.Zero(t, opts.BatchSize, "caller's options must remain unchanged")
+}
+
 func TestExecutor_Execute_Scenarios(t *testing.T) {
 	tests := []struct {
 		name       string
