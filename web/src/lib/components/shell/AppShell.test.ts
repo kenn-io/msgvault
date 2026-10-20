@@ -9,6 +9,8 @@ import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
+import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
+import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
@@ -810,7 +812,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it.each(['everything', 'files'] as const)('counts an explicit empty %s submission once', async (workspace) => {
+    it.each([['everything', false], ['everything', true], ['files', true]] as const)('counts an explicit empty %s submission with media ready=%s', async (workspace, ready) => {
       const state = shellState(workspace), events: Array<{ event: string; properties: unknown }> = [];
       const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
         const request = input as Request;
@@ -820,12 +822,21 @@ describe('AppShell', () => {
         }
         return Response.json({ ...exploreResponse(), files: [] });
       }));
-      render(AppShell, { client, state });
+      const media = new IntegrationReadiness(async () => ready);
+      render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
+      if (ready && workspace === 'everything') await waitFor(() => expect(media.ready).toBe(true));
       const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'missing' } });
       await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
       expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+      events.length = 0;
       await fireEvent.submit(search.closest('form')!);
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      media.dispose();
+      if (ready && workspace === 'everything') {
+        expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+        return;
+      }
       await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1));
       expect(events.find((event) => event.event === 'search_empty')?.properties).toEqual({ surface: 'web', search_type: 'text' });
     });

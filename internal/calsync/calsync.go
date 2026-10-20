@@ -37,8 +37,6 @@ type EmbedEnqueuer interface {
 
 // Options configures a calendar sync run.
 type Options struct {
-	// OnResult receives each attempted calendar's source identifier and outcome.
-	OnResult func(identifier string, err error)
 	// AccountEmail is the OAuth account that owns the token; it keys token
 	// lookup and is stored in each source's sync_config. Never the source
 	// identifier.
@@ -128,11 +126,7 @@ func (s *Syncer) Full(ctx context.Context) (Result, error) {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		err := s.syncCalendarFull(ctx, cal, &result)
-		if s.opts.OnResult != nil && !errors.Is(err, store.ErrSourceRetired) {
-			s.opts.OnResult(s.sourceIdentifier(cal), err)
-		}
-		if err != nil {
+		if err := s.syncCalendarFull(ctx, cal, &result); err != nil {
 			if errors.Is(err, store.ErrSourceRetired) && !slices.Contains(s.opts.Calendars, cal.ID) {
 				s.logger.Info("skipping retired calendar source", "calendar", cal.ID)
 				continue
@@ -450,22 +444,6 @@ func (s *Syncer) includeRegisteredCalendar(cal gcal.Calendar) bool {
 		return true
 	}
 	return !cal.Deleted && cal.AccessRole == "" && len(s.opts.Calendars) == 0
-}
-
-// SelectedSourceIdentifiers applies calendar selection to registered sources.
-func SelectedSourceIdentifiers(sources []*store.Source, opts Options) []string {
-	selector := Syncer{opts: opts}
-	var identifiers []string
-	for _, src := range sources {
-		cfg := parseSourceConfig(src.SyncConfig)
-		if src.MergedIntoSourceID != 0 || cfg.CalendarID == "" {
-			continue
-		}
-		if selector.includeRegisteredCalendar(gcal.Calendar{ID: cfg.CalendarID, AccessRole: cfg.AccessRole}) {
-			identifiers = append(identifiers, src.Identifier)
-		}
-	}
-	return identifiers
 }
 
 func (s *Syncer) minAccessRole() string {

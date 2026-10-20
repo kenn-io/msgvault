@@ -8,13 +8,11 @@ import (
 	"go.kenn.io/msgvault/internal/syncerr"
 )
 
-// SyncFailures counts the start of an outage for each source, in memory only.
 type SyncFailures struct {
 	Capture func(string, map[string]any) error
 	failing sync.Map
 }
 
-// Record clears a recovered source or reports its first observed failure, including a new source.
 func (s *SyncFailures) Record(sourceType, identifier string, err error) {
 	if s == nil || errors.Is(err, context.Canceled) {
 		return

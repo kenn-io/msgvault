@@ -13,6 +13,7 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
@@ -85,6 +86,7 @@
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
+  const media = mediaReadiness();
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -526,7 +528,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
-      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, count), signal); },
+      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && media?.ready ? undefined : count), signal); },
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the

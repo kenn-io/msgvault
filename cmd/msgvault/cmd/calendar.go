@@ -1064,7 +1064,7 @@ func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCal
 	return runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildCalendarClient)
 }
 
-func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) error {
+func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) (err error) {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
@@ -1095,34 +1095,29 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return nil
 	}
 	existing = activeExisting
-	attempted := false
-	opts := calsync.Options{
-		AccountEmail: email,
-		Calendars:    src.Calendars,
-		OnResult: func(identifier string, err error) {
-			attempted = true
-			recordSyncAttempt(ctx, sourceTypeCalendar, identifier, err)
-		},
-	}
-	setupFailure := func(err error) error {
-		for _, identifier := range calsync.SelectedSourceIdentifiers(existing, opts) {
-			recordSyncAttempt(ctx, sourceTypeCalendar, identifier, err)
+	refreshing := false
+	defer func() {
+		if !refreshing {
+			recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 		}
-		return err
-	}
+	}()
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
 	if err != nil {
-		return setupFailure(err)
+		return err
 	}
 
 	client, err := buildClient(ctx, email, appDecision.OAuthApp, false)
 	if err != nil {
-		return setupFailure(err)
+		return err
 	}
 	defer func() { _ = client.Close() }()
 
-	opts.OAuthApp, opts.OAuthAppSet = appDecision.OAuthApp, appDecision.OAuthAppSet
-	syncer := calsync.New(client, st, opts)
+	syncer := calsync.New(client, st, calsync.Options{
+		AccountEmail: email,
+		OAuthApp:     appDecision.OAuthApp,
+		OAuthAppSet:  appDecision.OAuthAppSet,
+		Calendars:    src.Calendars,
+	})
 	if logger != nil {
 		syncer = syncer.WithLogger(logger)
 	}
@@ -1133,11 +1128,10 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		_, err = syncer.Incremental(ctx)
 	}
 	if err != nil {
-		if !attempted {
-			return setupFailure(err)
-		}
 		return err
 	}
+	refreshing = true
+	recordSyncAttempt(ctx, sourceTypeCalendar, email, nil)
 	return rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
 }
 

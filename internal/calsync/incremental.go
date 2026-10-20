@@ -64,9 +64,6 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 			return result, err
 		}
 		if err := s.confirmCalendarSourceIdentity(ctx, src); err != nil {
-			if s.opts.OnResult != nil {
-				s.opts.OnResult(src.Identifier, err)
-			}
 			recordErr(fmt.Errorf("confirm account identity for source %d: %w", src.ID, err))
 			continue
 		}
@@ -85,18 +82,25 @@ func (s *Syncer) Incremental(ctx context.Context) (Result, error) {
 			continue
 		}
 
-		var err error
+		// No token yet → full sync.
 		if !src.SyncCursor.Valid || src.SyncCursor.String == "" {
-			err = s.syncCalendarFull(ctx, cal, &result)
-		} else {
-			err = s.incrementalCalendar(ctx, src, cal, &result)
-			if errors.Is(err, ErrSyncTokenExpired) {
-				s.logger.Warn("calendar sync token expired; running full resync", "calendar", cal.ID)
-				err = s.syncCalendarFull(ctx, cal, &result)
+			if err := s.syncCalendarFull(ctx, cal, &result); err != nil {
+				recordErr(err)
+				continue
 			}
+			result.CalendarsSynced++
+			continue
 		}
-		if s.opts.OnResult != nil {
-			s.opts.OnResult(src.Identifier, err)
+
+		err := s.incrementalCalendar(ctx, src, cal, &result)
+		if errors.Is(err, ErrSyncTokenExpired) {
+			s.logger.Warn("calendar sync token expired; running full resync", "calendar", cal.ID)
+			if ferr := s.syncCalendarFull(ctx, cal, &result); ferr != nil {
+				recordErr(ferr)
+				continue
+			}
+			result.CalendarsSynced++
+			continue
 		}
 		if err != nil {
 			recordErr(err)
