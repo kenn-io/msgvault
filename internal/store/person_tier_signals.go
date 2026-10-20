@@ -25,23 +25,29 @@ type PersonTierReadiness struct {
 // is the same barrier contact state uses; the watermark check adds messages
 // the projection has not queued yet.
 func (s *Store) PersonTierReadinessContext(ctx context.Context) (PersonTierReadiness, error) {
-	result := PersonTierReadiness{Reasons: []string{}}
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		_, stale, err := s.contactStateFreshnessTxContext(ctx, tx)
-		if stale {
-			result.Reasons = append(result.Reasons, "projection_pending")
-		}
+	var result PersonTierReadiness
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) (err error) {
+		result, err = s.personTierReadinessTx(ctx, tx)
 		return err
 	})
+	return result, err
+}
+
+func (s *Store) personTierReadinessTx(ctx context.Context, tx *loggedTx) (PersonTierReadiness, error) {
+	result := PersonTierReadiness{Reasons: []string{}}
+	_, stale, err := s.contactStateFreshnessTxContext(ctx, tx)
 	if err != nil {
 		return result, err
 	}
-	watermark, err := s.ActivityWatermarkContext(ctx)
+	if stale {
+		result.Reasons = append(result.Reasons, "projection_pending")
+	}
+	watermark, err := activityWatermark(ctx, tx)
 	if err != nil {
 		return result, err
 	}
 	var liveMax int64
-	if err = s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM messages WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL`).Scan(&liveMax); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id),0) FROM messages WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL`).Scan(&liveMax); err != nil {
 		return result, fmt.Errorf("read live messages for tier readiness: %w", err)
 	}
 	if watermark < liveMax {
@@ -60,6 +66,15 @@ func (s *Store) PersonTierReadinessContext(ctx context.Context) (PersonTierReadi
 // does not store is the inbound audience cut, so that comes from the
 // projector's own classifier.
 func (s *Store) PersonTierSignalsContext(ctx context.Context, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
+	var result map[int64]persontiers.Signals
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) (err error) {
+		result, err = s.personTierSignalsTx(ctx, tx, personIDs, asOf, cfg, maxDirect)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) personTierSignalsTx(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
 	if len(personIDs) == 0 {
 		return map[int64]persontiers.Signals{}, nil
 	}
@@ -71,11 +86,11 @@ func (s *Store) PersonTierSignalsContext(ctx context.Context, personIDs []int64,
 			return nil, fmt.Errorf("%w: person ids must be positive", ErrInvalidActivityRequest)
 		}
 	}
-	rows, err := s.personTierRowsContext(ctx, personIDs, asOf, cfg)
+	rows, err := personTierRowsContext(ctx, tx, personIDs, asOf, cfg)
 	if err != nil {
 		return nil, err
 	}
-	broadcast, err := s.personTierBroadcastContext(ctx, rows, cfg, maxDirect)
+	broadcast, err := s.personTierBroadcastContext(ctx, tx, rows, cfg, maxDirect)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +100,7 @@ func (s *Store) PersonTierSignalsContext(ctx context.Context, personIDs []int64,
 			result[id] = persontiers.Signals{}
 		}
 	}
-	if err = s.personTierBindingsContext(ctx, int64Placeholders(len(personIDs)), personMergeSnapshotIDArgs(personIDs), result); err != nil {
+	if err = personTierBindingsContext(ctx, tx, int64Placeholders(len(personIDs)), personMergeSnapshotIDArgs(personIDs), result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -121,12 +136,12 @@ func (r tierSignalRow) shapeCounts() bool {
 }
 
 // personTierRowsContext reads the direct links in the long window for the page.
-func (s *Store) personTierRowsContext(ctx context.Context, personIDs []int64, asOf time.Time, cfg persontiers.Config) ([]tierSignalRow, error) {
+func personTierRowsContext(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
 		asOf.Format(time.DateOnly))
-	rows, err := s.db.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.role,ae.ref_kind,ae.direction,ae.channel,aep.local_date,
+	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.role,ae.ref_kind,ae.direction,ae.channel,aep.local_date,
  CASE WHEN m.list_id IS NULL THEN 0 ELSE 1 END
  FROM activity_event_persons aep
  JOIN activity_events ae ON ae.message_id=aep.message_id
@@ -157,7 +172,7 @@ func (s *Store) personTierRowsContext(ctx context.Context, personIDs []int64, as
 // personTierBroadcastContext reports, per message, whether the projector's
 // classifier treats its audience as above the direct limit. It looks only at
 // inbound rows the tier rules would otherwise count.
-func (s *Store) personTierBroadcastContext(ctx context.Context, rows []tierSignalRow, cfg persontiers.Config, maxDirect int) (map[int64]bool, error) {
+func (s *Store) personTierBroadcastContext(ctx context.Context, tx *loggedTx, rows []tierSignalRow, cfg persontiers.Config, maxDirect int) (map[int64]bool, error) {
 	seen := map[int64]struct{}{}
 	var ids []int64
 	for _, r := range rows {
@@ -170,14 +185,12 @@ func (s *Store) personTierBroadcastContext(ctx context.Context, rows []tierSigna
 		}
 	}
 	broadcast := make(map[int64]bool, len(ids))
-	for start := 0; start < len(ids); start += activityCandidateIDChunk {
-		candidates, err := s.LoadActivityCandidatesByIDContext(ctx, ids[start:min(start+activityCandidateIDChunk, len(ids))])
-		if err != nil {
-			return nil, fmt.Errorf("load tier audiences: %w", err)
-		}
-		for _, c := range candidates {
-			broadcast[c.MessageID] = ClassifyActivityCandidate(c, maxDirect).Broadcast
-		}
+	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("load tier audiences: %w", err)
+	}
+	for _, c := range candidates {
+		broadcast[c.MessageID] = ClassifyActivityCandidate(c, maxDirect).Broadcast
 	}
 	return broadcast, nil
 }
@@ -187,14 +200,12 @@ func (s *Store) personTierBroadcastContext(ctx context.Context, rows []tierSigna
 // the direct limit. The two exclusion counters count only rows that would
 // otherwise count, a row taking the first reason that applies.
 func buildTierSignals(rows []tierSignalRow, broadcast map[int64]bool, cfg persontiers.Config, asOf time.Time) map[int64]persontiers.Signals {
-	from := asOf.AddDate(0, 0, -(cfg.LongWindowDays - 1)).Format(time.DateOnly)
 	short := asOf.AddDate(0, 0, -(cfg.ShortWindowDays - 1)).Format(time.DateOnly)
-	through := asOf.Format(time.DateOnly)
 	type days struct{ short, long, meeting, channel map[string]struct{} }
 	result := map[int64]persontiers.Signals{}
 	seen := map[int64]*days{}
 	for _, r := range rows {
-		if r.LocalDate < from || r.LocalDate > through || !r.shapeCounts() {
+		if !r.shapeCounts() {
 			continue
 		}
 		s := result[r.PersonID]
@@ -243,24 +254,18 @@ func buildTierSignals(rows []tierSignalRow, broadcast map[int64]bool, cfg person
 	return result
 }
 
-// personTierOwnerMatch reuses the activity loader's per-type identity matching:
-// primary email is authoritative over email aliases, and native IDs are exact.
-// An account_identities row is confirmed by its presence; candidates live in a
-// separate table. Empty sourceExpr checks identities in every source.
-func personTierOwnerMatch(participantExpr, sourceExpr string) string {
-	source := ""
-	if sourceExpr != "" {
-		source = "ai.source_id=" + sourceExpr + " AND "
-	}
-	return `EXISTS (SELECT 1 FROM participants op JOIN account_identities ai ON ` + source + `(
- (` + ownerEmailMatch("op.email_address", "ai.address") + `) OR EXISTS (
- SELECT 1 FROM participant_identifiers oi WHERE oi.participant_id=op.id AND ` +
-		ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", " AND (op.email_address IS NULL OR TRIM(op.email_address)='')") + `)) WHERE op.id=` + participantExpr + `)`
-}
-
-func (s *Store) personTierBindingsContext(ctx context.Context, marks string, args []any, signals map[int64]persontiers.Signals) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT pp.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),
- COALESCE(pi.identifier_type,''),COALESCE(pi.identifier_value,''),`+personTierOwnerMatch("p.id", "")+`
+// personTierBindingsContext reads each person's addresses and identifiers for
+// the exclusions, and whether any of their participants is one of the owner's
+// own addresses in any account. The projection drops owner-linked participants
+// only within the message's own account, so this is the stricter cross-account
+// check. Primary email is authoritative over email aliases, and native IDs are
+// exact.
+func personTierBindingsContext(ctx context.Context, tx *loggedTx, marks string, args []any, signals map[int64]persontiers.Signals) error {
+	rows, err := tx.QueryContext(ctx, `SELECT pp.person_id,COALESCE(p.email_address,''),COALESCE(p.phone_number,''),
+ COALESCE(pi.identifier_type,''),COALESCE(pi.identifier_value,''),
+ EXISTS (SELECT 1 FROM account_identities ai WHERE (`+ownerEmailMatch("p.email_address", "ai.address")+`) OR EXISTS (
+ SELECT 1 FROM participant_identifiers oi WHERE oi.participant_id=p.id AND `+
+		ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", " AND (p.email_address IS NULL OR TRIM(p.email_address)='')")+`))
  FROM person_participants pp JOIN participants p ON p.id=pp.participant_id
  LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id WHERE pp.person_id IN (`+marks+`)
  ORDER BY pp.person_id,p.id,pi.identifier_type,pi.identifier_value`, args...)

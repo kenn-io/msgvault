@@ -323,3 +323,50 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 	assert.False(preview.Provisional, "nothing is stored to differ from")
 	assert.Empty(preview.People)
 }
+
+// The projector keeps an all-day meeting on its own date. Converting a
+// timestamp into the projection timezone would show the day before.
+func TestPersonTiersKeepTheDateOfAnAllDayMeeting(t *testing.T) {
+	require := require.New(t)
+	a := newAudienceFixture(t)
+	id := a.message(t, "all-day", 0, a.f.ConvID, "calendar_event", a.owner)
+	require.NoError(a.f.Store.SetMessageMetadata(id,
+		sql.NullString{String: `{"all_day":true}`, Valid: true}))
+	projectTierSignals(t, a.f, "America/New_York", 25)
+
+	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+
+	require.NoError(err)
+	require.NotNil(explanation.LastContactDate)
+	assert.Equal(t, "2026-10-17", *explanation.LastContactDate)
+}
+
+// While the projector replays under a new setting, the stored rows follow
+// neither value. A preview then would drop people from their tier, so it
+// refuses until the replay finishes.
+func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	before := previewTiers(t, p, 0)
+	require.Len(before.People, 3)
+
+	_, err := p.f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
+	require.NoError(err)
+	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
+	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), p.frequent, tierOptions())
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
+
+	projectTierSignals(t, p.f, "America/New_York", 25)
+	after := previewTiers(t, p, 0)
+	assert.Equal("America/New_York", after.Projection.Timezone)
+	assert.Len(after.People, 3, "the same people are listed once the rebuild finishes")
+
+	_, err = p.f.Store.ClaimActivityDirectLimitTransitionContext(t.Context(), 10)
+	require.NoError(err)
+	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
+	projectTierSignals(t, p.f, "America/New_York", 10)
+	assert.Equal(10, previewTiers(t, p, 0).Projection.MaxDirect)
+}

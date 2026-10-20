@@ -20,8 +20,6 @@ func TestBuildTierSignalsCountsRowsByWindowDirectionAndKind(t *testing.T) {
 		row(3, "2026-07-20", "message", "outbound", "member", "chat"),  // 89 days back, inside the short window
 		row(4, "2026-07-19", "message", "inbound", "sender", "email"),  // 90 days back, long window only
 		row(5, "2025-10-18", "message", "inbound", "sender", "email"),  // 364 days back
-		row(6, "2025-10-17", "message", "inbound", "sender", "email"),  // 365 days back, outside
-		row(7, "2026-10-18", "message", "inbound", "sender", "email"),  // after as-of
 		row(8, "2026-10-10", "message", "outbound", "sender", "email"), // co-author: not counted
 		row(9, "2026-10-10", "message", "inbound", "addressed", "email"),
 		row(10, "2026-10-12", "meeting", "inbound", "organizer", "meeting"),
