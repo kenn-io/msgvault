@@ -182,3 +182,15 @@ func TestSecretCommandStartFailureIsConfiguration(t *testing.T) {
 	require.ErrorIs(err, ErrSecretCommandStart)
 	assert.NotContains(err.Error(), missing)
 }
+
+func TestTokenStoreRejectsIncompleteTokenCommands(t *testing.T) {
+	require := require.New(t)
+	store := NewTokenStore(t.TempDir(), config.OAuthTokenCommands{ReadCommand: []string{"read"}})
+
+	_, err := store.Read(t.Context(), "user@example.com")
+	require.ErrorContains(err, "tokens.write_command")
+	require.ErrorContains(store.Write(t.Context(), "user@example.com", []byte("{}")), "tokens.write_command")
+	require.ErrorContains(store.Delete(t.Context(), "user@example.com"), "tokens.write_command")
+	_, err = store.List(t.Context())
+	require.ErrorContains(err, "tokens.write_command")
+}

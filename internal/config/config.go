@@ -592,6 +592,30 @@ type Config struct {
 	bindSource         string
 	configPath         string // resolved path to the loaded config file
 	runtimeConfigState runtimeConfigState
+	// daemonErrs holds validation errors from settings only the daemon reads.
+	// Load joins them into its error; LoadClientWithOverrides keeps them here.
+	daemonErrs  []error
+	fastmailErr error
+}
+
+func (c *Config) deferDaemonError(err error) {
+	if err != nil {
+		c.daemonErrs = append(c.daemonErrs, err)
+	}
+}
+
+// DaemonConfigErrors lists invalid settings that only the daemon reads, as
+// recorded by LoadClientWithOverrides.
+func (c *Config) DaemonConfigErrors() []error {
+	return slices.Clone(c.daemonErrs)
+}
+
+// requireDaemonValid returns the config, or the recorded daemon errors.
+func (c *Config) requireDaemonValid() (*Config, error) {
+	if err := errors.Join(c.daemonErrs...); err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 
 // IMAPConfig contains operator-owned settings for IMAP mutations.
@@ -928,9 +952,7 @@ func loadWithOverrides(path, homeDir string, overrides RuntimeOverrides) (*Confi
 		if err := cfg.applyRuntimeOverrides(overrides); err != nil {
 			return nil, err
 		}
-		if err := cfg.Server.Validate(); err != nil {
-			return nil, err
-		}
+		cfg.deferDaemonError(cfg.Server.Validate())
 		return cfg, nil
 	}
 	content, err := os.ReadFile(path)
@@ -985,13 +1007,15 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 			if err := cfg.applyRuntimeOverrides(*overrides); err != nil {
 				return nil, err
 			}
-			if err := cfg.Server.Validate(); err != nil {
-				return nil, err
-			}
+			cfg.deferDaemonError(cfg.Server.Validate())
 		}
-		return cfg, nil
+		return cfg.requireDaemonValid()
 	}
-	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
+	cfg, err := decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
 }
 
 func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte, overrides *RuntimeOverrides) (*Config, error) {
@@ -1028,11 +1052,11 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if metadata.IsDefined("people", "identity_scoring", "minimum_probability") &&
 		cfg.People.IdentityScoring.MinimumProbability == 0 {
-		return nil, errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.minimum_probability must be at least 0.80 and less than 1.00"))
 	}
 	if metadata.IsDefined("people", "identity_scoring", "batch_size") &&
 		cfg.People.IdentityScoring.BatchSize == 0 {
-		return nil, errors.New("people.identity_scoring.batch_size must be between 1 and 100")
+		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
@@ -1058,12 +1082,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
 		}
 	}
-	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateDraftSources(content); err != nil {
-		return nil, err
-	}
+	cfg.fastmailErr = cfg.validateFastmailSources(fastmailSourceIDConfigured(content))
+	cfg.deferDaemonError(cfg.fastmailErr)
+	cfg.deferDaemonError(cfg.validateDraftSources(content))
 
 	// Expand ~ in paths
 	cfg.Data.DataDir = expandPath(cfg.Data.DataDir)
@@ -1135,55 +1156,37 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	if err := cfg.OAuth.Validate(); err != nil {
-		return nil, fmt.Errorf("oauth: %w", err)
+		cfg.deferDaemonError(fmt.Errorf("oauth: %w", err))
 	}
-
-	if err := cfg.Server.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Server.Validate())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.Web.ApplyDefaults()
-	if err := cfg.Web.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Web.Validate())
 	if !ValidCardDAVProvider(cfg.CardDAV.Provider) {
-		return nil, errors.New("carddav.provider must be empty, \"google\" or \"microsoft\"")
+		cfg.deferDaemonError(errors.New("carddav.provider must be empty, \"google\" or \"microsoft\""))
 	}
-	if _, _, err := cfg.CardDAV.TrustedDestination(); err != nil {
-		return nil, err
-	}
-	if err := cfg.validateCardDAVConnections(); err != nil {
-		return nil, err
-	}
+	_, _, err = cfg.CardDAV.TrustedDestination()
+	cfg.deferDaemonError(err)
+	cfg.deferDaemonError(cfg.validateCardDAVConnections())
 	cfg.Integrations.Tasks.ApplyDefaults()
-	if err := cfg.Integrations.Tasks.Validate("tasks"); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
-	if err := cfg.Integrations.Kata.Validate("kata"); err != nil {
-		return nil, err
-	}
-	if err := cfg.Integrations.Docbank.validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.Integrations.Kata.Validate("kata"))
+	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
 	}
-	if err := cfg.People.Sweep.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.People.Sweep.Validate())
 	cfg.People.Enrichment.ApplyDefaults()
 	if err := cfg.People.Enrichment.Validate(); err != nil {
 		return nil, err
 	}
 	cfg.People.IdentityScoring.ApplyDefaults()
-	if err := cfg.People.IdentityScoring.Validate(); err != nil {
-		return nil, err
-	}
+	cfg.deferDaemonError(cfg.People.IdentityScoring.Validate())
 	if err := cfg.Backup.Validate(); err != nil {
 		return nil, err
 	}
@@ -1328,6 +1331,9 @@ var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
 // inventory to multiple ingestion sources. Explicit source ID entries take
 // precedence over account matches.
 func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
+	if c.fastmailErr != nil {
+		return nil, c.fastmailErr
+	}
 	if st == nil {
 		return nil, errors.New("fastmail source lookup requires a source store")
 	}
@@ -1497,6 +1503,10 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
+	// A lenient load can't rewrite a file the daemon would reject.
+	if err := errors.Join(c.daemonErrs...); err != nil {
+		return fmt.Errorf("refusing to save invalid config: %w", err)
+	}
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create config directory: %w", err)

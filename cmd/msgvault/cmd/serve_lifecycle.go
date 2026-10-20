@@ -884,6 +884,9 @@ var stopBackgroundServeStartupForRun = func(proc *backgroundServeProcess) error 
 }
 
 func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
+	if err := requireDaemonConfig(c); err != nil {
+		return nil, err
+	}
 	exe := opts.ExecutablePath
 	if exe == "" {
 		var err error

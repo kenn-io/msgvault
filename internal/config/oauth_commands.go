@@ -102,6 +102,12 @@ func (o *OAuthConfig) CredentialsFor(name string) (OAuthApp, error) {
 		}
 		return OAuthApp{}, fmt.Errorf("OAuth app %q has no client_secrets or client_secrets_command configured", name)
 	}
+	if err := validateOAuthApp(app); err != nil {
+		if name != "" {
+			err = fmt.Errorf("apps.%s: %w", name, err)
+		}
+		return OAuthApp{}, fmt.Errorf("oauth: %w", err)
+	}
 	app.ClientSecretsCommand = append([]string(nil), app.ClientSecretsCommand...)
 	return app, nil
 }

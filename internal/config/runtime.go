@@ -25,7 +25,19 @@ func Load(path, home string) (*Config, error) {
 }
 
 // LoadWithOverrides applies flags before validating lower-priority env values.
+// It rejects invalid settings in every section, including those only the daemon reads.
 func LoadWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
+	cfg, err := LoadClientWithOverrides(path, home, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
+}
+
+// LoadClientWithOverrides loads like LoadWithOverrides, but records invalid
+// settings that only the daemon reads in DaemonConfigErrors instead of
+// failing, so client commands can still reach a running daemon.
+func LoadClientWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
 	return loadWithOverrides(path, home, overrides)
 }
 
@@ -144,32 +156,23 @@ func (s *secretSources) resolve() (string, error) {
 }
 
 func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
-	bindSupplied := o.BindAddr != nil
 	if o.BindAddr != nil {
 		c.runtimeConfigState.flags.BindAddr = new(*o.BindAddr)
-		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, *o.BindAddr)
-		c.Server.BindAddr = *o.BindAddr
-		c.bindSource = "--bind"
+		c.overrideBindAddr(*o.BindAddr, "--bind")
 	} else if v, ok := os.LookupEnv("MSGVAULT_BIND_ADDR"); ok {
-		bindSupplied = true
-		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, v)
-		c.Server.BindAddr = v
-		c.bindSource = "MSGVAULT_BIND_ADDR"
-	}
-	if bindSupplied && strings.TrimSpace(c.Server.BindAddr) == "" {
-		return errors.New("server bind address is empty")
+		c.overrideBindAddr(v, "MSGVAULT_BIND_ADDR")
 	}
 	if o.APIPort != nil {
 		c.runtimeConfigState.flags.APIPort = new(*o.APIPort)
 		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, *o.APIPort)
 		c.Server.APIPort = *o.APIPort
 	} else if v, ok := os.LookupEnv("MSGVAULT_API_PORT"); ok {
-		port, err := strconv.Atoi(v)
-		if err != nil {
-			return errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535")
+		if port, err := strconv.Atoi(v); err != nil {
+			c.deferDaemonError(errors.New("MSGVAULT_API_PORT must be an integer between 0 and 65535"))
+		} else {
+			c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
+			c.Server.APIPort = port
 		}
-		c.runtimeConfigState.apiPort.capture(c.Server.APIPort, port)
-		c.Server.APIPort = port
 	}
 	if v, ok := os.LookupEnv("MSGVAULT_BACKUP_REPO"); ok {
 		value := expandPath(v)
@@ -194,7 +197,13 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		if v, ok := os.LookupEnv(entry.name); ok {
 			value, err := strconv.ParseBool(v)
 			if err != nil {
-				return fmt.Errorf("%s must be a boolean", entry.name)
+				err = fmt.Errorf("%s must be a boolean", entry.name)
+				// Client commands read [remote] to reach the daemon, so that one stays fatal.
+				if entry.destination == &c.Remote.AllowInsecure {
+					return err
+				}
+				c.deferDaemonError(err)
+				continue
 			}
 			entry.record.capture(*entry.destination, value)
 			*entry.destination = value
@@ -227,6 +236,17 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		}
 	}
 	return nil
+}
+
+// overrideBindAddr applies a bind address, or records an error for an empty one.
+func (c *Config) overrideBindAddr(addr, source string) {
+	if strings.TrimSpace(addr) == "" {
+		c.deferDaemonError(fmt.Errorf("%s: server bind address is empty", source))
+		return
+	}
+	c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, addr)
+	c.Server.BindAddr = addr
+	c.bindSource = source
 }
 
 func (c *Config) credentialPath(path string) string {

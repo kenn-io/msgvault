@@ -60,6 +60,9 @@ func (s *TokenStore) environment(email string) []string {
 // Read returns the stored token bytes, or an error matching os.ErrNotExist
 // when the account has no token in this namespace.
 func (s *TokenStore) Read(ctx context.Context, email string) ([]byte, error) {
+	if err := s.commands.Validate(); err != nil {
+		return nil, fmt.Errorf("oauth: %w", err)
+	}
 	var data []byte
 	var err error
 	if s.commands.Enabled() {
@@ -79,6 +82,9 @@ func (s *TokenStore) Read(ctx context.Context, email string) ([]byte, error) {
 	return data, nil
 }
 func (s *TokenStore) withLock(ctx context.Context, email string, fn func() error) (err error) {
+	if err := s.commands.Validate(); err != nil {
+		return fmt.Errorf("oauth: %w", err)
+	}
 	if err := fileutil.SecureMkdirAll(s.dir(), 0700); err != nil {
 		return err
 	}
@@ -142,6 +148,9 @@ func (s *TokenStore) Delete(ctx context.Context, email string) error {
 
 // List runs the configured command to enumerate accounts in the secret store.
 func (s *TokenStore) List(ctx context.Context) ([]string, error) {
+	if err := s.commands.Validate(); err != nil {
+		return nil, fmt.Errorf("oauth: %w", err)
+	}
 	data, err := runSecretCommand(ctx, s.commands.ListCommand, s.environment(""), nil)
 	if err != nil {
 		return nil, fmt.Errorf("list tokens: %w", err)

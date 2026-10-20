@@ -112,10 +112,11 @@ Output and exit status:
 
 			// Load config first; logging options live under [log].
 			var err error
-			inv.cfg, err = config.LoadWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
+			inv.cfg, err = config.LoadClientWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
+			warnDaemonConfigErrors(cmd, inv.cfg)
 			if err := inv.cfg.EnsureHomeDir(); err != nil {
 				return fmt.Errorf(
 					"create data directory %s: %w",

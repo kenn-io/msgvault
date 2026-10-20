@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-18"
+last_edited: "2026-10-19"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -19,6 +19,20 @@ For a first archive, add only the sections required by your source. Optional
 provider setup is covered in [recommended configuration](usage/recommended-configuration.md).
 The [complete example](#example-configuration) below illustrates the available
 sections; it is not a required starting configuration.
+
+### Validation
+
+Invalid TOML, unknown keys, and invalid values in sections that commands read
+themselves fail every command. An invalid value in a setting only the daemon
+reads does not. These are `[server]` and its `MSGVAULT_*` overrides (except
+`MSGVAULT_REMOTE_ALLOW_INSECURE`), `[web]`, `[integrations.*]`, `[carddav]`,
+`[carddav_connections]`, `[oauth]` client credentials and token commands,
+`[people.sweep]`, `[people.identity_scoring]`, `[[imap.drafts]]`,
+`[[gmail.drafts]]`, `[[beeper.drafts]]`, and `[[fastmail]]`. A command prints
+`Warning: ignoring invalid daemon config: ...` to stderr and runs. For example,
+with `MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
+running daemon. Starting, restarting, or upgrading the daemon, saving
+configuration, and editing settings still reject the file with that message.
 
 
 ## Remote Deletion Consent

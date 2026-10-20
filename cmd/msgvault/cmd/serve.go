@@ -202,6 +202,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	cfg := state.cfg
 	logger := state.logger
+	if err := requireDaemonConfig(cfg); err != nil {
+		return err
+	}
 	// Resolve the interface before reserving a listener. Credential creation
 	// waits until this process owns the daemon lock.
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
