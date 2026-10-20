@@ -374,8 +374,7 @@ func TierOptionsAsOf(options PersonTierOptions, asOf time.Time) PersonTierOption
 	return options
 }
 
-// SetPersonTierRowPage changes how many tier events one read holds, and
-// returns the function that restores it.
+// SetPersonTierRowPage sets the tier read page size and returns the restore func.
 func SetPersonTierRowPage(n int) func() {
 	old := personTierRowPage
 	personTierRowPage = n

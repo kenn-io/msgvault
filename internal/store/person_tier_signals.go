@@ -55,13 +55,11 @@ func (s *Store) personTierReadiness(ctx context.Context, tx *loggedTx) (PersonTi
 
 // personTierSignals reads the windowed counts for one page of saved people.
 // asOf is already in the projection timezone and maxDirect is the limit the
-// projection was built under; windows include both boundary dates.
-//
-// The projection already holds each person's direct events. The only rule it
-// does not store is the inbound audience cut, so that comes from the
-// projector's own classifier. Events arrive in keyset pages and fold into the
-// counters as they do, so memory follows the page size and the number of
-// people and days, not the number of events.
+// projection was built under; windows include both boundary dates. The
+// projection holds each person's direct events; the inbound audience cut comes
+// from the projector's own classifier. Events arrive in keyset pages and fold
+// into the counters, so memory follows the page size and the number of people
+// and days, not the number of events.
 func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
 	tally := newTierTally(cfg, asOf)
 	var after tierSignalRow
@@ -80,7 +78,7 @@ func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs [
 		}
 		after = rows[len(rows)-1]
 	}
-	result := tally.signals()
+	result := tally.result
 	for _, id := range personIDs {
 		if _, ok := result[id]; !ok {
 			result[id] = persontiers.Signals{}
@@ -103,11 +101,10 @@ type tierSignalRow struct {
 	List      bool
 }
 
-// personTierRows reads up to personTierRowPage direct links in the long window
-// for the page, in (person, date, message) order after the given row. The WHERE
-// clause is the counting rule: sent email and chat messages between the person
-// and the owner, not drafts, texts that never left the phone, or call records,
-// and meetings in either direction.
+// personTierRows reads up to personTierRowPage direct links in the long window,
+// in (person, date, message) order after the given row. The WHERE clause is the
+// counting rule: sent email and chat messages between the person and the owner,
+// not drafts, unsent texts, or call records, and meetings in either direction.
 func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
@@ -181,9 +178,8 @@ func (s *Store) personTierBroadcast(ctx context.Context, tx *loggedTx, rows []ti
 
 // tierTally counts rows as pages arrive. A row counts unless the message came
 // from a mailing list (when excluded) or is an inbound message to more people
-// than the direct limit. The two exclusion counters count only rows that would
-// otherwise count, a row taking the first reason that applies. A meeting adds
-// to the active and meeting days but is not a message channel.
+// than the direct limit; an excluded row takes the first reason that applies.
+// A meeting adds to the active and meeting days but is not a message channel.
 type tierTally struct {
 	cfg    persontiers.Config
 	short  string
@@ -243,18 +239,10 @@ func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 				s.OutboundShort++
 			}
 		}
-		t.result[r.PersonID] = s
-	}
-}
-
-func (t *tierTally) signals() map[int64]persontiers.Signals {
-	for id, d := range t.seen {
-		s := t.result[id]
 		s.ActiveDaysShort, s.ActiveDaysLong = len(d.short), len(d.long)
 		s.MeetingDaysLong, s.ChannelsLong = len(d.meeting), len(d.channel)
-		t.result[id] = s
+		t.result[r.PersonID] = s
 	}
-	return t.result
 }
 
 // personTierBindings reads each person's addresses and identifiers for
