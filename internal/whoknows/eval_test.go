@@ -284,6 +284,11 @@ func TestFindEvaluation(t *testing.T) {
 			require.NoError(err)
 			ranked := f.ranked(got)
 			relevant := qrels.RelevantSet(topic.ID)
+			for person, grade := range qrels[topic.ID] {
+				if grade == 0 {
+					assert.NotContains(ranked, person, "a person judged irrelevant must be excluded")
+				}
+			}
 
 			if len(relevant) == 0 {
 				assert.Empty(got.People, "judged: nobody wrote about it")
@@ -302,6 +307,9 @@ func TestFindEvaluation(t *testing.T) {
 			if topic.ID == "ambiguous" {
 				assert.Equal([]string{"gopher@example.net"}, ranked,
 					"keyword-only matches on good, going, and google do not count")
+			}
+			if topic.ID == "questions" {
+				assert.Equal([]string{"answerer@example.net", "asker@example.net"}, ranked)
 			}
 		})
 	}

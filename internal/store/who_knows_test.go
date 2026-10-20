@@ -275,6 +275,9 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 		ids[ts], senders[ts] = id, sender
 	}
 	anaOwn, botAsAna, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
+	botParticipant, _, err := f.Store.ParticipantByIdentifierContext(ctx, "slack", "T1:bot:UBOT")
+	require.NoError(err)
+	assert.Equal(senders["1790000000.000003"], botParticipant, "the importer records the user's is_bot classification")
 	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn, botUser}, ownerOf(f))
 	require.NoError(err)
 	assert.False(got[botAsAna].Counts, "a bot posting as Ana")
