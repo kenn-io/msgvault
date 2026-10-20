@@ -90,13 +90,13 @@ func protectedDirectoryDescriptor(path string) (*windows.SECURITY_DESCRIPTOR, er
 	}
 	descriptor, err := windows.NewSecurityDescriptor()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fileutil: new security descriptor for %s: %w", path, err)
 	}
 	if err := descriptor.SetDACL(acl, true, false); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fileutil: set DACL for %s: %w", path, err)
 	}
 	if err := descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("fileutil: protect DACL for %s: %w", path, err)
 	}
 	return descriptor, nil
 }
