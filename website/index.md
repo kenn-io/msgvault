@@ -38,7 +38,7 @@ checksum. msgvault is also on
 [conda-forge](https://prefix.dev/channels/conda-forge/packages/msgvault), and
 the [setup documentation](/docs/setup/) covers building from source.
 
-The daemon sends anonymous usage telemetry by default. See [sent fields and opt-outs](https://msgvault.io/docs/configuration/#telemetry).
+The daemon sends anonymous usage telemetry by default. See [sent fields and opt-outs](/docs/configuration/#telemetry).
 
 Then [read how msgvault works](/guide/).
 

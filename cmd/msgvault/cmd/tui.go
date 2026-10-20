@@ -123,8 +123,8 @@ HTTP Mode:
 			AnalyticsNotice:       notice,
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
-			ReportScreen:          tuiScreenReporter(backend.client),
-			ReportAction:          tuiActionReporter(backend.client),
+			ReportScreen:          tuiScreenReporter(backend.client, currentCfg),
+			ReportAction:          tuiActionReporter(backend.client, currentCfg),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -163,6 +163,9 @@ HTTP Mode:
 }
 
 func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration) {
+	if !clientTelemetryEnabled(cfg) {
+		return
+	}
 	inv := invocationFromContext(ctx)
 	if inv == nil {
 		return
@@ -187,8 +190,11 @@ func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInf
 	})
 }
 
-func tuiScreenReporter(client *daemonclient.Client) func(context.Context, string) error {
+func tuiScreenReporter(client *daemonclient.Client, cfg *config.Config) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
+		if !clientTelemetryEnabled(cfg) {
+			return nil
+		}
 		return sendActionTelemetry(ctx, client, "tui", "screen_viewed", "screen", screen)
 	}
 }
@@ -400,8 +406,11 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
 }
 
-func tuiActionReporter(client *daemonclient.Client) func(context.Context, string, string, string) error {
+func tuiActionReporter(client *daemonclient.Client, cfg *config.Config) func(context.Context, string, string, string) error {
 	return func(ctx context.Context, event, property, value string) error {
+		if !clientTelemetryEnabled(cfg) {
+			return nil
+		}
 		return sendActionTelemetry(ctx, client, "tui", event, property, value)
 	}
 }

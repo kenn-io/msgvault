@@ -2209,8 +2209,15 @@ turns reporting off. Any present `CI`, including an empty value, also turns it o
 Reporting requires a plain release version, `vX.Y.Z` or `X.Y.Z`, with numeric
 components. Source, dev, prerelease, and dirty versions send nothing.
 These gates take precedence over enabling settings. Builds made with the
-`kit_posthog_disabled` tag also send nothing. Restart the daemon after changing
-these settings. A CLI command that starts a local daemon passes its environment to it.
+`kit_posthog_disabled` tag also send nothing.
+
+The CLI and terminal UI also check their own configuration and environment before
+forwarding usage events to the selected local or remote daemon. An opt-out in the
+client suppresses those events even when the daemon's telemetry is enabled.
+The daemon's configuration and environment control its independent reporting,
+including daily pings and events from other clients. Restart the daemon after
+changing its settings. A CLI command that starts a local daemon passes its
+environment to it.
 
 The daemon keeps its random install ID in `telemetry-install.json` in the data
 directory. It can create this file when no opt-out is active, including in a

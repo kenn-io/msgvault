@@ -207,8 +207,8 @@ func TestOptedOutReporterSendsNothing(t *testing.T) {
 			stub := newWireStub(t)
 			dir := t.TempDir()
 			out := runWireHelper(t, stub.server.URL, dir, tc.env...)
-			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 			assert.Empty(t, stub.recorded(), "an opted-out daemon must send nothing")
+			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
 			assert.NotContains(t, out, "telemetry is on")
 		})
 	}
