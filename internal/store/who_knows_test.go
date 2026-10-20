@@ -408,6 +408,44 @@ func TestTopicContactsReportWhomTheOwnerWroteTo(t *testing.T) {
 	assert.True(got[vendor].OneWay, "the vendor was never written to")
 }
 
+func TestTopicContactsRecognizeOwnerRepliesWithoutAccountIdentity(t *testing.T) {
+	for _, bound := range []bool{false, true} {
+		t.Run(fmt.Sprintf("bound=%t", bound), func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
+			alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+			ana := f.EnsureParticipant("ana@example.net", "Ana", "example.net")
+			send(f, "outbound", owner, func(m *store.Message) { m.IsFromMe = true })
+			require.Empty(ownerOf(f), "no account identity names the owner")
+			if bound {
+				person, _, err := f.Store.CreatePersonFromParticipant(owner)
+				require.NoError(err)
+				other, _, err := f.Store.CreatePersonFromParticipant(alias)
+				require.NoError(err)
+				_, err = f.Store.MergePersonsContext(t.Context(), store.PersonMergeRequest{
+					SurvivorID: person.ID, AbsorbedID: other.ID,
+					ExpectedSurvivorRevision: person.Revision, ExpectedAbsorbedRevision: other.Revision,
+					IdempotencyKey: "owner-reply-merge", Actor: "test",
+				})
+				require.NoError(err)
+			} else {
+				_, err := f.Store.LinkParticipants(owner, alias)
+				require.NoError(err)
+			}
+			reply := send(f, "reply", alias)
+			require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana}, []string{"Ana"}))
+			fromMe, err := f.Store.GetMessageIsFromMe(reply)
+			require.NoError(err)
+			require.False(fromMe)
+
+			got := contactsOf(f, ana)
+			require.Contains(got, ana)
+			assert.False(t, got[ana].OneWay, "the owner's alias replied to Ana")
+		})
+	}
+}
+
 func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

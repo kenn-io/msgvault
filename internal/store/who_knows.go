@@ -324,20 +324,11 @@ func (s *Store) slackNonAuthoredPayloadsContext(ctx context.Context, ids []int64
 	return out, nil
 }
 
-// topicContactsContext maps each sender to its identity family. Promotion,
-// linking, and merging bind a whole link cluster to at most one person, so a
-// saved sender's family is every participant bound to its person, and an
-// unsaved sender's family is its link cluster. The cluster walk starts from
-// the listed senders only. Owner families are left out. The owner wrote a
-// message when it is marked from me or its sender is in owner.
-func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int64, owner []int64) (map[int64]TopicContact, error) {
-	out := map[int64]TopicContact{}
-	senders := slices.Compact(slices.Sorted(maps.Values(bySender)))
-	if len(senders) == 0 {
-		return out, nil
-	}
-	query := `WITH RECURSIVE component(seed, id) AS (
-			SELECT p.id, p.id FROM participants p WHERE p.id IN (` + directoryPlaceholders(len(senders)) + `)
+// topicFamilyCTEs resolves each participant matching seed to its link cluster
+// or, when saved, every participant bound to its person.
+func topicFamilyCTEs(seed string) string {
+	return `component(seed, id) AS (
+			SELECT p.id, p.id FROM participants p WHERE ` + seed + `
 			UNION
 			SELECT c.seed, CASE WHEN l.participant_a = c.id THEN l.participant_b ELSE l.participant_a END
 			FROM component c JOIN participant_links l ON l.participant_a = c.id OR l.participant_b = c.id
@@ -351,7 +342,19 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 			UNION
 			SELECT sp.seed, pp.participant_id FROM seed_person sp
 			JOIN person_participants pp ON pp.person_id = sp.person_id
-		), keyed(seed, family_key) AS (
+		)`
+}
+
+// topicContactsContext maps each sender to its identity family. Owner
+// families are left out. A reply counts when marked from me or when its
+// sender's family includes an owner participant.
+func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int64, owner []int64) (map[int64]TopicContact, error) {
+	out := map[int64]TopicContact{}
+	senders := slices.Compact(slices.Sorted(maps.Values(bySender)))
+	if len(senders) == 0 {
+		return out, nil
+	}
+	query := `WITH RECURSIVE ` + topicFamilyCTEs("p.id IN ("+directoryPlaceholders(len(senders))+")") + `, keyed(seed, family_key) AS (
 			SELECT seed, MIN(id) FROM family GROUP BY seed
 		)
 		SELECT k.seed, k.family_key, COALESCE(sp.person_id, 0), COALESCE(per.display_name, ''),
@@ -362,7 +365,9 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 		         JOIN messages m ON m.id = mr.message_id
 		         WHERE f.seed = k.seed AND LOWER(mr.recipient_type) IN ('to', 'cc', 'bcc')
 		           AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		           AND (m.is_from_me OR ` + inOwnerFamily(messageSender("m"), len(owner)) + `))
+		           AND (m.is_from_me OR EXISTS (
+		             WITH RECURSIVE ` + topicFamilyCTEs("p.id = "+messageSender("m")) + `
+		             SELECT 1 FROM family WHERE ` + ownerParticipant("id", len(owner)) + `)))
 		FROM keyed k
 		JOIN participants kp ON kp.id = k.family_key
 		LEFT JOIN seed_person sp ON sp.seed = k.seed
