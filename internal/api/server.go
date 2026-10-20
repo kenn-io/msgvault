@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
@@ -1495,8 +1496,8 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // limiter. Loopback origin alone is not sufficient: a same-host reverse proxy,
 // SSH tunnel, or TLS terminator forwarding to loopback makes remote traffic
 // arrive as 127.0.0.1, which would otherwise brute-force the API key
-// unthrottled. Keyless GET discovery probes for ping and daemon identity are
-// exempt on loopback because neither route accepts a credential. Other
+// unthrottled. Credential-free GET discovery probes for ping and daemon identity
+// are exempt on loopback so clients can find a busy daemon. Other
 // loopback requests are exempt only when trusted — either
 // no API key is configured (pure local mode, the TUI/CLI autostart case) or it
 // carries a valid API key (an authenticated local client). apiRequestAuthorized
@@ -1506,7 +1507,10 @@ func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
 	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
 		return false
 	}
-	if isLoopbackRequest(r) && r.Method == http.MethodGet && (r.URL.Path == "/api/ping" || r.URL.Path == DaemonIdentityPath) {
+	_, agentTokenPresented := agentTokenHeaderValue(r)
+	if isLoopbackRequest(r) && r.Method == http.MethodGet &&
+		(r.URL.Path == daemon.DefaultPingPath || r.URL.Path == DaemonIdentityPath) &&
+		!ownerCredentialPresented(r) && !agentTokenPresented {
 		return true
 	}
 	return isLoopbackRequest(r) && (s.apiRequestAuthorized(r) || s.remoteClientRequest(r))

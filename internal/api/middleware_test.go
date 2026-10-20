@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -356,29 +357,36 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 	t.Parallel()
 	const key = "secret-key"
 
-	newReq := func(remoteAddr, apiKey string) *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-		req.RemoteAddr = remoteAddr
-		if apiKey != "" {
-			req.Header.Set("X-Api-Key", apiKey)
-		}
-		return req
-	}
-
 	tests := []struct {
 		name       string
 		apiKey     string
 		remoteAddr string
 		reqKey     string
 		want       bool
+		method     string
+		path       string
+		header     string
 	}{
-		{"keyless loopback exempt", "", "127.0.0.1:1234", "", true},
-		{"key configured valid key loopback exempt", key, "127.0.0.1:1234", key, true},
-		{"reader key loopback exempt", key, "127.0.0.1:1234", remoteClientTestReaderKey, true},
-		{"key configured missing key loopback limited", key, "127.0.0.1:1234", "", false},
-		{"key configured bad key loopback limited", key, "127.0.0.1:1234", "wrong", false},
-		{"key configured valid key non-loopback limited", key, "203.0.113.7:1234", key, false},
-		{"keyless non-loopback limited", "", "203.0.113.7:1234", "", false},
+		{"keyless loopback exempt", "", "127.0.0.1:1234", "", true, http.MethodGet, "/api/v1/stats", ""},
+		{"key configured valid key loopback exempt", key, "127.0.0.1:1234", key, true, http.MethodGet, "/api/v1/stats", "X-Api-Key"},
+		{"reader key loopback exempt", key, "127.0.0.1:1234", remoteClientTestReaderKey, true, http.MethodGet, "/api/v1/stats", "X-Api-Key"},
+		{"key configured missing key loopback limited", key, "127.0.0.1:1234", "", false, http.MethodGet, "/api/v1/stats", ""},
+		{"key configured bad key loopback limited", key, "127.0.0.1:1234", "wrong", false, http.MethodGet, "/api/v1/stats", "X-Api-Key"},
+		{"key configured valid key non-loopback limited", key, "203.0.113.7:1234", key, false, http.MethodGet, "/api/v1/stats", "X-Api-Key"},
+		{"keyless non-loopback limited", "", "203.0.113.7:1234", "", false, http.MethodGet, "/api/v1/stats", ""},
+		{"keyless loopback ping exempt", key, "127.0.0.1:1234", "", true, http.MethodGet, daemon.DefaultPingPath, ""},
+		{"keyless IPv6 loopback ping exempt", key, "[::1]:1234", "", true, http.MethodGet, daemon.DefaultPingPath, ""},
+		{"keyless loopback identity exempt", key, "127.0.0.1:1234", "", true, http.MethodGet, DaemonIdentityPath, ""},
+		{"wrong key loopback ping limited", key, "127.0.0.1:1234", "wrong", false, http.MethodGet, daemon.DefaultPingPath, "X-Api-Key"},
+		{"wrong key loopback identity limited", key, "127.0.0.1:1234", "wrong", false, http.MethodGet, DaemonIdentityPath, "X-Api-Key"},
+		{"wrong authorization loopback ping limited", key, "127.0.0.1:1234", "Bearer wrong", false, http.MethodGet, daemon.DefaultPingPath, "Authorization"},
+		{"wrong authorization loopback identity limited", key, "127.0.0.1:1234", "Bearer wrong", false, http.MethodGet, DaemonIdentityPath, "Authorization"},
+		{"agent token loopback ping limited", key, "127.0.0.1:1234", "wrong", false, http.MethodGet, daemon.DefaultPingPath, apiprotocol.AgentTokenHeader},
+		{"empty agent token loopback ping limited", key, "127.0.0.1:1234", "", false, http.MethodGet, daemon.DefaultPingPath, apiprotocol.AgentTokenHeader},
+		{"session cookie loopback ping limited", key, "127.0.0.1:1234", sessionCookieName + "=wrong", false, http.MethodGet, daemon.DefaultPingPath, "Cookie"},
+		{"runtime token loopback ping limited", key, "127.0.0.1:1234", "wrong", false, http.MethodGet, daemon.DefaultPingPath, apiprotocol.DaemonRuntimeTokenHeader},
+		{"keyless non-loopback ping limited", key, "203.0.113.7:1234", "", false, http.MethodGet, daemon.DefaultPingPath, ""},
+		{"keyless loopback POST ping limited", key, "127.0.0.1:1234", "", false, http.MethodPost, daemon.DefaultPingPath, ""},
 	}
 
 	for _, tt := range tests {
@@ -387,7 +395,12 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey, RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: remoteClientTestReaderKey}}}},
 				nil, nil, testLogger(),
 			)
-			got := srv.loopbackRateLimitExempt(newReq(tt.remoteAddr, tt.reqKey))
+			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.reqKey)
+			}
+			got := srv.loopbackRateLimitExempt(req)
 			require.Equal(t, tt.want, got, "loopbackRateLimitExempt")
 		})
 	}

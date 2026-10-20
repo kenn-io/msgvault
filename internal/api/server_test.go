@@ -935,46 +935,30 @@ func TestDaemonShutdownEndpointRequiresRuntimeToken(t *testing.T) {
 
 func TestLoopbackDiscoveryBypassesRateLimitWithAPIKey(t *testing.T) {
 	t.Parallel()
-	for _, remoteAddr := range []string{"127.0.0.1:1234", "[::1]:1234"} {
-		t.Run(remoteAddr, func(t *testing.T) {
-			require := require.New(t)
-			challenge, err := daemonauth.NewChallenge()
-			require.NoError(err)
-			srv := NewServerWithOptions(ServerOptions{
-				Config:        &config.Config{Server: config.ServerConfig{APIKey: "secret-key"}},
-				Logger:        testLogger(),
-				ShutdownToken: "runtime-secret",
-			})
-			t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
-			// Keep the exhausted budget deterministic on slow runners.
-			srv.rateLimiter.rate = 0
-			handler := srv.Router()
-			for i := 0; i <= srv.rateLimiter.burst; i++ {
-				req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-				req.RemoteAddr = remoteAddr
-				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, req)
-				if i < srv.rateLimiter.burst {
-					require.Equal(http.StatusUnauthorized, w.Code)
-				} else {
-					require.Equal(http.StatusTooManyRequests, w.Code)
-				}
-			}
-			for _, tt := range []struct {
-				path string
-				want int
-			}{
-				{"/api/ping", http.StatusOK},
-				{DaemonIdentityPath, http.StatusNoContent},
-			} {
-				req := httptest.NewRequest(http.MethodGet, tt.path, nil)
-				req.RemoteAddr = remoteAddr
-				req.Header.Set(DaemonIdentityChallengeHeader, challenge)
-				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, req)
-				assert.Equal(t, tt.want, w.Code, "keyless discovery at %s", tt.path)
-			}
-		})
+	require := require.New(t)
+	assert := assert.New(t)
+	srv := NewServer(&config.Config{Server: config.ServerConfig{APIKey: "secret-key"}}, nil, nil, testLogger())
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
+	// One request exhausts the budget; disable refills for slow runners.
+	srv.rateLimiter.rate = 0
+	srv.rateLimiter.burst = 1
+	handler := srv.Router()
+	for _, tt := range []struct {
+		path string
+		key  string
+		want int
+	}{
+		{"/api/v1/stats", "", http.StatusUnauthorized},
+		{"/api/v1/stats", "", http.StatusTooManyRequests},
+		{daemon.DefaultPingPath, "", http.StatusOK},
+		{daemon.DefaultPingPath, "wrong", http.StatusTooManyRequests},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		req.Header.Set("X-Api-Key", tt.key)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(tt.want, w.Code, "path %s, key %q", tt.path, tt.key)
 	}
 }
 
