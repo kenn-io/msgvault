@@ -143,13 +143,11 @@ min_meeting_days_long = 2
 | `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
 | `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
 
-The counts come from the activity projection, so the windows end on today's
-date in the timezone the projection was built under, and the large-audience cut
-uses the direct limit it was built under. After you change `[activity]
-timezone` or `max_direct_counterparts`, the counts follow the stored values and
-the commands warn that the projection is behind until `msgvault activity build`
-rebuilds it.
-See [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
+The counts come from the activity projection. The windows end on today's date in
+its timezone, and the large-audience cut uses its direct limit. After you change
+`[activity] timezone` or `max_direct_counterparts`, counts follow the stored
+values and the commands warn until `msgvault activity build` rebuilds it. See
+[choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
 ## People sweep inference
 
