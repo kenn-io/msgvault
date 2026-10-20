@@ -222,23 +222,47 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 }
 
 func seriesExceptionBounds(master, exception CalendarEventRow) (time.Time, time.Time, error) {
-	e := exception.Event
-	if !e.AllDay || e.Original == nil || e.Original.AllDay != master.Event.AllDay {
-		return *e.Start, *e.End, nil
-	}
 	set, duration, days, err := prepareCalendarRecurrence(master.Event)
-	if errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-		return *e.Start, *e.End, nil
+	var prepared *calrecur.Set
+	if err == nil {
+		prepared = &set
 	}
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	exceptions, err := calendarRecurrenceExceptions([]CalendarEventRow{exception})
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	o, err := calrecur.EffectiveException(set, exceptions[0], duration, days)
+	o, err := exceptionBoundsFor(prepared, duration, days, exception)
 	return o.Start, o.End, err
+}
+
+// Bounded edits share one interpretation across listings and meeting links,
+// including when series generation fails. Sparse edits still inherit bounds.
+func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row CalendarEventRow) (calrecur.Occurrence, error) {
+	e := row.Event
+	o := calrecur.Occurrence{AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == meetingCancelledStatus, ExceptionRef: row.MessageID, HasException: true}
+	if e.Original != nil {
+		o.Original = *e.Original
+	}
+	bounded := e.Start != nil && e.End != nil
+	if bounded {
+		o.Start, o.End = *e.Start, *e.End
+	}
+	if set == nil || e.Original == nil || e.Original.AllDay != set.AllDay || bounded && !e.AllDay {
+		return o, nil
+	}
+	// An omitted event zone inherits the master's zone.
+	var zone *time.Location
+	if e.EventTimeZone != "" {
+		var err error
+		zone, err = calendarEventZone(e)
+		if err != nil {
+			if bounded {
+				return o, nil
+			}
+			return o, err
+		}
+	}
+	resolved, err := calrecur.EffectiveException(*set, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: o.Cancelled, Ref: row.MessageID}, duration, days)
+	if bounded && errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+		return o, nil
+	}
+	return resolved, err
 }
 
 func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, error) {

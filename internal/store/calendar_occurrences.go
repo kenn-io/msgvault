@@ -207,13 +207,16 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 // Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, bounded, err
+		}
 		e := row.Event
 		if e.Start != nil && e.End != nil {
-			var original calrecur.Identity
-			if e.Original != nil {
-				original = *e.Original
+			o, err := exceptionBoundsFor(set, duration, days, row)
+			if err != nil {
+				return nil, bounded, err
 			}
-			bounded = append(bounded, calrecur.Occurrence{Original: original, Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", ExceptionRef: row.MessageID, HasException: true})
+			bounded = append(bounded, o)
 			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
@@ -222,13 +225,11 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	if set == nil {
 		return nil, bounded, nil
 	}
-	exceptions, err := calendarRecurrenceExceptions(rows)
-	if err != nil {
-		return nil, bounded, err
-	}
-	overrides := make(map[string]calrecur.Exception, len(exceptions))
-	for _, exception := range exceptions {
-		overrides[exception.Original.Key()] = exception
+	overrides := make(map[string]CalendarEventRow, len(rows))
+	for _, row := range rows {
+		if row.Event.Original != nil {
+			overrides[row.Event.Original.Key()] = row
+		}
 	}
 	for _, exception := range overrides {
 		if err := ctx.Err(); err != nil {
@@ -236,42 +237,21 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 		}
 		// A retained edit's old value type cannot identify a current instance.
 		// Its recorded bounds were already kept above.
-		if exception.Original.AllDay != set.AllDay {
+		if exception.Event.Original.AllDay != set.AllDay {
 			continue
 		}
-		o, err := calrecur.EffectiveException(*set, exception, duration, days)
+		o, err := exceptionBoundsFor(set, duration, days, exception)
 		if err != nil {
 			return nil, bounded, err
 		}
 		resolved = append(resolved, o)
-		set.ExDates = append(set.ExDates, exception.Original)
+		set.ExDates = append(set.ExDates, *exception.Event.Original)
 	}
 	return resolved, bounded, nil
 }
 
 func calendarRecurrenceBudgetError() error {
 	return fmt.Errorf("%w; long-running series count steps from their start; a narrower window may not reduce the work", ErrQueryTooBroad)
-}
-
-func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception, error) {
-	exceptions := make([]calrecur.Exception, 0, len(rows))
-	for _, row := range rows {
-		e := row.Event
-		if e.Original == nil {
-			continue
-		}
-		// An omitted event zone inherits the master's zone during expansion.
-		var zone *time.Location
-		if e.EventTimeZone != "" {
-			var err error
-			zone, err = calendarEventZone(e)
-			if err != nil {
-				return nil, err
-			}
-		}
-		exceptions = append(exceptions, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: e.Status == "cancelled", Ref: row.MessageID})
-	}
-	return exceptions, nil
 }
 
 func calendarEventZone(e calevent.Event) (*time.Location, error) {
