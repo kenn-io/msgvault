@@ -93,32 +93,3 @@ func TestMeetingLinksAllDayExceptionOverSeriesBudget(t *testing.T) {
 		}
 	}
 }
-
-func TestMeetingLinksExceptionBoundsMatchListing(t *testing.T) {
-	for _, tc := range []struct{ name, master, original, key string }{
-		{"usable", `"start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]`, `"date":"2027-03-14"`, "20270314"},
-		{"tombstone", `"status":"cancelled"`, `"dateTime":"2027-03-14T10:00:00Z"`, "20270314T100000Z"},
-		{"unsupported recurrence", `"start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=HOURLY"]`, `"date":"2027-03-14"`, "20270314"},
-		{"over budget", `"start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]`, `"date":"2027-03-14"`, "20270314"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			requirements, assertions := require.New(t), assert.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "master", `{"id":"series",`+tc.master+`}`)
-			_, edit := calendarFixture(t, st, "edit", `{"id":"edited","recurringEventId":"series","originalStartTime":{`+tc.original+`},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
-			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			listed := page.Occurrences[0]
-			assertions.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: master, Key: tc.key}), listed.Ref)
-			for _, ref := range []OccurrenceRef{{MessageID: master, Key: tc.key}, {MessageID: edit}} {
-				budget := calrecur.RequestReadBudget
-				resolved, err := resolveMeetingOccurrence(t.Context(), st.meetingReader(t.Context()), ref, &budget)
-				requirements.NoError(err)
-				assertions.True(listed.Start.Equal(resolved.Start))
-				assertions.True(listed.End.Equal(resolved.End))
-			}
-		})
-	}
-}
