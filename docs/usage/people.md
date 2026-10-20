@@ -290,7 +290,7 @@ a stored vector does not count. Each counted message weighs its similarity
 times its recency, which halves every 180 days and stops at 0.1. The message
 part of the score is `log(1 + total weight)`.
 
-A matching `ask_me_about` value you or an address book supplied adds 0.75 and
+A matching `ask_me_about` value you or an address book supplied adds 0.25 and
 is printed as `declared: ...`. For someone who wrote about the topic, a value
 matches when one side's words all appear in the other, so `kubernetes` boosts
 an author for `kubernetes networking`. A saved person with no matching

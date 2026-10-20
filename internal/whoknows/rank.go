@@ -12,7 +12,7 @@ import (
 const (
 	halfLifeDays  = 180.0
 	recencyFloor  = 0.1
-	declaredBoost = 0.75
+	declaredBoost = 0.25
 	maxContacts   = 5
 )
 

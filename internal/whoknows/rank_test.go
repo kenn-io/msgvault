@@ -80,11 +80,21 @@ func TestRankWeighsRecencyBoundsMailBoostsDeclaredTopicsAndCitesTheBestMessages(
 	}, rankParams(), rankNow)
 	require.Len(t, people, 2)
 	assert.Equal(int64(14), people[0].PersonID)
-	assert.InDelta(.75, people[0].DeclaredBoost, 1e-9)
-	assert.InDelta(math.Log1p(.9)+.75, people[0].Score, 1e-9)
+	assert.InDelta(.25, people[0].DeclaredBoost, 1e-9)
+	assert.InDelta(math.Log1p(.9)+.25, people[0].Score, 1e-9)
 	assert.Equal(int64(15), people[1].PersonID)
 	assert.Zero(people[1].AuthoredMessages)
-	assert.InDelta(.75, people[1].Score, 1e-9)
+	assert.InDelta(.25, people[1].Score, 1e-9)
+}
+
+func TestRankAuthoredEvidenceOutweighsDeclarationAlone(t *testing.T) {
+	people, _ := Rank([]Candidate{
+		{PersonID: 1, AskMeAbout: []string{"kubernetes"}},
+		{PersonID: 2, OneWay: true, Messages: []Authored{authored(1, 0, 1)}},
+	}, rankParams(), rankNow)
+	require.Len(t, people, 2)
+	assert.Equal(t, int64(2), people[0].PersonID)
+	assert.Equal(t, int64(1), people[1].PersonID)
 }
 
 func TestRankTiesAreDeterministic(t *testing.T) {
