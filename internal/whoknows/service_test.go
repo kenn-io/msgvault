@@ -47,12 +47,13 @@ func (truncatedDeclared) AskMeAboutValuesContext(context.Context, []int64) ([]st
 // embedding worker stamps the fixture's messages.
 type fixtureCount struct {
 	*store.Store
+
 	f *serviceFixture
 }
 
 func (c fixtureCount) CoverageCountsScoped(_ context.Context, _ int64, types []string, _ []int64) (int64, int64, int64, int64, error) {
 	c.f.counted = append(c.f.counted, types)
-	return 0, 0, 0, c.f.waiting, nil
+	return c.f.waiting, 0, 0, c.f.waiting, nil
 }
 
 var serviceNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)

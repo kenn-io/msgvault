@@ -153,8 +153,8 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 // returns only messages with a vector or a keyword hit, so either way an
 // empty answer can't say that nobody wrote about the topic.
 func (s *Service) unembedded(ctx context.Context, gen vector.GenerationID, types []string) bool {
-	_, _, _, missing, err := s.Data.CoverageCountsScoped(ctx, int64(gen), types, nil)
-	return err != nil || missing > 0
+	live, stamped, _, _, err := s.Data.CoverageCountsScoped(ctx, int64(gen), types, nil)
+	return err != nil || live > stamped
 }
 
 type scoredHit struct {
