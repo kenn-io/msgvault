@@ -193,6 +193,89 @@ type resolvingVectorBackend struct {
 	fingerprint string
 }
 
+func TestVectorStaleRestartAfterRebuildInsideThrottle(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{Model: "model-a", Dimension: 2}}
+	backend := &resolvingVectorBackend{fingerprint: cfg.GenerationFingerprint()}
+	opts := testServerOptions(t, backend)
+	opts.Store = &mockStore{}
+	srv := NewServerWithOptions(opts)
+	engine := hybrid.NewEngine(backend, nil, nil, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint()})
+	srv.SetVectorFeatures(engine, nil, backend, cfg)
+	cfg.Embeddings.Model = "model-b"
+	rebuilt := cfg.GenerationFingerprint()
+	srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return rebuilt, nil })
+
+	rec := httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+	require.Equal(http.StatusOK, rec.Code)
+	backend.fingerprint = rebuilt
+	rec = httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=budget&mode=vector", nil))
+	require.Equal(http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.Contains(rec.Body.String(), "msgvault daemon restart")
+	assert.NotContains(rec.Body.String(), "--full-rebuild")
+	rec = httptest.NewRecorder()
+	srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	var body HealthResponse
+	require.NoError(json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotNil(body.Vector)
+	assert.Equal("stale", body.Vector.Status)
+	assert.Contains(body.Vector.Error, "msgvault daemon restart")
+}
+
+func TestVectorStaleAdviceRefresh(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		resolve func(context.Context) (string, error)
+	}{
+		{"unset", nil},
+		{"edited again", func(context.Context) (string, error) { return "model-c", nil }},
+		{"read error", func(context.Context) (string, error) { return "", errors.New("read failed") }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			backend := &resolvingVectorBackend{fingerprint: "model-old"}
+			srv := NewServerWithOptions(testServerOptions(t, backend))
+			srv.SetVectorRestartFingerprint(test.resolve)
+			srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+			_, detail := srv.VectorStatus()
+			assert.Contains(detail, "--full-rebuild")
+			checks := 0
+			backend.fingerprint = "model-b"
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+				checks++
+				return "model-b", nil
+			})
+			for range 2 {
+				rec := httptest.NewRecorder()
+				srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+				require.Equal(http.StatusOK, rec.Code)
+				var health HealthResponse
+				require.NoError(json.Unmarshal(rec.Body.Bytes(), &health))
+				require.NotNil(health.Vector)
+				assert.Equal("stale", health.Vector.Status)
+				assert.Contains(health.Vector.Error, "msgvault daemon restart")
+			}
+			assert.Equal(1, checks, "stale advice resolves accounts at most once per interval")
+		})
+	}
+}
+
+func TestVectorStaleMarkPreservesScopeDrift(t *testing.T) {
+	t.Parallel()
+	srv := NewServerWithOptions(testServerOptions(t, nil))
+	srv.SetVectorScopeDrift("scope changed; restart the daemon")
+	srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+	status, detail := srv.VectorStatus()
+	assert.Equal(t, VectorStatusStale, status)
+	assert.Equal(t, "scope changed; restart the daemon", detail)
+}
+
 func (b *resolvingVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
 	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
 }

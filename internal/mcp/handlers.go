@@ -618,7 +618,7 @@ func translateVectorErr(err error) *toolResult {
 	case errors.Is(err, vector.ErrIndexStale):
 		return toolErrorResult(
 			"index_stale: the vector index does not match configured embedding settings; " +
-				"align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`",
+				"if the embedding settings in config.toml changed since the daemon started, run `msgvault daemon restart`; otherwise align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`",
 		)
 	case errors.Is(err, vector.ErrIndexBuilding):
 		return toolErrorResult(

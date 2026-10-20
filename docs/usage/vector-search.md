@@ -592,6 +592,8 @@ If the active generation's fingerprint no longer matches the current embedding
 policy or configuration, including a policy change shipped in an upgrade, vector
 and hybrid search report `index_stale`; run
 `msgvault embeddings build --full-rebuild --yes` to build a matching generation.
+If the daemon started before you changed the settings, run
+`msgvault daemon restart` after the rebuild.
 See [Model Rotation](#model-rotation) for fingerprint inputs and search behavior
 while the rebuild runs.
 
@@ -750,7 +752,9 @@ fingerprint, so search refuses to serve potentially-mismatched
 results). On the CLI or HTTP API, use `mode=fts` until the new generation
 activates; it does not depend on the vector index. In MCP, omit `mode` for
 metadata search or use `search_message_bodies`. Once `msgvault embeddings
-build` reports the new generation activated, vector and hybrid modes resume.
+build` reports the new generation activated, run `msgvault daemon restart`
+if the daemon started before you changed the settings. Vector and hybrid modes
+then resume.
 
 ## Troubleshooting
 
@@ -764,7 +768,7 @@ body keywords.
 | Error | Meaning | Recovery |
 |---|---|---|
 | `vector_not_enabled` | The server or MCP process did not wire a vector backend, usually because `[vector] enabled = false`. | Set `enabled = true`, configure `[vector.embeddings]`, and start with a build that includes the needed backend (`sqlite_vec` or `pgvector`). |
-| `index_stale` | Active generation's fingerprint does not match the current embedding settings: model, dimension, task prefixes, preprocessing policy, `max_input_chars`, output policy, or scope. | For an existing account-scoped index built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon. Otherwise run `msgvault embeddings build --full-rebuild --yes`. |
+| `index_stale` | Active generation's fingerprint does not match the current embedding settings: model, dimension, task prefixes, preprocessing policy, `max_input_chars`, output policy, or scope. | If a rebuild activated the settings changed in `config.toml` after the daemon started, run `msgvault daemon restart`. For an existing account-scoped index built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon. Otherwise run `msgvault embeddings build --full-rebuild --yes`. |
 | `index_building` | No active generation yet; one is being built. | Finish running `msgvault embeddings build`, wait for the scheduler, or use the appropriate non-vector fallback. |
 | `missing_free_text` | `mode=vector` or `mode=hybrid` used with a filter-only query (no free text to embed). | Add free-text terms to `q`, or use the appropriate non-vector fallback. |
 | `index_scope_mismatch` | The active vector generation was built for selected message types and the query is unscoped or asks for a type outside that scope. | Add a compatible `message_type` filter, use the appropriate non-vector fallback, or rebuild an unscoped generation. |

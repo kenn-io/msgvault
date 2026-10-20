@@ -1123,8 +1123,7 @@ func (s *Server) handleHybridSearch(
 			writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
 				"vector search is not configured")
 		case errors.Is(err, vector.ErrIndexStale):
-			writeError(w, http.StatusServiceUnavailable, "index_stale",
-				"the vector index does not match configured embedding settings; align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`")
+			s.writeIndexStale(ctx, w, err)
 		case errors.Is(err, vector.ErrIndexBuilding):
 			writeError(w, http.StatusServiceUnavailable, "index_building",
 				"the initial vector index is still being built")
@@ -1330,23 +1329,23 @@ func (s *Server) handleSimilarSearch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	active, err := vector.ResolveActiveForFingerprint(ctx, backend, vectorCfg.GenerationFingerprint())
 	if err != nil {
-		s.writeVectorSearchError(w, err, "active generation")
+		s.writeVectorSearchError(ctx, w, err, "active generation")
 		return
 	}
 	if err := hybrid.ValidateBuildScope(vectorCfg.Embed.Scope.BuildScope(), filter); err != nil {
-		s.writeVectorSearchError(w, err, "scope validation")
+		s.writeVectorSearchError(ctx, w, err, "scope validation")
 		return
 	}
 
 	seed, err := backend.LoadVector(ctx, seedID)
 	if err != nil {
-		s.writeVectorSearchError(w, err, "load seed vector")
+		s.writeVectorSearchError(ctx, w, err, "load seed vector")
 		return
 	}
 
 	hits, err := backend.Search(ctx, active.ID, seed, limit+1, filter)
 	if err != nil {
-		s.writeVectorSearchError(w, err, "similar search")
+		s.writeVectorSearchError(ctx, w, err, "similar search")
 		return
 	}
 
@@ -1458,14 +1457,13 @@ func parseAPITime(value string) (time.Time, error) {
 	return t.UTC(), nil
 }
 
-func (s *Server) writeVectorSearchError(w http.ResponseWriter, err error, operation string) {
+func (s *Server) writeVectorSearchError(ctx context.Context, w http.ResponseWriter, err error, operation string) {
 	switch {
 	case errors.Is(err, vector.ErrNotEnabled):
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled",
 			"vector search is not configured")
 	case errors.Is(err, vector.ErrIndexStale):
-		writeError(w, http.StatusServiceUnavailable, "index_stale",
-			"the vector index does not match configured embedding settings; align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`")
+		s.writeIndexStale(ctx, w, err)
 	case errors.Is(err, vector.ErrIndexBuilding):
 		writeError(w, http.StatusServiceUnavailable, "index_building",
 			"the initial vector index is still being built")

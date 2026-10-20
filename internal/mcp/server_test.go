@@ -3877,6 +3877,7 @@ func TestFindSimilarMessages_HappyPath(t *testing.T) {
 }
 
 func TestFindSimilarMessages_RejectsStaleActiveGeneration(t *testing.T) {
+	assert := assert.New(t)
 	cfg := vector.Config{
 		Embeddings: vector.EmbeddingsConfig{
 			Model:         "nomic-embed",
@@ -3900,9 +3901,10 @@ func TestFindSimilarMessages_RejectsStaleActiveGeneration(t *testing.T) {
 		"message_id": float64(100),
 	})
 	txt := resultText(t, r)
-	assert.Contains(t, txt, "index_stale", "expected stale-index error, got: %s", txt)
-	assert.Equal(t, 0, fb.searchCalls, "backend search calls")
-	assert.Equal(t, 0, fb.loadCalls, "seed vector load calls")
+	assert.Contains(txt, "index_stale", "expected stale-index error, got: %s", txt)
+	assert.Contains(txt, "if the embedding settings in config.toml changed since the daemon started, run `msgvault daemon restart`")
+	assert.Equal(0, fb.searchCalls, "backend search calls")
+	assert.Equal(0, fb.loadCalls, "seed vector load calls")
 }
 
 func TestFindSimilarMessages_ScopedIndexRequiresMatchingMessageTypeFilter(t *testing.T) {

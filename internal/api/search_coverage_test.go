@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -815,6 +816,36 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 			body := getSearchCoverage(t, srv, `{}`)
 			assert.Equal(tt.wantStatus, body.Status)
 			assert.ElementsMatch(tt.wantAction, body.Actions)
+		})
+	}
+}
+
+func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
+	t.Parallel()
+	for _, restart := range []bool{true, false} {
+		t.Run(strconv.FormatBool(restart), func(t *testing.T) {
+			assert := assert.New(t)
+			backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: "model-b"}}
+			cfg := vector.Config{Enabled: true}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
+				Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
+			})
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+				if restart {
+					return "model-b", nil
+				}
+				return "model-c", nil
+			})
+			body := getSearchCoverage(t, srv, `{}`)
+			assert.Equal(SearchCoverageStale, body.Status)
+			if restart {
+				assert.Contains(body.Detail, "msgvault daemon restart")
+				assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
+			} else {
+				assert.Contains(body.Detail, "--full-rebuild")
+				assert.Contains(body.Actions, SearchCoverageActionBuildIndex)
+			}
 		})
 	}
 }

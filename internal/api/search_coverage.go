@@ -145,7 +145,7 @@ func (s *Server) handleSearchCoverage(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreError(r.Context(), w, err)
 		return
 	}
-	currentStatus, _, current, _ := resolveSearchCoverageGeneration(
+	currentStatus, _, current, _ := s.resolveSearchCoverageGeneration(
 		r.Context(), backend, cfg, coverage.resolvedStatus, coverage.detail,
 	)
 	if !sameCoverageGeneration(coverage.resolvedStatus, *generation, currentStatus, current) {
@@ -189,7 +189,7 @@ func (s *Server) resolveSearchCoverageState(
 	backendStatus := coverageStatusForVectorStatus(status)
 	state := searchCoverageState{status: backendStatus, detail: detail, resolvedStatus: backendStatus}
 	if backend != nil && backendStatus != SearchCoverageDisabled && backendStatus != SearchCoverageUnavailable {
-		state.status, state.detail, state.generation, state.fullBuildAvailable = resolveSearchCoverageGeneration(
+		state.status, state.detail, state.generation, state.fullBuildAvailable = s.resolveSearchCoverageGeneration(
 			ctx, backend, cfg, backendStatus, detail,
 		)
 		state.resolvedStatus = state.status
@@ -259,7 +259,7 @@ func searchCoverageContextHash(ctx query.Context) string {
 	}{Context: ctx, Identity: identity}, false)
 }
 
-func resolveSearchCoverageGeneration(
+func (s *Server) resolveSearchCoverageGeneration(
 	ctx context.Context,
 	backend vector.Backend,
 	cfg vector.Config,
@@ -289,7 +289,8 @@ func resolveSearchCoverageGeneration(
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		fullBuildAvailable := buildingErr == nil && (building == nil ||
 			expectedFingerprint == "" || building.Fingerprint == expectedFingerprint)
-		return SearchCoverageStale, err.Error(), &active, fullBuildAvailable
+		advice, restart := s.staleAdvice(ctx, backend)
+		return SearchCoverageStale, err.Error() + "; " + advice, &active, fullBuildAvailable && !restart
 	case errors.Is(err, vector.ErrIndexBuilding):
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		if buildingErr != nil || building == nil {

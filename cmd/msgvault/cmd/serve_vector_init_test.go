@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1084,4 +1086,62 @@ func visualInvocationKeys(t *testing.T, st *store.Store) []string {
 	}
 	require.NoError(t, rows.Err())
 	return keys
+}
+
+func TestRestartVectorFingerprintMatchesStartup(t *testing.T) {
+	t.Parallel()
+	must := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("gmail", "a@example.com")
+	must.NoError(err)
+	_, err = st.GetOrCreateSource("gmail", "b@example.com")
+	must.NoError(err)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	writeConfig := func(accounts, model, messageTypes string) {
+		t.Helper()
+		content := fmt.Sprintf(`[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = %q
+dimension = 4
+[vector.embed.scope]
+accounts = %s
+message_types = %s
+`, model, accounts, messageTypes)
+		must.NoError(os.WriteFile(path, []byte(content), 0600))
+	}
+	writeConfig(`["a@example.com", "b@example.com"]`, "model-a", `["email"]`)
+	cfg, err := config.Load(path, home)
+	must.NoError(err)
+	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
+	initial, err := resolve(t.Context())
+	must.NoError(err)
+	for _, test := range []struct {
+		name, accounts, model, messageTypes string
+		same                                bool
+	}{
+		{"reordered accounts", `["b@example.com", "a@example.com"]`, "model-a", `["email"]`, true},
+		{"message types", `["a@example.com", "b@example.com"]`, "model-a", `["sms"]`, false},
+		{"model", `["a@example.com", "b@example.com"]`, "model-b", `["email"]`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			writeConfig(test.accounts, test.model, test.messageTypes)
+			got, err := resolve(t.Context())
+			require.NoError(err)
+			startup, err := config.Load(path, home)
+			require.NoError(err)
+			resolved, err := resolvedVectorConfig(st, startup.Vector)
+			require.NoError(err)
+			assert.Equal(resolved.GenerationFingerprint(), got)
+			if test.same {
+				assert.Equal(initial, got)
+			} else {
+				assert.NotEqual(initial, got)
+			}
+		})
+	}
 }

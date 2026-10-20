@@ -1895,7 +1895,7 @@ Sweep providers use their own named profile credentials. Use
 `msgvault person provider add --api-key-stdin` or `--credential-env` for them;
 the legacy `people.sweep` store ID is not consumed by current sweep runs.
 
-The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
+The index generation fingerprint includes the model, dimension, document and query prefixes, preprocessing settings, `max_input_chars`, embedding policy, and scope. Changing those settings triggers a stale-index error on the next vector/hybrid query. If you rebuild after changing the settings while the daemon is running, run `msgvault daemon restart` to use the new index. For an existing account-scoped generation built with CLI flags, set matching `[vector.embed.scope].accounts` and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild`.
 
 #### `[vector.preprocess]`
 
