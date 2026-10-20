@@ -417,9 +417,15 @@ func TestTopicContactsRecognizeOwnerReplies(t *testing.T) {
 			t.Run(fmt.Sprintf("account_identity=%t/bound=%t", accountIdentity, bound), func(t *testing.T) {
 				require := require.New(t)
 				f := storetest.New(t)
+				// Keep message IDs below every participant ID in this fixture.
+				for i := range 10 {
+					f.EnsureParticipant(fmt.Sprintf("padding-%d@example.net", i), "Padding", "example.net")
+				}
 				owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
 				alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
 				ana := f.EnsureParticipant("ana@example.net", "Ana", "example.net")
+				bob := f.EnsureParticipant("bob@example.net", "Bob", "example.net")
+				otherSender := f.EnsureParticipant("other@example.net", "Other", "example.net")
 				if accountIdentity {
 					require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
 				} else {
@@ -446,10 +452,14 @@ func TestTopicContactsRecognizeOwnerReplies(t *testing.T) {
 				fromMe, err := f.Store.GetMessageIsFromMe(reply)
 				require.NoError(err)
 				require.False(fromMe)
+				unrelatedReply := send(f, "unrelated-reply", otherSender)
+				require.NoError(f.Store.ReplaceMessageRecipients(unrelatedReply, "to", []int64{bob}, []string{"Bob"}))
 
-				got := contactsOf(f, ana)
+				got := contactsOf(f, ana, bob)
 				require.Contains(got, ana)
 				assert.False(t, got[ana].OneWay, "the owner's alias replied to Ana")
+				require.Contains(got, bob)
+				assert.True(t, got[bob].OneWay, "an unrelated sender replied to Bob")
 			})
 		}
 	}

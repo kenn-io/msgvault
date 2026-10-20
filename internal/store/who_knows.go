@@ -367,7 +367,7 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 		           AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		           AND (m.is_from_me OR EXISTS (
 		             WITH RECURSIVE ` + topicFamilyCTEs("p.id = "+messageSender("m")) + `
-		             SELECT 1 FROM family WHERE ` + ownerParticipant("id", len(owner)) + `)))
+		             SELECT 1 FROM family reply_family WHERE ` + ownerParticipant("reply_family.id", len(owner)) + `)))
 		FROM keyed k
 		JOIN participants kp ON kp.id = COALESCE((
 		  SELECT p.id FROM family f JOIN participants p ON p.id = f.id
