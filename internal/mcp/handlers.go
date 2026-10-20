@@ -33,12 +33,10 @@ import (
 )
 
 const (
-	maxLimit = 1000
-	// The daemon serves at most 500 rows per page; one row of room is left
-	// for the probe that reports has_more.
-	maxSearchByDomainsLimit = 499
-	maxSearchMessagesLimit  = 50
-	defaultSearchLimit      = 20
+	maxLimit                   = 1000
+	maxSearchByDomainsPageSize = 500
+	maxSearchMessagesLimit     = 50
+	defaultSearchLimit         = 20
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
 	searchContextChars   = 300
@@ -2576,7 +2574,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("at least one domain is required"), nil
 	}
 
-	limit := min(limitArg(args, toolArgLimit, 100), maxSearchByDomainsLimit)
+	limit := min(limitArg(args, toolArgLimit, 100), maxSearchByDomainsPageSize)
 	if limit == 0 {
 		limit = 100
 	}
@@ -2591,16 +2589,13 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit+1, offset, nil)
+	result, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
 	if err != nil {
 		return nil, newInternalError("search messages by domain", err)
 	}
 
-	hasMore := len(results) > limit
-	if hasMore {
-		results = results[:limit]
-	}
-	return jsonResult(searchByDomainsResponse(newPaginatedResponseNoTotal(results, offset, hasMore)))
+	return jsonResult(searchByDomainsResponse(newPaginatedResponseNoTotal(
+		result.Messages, offset, result.HasMore)))
 }
 
 func nonNilSlice[T any](values []T) []T {

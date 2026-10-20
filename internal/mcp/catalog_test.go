@@ -706,9 +706,9 @@ func (e *numericCaptureEngine) SearchByDomains(
 	limit int,
 	offset int,
 	_ []int64,
-) ([]query.MessageSummary, error) {
+) (query.DomainSearchResult, error) {
 	e.limit, e.offset = limit, offset
-	return []query.MessageSummary{}, nil
+	return query.DomainSearchResult{}, nil
 }
 
 func testNumericCompatibility(t *testing.T) {
@@ -825,8 +825,8 @@ func testNumericCompatibility(t *testing.T) {
 		{name: "aggregate omitted", tool: ToolAggregate, args: map[string]any{"group_by": "sender"}, want: 50},
 		{name: "aggregate zero", tool: ToolAggregate, args: map[string]any{"group_by": "sender", "limit": 0}, want: 0},
 		{name: "aggregate clamped", tool: ToolAggregate, args: map[string]any{"group_by": "sender", "limit": 5000}, want: 1000},
-		{name: "domains omitted", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}, want: 101},
-		{name: "domains zero", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 0}, want: 101},
+		{name: "domains omitted", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com"}, want: 100},
+		{name: "domains zero", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 0}, want: 100},
 		{name: "domains clamped", tool: ToolSearchByDomains, args: map[string]any{"domains": "example.com", "limit": 5000}, want: 500},
 	} {
 		t.Run(test.name, func(t *testing.T) {

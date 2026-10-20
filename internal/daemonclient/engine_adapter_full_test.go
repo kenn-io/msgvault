@@ -1149,7 +1149,7 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal([]string{"4", "7"}, r.URL.Query()["source_ids"], "source scope")
 		writeJSONResponse(t, w, map[string]any{
 			"count":    1,
-			"has_more": false,
+			"has_more": true,
 			"offset":   50,
 			"limit":    25,
 			"messages": []map[string]any{
@@ -1180,9 +1180,10 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		[]int64{4, 7},
 	)
 	require.NoError(err, "SearchByDomains")
-	require.Len(results, 1, "results")
-	assert.Equal(int64(84), results[0].ID, "ID")
-	assert.Equal("alice@example.com", results[0].FromEmail, "FromEmail")
+	require.Len(results.Messages, 1, "results")
+	assert.Equal(int64(84), results.Messages[0].ID, "ID")
+	assert.Equal("alice@example.com", results.Messages[0].FromEmail, "FromEmail")
+	assert.True(results.HasMore, "daemon has_more survives the adapter")
 }
 
 func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {

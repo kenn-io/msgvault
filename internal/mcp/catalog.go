@@ -856,7 +856,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 			"Useful for finding all communication with a company regardless of direction. Returns data, returned, offset, and has_more; page with offset while has_more is true.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
-			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 499)", 100),
+			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 500)", 100),
 			toolArgOffset:  offsetProperty(),
 			toolArgAfter:   afterProperty(),
 			toolArgBefore:  beforeProperty(),

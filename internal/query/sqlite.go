@@ -1872,9 +1872,9 @@ const inListChunkSize = 500
 // belongs to one of the given domains. Uses the shared executeSearchQuery
 // path so results carry the same fields as Search/SearchFast (including
 // deleted_at, conversation_title, message_type, and labels).
-func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error) {
+func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) (DomainSearchResult, error) {
 	if len(domains) == 0 {
-		return nil, nil
+		return DomainSearchResult{}, nil
 	}
 
 	// Lower-cased placeholders for case-insensitive domain matching.
@@ -1914,7 +1914,16 @@ func (e *SQLiteEngine) SearchByDomains(ctx context.Context, domains []string, af
 		limit = 1000
 	}
 
-	return e.executeSearchQuery(ctx, conditions, args, "", limit, offset)
+	// Fetch one row past the page to learn whether another page follows.
+	messages, err := e.executeSearchQuery(ctx, conditions, args, "", limit+1, offset)
+	if err != nil {
+		return DomainSearchResult{}, err
+	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[:limit]
+	}
+	return DomainSearchResult{Messages: messages, HasMore: hasMore}, nil
 }
 
 // Search performs a Gmail-style search query.
