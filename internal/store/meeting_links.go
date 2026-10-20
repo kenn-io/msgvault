@@ -227,6 +227,9 @@ func seriesExceptionBounds(master, exception CalendarEventRow) (time.Time, time.
 		return *e.Start, *e.End, nil
 	}
 	set, duration, days, err := prepareCalendarRecurrence(master.Event)
+	if errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+		return *e.Start, *e.End, nil
+	}
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
