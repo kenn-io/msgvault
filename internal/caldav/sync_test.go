@@ -1367,6 +1367,31 @@ func TestSyncRecipientMembership(t *testing.T) {
 	assert.Zero(count(t, st, `SELECT COUNT(*) FROM participants WHERE email_address='room@example.org'`))
 }
 
+func TestSyncOrganizerMatchingNonhumanAttendeeIsDropped(t *testing.T) {
+	for _, cutype := range []string{"ROOM", "RESOURCE"} {
+		t.Run(cutype, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ORGANIZER:mailto:Room@Example.org\r\nATTENDEE;CUTYPE="+cutype+":mailto:room@example.org\r\nATTENDEE:mailto:guest@example.org\r\nEND:VEVENT", 1)
+			st := testutil.NewTestStore(t)
+			_, err := c.Sync(t.Context(), st, syncOpts())
+			requirements.NoError(err)
+			rows, total, err := st.SearchMessagesQuery(search.Parse("to:guest@example.org"), 0, 10)
+			requirements.NoError(err)
+			assertions.EqualValues(1, total)
+			assertions.Len(rows, 1)
+			for _, query := range []string{"to:room@example.org", "from:room@example.org"} {
+				rows, total, err = st.SearchMessagesQuery(search.Parse(query), 0, 10)
+				requirements.NoError(err)
+				assertions.Zero(total, query)
+				assertions.Empty(rows, query)
+			}
+			assertions.Zero(count(t, st, `SELECT COUNT(*) FROM participants WHERE email_address='room@example.org'`))
+			assertions.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE sender_id IS NOT NULL`))
+		})
+	}
+}
+
 func TestSyncBodyUsesEventClock(t *testing.T) {
 	for _, explicit := range []bool{true, false} {
 		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
