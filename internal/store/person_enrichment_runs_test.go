@@ -277,6 +277,59 @@ func TestPersonEnrichmentRecoveryPreservesClaimedWorkBeforeAttempt(t *testing.T)
 	assert.True(created, "the preserved work must still be processable")
 }
 
+func TestPersonEnrichmentRecoveryQueuesDeferredExactManualTarget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEnrichmentWorkFixture(t)
+	run, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profile.Fingerprint, "restart-deferred-manual", f.now)
+	require.NoError(err)
+	require.True(created)
+	require.NoError(f.store.SetPersonTierOptOutContext(
+		t.Context(), f.person.ID, "enrichment", true, "owner", "pause scheduled enrichment"))
+
+	lease := f.claim(t, run.ID, "deferred-manual-worker")
+	assert.Equal(personenrichment.TriggerManual, lease.Trigger.Kind)
+	nextActionAt := f.now.Add(24 * time.Hour)
+	require.NoError(f.store.ReleaseWork(t.Context(), lease.Token, personenrichment.WorkRelease{
+		Outcome: "defer", NextActionAt: &nextActionAt,
+	}))
+
+	recoveredAt := f.now.Add(time.Hour)
+	recovered, err := f.store.RecoverPersonEnrichmentRunsContext(t.Context(), recoveredAt)
+	require.NoError(err)
+	assert.Equal(int64(1), recovered)
+
+	gotRun, err := f.store.GetPersonEnrichmentRunContext(t.Context(), run.ID)
+	require.NoError(err)
+	assert.Equal("queued", gotRun.State)
+	work := f.work(t)
+	require.Len(work, 1)
+	require.NotNil(work[0].RunID)
+	assert.Equal(run.ID, *work[0].RunID)
+	assert.Equal(nextActionAt.UTC(), work[0].DueAt.UTC())
+
+	_, claimed, err := f.store.ClaimQueuedPersonEnrichmentRunContext(t.Context(), run.ID)
+	require.NoError(err)
+	require.True(claimed)
+	tooEarly, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+		RunID: run.ID, Owner: "early-manual-worker", ProviderName: f.profile.Name,
+		ProfileFingerprint: f.profile.Fingerprint, Now: recoveredAt, LeaseDuration: time.Minute,
+	})
+	require.NoError(err)
+	assert.Nil(tooEarly, "recovery must retain the deferred due time")
+
+	f.setNow(nextActionAt)
+	reclaimed := f.claim(t, run.ID, "restarted-manual-worker")
+	assert.Equal(personenrichment.TriggerManual, reclaimed.Trigger.Kind)
+	assert.Equal("manual:restart-deferred-manual", reclaimed.Trigger.Generation)
+	start := testAttemptStart(&f, run.ID, "d")
+	start.Trigger = reclaimed.Trigger
+	_, created, err = f.store.BeginAttempt(t.Context(), reclaimed.Token, start)
+	require.NoError(err)
+	assert.True(created, "the exact manual target must remain claimable after recovery")
+}
+
 func TestPersonEnrichmentRecoveryReconcilesUncertainStartCostOnce(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -541,6 +594,11 @@ func TestPersonEnrichmentCompleteRunDerivesTruthfulState(t *testing.T) {
 			"derive-state@example.test", "Derive State", "example.test")
 		require.NoError(t, err)
 		person, _, err := f.store.CreatePersonFromParticipantContext(t.Context(), participantID)
+		require.NoError(t, err)
+		_, err = f.store.SetPersonTrackingContext(t.Context(), person.ID, true)
+		require.NoError(t, err)
+		_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+			`DELETE FROM person_enrichment_work WHERE person_id = ?`), person.ID)
 		require.NoError(t, err)
 		require.NoError(t, f.store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
 			PersonID: person.ID, ProfileFingerprint: f.profile.Fingerprint,

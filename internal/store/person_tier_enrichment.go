@@ -37,6 +37,20 @@ func personEnrichmentExactManualTargetSQL(workAlias string) string {
     AND manual_run.state IN ('queued', 'running'))`
 }
 
+func personEnrichmentManualTriggerGenerationSQL(workAlias string) string {
+	return `COALESCE(
+  (SELECT a.trigger_generation FROM person_enrichment_attempts a
+   WHERE a.id = ` + workAlias + `.active_attempt_id AND a.run_id = ` + workAlias + `.run_id
+     AND a.trigger_kind = 'manual'),
+  (SELECT 'manual:' || r.requested_by
+   FROM person_enrichment_runs r
+   JOIN person_enrichment_manual_run_targets manual_target ON manual_target.run_id = r.id
+   WHERE r.id = ` + workAlias + `.run_id AND r.kind = 'manual'
+     AND manual_target.person_id = ` + workAlias + `.person_id
+     AND manual_target.profile_fingerprint = ` + workAlias + `.profile_fingerprint),
+  ` + workAlias + `.trigger_generation)`
+}
+
 func (s *Store) personEnrichmentScheduledEligibleTx(
 	ctx context.Context, tx *loggedTx, personID int64,
 ) (bool, error) {
@@ -143,10 +157,13 @@ func (s *Store) cancelScheduledPersonEnrichmentTx(
   WHERE w.person_id = ? AND NOT `+personEnrichmentExactManualTargetSQL("w"), personID); err != nil {
 		return fmt.Errorf("delete scheduled person enrichment work: %w", err)
 	}
-	// A fresh scheduled publication can replace a leased manual mask entirely.
-	// The immutable exact target remains authoritative for the manual bit.
+	// A fresh scheduled publication can replace a leased manual mask and
+	// generation. The immutable exact target and its manual run key remain
+	// authoritative until an active attempt supplies its generation.
 	if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work AS w
-  SET trigger_mask = 16
+  SET trigger_mask = 16,
+      trigger_generation = `+personEnrichmentManualTriggerGenerationSQL("w")+`,
+      has_fresh_trigger = FALSE
   WHERE w.person_id = ? AND `+personEnrichmentExactManualTargetSQL("w"), personID); err != nil {
 		return fmt.Errorf("retain manual person enrichment trigger: %w", err)
 	}
