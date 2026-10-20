@@ -26,8 +26,9 @@ const (
 // Limits name the ways a search came up short, so an empty result that lists
 // one never means nobody wrote about the topic.
 const (
-	// LimitPoolFull means a message cleared the floor and the search returned
-	// its full pool, so more messages beyond it may match.
+	// LimitPoolFull means the search returned its full pool and a message
+	// cleared the floor, or the pool's order may not follow the floor, so more
+	// messages beyond it may match.
 	LimitPoolFull = "pool_full"
 	// LimitDeclaredTruncated means more declared topics exist than one
 	// request reads, so some were not searched.

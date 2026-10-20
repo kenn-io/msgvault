@@ -122,7 +122,7 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		return nil, err
 	}
 	counted := similarities(scores, hits, p.MinScore)
-	if len(counted) > 0 && (meta.PoolSaturated || len(hits) >= SearchPool) {
+	if s.poolFull(meta, len(hits), len(counted) > 0) {
 		out.Limits = append(out.Limits, LimitPoolFull)
 	}
 	unembedded, err := s.unembedded(ctx, hits, meta.Generation.ID)
@@ -133,6 +133,28 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		out.Limits = append(out.Limits, LimitNotEmbedded)
 	}
 	return s.attribute(ctx, counted)
+}
+
+// poolFull reports that the search filled its pool and more matching messages
+// may lie beyond it. A full pool where no hit reached the floor is an
+// unrelated topic, unless the index ranked it by L2 distance with a query
+// that is not unit length. Such a provider does not normalize its vectors,
+// so L2 order is not cosine order and a match may sit outside the pool.
+func (s *Service) poolFull(meta hybrid.ResultMeta, hits int, counted bool) bool {
+	if !meta.PoolSaturated && hits < SearchPool {
+		return false
+	}
+	_, l2 := s.Index.(cosineScorer)
+	return counted || l2 && !unitLength(meta.QueryVector)
+}
+
+// unitLength reports that v's length is 1, within float32 rounding.
+func unitLength(v []float32) bool {
+	var sum float64
+	for _, x := range v {
+		sum += float64(x) * float64(x)
+	}
+	return math.Abs(math.Sqrt(sum)-1) <= 1e-3
 }
 
 // unembedded reports that a keyword-only hit has no vector in the searched

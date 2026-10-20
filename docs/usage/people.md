@@ -314,7 +314,9 @@ or in place of "nobody":
 
 - `Searched the 200 closest messages; more may match.` A matching message was
   among a full pool, so others may lie beyond it. Narrow with `--after` or
-  `--before`.
+  `--before`. The SQLite vector index ranks by distance, which matches meaning
+  only when the embedding model returns unit-length vectors. With a model that
+  doesn't, a full pool reports this even when nothing in it matched.
 - `Declared topics were searched only in part.` More than 5,000 declared values
   exist, and only the first 5,000 were read.
 - `The vector index covers only some message types or accounts; the rest

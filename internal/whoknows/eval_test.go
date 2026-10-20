@@ -6,10 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +41,22 @@ type bagOfWordsEmbedder struct{}
 
 func (bagOfWordsEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
 	return embedWords(text), nil
+}
+
+// scaledEmbedder embeds as bagOfWordsEmbedder does, then scales the vector,
+// as a provider that does not normalize its vectors would.
+type scaledEmbedder struct{ scale float32 }
+
+func (e scaledEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return scaled(embedWords(text), e.scale), nil
+}
+
+func scaled(v []float32, by float32) []float32 {
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = x * by
+	}
+	return out
 }
 
 var fillerWords = map[string]bool{
@@ -205,16 +223,19 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	coverage, ok := backend.(vector.FilteredCoverageBackend)
 	require.True(t, ok, "backend must report filtered coverage")
 
-	engine := hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
-		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	return &evalFixture{
 		service: &Service{
-			Retriever: engine, Data: st, Index: coverage,
+			Retriever: evalEngine(st, backend, bagOfWordsEmbedder{}), Data: st, Index: coverage,
 			Now: func() time.Time { return evalNow },
 		},
 		emails: emails, store: st, backend: backend,
 		generation: generation, source: source.ID, conversation: conversation,
 	}
+}
+
+func evalEngine(st *store.Store, backend vector.Backend, embedder hybrid.EmbeddingClient) *hybrid.Engine {
+	return hybrid.NewEngine(backend, st.DB(), embedder,
+		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 }
 
 // post stores an email from a new sender, indexed for keyword search. Unless
@@ -317,4 +338,39 @@ func TestFindCountsVectorHitsByCosine(t *testing.T) {
 	assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
 	// Two of three words shared: cosine 2/sqrt(6), sent today.
 	assert.InDelta(t, math.Log1p(2/math.Sqrt(6)), got.UnsavedContacts[0].MessageScore, 1e-6)
+}
+
+// sqlite-vec ranks the pool by L2 distance, which follows cosine order only
+// for unit-length vectors. With a query that is not unit length, a full pool
+// where nothing reached the floor can hide a message that would, so the
+// result says the pool was full rather than that nobody wrote.
+func TestFindReportsAFullL2PoolForAQueryThatIsNotUnitLength(t *testing.T) {
+	f := newEvalFixture(t)
+	if f.store.IsPostgreSQL() {
+		t.Skip("pgvector ranks by cosine distance")
+	}
+	topic := embedWords("zeppelin mooring")
+	// Each filler is 3 units long, at cosine 0.3 to the topic: below the
+	// floor, but nearer the query by L2 than the answer below.
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	filler := scaled(topic, .3)
+	filler[off] = float32(math.Sqrt(1 - .3*.3))
+	filler = scaled(filler, 3)
+	for i := range 101 {
+		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
+	}
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Empty(t, got.Limits, "a unit-length query over a pool below the floor is an unrelated topic")
+
+	// The answer points the topic's way but is 100 units long, so it sits
+	// past every filler by L2 and outside the pool.
+	f.post(t, "captain@example.net", "airship tethering", scaled(topic, 100))
+	f.service.Retriever = evalEngine(f.store, f.backend, scaledEmbedder{3})
+	got, err = f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
 }
