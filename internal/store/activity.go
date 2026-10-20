@@ -1429,7 +1429,7 @@ func (s *Store) validateActivityMessageTx(
 		return fmt.Errorf("lock activity message %d: %w", token.MessageID, err)
 	}
 	var unsent bool
-	if err := tx.QueryRowContext(ctx, `SELECT `+activityUnsentSQL()+`
+	if err := tx.QueryRowContext(ctx, `SELECT `+s.activityUnsentSQL()+`
 		FROM messages m LEFT JOIN sources src ON src.id = m.source_id
 		WHERE m.id = ?`, token.MessageID).Scan(&unsent); err != nil {
 		return fmt.Errorf("read activity unsent status for message %d: %w", token.MessageID, err)

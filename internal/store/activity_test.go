@@ -1564,13 +1564,17 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 
 func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		labels []string
-		unsent bool
+		name      string
+		labels    []string
+		unsent    bool
+		savedSent bool
 	}{
 		{name: "draft", labels: []string{"DRAFT"}, unsent: true},
 		{name: "draft_and_sent", labels: []string{"DRAFT", "SENT"}},
 		{name: "gmail_record_and_sent", labels: []string{"SENT"}},
+		{name: "draft_and_imap_sent_origin", labels: []string{"DRAFT"}, savedSent: true},
+		{name: "gmail_record_and_imap_sent_origin", savedSent: true},
+		{name: "is_sent_false_with_imap_sent_origin", labels: []string{"DRAFT"}, unsent: true, savedSent: true},
 		{name: "former_draft"},
 		{name: "imap_flag", unsent: true},
 		{name: "is_sent_false", unsent: true},
@@ -1589,7 +1593,7 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 			}
 			var err error
 			switch tc.name {
-			case "gmail_record_and_sent":
+			case "gmail_record_and_sent", "gmail_record_and_imap_sent_origin":
 				_, err = activityExec(f.Store, `INSERT INTO gmail_drafts
 					(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
 					VALUES ('draft', ?, 'draft', ?, 'message', 'thread', 1)`, f.Source.ID, id)
@@ -1607,6 +1611,13 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 				err = f.Store.SetMessageMetadata(id, sql.NullString{String: "invalid JSON", Valid: true})
 			}
 			require.NoError(err)
+			if tc.savedSent {
+				require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
+			}
+			if tc.name == "is_sent_false_with_imap_sent_origin" {
+				_, err = activityExec(f.Store, `UPDATE messages SET is_sent = FALSE WHERE id = ?`, id)
+				require.NoError(err)
+			}
 			candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
 			require.NoError(err)
 			require.Len(candidates, 1)

@@ -840,7 +840,7 @@ func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, m
 		WHERE m.id = ? AND (EXISTS (
 			SELECT 1 FROM activity_projection_queue q
 			WHERE q.message_id = m.id AND q.revision > q.processed_revision
-		) OR `+activityUnsentSQL()+` = EXISTS (
+		) OR `+s.activityUnsentSQL()+` = EXISTS (
 			SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
 		))`), messageID)
 	if err != nil {

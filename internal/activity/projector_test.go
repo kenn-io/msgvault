@@ -137,6 +137,42 @@ func TestProjectorFollowsDraftSendAndRedraft(t *testing.T) {
 	}
 }
 
+func TestProjectorKeepsArchivedIMAPSentCopyWithDraftMembership(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, messageID, personID := projectorFixture(t, time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), false)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
+	require.NoError(err)
+	require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
+	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+		"DRAFT":   {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+		"SENT":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"ARCHIVE": {Name: "Archive", Type: "system"},
+	})
+	require.NoError(err)
+	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"], labels["SENT"]}))
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO imap_message_memberships
+		(source_id, mailbox, uidvalidity, uid, message_id, flags)
+		VALUES (?, 'Drafts', 1, 1, ?, ?)`), f.Source.ID, messageID, `["\\Draft"]`)
+	require.NoError(err)
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	require.NoError(err)
+	require.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
+
+	require.NoError(f.Store.RemoveMessageLabels(messageID, []int64{labels["SENT"]}))
+	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["ARCHIVE"]}))
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	require.NoError(err)
+	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
+	assert.Equal([]string{"message:" + formatProjectorID(messageID)}, projectedActivityRefs(t, f.Store))
+}
+
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
