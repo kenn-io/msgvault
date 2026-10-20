@@ -222,7 +222,7 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 		assert.True(listed.Start.Equal(links[0].Start))
 		assert.True(listed.End.Equal(links[0].End))
 	})
-	for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}} {
+	for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}} {
 		t.Run("suggest/"+target.Kind, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
