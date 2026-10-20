@@ -279,36 +279,45 @@ saved person; promote one with `msgvault person promote <participant-id>`.
 The topic is plain words. Search operators such as `from:` are refused.
 
 The search reads the 200 closest messages. A message counts when its cosine
-similarity to the topic reaches `--min-score` (default 0.5), measured on the
-message's best chunk. Each counted message weighs its similarity times its
-recency, which halves every 180 days and stops at 0.1. The message part of the
-score is `log(1 + total weight)`. A matching `ask_me_about` value you or an
-address book supplied adds 0.75 and is printed as `declared: ...`, so a saved
-person who declared the topic but wrote nothing about it is listed as
-"declared, no messages". Matching compares whole words without regard to case,
-so `strasse` finds `Straße`. A person with no matching messages is listed only
-when a value names every word of the topic; `sales` does not answer `sales tax
-filing`. A request reads at most 5,000 declared values; past
-that, the command prints "Declared topics were searched only in part."
+similarity to the topic reaches `--min-score` (default 0.5). On SQLite the
+vector index scores by distance, which the command converts to cosine
+similarity; that holds for unit-length embeddings, as
+[search ranking](../architecture/search-ranking.md) assumes. A message found
+only by keyword does not count. Each counted message weighs its similarity
+times its recency, which halves every 180 days and stops at 0.1. The message
+part of the score is `log(1 + total weight)`.
+
+A matching `ask_me_about` value you or an address book supplied adds 0.75 and
+is printed as `declared: ...`. For someone who wrote about the topic, a value
+matches when one side's words all appear in the other, so `kubernetes` boosts
+an author for `kubernetes networking`. A saved person with no matching
+messages is listed, as "declared, no messages", only when a value holds every
+word of the topic; `sales` does not answer `sales tax filing`. Matching
+compares whole words without regard to case, so `strasse` finds `Straße`.
 
 Only the author earns credit. People copied on a message, meeting attendees,
-you, and automated senders get none. A sender counts as automated when its
-address looks like `noreply@` or `notifications@`, or when the source marked
-the author as a bot or webhook, as Discord does, or the archived Slack
-message carries a `bot_id`. A Slack message whose stored payload can't be read
-still counts. Meeting transcripts and
-calendar entries are not searched. Two kinds of sender earn the weight of their
-best message only: list mail, and a sender you never wrote to, such as a vendor
-who sends many unanswered messages. A colleague who answers keeps every message.
+you, and automated senders get none. Addresses linked to one another, or bound
+to the same saved person, count as one sender, and any address linked to one
+of yours counts as you. A sender counts as automated when its address looks
+like `noreply@` or `notifications@`, or when the source marked the author as a
+bot or webhook, as Discord does, or the archived Slack message carries a
+`bot_id`. A Slack message whose stored payload can't be read still counts.
+Meeting transcripts and calendar entries are not searched. Two kinds of sender
+earn the weight of their best message only: list mail, and a sender you never
+wrote to, such as a vendor who sends many unanswered messages. A colleague you
+write to keeps every message.
 
 A topic nobody wrote about prints `Nobody in your archive has written about
-"..."`. When the search returned its full pool and every matching message came
-from you or automated senders, or declared topics were searched only in part,
-the command says no one turned up within the search limits and suggests
-`--after` or `--before`, because the answer may lie beyond them. Every result
-list ends with "Based on the N closest messages", since an author outside those
-messages is not listed. If the vector index covers no message type with authors,
-the command says it couldn't search messages.
+"..."`. When the search came up short, the output says how, under the results
+or in place of "nobody":
+
+- `Searched the 200 closest messages; more may match.` A matching message was
+  among a full pool, so others may lie beyond it. Narrow with `--after` or
+  `--before`.
+- `Declared topics were searched only in part.` More than 5,000 declared values
+  exist, and only the first 5,000 were read.
+- `The vector index doesn't cover email or chat, so messages weren't searched.`
+  Declared topics are still listed.
 
 The 0.5 default is not calibrated for any real embedding model. If a topic
 worded unlike your mail finds nobody, lower `--min-score`; if unrelated people
