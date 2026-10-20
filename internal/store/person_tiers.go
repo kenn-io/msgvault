@@ -16,18 +16,15 @@ import (
 // timezone or direct limit, so its rows match neither setting.
 var ErrPersonTierRebuilding = errors.New("the activity projection is rebuilding under new settings; retry once it finishes")
 
-// PersonTierOptions chooses the rules and the date the counts are read at.
-// The timezone and direct-contact limit come from the projection, since the
-// stored rows were built under them. ActivityTimezone and ActivityMaxDirect are
-// the configured [activity] values and only decide whether readiness reports
+// PersonTierOptions chooses the rules. Counts are read as of today. The
+// timezone and direct-contact limit come from the projection, since the stored
+// rows were built under them. ActivityTimezone and ActivityMaxDirect are the
+// configured [activity] values and only decide whether readiness reports
 // settings_changed.
 type PersonTierOptions struct {
 	Config            persontiers.Config
 	ActivityTimezone  string
 	ActivityMaxDirect int
-	// AsOf defaults to now. Only its calendar date in the projection timezone
-	// matters.
-	AsOf time.Time
 }
 
 // PersonTierProjection is the timezone and direct-contact limit the counts
@@ -76,11 +73,17 @@ type PersonTierExplanation struct {
 // PreviewPersonTiersContext reads every saved person's counts and returns those
 // in tier 1 or 2. It writes nothing.
 func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTierOptions) (*PersonTierPreview, error) {
+	return s.previewPersonTiers(ctx, options, time.Now())
+}
+
+// previewPersonTiers reads the counts as of the calendar date of asOf in the
+// projection timezone.
+func (s *Store) previewPersonTiers(ctx context.Context, options PersonTierOptions, asOf time.Time) (*PersonTierPreview, error) {
 	var preview *PersonTierPreview
 	// One snapshot keeps the projection settings and every page of rows from the
 	// same moment, so a rebuild that starts mid-read cannot mix generations.
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		plan, err := s.planPersonTiers(ctx, tx, options)
+		plan, err := s.planPersonTiers(ctx, tx, asOf)
 		if err != nil {
 			return err
 		}
@@ -170,9 +173,13 @@ func personTierPage(ctx context.Context, tx *loggedTx, afterID int64) ([]int64, 
 // ExplainPersonTierContext returns the counts and threshold checks behind one
 // saved person's tier, including people in tier 3.
 func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, options PersonTierOptions) (*PersonTierExplanation, error) {
+	return s.explainPersonTier(ctx, personID, options, time.Now())
+}
+
+func (s *Store) explainPersonTier(ctx context.Context, personID int64, options PersonTierOptions, asOf time.Time) (*PersonTierExplanation, error) {
 	var explanation *PersonTierExplanation
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		plan, err := s.planPersonTiers(ctx, tx, options)
+		plan, err := s.planPersonTiers(ctx, tx, asOf)
 		if err != nil {
 			return err
 		}
@@ -226,7 +233,7 @@ type personTierPlan struct {
 // is changing, the stored rows follow neither the old nor the new value, so it
 // refuses. With nothing projected yet, counts use UTC and the default limit and
 // readiness reports the missing projection.
-func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options PersonTierOptions) (personTierPlan, error) {
+func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, asOf time.Time) (personTierPlan, error) {
 	zone, err := s.activityTimezoneTransitionQueryContext(ctx, tx)
 	if err != nil {
 		return personTierPlan{}, err
@@ -252,11 +259,7 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 	if err != nil {
 		return personTierPlan{}, fmt.Errorf("load projection timezone: %w", err)
 	}
-	at := options.AsOf
-	if at.IsZero() {
-		at = time.Now()
-	}
-	local := at.In(location)
+	local := asOf.In(location)
 	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
 	return plan, nil
 }
