@@ -98,9 +98,11 @@ endpoints.
 `msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
 only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
-Counts cover direct email, chat, and meeting contact only. Newsletter and
-list messages and large-audience threads never count. A person whose address
-is one of your own in any account is never listed.
+Counts cover direct email, chat, and meeting contact only. By default,
+newsletter and list messages are left out (`exclude_list_messages = false`
+counts them), and so are messages sent to more people than `[activity]
+max_direct_counterparts`. A person whose address is one of your own in any
+account is never listed.
 
 ```toml
 [people.tiers]
@@ -142,8 +144,9 @@ min_meeting_days_long = 2
 The counts come from the activity projection, so the windows end on today's
 date in the timezone the projection was built under, and the large-audience cut
 uses the direct limit it was built under. After you change `[activity]
-timezone` or `max_direct_counterparts`, the commands name the stored values and
-mark the result provisional until the projector rebuilds.
+timezone` or `max_direct_counterparts`, the counts follow the stored values and
+the commands warn that the projection is behind until `msgvault activity build`
+rebuilds it.
 See [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
 ## People sweep inference

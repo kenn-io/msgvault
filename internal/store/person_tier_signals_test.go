@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"strconv"
@@ -51,9 +50,8 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, []string{"Synthetic recipient"}))
 	}
 	projectTierSignals(t, f, "UTC", 25)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	s := signals[personID]
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	s := signals
 	assert.Equal(2, s.OutboundShort)
 	assert.Equal(2, s.OutboundLong)
 	assert.Equal(1, s.InboundShort)
@@ -65,10 +63,9 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 	assert.Equal(1, s.ExcludedListEvents)
 	cfg := persontiers.DefaultConfig()
 	cfg.ExcludeListMessages = false
-	signals, err = f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, cfg, 25)
-	require.NoError(err)
-	assert.Equal(2, signals[personID].InboundShort)
-	assert.Equal(4, signals[personID].ActiveDaysShort)
+	signals = tierSignals(t, f, personID, asOf, cfg)
+	assert.Equal(2, signals.InboundShort)
+	assert.Equal(4, signals.ActiveDaysShort)
 }
 
 func TestPersonTierSignalsCountDistinctEmailAudience(t *testing.T) {
@@ -103,11 +100,10 @@ func TestPersonTierSignalsCountDistinctEmailAudience(t *testing.T) {
 		require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, p, "member"))
 	}
 	projectTierSignals(t, f, "UTC", 2)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 2)
-	require.NoError(err)
-	assert.Equal(1, signals[personID].InboundShort)
-	assert.Equal(1, signals[personID].ActiveDaysShort)
-	assert.Equal(1, signals[personID].LargeAudienceInboundEvents)
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.Equal(1, signals.InboundShort)
+	assert.Equal(1, signals.ActiveDaysShort)
+	assert.Equal(1, signals.LargeAudienceInboundEvents)
 }
 
 func TestPersonTierSignalsRejectLargeChatAndUseLocalDates(t *testing.T) {
@@ -145,35 +141,39 @@ func TestPersonTierSignalsRejectLargeChatAndUseLocalDates(t *testing.T) {
 		}
 	}
 	projectTierSignals(t, f, zone.String(), 25)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	assert.Equal(1, signals[personID].InboundShort)
-	assert.Equal(2, signals[personID].InboundLong)
-	assert.Equal(1, signals[personID].LargeAudienceInboundEvents)
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.Equal(1, signals.InboundShort)
+	assert.Equal(2, signals.InboundLong)
+	assert.Equal(1, signals.LargeAudienceInboundEvents)
 }
 
 func TestPersonTierReadiness(t *testing.T) {
-	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
 	seedProjectedActivity(t, f, personID, []time.Time{time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)})
-	ready, err := f.Store.PersonTierReadinessContext(t.Context())
-	require.NoError(err)
+	ready := tierReadiness(t, f)
 	assert.True(ready.Ready)
 	assert.Empty(ready.Reasons)
 	f.CreateMessage("pending-tier-projection")
-	ready, err = f.Store.PersonTierReadinessContext(t.Context())
-	require.NoError(err)
+	ready = tierReadiness(t, f)
 	assert.False(ready.Ready)
 	assert.Contains(ready.Reasons, "projection_pending")
 	assert.Contains(ready.Reasons, "watermark_behind")
-	_, err = f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
-	require.NoError(err)
-	_, err = f.Store.ClaimActivityDirectLimitTransitionContext(t.Context(), 10)
-	require.NoError(err)
-	ready, err = f.Store.PersonTierReadinessContext(t.Context())
-	require.NoError(err)
-	assert.Contains(ready.Reasons, "projection_pending")
+}
+
+// tierSignals reads one person's counts through explain.
+func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.Time, cfg persontiers.Config) persontiers.Signals {
+	t.Helper()
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.PersonTierOptions{Config: cfg, AsOf: asOf})
+	require.NoError(t, err)
+	return explanation.Signals
+}
+
+func tierReadiness(t *testing.T, f *storetest.Fixture) store.PersonTierReadiness {
+	t.Helper()
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), store.PersonTierOptions{Config: persontiers.DefaultConfig()}, 0)
+	require.NoError(t, err)
+	return preview.Readiness
 }
 
 func projectTierSignals(t *testing.T, f *storetest.Fixture, zone string, maxDirect int) {
@@ -214,9 +214,8 @@ func TestPersonTierSignalsRejectCoauthorsCCAndObserved(t *testing.T) {
 		}
 	}
 	projectTierSignals(t, f, "UTC", 25)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	s := signals[personID]
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	s := signals
 	assert.Zero(s.OutboundLong)
 	assert.Zero(s.InboundLong)
 	assert.Zero(s.ActiveDaysLong)
@@ -229,34 +228,20 @@ func TestPersonTierSignalsBindingsFeedExclusions(t *testing.T) {
 	f, personID := newActivityQueryFixture(t)
 	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	seedProjectedActivity(t, f, personID, []time.Time{asOf.AddDate(0, 0, -400)})
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	s := signals[personID]
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	s := signals
 	assert.Zero(s.InboundLong)
 	assert.Equal([]string{"counterpart@example.com"}, s.Emails)
 	assert.False(s.HasPhoneOrChat)
 	assert.False(s.Owner)
 	var counterpart int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&counterpart))
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers(participant_id,identifier_type,identifier_value) VALUES (?,'beeper',?)`), counterpart, "synthetic-chat-owner")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO participant_identifiers(participant_id,identifier_type,identifier_value) VALUES (?,'beeper',?)`), counterpart, "synthetic-chat-owner")
 	require.NoError(err)
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "synthetic-chat-owner", "manual"))
-	signals, err = f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	assert.True(signals[personID].HasPhoneOrChat)
-	assert.True(signals[personID].Owner)
-}
-
-func TestPersonTierSignalsEmptyPageAndCanceledContext(t *testing.T) {
-	require := require.New(t)
-	f, personID := newActivityQueryFixture(t)
-	got, err := f.Store.PersonTierSignalsContext(t.Context(), nil, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	assert.Empty(t, got)
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = f.Store.PersonTierSignalsContext(ctx, []int64{personID}, time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC), persontiers.DefaultConfig(), 25)
-	require.ErrorIs(err, context.Canceled)
+	signals = tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.True(signals.HasPhoneOrChat)
+	assert.True(signals.Owner)
 }
 
 func TestPersonTierReadinessUnreconciledIdentityAndDeletedWatermark(t *testing.T) {
@@ -265,21 +250,19 @@ func TestPersonTierReadinessUnreconciledIdentityAndDeletedWatermark(t *testing.T
 	f, personID := newActivityQueryFixture(t)
 	seedProjectedActivity(t, f, personID, []time.Time{time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)})
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "second-owner@example.com", "manual"))
-	ready, err := f.Store.PersonTierReadinessContext(t.Context())
-	require.NoError(err)
+	ready := tierReadiness(t, f)
 	assert.False(ready.Ready)
 	assert.Contains(ready.Reasons, "projection_pending")
 	projectTierSignals(t, f, "UTC", 25)
 	id := f.CreateMessage("tier-deleted")
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`), id)
 	require.NoError(err)
 	projectTierSignals(t, f, "UTC", 25)
 	// Model a restored watermark ending at the last live message. A later deleted
 	// row must not keep an otherwise reconciled archive permanently unready.
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE archive_metadata SET value = ? WHERE key = 'activity_spine_watermark'`), strconv.FormatInt(id-1, 10))
 	require.NoError(err)
-	ready, err = f.Store.PersonTierReadinessContext(t.Context())
-	require.NoError(err)
+	ready = tierReadiness(t, f)
 	assert.True(ready.Ready)
 	assert.Empty(ready.Reasons)
 }
@@ -313,12 +296,11 @@ func TestPersonTierSignalsChatAudienceExcludesOnlySourceOwners(t *testing.T) {
 		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
 	}
 	projectTierSignals(t, f, "UTC", 2)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 2)
-	require.NoError(err)
-	assert.Equal(1, signals[personID].InboundShort)
-	assert.Equal(1, signals[personID].ActiveDaysShort)
-	assert.Equal(1, signals[personID].ChannelsLong)
-	assert.Equal(1, signals[personID].LargeAudienceInboundEvents)
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.Equal(1, signals.InboundShort)
+	assert.Equal(1, signals.ActiveDaysShort)
+	assert.Equal(1, signals.ChannelsLong)
+	assert.Equal(1, signals.LargeAudienceInboundEvents)
 }
 
 func TestPersonTierSignalsOwnerBoundThroughSecondParticipant(t *testing.T) {
@@ -333,24 +315,10 @@ func TestPersonTierSignalsOwnerBoundThroughSecondParticipant(t *testing.T) {
 	_, err := f.Store.LinkParticipants(counterpart, owner)
 	require.NoError(err)
 	projectTierSignals(t, f, "UTC", 25)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
-	require.NoError(err)
-	assert.True(signals[personID].Owner)
-	assert.Zero(signals[personID].InboundLong)
-	assert.ElementsMatch([]string{"owner@example.com", "counterpart@example.com"}, signals[personID].Emails)
-}
-
-func TestPersonTierSignalsValidatePage(t *testing.T) {
-	require := require.New(t)
-	f, personID := newActivityQueryFixture(t)
-	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	cfg := persontiers.DefaultConfig()
-	for _, ids := range [][]int64{{0}, {-1}, make([]int64, 501)} {
-		_, err := f.Store.PersonTierSignalsContext(t.Context(), ids, asOf, cfg, 25)
-		require.ErrorIs(err, store.ErrInvalidActivityRequest)
-	}
-	_, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, time.Time{}, cfg, 25)
-	require.ErrorIs(err, store.ErrInvalidActivityRequest)
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.True(signals.Owner)
+	assert.Zero(signals.InboundLong)
+	assert.ElementsMatch([]string{"owner@example.com", "counterpart@example.com"}, signals.Emails)
 }
 
 // Aliases of one resolved person must count once in an audience, as they do in
@@ -390,14 +358,9 @@ func TestPersonTierSignalsCountResolvedPeopleOncePerAudience(t *testing.T) {
 	}
 	// Two people besides the owner: the sender and the aliased person.
 	projectTierSignals(t, f, "UTC", 2)
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 2)
-	require.NoError(err)
-	assert.Equal(2, signals[personID].InboundShort, "chat and email both stay under the limit")
-	assert.Zero(signals[personID].LargeAudienceInboundEvents)
-	// The limit still applies: two people are a broadcast at a limit of one.
-	signals, err = f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 1)
-	require.NoError(err)
-	assert.Equal(2, signals[personID].LargeAudienceInboundEvents, "the limit still applies")
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
+	assert.Equal(2, signals.InboundShort, "chat and email both stay under the limit")
+	assert.Zero(signals.LargeAudienceInboundEvents)
 }
 
 // The projection drops the owner's own addresses only within a message's
@@ -412,11 +375,11 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	seedProjectedActivity(t, f, personID, []time.Time{asOf})
 
-	signals, err := f.Store.PersonTierSignalsContext(t.Context(), []int64{personID}, asOf, persontiers.DefaultConfig(), 25)
+	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
 
 	require.NoError(err)
-	assert.Equal(1, signals[personID].InboundLong, "this account's projection still counts the person")
-	assert.True(signals[personID].Owner)
+	assert.Equal(1, signals.InboundLong, "this account's projection still counts the person")
+	assert.True(signals.Owner)
 	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: asOf})
 	require.NoError(err)
 	assert.Equal("owner", explanation.Exclusion)

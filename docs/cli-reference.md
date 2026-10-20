@@ -2883,7 +2883,7 @@ grant consent to a provider or enroll a person in briefs.
 | Command | Purpose |
 |---|---|
 | `person track <person-id>` / `person untrack <person-id>` | Enable or stop future profile maintenance for a person |
-| `person tiers preview [--tier 1\|2] [--json]` | List saved people with sustained two-way contact, whether they are tracked, and their last contact date. Reads only; `--json` gives the IDs to pass to `person track` |
+| `person tiers preview [--tier 1\|2] [--json]` | List saved people with sustained two-way contact, whether they are tracked, and the latest day that counted toward the tier. Reads only; `--json` gives the IDs to pass to `person track` |
 | `person tiers explain <person-id> [--json]` | Show every count behind one person's tier against its threshold |
 | `person provider add <name> [flags]` | Configure and synthetically check a named model provider |
 | `person provider list` | List configured model profiles |
