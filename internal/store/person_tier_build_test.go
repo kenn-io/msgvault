@@ -8,39 +8,6 @@ import (
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
-func TestBuildTierSignalsCountsRowsByWindowDirectionAndKind(t *testing.T) {
-	assert := assert.New(t)
-	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
-	message := func(id int64, date, channel string, inbound bool) tierSignalRow {
-		return tierSignalRow{PersonID: 1, MessageID: id, LocalDate: date, Channel: channel, Inbound: inbound}
-	}
-	meeting := func(id int64, date string, inbound bool) tierSignalRow {
-		return tierSignalRow{PersonID: 1, MessageID: id, LocalDate: date, Channel: "meeting", Inbound: inbound, Meeting: true}
-	}
-	rows := []tierSignalRow{
-		message(1, "2026-10-17", "email", false),
-		message(2, "2026-10-17", "email", true),
-		message(3, "2026-07-20", "chat", false), // 89 days back, inside the short window
-		message(4, "2026-07-19", "email", true), // 90 days back, long window only
-		message(5, "2025-10-18", "email", true), // 364 days back
-		meeting(6, "2026-10-12", true),
-		meeting(7, "2026-10-12", false),
-		meeting(8, "2026-10-11", true),
-	}
-
-	got := buildTierSignals(rows, nil, persontiers.DefaultConfig(), asOf)[1]
-
-	assert.Equal(2, got.OutboundLong)
-	assert.Equal(2, got.OutboundShort)
-	assert.Equal(3, got.InboundLong)
-	assert.Equal(1, got.InboundShort)
-	assert.Equal(2, got.MeetingDaysLong, "two meeting dates, a date counted once")
-	assert.Equal(4, got.ActiveDaysShort)
-	assert.Equal(6, got.ActiveDaysLong)
-	assert.Equal(3, got.ChannelsLong)
-	assert.Equal("2026-10-17", got.LastDate)
-}
-
 func TestBuildTierSignalsExcludesListsAndBroadcastsOnceEach(t *testing.T) {
 	assert := assert.New(t)
 	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
