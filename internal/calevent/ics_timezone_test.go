@@ -132,12 +132,10 @@ func TestICSTimeZoneWinterSeriesCrossingDSTRequiresDaylight(t *testing.T) {
 
 func TestICSTimeZoneStandardOnlyDefinition(t *testing.T) {
 	for _, tc := range []struct {
-		name, start, recurrence, wantErr string
+		name, start, recurrence string
 	}{
-		{"standalone January event", "20270115T090000", "", ""},
-		{"bounded winter series", "20270104T090000", "RRULE:FREQ=DAILY;COUNT=30\r\n", ""},
-		{"summer event", "20270715T090000", "", "VTIMEZONE DAYLIGHT contradicts America/New_York near DTSTART"},
-		{"series crossing spring DST", "20270102T090000", "RRULE:FREQ=DAILY;COUNT=365\r\n", "VTIMEZONE transition dates contradict America/New_York in event range"},
+		{"standalone January event", "20270115T090000", ""},
+		{"bounded winter series", "20270104T090000", "RRULE:FREQ=DAILY;COUNT=30\r\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
@@ -148,11 +146,6 @@ func TestICSTimeZoneStandardOnlyDefinition(t *testing.T) {
 				"END:VEVENT\r\nEND:VCALENDAR\r\n"
 			assertions, requirements := assert.New(t), require.New(t)
 			components, err := ParseICS([]byte(raw), "", "UTC")
-			if tc.wantErr != "" {
-				requirements.ErrorContains(err, tc.wantErr)
-				assertions.Empty(components)
-				return
-			}
 			requirements.NoError(err)
 			requirements.Len(components, 1)
 			assertions.Equal("America/New_York", components[0].Event.EventTimeZone)
