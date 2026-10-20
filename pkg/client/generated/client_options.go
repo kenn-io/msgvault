@@ -7865,6 +7865,50 @@ func (o *SearchPeopleRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// FindPeopleWhoKnowRequestOptions is the options needed to make a request to FindPeopleWhoKnow.
+type FindPeopleWhoKnowRequestOptions struct {
+	Body *FindPeopleWhoKnowBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *FindPeopleWhoKnowRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *FindPeopleWhoKnowRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *FindPeopleWhoKnowRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *FindPeopleWhoKnowRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *FindPeopleWhoKnowRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // DeletePersonRequestOptions is the options needed to make a request to DeletePerson.
 type DeletePersonRequestOptions struct {
 	PathParams *DeletePersonPath

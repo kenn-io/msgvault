@@ -153,6 +153,25 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Find who knows about a topic
+
+On unreleased `main`, `POST /api/v1/people/who-knows` ranks the people who wrote
+about a topic. The route is owner-only and returns `Cache-Control: no-store`.
+Restricted agent tokens cannot use it.
+
+The JSON body takes `topic` (required) and optional `limit` (1-50), `evidence`
+(1-10), `min_score` (above 0, at most 1), `after`, and `before`, as in the
+[CLI options](cli-reference.md#person-who-knows). The response holds `topic`,
+`people`, `unsaved_contacts`, and a `reason` of `no_relevant_evidence` when both
+lists are empty. Each entry has a `score`, `authored_messages`, and `citations`.
+
+Invalid values return `400 invalid_parameter`; a topic with no free text returns
+`400 missing_free_text`. Vector search failures keep their usual
+`503 vector_not_enabled`, `index_stale`, `index_building`, and
+`embedding_timeout` errors.
+
+See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
@@ -178,7 +197,8 @@ owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
-routes, delivery receipts and status states.
+routes, delivery receipts and status states. It also adds
+[`POST /api/v1/people/who-knows`](#find-who-knows-about-a-topic).
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.

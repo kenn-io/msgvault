@@ -15513,3 +15513,121 @@ type VisualTextSearchRequest struct {
 func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
+
+type WhoKnowsCitation struct {
+	MessageID   int64      `json:"message_id"`
+	MessageType string     `json:"message_type" validate:"required"`
+	SentAt      *time.Time `json:"sent_at,omitempty"`
+	Snippet     *string    `json:"snippet,omitzero"`
+	Subject     *string    `json:"subject,omitzero"`
+}
+
+func (w WhoKnowsCitation) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsContact struct {
+	AuthoredMessages int64              `json:"authored_messages"`
+	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
+	DisplayName      *string            `json:"display_name,omitzero"`
+	EmailAddress     *string            `json:"email_address,omitzero"`
+	ParticipantID    int64              `json:"participant_id"`
+	Rank             int64              `json:"rank"`
+	Score            float64            `json:"score"`
+}
+
+func (w WhoKnowsContact) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range w.Citations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Citations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsPerson struct {
+	AskMeAbout       []string           `json:"ask_me_about,omitempty"`
+	AuthoredMessages int64              `json:"authored_messages"`
+	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
+	DisplayName      *string            `json:"display_name,omitzero"`
+	PersonID         int64              `json:"person_id"`
+	Rank             int64              `json:"rank"`
+	Score            float64            `json:"score"`
+}
+
+func (w WhoKnowsPerson) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range w.Citations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Citations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsRequest struct {
+	// After YYYY-MM-DD or RFC3339; messages at or after this instant
+	After *string `json:"after,omitzero"`
+
+	// Before YYYY-MM-DD or RFC3339; messages before this instant
+	Before *string `json:"before,omitzero"`
+
+	// Evidence Citations per person; default 3
+	Evidence *int64 `json:"evidence,omitempty" validate:"omitempty,gte=1,lte=10"`
+
+	// Limit Saved people to return; default 10
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=50"`
+
+	// MinScore Lowest meaning similarity a message needs to count; default 0.5
+	MinScore *float64 `json:"min_score,omitempty" validate:"omitempty,gt=0,lte=1"`
+
+	// Topic Free-text topic
+	Topic string `json:"topic" validate:"required,min=1"`
+}
+
+func (w WhoKnowsRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsResponse struct {
+	People          []WhoKnowsPerson  `json:"people" validate:"required"`
+	Reason          *string           `json:"reason,omitzero"`
+	Topic           string            `json:"topic" validate:"required"`
+	UnsavedContacts []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
+}
+
+func (w WhoKnowsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range w.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(w.Topic, "required"); err != nil {
+		errors = errors.Append("Topic", err)
+	}
+	for i, item := range w.UnsavedContacts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("UnsavedContacts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}

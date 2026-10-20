@@ -373,7 +373,8 @@ import (
 // 3.22.0 adds account aliases, source lifecycle fields, account merging, and
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
-// 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
+// 3.23.0 adds the Docbank attachment mirror routes, receipts and status states,
+// and the people/who-knows ranking of authors by cited topic evidence.
 const APISchemaVersion = "3.23.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

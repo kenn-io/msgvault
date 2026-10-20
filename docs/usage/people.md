@@ -262,6 +262,39 @@ are excluded. Search text and the curated person documents go to the configured
 embedding endpoint. `--limit` defaults to 20 and accepts 1–100; `--json` includes
 person IDs and scores.
 
+## Find who knows about a topic
+
+On unreleased `main`, find the people who wrote about a topic:
+
+```bash
+msgvault person who-knows "kubernetes networking"
+msgvault person who-knows "certificate rotation" --after 2026-01-01 --json
+```
+
+The command lists up to 10 saved people, then up to 5 unsaved contacts. Each
+entry shows a score, the number of matching messages the person wrote, and
+dated citations you can open with `msgvault show-message <id>`. A topic nobody
+wrote about prints `Nobody in your archive has written about "..."`.
+
+A message counts when its meaning similarity to the topic reaches
+`--min-score` (default 0.5); keyword-only matches do not count. Each counted
+message weighs its similarity times its recency, which halves every 180 days
+and stops at 0.1. The score is `log(1 + total weight)`, plus 0.75 when one of
+the person's `ask_me_about` values matches the topic. Equal scores order by
+message count. Only authors count: people copied on a message, meeting
+attendees, you, and automated senders such as `noreply@` get no credit.
+Unsaved contacts are senders bound to no saved person; promote one with
+`msgvault person promote <participant-id>`.
+
+The similarity scale depends on your embedding model. If a topic worded unlike
+your mail finds nobody, lower `--min-score`. Vector search must be ready, and
+the topic goes to the configured embedding endpoint once, like semantic
+message search. The command reads senders when you run it, so newly synced
+mail counts without an activity build. It does not create or edit profiles.
+
+The owner-only [HTTP endpoint](/docs/api-server/#find-who-knows-about-a-topic)
+provides the same result. See the [CLI options](/docs/cli-reference/#person-who-knows).
+
 ## Find files related to a person
 
 Use a saved person ID to find attachments across their linked identities:

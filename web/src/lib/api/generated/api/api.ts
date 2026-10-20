@@ -468,6 +468,8 @@ import type {
   VerifyCLIParams,
   VisualBuildRequest,
   VisualRetryRequest,
+  WhoKnowsRequest,
+  WhoKnowsResponse,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -2838,6 +2840,24 @@ export const searchPeople = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: personSearchRequest,
+    },
+    options,
+  );
+};
+/**
+ * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. A topic nobody wrote about returns empty lists with reason no_relevant_evidence.
+ * @summary Find people who wrote about a topic
+ */
+export const findPeopleWhoKnow = (
+  whoKnowsRequest: WhoKnowsRequest,
+  options?: SecondParameter<typeof orvalFetch<WhoKnowsResponse>>,
+) => {
+  return orvalFetch<WhoKnowsResponse>(
+    {
+      url: `/api/v1/people/who-knows`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: whoKnowsRequest,
     },
     options,
   );

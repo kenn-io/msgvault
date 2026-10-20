@@ -2875,6 +2875,25 @@ reports those errors rather than retrying an ordinary or unscoped search. See
 [filename suggestion limits](architecture/search-ranking.md#filename-suggestions)
 and the [API contract](api-server.md#filename-suggestions).
 
+### person who-knows
+
+On unreleased `main`, find the people who wrote about a topic:
+
+```bash
+msgvault person who-knows <topic words...> [flags]
+```
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--limit` | `10` | Saved people, 1-50 |
+| `--evidence` | `3` | Citations per person, 1-10 |
+| `--min-score` | `0.5` | Lowest meaning similarity a message needs to count, above 0 and at most 1 |
+| `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after is inclusive, before is exclusive |
+| `--json` | false | Return the API JSON |
+
+See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring
+and exclusions.
+
 ### person track, provider, sweep, and facts
 
 Tracking chooses which profiles automatic maintenance may process. It does not

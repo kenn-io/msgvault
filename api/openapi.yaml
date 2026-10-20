@@ -16518,6 +16518,141 @@ components:
       required:
         - text
       type: object
+    WhoKnowsCitation:
+      additionalProperties: true
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        message_type:
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        snippet:
+          type: string
+        subject:
+          type: string
+      required:
+        - message_id
+        - message_type
+      type: object
+    WhoKnowsContact:
+      additionalProperties: true
+      properties:
+        authored_messages:
+          format: int64
+          type: integer
+        citations:
+          items:
+            $ref: "#/components/schemas/WhoKnowsCitation"
+          type: array
+        display_name:
+          type: string
+        email_address:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+      required:
+        - rank
+        - participant_id
+        - score
+        - authored_messages
+        - citations
+      type: object
+    WhoKnowsPerson:
+      additionalProperties: true
+      properties:
+        ask_me_about:
+          items:
+            type: string
+          type: array
+        authored_messages:
+          format: int64
+          type: integer
+        citations:
+          items:
+            $ref: "#/components/schemas/WhoKnowsCitation"
+          type: array
+        display_name:
+          type: string
+        person_id:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+      required:
+        - rank
+        - person_id
+        - score
+        - authored_messages
+        - citations
+      type: object
+    WhoKnowsRequest:
+      additionalProperties: false
+      properties:
+        after:
+          description: YYYY-MM-DD or RFC3339; messages at or after this instant
+          type: string
+        before:
+          description: YYYY-MM-DD or RFC3339; messages before this instant
+          type: string
+        evidence:
+          description: Citations per person; default 3
+          format: int64
+          maximum: 10
+          minimum: 1
+          type: integer
+        limit:
+          description: Saved people to return; default 10
+          format: int64
+          maximum: 50
+          minimum: 1
+          type: integer
+        min_score:
+          description: Lowest meaning similarity a message needs to count; default 0.5
+          exclusiveMinimum: 0
+          format: double
+          maximum: 1
+          type: number
+        topic:
+          description: Free-text topic
+          minLength: 1
+          type: string
+      required:
+        - topic
+      type: object
+    WhoKnowsResponse:
+      additionalProperties: true
+      properties:
+        people:
+          items:
+            $ref: "#/components/schemas/WhoKnowsPerson"
+          type: array
+        reason:
+          type: string
+        topic:
+          type: string
+        unsaved_contacts:
+          items:
+            $ref: "#/components/schemas/WhoKnowsContact"
+          type: array
+      required:
+        - topic
+        - people
+        - unsaved_contacts
+      type: object
   securitySchemes:
     apiKey:
       in: header
@@ -26727,6 +26862,46 @@ paths:
       security:
         - apiKey: []
       summary: Search durable people semantically
+      tags:
+        - API
+  /api/v1/people/who-knows:
+    post:
+      description: Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. A topic nobody wrote about returns empty lists with reason no_relevant_evidence.
+      operationId: findPeopleWhoKnow
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WhoKnowsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoKnowsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find people who wrote about a topic
       tags:
         - API
   /api/v1/people/{id}:

@@ -1008,3 +1008,8 @@ export * from "./visualGeneration";
 export * from "./visualRetireRequest";
 export * from "./visualRetryRequest";
 export * from "./visualTextSearchRequest";
+export * from "./whoKnowsCitation";
+export * from "./whoKnowsContact";
+export * from "./whoKnowsPerson";
+export * from "./whoKnowsRequest";
+export * from "./whoKnowsResponse";
