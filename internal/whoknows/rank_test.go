@@ -33,7 +33,8 @@ func TestRankWeighsRecencyAndCitesTheBestMessages(t *testing.T) {
 	}, rankParams(), rankNow)
 	require.Len(t, people, 2)
 	assert.Equal(int64(2), people[0].PersonID, "recent authors rank above old ones")
-	assert.InDelta(math.Log1p(.6+.9+.99*recency(authored(5, 400, 1).Citation.SentAt, rankNow)+.7+.5), people[0].MessageScore, 1e-9)
+	// Recency halves every 180 days: 0.5 at 180 days, 2^(-400/180) = 0.2143 at 400.
+	assert.InDelta(math.Log1p(.6+.9+.99*.2143109957+.7+1*.5), people[0].MessageScore, 1e-9)
 	var ids []int64
 	for _, c := range people[0].Citations {
 		ids = append(ids, c.MessageID)
