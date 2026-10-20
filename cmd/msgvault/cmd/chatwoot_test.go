@@ -68,6 +68,60 @@ func TestChatwootInboxesFailIndependently(t *testing.T) {
 	}
 }
 
+func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
+	for _, mode := range []string{"missing token", "authentication rejected", "all excluded"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal("/api/v1/accounts/9/inboxes", r.URL.Path)
+				http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			}))
+			t.Cleanup(server.Close)
+			src := config.ChatwootSource{URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN",
+				Inboxes: []int64{7, 8}, ExcludeInboxes: []int64{8}}
+			want, message := 1, "needs EXAMPLE_CHATWOOT_TOKEN"
+			switch mode {
+			case "authentication rejected":
+				t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
+				message = "discover Chatwoot inboxes"
+			case "all excluded":
+				src.ExcludeInboxes = []int64{7, 8}
+				want, message = 0, "no included Chatwoot inboxes"
+			}
+			for _, id := range []string{
+				chatwoot.SourceIdentifier(src.URL, 9, 7),
+				chatwoot.SourceIdentifier(src.URL, 9, 8),
+				chatwoot.SourceIdentifier(src.URL, 9, 9),
+				chatwoot.SourceIdentifier(src.URL, 10, 7),
+			} {
+				_, err := st.GetOrCreateSource(chatwoot.SourceType, id)
+				require.NoError(err)
+			}
+			state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+			events := 0
+			state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+				assert.Equal("sync_failed", event)
+				assert.Equal("chatwoot", props["sync_source"])
+				events++
+				return nil
+			}}
+			job, ok := api.ChatwootJobNameForAccount(src.URL, src.AccountID)
+			require.True(ok)
+			results := syncJobResults(st, state)
+			for range 2 {
+				runCtx, report := results(withInvocation(t.Context(), state), job)
+				err := runConfiguredChatwootSync(runCtx, st, src)
+				require.ErrorContains(err, message)
+				report(err)
+				assert.Equal(want, events, "only selected inboxes enter failure, once per outage")
+			}
+		})
+	}
+}
+
 func TestChatwootRegisteredInboxSelection(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

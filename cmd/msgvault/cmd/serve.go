@@ -4084,7 +4084,9 @@ func syncJobResults(s *store.Store, state *invocation) func(context.Context, str
 		return context.WithValue(ctx, syncAttemptKey{}, recorded), func(err error) {
 			if sourceType, ok := api.SyncSourceForJob(name); ok {
 				switch sourceType {
-				case sourceTypeMatrix, sourceTypeBeeper, sourceTypeSlack, sourceTypeCalendar, "chatwoot":
+				case sourceTypeCalendar, "chatwoot":
+					// These providers report setup failures for their selected sources.
+				case sourceTypeMatrix, sourceTypeBeeper, sourceTypeSlack:
 					if !recorded.Load() && err != nil {
 						sources, _ := s.ListSources(sourceType)
 						_, account, scoped := strings.Cut(name, ":")

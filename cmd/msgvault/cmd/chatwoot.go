@@ -162,10 +162,16 @@ func importChatwootProfile(ctx context.Context, st *store.Store, src config.Chat
 	}
 	client, err := configuredChatwootClient(src)
 	if err != nil {
+		for _, id := range ids {
+			recordSyncAttempt(ctx, chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, src.AccountID, id), err)
+		}
 		return nil, err
 	}
 	inboxes, err := client.ListInboxes(ctx)
 	if err != nil {
+		for _, id := range ids {
+			recordSyncAttempt(ctx, chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, src.AccountID, id), err)
+		}
 		return nil, fmt.Errorf("discover Chatwoot inboxes: %w", err)
 	}
 	warnUnavailableChatwootInboxes(src, ids, inboxes)

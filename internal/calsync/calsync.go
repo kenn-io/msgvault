@@ -452,6 +452,22 @@ func (s *Syncer) includeRegisteredCalendar(cal gcal.Calendar) bool {
 	return !cal.Deleted && cal.AccessRole == "" && len(s.opts.Calendars) == 0
 }
 
+// SelectedSourceIdentifiers applies calendar selection to registered sources.
+func SelectedSourceIdentifiers(sources []*store.Source, opts Options) []string {
+	selector := Syncer{opts: opts}
+	var identifiers []string
+	for _, src := range sources {
+		cfg := parseSourceConfig(src.SyncConfig)
+		if src.MergedIntoSourceID != 0 || cfg.CalendarID == "" {
+			continue
+		}
+		if selector.includeRegisteredCalendar(gcal.Calendar{ID: cfg.CalendarID, AccessRole: cfg.AccessRole}) {
+			identifiers = append(identifiers, src.Identifier)
+		}
+	}
+	return identifiers
+}
+
 func (s *Syncer) minAccessRole() string {
 	if s.opts.MinAccessRole != "" {
 		return s.opts.MinAccessRole
