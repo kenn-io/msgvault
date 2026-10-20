@@ -63,6 +63,82 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
+func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-03-02T10:00:00Z","timeZone":"UTC"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-10T12:00:00Z"},"end":{"dateTime":"2027-03-10T13:00:00Z"}}`)
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	require.NoError(err)
+	require.Len(page.Occurrences, 3)
+
+	// Sync the recurrence removal, then a move of the standalone meeting.
+	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"}}`), "gcal_json"))
+	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(`{"id":"weekly","start":{"dateTime":"2027-03-09T09:00:00Z"},"end":{"dateTime":"2027-03-09T10:00:00Z"}}`), "gcal_json"))
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	require.NoError(err)
+	assert.Empty(page.Unexpandable)
+	require.Len(page.Occurrences, 2, "both the current standalone meeting and the retained edit must remain visible")
+	assert.Equal(master, page.Occurrences[0].MessageID)
+	assert.Zero(page.Occurrences[0].SeriesMessageID)
+	assert.Equal("2027-03-09T09:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+	assert.Equal(edit, page.Occurrences[1].MessageID)
+	assert.Equal(master, page.Occurrences[1].SeriesMessageID)
+	assert.Equal("2027-03-10T12:00:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
+}
+
+func TestListCalendarOccurrencesMasterChangesValueType(t *testing.T) {
+	for _, tc := range []struct {
+		name, oldStart, oldEnd, original, editStart, editEnd, newStart, newEnd string
+		wantStarts                                                             []string
+	}{
+		{
+			name:     "all-day to timed",
+			oldStart: `{"date":"2027-03-02"}`, oldEnd: `{"date":"2027-03-03"}`,
+			original:  `{"date":"2027-03-09"}`,
+			editStart: `{"date":"2027-03-10"}`, editEnd: `{"date":"2027-03-11"}`,
+			newStart: `{"dateTime":"2027-03-02T09:00:00Z","timeZone":"UTC"}`, newEnd: `{"dateTime":"2027-03-02T10:00:00Z","timeZone":"UTC"}`,
+			wantStarts: []string{"2027-03-02T09:00:00Z", "2027-03-09T09:00:00Z", "2027-03-10T00:00:00Z", "2027-03-16T09:00:00Z"},
+		},
+		{
+			name:     "timed to all-day",
+			oldStart: `{"dateTime":"2027-03-02T09:00:00Z","timeZone":"UTC"}`, oldEnd: `{"dateTime":"2027-03-02T10:00:00Z","timeZone":"UTC"}`,
+			original:  `{"dateTime":"2027-03-09T09:00:00Z"}`,
+			editStart: `{"dateTime":"2027-03-10T12:00:00Z"}`, editEnd: `{"dateTime":"2027-03-10T13:00:00Z"}`,
+			newStart: `{"date":"2027-03-02"}`, newEnd: `{"date":"2027-03-03"}`,
+			wantStarts: []string{"2027-03-02T00:00:00Z", "2027-03-09T00:00:00Z", "2027-03-10T12:00:00Z", "2027-03-16T00:00:00Z"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.oldStart, tc.oldEnd))
+			_, edit := calendarFixture(t, st, "edit", fmt.Sprintf(`{"id":"edited","recurringEventId":"weekly","originalStartTime":%s,"start":%s,"end":%s}`, tc.original, tc.editStart, tc.editEnd))
+			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			require.Len(page.Occurrences, 3)
+			assert.Empty(page.Unexpandable)
+
+			// A later master sync leaves the archived edit's immutable original intact.
+			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(fmt.Sprintf(`{"id":"weekly","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.newStart, tc.newEnd)), "gcal_json"))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			assert.Empty(page.Unexpandable)
+			var starts []string
+			var ids []int64
+			for _, occurrence := range page.Occurrences {
+				starts = append(starts, occurrence.Start.Format(time.RFC3339))
+				ids = append(ids, occurrence.MessageID)
+				assert.Equal(master, occurrence.SeriesMessageID)
+			}
+			assert.Equal(tc.wantStarts, starts)
+			assert.Equal([]int64{master, master, edit, master}, ids)
+		})
+	}
+}
+
 func TestListCalendarOccurrencesUnidentifiedExceptions(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

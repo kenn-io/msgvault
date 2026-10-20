@@ -274,7 +274,7 @@ func TestCalendarExceptionsClearedRecurrence(t *testing.T) {
 	}
 }
 
-func TestCalendarClearedMasterSuppressesFirstOccurrenceExceptions(t *testing.T) {
+func TestCalendarClearedMasterKeepsStandaloneAndFirstOccurrenceExceptions(t *testing.T) {
 	for _, tc := range []struct {
 		name, exception, effectiveStart, effectiveEnd, status string
 		originalCount, effectiveCount                         int
@@ -317,6 +317,15 @@ func TestCalendarClearedMasterSuppressesFirstOccurrenceExceptions(t *testing.T) 
 					from := time.Date(2027, 3, window.day, 0, 0, 0, 0, time.UTC)
 					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 					require.NoError(t, err)
+					if window.day == 2 {
+						require.Len(t, page.Occurrences, window.want+1)
+						standalone := page.Occurrences[0]
+						assertions.Equal(master, standalone.MessageID)
+						assertions.Zero(standalone.SeriesMessageID)
+						assertions.Equal("confirmed", standalone.Status)
+						assertions.Equal("2027-03-02T09:00:00Z", standalone.Start.Format(time.RFC3339))
+						page.Occurrences = page.Occurrences[1:]
+					}
 					require.Len(t, page.Occurrences, window.want)
 					if window.want == 0 {
 						return
