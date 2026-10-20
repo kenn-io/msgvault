@@ -1,3 +1,5 @@
+//go:build fts5
+
 package whatsapp
 
 import (
@@ -13,6 +15,7 @@ func TestImportReportsFTSWriteErrors(t *testing.T) {
 	waDBPath := createGroupParticipantsImportFixture(t, nil)
 	progress := &importProgressRecorder{}
 	st := testutil.NewSQLiteTestStore(t)
+	require.True(t, st.FTS5Available(), "fts5 build tag set but FTS5 unavailable")
 	_, err := st.DB().Exec(`DROP TABLE messages_fts`)
 	require.NoError(t, err)
 
