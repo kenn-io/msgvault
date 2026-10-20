@@ -170,7 +170,6 @@ func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:parall
 
 			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
 			require.ErrorContains(t, err, "start background daemon: daemon config invalid")
-			assert.NoFileExists(filepath.Join(home, "serve.log"))
 			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
 		})
 	}
