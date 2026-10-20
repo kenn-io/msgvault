@@ -1017,3 +1017,76 @@ func TestCancellationPreservesEmptyExceptionSnapshot(t *testing.T) {
 		}
 	}
 }
+
+func exceptionJSON(status, summary, originalStart string) string {
+	body := `"id":"instance-example","recurringEventId":"series-example","status":"` + status + `","originalStartTime":` + originalStart
+	if status == "cancelled" {
+		return `{` + body + `}`
+	}
+	return `{` + body + `,"summary":"` + summary + `","start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`
+}
+
+func TestExceptionArchiveKeyByOriginalStart(t *testing.T) {
+	for _, tt := range []struct {
+		name, originalStart, wantKey string
+	}{
+		{"offset-free keeps event id", `{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"}`, "instance-example"},
+		{"explicit offset keeps instant key", `{"dateTime":"2027-03-09T17:00:00-05:00","timeZone":"America/New_York"}`, "series-example|2027-03-09T22:00:00Z"},
+		{"all-day keeps date key", `{"date":"2027-03-09"}`, "series-example|2027-03-09"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			s, st := newSyncer(t, gcal.NewMockAPI(), Options{})
+			src, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+			requirements.NoError(err)
+			ev, err := gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "Moved", tt.originalStart)))
+			requirements.NoError(err)
+			_, err = s.ingestEvent(src.ID, gcal.Calendar{ID: "primary", TimeZone: "UTC"}, ev)
+			requirements.NoError(err)
+
+			row, ok := getMsg(t, st, src.ID, tt.wantKey)
+			requirements.True(ok, "row stored under %q", tt.wantKey)
+			assertions.Equal(1, countMessages(t, st, src.ID))
+			if tt.wantKey != "series-example|2027-03-09" {
+				assertions.Equal("2027-03-09T22:00:00Z", parseMeta(t, row)["original_start_time"])
+			} else {
+				assertions.Equal("2027-03-09", parseMeta(t, row)["original_start_time"])
+			}
+		})
+	}
+}
+
+func TestOffsetFreeExceptionResyncAndSparseCancellationReuseRow(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	s, st := newSyncer(t, gcal.NewMockAPI(), Options{})
+	src, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	requirements.NoError(err)
+	cal := gcal.Calendar{ID: "primary", TimeZone: "UTC"}
+	original := `{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"}`
+
+	ev, err := gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "Before", original)))
+	requirements.NoError(err)
+	first, err := s.ingestEvent(src.ID, cal, ev)
+	requirements.NoError(err)
+
+	ev, err = gcalmodel.DecodeEvent([]byte(exceptionJSON("confirmed", "After", original)))
+	requirements.NoError(err)
+	second, err := s.ingestEvent(src.ID, cal, ev)
+	requirements.NoError(err)
+	assertions.Equal(first, second)
+	row, ok := getMsg(t, st, src.ID, "instance-example")
+	requirements.True(ok)
+	assertions.Equal("After", row.subject.String)
+
+	ev, err = gcalmodel.DecodeEvent([]byte(exceptionJSON("cancelled", "", original)))
+	requirements.NoError(err)
+	id, inserted, err := s.flagCancelled(src.ID, cal, ev)
+	requirements.NoError(err)
+	assertions.False(inserted)
+	assertions.Equal(first, id)
+	assertions.Equal(1, countMessages(t, st, src.ID))
+	row, ok = getMsg(t, st, src.ID, "instance-example")
+	requirements.True(ok)
+	assertions.Equal("After", row.subject.String)
+	assertions.Equal("cancelled", parseMeta(t, row)["status"])
+}

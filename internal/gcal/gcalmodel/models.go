@@ -36,6 +36,10 @@ type EventDateTime struct {
 	DateTime time.Time `json:"dateTime,omitzero"`
 	Date     string    `json:"date,omitempty"`
 	TimeZone string    `json:"timeZone,omitempty"`
+
+	// ResolvedFromTimeZone is set when an offset-free dateTime was resolved to
+	// an instant using TimeZone. It is decoder metadata and is not serialized.
+	ResolvedFromTimeZone bool `json:"-"`
 }
 
 // IsAllDay reports whether this is an all-day (date-only) value.
