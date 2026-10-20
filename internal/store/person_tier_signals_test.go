@@ -104,7 +104,7 @@ func TestPersonTierReadiness(t *testing.T) {
 // tierSignals reads one person's counts through explain.
 func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.Time, cfg persontiers.Config) persontiers.Signals {
 	t.Helper()
-	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.PersonTierOptions{Config: cfg, AsOf: asOf})
+	explanation, err := store.ExplainPersonTierAt(t.Context(), f.Store, personID, store.PersonTierOptions{Config: cfg}, asOf)
 	require.NoError(t, err)
 	return explanation.Signals
 }

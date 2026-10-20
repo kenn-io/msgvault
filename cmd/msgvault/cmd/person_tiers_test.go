@@ -3,14 +3,20 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -21,16 +27,14 @@ type tiersStore struct {
 	preview     store.PersonTierPreview
 	explanation *store.PersonTierExplanation
 	personID    int64
-	options     store.PersonTierOptions
 }
 
-func (s *tiersStore) PreviewPersonTiersContext(_ context.Context, options store.PersonTierOptions) (*store.PersonTierPreview, error) {
-	s.options = options
+func (s *tiersStore) PreviewPersonTiersContext(context.Context, store.PersonTierOptions) (*store.PersonTierPreview, error) {
 	return &s.preview, nil
 }
 
-func (s *tiersStore) ExplainPersonTierContext(_ context.Context, personID int64, options store.PersonTierOptions) (*store.PersonTierExplanation, error) {
-	s.personID, s.options = personID, options
+func (s *tiersStore) ExplainPersonTierContext(_ context.Context, personID int64, _ store.PersonTierOptions) (*store.PersonTierExplanation, error) {
+	s.personID = personID
 	return s.explanation, nil
 }
 
@@ -86,7 +90,6 @@ func TestPersonTiersPreviewPrintsJSON(t *testing.T) {
 	assert.Equal(int64(3), out.People[0].PersonID)
 	assert.True(out.People[1].Tracked)
 	assert.Equal("2026-10-17", out.AsOf)
-	assert.Equal(tiersTestOptions, st.options, "the configured rules and [activity] settings reach the store")
 }
 
 func TestPersonTiersPreviewPrintsATable(t *testing.T) {
@@ -157,7 +160,6 @@ func TestPersonTiersExplain(t *testing.T) {
 	stdout, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "explain", "7")
 	require.NoError(err)
 	assert.Equal(int64(7), st.personID)
-	assert.Equal(tiersTestOptions, st.options)
 	assert.Contains(stdout, "Tier: 2")
 	assert.Contains(stdout, "Last counted: 2026-10-16")
 	assert.Contains(stdout, "Projection: timezone UTC, direct limit 25")
@@ -181,4 +183,77 @@ func TestPersonTiersExplainRejectsBadIDBeforeTheDaemon(t *testing.T) {
 	_, _, err := executePersonTiersCommand(t, deps, "explain", "0")
 	require.ErrorContains(t, err, "positive")
 	assert.False(t, called)
+}
+
+// The tier thresholds and [activity] settings reach the store only through
+// bind, so this runs the real command against a loaded config and a seeded
+// archive. Mail on three days with both directions is tier 2 by default.
+func TestPersonTiersUseTheLoadedConfig(t *testing.T) {
+	markDaemonCLISubprocessForTest(t)
+	home := t.TempDir()
+	st, err := store.OpenForTest(filepath.Join(home, "msgvault.db"))
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	require.NoError(t, err)
+	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	conversation, err := st.EnsureConversation(source.ID, "tier-thread", "Tier")
+	require.NoError(t, err)
+	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(t, err)
+	friend, err := st.EnsureParticipant("friend@example.com", "Friend", "example.com")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipant(friend)
+	require.NoError(t, err)
+	for day := 1; day <= 3; day++ {
+		from, to := friend, owner
+		if day == 1 {
+			from, to = owner, friend
+		}
+		id, err := st.UpsertMessage(&store.Message{
+			ConversationID: conversation, SourceID: source.ID, MessageType: "email",
+			SourceMessageID: fmt.Sprintf("tier-%d", day),
+			SentAt:          sql.NullTime{Time: time.Now().UTC().AddDate(0, 0, -day), Valid: true},
+			SenderID:        sql.NullInt64{Int64: from, Valid: true},
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{from}, []string{""}))
+		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{to}, []string{""}))
+	}
+	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 25})
+	require.NoError(t, err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+
+	run := func(t *testing.T, toml string) (store.PersonTierPreview, string) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(path, []byte(toml), 0o600))
+		cfg, err := config.Load(path, home)
+		require.NoError(t, err)
+		command := &cobra.Command{Use: "msgvault", SilenceUsage: true, SilenceErrors: true}
+		person := &cobra.Command{Use: "person"}
+		person.AddCommand(newPersonTiersCommand(defaultPersonTiersCommandDeps()))
+		command.AddCommand(person)
+		command.SetArgs([]string{"person", "tiers", "preview", "--json"})
+		var stdout, stderr bytes.Buffer
+		command.SetOut(&stdout)
+		command.SetErr(&stderr)
+		require.NoError(t, command.ExecuteContext(testInvocationContext(t.Context(), cfg, invocationOptions{})))
+		var preview store.PersonTierPreview
+		require.NoError(t, json.Unmarshal(stdout.Bytes(), &preview))
+		return preview, stderr.String()
+	}
+
+	preview, _ := run(t, "")
+	require.Len(t, preview.People, 1)
+	assert.Equal(t, person.ID, preview.People[0].PersonID)
+	assert.Equal(t, 2, preview.People[0].Tier)
+
+	preview, _ = run(t, "[people.tiers.tier2]\nmin_active_days_long = 4\n")
+	assert.Empty(t, preview.People, "a raised threshold from [people.tiers] drops the person")
+
+	_, warning := run(t, "[activity]\ntimezone = \"America/New_York\"\n")
+	assert.Contains(t, warning, "settings_changed")
 }
