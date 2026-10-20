@@ -28,13 +28,12 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 			"No one turned up for \"kubernetes\".\n" +
 				"Searched the 200 closest messages; more may match. Narrow with --after or --before.\n",
 		},
-		"index scope, not embedded, and declared in part": {
+		"partial index and declared in part": {
 			generated.WhoKnowsResponse{Topic: "kubernetes", Limits: []generated.WhoKnowsResponseLimits{
-				generated.IndexScope, generated.NotEmbedded, generated.DeclaredTruncated,
+				generated.PartialIndex, generated.DeclaredTruncated,
 			}},
 			"No one turned up for \"kubernetes\".\n" +
-				"The vector index covers only some message types or accounts; the rest weren't searched.\n" +
-				"Some matching messages aren't embedded yet, so they didn't count.\n" +
+				"The vector index doesn't cover all your mail and chat yet, so some messages weren't searched.\n" +
 				"Declared topics were searched only in part.\n",
 		},
 	} {

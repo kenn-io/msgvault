@@ -321,15 +321,13 @@ or in place of "nobody":
   only for unit-length vectors. When the topic's vector or a stored vector in
   the pool isn't unit length, a full pool reports this even when nothing in it
   matched.
+- `The vector index doesn't cover all your mail and chat yet, so some messages
+  weren't searched.` The `[vector.embed.scope]` settings leave out a message
+  type with authors, such as chat, or some accounts, or keyword search found
+  mail synced since the last embedding run. Declared topics are still listed.
+  Check progress with `msgvault embeddings status`.
 - `Declared topics were searched only in part.` More than 5,000 declared values
   exist, and only the first 5,000 were read.
-- `The vector index covers only some message types or accounts; the rest
-  weren't searched.` The `[vector.embed.scope]` settings leave out a message
-  type with authors, such as chat, or some accounts. Declared topics are still
-  listed.
-- `Some matching messages aren't embedded yet, so they didn't count.` Keyword
-  search found mail synced since the last embedding run. Check progress with
-  `msgvault embeddings status` and ask again once it is done.
 
 The 0.5 default is not calibrated for any real embedding model. If a topic
 worded unlike your mail finds nobody, lower `--min-score`; if unrelated people

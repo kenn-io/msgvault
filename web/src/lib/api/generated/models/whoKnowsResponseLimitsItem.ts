@@ -7,7 +7,6 @@ export type WhoKnowsResponseLimitsItem =
 
 export const WhoKnowsResponseLimitsItem = {
   pool_full: "pool_full",
+  partial_index: "partial_index",
   declared_truncated: "declared_truncated",
-  index_scope: "index_scope",
-  not_embedded: "not_embedded",
 } as const;

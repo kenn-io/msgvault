@@ -118,9 +118,8 @@ func writeWhoKnows(w io.Writer, response generated.WhoKnowsResponse) error {
 var whoKnowsLimitLines = map[generated.WhoKnowsResponseLimits]string{
 	generated.PoolFull: fmt.Sprintf("Searched the %d closest messages; more may match. Narrow with --after or --before.",
 		whoknows.SearchPool),
+	generated.PartialIndex:      "The vector index doesn't cover all your mail and chat yet, so some messages weren't searched.",
 	generated.DeclaredTruncated: "Declared topics were searched only in part.",
-	generated.IndexScope:        "The vector index covers only some message types or accounts; the rest weren't searched.",
-	generated.NotEmbedded:       "Some matching messages aren't embedded yet, so they didn't count.",
 }
 
 func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse) {

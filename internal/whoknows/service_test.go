@@ -231,12 +231,12 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	f.service.BuildScope = vector.NewBuildScope([]string{"email", "meeting_transcript"}, nil)
-	assert.Equal([]string{whoknows.LimitIndexScope}, f.find("topic").Limits, "an email-only index leaves chat unsearched")
+	assert.Equal([]string{whoknows.LimitPartialIndex}, f.find("topic").Limits, "an email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, f.retriever.request.Filter.MessageTypes)
 
 	// An index of some accounts leaves the others unsearched.
 	f.service.BuildScope = vector.NewBuildScope(nil, []int64{f.Source.ID})
-	assert.Equal([]string{whoknows.LimitIndexScope}, f.find("topic").Limits)
+	assert.Equal([]string{whoknows.LimitPartialIndex}, f.find("topic").Limits)
 	assert.Contains(f.retriever.request.Filter.MessageTypes, "slack")
 
 	// An index of only transcripts and events has no authors to search, but
@@ -247,7 +247,7 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	f.service.BuildScope = vector.NewBuildScope([]string{"meeting_transcript", "calendar_event"}, nil)
 	got := f.find("kubernetes networking")
 	assert.Zero(f.retriever.calls)
-	assert.Equal([]string{whoknows.LimitIndexScope}, got.Limits)
+	assert.Equal([]string{whoknows.LimitPartialIndex}, got.Limits)
 	require.Len(t, got.People, 1)
 	assert.Equal(person, got.People[0].PersonID)
 }

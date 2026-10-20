@@ -322,7 +322,7 @@ func TestFindReportsMessagesNotYetEmbedded(t *testing.T) {
 	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
 	require.NoError(t, err)
 	assert.Empty(t, got.UnsavedContacts)
-	assert.Equal(t, []string{LimitNotEmbedded}, got.Limits)
+	assert.Equal(t, []string{LimitPartialIndex}, got.Limits)
 }
 
 // Search scores a vector hit as 1 - L2 distance, which falls below the floor

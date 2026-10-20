@@ -87,14 +87,11 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	if err != nil {
 		return out, err
 	}
-	if narrowed {
-		out.Limits = append(out.Limits, LimitIndexScope)
-	}
 	if found.poolFull {
 		out.Limits = append(out.Limits, LimitPoolFull)
 	}
-	if found.unembedded {
-		out.Limits = append(out.Limits, LimitNotEmbedded)
+	if narrowed || found.unembedded {
+		out.Limits = append(out.Limits, LimitPartialIndex)
 	}
 	if truncated {
 		out.Limits = append(out.Limits, LimitDeclaredTruncated)

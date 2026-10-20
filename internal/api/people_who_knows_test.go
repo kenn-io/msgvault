@@ -116,7 +116,7 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 	got := whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
-	assert.JSONEq(`{"topic":"sailboat insurance","limits":["index_scope"],"people":[],"unsaved_contacts":[]}`, got.Body.String(),
+	assert.JSONEq(`{"topic":"sailboat insurance","limits":["partial_index"],"people":[],"unsaved_contacts":[]}`, got.Body.String(),
 		"the email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)

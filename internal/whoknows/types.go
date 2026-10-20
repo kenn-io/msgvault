@@ -27,18 +27,16 @@ const (
 // one never means nobody wrote about the topic.
 const (
 	// LimitPoolFull means the search returned its full pool and a message
-	// cleared the floor, or the pool's order may not follow the floor, so more
-	// messages beyond it may match.
+	// cleared the floor, or the pool's order may not follow cosine order, so
+	// more messages beyond it may match.
 	LimitPoolFull = "pool_full"
+	// LimitPartialIndex means the vector index leaves out some message types
+	// with authors or some accounts, or has not embedded a message keyword
+	// search found, so some messages were not searched.
+	LimitPartialIndex = "partial_index"
 	// LimitDeclaredTruncated means more declared topics exist than one
 	// request reads, so some were not searched.
 	LimitDeclaredTruncated = "declared_truncated"
-	// LimitIndexScope means the vector index leaves out some message types
-	// with authors or some accounts, so their messages were not searched.
-	LimitIndexScope = "index_scope"
-	// LimitNotEmbedded means the keyword search found messages the vector
-	// index has not embedded yet, so they could not count.
-	LimitNotEmbedded = "not_embedded"
 )
 
 // Request asks who in the archive has written about a topic.
@@ -87,7 +85,7 @@ type Entry struct {
 // the archive wrote about the topic.
 type Response struct {
 	Topic           string   `json:"topic"`
-	Limits          []string `json:"limits" enum:"pool_full,declared_truncated,index_scope,not_embedded"`
+	Limits          []string `json:"limits" enum:"pool_full,partial_index,declared_truncated"`
 	People          []Entry  `json:"people"`
 	UnsavedContacts []Entry  `json:"unsaved_contacts"`
 }
