@@ -111,11 +111,13 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		query = r.URL.Query()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"topic":"kubernetes networking","limits":[],"people":[],"unsaved_contacts":[]}`))
-	}, "kubernetes", "networking", "--limit", "3", "--min-score", "0.4", "--after", "2026-01-01")
+	}, "kubernetes", "networking", "--limit", "3", "--min-score", "0.4", "--after", "2026-01-01",
+		"--before", "2026-01-01T00:00:00.25Z")
 	require.NoError(t, err)
 	assert.Equal(t, url.Values{
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
-	}, query)
+		"before": {"2026-01-01T00:00:00.25Z"},
+	}, query, "a subsecond bound keeps its fraction")
 }
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {

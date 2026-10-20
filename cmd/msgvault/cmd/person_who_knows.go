@@ -61,7 +61,7 @@ unlike your messages.`,
 					return usageErr(cmd, fmt.Errorf("%s %w", date.flag, err))
 				}
 				if parsed != nil {
-					*date.target = new(parsed.Format(time.RFC3339))
+					*date.target = new(parsed.Format(time.RFC3339Nano))
 				}
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
