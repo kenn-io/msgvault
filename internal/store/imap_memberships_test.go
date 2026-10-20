@@ -671,6 +671,50 @@ func TestApplyIMAPMailboxDeltas_ReconcilesLiveMessageImportedAfterBaseline(t *te
 	assert.Empty(messageLabels(t, f.store, untrackedID))
 }
 
+func TestApplyIMAPMailboxDeltasKeepsExtractedCalendarEventsLive(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	raw := []byte("From: organizer@example.com\r\nTo: guest@example.org\r\nSubject: Invite\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=invite\r\n\r\n" +
+		"--invite\r\nContent-Type: text/plain\r\n\r\nInvitation body\r\n" +
+		"--invite\r\nContent-Type: text/calendar\r\n\r\n" +
+		"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:imap-invite@example.test\r\n" +
+		"DTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:Invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" +
+		"--invite--\r\n")
+	parentID, err := f.store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.source.ID, SourceMessageID: "INBOX|1", MessageType: "email",
+			Subject: sql.NullString{String: "Invite", Valid: true},
+		},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "INBOX|1", Title: "Invite"},
+		BodyText:     sql.NullString{String: "Invitation body", Valid: true},
+		RawMIME:      raw,
+	})
+	requirements.NoError(err)
+	var eventID int64
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT id FROM messages WHERE source_id = ? AND message_type = 'calendar_event'
+	`), f.source.ID).Scan(&eventID), "invite extraction should persist a calendar artifact")
+	requirements.NotEqual(parentID, eventID)
+
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX",
+		State:   store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 7, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			UID: 1, SourceMessageID: "INBOX|1",
+		}},
+	}
+	requirements.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{delta}))
+	assertions.False(messageTombstoned(t, f.store, parentID))
+	assertions.False(messageTombstoned(t, f.store, eventID), "the derived event has no provider mailbox membership")
+	assertions.Equal(1, membershipCount(t, f.store, f.source.ID), "only the source email is published as a mailbox member")
+	var eventMemberships int
+	requirements.NoError(f.store.DB().QueryRow(f.store.Rebind(`
+		SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?
+	`), eventID).Scan(&eventMemberships))
+	assertions.Zero(eventMemberships)
+}
+
 func TestApplyIMAPMailboxDeltas_CanonicalSourceHintWinsOverSecondaryCopy(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

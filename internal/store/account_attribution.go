@@ -328,7 +328,7 @@ func outboundEvidenceExistsSQL(m, src string) string {
 func accountSink(sourceType, identifier string) string {
 	address := strings.TrimSpace(identifier)
 	switch sourceType {
-	case "imap", "imaps", "imap+starttls":
+	case sourceTypeIMAP, "imaps", "imap+starttls":
 		address = imapIdentifierUser(address)
 	}
 	if !isExactMailbox(address) {
@@ -348,7 +348,7 @@ func imapIdentifierUser(identifier string) string {
 		return identifier
 	}
 	switch strings.ToLower(scheme) {
-	case "imap", "imaps", "imap+starttls":
+	case sourceTypeIMAP, "imaps", "imap+starttls":
 	default:
 		return identifier
 	}
@@ -464,7 +464,7 @@ func (s *Store) refreshAccountAttributionTx(
 	}
 
 	if messageType == "calendar_event" {
-		address, err := s.calendarAccountAddressTx(ctx, tx, sourceID, syncConfig)
+		address, err := s.calendarAccountAddressTx(ctx, tx, sourceID, sourceType, identifier, syncConfig)
 		if err != nil {
 			return false, err
 		}
@@ -610,9 +610,13 @@ func calendarMailbox(syncConfig sql.NullString) string {
 }
 
 func (s *Store) calendarAccountAddressTx(
-	ctx context.Context, tx *loggedTx, sourceID int64, syncConfig sql.NullString,
+	ctx context.Context, tx *loggedTx, sourceID int64, sourceType, identifier string, syncConfig sql.NullString,
 ) (string, error) {
 	address := calendarMailbox(syncConfig)
+	if sourceType == "gmail" || sourceType == sourceTypeIMAP {
+		// Email invitations inherit the confirmed mailbox of their mail source.
+		address = accountSink(sourceType, identifier)
+	}
 	if address == "" {
 		return "", nil
 	}

@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-ics](#import-ics), [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -1735,8 +1735,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.24.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1762,9 +1770,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |
@@ -1786,6 +1794,56 @@ remote failure or an archive failure exits with an error after printing the
 receipts. Reconcile the reported event; do not repeat a completed mutation.
 
 ---
+
+## import-ics
+
+Import a local iCalendar file as separate calendar event messages:
+
+```bash
+msgvault import-ics calendar.ics --identifier personal-calendar
+```
+
+Choose a stable `--identifier` for each calendar. Re-importing into that source
+updates events by UID and original recurrence identity. Higher SEQUENCE wins;
+equal sequences use DTSTAMP, with cancellation winning an exact tie. Older
+invitations cannot undo a cancellation. Each event keeps a stable message ID
+and its own VEVENT with calendar time zone definitions. A single-VEVENT file
+without sibling components stays byte-identical. The daemon reads the file locally; importing
+files through a remote daemon is unavailable.
+
+Each VEVENT becomes its own entry. A malformed or unsupported component rejects
+the whole file. Valid series with unsupported recurrence remain archived with
+an expansion error. The command reports updated, unchanged, and unexpandable
+event counts. Imports support UTC times, IANA time zones, all-day dates, and
+floating times. Floating times use the source's `time_zone` or UTC. Changing that zone
+rebuilds event times from the stored raw while preserving floating recurrence identities. Recurring timed events with a day or week DURATION in a zone with clock changes remain archived with an expansion error. All-day dates and exact-time durations still expand. Unsupported custom time zones and
+RECURRENCE-ID RANGE reject a file or email part. For email, the original MIME
+preserves that raw evidence.
+
+Files are limited to 32 MiB, 10,000 VEVENTs, 32 component levels, and 8 KiB per
+unfolded line.
+
+### Invitations in email
+
+Archiving email extracts decoded `text/calendar` MIME parts, including inline alternatives, into event messages in the same source. A `.ics` filename alone does not qualify. Attached forwarded emails and iTIP messages with the ADD, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+
+The first invitation for a UID creates an event entry. Recurring exceptions use the UID and original recurrence identity. Every contributing email keeps its full MIME and attachments. Events survive replacement or deletion of those emails. Floating invite times in email sources use UTC because email sources have no calendar time zone.
+
+Later emailed revisions, including recurring exceptions and cancellations, apply when their `ORGANIZER` address matches the family's original `invite_organizer`, ignoring case. `From`, `CN`, and `SENT-BY` do not affect this comparison. An empty original organizer or a mismatched organizer leaves the event unchanged and records `update ignored: ORGANIZER does not match invite_organizer` in the email's `calendar_invite_errors` metadata. The email keeps its full MIME and attachments. An emailed cancellation for an unseen UID creates a tombstone only if it carries an `ORGANIZER`, which becomes the family's original organizer. Accepted revisions still follow SEQUENCE, then DTSTAMP precedence. Standalone `import-ics` revisions do not use this email rule.
+
+This rule checks organizer continuity. The addresses are unauthenticated. A stranger who copies the visible `ORGANIZER` address can update or cancel the derived event. The archived emails remain available as evidence.
+
+Guest replies and single-guest removals stay in the email and leave the event unchanged. Ignored guest removals record a `guest removal ignored` diagnostic in `calendar_invite_errors`.
+
+For `import-ics`, `STATUS:CANCELLED` marks a full cancellation. `METHOD:CANCEL` without STATUS cancels the event when it has no ATTENDEE properties; with ATTENDEE properties, it is a guest removal. Cancellation preserves the last accepted event's title, times, participants, and raw. A cancellation received before the event creates a tombstone. Cancelled series list all occurrences as cancelled. Email cancellations follow the organizer continuity rule above. Invalid email calendar parts leave the email intact and record `calendar_invite_errors`.
+
+To extract invites from emails already in the archive, run
+[`repair-derived`](#repair-derived). It works from stored MIME without a provider
+connection or a schema migration:
+
+```bash
+msgvault repair-derived --source-type mbox
+```
 
 ## import-eml
 
@@ -2718,8 +2776,8 @@ msgvault export-token <email> [flags]
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. The command streams the daemon's stdout/stderr back to the
-terminal.
+local daemon. Email counts exclude calendar events extracted from invitations.
+The command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
 msgvault verify <email> [flags]
@@ -4753,6 +4811,7 @@ repair's error output for diagnosis.
 Recompute derived text and metadata from retained provider payloads without
 contacting the provider. The command writes immediately and refreshes analytics;
 it leaves raw payloads, downloaded media, and sync cursors in place.
+It also extracts calendar invites from archived email MIME.
 
 ```bash
 msgvault repair-derived

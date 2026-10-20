@@ -17,6 +17,8 @@ import (
 // last_modified backfill alone is a full messages-table scan — seconds of
 // startup on a large archive).
 const (
+	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
+	migrationCalendarEventProjectionV2      = "calendar_event_projection_v2"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
@@ -596,6 +598,19 @@ func (s *Store) ensureMigrationLedgerVersionColumn(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, statement); err != nil &&
 		!s.dialect.IsDuplicateColumnError(err) {
 		return fmt.Errorf("add migration ledger version: %w", err)
+	}
+	return nil
+}
+
+// ensureCalendarEventStartWallColumn adds recurrence wall-time evidence to
+// archives created before calendar_events.start_wall was introduced.
+func (s *Store) ensureCalendarEventStartWallColumn(ctx context.Context) error {
+	statement := `ALTER TABLE calendar_events ADD COLUMN start_wall TEXT NOT NULL DEFAULT ''`
+	if s.IsPostgreSQL() {
+		statement = `ALTER TABLE calendar_events ADD COLUMN IF NOT EXISTS start_wall TEXT NOT NULL DEFAULT ''`
+	}
+	if _, err := s.db.ExecContext(ctx, statement); err != nil && !s.dialect.IsDuplicateColumnError(err) {
+		return fmt.Errorf("add calendar event wall DTSTART column: %w", err)
 	}
 	return nil
 }
