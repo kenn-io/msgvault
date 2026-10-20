@@ -583,7 +583,7 @@ func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
 }
 
 // Dropping the real index must not turn a live scoped write into an error.
-func TestScopedStoreRejectsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
+func TestScopedStoreSkipsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
 	testutil.SkipIfPostgres(t, "drops the SQLite FTS5 table")
 	requirements := require.New(t)
 	f := storetest.New(t)
