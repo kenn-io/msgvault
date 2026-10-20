@@ -168,7 +168,7 @@ topic is plain words; search operators return `400 invalid_parameter`.
 The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
 lists each way the search came up short: `pool_full` when the search returned
 its full pool of 200 and a message matched, or the SQLite vector index ranked
-the pool for a query vector that is not unit length, `declared_truncated` when more
+vectors that are not unit length, `declared_truncated` when more
 than 5,000 declared topics exist, `index_scope` when the vector index leaves
 out some message types with authors or some accounts, and `not_embedded` when
 keyword search found messages the index has not embedded yet. Both lists empty with no limits means

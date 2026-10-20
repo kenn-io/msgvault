@@ -340,36 +340,53 @@ func TestFindCountsVectorHitsByCosine(t *testing.T) {
 	assert.InDelta(t, math.Log1p(2/math.Sqrt(6)), got.UnsavedContacts[0].MessageScore, 1e-6)
 }
 
+// fillPool posts 101 messages at cosine 0.3 to the topic, scaled by scale:
+// below the floor, but nearer the query by L2 than a long vector pointing the
+// topic's way.
+func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
+	t.Helper()
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	filler := scaled(topic, .3)
+	filler[off] = float32(math.Sqrt(1 - .3*.3))
+	filler = scaled(filler, scale)
+	for i := range 101 {
+		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
+	}
+}
+
+// A full pool where nothing reached the floor is an unrelated topic when the
+// index ranks unit-length vectors, since L2 order is then cosine order.
+func TestFindReportsNoLimitForAFullUnitLengthPoolBelowTheFloor(t *testing.T) {
+	f := newEvalFixture(t)
+	f.fillPool(t, embedWords("zeppelin mooring"), 1)
+	_, meta, err := f.service.Retriever.Search(t.Context(),
+		hybrid.SearchRequest{Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool})
+	require.NoError(t, err)
+	require.True(t, meta.PoolSaturated, "the fillers fill the pool")
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Empty(t, got.Limits)
+}
+
 // sqlite-vec ranks the pool by L2 distance, which follows cosine order only
-// for unit-length vectors. With a query that is not unit length, a full pool
-// where nothing reached the floor can hide a message that would, so the
+// for unit-length vectors. With a provider that does not normalize, a full
+// pool where nothing reached the floor can hide a message that would, so the
 // result says the pool was full rather than that nobody wrote.
-func TestFindReportsAFullL2PoolForAQueryThatIsNotUnitLength(t *testing.T) {
+func TestFindReportsAFullPoolOfVectorsThatAreNotUnitLength(t *testing.T) {
 	f := newEvalFixture(t)
 	if f.store.IsPostgreSQL() {
 		t.Skip("pgvector ranks by cosine distance")
 	}
 	topic := embedWords("zeppelin mooring")
-	// Each filler is 3 units long, at cosine 0.3 to the topic: below the
-	// floor, but nearer the query by L2 than the answer below.
-	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
-	filler := scaled(topic, .3)
-	filler[off] = float32(math.Sqrt(1 - .3*.3))
-	filler = scaled(filler, 3)
-	for i := range 101 {
-		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
-	}
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	assert.Empty(t, got.UnsavedContacts)
-	assert.Empty(t, got.Limits, "a unit-length query over a pool below the floor is an unrelated topic")
-
+	f.fillPool(t, topic, 3)
 	// The answer points the topic's way but is 100 units long, so it sits
 	// past every filler by L2 and outside the pool.
 	f.post(t, "captain@example.net", "airship tethering", scaled(topic, 100))
 	f.service.Retriever = evalEngine(f.store, f.backend, scaledEmbedder{3})
-	got, err = f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
 	require.NoError(t, err)
 	assert.Empty(t, got.UnsavedContacts)
 	assert.Equal(t, []string{LimitPoolFull}, got.Limits)

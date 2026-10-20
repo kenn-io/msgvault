@@ -16,22 +16,24 @@ import (
 // MessageCosines returns, for each listed message embedded in gen, the
 // cosine similarity of its closest chunk to queryVec. Search scores a hit as
 // 1 - L2 distance, which matches cosine only for unit-length vectors, and the
-// embedding client stores provider vectors as they come. A zero vector
-// scores 0. Messages with no chunk in gen are left out.
+// embedding client stores provider vectors as they come. UnitLength reports
+// that queryVec and every chunk read have length 1. A zero vector scores 0.
+// Messages with no chunk in gen are left out.
 func (b *Backend) MessageCosines(
 	ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64,
-) (map[int64]float64, error) {
-	out := map[int64]float64{}
+) (vector.CosineScores, error) {
+	queryNorm := norm(queryVec)
+	out := vector.CosineScores{Scores: map[int64]float64{}, UnitLength: unitLength(queryNorm)}
 	if len(messageIDs) == 0 {
 		return out, nil
 	}
 	dim, err := b.queryDimension(ctx, gen, queryVec)
 	if err != nil {
-		return nil, err
+		return vector.CosineScores{}, err
 	}
 	encoded, err := json.Marshal(messageIDs, json.Deterministic(true))
 	if err != nil {
-		return nil, fmt.Errorf("encode cosine message ids: %w", err)
+		return vector.CosineScores{}, fmt.Errorf("encode cosine message ids: %w", err)
 	}
 	rows, err := b.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT e.message_id, v.embedding
@@ -41,26 +43,28 @@ func (b *Backend) MessageCosines(
 		   AND e.message_id IN (SELECT value FROM json_each(?))`, VectorTableName(dim)),
 		int64(gen), string(encoded))
 	if err != nil {
-		return nil, fmt.Errorf("load message chunks: %w", err)
+		return vector.CosineScores{}, fmt.Errorf("load message chunks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id int64
 		var blob []byte
 		if err := rows.Scan(&id, &blob); err != nil {
-			return nil, fmt.Errorf("scan chunk row: %w", err)
+			return vector.CosineScores{}, fmt.Errorf("scan chunk row: %w", err)
 		}
 		vec, err := blobToFloat32(blob, dim)
 		if err != nil {
-			return nil, fmt.Errorf("decode message %d chunk vector: %w", id, err)
+			return vector.CosineScores{}, fmt.Errorf("decode message %d chunk vector: %w", id, err)
 		}
-		score := cosine(vec, queryVec)
-		if best, seen := out[id]; !seen || score > best {
-			out[id] = score
+		vecNorm := norm(vec)
+		out.UnitLength = out.UnitLength && unitLength(vecNorm)
+		score := cosine(vec, queryVec, vecNorm, queryNorm)
+		if best, seen := out.Scores[id]; !seen || score > best {
+			out.Scores[id] = score
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate chunk rows: %w", err)
+		return vector.CosineScores{}, fmt.Errorf("iterate chunk rows: %w", err)
 	}
 	return out, nil
 }
@@ -83,17 +87,27 @@ func (b *Backend) queryDimension(ctx context.Context, gen vector.GenerationID, q
 	return dim, nil
 }
 
-// cosine returns the cosine similarity of two equal-length vectors, or 0
-// when either is zero.
-func cosine(a, b []float32) float64 {
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
+// norm returns the length of v.
+func norm(v []float32) float64 {
+	var sum float64
+	for _, x := range v {
+		sum += float64(x) * float64(x)
 	}
+	return math.Sqrt(sum)
+}
+
+// unitLength reports that a length is 1, within float32 rounding.
+func unitLength(n float64) bool { return math.Abs(n-1) <= 1e-3 }
+
+// cosine returns the cosine similarity of two equal-length vectors with
+// lengths normA and normB, or 0 when either is zero.
+func cosine(a, b []float32, normA, normB float64) float64 {
 	if normA == 0 || normB == 0 {
 		return 0
 	}
-	return dot / math.Sqrt(normA*normB)
+	var dot float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+	}
+	return dot / (normA * normB)
 }

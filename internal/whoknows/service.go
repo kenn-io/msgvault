@@ -48,7 +48,7 @@ type Service struct {
 // cosineScorer is an index whose search score is not cosine similarity, as
 // sqlite-vec's 1 - L2 distance is not, so it scores the hits again.
 type cosineScorer interface {
-	MessageCosines(ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64) (map[int64]float64, error)
+	MessageCosines(ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
 }
 
 // searchTypes are the message types worth searching for authors: everything
@@ -121,8 +121,10 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 	if err != nil {
 		return nil, err
 	}
-	counted := similarities(scores, hits, p.MinScore)
-	if s.poolFull(meta, len(hits), len(counted) > 0) {
+	// More matching messages may lie beyond a full pool when a hit cleared
+	// the floor, or when the index can't vouch that its order is cosine order.
+	counted := similarities(scores.Scores, hits, p.MinScore)
+	if (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength) {
 		out.Limits = append(out.Limits, LimitPoolFull)
 	}
 	unembedded, err := s.unembedded(ctx, hits, meta.Generation.ID)
@@ -133,28 +135,6 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		out.Limits = append(out.Limits, LimitNotEmbedded)
 	}
 	return s.attribute(ctx, counted)
-}
-
-// poolFull reports that the search filled its pool and more matching messages
-// may lie beyond it. A full pool where no hit reached the floor is an
-// unrelated topic, unless the index ranked it by L2 distance with a query
-// that is not unit length. Such a provider does not normalize its vectors,
-// so L2 order is not cosine order and a match may sit outside the pool.
-func (s *Service) poolFull(meta hybrid.ResultMeta, hits int, counted bool) bool {
-	if !meta.PoolSaturated && hits < SearchPool {
-		return false
-	}
-	_, l2 := s.Index.(cosineScorer)
-	return counted || l2 && !unitLength(meta.QueryVector)
-}
-
-// unitLength reports that v's length is 1, within float32 rounding.
-func unitLength(v []float32) bool {
-	var sum float64
-	for _, x := range v {
-		sum += float64(x) * float64(x)
-	}
-	return math.Abs(math.Sqrt(sum)-1) <= 1e-3
 }
 
 // unembedded reports that a keyword-only hit has no vector in the searched
@@ -179,8 +159,9 @@ type scoredHit struct {
 }
 
 // vectorScores maps each hit the meaning search returned to its cosine
-// similarity to the topic. A keyword-only hit has none.
-func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta) (map[int64]float64, error) {
+// similarity to the topic. A keyword-only hit has none. A backend that
+// ranks by cosine distance, as pgvector does, scores hits by cosine already.
+func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta) (vector.CosineScores, error) {
 	scores := map[int64]float64{}
 	for _, hit := range hits {
 		if !math.IsNaN(hit.VectorScore) {
@@ -188,10 +169,10 @@ func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta
 		}
 	}
 	scorer, ok := s.Index.(cosineScorer)
-	if !ok || len(scores) == 0 {
-		return scores, nil
+	if !ok {
+		return vector.CosineScores{Scores: scores, UnitLength: true}, nil
 	}
-	return scorer.MessageCosines(ctx, meta.Generation.ID, meta.QueryVector, slices.Collect(maps.Keys(scores)))
+	return scorer.MessageCosines(ctx, meta.Generation.ID, meta.QueryVector, slices.Sorted(maps.Keys(scores)))
 }
 
 // similarities returns the hits whose cosine similarity to the topic reaches
