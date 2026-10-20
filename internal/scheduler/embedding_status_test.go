@@ -45,7 +45,7 @@ func TestEmbeddingJobStatus(t *testing.T) {
 			defer func() { <-s.Stop().Done() }()
 			require.NoError(s.SetEmbedJob(&EmbedJob{Worker: runner, Backend: backend}, "", true))
 			require.NoError(s.AddAccount("synthetic@example.com", "0 0 * * *"))
-			require.NoError(s.TriggerSync("synthetic@example.com"))
+			require.NoError(s.TriggerSync("synthetic@example.com", false))
 			<-runner.gate
 			status := s.EmbeddingStatus()
 			assert.Equal("running", status.Job.State)

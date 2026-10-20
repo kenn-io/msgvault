@@ -63,7 +63,7 @@ func TestFilenameDiscoverySchedulerOneBatch(t *testing.T) {
 		var count int
 		require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM filename_discovery_entries`).Scan(&count))
 		assert.Zero(count, "registration never bootstraps the archive")
-		disposition, err := sched.StartJob("filename-discovery")
+		disposition, err := sched.StartJob("filename-discovery", false)
 		require.NoError(err)
 		assert.Equal(scheduler.JobStarted, disposition)
 		<-gate.waiting
@@ -93,7 +93,7 @@ func TestFilenameDiscoverySchedulerCancellation(t *testing.T) {
 		gate := &filenameSchedulerGate{waiting: make(chan struct{}), permit: make(chan struct{})}
 		sched := scheduler.New(nil).WithWorkTracker(gate)
 		require.NoError(registerFilenameDiscoveryJob(sched, f.Store))
-		_, err := sched.StartJob("filename-discovery")
+		_, err := sched.StartJob("filename-discovery", false)
 		require.NoError(err)
 		<-gate.waiting
 		<-sched.Stop().Done()
@@ -130,7 +130,7 @@ func TestFilenameDiscoveryWarmMaintenanceDoesNotExtendIdleTimeout(t *testing.T) 
 		timeout := 100 * time.Millisecond
 		fired := make(chan struct{})
 		idle := api.NewIdleTracker(timeout, func() { close(fired) })
-		sched, media := newServeSchedulers(nil, testDiscardLogger(), idle, nil)
+		sched, media := newServeSchedulers(nil, testDiscardLogger(), idle, nil, nil)
 		t.Cleanup(func() { <-sched.Stop().Done(); <-media.Stop().Done() })
 		require.NoError(registerFilenameDiscoveryJob(sched, f.Store))
 		started := time.Now()

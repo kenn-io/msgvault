@@ -50,7 +50,7 @@ var multimodalSearchCmd = &cobra.Command{
 	Use:   "search [text]",
 	Short: "Search attachment pixels by text or a query image",
 	Args:  cobra.ArbitraryArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) (result error) {
 		text := strings.TrimSpace(strings.Join(args, " "))
 		if (text == "") == (multimodalSearchImage == "") {
 			return usageErr(cmd, errors.New("provide exactly one text query or --image"))
@@ -106,6 +106,9 @@ var multimodalSearchCmd = &cobra.Command{
 			return err
 		}
 		defer func() { _ = client.Close() }()
+		if multimodalSearchCursor == "" {
+			defer reportSuccessfulCLIAction(cmd, client, "search_run", "search_type", "semantic", &result)
+		}
 		var after, before *time.Time
 		if multimodalSearchAfter != "" {
 			parsed, parseErr := time.Parse("2006-01-02", multimodalSearchAfter)

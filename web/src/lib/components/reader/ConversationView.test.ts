@@ -1,9 +1,21 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
+import { createAPIClient as createClient } from '../../api/client';
 import ConversationView from './ConversationView.svelte';
 
+const telemetryEvents: unknown[] = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+afterEach(() => { vi.useRealTimers(); });
+function createAPIClient(fetchFn: typeof fetch) {
+  return createClient(async (input, init) => {
+    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+      telemetryEvents.push(await (input as Request).json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    return fetchFn(input, init);
+  });
+}
 function message(id: number, type = 'email') {
   return {
     id,
@@ -374,32 +386,59 @@ describe('ConversationView', () => {
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/conversations/7');
   });
 
-  it('fetches an omitted body through the message endpoint when its card expands', async () => {
+  it.each(['visible', 'visibilitychange', 'focus', 'destroy'])('fetches an omitted body and reports once readable after %s', async (trigger) => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
     const requests: Request[] = [];
+    let resolveBody!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const url = new URL(request.url);
       if (url.pathname === '/api/v1/messages/1') {
-        return Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
+        return new Promise<Response>((resolve) => { resolveBody = resolve; });
       }
       return Response.json({
-        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
+        id: 7, anchor_id: 1, messages: [omittedMessage(1), message(2)],
         has_before: false, has_after: false, total: 2
       });
     });
 
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
-    });
+    const client = createAPIClient(fetchFn);
+    const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
 
-    await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    await screen.findByText('Loading message…');
+    expect(screen.queryByText('Fetched body 1')).toBeNull();
+    expect(telemetryEvents).toHaveLength(0);
+    resolveBody(Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' }));
 
     const card = await screen.findByRole('article', { name: 'Message 1' });
     await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
     expect(requests).toHaveLength(2);
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
+    if (trigger !== 'visible') {
+      expect(telemetryEvents).toHaveLength(0);
+      if (trigger === 'destroy') view.unmount();
+      visibility.mockReturnValue('visible');
+      if (trigger === 'visibilitychange') await fireEvent(document, new Event('visibilitychange'));
+      else await fireEvent(window, new Event('focus'));
+    }
+    if (trigger === 'destroy') {
+      expect(telemetryEvents).toHaveLength(0);
+    } else {
+      await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));
+      const today = Date.now();
+      vi.useFakeTimers({ toFake: ['Date'], now: today });
+      await fireEvent(window, new Event('focus'));
+      vi.setSystemTime(today + 86_400_000);
+      await fireEvent(window, new Event('focus'));
+      // A same-day focus would have made this three.
+      await waitFor(() => expect(telemetryEvents).toHaveLength(2));
+      view.unmount();
+      vi.setSystemTime(today + 2 * 86_400_000);
+      await fireEvent(window, new Event('focus'));
+      expect(telemetryEvents).toHaveLength(2);
+    }
+    visibility.mockRestore();
   });
 
   it('surfaces a failed body fetch inside the card and retries on re-expand', async () => {

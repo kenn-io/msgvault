@@ -4453,7 +4453,7 @@ export const triggerSync = (
   );
 };
 /**
- * @summary Report a web or terminal UI usage event
+ * @summary Report a web, terminal UI, or interactive CLI usage event
  */
 export const captureTelemetryEvent = (
   telemetryEventRequest: TelemetryEventRequest,

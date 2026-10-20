@@ -47,6 +47,53 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it.each(['text', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
+    const events: Array<{ properties: { search_type: string } }> = [];
+    let textSearchRequests = 0, resolveStale!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async (input): Promise<Response> => {
+      if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+        events.push(await (input as Request).json());
+        return Response.json({ status: 'queued' }, { status: 202 });
+      }
+      return kind === 'text' && ++textSearchRequests === 2 ? new Promise<Response>((resolve) => { resolveStale = resolve; }) : Response.json(response());
+    });
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { query: kind === 'text' || kind === 'combined' ? 'needle' : '', search_mode: 'full_text', filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' },
+    });
+    await screen.findByText('fixture.pdf');
+    await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'text' || kind === 'combined' ? ['text'] : []));
+    if (kind === 'text') {
+      const search = (query: string, search_mode: 'full_text' | 'semantic' = 'full_text') => rendered.rerender({ predicate: { query, search_mode, filters: [], presentation: 'table' } });
+      await search('superseded', 'semantic');
+      await waitFor(() => expect(resolveStale).toBeDefined());
+      await search('current');
+      await waitFor(() => expect(textSearchRequests).toBe(3));
+      resolveStale(Response.json(response()));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
+      await search('');
+      await waitFor(() => expect(textSearchRequests).toBe(4));
+      await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+      expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']);
+      await search('current');
+      await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text']));
+      await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' } });
+      return waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text', 'text', 'text']));
+    }
+    await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    if (kind === 'combined') await waitFor(() => expect(events.map((e) => e.properties.search_type)).toEqual(['text', 'text']));
+    events.length = 0;
+    if (kind === 'image') {
+      await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
+    } else {
+      await fireEvent.input(screen.getByRole('searchbox', { name: 'Search attachment pixels' }), { target: { value: 'blue sky' } });
+    }
+    await waitFor(() => expect(events.at(-1)?.properties.search_type).toBe('semantic'), { timeout: 5000 });
+    expect(events.map((e) => e.properties.search_type)).toEqual(kind === 'combined' ? ['text', 'semantic'] : ['semantic']);
+  });
+
   it.each([
     {
       state: 'loading',

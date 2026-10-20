@@ -214,6 +214,10 @@ The PostgreSQL targets keep their existing connection-oriented concurrency
 limits; setting `MSGVAULT_TEST_DB` disables automatic scaling in `make test` too.
 CI's explicit `test-unsharded` and package-shard jobs keep their existing layout.
 
+Successful Bash shards and the Windows slow-packages job print named passing
+and skipped test outcomes, including subtests, followed by the package result.
+Failed runs print the full verbose test output for diagnosis.
+
 ## Lint & Format
 
 ```bash

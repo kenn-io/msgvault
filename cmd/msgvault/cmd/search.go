@@ -178,7 +178,7 @@ Examples:
 	},
 }
 
-func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
+func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.logger == nil {
 		return errors.New("invocation state is unavailable")
@@ -189,6 +189,9 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) error {
 		return fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = s.Close() }()
+	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" {
+		defer reportSuccessfulCLIAction(cmd, s, "search_run", "search_type", "text", &result)
+	}
 
 	prefix := "Searching..."
 	if info.Kind == HTTPStoreConfiguredRemote || info.Kind == HTTPStoreAgentDelegated {

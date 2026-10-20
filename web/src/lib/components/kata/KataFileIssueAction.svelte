@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { Button, escapeCloses, Modal, TextInput } from '@kenn-io/kit-ui';
   import { searchDocuments } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
@@ -6,6 +7,7 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_WINDOW, type EvidenceSelector } from '../../kata/evidence';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
+  import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
   let { client, attachmentID, messageID, filename }: {
@@ -19,20 +21,28 @@
   let busy = $state(false);
   let searched = $state(false);
   let error = $state('');
-
+  let generation = 0;
+  let controller: AbortController | undefined;
+  onDestroy(close);
 
   async function search(): Promise<void> {
     if (!query.trim() || busy) return;
+    const request = ++generation, submitted = query.trim();
+    controller?.abort();
+    const requestController = new AbortController();
+    controller = requestController;
     busy = true; error = ''; hits = []; searched = true;
     try {
-      const { data, error: failure } = await searchDocuments({ q: query.trim(), attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, client);
+      const { data, error: failure } = await searchDocuments({ q: submitted, attachment_id: attachmentID, message_id: messageID, mode: 'lexical', limit: 20 }, { ...client, signal: requestController.signal });
+      if (request !== generation) return;
       if (!data) throw new Error(errorMessage(failure, 'This file has no searchable text yet.'));
+      reportWhenVisible(() => reportSearch(client, submitted, 'full_text'), requestController.signal);
       // A filename match names the file, not a passage in it.
       hits = data.results.filter((hit) => hit.attachment_id === attachmentID && hit.message_id === messageID && hit.extraction_id && hit.chunk_key && hit.matched_signals.includes('content'));
     } catch (cause) {
-      error = errorMessage(cause, 'Unable to search this file.');
+      if (request === generation) error = errorMessage(cause, 'Unable to search this file.');
     } finally {
-      busy = false;
+      if (request === generation) busy = false;
     }
   }
 
@@ -42,7 +52,7 @@
     selected = { kind: 'document_chunk', attachment_id: attachmentID, message_id: messageID, extraction_id: hit.extraction_id, chunk_key: hit.chunk_key, start_rune: hit.excerpt_start_rune, max_chars: EVIDENCE_WINDOW };
   }
 
-  function close(): void { open = false; selected = undefined; }
+  function close(): void { generation++; controller?.abort(); busy = false; open = false; selected = undefined; }
 
   // Every kit-ui Modal hears Escape on the window, and the file viewer's was
   // registered first; claiming it during capture closes only this picker.

@@ -47,6 +47,8 @@ const defaultThreadMessageLimit = 1000
 type Options struct {
 	// ReportScreen posts a fixed screen name through the selected daemon.
 	ReportScreen func(context.Context, string) error
+	// ReportAction posts fixed action properties through the selected daemon.
+	ReportAction func(context.Context, string, string, string) error
 	DataDir      string
 	ExportDir    string
 	Version      string
@@ -366,6 +368,10 @@ type Model struct {
 	reportedDay    string
 	contentScreen  string
 
+	reportAction       func(context.Context, string, string, string) error
+	visibleDetailID    int64
+	messageReportedDay string
+
 	// Top-level mode: Email or Texts
 	mode tuiMode
 
@@ -563,6 +569,7 @@ func New(engine query.Engine, opts Options) Model {
 
 	return Model{
 		reportScreen:          opts.ReportScreen,
+		reportAction:          opts.ReportAction,
 		contentScreen:         "email",
 		engine:                engine,
 		textEngine:            textEngine,
@@ -641,6 +648,7 @@ func (m Model) checkForUpdate() tea.Cmd {
 type dataLoadedMsg struct {
 	rows                   []query.AggregateRow
 	filteredStats          *query.TotalStats // distinct message stats when search is active
+	searchQuery            string
 	err                    error
 	requestID              uint64 // To detect stale responses
 	presentationGeneration uint64
@@ -779,7 +787,7 @@ func (m Model) loadData() tea.Cmd {
 			}
 
 			return dataLoadedMsg{
-				rows: rows, filteredStats: filteredStats, err: err, requestID: requestID,
+				rows: rows, filteredStats: filteredStats, searchQuery: searchTerm, err: err, requestID: requestID,
 				presentationGeneration: presentationGeneration,
 			}
 		},
@@ -903,6 +911,8 @@ type searchResultsMsg struct {
 	messages               []query.MessageSummary
 	totalCount             int64             // Total matching messages (for "N of M" display)
 	stats                  *query.TotalStats // Aggregate stats for the search results (size, attachments, etc.)
+	query                  string
+	searchMode             searchModeKind
 	err                    error
 	requestID              uint64 // To detect stale responses
 	append                 bool   // True if these results should be appended (pagination)
@@ -1093,6 +1103,8 @@ func (m Model) loadSearchWithOffset(queryStr string, offset int, appendResults b
 				messages:               results,
 				totalCount:             totalCount,
 				stats:                  stats,
+				query:                  queryStr,
+				searchMode:             m.searchMode,
 				err:                    err,
 				requestID:              requestID,
 				append:                 appendResults,
@@ -1360,7 +1372,7 @@ func (m *Model) startSpinner() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 	defer func() {
 		updated, ok := result.(Model)
-		if !ok || updated.reportScreen == nil || updated.width == 0 || updated.quitting {
+		if !ok || updated.reportScreen == nil && updated.reportAction == nil || updated.width == 0 || updated.quitting {
 			return
 		}
 		if updated.transitionBuffer == "" {
@@ -1372,16 +1384,20 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 		}
 		day := time.Now().UTC().Format(time.DateOnly)
 		_, interaction := msg.(tea.KeyPressMsg)
-		if screen != updated.reportedScreen || interaction && day != updated.reportedDay {
+		if updated.reportScreen != nil && (screen != updated.reportedScreen || interaction && day != updated.reportedDay) {
 			updated.reportedScreen, updated.reportedDay = screen, day
 			report := updated.reportScreen
-			command = tea.Batch(command, func() tea.Msg {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-				defer cancel()
-				_ = report(ctx, screen)
-				return nil
-			})
+			command = tea.Batch(command, reportTelemetryCmd(func(ctx context.Context) error { return report(ctx, screen) }))
 		}
+		var detailID int64
+		if detail := updated.displayedDetail(); detail != nil && updated.transitionBuffer == "" && !updated.settings.active {
+			detailID = detail.ID
+		}
+		if detailID != 0 && (detailID != updated.visibleDetailID || updated.mode != m.mode || interaction && day != updated.messageReportedDay) {
+			updated.messageReportedDay = day
+			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
+		}
+		updated.visibleDetailID = detailID
 		result = updated
 	}()
 	switch msg := msg.(type) {
@@ -1586,7 +1602,7 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 	}
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, nil
+	return m, m.acceptedSearchAction(msg.query, searchModeFast)
 }
 
 // handleTextSearchResult processes text search results.
@@ -1611,7 +1627,7 @@ func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.C
 	m.textState.unfilteredMessages = nil
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, nil
+	return m, m.acceptedSearchAction(msg.query, searchModeFast)
 }
 
 // handleTextStatsLoaded processes text stats load completion.
@@ -1701,6 +1717,9 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	} else if m.level == levelAggregates {
 		// Clear contextStats when no search filter at top level
 		m.contextStats = nil
+	}
+	if active {
+		return m, m.acceptedSearchAction(msg.searchQuery, searchModeFast)
 	}
 	return m, nil
 }
@@ -1974,6 +1993,9 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 		m.appendSearchResults(msg)
 	} else {
 		m.replaceSearchResults(msg)
+	}
+	if active && !msg.append {
+		return m, m.acceptedSearchAction(msg.query, msg.searchMode)
 	}
 	return m, nil
 }
@@ -2532,4 +2554,47 @@ func (m Model) exportAttachments() (tea.Model, tea.Cmd) {
 	m.loading = true
 	m.exportSelection = nil
 	return m, cmd
+}
+
+// displayedDetail returns the message or meeting detail the current screen
+// renders, or nil when no reader is visible.
+func (m Model) displayedDetail() *query.MessageDetail {
+	switch {
+	case m.mode == modeEmail && m.level == levelMessageDetail,
+		m.mode == modeTexts && m.textState.level == textLevelDetail,
+		m.mode == modePeople && (m.peopleState.level == peopleLevelActivityMessage || m.peopleState.level == peopleLevelMessage):
+		return m.messageDetail
+	case m.mode == modeMeetings && m.meetingState.level == meetingLevelDetail,
+		m.mode == modePeople && m.peopleState.level == peopleLevelMeetingDetail:
+		return m.meetingState.detail
+	default:
+		return nil
+	}
+}
+
+func (m Model) reportActionCmd(event, property, value string) tea.Cmd {
+	if m.reportAction == nil {
+		return nil
+	}
+	return reportTelemetryCmd(func(ctx context.Context) error { return m.reportAction(ctx, event, property, value) })
+}
+
+func reportTelemetryCmd(report func(context.Context) error) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = report(ctx)
+		return nil
+	}
+}
+
+func (m Model) acceptedSearchAction(query string, mode searchModeKind) tea.Cmd {
+	if strings.TrimSpace(query) == "" {
+		return nil
+	}
+	kind := "text"
+	if mode == searchModeSemantic {
+		kind = "hybrid"
+	}
+	return m.reportActionCmd("search_run", "search_type", kind)
 }

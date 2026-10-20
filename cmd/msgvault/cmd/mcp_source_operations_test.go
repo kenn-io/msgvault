@@ -544,7 +544,7 @@ func TestMCPSourceStatusRetainsRealSchedulerQueue(t *testing.T) {
 	sched := scheduler.New(func(context.Context, string) error { return nil }).WithWorkTracker(gate)
 	requirements.NoError(sched.AddAccount("queued@example.com", "0 2 * * *"))
 	t.Cleanup(func() { release(); sched.Stop() })
-	requirements.NoError(sched.TriggerSync("queued@example.com"))
+	requirements.NoError(sched.TriggerSync("queued@example.com", false))
 	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: st, Scheduler: &schedulerAdapter{scheduler: sched}, Logger: slog.New(slog.DiscardHandler)}))
 	var status generated.SourceStatusResponse
 	requirements.Eventually(func() bool {

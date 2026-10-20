@@ -211,7 +211,7 @@ func TestPlaudAuthorizationPreflightUsesOwningDaemon(t *testing.T) {
 		_, _ = fmt.Fprintln(w)
 		event := api.CLIRunEvent{Type: "complete"}
 		if runErr != nil {
-			event = api.CLIRunEvent{Type: "error", Error: classifyDaemonCLIWaitErr(runErr, req.Args).Error()}
+			event = api.CLIRunEvent{Type: "error", Error: classifyDaemonCLIWaitErr(runErr, req.Args, nil).Error()}
 		}
 		assert.NoError(json.MarshalWrite(w, event))
 		_, _ = fmt.Fprintln(w)

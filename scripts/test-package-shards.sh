@@ -17,7 +17,8 @@ shard_count=${2:-4}
 tags=${3:-}
 timeout=${4:-60m}
 
-package_dir=$(go list ${tags:+-tags "$tags"} -f '{{.Dir}}' "$package")
+package_info=$(go list ${tags:+-tags "$tags"} -f '{{.Dir}}{{"\t"}}{{.ImportPath}}' "$package")
+IFS=$'\t' read -r package_dir import_path <<<"$package_info"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -67,7 +68,7 @@ for ((i = 0; i < active_shards; i++)); do
 	pattern="^($(paste -sd '|' "$work/shard-$i.names"))$"
 	(
 		cd "$package_dir"
-		exec "$test_binary" "-test.run=$pattern" "-test.timeout=$timeout"
+		exec "$test_binary" -test.v "-test.run=$pattern" "-test.timeout=$timeout"
 	) >"$work/shard-$i.out" 2>&1 &
 	pids+=($!)
 done
@@ -76,11 +77,14 @@ failed=0
 for ((i = 0; i < active_shards; i++)); do
 	count=$(( $(wc -l <"$work/shard-$i.names") ))
 	if wait "${pids[$i]}"; then
+		awk '/^[[:space:]]*--- (PASS|SKIP): /' "$work/shard-$i.out"
+		printf 'ok\t%s\n' "$import_path"
 		echo "ok shard $((i + 1)): $count tests"
 	else
 		failed=1
 		echo "shard $((i + 1)) failed" >&2
 		cat "$work/shard-$i.out"
+		printf 'FAIL\t%s\n' "$import_path"
 	fi
 done
 

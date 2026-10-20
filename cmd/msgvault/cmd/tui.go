@@ -124,6 +124,7 @@ HTTP Mode:
 			SettingsBackend:       backend.settings,
 			CollectionScopeLister: collectionScopes,
 			ReportScreen:          tuiScreenReporter(backend.client),
+			ReportAction:          tuiActionReporter(backend.client),
 		})
 		p := tea.NewProgram(model)
 		noticeCtx, stopNoticeRefresh := context.WithCancel(cmd.Context())
@@ -162,34 +163,33 @@ HTTP Mode:
 }
 
 func reportTUISession(ctx context.Context, cfg *config.Config, info HTTPStoreInfo, duration time.Duration) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-	defer cancel()
+	inv := invocationFromContext(ctx)
+	if inv == nil {
+		return
+	}
 	clientConfig := daemonclient.Config{URL: info.URL, APIKey: httpStoreAPIKey(info, cfg), AllowInsecure: true}
 	if info.Kind == HTTPStoreConfiguredRemote {
 		clientConfig.AllowInsecure = cfg.Remote.AllowInsecure
 	}
-	client, err := newDaemonCLIClient(ctx, clientConfig)
-	if err != nil {
-		return
-	}
-	defer func() { _ = client.Close() }()
-	// daemonclient.New already built and cached the generated client.
-	generated, _ := client.GeneratedClient()
-	_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
-		Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
+	inv.sends.Go(func() {
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		client, err := newDaemonCLIClient(ctx, clientConfig)
+		if err != nil {
+			return
+		}
+		defer func() { _ = client.Close() }()
+		// daemonclient.New already built and cached the generated client.
+		generated, _ := client.GeneratedClient()
+		_, _ = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
+			Body: &apiclient.CaptureTelemetryEventBody{Event: telemetry.EventSessionEnded, Properties: map[string]any{"surface": "tui", "duration_bucket": telemetry.DurationBucket(duration)}},
+		})
 	})
 }
 
 func tuiScreenReporter(client *daemonclient.Client) func(context.Context, string) error {
 	return func(ctx context.Context, screen string) error {
-		generated, err := client.GeneratedClient()
-		if err != nil {
-			return err
-		}
-		_, err = generated.CaptureTelemetryEvent(ctx, &apiclient.CaptureTelemetryEventRequestOptions{
-			Body: &apiclient.CaptureTelemetryEventBody{Event: "screen_viewed", Properties: map[string]any{"screen": screen, "surface": "tui"}},
-		})
-		return err
+		return sendActionTelemetry(ctx, client, "tui", "screen_viewed", "screen", screen)
 	}
 }
 
@@ -398,4 +398,10 @@ func init() {
 	_ = tuiCmd.Flags().MarkHidden("force-sql")
 	_ = tuiCmd.Flags().MarkHidden("no-cache-build")
 	_ = tuiCmd.Flags().MarkHidden("no-sqlite-scanner")
+}
+
+func tuiActionReporter(client *daemonclient.Client) func(context.Context, string, string, string) error {
+	return func(ctx context.Context, event, property, value string) error {
+		return sendActionTelemetry(ctx, client, "tui", event, property, value)
+	}
 }

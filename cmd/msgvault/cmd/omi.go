@@ -203,6 +203,7 @@ Examples:
 		interruptCtx, stop := withInterruptCancel(cmd, "\nInterrupted. Finishing current conversation...")
 		defer stop()
 
+		paused := false
 		var pendingWrites int64
 		finish := func(identifier string, err error) error {
 			return (meetingSyncRun{provider: "omi", identifier: identifier, writes: pendingWrites, err: err}).finish(func() error { return rebuildOmiCacheAfterWrite(dbPath, state) })
@@ -227,6 +228,7 @@ Examples:
 				pendingWrites += sum.MeetingsAdded + sum.MeetingsUpdated
 			}
 			if err == nil && sum != nil && sum.PauseReason != nil {
+				paused = true
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Omi sync for %s paused. Run the same command again", src.Identifier)
 				if sum != nil && sum.CheckpointSaved {
 					_, _ = fmt.Fprint(cmd.OutOrStdout(), " to continue the saved scan")
@@ -261,7 +263,14 @@ Examples:
 			}
 		}
 
-		return rebuildOmiCacheAfterWrite(dbPath, state)
+		if err := rebuildOmiCacheAfterWrite(dbPath, state); err != nil {
+			return err
+		}
+		if paused && isDaemonCLISubprocess() {
+			cmd.SilenceErrors = true
+			return ErrSyncPaused
+		}
+		return nil
 	},
 }
 

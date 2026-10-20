@@ -5,8 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	"github.com/netresearch/go-cron"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/cronexpr"
 )
 
 type muesliWatchSource struct {
@@ -21,7 +22,7 @@ func muesliWatchSources(sources []config.MuesliSource) ([]muesliWatchSource, err
 		if !source.Enabled || source.Schedule == "" {
 			continue
 		}
-		schedule, err := cron.ParseStandard(source.Schedule)
+		schedule, err := cronexpr.Parser.Parse(source.Schedule)
 		if err != nil {
 			return nil, errors.New("invalid Muesli rescan schedule")
 		}

@@ -85,10 +85,13 @@ func runDaemonCLICommandHTTPWithEnv(
 	}
 
 	draftFailureReported := false
+	paused := false
 	runErr := st.RunCLICommand(cmd.Context(), daemonclient.CLIRunRequest{
 		Args: args, Env: env, Cwd: cwd, GrantDecided: grantDecided,
 	}, func(stream, data string) error {
 		switch stream {
+		case "outcome":
+			paused = paused || data == "paused"
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
 				return fmt.Errorf("write CLI stdout: %w", err)
@@ -111,6 +114,9 @@ func runDaemonCLICommandHTTPWithEnv(
 		// letting cobra print a second, redundant error line.
 		cmd.SilenceErrors = true
 		return errCLISubprocessProxied
+	}
+	if runErr == nil && !paused && manualSyncCLICommand(args) {
+		reportCLISyncFinished(cmd, st)
 	}
 	return runErr
 }

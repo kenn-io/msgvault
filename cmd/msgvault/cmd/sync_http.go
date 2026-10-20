@@ -77,7 +77,7 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		return err
 	}
 
-	return st.RunCLISync(cmd.Context(), req, func(stream, data string) error {
+	err = st.RunCLISync(cmd.Context(), req, func(stream, data string) error {
 		switch stream {
 		case cliStreamStdout:
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), data); err != nil {
@@ -90,6 +90,10 @@ func runSyncHTTP(cmd *cobra.Command, req daemonclient.CLISyncRequest) error {
 		}
 		return nil
 	})
+	if err == nil {
+		reportCLISyncFinished(cmd, st)
+	}
+	return err
 }
 
 // preflightReauthManager is the subset of oauth.Manager the sync preflight
