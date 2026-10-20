@@ -15,8 +15,9 @@ type Signals struct {
 	ChannelsLong               int `json:"channels_long"`
 	ExcludedListEvents         int `json:"excluded_list_events"`
 	LargeAudienceInboundEvents int `json:"large_audience_inbound_events"`
-	// LastDate is the latest local date of a counted event, or empty.
-	LastDate       string   `json:"last_counted_date"`
+	// LastDate is the latest local date of a counted event, or empty. Previews and
+	// explanations report it as last_contact_date.
+	LastDate       string   `json:"-"`
 	Owner          bool     `json:"-"`
 	Emails         []string `json:"-"`
 	HasPhoneOrChat bool     `json:"-"`
