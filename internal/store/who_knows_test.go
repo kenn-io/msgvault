@@ -370,6 +370,18 @@ func TestTopicContactsGroupLinkedAndBoundSenders(t *testing.T) {
 	assert.Equal(got[ana], got[anaOther])
 }
 
+func TestTopicContactsUseNamedAliasWhenKeyHasNoName(t *testing.T) {
+	f := storetest.New(t)
+	key := f.EnsureParticipant("unnamed@example.net", "", "example.net")
+	alias := f.EnsureParticipant("alias@example.net", "Alias", "example.net")
+	_, err := f.Store.LinkParticipants(key, alias)
+	require.NoError(t, err)
+	got := contactsOf(f, key, alias)
+	want := store.TopicContact{Key: key, Name: "Alias", Email: "alias@example.net", OneWay: true}
+	assert.Equal(t, want, got[key])
+	assert.Equal(t, want, got[alias])
+}
+
 func TestTopicContactsReportWhomTheOwnerWroteTo(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

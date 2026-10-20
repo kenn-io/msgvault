@@ -369,7 +369,11 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 		             WITH RECURSIVE ` + topicFamilyCTEs("p.id = "+messageSender("m")) + `
 		             SELECT 1 FROM family WHERE ` + ownerParticipant("id", len(owner)) + `)))
 		FROM keyed k
-		JOIN participants kp ON kp.id = k.family_key
+		JOIN participants kp ON kp.id = COALESCE((
+		  SELECT p.id FROM family f JOIN participants p ON p.id = f.id
+		  WHERE f.seed = k.seed AND COALESCE(p.display_name, '') <> ''
+		  ORDER BY p.id LIMIT 1
+		), k.family_key)
 		LEFT JOIN seed_person sp ON sp.seed = k.seed
 		LEFT JOIN persons per ON per.id = sp.person_id
 		WHERE NOT EXISTS (
