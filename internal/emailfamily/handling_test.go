@@ -123,32 +123,37 @@ func TestEmailWorkHandlingIncompleteFactsStayVisibleAndScoped(t *testing.T) {
 
 func TestEmailWorkHandlingLongDirectAncestry(t *testing.T) {
 	assertions := assert.New(t)
-	const count = 5000
-	members := make([]Activity, 0, count)
-	for id := 1; id <= count; id++ {
+	const incomingCount = 499
+	members := make([]Activity, 0, incomingCount+1)
+	for id := 1; id <= incomingCount; id++ {
 		header := fmt.Sprintf("Message-ID: <m-%d@example.test>", id)
 		if id > 1 {
 			header += fmt.Sprintf("\r\nIn-Reply-To: <m-%d@example.test>", id-1)
 		}
-		member := workActivity(int64(id), 1, header, id%2 == 1, 1)
+		member := workActivity(int64(id), 1, header, true, id)
 		member.OccurredAt = time.Unix(int64(id), 0)
-		if id%2 == 0 {
-			member.SourceID = 2
-			member.ConfirmedSourceSender = true
-			member.PositiveSent = true
-			member.ExternalRecipient = true
-		}
 		members = append(members, member)
 	}
-	// Reversed ingestion order cannot change causal completion. This exercises
-	// thousands of real parsed direct links without a throughput/time assertion.
+	members = append(members, completedReply(incomingCount+1, fmt.Sprintf("m-%d@example.test", incomingCount), incomingCount+1))
+	// The production caller caps families at 500 members. One terminal reply
+	// must close the full direct ancestry even when ingestion order is reversed.
 	slices.Reverse(members)
 	got := Evaluate(members)
 	assertions.Equal("handled", got.State)
 	assertions.Empty(got.OutstandingEventIDs)
-	assertions.Len(got.OutboundEvidenceIDs, count/2)
-	assertions.Equal(int64(2), got.OutboundEvidenceIDs[0])
-	assertions.Equal(int64(count), got.OutboundEvidenceIDs[len(got.OutboundEvidenceIDs)-1])
+	assertions.Equal([]int64{incomingCount + 1}, got.OutboundEvidenceIDs)
+}
+
+func TestEmailWorkHandlingMultipleCompletedRepliesStayOrdered(t *testing.T) {
+	root := workActivity(1, 1, "Message-ID: <root@example.test>", true, 1)
+	child := workActivity(2, 1, "Message-ID: <child@example.test>\r\nIn-Reply-To: <root@example.test>", true, 2)
+	first := completedReply(3, "root@example.test", 3)
+	second := completedReply(4, "child@example.test", 4)
+
+	got := Evaluate([]Activity{second, child, first, root})
+
+	assert.Equal(t, "handled", got.State)
+	assert.Equal(t, []int64{3, 4}, got.OutboundEvidenceIDs)
 }
 
 func TestHandlingLocalDecisionCoversExactDuplicateCopies(t *testing.T) {

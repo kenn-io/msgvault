@@ -24,6 +24,14 @@ func TestRewriteGeneratedValidatorsRepairsKnownGeneratorGaps(t *testing.T) {
 	assertions.NotContains(string(got), "if p.SourceVersion != nil")
 	assertions.NotContains(string(got), "if p.SubjectRef != nil")
 	assertions.NotContains(string(got), "if p.Excerpt != nil")
+	assertions.NotContains(string(got), `typesValidator.Var(e.AccountAddress, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(e.RawSha256, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(e.Snippet, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(e.Subject, "required")`)
+	assertions.NotContains(string(got), `typesValidator.Var(e.OccurredAt, "required")`)
+	assertions.Contains(string(got), "OccurredAt time.Time")
+	assertions.Contains(string(got), "ActorRef string `json:\"actor_ref\"`")
+	assertions.NotContains(string(got), "ActorRef string `json:\"actor_ref\" validate:\"required\"`")
 	assertions.Contains(string(got), `typesValidator.Var(e.Grouping, "required,min=1,max=1")`)
 	assertions.Contains(string(got), `typesValidator.Var(f.Grouping, "required,min=1,max=1")`)
 	assertions.NotContains(string(got), exploreCacheRecoveryActionRequiredValidatorBlock())
@@ -76,8 +84,6 @@ func TestRewriteEmailFamilySourceSelectionQueriesEncodesExplicitEmptySlices(t *t
 	got, err := RewriteEmailFamilySourceSelectionQueries(fixture)
 	require.NoError(err)
 	assert.Equal(3, strings.Count(string(got), `params["source_id"] = ""`))
-	assert.Equal(3, strings.Count(string(got), "if params == nil"))
-	assert.Contains(string(got), "params = make(map[string]any, 1)")
 	again, err := RewriteEmailFamilySourceSelectionQueries(got)
 	require.NoError(err)
 	assert.Equal(got, again)
@@ -217,7 +223,19 @@ func (c CreateDailyNoteEntryRequest) Validate() error {
 	var errors runtime.ValidationErrors
 ` + dailyNoteDecoyValidatorBlock() + dailyNotePersonIDsValidatorBlock("omitempty,gte=1") + `
 }
-` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture()
+` + contactRouteEmptyStringValidatorFixture() + contactCandidateEmptyStringValidatorFixture() + emailFamilyEmptyStringValidatorFixture()
+}
+
+func emailFamilyEmptyStringValidatorFixture() string {
+	return "type EmailFamilyMember struct {\n\tAccountAddress string `json:\"account_address\" validate:\"required\"`\n\tRawSha256 string `json:\"raw_sha256\" validate:\"required\"`\n\tSnippet string `json:\"snippet\" validate:\"required\"`\n\tSubject string `json:\"subject\" validate:\"required\"`\n\tOccurredAt time.Time `json:\"occurred_at\" validate:\"required\"`\n}\n" +
+		"func (e EmailFamilyMember) Validate() error {\n\tvar errors runtime.ValidationErrors\n" +
+		"\tif err := typesValidator.Var(e.OccurredAt, \"required\"); err != nil {\n\t\terrors = errors.Append(\"OccurredAt\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(e.AccountAddress, \"required\"); err != nil {\n\t\terrors = errors.Append(\"AccountAddress\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(e.RawSha256, \"required\"); err != nil {\n\t\terrors = errors.Append(\"RawSha256\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(e.Snippet, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Snippet\", err)\n\t}\n" +
+		"\tif err := typesValidator.Var(e.Subject, \"required\"); err != nil {\n\t\terrors = errors.Append(\"Subject\", err)\n\t}\n\treturn errors\n}\n" +
+		"type EmailFamilyDecision struct {\n\tActorRef string `json:\"actor_ref\" validate:\"required\"`\n}\n" +
+		"func (e EmailFamilyDecision) Validate() error {\n\treturn runtime.ConvertValidatorError(typesValidator.Struct(e))\n}\n"
 }
 
 func contactRouteEmptyStringValidatorFixture() string {

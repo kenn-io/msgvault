@@ -989,10 +989,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	schemas := doc.Components.Schemas.Map()
 	// These response properties stay required in JSON, but an empty string is
-	// meaningful for canonical aliases, direct routes, unresolved routes, and
-	// candidates whose saved display name has been cleared.
+	// meaningful for canonical aliases, direct routes, unresolved routes,
+	// envelope rows without a saved address, and candidates whose display name
+	// has been cleared.
 	for _, field := range []struct{ schema, property string }{
 		{"ContactCandidate", "display_name"},
+		{"EmailFamilyEnvelope", "address"},
 		{"MessagingRoute", "merged_into_chat_id"},
 		{"MessagingRoute", "network"},
 		{"MessagingRoute", "network_label"},

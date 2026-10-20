@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	generated "go.kenn.io/msgvault/pkg/client/generated"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -41,6 +42,40 @@ func TestEmailFamilyHTTPReadsAndErrors(t *testing.T) {
 			assert.Equal("no-store", w.Header().Get("Cache-Control"))
 		}
 	}
+}
+
+func TestEmailFamilyHTTPResponseValidatesWithGeneratedClient(t *testing.T) {
+	require := require.New(t)
+	srv, st := newIdentityLinkTestServer(t)
+	source, err := st.GetOrCreateSource("imap", "family@example.test")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "thread", "Synthetic mail")
+	require.NoError(err)
+	id, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "seed", MessageType: "email"},
+		RawMIME: []byte("Message-ID: <seed@example.test>\r\nSubject: Undated mail\r\n\r\nSynthetic body"),
+	})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipant("legacy-sender@example.test", "Legacy sender", "example.test")
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES (?, ?, 'from', NULL)`), id, participantID)
+	require.NoError(err)
+	input := store.EmailFamilyDecisionInput{RequestKey: strings.Repeat("d", 32), Kind: "handled", MessageIDs: []int64{id}, ActorKind: "cli"}
+	preview, err := st.PreviewEmailFamilyDecisionContext(t.Context(), input)
+	require.NoError(err)
+	input.ExpectedFamilyRevision = preview.BeforeRevision
+	_, err = st.ApplyEmailFamilyDecisionContext(t.Context(), input)
+	require.NoError(err)
+
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d/family", id), nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var family generated.EmailFamily
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &family))
+	require.NoError(family.Validate())
+	require.Len(family.Members, 1)
+	require.Equal([]generated.EmailFamilyEnvelope{{Kind: "from", Address: ""}}, family.Members[0].Envelopes)
+	require.True(family.Members[0].OccurredAt.IsZero())
 }
 
 func TestEmailFamilyHTTPRequiresOwner(t *testing.T) {
@@ -117,6 +152,10 @@ func TestEmailFamilyDecisionHTTPPreviewApplyHistoryUndo(t *testing.T) {
 	assert.Equal(404, denied.Code, denied.Body.String())
 	response := request("POST", "/api/v1/messages/family/decisions/preview", input)
 	require.Equal(200, response.Code, response.Body.String())
+	var generatedPreview generated.EmailFamilyDecisionPreview
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &generatedPreview))
+	require.NoError(generatedPreview.Validate())
+	require.Empty(generatedPreview.Family.Decisions)
 	var preview store.EmailFamilyDecisionPreview
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &preview))
 	assert.Len(preview.Family.Members, 2)

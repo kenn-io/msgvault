@@ -35,6 +35,24 @@ function message(id: number, type = 'email') {
   };
 }
 
+// Keep conversation/body request assertions focused on their own endpoints.
+// RelatedCopies has its own tests for the family request and local decisions.
+function readerClient(fetchFn: typeof fetch) {
+  return createAPIClient(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    if (/^\/api\/v1\/messages\/\d+\/family$/.test(path)) {
+      const id = Number(path.split('/').at(-2));
+      return Response.json({
+        anchor_message_id: id, revision: 'fixture', truncated: false, decisions: [],
+        members: [{ message_id: id, linkage: { outcome: 'complete' } }],
+        handling: { state: 'unknown', reasons: [] },
+      });
+    }
+    return fetchFn(input, init);
+  });
+}
+
 function omittedMessage(id: number) {
   return { ...message(id), body: '', body_html: '', body_omitted: true };
 }
@@ -52,7 +70,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
@@ -82,7 +100,7 @@ describe('ConversationView', () => {
     }));
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
@@ -102,7 +120,7 @@ describe('ConversationView', () => {
 
     render(ConversationView, {
       props: {
-        client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2,
+        client: readerClient(fetchFn), conversationId: 7, anchorId: 2,
         start: '2026-07-19T00:00:00.000Z', end: '2026-07-20T00:00:00.000Z'
       }
     });
@@ -118,7 +136,7 @@ describe('ConversationView', () => {
       id: 7, anchor_id: 2, messages: [message(2)], has_before: false, has_after: false, total: 1
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -134,7 +152,7 @@ describe('ConversationView', () => {
     }));
     const onAnchorChange = vi.fn();
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -153,7 +171,7 @@ describe('ConversationView', () => {
       has_before: false, has_after: false, total: 2
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -178,7 +196,7 @@ describe('ConversationView', () => {
         id: 7, anchor_id: 2, messages: [message(1), message(2), message(3)],
         has_before: false, has_after: false, total: 3
       }));
-      const client = createAPIClient(fetchFn);
+      const client = readerClient(fetchFn);
       const rendered = render(ConversationView, {
         props: { client, conversationId: 7, anchorId: 2 }
       });
@@ -209,7 +227,7 @@ describe('ConversationView', () => {
         has_before: false, has_after: false, total: 2
       });
     });
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const rendered = render(ConversationView, {
       props: { client, conversationId: 7, anchorId: 2 }
     });
@@ -230,7 +248,7 @@ describe('ConversationView', () => {
         pending.set(conversation, resolve);
       });
     });
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const rendered = render(ConversationView, {
       props: { client, conversationId: 7, anchorId: 2 }
     });
@@ -265,7 +283,7 @@ describe('ConversationView', () => {
         pending.set(conversation, resolve);
       });
     });
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const rendered = render(ConversationView, {
       props: { client, conversationId: 7, anchorId: 2 }
     });
@@ -307,7 +325,7 @@ describe('ConversationView', () => {
         pending.set(anchor, { request, resolve, reject });
       });
     });
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const rendered = render(ConversationView, {
       props: { client, conversationId: 7, anchorId: 2 }
     });
@@ -335,7 +353,7 @@ describe('ConversationView', () => {
       throw new TypeError('connection refused');
     });
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation network error');
@@ -346,7 +364,7 @@ describe('ConversationView', () => {
       throw new DOMException('superseded', 'AbortError');
     });
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
@@ -358,7 +376,7 @@ describe('ConversationView', () => {
       error: 'conversation_unavailable', message: 'Conversation details are unavailable'
     }, { status: 503 }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
@@ -376,7 +394,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -403,7 +421,7 @@ describe('ConversationView', () => {
       });
     });
 
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
 
     await screen.findByText('Loading message…');
@@ -441,6 +459,34 @@ describe('ConversationView', () => {
     visibility.mockRestore();
   });
 
+  it('fetches an omitted body through the message endpoint when its collapsed card expands', async () => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const url = new URL(request.url);
+      if (url.pathname === '/api/v1/messages/1') {
+        return Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' });
+      }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [omittedMessage(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+
+    render(ConversationView, {
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
+    });
+
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+
+    const card = await screen.findByRole('article', { name: 'Message 1' });
+    await waitFor(() => expect(card.textContent).toContain('Fetched body 1'));
+    expect(requests).toHaveLength(2);
+    expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
+  });
+
   it('surfaces a failed body fetch inside the card and retries on re-expand', async () => {
     let bodyRequests = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -461,7 +507,7 @@ describe('ConversationView', () => {
     });
 
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
@@ -497,7 +543,7 @@ describe('ConversationView', () => {
         has_before: false, has_after: false, total: 2
       });
     });
-    const client = createAPIClient(fetchFn);
+    const client = readerClient(fetchFn);
     const rendered = render(ConversationView, {
       props: { client, conversationId: 7, anchorId: 2 }
     });
@@ -522,7 +568,7 @@ describe('ConversationView', () => {
       id: 7, anchor_id: 2, messages: [message(2)], has_before: true, has_after: true, total: 40
     }));
     render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
+      props: { client: readerClient(fetchFn), conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });

@@ -173,6 +173,10 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		{"ExploreCacheUnavailableResponse", "RecoveryAction", "e"},
 		{"Evidence", "Excerpt", "e"},
 		{"ContactCandidate", "DisplayName", "c"},
+		{"EmailFamilyMember", "AccountAddress", "e"},
+		{"EmailFamilyMember", "RawSha256", "e"},
+		{"EmailFamilyMember", "Snippet", "e"},
+		{"EmailFamilyMember", "Subject", "e"},
 		{"MessagingRoute", "MergedIntoChatID", "m"},
 		{"MessagingRoute", "Network", "m"},
 		{"MessagingRoute", "NetworkLabel", "m"},
@@ -203,6 +207,56 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		default:
 			return nil, shapeErr
 		}
+	}
+	memberStart := bytes.Index(result, []byte("type EmailFamilyMember struct {"))
+	if memberStart < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt field shape changed")
+	}
+	memberEndOffset := bytes.Index(result[memberStart:], []byte("\n}"))
+	if memberEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt field shape changed")
+	}
+	if !regexp.MustCompile(`\bOccurredAt\s+time\.Time\b`).Match(result[memberStart : memberStart+memberEndOffset]) {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt field shape changed")
+	}
+	validatorStart := bytes.Index(result, []byte("func (e EmailFamilyMember) Validate() error {"))
+	if validatorStart < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+	}
+	validatorEndOffset := bytes.Index(result[validatorStart:], []byte("\n}\n"))
+	if validatorEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+	}
+	validatorEnd := validatorStart + validatorEndOffset
+	occurredAtValidator := result[validatorStart:validatorEnd]
+	requiredOccurredAt := []byte("\tif err := typesValidator.Var(e.OccurredAt, \"required\"); err != nil {\n\t\terrors = errors.Append(\"OccurredAt\", err)\n\t}\n")
+	switch bytes.Count(occurredAtValidator, requiredOccurredAt) {
+	case 1:
+		rewritten := bytes.Replace(occurredAtValidator, requiredOccurredAt, nil, 1)
+		result = append(append(append([]byte(nil), result[:validatorStart]...), rewritten...), result[validatorEnd:]...)
+	case 0:
+	default:
+		return nil, errors.New("generated EmailFamilyMember.OccurredAt validator shape changed")
+	}
+	decisionStart := bytes.Index(result, []byte("type EmailFamilyDecision struct {"))
+	if decisionStart < 0 {
+		return nil, errors.New("generated EmailFamilyDecision.ActorRef field shape changed")
+	}
+	decisionEndOffset := bytes.Index(result[decisionStart:], []byte("\n}"))
+	if decisionEndOffset < 0 {
+		return nil, errors.New("generated EmailFamilyDecision.ActorRef field shape changed")
+	}
+	decisionEnd := decisionStart + decisionEndOffset
+	decisionFields := result[decisionStart:decisionEnd]
+	requiredActorRef := []byte("`json:\"actor_ref\" validate:\"required\"`")
+	emptyActorRef := []byte("`json:\"actor_ref\"`")
+	switch {
+	case bytes.Count(decisionFields, requiredActorRef) == 1 && bytes.Count(decisionFields, emptyActorRef) == 0:
+		fixed := bytes.Replace(decisionFields, requiredActorRef, emptyActorRef, 1)
+		result = append(append(append([]byte(nil), result[:decisionStart]...), fixed...), result[decisionEnd:]...)
+	case bytes.Count(decisionFields, requiredActorRef) == 0 && bytes.Count(decisionFields, emptyActorRef) == 1:
+	default:
+		return nil, errors.New("generated EmailFamilyDecision.ActorRef field shape changed")
 	}
 	const dailyNoteRequest = "CreateDailyNoteEntryRequest"
 	startMarker := []byte("func (c " + dailyNoteRequest + ") Validate() error {")

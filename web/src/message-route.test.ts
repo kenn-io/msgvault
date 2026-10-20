@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 import App from './App.svelte';
 import { createSessionController } from './lib/api/session.svelte';
@@ -21,6 +21,11 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
     if (url.pathname === '/api/session') return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
     if (url.pathname === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
     if (url.pathname === '/api/v1/messages/42001') return Response.json(message);
+    if (url.pathname === '/api/v1/messages/42001/family') return Response.json({
+      anchor_message_id: 42001, revision: 'fixture', truncated: false, decisions: [],
+      members: [{ message_id: 42001, linkage: { outcome: 'complete' } }],
+      handling: { state: 'unknown', reasons: [] },
+    });
     if (url.pathname === '/api/v1/conversations/71') {
       expect(url.searchParams.get('anchor')).toBe('42001');
       expect(url.searchParams.get('before')).toBe('25');
@@ -31,6 +36,7 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
   });
   render(App, { session });
   expect((await screen.findByRole('article', { name: 'Message 42001' })).textContent).toContain('The requested old message');
-  expect(requested.filter((path) => path.startsWith('/api/v1/messages/') || path.startsWith('/api/v1/conversations/'))).toHaveLength(2);
+  expect(requested.filter((path) => /^\/api\/v1\/messages\/\d+$/.test(path) || path.startsWith('/api/v1/conversations/'))).toHaveLength(2);
   expect(requested.some((path) => path.startsWith('/api/v1/explore'))).toBe(false);
+  await waitFor(() => expect(requested.filter((path) => path.endsWith('/family'))).toHaveLength(messageType === 'email' ? 1 : 0));
 });

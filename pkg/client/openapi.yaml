@@ -4594,6 +4594,9 @@ components:
       properties:
         address:
           type: string
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
         kind:
           type: string
       required:

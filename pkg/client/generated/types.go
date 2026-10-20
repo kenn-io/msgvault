@@ -4133,7 +4133,7 @@ func (e EmailFamily) Validate() error {
 
 type EmailFamilyDecision struct {
 	ActorKind           string     `json:"actor_kind" validate:"required"`
-	ActorRef            string     `json:"actor_ref" validate:"required"`
+	ActorRef            string     `json:"actor_ref"`
 	CreatedAt           time.Time  `json:"created_at" validate:"required"`
 	ExpectedMemberCount int64      `json:"expected_member_count"`
 	ID                  int64      `json:"id"`
@@ -4219,7 +4219,7 @@ func (e EmailFamilyDecisionUndo) Validate() error {
 }
 
 type EmailFamilyEnvelope struct {
-	Address string `json:"address" validate:"required"`
+	Address string `json:"address" validate:"omitempty"`
 	Kind    string `json:"kind" validate:"required"`
 }
 
@@ -4269,9 +4269,6 @@ type EmailFamilyMember struct {
 
 func (e EmailFamilyMember) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(e.AccountAddress, "required"); err != nil {
-		errors = errors.Append("AccountAddress", err)
-	}
 	if err := typesValidator.Var(e.AccountPath, "required"); err != nil {
 		errors = errors.Append("AccountPath", err)
 	}
@@ -4293,17 +4290,8 @@ func (e EmailFamilyMember) Validate() error {
 			errors = errors.Append("Linkage", err)
 		}
 	}
-	if err := typesValidator.Var(e.OccurredAt, "required"); err != nil {
-		errors = errors.Append("OccurredAt", err)
-	}
 	if err := typesValidator.Var(e.ProviderThreadID, "required"); err != nil {
 		errors = errors.Append("ProviderThreadID", err)
-	}
-	if err := typesValidator.Var(e.RawSha256, "required"); err != nil {
-		errors = errors.Append("RawSha256", err)
-	}
-	if err := typesValidator.Var(e.Snippet, "required"); err != nil {
-		errors = errors.Append("Snippet", err)
 	}
 	if err := typesValidator.Var(e.SourceIdentifier, "required"); err != nil {
 		errors = errors.Append("SourceIdentifier", err)
@@ -4313,9 +4301,6 @@ func (e EmailFamilyMember) Validate() error {
 	}
 	if err := typesValidator.Var(e.SourceType, "required"); err != nil {
 		errors = errors.Append("SourceType", err)
-	}
-	if err := typesValidator.Var(e.Subject, "required"); err != nil {
-		errors = errors.Append("Subject", err)
 	}
 	if err := typesValidator.Var(e.UnavailableReasons, "required"); err != nil {
 		errors = errors.Append("UnavailableReasons", err)

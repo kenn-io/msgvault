@@ -442,7 +442,7 @@ func (s *Store) emailFamilyEdges(ctx context.Context, id int64, seen map[int64]b
 		}
 	}
 	args = append(args, budget+1)
-	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.kind,d.revision,d.expected_member_count,dm.message_id FROM email_family_decisions d JOIN email_family_decision_members anchor ON anchor.decision_id=d.id JOIN email_family_decision_members dm ON dm.decision_id=d.id WHERE anchor.message_id=? AND d.state='active'`+exclude+` ORDER BY d.id,dm.message_id LIMIT ?`, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id,d.request_key,d.kind,d.state,d.revision,d.request_sha256,d.expected_member_count,d.actor_kind,d.actor_ref,d.created_at,dm.message_id FROM email_family_decisions d JOIN email_family_decision_members anchor ON anchor.decision_id=d.id JOIN email_family_decision_members dm ON dm.decision_id=d.id WHERE anchor.message_id=? AND d.state='active'`+exclude+` ORDER BY d.id,dm.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -451,7 +451,7 @@ func (s *Store) emailFamilyEdges(ctx context.Context, id int64, seen map[int64]b
 	for rows.Next() {
 		var decision EmailFamilyDecision
 		var member int64
-		if err := rows.Scan(&decision.ID, &decision.Kind, &decision.Revision, &decision.ExpectedMemberCount, &member); err != nil {
+		if err := rows.Scan(&decision.ID, &decision.RequestKey, &decision.Kind, &decision.State, &decision.Revision, &decision.RequestSHA256, &decision.ExpectedMemberCount, &decision.ActorKind, &decision.ActorRef, &decision.CreatedAt, &member); err != nil {
 			_ = rows.Close()
 			return nil, count, false, err
 		}
@@ -460,7 +460,6 @@ func (s *Store) emailFamilyEdges(ctx context.Context, id int64, seen map[int64]b
 			break
 		}
 		if len(decisions) == 0 || decisions[len(decisions)-1].ID != decision.ID {
-			decision.State = "active"
 			decision.MessageIDs = []int64{}
 			decisions = append(decisions, decision)
 		}

@@ -103,7 +103,6 @@ func (s *Store) emailFamilySnapshotIDs(ctx context.Context, ids []int64, project
 	handled := map[int64]bool{}
 	edgeCount := 0
 	if projected != nil {
-		result.Decisions = append(result.Decisions, *projected)
 		if projected.State == "active" {
 			edgeCount += len(projected.MessageIDs)
 			if edgeCount > emailFamilyDecisionEdgeLimit {
@@ -302,12 +301,16 @@ func (s *Store) emailFamilySnapshotIDs(ctx context.Context, ids []int64, project
 	}
 	slices.SortFunc(result.Decisions, func(a, b EmailFamilyDecision) int { return compareInt64(a.ID, b.ID) })
 	// Include every input, not wall-clock time or unrelated archive state.
+	decisionsForRevision := result.Decisions
+	if projected != nil {
+		decisionsForRevision = append([]EmailFamilyDecision{*projected}, result.Decisions...)
+	}
 	canonical, err := json.Marshal(struct {
 		Members    []EmailFamilyMember
 		Identities map[int64][]string
 		Truncated  bool
 		Decisions  []EmailFamilyDecision
-	}{result.Members, identities, result.Truncated, result.Decisions}, json.Deterministic(true), jsontext.AllowInvalidUTF8(true))
+	}{result.Members, identities, result.Truncated, decisionsForRevision}, json.Deterministic(true), jsontext.AllowInvalidUTF8(true))
 	if err != nil {
 		return nil, err
 	}

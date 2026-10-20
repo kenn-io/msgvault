@@ -410,6 +410,10 @@ func TestEmailFamilyDecisionReadSurvivingUnion(t *testing.T) {
 			input.ExpectedFamilyRevision = preview.BeforeRevision
 			applied, err := f.st.ApplyEmailFamilyDecisionContext(t.Context(), input)
 			require.NoError(err)
+			family, err := f.st.EmailFamilyContext(t.Context(), a, store.EmailFamilyOptions{})
+			require.NoError(err)
+			require.Len(family.Decisions, 1)
+			assert.Equal(applied.Decision, family.Decisions[0])
 			for i, id := range []int64{b, a} {
 				query := "UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?"
 				if deletion == "hard" {
