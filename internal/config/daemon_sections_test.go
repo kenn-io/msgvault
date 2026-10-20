@@ -70,8 +70,7 @@ func TestInvalidEnvironmentIsRecordedWithoutSkippingTheRest(t *testing.T) { //no
 	assert.ErrorContains(err, "MSGVAULT_REMOTE_ALLOW_INSECURE")
 }
 
-func TestClientSectionsStayStrictAndDaemonErrorsGuardReaders(t *testing.T) {
-	assert := assert.New(t)
+func TestClientSectionsStayStrictAndFastmailErrorGuardsReader(t *testing.T) {
 	require := require.New(t)
 
 	for _, content := range []string{
@@ -94,11 +93,4 @@ func TestClientSectionsStayStrictAndDaemonErrorsGuardReaders(t *testing.T) {
 	require.NoError(err)
 	_, err = cfg.FastmailSourceFor(st, source.ID)
 	require.ErrorContains(err, "api_token is required")
-
-	before, err := os.ReadFile(path)
-	require.NoError(err)
-	require.ErrorContains(cfg.Save(), "[integrations.kata]")
-	after, err := os.ReadFile(path)
-	require.NoError(err)
-	assert.Equal(before, after)
 }

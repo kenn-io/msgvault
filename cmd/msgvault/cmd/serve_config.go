@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/logging"
 )
 
 func addServeConfigFlags(cmd *cobra.Command) {
@@ -45,13 +47,33 @@ func requireDaemonConfig(cfg *config.Config) error {
 }
 
 // warnDaemonConfigErrors tells a client command about invalid daemon-only
-// settings. The daemon's own CLI children stay quiet; their parent warned.
+// settings. The daemon's own CLI children stream stderr back to the caller,
+// who already warned, so they record the warning in the daemon log file.
 func warnDaemonConfigErrors(cmd *cobra.Command, cfg *config.Config) {
+	errs := cfg.DaemonConfigErrors()
 	if isDaemonConsoleSubprocess() {
+		logDaemonConfigErrors(cfg, errs)
 		return
 	}
-	for _, err := range cfg.DaemonConfigErrors() {
+	for _, err := range errs {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: invalid daemon config: %v\n", err)
+	}
+}
+
+func logDaemonConfigErrors(cfg *config.Config, errs []error) {
+	if len(errs) == 0 || (!cfg.Log.Enabled && cfg.Log.Dir == "") {
+		return
+	}
+	result, err := logging.BuildHandler(logging.Options{
+		LogsDir: cfg.LogsDir(), LevelString: cfg.Log.Level, Stderr: io.Discard,
+	})
+	if err != nil {
+		return
+	}
+	defer result.Close()
+	logger := result.FileOnlyLogger()
+	for _, err := range errs {
+		logger.Warn("invalid daemon config", "error", err)
 	}
 }
 

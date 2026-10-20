@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,18 +12,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 func runExportMessagesForConfig(t *testing.T, home string) (stdout, stderr string, err error) {
 	t.Helper()
-	st := testutil.NewTestStore(t)
 	root := newRootCommand()
-	root.AddCommand(newExportMessagesLocalCmd(exportMessagesDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
-	}))
+	root.AddCommand(newExportMessagesCmd(exportMessagesDeps{}))
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
@@ -39,7 +33,7 @@ func runExportMessagesForConfig(t *testing.T, home string) (stdout, stderr strin
 	return out.String(), errOut.String(), err
 }
 
-func TestDaemonOnlyConfigErrorsWarnClientAndStopServe(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+func TestDaemonOnlyConfigErrorsWarnClientAndStopDaemonStart(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	for _, tc := range []struct{ name, content, env, mention string }{
 		{name: "kata", content: "[integrations.kata]\nendpoint = '://invalid'\n", mention: "[integrations.kata]"},
 		{name: "docbank", content: "[integrations.docbank]\nattachment_folder = '../escape'\n", mention: "docbank"},
@@ -49,38 +43,74 @@ func TestDaemonOnlyConfigErrorsWarnClientAndStopServe(t *testing.T) { //nolint:p
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			home := t.TempDir()
-			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.content), 0o600))
 			if tc.env != "" {
 				t.Setenv("MSGVAULT_API_PORT", tc.env)
 			}
+			t.Setenv(daemonCLISubprocessEnv, "")
 
+			// A reachable daemon runs the export; the client only warns.
+			server, requests := newDaemonCLIRunnerTestServer(t, nil,
+				"{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n"+
+					"{\"type\":\"complete\"}\n")
+			home := t.TempDir()
+			remote := "\n[remote]\nurl = '" + server.URL + "'\nallow_insecure = true\n"
+			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.content+remote), 0o600))
 			stdout, stderr, err := runExportMessagesForConfig(t, home)
 			require.NoError(err)
+			assert.Equal(int32(1), requests.Load())
 			assert.Contains(stdout, `"record_type":"complete"`)
 			assert.NotContains(stdout, "Warning")
 			assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 			assert.Contains(stderr, tc.mention)
 
-			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-			_, stderr, err = runExportMessagesForConfig(t, home)
-			require.NoError(err)
-			assert.Empty(stderr)
-			t.Setenv(daemonCLISubprocessEnv, "")
+			// With no daemon, autostart refuses before it spawns one.
+			stubStartServeBackgroundProcess(t, startServeBackgroundProcess)
+			home = t.TempDir()
+			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.content), 0o600))
+			_, _, err = runExportMessagesForConfig(t, home)
+			require.ErrorContains(err, "start background daemon: daemon config invalid")
+			require.ErrorContains(err, tc.mention)
 
-			server := newRootCommand()
-			server.AddCommand(&cobra.Command{Use: "serve", RunE: runServe})
-			server.SetErr(&bytes.Buffer{})
-			server.SetArgs([]string{"--home", home, "serve"})
-			err = server.Execute()
-			if inv := invocationFromCommand(server); inv != nil && inv.logResult != nil {
+			server2 := newRootCommand()
+			server2.AddCommand(&cobra.Command{Use: "serve", RunE: runServe})
+			server2.SetErr(&bytes.Buffer{})
+			server2.SetArgs([]string{"--home", home, "serve"})
+			err = server2.Execute()
+			if inv := invocationFromCommand(server2); inv != nil && inv.logResult != nil {
 				inv.logResult.Close()
 			}
-			require.Error(err)
-			assert.Contains(err.Error(), "daemon config invalid")
+			require.ErrorContains(err, "daemon config invalid")
 			assert.Contains(err.Error(), tc.mention)
 		})
 	}
+}
+
+func TestDaemonCLIChildLogsDaemonConfigErrorsInsteadOfWarning(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	assert := assert.New(t)
+	require := require.New(t)
+	home := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(home, "config.toml"),
+		[]byte("[log]\nenabled = true\n[integrations.kata]\nendpoint = '://invalid'\n"), 0o600))
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+
+	root := newRootCommand()
+	root.AddCommand(&cobra.Command{Use: "noop", Run: func(*cobra.Command, []string) {}})
+	var errOut bytes.Buffer
+	root.SetErr(&errOut)
+	root.SetArgs([]string{"--home", home, "--no-log-file", "noop"})
+	require.NoError(root.Execute())
+	if inv := invocationFromCommand(root); inv != nil && inv.logResult != nil {
+		inv.logResult.Close()
+	}
+
+	assert.Empty(errOut.String())
+	logs, err := filepath.Glob(filepath.Join(home, "logs", "msgvault-*.log"))
+	require.NoError(err)
+	require.Len(logs, 1)
+	content, err := os.ReadFile(logs[0])
+	require.NoError(err)
+	assert.Contains(string(content), "invalid daemon config")
+	assert.Contains(string(content), "[integrations.kata]")
 }
 
 func TestClientCommandsStillFailOnInvalidClientConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger
@@ -131,9 +161,21 @@ func TestSemanticPersonVectorConfigSourceToleratesInvalidDaemonConfig(t *testing
 	configured.Vector.People = vector.PeopleConfig{
 		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
 	}
-	configured.Integrations.Kata.Endpoint = "://invalid"
 	testCtx := withTestConfig(t, configured)
-	require.NoError(configured.Save())
+	require.NoError(os.WriteFile(configured.ConfigFilePath(), []byte(`
+[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "https://embedding.example.test/v1"
+model = "synthetic-config-source-model"
+dimension = 4
+[vector.people]
+enabled = true
+retention_posture = "zero_data_retention"
+training_posture = "no_training"
+[integrations.kata]
+endpoint = "://invalid"
+`), 0o600))
 	current, err := currentSemanticPersonVectorConfigSource(invocationFromContext(testCtx))()
 	require.NoError(err)
 	assert.True(current.People.Enabled)

@@ -297,6 +297,14 @@ func (t TelemetryConfig) EnabledOrDefault() bool {
 }
 
 func (s *ServerConfig) Validate() error {
+	if err := s.validateDaemonAutoRestart(); err != nil {
+		return err
+	}
+	return s.validateDaemonSettings()
+}
+
+// validateDaemonSettings checks the [server] settings only the daemon reads.
+func (s *ServerConfig) validateDaemonSettings() error {
 	if s.APIPort < 0 || s.APIPort > 65535 {
 		return fmt.Errorf("invalid [server] api_port %d: must be between 0 and 65535 (0 auto-selects an open port)", s.APIPort)
 	}
@@ -306,9 +314,6 @@ func (s *ServerConfig) Validate() error {
 			return fmt.Errorf("invalid [server] remote_clients client_id %q: must be non-empty and unique", client.ClientID)
 		}
 		clientIDs[client.ClientID] = true
-	}
-	if err := s.validateDaemonAutoRestart(); err != nil {
-		return err
 	}
 	for _, entry := range s.TrustedProxies {
 		if entry == "" {
@@ -1191,7 +1196,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Server.validateDaemonAutoRestart(); err != nil {
 		return nil, err
 	}
-	cfg.deferDaemonError(cfg.Server.Validate())
+	cfg.deferDaemonError(cfg.Server.validateDaemonSettings())
 	cfg.Analytics.ApplyDefaults()
 	if err := cfg.Analytics.Validate(); err != nil {
 		return nil, err
@@ -1538,10 +1543,6 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
-	// A lenient load can't rewrite a file the daemon would reject.
-	if err := c.DaemonConfigError(); err != nil {
-		return fmt.Errorf("refusing to save invalid config: %w", err)
-	}
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {
 		return fmt.Errorf("create config directory: %w", err)

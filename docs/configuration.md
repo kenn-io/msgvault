@@ -23,9 +23,8 @@ sections; it is not a required starting configuration.
 ### Validation
 
 Invalid TOML, wrong-typed values, and invalid values in sections that commands
-read themselves fail every command. Unknown keys fail only where the decoder
-already rejects them. An invalid value in a setting only the daemon reads does
-not. These are `[server]` and its `MSGVAULT_*` overrides (except
+read themselves fail every command. An invalid value in a setting only the
+daemon reads does not. These are `[server]` and its `MSGVAULT_*` overrides (except
 `daemon_auto_restart` and `MSGVAULT_REMOTE_ALLOW_INSECURE`), `[web]`,
 `[integrations.*]`, `[carddav]`, `[carddav_connections]`,
 `[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
