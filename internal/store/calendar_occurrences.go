@@ -136,10 +136,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 				continue
 			}
 			if e.Start != nil && e.End != nil {
-				key := calendarSeriesKey{row.SourceID, e.ProviderEventID}
-				if e.Kind != "single" || !calendarSingleStartHasException(e, exceptions[key]) {
-					add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
-				}
+				add(row, 0, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled"})
 			} else {
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
@@ -170,31 +167,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
-}
-
-func calendarSingleStartHasException(event calevent.Event, exceptions []CalendarEventRow) bool {
-	var start calrecur.Identity
-	if event.AllDay {
-		if event.StartDate == "" {
-			return false
-		}
-		start = calrecur.Identity{Date: event.StartDate, AllDay: true}
-	} else {
-		if event.Start == nil {
-			return false
-		}
-		start = calrecur.Identity{Instant: *event.Start}
-	}
-	key := start.Key()
-	if key == "" {
-		return false
-	}
-	for _, exception := range exceptions {
-		if exception.Event.Original != nil && exception.Event.Original.Key() == key {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Store) calendarOccurrenceRows(ctx context.Context, from, to time.Time) ([]CalendarEventRow, int, error) {
@@ -259,13 +231,14 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 	return append(occurrences, resolved...), count, "", nil
 }
 
-// Keep unidentified edits alongside resolved overrides and all bounded edits for generation failures.
+// Keep unidentified edits and edits of a former series type alongside resolved overrides.
+// Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
 	for _, row := range rows {
 		e := row.Event
 		if e.Start != nil && e.End != nil {
 			bounded = append(bounded, calrecur.Occurrence{Start: *e.Start, End: *e.End, AllDay: e.AllDay, StartDate: e.StartDate, EndDate: e.EndDate, Cancelled: e.Status == "cancelled", ExceptionRef: row.MessageID, HasException: true})
-			if e.Original == nil {
+			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
 		}
@@ -284,6 +257,11 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	for _, exception := range overrides {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
+		}
+		// A retained edit's old value type cannot identify a current instance.
+		// Its recorded bounds were already kept above.
+		if exception.Original.AllDay != set.AllDay && exception.Start != nil && exception.End != nil {
+			continue
 		}
 		o, err := calrecur.EffectiveException(*set, exception, duration, days)
 		if err != nil {
