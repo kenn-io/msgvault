@@ -3,6 +3,7 @@
 package whoknows
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -284,9 +285,24 @@ func TestFindEvaluation(t *testing.T) {
 			require.NoError(err)
 			ranked := f.ranked(got)
 			relevant := qrels.RelevantSet(topic.ID)
+			var expectedOrder []string
 			for person, grade := range qrels[topic.ID] {
 				if grade == 0 {
 					assert.NotContains(ranked, person, "a person judged irrelevant must be excluded")
+				} else if grade > 0 {
+					expectedOrder = append(expectedOrder, person)
+				}
+			}
+			slices.SortFunc(expectedOrder, func(a, b string) int {
+				return cmp.Compare(qrels[topic.ID][b], qrels[topic.ID][a])
+			})
+			for i, person := range expectedOrder {
+				require.Contains(ranked, person)
+				for _, higher := range expectedOrder[:i] {
+					if qrels[topic.ID][higher] > qrels[topic.ID][person] {
+						assert.Less(slices.Index(ranked, higher), slices.Index(ranked, person),
+							"higher-grade person %s must rank before %s: %v", higher, person, ranked)
+					}
 				}
 			}
 
@@ -307,9 +323,6 @@ func TestFindEvaluation(t *testing.T) {
 			if topic.ID == "ambiguous" {
 				assert.Equal([]string{"gopher@example.net"}, ranked,
 					"keyword-only matches on good, going, and google do not count")
-			}
-			if topic.ID == "questions" {
-				assert.Equal([]string{"answerer@example.net", "asker@example.net"}, ranked)
 			}
 		})
 	}
