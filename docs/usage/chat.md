@@ -403,7 +403,7 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
-cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_messages` use this
+cap it at 50. `search_message_bodies`, `semantic_search_messages`, `list_messages`, and `search_by_domains` use this
 `total = -1` shape because they do not run a separate count query.
 `search_metadata` accepts msgvault's local subset of Gmail-like syntax,
 including case-insensitive literal `list:` and `list-id:` List-Id filters.

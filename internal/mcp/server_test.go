@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -24,9 +24,6 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/personscope"
@@ -4091,15 +4088,20 @@ func TestSearchByDomains(t *testing.T) {
 	})
 }
 
+// sequentialMessages returns up to limit summaries with IDs offset+1 through total.
+func sequentialMessages(total, offset, limit int) []query.MessageSummary {
+	var rows []query.MessageSummary
+	for id := offset + 1; id <= total && len(rows) < limit; id++ {
+		rows = append(rows, query.MessageSummary{ID: int64(id)})
+	}
+	return rows
+}
+
 func TestListMessagesPagesPastOffsetCeiling(t *testing.T) {
 	const total = 1100
 	eng := &querytest.MockEngine{
 		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
-			var rows []query.MessageSummary
-			for id := filter.Pagination.Offset + 1; id <= total && len(rows) < filter.Pagination.Limit; id++ {
-				rows = append(rows, query.MessageSummary{ID: int64(id)})
-			}
-			return rows, nil
+			return sequentialMessages(total, filter.Pagination.Offset, filter.Pagination.Limit), nil
 		},
 	}
 	h := newTestHandlers(eng)
@@ -4128,26 +4130,14 @@ func TestListMessagesPagesPastOffsetCeiling(t *testing.T) {
 }
 
 func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
-	const total = 1001
+	const total = 1500
 	eng := &querytest.MockEngine{
 		SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
-			var rows []query.MessageSummary
-			for id := offset + 1; id <= total && len(rows) < limit; id++ {
-				rows = append(rows, query.MessageSummary{ID: int64(id)})
-			}
-			return rows, nil
+			return sequentialMessages(total, offset, limit), nil
 		},
 	}
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	daemon := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
-		Config: cfg, Engine: eng, Logger: slog.New(slog.DiscardHandler),
-	}).Router())
-	defer daemon.Close()
-	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client()})
-	require.NoError(t, err)
-	defer func() { assert.NoError(t, client.Close()) }()
-	h := newTestHandlers(daemonclient.NewEngineAdapter(client))
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, eng, &requests))
 
 	type page struct {
 		returned int
@@ -4156,7 +4146,7 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 	var pages, wantPages []page
 	var got []int64
 	offset := 0
-	for range 5 {
+	for range 6 {
 		resp := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains, map[string]any{
 			"domains": "example.com",
 			"limit":   float64(5000),
@@ -4172,7 +4162,7 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 		offset += resp.Returned
 	}
 
-	wantPages = []page{{499, true}, {499, true}, {3, false}}
+	wantPages = []page{{499, true}, {499, true}, {499, true}, {3, false}}
 	assert.Equal(t, wantPages, pages)
 	want := make([]int64, total)
 	for i := range want {

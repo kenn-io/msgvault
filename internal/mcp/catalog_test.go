@@ -836,6 +836,12 @@ func testNumericCompatibility(t *testing.T) {
 			assert.Equal(t, test.want, engine.limit)
 		})
 	}
+	t.Run(ToolSearchByDomains+"/offset past 1000", func(t *testing.T) {
+		engine.offset = -1
+		result := rawCallTool(t, opts, ToolSearchByDomains, map[string]any{"domains": "example.com", "offset": 5000})
+		assert.NotEqual(t, true, result["isError"], "result: %#v", result)
+		assert.Equal(t, 5000, engine.offset)
+	})
 
 	for _, test := range []struct {
 		name       string
