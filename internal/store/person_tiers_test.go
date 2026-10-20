@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -83,9 +84,9 @@ func newTierPeople(t *testing.T) tierPeople {
 	return p
 }
 
-func previewTiers(t *testing.T, p tierPeople, tier int) *store.PersonTierPreview {
+func previewTiers(t *testing.T, p tierPeople) *store.PersonTierPreview {
 	t.Helper()
-	preview, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), tier)
+	preview, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.NoError(t, err)
 	return preview
 }
@@ -97,7 +98,7 @@ func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
 	_, err := p.f.Store.SetPersonTrackingContext(t.Context(), p.regular, true)
 	require.NoError(err)
 
-	preview := previewTiers(t, p, 0)
+	preview := previewTiers(t, p)
 
 	assert.Equal("2026-10-17", preview.AsOf)
 	assert.True(preview.Readiness.Ready)
@@ -120,23 +121,11 @@ func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
 func TestPreviewPersonTiersOrdersByTierThenMostRecentContact(t *testing.T) {
 	p := newTierPeople(t)
 	var ids []int64
-	for _, row := range previewTiers(t, p, 0).People {
+	for _, row := range previewTiers(t, p).People {
 		ids = append(ids, row.PersonID)
 	}
 	// "latest" was saved last but has the newest contact in tier 1.
 	assert.Equal(t, []int64{p.latest, p.frequent, p.regular}, ids)
-}
-
-func TestPreviewPersonTiersFiltersByTier(t *testing.T) {
-	assert := assert.New(t)
-	p := newTierPeople(t)
-	tierOne := previewTiers(t, p, 1)
-	require.Len(t, tierOne.People, 2)
-	assert.Equal(p.latest, tierOne.People[0].PersonID)
-	assert.Equal(p.frequent, tierOne.People[1].PersonID)
-	tierTwo := previewTiers(t, p, 2)
-	require.Len(t, tierTwo.People, 1)
-	assert.Equal(p.regular, tierTwo.People[0].PersonID)
 }
 
 func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
@@ -154,7 +143,7 @@ func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
 	late := mustPromotedPerson(t, f.Store, "late@example.com", "late")
 	seedTierMail(t, f, late.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.NoError(err)
 	require.Len(preview.People, 1)
 	assert.Equal(late.ID, preview.People[0].PersonID)
@@ -164,7 +153,7 @@ func TestPreviewPersonTiersWarnsWhenProjectionIsBehind(t *testing.T) {
 	assert := assert.New(t)
 	p := newTierPeople(t)
 	p.f.CreateMessage("unprojected-tier-message")
-	preview := previewTiers(t, p, 0)
+	preview := previewTiers(t, p)
 	assert.False(preview.Readiness.Ready)
 	assert.Contains(preview.Readiness.Reasons, "watermark_behind")
 	assert.Len(preview.People, 3, "counts are still reported")
@@ -187,6 +176,22 @@ func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
 	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
 		Name: "tier1.min_outbound_short", Observed: 0, Required: 2, Enabled: true,
 	})
+}
+
+func TestExplainPersonTierJSONNamesTheLastDayOnce(t *testing.T) {
+	require := require.New(t)
+	p := newTierPeople(t)
+	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
+	require.NoError(err)
+	raw, err := json.Marshal(explanation)
+	require.NoError(err)
+	var out struct {
+		LastContactDate *string        `json:"last_contact_date"`
+		Signals         map[string]any `json:"signals"`
+	}
+	require.NoError(json.Unmarshal(raw, &out))
+	require.NotNil(out.LastContactDate)
+	require.NotContains(out.Signals, "last_counted_date")
 }
 
 func TestExplainPersonTierReportsDormantPersonWithNoCountedDay(t *testing.T) {
@@ -248,7 +253,7 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 	assert.Equal(1, explanation.Signals.InboundLong, "a limit of 1 would have dropped this message")
 	assert.Zero(explanation.Signals.LargeAudienceInboundEvents)
 
-	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options, 0)
+	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options)
 	require.NoError(err)
 	assert.Contains(preview.Readiness.Reasons[0], "settings_changed")
 	assert.Equal(25, preview.Projection.MaxDirect)
@@ -281,7 +286,7 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 	options := tierOptions()
 	options.ActivityTimezone, options.ActivityMaxDirect = "America/New_York", 10
 
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), options, 0)
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), options)
 
 	require.NoError(err)
 	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, preview.Projection)
@@ -316,27 +321,27 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	p := newTierPeople(t)
-	before := previewTiers(t, p, 0)
+	before := previewTiers(t, p)
 	require.Len(before.People, 3)
 
 	_, err := p.f.Store.ClaimActivityTimezoneTransitionContext(t.Context(), "America/New_York")
 	require.NoError(err)
-	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), p.frequent, tierOptions())
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 
 	projectTierSignals(t, p.f, "America/New_York", 25)
-	after := previewTiers(t, p, 0)
+	after := previewTiers(t, p)
 	assert.Equal("America/New_York", after.Projection.Timezone)
 	assert.Len(after.People, 3, "the same people are listed once the rebuild finishes")
 
 	_, err = p.f.Store.ClaimActivityDirectLimitTransitionContext(t.Context(), 10)
 	require.NoError(err)
-	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	_, err = p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	projectTierSignals(t, p.f, "America/New_York", 10)
-	assert.Equal(10, previewTiers(t, p, 0).Projection.MaxDirect)
+	assert.Equal(10, previewTiers(t, p).Projection.MaxDirect)
 }
 
 // The last counted day comes from the rows the tier rules counted. A future

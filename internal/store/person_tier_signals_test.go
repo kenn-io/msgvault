@@ -171,7 +171,7 @@ func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.T
 
 func tierReadiness(t *testing.T, f *storetest.Fixture) store.PersonTierReadiness {
 	t.Helper()
-	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), store.PersonTierOptions{Config: persontiers.DefaultConfig()}, 0)
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), store.PersonTierOptions{Config: persontiers.DefaultConfig()})
 	require.NoError(t, err)
 	return preview.Readiness
 }

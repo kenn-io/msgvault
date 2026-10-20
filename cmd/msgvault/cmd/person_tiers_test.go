@@ -25,13 +25,12 @@ import (
 type tiersStore struct {
 	preview     store.PersonTierPreview
 	explanation *store.PersonTierExplanation
-	tier        int
 	personID    int64
 	options     store.PersonTierOptions
 }
 
-func (s *tiersStore) PreviewPersonTiersContext(_ context.Context, options store.PersonTierOptions, tier int) (*store.PersonTierPreview, error) {
-	s.tier, s.options = tier, options
+func (s *tiersStore) PreviewPersonTiersContext(_ context.Context, options store.PersonTierOptions) (*store.PersonTierPreview, error) {
+	s.options = options
 	return &s.preview, nil
 }
 
@@ -82,7 +81,7 @@ func TestPersonTiersPreviewPrintsJSON(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	st := &tiersStore{preview: readyPreview(tierRow(3, "Cleo", 1, false), tierRow(1, "Ada", 2, true))}
-	stdout, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "preview", "--json", "--tier", "2")
+	stdout, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "preview", "--json")
 	require.NoError(err)
 	var out store.PersonTierPreview
 	require.NoError(json.Unmarshal([]byte(stdout), &out))
@@ -90,7 +89,6 @@ func TestPersonTiersPreviewPrintsJSON(t *testing.T) {
 	assert.Equal(int64(3), out.People[0].PersonID)
 	assert.True(out.People[1].Tracked)
 	assert.Equal("2026-10-17", out.AsOf)
-	assert.Equal(2, st.tier)
 	assert.Equal(tiersTestOptions, st.options, "the configured rules and [activity] settings reach the store")
 }
 
@@ -122,11 +120,9 @@ func TestPersonTiersWarnOnceWhenReadinessIsNotReady(t *testing.T) {
 	assert.True(json.Valid([]byte(stdout)), "stdout stays JSON")
 }
 
-func TestPersonTiersPreviewRejectsAnUnknownTier(t *testing.T) {
-	st := &tiersStore{}
-	_, _, err := executePersonTiersCommand(t, daemonTiersDeps(st), "preview", "--tier", "3")
-	require.ErrorContains(t, err, "--tier must be 1 or 2")
-	assert.Zero(t, st.tier)
+func TestPersonTiersPreviewHasNoTierFlag(t *testing.T) {
+	_, _, err := executePersonTiersCommand(t, daemonTiersDeps(&tiersStore{}), "preview", "--tier", "1")
+	require.ErrorContains(t, err, "unknown flag: --tier")
 }
 
 func TestPersonTiersForwardTheCommandFromTheCLI(t *testing.T) {
@@ -140,13 +136,13 @@ func TestPersonTiersForwardTheCommandFromTheCLI(t *testing.T) {
 			return nil
 		},
 	}
-	stdout, _, err := executePersonTiersCommand(t, deps, "preview", "--tier", "1", "--json")
+	stdout, _, err := executePersonTiersCommand(t, deps, "preview", "--json")
 	require.NoError(err)
 	assert.Equal(t, "forwarded\n", stdout)
 	_, _, err = executePersonTiersCommand(t, deps, "explain", "7")
 	require.NoError(err)
 	assert.Equal(t, [][]string{
-		{"person", "tiers", "preview", "--json", "--tier=1"},
+		{"person", "tiers", "preview", "--json"},
 		{"person", "tiers", "explain", "7"},
 	}, forwarded)
 }
@@ -225,7 +221,7 @@ func TestPersonTiersWorkflowAgainstARealStore(t *testing.T) {
 	require.NoError(err)
 	deps := daemonTiersDeps(f.Store)
 
-	stdout, stderr, err := executePersonTiersCommand(t, deps, "preview", "--json", "--tier", "1")
+	stdout, stderr, err := executePersonTiersCommand(t, deps, "preview", "--json")
 	require.NoError(err)
 	assert.Empty(stderr)
 	var preview store.PersonTierPreview
