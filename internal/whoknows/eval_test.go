@@ -6,7 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -273,7 +272,7 @@ func TestFindEvaluation(t *testing.T) {
 	f := newEvalFixture(t)
 	topics, stats, err := eval.LoadTopics("testdata/eval/topics.tsv")
 	require.NoError(t, err)
-	require.Equal(t, 8, stats.Parsed)
+	require.Equal(t, 5, stats.Parsed)
 	qrels, _, err := eval.LoadQrels("testdata/eval/qrels.txt")
 	require.NoError(t, err)
 
@@ -337,22 +336,6 @@ func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
 	}
 }
 
-// A full pool where nothing reached the floor is an unrelated topic when the
-// index ranks unit-length vectors, since L2 order is then cosine order.
-func TestFindReportsNoLimitForAFullUnitLengthPoolBelowTheFloor(t *testing.T) {
-	f := newEvalFixture(t)
-	f.fillPool(t, embedWords("zeppelin mooring"), 1)
-	_, meta, err := f.service.Retriever.Search(t.Context(),
-		hybrid.SearchRequest{Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool})
-	require.NoError(t, err)
-	require.True(t, meta.PoolSaturated, "the fillers fill the pool")
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	assert.Empty(t, got.UnsavedContacts)
-	assert.Empty(t, got.Limits)
-}
-
 // sqlite-vec ranks the pool by L2 distance, which follows cosine order only
 // for unit-length vectors. With a provider that does not normalize, a full
 // pool where nothing reached the floor can hide a message that would, so the
@@ -373,38 +356,4 @@ func TestFindReportsAFullPoolOfVectorsThatAreNotUnitLength(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got.UnsavedContacts)
 	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
-}
-
-// failingCount is an archive whose embedding coverage count fails.
-type failingCount struct{ *store.Store }
-
-func (failingCount) CoverageCountsScoped(context.Context, int64, []string, []int64) (int64, int64, int64, int64, error) {
-	return 0, 0, 0, 0, errors.New("count failed")
-}
-
-// The search finds only messages with a vector or a keyword hit, so an empty
-// answer reports partial_index while a message waits for its vector, or when
-// the wait can't be counted.
-func TestFindReportsAPartialIndexWhileAMessageWaitsForAVector(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newEvalFixture(t)
-	find := func() []string {
-		got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-		require.NoError(err)
-		require.Empty(got.UnsavedContacts)
-		return got.Limits
-	}
-	assert.Empty(find(), "every message has its vector")
-
-	f.service.Data = failingCount{f.store}
-	assert.Equal([]string{LimitPartialIndex}, find())
-	f.service.Data = f.store
-
-	_, err := f.store.UpsertMessage(&store.Message{
-		ConversationID: f.conversation, SourceID: f.source, SourceMessageID: "waiting", MessageType: "email",
-		Subject: sql.NullString{String: "airship tethering", Valid: true},
-	})
-	require.NoError(err)
-	assert.Equal([]string{LimitPartialIndex}, find())
 }

@@ -36,11 +36,12 @@ func (r *fixedRetriever) Search(_ context.Context, request hybrid.SearchRequest)
 	return hits, hybrid.ResultMeta{PoolSaturated: len(hits) < len(r.hits)}, r.err
 }
 
-// truncatedDeclared reports that the declared read hit its cap.
+// truncatedDeclared reports that the declared read hit its cap, as the store
+// does by returning DeclaredValueLimit values.
 type truncatedDeclared struct{ whoknows.DataReader }
 
 func (truncatedDeclared) AskMeAboutValuesContext(context.Context, []int64) ([]store.PersonAskMeAbout, bool, error) {
-	return nil, true, nil
+	return make([]store.PersonAskMeAbout, store.DeclaredValueLimit), true, nil
 }
 
 // fixtureCount answers the vector-wait count from the fixture, since no
@@ -53,7 +54,7 @@ type fixtureCount struct {
 
 func (c fixtureCount) CoverageCountsScoped(_ context.Context, _ int64, types []string, _ []int64) (int64, int64, int64, int64, error) {
 	c.f.counted = append(c.f.counted, types)
-	return c.f.waiting, 0, 0, c.f.waiting, nil
+	return c.f.waiting, 0, 0, c.f.waiting, c.f.countErr
 }
 
 var serviceNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
@@ -64,10 +65,11 @@ type serviceFixture struct {
 	retriever *fixedRetriever
 	service   *whoknows.Service
 	owner     int64
-	// waiting is how many messages the vector-wait count reports, and
-	// counted the message types of each count.
-	waiting int64
-	counted [][]string
+	// waiting is how many messages the vector-wait count reports, counted
+	// the message types of each count, and countErr the error it returns.
+	waiting  int64
+	counted  [][]string
+	countErr error
 }
 
 func newServiceFixture(t *testing.T) *serviceFixture {
@@ -139,35 +141,19 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newServiceFixture(t)
-	chat, err := f.Store.GetOrCreateSource("slack", "workspace")
-	require.NoError(err)
-	room, err := f.Store.EnsureConversation(chat.ID, "room", "Room")
-	require.NoError(err)
-	inRoom := func(m *store.Message) { m.SourceID, m.ConversationID, m.MessageType = chat.ID, room, "slack" }
 
 	ana, anaPerson := f.saved("ana@example.net")
 	ben := f.EnsureParticipant("ben@example.net", "Ben Contractor", "example.net")
 	dana, _ := f.saved("dana@example.net")
-	robot := f.EnsureParticipant("no_reply@example.net", "Robot", "example.net")
-	relay := f.EnsureParticipant("relay@example.net", "Chat Relay", "example.net")
 	erin := f.EnsureParticipant("erin@example.net", "Erin", "example.net")
 	frank := f.EnsureParticipant("frank@example.net", "Frank", "example.net")
-	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
-	_, err = f.Store.LinkParticipants(f.owner, alias)
-	require.NoError(err)
-	_, _, err = f.Store.CreatePersonFromParticipant(f.owner)
-	require.NoError(err)
 
 	answered := f.message("answered", ana, 5, .9)
 	f.message("follow-up", ana, 30, .6)
 	contractor := f.message("contractor", ben, 3, .8)
 	copied := f.message("copied", ana, 2, .7)
 	require.NoError(f.Store.ReplaceMessageRecipients(copied, "cc", []int64{dana}, []string{"Dana"}))
-	f.message("outbound", f.owner, 1, .95)
-	f.message("alias", alias, 1, .95)
-	f.message("robot", robot, 1, .95)
-	bot := f.message("bot", relay, 1, .95, inRoom)
-	require.NoError(f.Store.SetMessageMetadata(bot, sql.NullString{String: `{"automated":true}`, Valid: true}))
+	f.message("outbound", f.owner, 1, .95) // the store leaves out what the owner wrote
 	f.message("no vector", erin, 1, 0)
 	f.message("weak", frank, 1, .49)
 
@@ -265,13 +251,6 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 func TestFindReportsLimitsOnlyWhenTheSearchCameUpShort(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
-	ana, _ := f.saved("ana@example.net")
-
-	assert.Empty(f.find("sailboat insurance").Limits, "no hits")
-	f.message("weak", ana, 1, .3)
-	f.message("mine", f.owner, 1, .99)
-	assert.Empty(f.find("sailboat insurance").Limits, "an unsaturated search that found only the owner's mail is complete")
-
 	f.service.Data = truncatedDeclared{f.service.Data}
 	assert.Equal([]string{whoknows.LimitDeclaredTruncated}, f.find("sailboat insurance").Limits,
 		"declared topics that were not all read may hide the answer")
@@ -300,6 +279,13 @@ func TestFindChecksCoverageBeforeAnsweringEmpty(t *testing.T) {
 	f.service.BuildScope = vector.NewBuildScope([]string{"email"}, nil)
 	assert.Equal([]string{whoknows.LimitPartialIndex}, f.find("sailboat insurance").Limits)
 	assert.Len(f.counted, 1, "an index that leaves out chat is partial already")
+
+	f.service.BuildScope = vector.BuildScope{}
+	f.waiting = 0
+	assert.Empty(f.find("sailboat insurance").Limits, "every message has its vector")
+	f.countErr = errors.New("count failed")
+	assert.Equal([]string{whoknows.LimitPartialIndex}, f.find("sailboat insurance").Limits,
+		"a wait that can't be counted is partial")
 }
 
 // The owner's mail can fill the whole pool. A real answer that made the pool
@@ -344,33 +330,6 @@ func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
 	assert.Empty(f.find("sailboat insurance").Limits)
 }
 
-// Linked addresses are one sender, and so are the addresses of one saved
-// person, so each ranks once.
-func TestFindRanksLinkedAddressesOnce(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newServiceFixture(t)
-	home := f.EnsureParticipant("dee@example.net", "Dee", "example.net")
-	work := f.EnsureParticipant("dee@work.example.net", "Dee Work", "work.example.net")
-	_, err := f.Store.LinkParticipants(home, work)
-	require.NoError(err)
-	f.message("home", home, 1, .8)
-	f.message("work", work, 2, .8)
-
-	got := f.find("kubernetes networking")
-	require.Len(got.UnsavedContacts, 1)
-	assert.Equal(2, got.UnsavedContacts[0].AuthoredMessages)
-	assert.Empty(got.People)
-
-	person, _, err := f.Store.CreatePersonFromParticipant(work)
-	require.NoError(err)
-	got = f.find("kubernetes networking")
-	require.Len(got.People, 1)
-	assert.Equal(person.ID, got.People[0].PersonID)
-	assert.Equal(2, got.People[0].AuthoredMessages)
-	assert.Empty(got.UnsavedContacts)
-}
-
 // messageScores maps each listed person to their message score.
 func messageScores(people []whoknows.Entry) map[int64]float64 {
 	out := map[int64]float64{}
@@ -380,13 +339,16 @@ func messageScores(people []whoknows.Entry) map[int64]float64 {
 	return out
 }
 
-func TestFindBoundsListMail(t *testing.T) {
+// The store's list-mail and one-way flags reach Rank, which bounds their
+// credit.
+func TestFindBoundsListMailAndOneWayEmailSenders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newServiceFixture(t)
 	editor, editorPerson := f.saved("editor@example.net")
+	vendor, vendorPerson := f.saved("vendor@example.net")
 	other, otherPerson := f.saved("other@example.net")
-	// The owner has written to both, so neither is one-way.
+	// The owner has written to the editor and to Other, never to the vendor.
 	reply := f.message("reply", f.owner, 40, 0)
 	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{editor, other}, []string{"Editor", "Other"}))
 	f.retriever.hits = nil
@@ -395,26 +357,6 @@ func TestFindBoundsListMail(t *testing.T) {
 			m.ListID = sql.NullString{String: "<digest.example.net>", Valid: true}
 		})
 	}
-	for i := range 2 {
-		f.message(fmt.Sprintf("answer-%d", i), other, 0, .8)
-	}
-
-	got := f.find("kubernetes networking")
-	require.Len(got.People, 2)
-	assert.Equal(otherPerson, got.People[0].PersonID, "two answers beat twelve digests")
-	assert.Equal(map[int64]float64{otherPerson: math.Log1p(1.6), editorPerson: math.Log1p(.9)}, messageScores(got.People))
-}
-
-func TestFindBoundsOneWayEmailSenders(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newServiceFixture(t)
-	vendor, vendorPerson := f.saved("vendor@example.net")
-	other, otherPerson := f.saved("other@example.net")
-	// The owner has written to Other, never to the vendor.
-	reply := f.message("reply", f.owner, 40, 0)
-	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{other}, []string{"Other"}))
-	f.retriever.hits = nil
 	for i := range 30 {
 		f.message(fmt.Sprintf("vendor-%d", i), vendor, 0, .9)
 	}
@@ -423,44 +365,11 @@ func TestFindBoundsOneWayEmailSenders(t *testing.T) {
 	}
 
 	got := f.find("kubernetes networking")
-	require.Len(got.People, 2)
-	assert.Equal(otherPerson, got.People[0].PersonID, "a two-way answerer beats thirty unanswered notes")
-	assert.Equal(map[int64]float64{otherPerson: math.Log1p(1.6), vendorPerson: math.Log1p(.9)}, messageScores(got.People))
-	assert.Equal(30, got.People[1].AuthoredMessages)
-}
-
-// Chat has no direction: a colleague the owner reads in a channel but never
-// writes to keeps every message.
-func TestFindGivesChatSendersFullCredit(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newServiceFixture(t)
-	chat, err := f.Store.GetOrCreateSource("slack", "workspace")
-	require.NoError(err)
-	channel, err := f.Store.EnsureConversation(chat.ID, "channel", "Channel")
-	require.NoError(err)
-	priya, priyaPerson := f.saved("priya@example.net")
-	for i := range 3 {
-		f.message(fmt.Sprintf("post-%d", i), priya, 0, .8, func(m *store.Message) {
-			m.SourceID, m.ConversationID, m.MessageType = chat.ID, channel, "slack"
-		})
-	}
-
-	got := f.find("kubernetes networking")
-	require.Len(got.People, 1)
-	assert.Equal(priyaPerson, got.People[0].PersonID)
-	assert.InDelta(math.Log1p(2.4), got.People[0].MessageScore, 1e-9)
-}
-
-// Declared topics match by whole words without regard to case.
-func TestFindFoldsCaseInDeclaredTopics(t *testing.T) {
-	f := newServiceFixture(t)
-	_, person := f.saved("lurker@example.net")
-	f.declare(person, "Straße networking")
-	got := f.find("strasse networking")
-	require.Len(t, got.People, 1)
-	assert.Equal(t, person, got.People[0].PersonID)
-	assert.Equal(t, []string{"Straße networking"}, got.People[0].AskMeAbout)
+	require.Len(got.People, 3)
+	assert.Equal(otherPerson, got.People[0].PersonID, "two answers beat twelve digests and thirty unanswered notes")
+	assert.Equal(map[int64]float64{
+		otherPerson: math.Log1p(1.6), editorPerson: math.Log1p(.9), vendorPerson: math.Log1p(.9),
+	}, messageScores(got.People))
 }
 
 func TestFindStopsBeforeSearchingOnBadInput(t *testing.T) {

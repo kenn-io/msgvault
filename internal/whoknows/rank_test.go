@@ -42,6 +42,35 @@ func TestRankWeighsRecencyAndCitesTheBestMessages(t *testing.T) {
 	}
 	assert.Equal([]int64{4, 6, 3}, ids, "highest weight first, capped at the evidence count")
 	assert.Equal(5, people[0].AuthoredMessages)
+
+	// List mail and every email from a one-way sender earn one message's
+	// worth. Chat has no direction, so a one-way chat sender keeps every
+	// message.
+	mail := func(id int64, change func(*Authored)) Authored {
+		a := authored(id, 0, .9)
+		change(&a)
+		return a
+	}
+	var listed, oneWay, chat []Authored
+	for id := int64(1); id <= 3; id++ {
+		listed = append(listed, mail(id, func(a *Authored) { a.ListMail = true }))
+		oneWay = append(oneWay, mail(10+id, func(*Authored) {}))
+		chat = append(chat, mail(20+id, func(a *Authored) { a.Citation.MessageType = "slack" }))
+	}
+	people, _ = Rank([]Candidate{
+		person(10, listed...),
+		{PersonID: 11, OneWay: true, Messages: oneWay},
+		{PersonID: 12, OneWay: true, Messages: chat},
+		person(13, authored(31, 0, .9), authored(32, 0, .9), authored(33, 0, .9)),
+	}, rankParams(), rankNow)
+	scores := map[int64]float64{}
+	for _, p := range people {
+		scores[p.PersonID] = p.MessageScore
+	}
+	assert.InDelta(math.Log1p(.9), scores[10], 1e-9, "list mail counts once")
+	assert.InDelta(math.Log1p(.9), scores[11], 1e-9, "one-way email counts once")
+	assert.InDelta(math.Log1p(3*.9), scores[12], 1e-9, "one-way chat keeps every message")
+	assert.InDelta(math.Log1p(3*.9), scores[13], 1e-9, "two-way email keeps every message")
 }
 
 func TestRankTiesAreDeterministic(t *testing.T) {
