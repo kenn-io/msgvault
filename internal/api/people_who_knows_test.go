@@ -9,12 +9,14 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -23,10 +25,13 @@ import (
 	"go.kenn.io/msgvault/internal/whoknows"
 )
 
-func whoKnowsGet(t *testing.T, srv *api.Server, query string) *httptest.ResponseRecorder {
+func whoKnowsGet(t *testing.T, srv *api.Server, query string, headers ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/people/who-knows?"+query, nil)
 	request.RemoteAddr = "127.0.0.1:12345"
+	for i := 0; i+1 < len(headers); i += 2 {
+		request.Header.Set(headers[i], headers[i+1])
+	}
 	got := httptest.NewRecorder()
 	srv.Router().ServeHTTP(got, request)
 	return got
@@ -172,6 +177,47 @@ func TestWhoKnowsMapsSearchErrors(t *testing.T) {
 			assert.NotContains(t, got.Body.String(), "query_timeout")
 		})
 	}
+}
+
+func TestWhoKnowsRejectsRestrictedAgent(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
+	require.NoError(err)
+	srv := api.NewServerWithOptions(api.ServerOptions{
+		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}},
+		Store:  st, Logger: slog.New(slog.DiscardHandler),
+	})
+	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
+	issue := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens",
+		strings.NewReader(fmt.Sprintf(`{"label":"reader","permissions":["search.read"],"source_ids":[%d]}`, source.ID)))
+	issue.RemoteAddr = "127.0.0.1:12345"
+	issue.Header.Set("X-Api-Key", "synthetic-owner-key")
+	issue.Header.Set("Content-Type", "application/json")
+	granted := httptest.NewRecorder()
+	srv.Router().ServeHTTP(granted, issue)
+	require.Equal(http.StatusCreated, granted.Code, granted.Body.String())
+	var token struct {
+		Secret string `json:"secret"`
+	}
+	require.NoError(json.Unmarshal(granted.Body.Bytes(), &token))
+
+	got := whoKnowsGet(t, srv, "topic=cloud", apiprotocol.AgentTokenHeader, token.Secret)
+	assert.Equal(t, http.StatusUnauthorized, got.Code, got.Body.String())
+}
+
+// The route reads the archive, so a sync holding the operation gate does not
+// hold it up.
+func TestWhoKnowsAnswersWhileASyncRuns(t *testing.T) {
+	gate := api.NewSerialOperationGate()
+	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
+		o.OperationGate = gate
+	})
+	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sync")
+	require.True(t, ok)
+	t.Cleanup(release)
+	got := whoKnowsGet(t, srv, "topic=cloud")
+	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
 }
 
 // bareStore has no who-knows reads.
