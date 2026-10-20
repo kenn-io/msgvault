@@ -445,6 +445,10 @@ var readOnlyPostRoutePatterns = []string{
 	// the embedding provider; it mutates nothing, and gating it would hold
 	// pure reads (and the mutation gate) hostage to provider latency.
 	"/api/v1/search/attachments/visual",
+	// Who-knows runs one vector search and reads authors and declared
+	// topics; like visual search it mutates nothing and waits on the
+	// embedding provider.
+	"/api/v1/people/who-knows",
 	"/api/v1/files/groups",
 	"/api/v1/participants/completions",
 	"/api/v1/participants/search",
