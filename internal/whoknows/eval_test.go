@@ -344,12 +344,13 @@ func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
 
 func (f *evalFixture) fillOwnerPool(t *testing.T, topic []float32, count int) {
 	t.Helper()
+	ownerID, err := f.store.EnsureParticipant("owner@example.net", "Owner", "example.net")
+	require.NoError(t, err)
 	for i := range count {
 		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
 	}
-	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id =
-		(SELECT id FROM participants WHERE email_address = 'owner@example.net')
-		WHERE subject = 'airship tethering'`)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE subject = ?`), ownerID, "airship tethering")
 	require.NoError(t, err)
 }
 
@@ -357,6 +358,13 @@ func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
 	f := newEvalFixture(t)
 	topic := embedWords("zeppelin mooring")
 	f.fillOwnerPool(t, topic, 99)
+	var ownerID int64
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT id FROM participants WHERE email_address = ?`), "owner@example.net").Scan(&ownerID))
+	var ownerMessages int
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE subject = ? AND sender_id = ?`), "airship tethering", ownerID).Scan(&ownerMessages))
+	assert.Equal(t, 99, ownerMessages, "every filler message must resolve to the owner")
 	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
 	match := scaled(topic, .9)
 	match[off] = float32(math.Sqrt(1 - .9*.9))
