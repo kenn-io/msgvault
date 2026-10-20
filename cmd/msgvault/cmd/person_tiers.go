@@ -15,7 +15,7 @@ import (
 )
 
 type personTiersCommandStore interface {
-	PreviewPersonTiersContext(ctx context.Context, options store.PersonTierOptions, tier int) (*store.PersonTierPreview, error)
+	PreviewPersonTiersContext(ctx context.Context, options store.PersonTierOptions) (*store.PersonTierPreview, error)
 	ExplainPersonTierContext(ctx context.Context, personID int64, options store.PersonTierOptions) (*store.PersonTierExplanation, error)
 }
 
@@ -71,7 +71,6 @@ func newPersonTiersCommand(deps personTiersCommandDeps) *cobra.Command {
 }
 
 func newPersonTiersPreviewCommand(deps personTiersCommandDeps) *cobra.Command {
-	var tier int
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "preview",
@@ -85,11 +84,8 @@ limit the activity projection was built under. Nothing is written; pass the
 IDs from --json to "person track".`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if command.Flags().Changed("tier") && tier != 1 && tier != 2 {
-				return usageErr(command, errors.New("--tier must be 1 or 2"))
-			}
 			return runPersonTiers(command, deps, args, func(st personTiersCommandStore, options store.PersonTierOptions) error {
-				preview, err := st.PreviewPersonTiersContext(command.Context(), options, tier)
+				preview, err := st.PreviewPersonTiersContext(command.Context(), options)
 				if err != nil {
 					return err
 				}
@@ -101,7 +97,6 @@ IDs from --json to "person track".`,
 			})
 		},
 	}
-	command.Flags().IntVar(&tier, "tier", 0, "Only show tier 1 or 2")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
 }

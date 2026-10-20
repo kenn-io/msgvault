@@ -74,9 +74,8 @@ type PersonTierExplanation struct {
 }
 
 // PreviewPersonTiersContext reads every saved person's counts and returns those
-// in tier 1 or 2, or only in the given tier when tier is 1 or 2. It writes
-// nothing.
-func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTierOptions, tier int) (*PersonTierPreview, error) {
+// in tier 1 or 2. It writes nothing.
+func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTierOptions) (*PersonTierPreview, error) {
 	var preview *PersonTierPreview
 	// One snapshot keeps the projection settings and every page of rows from the
 	// same moment, so a rebuild that starts mid-read cannot mix generations.
@@ -108,7 +107,7 @@ func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTie
 			}
 			for _, id := range ids {
 				d := persontiers.Evaluate(signals[id], options.Config)
-				if d.Tier == 3 || (tier != 0 && d.Tier != tier) {
+				if d.Tier == 3 {
 					continue
 				}
 				preview.People = append(preview.People, PersonTierRow{
