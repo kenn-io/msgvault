@@ -323,6 +323,7 @@ func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 }
 
 func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
+	clearTelemetryVetoEnvironment(t)
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
 	terminal := cliActionTerminal
