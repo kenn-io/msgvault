@@ -263,11 +263,11 @@ func markStrictConfig(cmd *cobra.Command) *cobra.Command {
 }
 
 // warnDaemonConfigError prints each invalid daemon-only setting once, after
-// the command ran, unless runErr already reports it or a proxied child
-// failure streamed its own error. The daemon's own CLI
+// the command ran, unless runErr or the stderr a proxied child streamed
+// already reports it. The daemon's own CLI
 // children stay quiet; their parent warned.
 func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error) {
-	if cfg == nil || isDaemonConsoleSubprocess() || errors.Is(runErr, errCLISubprocessProxied) {
+	if cfg == nil || isDaemonConsoleSubprocess() {
 		return
 	}
 	err := cfg.DaemonConfigError()
@@ -279,11 +279,20 @@ func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error
 		errs = joined.Unwrap()
 	}
 	for _, e := range errs {
-		if runErr != nil && (errors.Is(runErr, e) || strings.Contains(runErr.Error(), e.Error())) {
+		if alreadyReported(runErr, e) {
 			continue
 		}
 		_, _ = fmt.Fprintf(root.ErrOrStderr(), "Warning: invalid daemon config: %v\n", e)
 	}
+}
+
+// alreadyReported reports whether runErr, or the stderr a failed proxied child
+// streamed, already shows err.
+func alreadyReported(runErr, err error) bool {
+	if child, ok := errors.AsType[proxiedChildError](runErr); ok {
+		return child.reported(err)
+	}
+	return runErr != nil && (errors.Is(runErr, err) || strings.Contains(runErr.Error(), err.Error()))
 }
 
 // skipsConfigLoad reports whether cmd must run without loading config
