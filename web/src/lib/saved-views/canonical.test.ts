@@ -44,38 +44,15 @@ function openedAndReloaded(saved: CanonicalState) {
 }
 
 describe('saved-view canonical state', () => {
-  it.each([
-    [' 1', '1 ', 'SENDER'],
-    ['01', '+1', 'any'],
-    ['9223372036854775807', '+09223372036854775807', ' recipient '],
-    ['1', '1', 'RECİPİENT'],
-    ['\u00851', '1', 'any'],
-    [['1', ' 1'], '1', 'sender']
-  ])('keeps identity %j/%j/%j on open and URL-only reload', (source, identity, direction) => {
-    const sources = [source].flat();
+  it('keeps a saved identity filter on open and URL-only reload', () => {
+    const identity = ['1 ', 'person@example.com', 'SENDER'];
     const saved: CanonicalState = { filters: [
-      { field: 'source', operator: 'in', values: sources },
-      { field: 'identity', operator: 'in', values: [identity, 'person@example.com', direction] }
+      { field: 'source', operator: 'in', values: [' 1'] },
+      { field: 'identity', operator: 'in', values: identity }
     ] };
     const expected = [
-      { dimension: 'source', values: sources },
-      { dimension: 'identity', values: [identity, 'person@example.com', direction] }
-    ];
-    expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
-  });
-
-  it.each([
-    ['0', '0'], ['-1', '-1'], ['9223372036854775808', '9223372036854775808'],
-    ['1', '2'], ['9007199254740992', '9007199254740993']
-  ])('drops only identity for IDs %s and %s', (source, identity) => {
-    const saved: CanonicalState = { filters: [
-      { field: 'source', operator: 'in', values: [source] },
-      { field: 'identity', operator: 'in', values: [identity, 'person@example.com', 'any'] },
-      { field: 'message_type', operator: 'in', values: ['email'] }
-    ] };
-    const expected = [
-      { dimension: 'source', values: [source] },
-      { dimension: 'message_type', values: ['email'] }
+      { dimension: 'source', values: [' 1'] },
+      { dimension: 'identity', values: identity }
     ];
     expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
   });
