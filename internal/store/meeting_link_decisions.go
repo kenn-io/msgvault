@@ -61,8 +61,34 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 			return fmt.Errorf("resolve meeting decision target: %w", err)
 		}
 		_, err = tx.ExecContext(ctx, meetingDecisionUpsert, memberID, target.Identity.ICalUID, sql.NullInt64{Int64: target.Identity.EventMessageID, Valid: target.Identity.ICalUID == ""}, target.Identity.OccurrenceKey, decision, time.Now().UTC())
-		return err
+		if err != nil || decision != "split" {
+			return err
+		}
+		return s.splitMeetingEvidence(ctx, tx, memberID, target.Identity)
 	})
+}
+
+func (s *Store) splitMeetingEvidence(ctx context.Context, tx *loggedTx, memberID int64, identity meetingIdentity) error {
+	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
+	key, err := memberLinkKey(ctx, r, memberID)
+	if err != nil || key.Kind != "ical_uid" || key.Value != identity.ICalUID {
+		return err
+	}
+	budget := calrecur.RequestReadBudget
+	matches, err := s.automaticMeetingOccurrences(ctx, r, key, &budget)
+	if errors.Is(err, ErrQueryTooBroad) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, match := range matches {
+		if match.Identity == identity {
+			_, err := tx.ExecContext(ctx, meetingDecisionUpsert, memberID, identity.ICalUID, sql.NullInt64{}, meetingEvidenceSplitKey, "split", time.Now().UTC())
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveMeetingDecisionTarget(ctx context.Context, r reboundReader, memberID int64, ref OccurrenceRef, decision string) (linkOccurrence, error) {
