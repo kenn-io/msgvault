@@ -25,9 +25,10 @@ func TestEvaluateRules(t *testing.T) {
 		{"large group and two DMs", Signals{OutboundShort: 2, OutboundLong: 2, ActiveDaysShort: 2, ActiveDaysLong: 2, LargeAudienceInboundEvents: 58}, 3, "none"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			d := Evaluate(tc.signals, DefaultConfig())
-			assert.Equal(t, tc.tier, d.Tier)
-			assert.Equal(t, tc.rule, d.Rule)
+			assert.Equal(tc.tier, d.Tier)
+			assert.Equal(tc.rule, d.Rule)
 		})
 	}
 }
@@ -52,14 +53,15 @@ func TestEvaluateThresholds(t *testing.T) {
 		{"meeting days", Signals{}, func(s *Signals, n int) { s.MeetingDaysLong = n }, 2, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			for _, delta := range []int{-1, 0, 1} {
 				s := tc.base
 				tc.set(&s, tc.threshold+delta)
 				d := Evaluate(s, DefaultConfig())
 				if delta < 0 {
-					assert.Greater(t, d.Tier, tc.wantTier)
+					assert.Greater(d.Tier, tc.wantTier)
 				} else {
-					assert.Equal(t, tc.wantTier, d.Tier)
+					assert.Equal(tc.wantTier, d.Tier)
 				}
 			}
 		})
@@ -67,6 +69,7 @@ func TestEvaluateThresholds(t *testing.T) {
 }
 
 func TestExclusionsForceTierThree(t *testing.T) {
+	checks := assert.New(t)
 	cfg := DefaultConfig()
 	cfg.ExcludeDomainPatterns = []string{"rooms.example.com"}
 	// Two-way contact that would reach tier 2 without an exclusion.
@@ -89,17 +92,18 @@ func TestExclusionsForceTierThree(t *testing.T) {
 		{"human plus room", false, []string{"room@rooms.example.com", "alex@example.com"}, false, 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
 			s := active
 			s.Owner, s.Emails, s.HasPhoneOrChat = tc.owner, tc.emails, tc.phone
 			d := Evaluate(s, cfg)
-			assert.Equal(t, tc.tier, d.Tier)
-			assert.Equal(t, tc.exclusion, d.Exclusion)
-			assert.Equal(t, "tier2_two_way", d.Rule, "the matching rule stays visible for explain")
+			assert.Equal(tc.tier, d.Tier)
+			assert.Equal(tc.exclusion, d.Exclusion)
+			assert.Equal("tier2_two_way", d.Rule, "the matching rule stays visible for explain")
 		})
 	}
 	cfg.ExcludeAddressPatterns = []string{"alerts*"}
-	assert.Equal(t, "automated_address", Evaluate(Signals{Emails: []string{"ALERTS-weekly@example.com"}}, cfg).Exclusion)
-	assert.Empty(t, Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg).Exclusion)
+	checks.Equal("automated_address", Evaluate(Signals{Emails: []string{"ALERTS-weekly@example.com"}}, cfg).Exclusion)
+	checks.Empty(Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg).Exclusion)
 }
 
 func TestDisabledAlternatives(t *testing.T) {
@@ -113,12 +117,13 @@ func TestDisabledAlternatives(t *testing.T) {
 }
 
 func TestEvaluateReportsEveryThresholdCheck(t *testing.T) {
+	assert := assert.New(t)
 	d := Evaluate(Signals{OutboundShort: 1, InboundShort: 2}, DefaultConfig())
 	require.Len(t, d.Thresholds, 10)
-	assert.Equal(t, ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
-	assert.Equal(t, ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
+	assert.Equal(ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
+	assert.Equal(ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])
 	cfg := DefaultConfig()
 	cfg.Tier2.MinMeetingDaysLong = 0
 	d = Evaluate(Signals{MeetingDaysLong: 9}, cfg)
-	assert.Equal(t, ThresholdCheck{Name: "tier2.min_meeting_days_long", Observed: 9}, d.Thresholds[9])
+	assert.Equal(ThresholdCheck{Name: "tier2.min_meeting_days_long", Observed: 9}, d.Thresholds[9])
 }
