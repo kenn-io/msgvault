@@ -27,8 +27,7 @@ msgvault person untrack 7
 ```
 
 To find people worth tracking, list the saved people you have exchanged
-messages or met with. Drafts, texts that never left your phone, and call or
-voicemail records don't count:
+messages or met with:
 
 ```bash
 msgvault person tiers preview

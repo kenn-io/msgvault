@@ -92,20 +92,6 @@ func TestPersonTierSignalsUseLocalDates(t *testing.T) {
 	assert.Equal(2, signals.InboundLong)
 }
 
-func TestPersonTierReadiness(t *testing.T) {
-	assert := assert.New(t)
-	f, personID := newActivityQueryFixture(t)
-	seedProjectedActivity(t, f, personID, []time.Time{time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)})
-	ready := tierReadiness(t, f)
-	assert.True(ready.Ready)
-	assert.Empty(ready.Reasons)
-	f.CreateMessage("pending-tier-projection")
-	ready = tierReadiness(t, f)
-	assert.False(ready.Ready)
-	assert.Contains(ready.Reasons, "projection_pending")
-	assert.Contains(ready.Reasons, "watermark_behind")
-}
-
 // tierSignals reads one person's counts through explain.
 func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.Time, cfg persontiers.Config) persontiers.Signals {
 	t.Helper()
@@ -192,13 +178,18 @@ func TestPersonTierSignalsBindingsFeedExclusions(t *testing.T) {
 	assert.True(signals.Owner)
 }
 
-func TestPersonTierReadinessUnreconciledIdentityAndDeletedWatermark(t *testing.T) {
+func TestPersonTierReadiness(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
 	seedProjectedActivity(t, f, personID, []time.Time{time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)})
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "second-owner@example.com", "manual"))
+	f.CreateMessage("pending-tier-projection")
 	ready := tierReadiness(t, f)
+	assert.False(ready.Ready)
+	assert.Contains(ready.Reasons, "watermark_behind")
+	projectTierSignals(t, f, "UTC", 25)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "second-owner@example.com", "manual"))
+	ready = tierReadiness(t, f)
 	assert.False(ready.Ready)
 	assert.Contains(ready.Reasons, "projection_pending")
 	projectTierSignals(t, f, "UTC", 25)

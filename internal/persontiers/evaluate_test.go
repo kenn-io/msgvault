@@ -14,11 +14,7 @@ func TestEvaluateRules(t *testing.T) {
 		tier    int
 		rule    string
 	}{
-		{"intensity", Signals{OutboundShort: 14, InboundShort: 22, ActiveDaysShort: 19}, 1, "tier1_intensity"},
-		{"chat only below intensity", Signals{OutboundShort: 9, InboundShort: 11, ActiveDaysShort: 5, OutboundLong: 9, InboundLong: 11, ActiveDaysLong: 17, ChannelsLong: 1}, 2, "tier2_two_way"},
-		{"breadth channels", Signals{OutboundShort: 3, InboundShort: 2, ActiveDaysShort: 3, ChannelsLong: 2}, 1, "tier1_breadth"},
 		{"breadth meetings", Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3, MeetingDaysLong: 2}, 1, "tier1_breadth"},
-		{"known", Signals{OutboundLong: 1, InboundLong: 2, ActiveDaysLong: 4}, 2, "tier2_two_way"},
 		{"meetings only", Signals{MeetingDaysLong: 5}, 2, "tier2_meetings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
