@@ -125,6 +125,60 @@ func TestListCalendarOccurrencesMasterChangesValueType(t *testing.T) {
 	}
 }
 
+func TestListCalendarOccurrencesMasterChangesValueTypeSparseCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name, oldStart, oldEnd, original, newStart, newEnd string
+		wantStarts, wantEnds                               []string
+		wantAllDay                                         bool
+	}{
+		{
+			name:     "all-day to timed",
+			oldStart: `{"date":"2027-03-02"}`, oldEnd: `{"date":"2027-03-03"}`,
+			original: `{"date":"2027-03-09"}`,
+			newStart: `{"dateTime":"2027-03-02T09:00:00Z"}`, newEnd: `{"dateTime":"2027-03-02T10:00:00Z"}`,
+			wantStarts: []string{"2027-03-02T09:00:00Z", "2027-03-09T09:00:00Z", "2027-03-16T09:00:00Z"},
+			wantEnds:   []string{"2027-03-02T10:00:00Z", "2027-03-09T10:00:00Z", "2027-03-16T10:00:00Z"},
+		},
+		{
+			name:     "timed to all-day",
+			oldStart: `{"dateTime":"2027-03-02T09:00:00Z"}`, oldEnd: `{"dateTime":"2027-03-02T10:00:00Z"}`,
+			original: `{"dateTime":"2027-03-09T09:00:00Z"}`,
+			newStart: `{"date":"2027-03-02"}`, newEnd: `{"date":"2027-03-03"}`,
+			wantStarts: []string{"2027-03-02T00:00:00Z", "2027-03-09T00:00:00Z", "2027-03-16T00:00:00Z"},
+			wantEnds:   []string{"2027-03-03T00:00:00Z", "2027-03-10T00:00:00Z", "2027-03-17T00:00:00Z"},
+			wantAllDay: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, "master", fmt.Sprintf(`{"id":"weekly","status":"confirmed","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.oldStart, tc.oldEnd))
+			_, cancelled := calendarFixture(t, st, "cancelled", fmt.Sprintf(`{"id":"cancelled","recurringEventId":"weekly","originalStartTime":%s,"status":"cancelled"}`, tc.original))
+			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			require.Len(page.Occurrences, 3)
+			assert.Equal(cancelled, page.Occurrences[1].MessageID)
+			assert.Equal("cancelled", page.Occurrences[1].Status)
+			assert.Empty(page.Unexpandable)
+
+			require.NoError(st.UpsertMessageRawWithFormat(master, []byte(fmt.Sprintf(`{"id":"weekly","status":"confirmed","start":%s,"end":%s,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, tc.newStart, tc.newEnd)), "gcal_json"))
+			page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			assert.Equal([]CalendarUnexpandable{{MessageID: cancelled, Reason: "exception original type differs from series and event bounds are missing"}}, page.Unexpandable)
+			require.Len(page.Occurrences, 3, "the current series must remain visible after its type changes")
+			for i, occurrence := range page.Occurrences {
+				assert.Equal(master, occurrence.MessageID)
+				assert.Equal(master, occurrence.SeriesMessageID)
+				assert.Equal("confirmed", occurrence.Status)
+				assert.Equal(tc.wantAllDay, occurrence.AllDay)
+				assert.Equal(tc.wantStarts[i], occurrence.Start.Format(time.RFC3339))
+				assert.Equal(tc.wantEnds[i], occurrence.End.Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestListCalendarOccurrencesUnidentifiedExceptions(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
