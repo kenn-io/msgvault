@@ -37,7 +37,7 @@ msgvault person tiers explain 7
 
 By default, preview lists tier 1 (at least two messages each way and six days
 of contact in the last 90 days, or at least two messages each way and three
-days of contact plus a second channel or repeated meetings) and tier 2
+days of contact plus both email and chat, or repeated meetings) and tier 2
 (messages both ways and three days of contact in the last year, or repeated
 meetings). Each row shows the rule that put the person there, whether they are
 already tracked, and the latest day that counted toward the tier. A header line

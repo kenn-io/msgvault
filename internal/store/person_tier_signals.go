@@ -13,6 +13,9 @@ import (
 
 const personTierPageSize = 500
 
+// personTierRowPage is how many events one read holds at a time.
+var personTierRowPage = 5000
+
 // PersonTierReadiness reports whether the activity projection has caught up
 // with the archive and was built under the configured settings. Counts read
 // while it is behind can be too low or follow older settings, so previews warn
@@ -56,23 +59,34 @@ func (s *Store) personTierReadiness(ctx context.Context, tx *loggedTx) (PersonTi
 //
 // The projection already holds each person's direct events. The only rule it
 // does not store is the inbound audience cut, so that comes from the
-// projector's own classifier.
+// projector's own classifier. Events arrive in keyset pages and fold into the
+// counters as they do, so memory follows the page size and the number of
+// people and days, not the number of events.
 func (s *Store) personTierSignals(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, maxDirect int) (map[int64]persontiers.Signals, error) {
-	rows, err := personTierRows(ctx, tx, personIDs, asOf, cfg)
-	if err != nil {
-		return nil, err
+	tally := newTierTally(cfg, asOf)
+	var after tierSignalRow
+	for {
+		rows, err := personTierRows(ctx, tx, personIDs, asOf, cfg, after)
+		if err != nil {
+			return nil, err
+		}
+		broadcast, err := s.personTierBroadcast(ctx, tx, rows, cfg, maxDirect)
+		if err != nil {
+			return nil, err
+		}
+		tally.add(rows, broadcast)
+		if len(rows) < personTierRowPage {
+			break
+		}
+		after = rows[len(rows)-1]
 	}
-	broadcast, err := s.personTierBroadcast(ctx, tx, rows, cfg, maxDirect)
-	if err != nil {
-		return nil, err
-	}
-	result := buildTierSignals(rows, broadcast, cfg, asOf)
+	result := tally.signals()
 	for _, id := range personIDs {
 		if _, ok := result[id]; !ok {
 			result[id] = persontiers.Signals{}
 		}
 	}
-	if err = personTierBindings(ctx, tx, int64Placeholders(len(personIDs)), personMergeSnapshotIDArgs(personIDs), result); err != nil {
+	if err := personTierBindings(ctx, tx, int64Placeholders(len(personIDs)), personMergeSnapshotIDArgs(personIDs), result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -89,15 +103,17 @@ type tierSignalRow struct {
 	List      bool
 }
 
-// personTierRows reads the direct links in the long window for the page. The
-// WHERE clause is the counting rule: sent email and chat messages between the
-// person and the owner, not drafts, texts that never left the phone, or call
-// records, and meetings in either direction.
-func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config) ([]tierSignalRow, error) {
+// personTierRows reads up to personTierRowPage direct links in the long window
+// for the page, in (person, date, message) order after the given row. The WHERE
+// clause is the counting rule: sent email and chat messages between the person
+// and the owner, not drafts, texts that never left the phone, or call records,
+// and meetings in either direction.
+func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config, after tierSignalRow) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
-		asOf.Format(time.DateOnly))
+		asOf.Format(time.DateOnly),
+		after.PersonID, after.LocalDate, after.MessageID, personTierRowPage)
 	rows, err := tx.QueryContext(ctx, `SELECT aep.person_id,aep.message_id,aep.local_date,ae.channel,
  CASE WHEN ae.direction='inbound' THEN 1 ELSE 0 END,
  CASE WHEN ae.ref_kind='meeting' THEN 1 ELSE 0 END,
@@ -109,18 +125,19 @@ func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf t
  JOIN sources src ON src.id=m.source_id
  WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`) AND aep.evidence='direct'
  AND aep.local_date BETWEEN ? AND ?
- AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
- AND ae.direction IN ('inbound','outbound') AND (
+ AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
+ AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
  (ae.ref_kind='meeting' AND aep.role IN ('attendee','organizer')) OR
  (ae.ref_kind='message' AND ((ae.direction='inbound' AND aep.role='sender') OR
  (ae.direction='outbound' AND aep.role IN ('addressed','member')))
  AND (COALESCE(m.message_type,'') IN ('','`+MessageTypeEmail+`') OR `+identityindex.IsChatSQL("m.message_type", "c.conversation_type")+`)
- AND COALESCE(m.is_sent,TRUE) AND NOT `+draftEvidenceSQL("m", "src")+`))`, args...)
+ AND COALESCE(m.is_sent,TRUE) AND NOT `+draftEvidenceSQL("m", "src")+`))
+ ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var result []tierSignalRow
+	result := make([]tierSignalRow, 0, personTierRowPage)
 	for rows.Next() {
 		var r tierSignalRow
 		var inbound, meeting, list int
@@ -162,35 +179,52 @@ func (s *Store) personTierBroadcast(ctx context.Context, tx *loggedTx, rows []ti
 	return broadcast, nil
 }
 
-// buildTierSignals counts the rows. A row counts unless the message came from
-// a mailing list (when excluded) or is an inbound message to more people than
-// the direct limit. The two exclusion counters count only rows that would
-// otherwise count, a row taking the first reason that applies.
-func buildTierSignals(rows []tierSignalRow, broadcast map[int64]bool, cfg persontiers.Config, asOf time.Time) map[int64]persontiers.Signals {
-	short := asOf.AddDate(0, 0, -(cfg.ShortWindowDays - 1)).Format(time.DateOnly)
-	type days struct{ short, long, meeting, channel map[string]struct{} }
-	result := map[int64]persontiers.Signals{}
-	seen := map[int64]*days{}
+// tierTally counts rows as pages arrive. A row counts unless the message came
+// from a mailing list (when excluded) or is an inbound message to more people
+// than the direct limit. The two exclusion counters count only rows that would
+// otherwise count, a row taking the first reason that applies. A meeting adds
+// to the active and meeting days but is not a message channel.
+type tierTally struct {
+	cfg    persontiers.Config
+	short  string
+	result map[int64]persontiers.Signals
+	seen   map[int64]*tierDays
+}
+
+type tierDays struct{ short, long, meeting, channel map[string]struct{} }
+
+func newTierTally(cfg persontiers.Config, asOf time.Time) *tierTally {
+	return &tierTally{
+		cfg:    cfg,
+		short:  asOf.AddDate(0, 0, -(cfg.ShortWindowDays - 1)).Format(time.DateOnly),
+		result: map[int64]persontiers.Signals{},
+		seen:   map[int64]*tierDays{},
+	}
+}
+
+func (t *tierTally) add(rows []tierSignalRow, broadcast map[int64]bool) {
 	for _, r := range rows {
-		s := result[r.PersonID]
+		s := t.result[r.PersonID]
 		switch {
-		case r.List && cfg.ExcludeListMessages:
+		case r.List && t.cfg.ExcludeListMessages:
 			s.ExcludedListEvents++
-			result[r.PersonID] = s
+			t.result[r.PersonID] = s
 			continue
 		case r.Inbound && broadcast[r.MessageID]:
 			s.LargeAudienceInboundEvents++
-			result[r.PersonID] = s
+			t.result[r.PersonID] = s
 			continue
 		}
-		d := seen[r.PersonID]
+		d := t.seen[r.PersonID]
 		if d == nil {
-			d = &days{map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}}
-			seen[r.PersonID] = d
+			d = &tierDays{map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}}
+			t.seen[r.PersonID] = d
 		}
-		inShort := r.LocalDate >= short
+		inShort := r.LocalDate >= t.short
 		d.long[r.LocalDate] = struct{}{}
-		d.channel[r.Channel] = struct{}{}
+		if !r.Meeting {
+			d.channel[r.Channel] = struct{}{}
+		}
 		s.LastDate = max(s.LastDate, r.LocalDate)
 		if inShort {
 			d.short[r.LocalDate] = struct{}{}
@@ -209,15 +243,18 @@ func buildTierSignals(rows []tierSignalRow, broadcast map[int64]bool, cfg person
 				s.OutboundShort++
 			}
 		}
-		result[r.PersonID] = s
+		t.result[r.PersonID] = s
 	}
-	for id, d := range seen {
-		s := result[id]
+}
+
+func (t *tierTally) signals() map[int64]persontiers.Signals {
+	for id, d := range t.seen {
+		s := t.result[id]
 		s.ActiveDaysShort, s.ActiveDaysLong = len(d.short), len(d.long)
 		s.MeetingDaysLong, s.ChannelsLong = len(d.meeting), len(d.channel)
-		result[id] = s
+		t.result[id] = s
 	}
-	return result
+	return t.result
 }
 
 // personTierBindings reads each person's addresses and identifiers for

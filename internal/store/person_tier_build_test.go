@@ -8,7 +8,7 @@ import (
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
-func TestBuildTierSignalsExcludesListsAndBroadcastsOnceEach(t *testing.T) {
+func TestTierTallyExcludesListsAndBroadcastsOnceEach(t *testing.T) {
 	assert := assert.New(t)
 	asOf := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	rows := []tierSignalRow{
@@ -19,7 +19,7 @@ func TestBuildTierSignalsExcludesListsAndBroadcastsOnceEach(t *testing.T) {
 	}
 	broadcast := map[int64]bool{1: true, 2: true, 3: true}
 
-	got := buildTierSignals(rows, broadcast, persontiers.DefaultConfig(), asOf)[1]
+	got := tallyTierRows(rows, broadcast, persontiers.DefaultConfig(), asOf)[1]
 
 	assert.Equal(1, got.ExcludedListEvents, "a list row that is also a broadcast counts as a list")
 	assert.Equal(2, got.LargeAudienceInboundEvents, "the message and the all-hands meeting")
@@ -31,8 +31,14 @@ func TestBuildTierSignalsExcludesListsAndBroadcastsOnceEach(t *testing.T) {
 
 	cfg := persontiers.DefaultConfig()
 	cfg.ExcludeListMessages = false
-	got = buildTierSignals(rows, map[int64]bool{}, cfg, asOf)[1]
+	got = tallyTierRows(rows, map[int64]bool{}, cfg, asOf)[1]
 	assert.Zero(got.ExcludedListEvents)
 	assert.Equal(2, got.InboundLong)
 	assert.Equal("2026-10-16", got.LastDate)
+}
+
+func tallyTierRows(rows []tierSignalRow, broadcast map[int64]bool, cfg persontiers.Config, asOf time.Time) map[int64]persontiers.Signals {
+	tally := newTierTally(cfg, asOf)
+	tally.add(rows, broadcast)
+	return tally.signals()
 }

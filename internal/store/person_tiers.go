@@ -264,8 +264,7 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 // settings differ from the ones the projection was built under, since the
 // counts follow the stored ones until the projection is rebuilt.
 func (p personTierPlan) checkSettings(r PersonTierReadiness, options PersonTierOptions) PersonTierReadiness {
-	if !p.stored || options.ActivityTimezone == "" || options.ActivityMaxDirect <= 0 ||
-		(options.ActivityTimezone == p.projection.Timezone && options.ActivityMaxDirect == p.projection.MaxDirect) {
+	if !p.stored || (options.ActivityTimezone == p.projection.Timezone && options.ActivityMaxDirect == p.projection.MaxDirect) {
 		return r
 	}
 	r.Ready = false

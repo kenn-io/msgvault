@@ -16,7 +16,9 @@ import (
 var tierAsOf = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 
 func tierOptions() store.PersonTierOptions {
-	return store.TierOptionsAsOf(store.PersonTierOptions{Config: persontiers.DefaultConfig()}, tierAsOf)
+	return store.TierOptionsAsOf(store.PersonTierOptions{
+		Config: persontiers.DefaultConfig(), ActivityTimezone: "UTC", ActivityMaxDirect: 25,
+	}, tierAsOf)
 }
 
 // seedTierMail writes one message per entry. A negative day offset is that
@@ -88,6 +90,26 @@ func previewTiers(t *testing.T, p tierPeople) *store.PersonTierPreview {
 	preview, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions())
 	require.NoError(t, err)
 	return preview
+}
+
+// Reading events in small pages cuts people's rows across page boundaries and
+// must not change a count.
+func TestPersonTierCountsDoNotDependOnReadPageSize(t *testing.T) {
+	p := newTierPeople(t)
+	explainAll := func() []*store.PersonTierExplanation {
+		var all []*store.PersonTierExplanation
+		for _, id := range []int64{p.frequent, p.regular, p.oneWay, p.old, p.latest} {
+			explained, err := p.f.Store.ExplainPersonTierContext(t.Context(), id, tierOptions())
+			require.NoError(t, err)
+			all = append(all, explained)
+		}
+		return all
+	}
+	want := explainAll()
+	require.Equal(t, 8, want[0].Signals.OutboundLong+want[0].Signals.InboundLong)
+	defer store.SetPersonTierRowPage(3)()
+
+	assert.Equal(t, want, explainAll())
 }
 
 func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
@@ -192,9 +214,7 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 	y := a.f.EnsureParticipant("y@example.com", "Y", "example.com")
 	a.message(t, "stored-limit", -1, a.f.ConvID, "", a.owner, x, y)
 	projectTierSignals(t, a.f, "UTC", 25)
-	options := store.TierOptionsAsOf(store.PersonTierOptions{
-		Config: persontiers.DefaultConfig(), ActivityTimezone: "UTC", ActivityMaxDirect: 25,
-	}, tierAsOf)
+	options := tierOptions()
 
 	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
 	require.NoError(err)
