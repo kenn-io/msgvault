@@ -39,8 +39,12 @@ type Service struct {
 	Retriever Retriever
 	Data      DataReader
 	// Index is the vector backend the search reads.
-	Index      vector.FilteredCoverageBackend
+	Index      vector.Backend
 	BuildScope vector.BuildScope
+	// Unembedded reports that some message in scope has no vector. The
+	// search returns only messages with a vector or a keyword hit, so Find
+	// asks before answering that nobody wrote about the topic.
+	Unembedded func(ctx context.Context, scope query.Context) (bool, error)
 	Now        func() time.Time
 }
 
@@ -62,11 +66,10 @@ func searchTypes(scope vector.BuildScope) (types []string, narrowed bool) {
 	return types, len(types) < len(allowed) || len(scope.SourceIDs) > 0
 }
 
-// searchResult is what one search found and where it came up short.
+// searchResult is what one search found and whether it filled its pool.
 type searchResult struct {
 	candidates []Candidate
 	poolFull   bool
-	unembedded bool
 }
 
 // Find retrieves messages about the topic, keeps those whose cosine
@@ -83,7 +86,7 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	if err != nil {
 		return out, err
 	}
-	types, narrowed := searchTypes(s.BuildScope)
+	types, partial := searchTypes(s.BuildScope)
 	found, err := s.searchAuthors(ctx, p, types, owner)
 	if err != nil {
 		return out, err
@@ -92,20 +95,26 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	if err != nil {
 		return out, err
 	}
-	if found.poolFull {
-		out.Limits = append(out.Limits, LimitPoolFull)
-	}
-	if narrowed || found.unembedded {
-		out.Limits = append(out.Limits, LimitPartialIndex)
-	}
-	if truncated {
-		out.Limits = append(out.Limits, LimitDeclaredTruncated)
-	}
 	now := time.Now().UTC()
 	if s.Now != nil {
 		now = s.Now().UTC()
 	}
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
+	if !partial && len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
+		partial, err = s.Unembedded(ctx, query.Context{After: p.After, Before: p.Before, MessageTypes: types})
+		if err != nil {
+			return out, err
+		}
+	}
+	if found.poolFull {
+		out.Limits = append(out.Limits, LimitPoolFull)
+	}
+	if partial {
+		out.Limits = append(out.Limits, LimitPartialIndex)
+	}
+	if truncated {
+		out.Limits = append(out.Limits, LimitDeclaredTruncated)
+	}
 	return out, nil
 }
 
@@ -139,27 +148,8 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 	counted := similarities(scores.Scores, hits, p.MinScore)
 	var result searchResult
 	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength)
-	if result.unembedded, err = s.unembedded(ctx, hits, meta.Generation.ID); err != nil {
-		return searchResult{}, err
-	}
 	result.candidates, err = s.attribute(ctx, counted, owner)
 	return result, err
-}
-
-// unembedded reports that a keyword-only hit has no vector in the searched
-// generation, as mail synced since the last embedding run has none.
-func (s *Service) unembedded(ctx context.Context, hits []vector.FusedHit, gen vector.GenerationID) (bool, error) {
-	var keywordOnly []int64
-	for _, hit := range hits {
-		if math.IsNaN(hit.VectorScore) {
-			keywordOnly = append(keywordOnly, hit.MessageID)
-		}
-	}
-	if len(keywordOnly) == 0 {
-		return false, nil
-	}
-	embedded, err := s.Index.EmbeddedMessageCountForIDs(ctx, gen, keywordOnly)
-	return embedded < int64(len(keywordOnly)), err
 }
 
 type scoredHit struct {

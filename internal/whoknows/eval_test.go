@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/eval"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -220,13 +221,12 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET embed_gen = ?"), int64(generation))
 	require.NoError(t, err)
 
-	coverage, ok := backend.(vector.FilteredCoverageBackend)
-	require.True(t, ok, "backend must report filtered coverage")
-
 	return &evalFixture{
 		service: &Service{
-			Retriever: evalEngine(st, backend, bagOfWordsEmbedder{}), Data: st, Index: coverage,
-			Now: func() time.Time { return evalNow },
+			Retriever: evalEngine(st, backend, bagOfWordsEmbedder{}), Data: st, Index: backend,
+			// The fixture embeds every message.
+			Unembedded: func(context.Context, query.Context) (bool, error) { return false, nil },
+			Now:        func() time.Time { return evalNow },
 		},
 		emails: emails, store: st, backend: backend,
 		generation: generation, source: source.ID, conversation: conversation,
@@ -238,9 +238,8 @@ func evalEngine(st *store.Store, backend vector.Backend, embedder hybrid.Embeddi
 		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 }
 
-// post stores an email from a new sender, indexed for keyword search. Unless
-// vec is nil, it also embeds the email as vec and stamps it, as the embedding
-// worker does; mail synced since the last embedding run has neither.
+// post stores an email from a new sender, indexed for keyword search, and
+// embeds it as vec and stamps it, as the embedding worker does.
 func (f *evalFixture) post(t *testing.T, from, text string, vec []float32) int64 {
 	t.Helper()
 	sender, err := f.store.EnsureParticipant(from, from, "example.net")
@@ -253,13 +252,11 @@ func (f *evalFixture) post(t *testing.T, from, text string, vec []float32) int64
 	})
 	require.NoError(t, err)
 	require.NoError(t, f.store.UpsertFTS(id, text, text, from, "", ""))
-	if vec != nil {
-		require.NoError(t, f.backend.Upsert(t.Context(), f.generation,
-			[]vector.Chunk{{MessageID: id, Vector: vec, SourceCharLen: len(text)}}))
-		_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE messages SET embed_gen = ? WHERE id = ?"),
-			int64(f.generation), id)
-		require.NoError(t, err)
-	}
+	require.NoError(t, f.backend.Upsert(t.Context(), f.generation,
+		[]vector.Chunk{{MessageID: id, Vector: vec, SourceCharLen: len(text)}}))
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE messages SET embed_gen = ? WHERE id = ?"),
+		int64(f.generation), id)
+	require.NoError(t, err)
 	return id
 }
 
@@ -311,18 +308,6 @@ func TestFindEvaluation(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Mail synced since the last embedding run is found only by keyword, which
-// does not count, so the result says so rather than that nobody wrote.
-func TestFindReportsMessagesNotYetEmbedded(t *testing.T) {
-	f := newEvalFixture(t)
-	f.post(t, "fresh@example.net", "zeppelin mooring lines", nil)
-
-	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
-	require.NoError(t, err)
-	assert.Empty(t, got.UnsavedContacts)
-	assert.Equal(t, []string{LimitPartialIndex}, got.Limits)
 }
 
 // Search scores a vector hit as 1 - L2 distance, which falls below the floor

@@ -18,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -68,6 +69,7 @@ type whoKnowsBackend struct {
 	hits       []vector.FusedHit
 	err        error
 	request    vector.FusedRequest
+	unembedded map[int64]bool
 }
 
 func (b *whoKnowsBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
@@ -79,9 +81,42 @@ func (b *whoKnowsBackend) FusedSearch(_ context.Context, r vector.FusedRequest) 
 	return b.hits, vector.SearchMetadata{}, b.err
 }
 
-// EmbeddedMessageCountForIDs reports every message as embedded.
+// EmbeddedMessageCountForIDs reports every message but those in unembedded
+// as embedded.
 func (b *whoKnowsBackend) EmbeddedMessageCountForIDs(_ context.Context, _ vector.GenerationID, ids []int64) (int64, error) {
-	return int64(len(ids)), nil
+	var count int64
+	for _, id := range ids {
+		if !b.unembedded[id] {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// whoKnowsExplorer lists messageIDs as the archive messages in any coverage
+// context, and keeps the context it was asked about.
+type whoKnowsExplorer struct {
+	query.Engine
+	query.Explorer
+
+	messageIDs []int64
+	context    query.Context
+	scans      int
+}
+
+func (e *whoKnowsExplorer) ExploreSelectionStats(context.Context, query.ExploreSelectionRequest) (*query.ExploreSelectionStats, error) {
+	return &query.ExploreSelectionStats{CacheRevision: "cache:test"}, nil
+}
+
+func (e *whoKnowsExplorer) ExploreCoverage(
+	_ context.Context, request query.ExploreCoverageRequest, visit func([]int64) error,
+) (*query.ExploreCoverageResult, error) {
+	e.scans++
+	e.context = request.Context
+	if err := visit(e.messageIDs); err != nil {
+		return nil, err
+	}
+	return &query.ExploreCoverageResult{EligibleCount: int64(len(e.messageIDs)), CacheRevision: "cache:test"}, nil
 }
 
 type whoKnowsEmbedder struct{ err error }
@@ -94,18 +129,18 @@ func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder wh
 	t.Helper()
 	cfg := vector.Config{Enabled: true}
 	cfg.Embed.Scope.MessageTypes = []string{"email"}
-	backend.generation = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: cfg.GenerationFingerprint()}
 	st := testutil.NewTestStore(t)
-	engine := hybrid.NewEngine(backend, st.DB(), embedder, hybrid.Config{
-		KPerSignal: 100, RRFK: 60, BuildScope: cfg.Embed.Scope.BuildScope(),
-	})
 	options := api.ServerOptions{
-		Config: &config.Config{}, Store: st, HybridEngine: engine, Backend: backend,
+		Config: &config.Config{}, Store: st, Backend: backend,
 		VectorCfg: cfg, Logger: slog.New(slog.DiscardHandler),
 	}
 	for _, change := range tweak {
 		change(&options)
 	}
+	backend.generation = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: options.VectorCfg.GenerationFingerprint()}
+	options.HybridEngine = hybrid.NewEngine(backend, st.DB(), embedder, hybrid.Config{
+		KPerSignal: 100, RRFK: 60, BuildScope: options.VectorCfg.Embed.Scope.BuildScope(),
+	})
 	srv := api.NewServerWithOptions(options)
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
 	srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
@@ -125,6 +160,38 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 		"the email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
+}
+
+// The search finds only embedded mail or mail sharing a keyword with the
+// topic, so before answering that nobody wrote about it, the route checks
+// that every message the search covered has a vector.
+func TestWhoKnowsReportsUnembeddedMailBeforeAnsweringEmpty(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &whoKnowsBackend{unembedded: map[int64]bool{2: true}}
+	explorer := &whoKnowsExplorer{messageIDs: []int64{1, 2}}
+	srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
+		o.VectorCfg.Embed.Scope.MessageTypes = nil
+		o.Engine = explorer
+	})
+	got := whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01&before=2026-06-01")
+	require.Equal(http.StatusOK, got.Code, got.Body.String())
+	assert.JSONEq(`{"topic":"sailboat insurance","limits":["partial_index"],"people":[],"unsaved_contacts":[]}`, got.Body.String())
+
+	scope := explorer.context
+	require.NotNil(scope.After)
+	require.NotNil(scope.Before)
+	assert.True(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Equal(*scope.After))
+	assert.True(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).Equal(*scope.Before))
+	assert.Equal(backend.request.Filter.MessageTypes, scope.MessageTypes, "coverage counts the types the search read")
+	assert.Equal(query.DeletionActive, scope.Deletion)
+
+	backend.unembedded = nil
+	explorer.scans = 0
+	got = whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
+	require.Equal(http.StatusOK, got.Code, got.Body.String())
+	assert.JSONEq(`{"topic":"sailboat insurance","limits":[],"people":[],"unsaved_contacts":[]}`, got.Body.String())
+	assert.Equal(1, explorer.scans)
 }
 
 func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {

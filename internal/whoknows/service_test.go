@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -43,13 +44,6 @@ func (truncatedDeclared) AskMeAboutValuesContext(context.Context, []int64) ([]st
 	return nil, true, nil
 }
 
-// embeddedIndex reports every message as embedded.
-type embeddedIndex struct{}
-
-func (embeddedIndex) EmbeddedMessageCountForIDs(_ context.Context, _ vector.GenerationID, ids []int64) (int64, error) {
-	return int64(len(ids)), nil
-}
-
 var serviceNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 
 type serviceFixture struct {
@@ -58,22 +52,30 @@ type serviceFixture struct {
 	retriever *fixedRetriever
 	service   *whoknows.Service
 	owner     int64
+	// unembedded is what the coverage check reports for each scope it is
+	// asked about.
+	unembedded bool
+	scopes     []query.Context
 }
 
 func newServiceFixture(t *testing.T) *serviceFixture {
 	t.Helper()
 	f := storetest.New(t)
 	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
-	retriever := &fixedRetriever{}
-	return &serviceFixture{
+	fixture := &serviceFixture{
 		Fixture:   f,
-		retriever: retriever,
+		retriever: &fixedRetriever{},
 		owner:     f.EnsureParticipant("owner@example.net", "Owner", "example.net"),
-		service: &whoknows.Service{
-			Retriever: retriever, Data: f.Store, Index: embeddedIndex{},
-			Now: func() time.Time { return serviceNow },
-		},
 	}
+	fixture.service = &whoknows.Service{
+		Retriever: fixture.retriever, Data: f.Store,
+		Unembedded: func(_ context.Context, scope query.Context) (bool, error) {
+			fixture.scopes = append(fixture.scopes, scope)
+			return fixture.unembedded, nil
+		},
+		Now: func() time.Time { return serviceNow },
+	}
+	return fixture
 }
 
 // message stores one message from sender and adds it to the hits with its
@@ -265,6 +267,36 @@ func TestFindReportsLimitsOnlyWhenTheSearchCameUpShort(t *testing.T) {
 	f.service.Data = truncatedDeclared{f.Store}
 	assert.Equal([]string{whoknows.LimitDeclaredTruncated}, f.find("sailboat insurance").Limits,
 		"declared topics that were not all read may hide the answer")
+}
+
+// Before answering that nobody wrote about the topic, Find asks whether every
+// message the search covered has a vector, as the search returns only
+// messages with one or with a keyword hit.
+func TestFindChecksCoverageBeforeAnsweringEmpty(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	f.unembedded = true
+	after, before := serviceNow.AddDate(0, -1, 0), serviceNow
+	got, err := f.service.Find(t.Context(), whoknows.Request{Topic: "sailboat insurance", After: &after, Before: &before})
+	require.NoError(err)
+	assert.Equal([]string{whoknows.LimitPartialIndex}, got.Limits)
+	require.Len(f.scopes, 1)
+	filter := f.retriever.request.Filter
+	assert.Equal(query.Context{After: filter.After, Before: filter.Before, MessageTypes: filter.MessageTypes}, f.scopes[0],
+		"coverage counts what the search read")
+
+	ana, _ := f.saved("ana@example.net")
+	f.message("answer", ana, 1, .8)
+	got = f.find("sailboat insurance")
+	assert.Len(got.People, 1)
+	assert.Empty(got.Limits, "an answer does not wait on coverage")
+	assert.Len(f.scopes, 1)
+
+	f.retriever.hits = nil
+	f.service.BuildScope = vector.NewBuildScope([]string{"email"}, nil)
+	assert.Equal([]string{whoknows.LimitPartialIndex}, f.find("sailboat insurance").Limits)
+	assert.Len(f.scopes, 1, "an index that leaves out chat is partial already")
 }
 
 // The owner's mail can fill the whole pool. A real answer that made the pool

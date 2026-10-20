@@ -169,8 +169,8 @@ The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
 lists each way the search came up short: `pool_full` when the search returned
 its full pool of 200 and a message matched, or the SQLite vector index ranked
 vectors that are not unit length; `partial_index` when the vector index leaves
-out some message types with authors or some accounts, or has not embedded a
-message keyword search found; and `declared_truncated` when more than 5,000
+out some message types with authors or some accounts, or, for an empty
+answer, can't confirm that every message in the searched dates is embedded; and `declared_truncated` when more than 5,000
 declared topics exist. Both lists empty with no limits means nobody wrote
 about the topic. Each entry has a `score` split into
 `message_score` and `declared_boost`, `authored_messages`, and `citations`,

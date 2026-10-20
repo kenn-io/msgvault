@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/whoknows"
 )
@@ -85,13 +87,24 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, ok := s.store.(whoknows.DataReader)
-	index, indexed := backend.(vector.FilteredCoverageBackend)
-	if !ok || !indexed {
+	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "who_knows_unavailable",
 			"the archive cannot read who-knows data")
 		return
 	}
-	service := whoknows.Service{Retriever: engine, Data: data, Index: index, BuildScope: cfg.Embed.Scope.BuildScope()}
+	explorer, explorable := s.queryEngineForContext(r.Context()).(query.Explorer)
+	service := whoknows.Service{
+		Retriever: engine, Data: data, Index: backend, BuildScope: cfg.Embed.Scope.BuildScope(),
+		// Without the analytical cache, coverage is unknown, so an empty
+		// answer can't say every message was searched.
+		Unembedded: func(ctx context.Context, scope query.Context) (bool, error) {
+			if !explorable {
+				return true, nil
+			}
+			coverage, err := s.searchCoverage(ctx, explorer, scope)
+			return coverage.Status != SearchCoverageReady, err
+		},
+	}
 	response, err := service.Find(r.Context(), request)
 	if err != nil {
 		s.writeWhoKnowsError(w, err)
