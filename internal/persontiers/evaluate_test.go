@@ -7,25 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEvaluateRules(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		signals Signals
-		tier    int
-		rule    string
-	}{
-		{"breadth meetings", Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3, MeetingDaysLong: 2}, 1, "tier1_breadth"},
-		{"meetings only", Signals{MeetingDaysLong: 5}, 2, "tier2_meetings"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			d := Evaluate(tc.signals, DefaultConfig())
-			assert.Equal(tc.tier, d.Tier)
-			assert.Equal(tc.rule, d.Rule)
-		})
-	}
-}
-
 func TestEvaluateThresholds(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -33,17 +14,18 @@ func TestEvaluateThresholds(t *testing.T) {
 		set       func(*Signals, int)
 		threshold int
 		wantTier  int
+		wantRule  string
 	}{
-		{"outbound short", Signals{InboundShort: 2, ActiveDaysShort: 6}, func(s *Signals, n int) { s.OutboundShort = n }, 2, 1},
-		{"inbound short", Signals{OutboundShort: 2, ActiveDaysShort: 6}, func(s *Signals, n int) { s.InboundShort = n }, 2, 1},
-		{"intensity days", Signals{OutboundShort: 2, InboundShort: 2}, func(s *Signals, n int) { s.ActiveDaysShort = n }, 6, 1},
-		{"breadth days", Signals{OutboundShort: 2, InboundShort: 2, ChannelsLong: 2}, func(s *Signals, n int) { s.ActiveDaysShort = n }, 3, 1},
-		{"breadth channels", Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3}, func(s *Signals, n int) { s.ChannelsLong = n }, 2, 1},
-		{"breadth meeting days", Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3}, func(s *Signals, n int) { s.MeetingDaysLong = n }, 2, 1},
-		{"outbound long", Signals{InboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.OutboundLong = n }, 1, 2},
-		{"inbound long", Signals{OutboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.InboundLong = n }, 1, 2},
-		{"long days", Signals{OutboundLong: 1, InboundLong: 1}, func(s *Signals, n int) { s.ActiveDaysLong = n }, 3, 2},
-		{"meeting days", Signals{}, func(s *Signals, n int) { s.MeetingDaysLong = n }, 2, 2},
+		{"outbound short", Signals{InboundShort: 2, InboundLong: 2, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.OutboundShort, s.OutboundLong = n, n }, 2, 1, ""},
+		{"inbound short", Signals{OutboundShort: 2, OutboundLong: 2, ActiveDaysShort: 6, ActiveDaysLong: 6}, func(s *Signals, n int) { s.InboundShort, s.InboundLong = n, n }, 2, 1, ""},
+		{"intensity days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2}, func(s *Signals, n int) { s.ActiveDaysShort, s.ActiveDaysLong = n, n }, 6, 1, ""},
+		{"breadth days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ChannelsLong: 2}, func(s *Signals, n int) { s.ActiveDaysShort, s.ActiveDaysLong = n, n }, 3, 1, ""},
+		{"breadth channels", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ActiveDaysShort: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.ChannelsLong = n }, 2, 1, ""},
+		{"breadth meeting days", Signals{OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2, ActiveDaysShort: 3, ActiveDaysLong: 3}, func(s *Signals, n int) { s.MeetingDaysLong = n }, 2, 1, "tier1_breadth"},
+		{"outbound long", Signals{InboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.OutboundLong = n }, 1, 2, ""},
+		{"inbound long", Signals{OutboundLong: 1, ActiveDaysLong: 3}, func(s *Signals, n int) { s.InboundLong = n }, 1, 2, ""},
+		{"long days", Signals{OutboundLong: 1, InboundLong: 1}, func(s *Signals, n int) { s.ActiveDaysLong = n }, 3, 2, ""},
+		{"meeting days", Signals{}, func(s *Signals, n int) { s.MeetingDaysLong, s.ActiveDaysLong = n, n }, 2, 2, "tier2_meetings"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -53,8 +35,11 @@ func TestEvaluateThresholds(t *testing.T) {
 				d := Evaluate(s, DefaultConfig())
 				if delta < 0 {
 					assert.Greater(d.Tier, tc.wantTier)
-				} else {
-					assert.Equal(tc.wantTier, d.Tier)
+					continue
+				}
+				assert.Equal(tc.wantTier, d.Tier)
+				if tc.wantRule != "" {
+					assert.Equal(tc.wantRule, d.Rule)
 				}
 			}
 		})
@@ -104,13 +89,18 @@ func TestDisabledAlternatives(t *testing.T) {
 	cfg.Tier1.BreadthMinMeetingDaysLong = 0
 	cfg.Tier2.MinMeetingDaysLong = 0
 	require.NoError(t, cfg.Validate())
-	d := Evaluate(Signals{OutboundShort: 2, InboundShort: 2, ActiveDaysShort: 3, MeetingDaysLong: 100, ChannelsLong: 100}, cfg)
-	assert.Equal(t, 3, d.Tier)
+	breadth := Evaluate(Signals{
+		OutboundShort: 2, OutboundLong: 2, InboundShort: 2, InboundLong: 2,
+		ActiveDaysShort: 3, ActiveDaysLong: 100, MeetingDaysLong: 100, ChannelsLong: 4,
+	}, cfg)
+	assert.Equal(t, "tier2_two_way", breadth.Rule, "channels and meeting days no longer make tier 1")
+	meetings := Evaluate(Signals{ActiveDaysLong: 100, MeetingDaysLong: 100}, cfg)
+	assert.Equal(t, 3, meetings.Tier)
 }
 
 func TestEvaluateReportsEveryThresholdCheck(t *testing.T) {
 	assert := assert.New(t)
-	d := Evaluate(Signals{OutboundShort: 1, InboundShort: 2}, DefaultConfig())
+	d := Evaluate(Signals{OutboundShort: 1, OutboundLong: 1, InboundShort: 2, InboundLong: 2}, DefaultConfig())
 	require.Len(t, d.Thresholds, 10)
 	assert.Equal(ThresholdCheck{Name: "tier1.min_outbound_short", Observed: 1, Required: 2, Enabled: true}, d.Thresholds[0])
 	assert.Equal(ThresholdCheck{Name: "tier1.min_inbound_short", Observed: 2, Required: 2, Enabled: true, Met: true}, d.Thresholds[1])

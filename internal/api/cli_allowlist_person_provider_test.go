@@ -110,7 +110,7 @@ func TestCLIRunEnvAllowedPermitsConfiguredPeopleProviderKeyOnly(t *testing.T) {
 	checks.False(codex.cliRunEnvAllowed("MSGVAULT_PEOPLE_PROVIDER_KEY"))
 }
 
-func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
+func TestCLIAllowlistPermitsExactPersonSweepAndTiersCommands(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		args []string
@@ -122,18 +122,6 @@ func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
 		{args: []string{"person", "sweep"}},
 		{args: []string{"person", "sweep", "delete"}},
 		{args: []string{"person", "sweep", "run-everything"}},
-	}
-	for _, test := range tests {
-		assert.Equal(t, test.want, cliRunCommandAllowed(test.args), test.args)
-	}
-}
-
-func TestCLIAllowlistPermitsOnlyPersonTiersPreviewAndExplain(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		args []string
-		want bool
-	}{
 		{args: []string{"person", "tiers", "preview"}, want: true},
 		{args: []string{"person", "tiers", "explain", "7", "--json"}, want: true},
 		{args: []string{"person", "tiers"}},
