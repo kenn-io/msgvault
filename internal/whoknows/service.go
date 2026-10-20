@@ -264,7 +264,7 @@ func (s *Service) addDeclared(
 		// A person with matching messages gets a boost from a value that
 		// shares words with the topic. A declared-only person needs a value
 		// that names every topic word, so "sales" does not answer "sales tax".
-		if !Matches(freeText, v.Value) || !authored[v.PersonID] && !Covers(v.Value, freeText) {
+		if authored[v.PersonID] && !Matches(freeText, v.Value) || !authored[v.PersonID] && !Covers(v.Value, freeText) {
 			continue
 		}
 		i, ok := index[v.PersonID]
