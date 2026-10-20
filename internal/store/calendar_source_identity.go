@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,9 +13,10 @@ import (
 
 // ReconcileCalendarEventSourceMessageIDContext adopts recurring exceptions
 // that were archived under event.id before their original start could be
-// resolved. If the canonical recurrence key already exists, its newer stored
-// snapshot replaces the legacy row's content while the archive message ID is
-// retained.
+// resolved. If the canonical recurrence key already exists, its newer
+// populated snapshot replaces the legacy row's content while the archive
+// message ID is retained. A sparse cancellation tombstone does not replace
+// that content.
 func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 	ctx context.Context,
 	sourceID int64,
@@ -71,6 +73,10 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 				return fmt.Errorf("lock calendar event %d snapshot: %w", id, err)
 			}
 		}
+		preserveLegacySnapshot, err := sparseCancelledCalendarEventTx(ctx, tx, duplicateID)
+		if err != nil {
+			return err
+		}
 
 		if err := s.dialect.InvalidateFTSForMessage(q, legacyID); err != nil {
 			return fmt.Errorf("invalidate legacy calendar event search document: %w", err)
@@ -78,7 +84,8 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 		if err := s.dialect.InvalidateFTSForMessage(q, duplicateID); err != nil {
 			return fmt.Errorf("invalidate duplicate calendar event search document: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET
+		if !preserveLegacySnapshot {
+			if _, err := tx.ExecContext(ctx, `UPDATE messages SET
 				conversation_id = (SELECT conversation_id FROM messages WHERE id = ?),
 				rfc822_message_id = (SELECT rfc822_message_id FROM messages WHERE id = ?),
 				list_id = (SELECT list_id FROM messages WHERE id = ?),
@@ -101,20 +108,21 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 				account_path = NULL,
 				embed_gen = NULL
 			WHERE id = ?`,
-			duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
-			duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
-			duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
-			legacyID); err != nil {
-			return fmt.Errorf("copy newer calendar event fields: %w", err)
-		}
-		if err := copyCalendarEventBodyTx(ctx, tx, legacyID, duplicateID); err != nil {
-			return err
-		}
-		if err := copyCalendarEventRawTx(ctx, tx, legacyID, duplicateID); err != nil {
-			return err
-		}
-		if err := copyCalendarEventRecipientsTx(ctx, tx, legacyID, duplicateID); err != nil {
-			return err
+				duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
+				duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
+				duplicateID, duplicateID, duplicateID, duplicateID, duplicateID, duplicateID,
+				legacyID); err != nil {
+				return fmt.Errorf("copy newer calendar event fields: %w", err)
+			}
+			if err := copyCalendarEventBodyTx(ctx, tx, legacyID, duplicateID); err != nil {
+				return err
+			}
+			if err := copyCalendarEventRawTx(ctx, tx, legacyID, duplicateID); err != nil {
+				return err
+			}
+			if err := copyCalendarEventRecipientsTx(ctx, tx, legacyID, duplicateID); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO message_labels(message_id, label_id)
 			SELECT ?, label_id FROM message_labels WHERE message_id = ?
@@ -169,6 +177,26 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 		}
 		return nil
 	})
+}
+
+func sparseCancelledCalendarEventTx(ctx context.Context, tx *loggedTx, messageID int64) (bool, error) {
+	var metadata sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT metadata FROM messages WHERE id = ?`, messageID).Scan(&metadata)
+	if err != nil {
+		return false, fmt.Errorf("read duplicate calendar event snapshot: %w", err)
+	}
+	if !metadata.Valid || metadata.String == "" {
+		return false, nil
+	}
+	var fields struct {
+		Status string `json:"status"`
+		Start  string `json:"start"`
+		End    string `json:"end"`
+	}
+	if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
+		return false, fmt.Errorf("decode duplicate calendar event metadata: %w", err)
+	}
+	return fields.Status == "cancelled" && fields.Start == "" && fields.End == "", nil
 }
 
 func calendarSourceMessageTx(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string) (int64, string, error) {
