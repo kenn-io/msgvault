@@ -61,18 +61,21 @@ func (c Config) Validate() error {
 	if c.ShortWindowDays < 1 || c.LongWindowDays < c.ShortWindowDays || c.LongWindowDays > 3650 {
 		return errors.New("people.tiers windows must satisfy 1 <= short_window_days <= long_window_days <= 3650")
 	}
-	required := map[string]int{
-		"tier1.min_outbound_short":            c.Tier1.MinOutboundShort,
-		"tier1.min_inbound_short":             c.Tier1.MinInboundShort,
-		"tier1.min_active_days_short":         c.Tier1.MinActiveDaysShort,
-		"tier1.breadth_min_active_days_short": c.Tier1.BreadthMinActiveDaysShort,
-		"tier2.min_outbound_long":             c.Tier2.MinOutboundLong,
-		"tier2.min_inbound_long":              c.Tier2.MinInboundLong,
-		"tier2.min_active_days_long":          c.Tier2.MinActiveDaysLong,
+	required := []struct {
+		name string
+		n    int
+	}{
+		{"tier1.min_outbound_short", c.Tier1.MinOutboundShort},
+		{"tier1.min_inbound_short", c.Tier1.MinInboundShort},
+		{"tier1.min_active_days_short", c.Tier1.MinActiveDaysShort},
+		{"tier1.breadth_min_active_days_short", c.Tier1.BreadthMinActiveDaysShort},
+		{"tier2.min_outbound_long", c.Tier2.MinOutboundLong},
+		{"tier2.min_inbound_long", c.Tier2.MinInboundLong},
+		{"tier2.min_active_days_long", c.Tier2.MinActiveDaysLong},
 	}
-	for name, n := range required {
-		if n < 1 {
-			return fmt.Errorf("people.tiers.%s must be at least 1", name)
+	for _, r := range required {
+		if r.n < 1 {
+			return fmt.Errorf("people.tiers.%s must be at least 1", r.name)
 		}
 	}
 	if c.Tier1.BreadthMinChannelsLong != 0 && c.Tier1.BreadthMinChannelsLong < 2 {
