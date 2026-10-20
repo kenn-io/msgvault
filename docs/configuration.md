@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-18"
+last_edited: "2026-10-19"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -92,6 +92,58 @@ Set `enabled = false` to disable scoring in the configuration. See
 [identity scoring](usage/people.md#optional-identity-scoring) for the workflow
 and [the API reference](api-server.md#identity-match-review-and-scoring) for
 endpoints.
+
+## People tiers
+
+`msgvault person tiers preview` needs no configuration. Add `[people.tiers]`
+only to change which saved people it lists. Tier 1 is sustained two-way contact
+in the short window. Tier 2 is two-way contact in the long window, or meetings.
+Counts cover direct email, chat, and meeting contact only. Newsletter and
+list messages, large-audience threads, and your own addresses never count.
+
+```toml
+[people.tiers]
+short_window_days = 90
+long_window_days = 365
+exclude_list_messages = true
+
+[people.tiers.tier1]
+min_outbound_short = 2
+min_inbound_short = 2
+min_active_days_short = 6
+breadth_min_active_days_short = 3
+breadth_min_channels_long = 2
+breadth_min_meeting_days_long = 2
+
+[people.tiers.tier2]
+min_outbound_long = 1
+min_inbound_long = 1
+min_active_days_long = 3
+min_meeting_days_long = 2
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `short_window_days` | `90` | Days counted for tier 1. At least 1 and at most `long_window_days`. |
+| `long_window_days` | `365` | Days counted for tier 2. At most 3650. |
+| `exclude_list_messages` | `true` | Ignore messages that carry a mailing-list ID. |
+| `exclude_address_patterns` | `noreply`, `notifications`, `alerts`, and similar | Lower-case local parts of automated addresses. A trailing `*` matches a prefix. A person whose addresses all match, and who has no phone or chat identity, is never listed. |
+| `exclude_domain_patterns` | `resource.calendar.google.com` | Lower-case domains of rooms and resources. A person whose addresses all match is never listed. |
+| `tier1.min_outbound_short`, `tier1.min_inbound_short` | `2`, `2` | Messages you sent to the person and they sent to you in the short window. Both are required, so one-way mail never qualifies. |
+| `tier1.min_active_days_short` | `6` | Distinct days with contact in the short window. With the two counts above, this alone makes tier 1. |
+| `tier1.breadth_min_active_days_short` | `3` | Days needed for the breadth path to tier 1. |
+| `tier1.breadth_min_channels_long` | `2` | Channels (email, chat, meetings) in the long window for the breadth path. `0` turns it off; `1` is invalid. |
+| `tier1.breadth_min_meeting_days_long` | `2` | Meeting days in the long window for the breadth path. `0` turns it off. |
+| `tier2.min_outbound_long`, `tier2.min_inbound_long` | `1`, `1` | Two-way message counts in the long window. |
+| `tier2.min_active_days_long` | `3` | Distinct days with contact in the long window. |
+| `tier2.min_meeting_days_long` | `2` | Meeting days that alone make tier 2. `0` turns it off. |
+
+The counts come from the activity projection, so the windows end on today's
+date in the timezone the projection was built under, and the large-audience cut
+uses the direct limit it was built under. After you change `[activity]
+timezone` or `max_direct_counterparts`, the commands name the stored values and
+mark the result provisional until the projector rebuilds.
+See [choose people to maintain](usage/people-automation.md#choose-people-to-maintain).
 
 ## People sweep inference
 
