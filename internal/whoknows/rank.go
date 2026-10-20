@@ -5,6 +5,8 @@ import (
 	"math"
 	"slices"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const (
@@ -61,25 +63,22 @@ func recency(sentAt *time.Time, now time.Time) float64 {
 	return math.Max(recencyFloor, math.Exp2(-days/halfLifeDays))
 }
 
-// total sums message weights, but list mail adds only its best message and a
-// one-way sender adds only its best message overall. A newsletter or a
-// vendor who writes often earns one message's worth, while a colleague who
-// answers keeps all of their messages. Messages sum in ID order so equal
-// inputs give equal floats.
-func total(messages []weighted, oneWay bool) float64 {
-	var direct, bestList, best float64
+// credit sums the weights of unbounded messages and adds the best bounded
+// one. List mail is bounded, and so is every email from a one-way sender. A
+// newsletter or a vendor who writes often earns one message's worth, while a
+// colleague who answers keeps all of their messages. Chat has no direction,
+// so a chat message is never bounded as one-way. Messages sum in ID order so
+// equal inputs give equal floats.
+func credit(messages []weighted, oneWay bool) float64 {
+	var unbounded, bounded float64
 	for _, m := range messages {
-		best = max(best, m.weight)
-		if m.ListMail {
-			bestList = max(bestList, m.weight)
+		if m.ListMail || oneWay && store.IsEmailMessageType(m.Citation.MessageType) {
+			bounded = max(bounded, m.weight)
 		} else {
-			direct += m.weight
+			unbounded += m.weight
 		}
 	}
-	if oneWay {
-		return best
-	}
-	return direct + bestList
+	return unbounded + bounded
 }
 
 // Rank scores each candidate as log1p of the total message weight, where a
@@ -100,7 +99,7 @@ func Rank(candidates []Candidate, p Params, now time.Time) (people, contacts []E
 		})
 		r := ranked{Candidate: c}
 		if len(messages) > 0 {
-			r.messageScore = math.Log1p(total(messages, c.OneWay))
+			r.messageScore = math.Log1p(credit(messages, c.OneWay))
 		}
 		if len(c.AskMeAbout) > 0 {
 			r.boost = declaredBoost

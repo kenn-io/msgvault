@@ -336,46 +336,96 @@ func TestFindRanksLinkedAddressesOnce(t *testing.T) {
 	assert.Empty(got.UnsavedContacts)
 }
 
-func TestFindBoundsListMailAndOneWaySenders(t *testing.T) {
+// messageScores maps each listed person to their message score.
+func messageScores(people []whoknows.Entry) map[int64]float64 {
+	out := map[int64]float64{}
+	for _, p := range people {
+		out[p.PersonID] = p.MessageScore
+	}
+	return out
+}
+
+func TestFindBoundsListMail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newServiceFixture(t)
-	ana, anaPerson := f.saved("ana@example.net")
-	vendor, vendorPerson := f.saved("vendor@example.net")
 	editor, editorPerson := f.saved("editor@example.net")
 	other, otherPerson := f.saved("other@example.net")
-
-	// The owner has written to Ana, Other, and the editor, never to the vendor.
-	reply := f.message("reply-to-ana", f.owner, 40, 0)
-	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{ana, other, editor}, []string{"Ana", "Other", "Editor"}))
+	// The owner has written to both, so neither is one-way.
+	reply := f.message("reply", f.owner, 40, 0)
+	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{editor, other}, []string{"Editor", "Other"}))
 	f.retriever.hits = nil
-	for i := range 10 {
-		f.message(fmt.Sprintf("ana-%d", i), ana, 3+i, .8)
-	}
-	for i := range 30 {
-		f.message(fmt.Sprintf("vendor-%d", i), vendor, 1, .9)
-	}
 	for i := range 12 {
-		f.message(fmt.Sprintf("digest-%d", i), editor, 1, .9, func(m *store.Message) {
+		f.message(fmt.Sprintf("digest-%d", i), editor, 0, .9, func(m *store.Message) {
 			m.ListID = sql.NullString{String: "<digest.example.net>", Valid: true}
 		})
 	}
 	for i := range 2 {
-		f.message(fmt.Sprintf("other-%d", i), other, 2, .8)
+		f.message(fmt.Sprintf("answer-%d", i), other, 0, .8)
 	}
 
 	got := f.find("kubernetes networking")
-	var order []int64
-	scores := map[int64]float64{}
-	for _, p := range got.People {
-		order = append(order, p.PersonID)
-		scores[p.PersonID] = p.MessageScore
+	require.Len(got.People, 2)
+	assert.Equal(otherPerson, got.People[0].PersonID, "two answers beat twelve digests")
+	assert.Equal(map[int64]float64{otherPerson: math.Log1p(1.6), editorPerson: math.Log1p(.9)}, messageScores(got.People))
+}
+
+func TestFindBoundsOneWayEmailSenders(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	vendor, vendorPerson := f.saved("vendor@example.net")
+	other, otherPerson := f.saved("other@example.net")
+	// The owner has written to Other, never to the vendor.
+	reply := f.message("reply", f.owner, 40, 0)
+	require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{other}, []string{"Other"}))
+	f.retriever.hits = nil
+	for i := range 30 {
+		f.message(fmt.Sprintf("vendor-%d", i), vendor, 0, .9)
 	}
-	assert.Equal([]int64{anaPerson, otherPerson, vendorPerson, editorPerson}, order,
-		"ten answers beat two answers; thirty unanswered messages and twelve digests earn one message each")
-	assert.Greater(scores[otherPerson], scores[vendorPerson])
-	assert.Greater(scores[otherPerson], scores[editorPerson])
-	assert.Equal(30, got.People[2].AuthoredMessages)
+	for i := range 2 {
+		f.message(fmt.Sprintf("answer-%d", i), other, 0, .8)
+	}
+
+	got := f.find("kubernetes networking")
+	require.Len(got.People, 2)
+	assert.Equal(otherPerson, got.People[0].PersonID, "a two-way answerer beats thirty unanswered notes")
+	assert.Equal(map[int64]float64{otherPerson: math.Log1p(1.6), vendorPerson: math.Log1p(.9)}, messageScores(got.People))
+	assert.Equal(30, got.People[1].AuthoredMessages)
+}
+
+// Chat has no direction: a colleague the owner reads in a channel but never
+// writes to keeps every message.
+func TestFindGivesChatSendersFullCredit(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	chat, err := f.Store.GetOrCreateSource("slack", "workspace")
+	require.NoError(err)
+	channel, err := f.Store.EnsureConversation(chat.ID, "channel", "Channel")
+	require.NoError(err)
+	priya, priyaPerson := f.saved("priya@example.net")
+	for i := range 3 {
+		f.message(fmt.Sprintf("post-%d", i), priya, 0, .8, func(m *store.Message) {
+			m.SourceID, m.ConversationID, m.MessageType = chat.ID, channel, "slack"
+		})
+	}
+
+	got := f.find("kubernetes networking")
+	require.Len(got.People, 1)
+	assert.Equal(priyaPerson, got.People[0].PersonID)
+	assert.InDelta(math.Log1p(2.4), got.People[0].MessageScore, 1e-9)
+}
+
+// Declared topics match by whole words without regard to case.
+func TestFindFoldsCaseInDeclaredTopics(t *testing.T) {
+	f := newServiceFixture(t)
+	_, person := f.saved("lurker@example.net")
+	f.declare(person, "Straße networking")
+	got := f.find("strasse networking")
+	require.Len(t, got.People, 1)
+	assert.Equal(t, person, got.People[0].PersonID)
+	assert.Equal(t, []string{"Straße networking"}, got.People[0].AskMeAbout)
 }
 
 func TestFindStopsBeforeSearchingOnBadInput(t *testing.T) {

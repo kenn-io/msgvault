@@ -1,49 +1,48 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
+	"net/mail"
 	"slices"
+	"strings"
 	"time"
 )
 
-// TopicAuthor is one message with the participant that sent it.
+// TopicAuthor is one message with the contact that wrote it.
 type TopicAuthor struct {
-	MessageID   int64
-	IsFromMe    bool
+	MessageID int64
+	// Counts is false for a message the owner sent, one with no sender, and
+	// one an automated sender wrote. Contact is set only when Counts is true.
+	Counts      bool
 	ListMail    bool
-	Automated   bool
 	MessageType string
 	SentAt      *time.Time
 	Subject     string
 
-	// SenderID is zero when the message has no resolvable sender.
-	SenderID    int64
-	SenderEmail string
-	SenderName  string
-
 	// SenderAuthenticated reports that the source sets the sender, rather
 	// than the message header asserting it.
 	SenderAuthenticated bool
+
+	Contact TopicContact
 }
 
-// AuthorIdentity is the identity family of a sender: every participant
-// bound to its saved person, or its link cluster when it has none.
-type AuthorIdentity struct {
+// TopicContact is the identity family of a sender: every participant bound
+// to its saved person, or its link cluster when it has none.
+type TopicContact struct {
 	// Key is the smallest participant ID in the family.
 	Key int64
 	// PersonID is zero when no member is bound to a saved person.
-	PersonID   int64
-	PersonName string
-	// Owner reports that a member is one of the owner's account identities.
-	Owner bool
-	// Addressed reports that the owner wrote to a member: as a recipient of
-	// an owner message, or as a member of a conversation the owner wrote in.
-	Addressed bool
+	PersonID int64
+	// Name is the saved person's name, else the key participant's. Email is
+	// the key participant's address.
+	Name  string
+	Email string
+	// OneWay reports that no member is a to, cc, or bcc recipient of a
+	// message the owner sent.
+	OneWay bool
 }
 
 // PersonAskMeAbout is one current, user-declared ask-me-about value.
@@ -53,23 +52,58 @@ type PersonAskMeAbout struct {
 	Value      string
 }
 
-// automatedAuthor is true when the producer marked the message's author as
-// automation: Discord stores a flag in messages.metadata, Slack namespaces
-// bots as "<team>:bot:<id>" participant identifiers, and Chatwoot keeps bots
-// and assistants under their own path segment. Importers write no other
-// marker.
-func (s *Store) automatedAuthor() string {
-	flag := "COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.automated') = 1 END, FALSE)"
-	if s.IsPostgreSQL() {
-		flag = "COALESCE(m.metadata ->> 'automated' = 'true', FALSE)"
+// automatedPatterns are sender local parts that belong to systems rather than
+// people. A local part matches when it equals a pattern or starts with one
+// followed by "-", "+", or ".". Underscores count as hyphens.
+var automatedPatterns = []string{
+	"no-reply", "noreply", "do-not-reply", "donotreply", "notification",
+	"notifications", "notify", "alert", "alerts", "newsletter", "newsletters",
+	"digest", "mailer-daemon", "postmaster", "bounce", "bounces", "automated",
+	"robot", "bot", "calendar-notification",
+}
+
+// automatedAddress reports whether an address looks like a system sender.
+func automatedAddress(email string) bool {
+	if a, err := mail.ParseAddress(email); err == nil {
+		email = a.Address
 	}
-	return `(` + flag + ` OR EXISTS (
-		         SELECT 1 FROM participant_identifiers bi
-		          WHERE bi.participant_id = p.id AND (
-		                (bi.identifier_type = 'slack' AND bi.identifier_value LIKE '%:bot:%')
-		             OR (bi.identifier_type = 'chatwoot' AND (
-		                    bi.identifier_value LIKE '%/agent\_bot/%' ESCAPE '\'
-		                 OR bi.identifier_value LIKE '%/captain\_assistant/%' ESCAPE '\'))))) `
+	local, _, _ := strings.Cut(strings.ToLower(email), "@")
+	local, _, _ = strings.Cut(local, "+")
+	local = strings.ReplaceAll(local, "_", "-")
+	for _, pattern := range automatedPatterns {
+		if local == pattern {
+			return true
+		}
+		if strings.HasPrefix(local, pattern) && len(local) > len(pattern) &&
+			strings.ContainsRune("-.", rune(local[len(pattern)])) {
+			return true
+		}
+	}
+	return false
+}
+
+// automatedParticipant is true when the producer marked participant alias p
+// as automation: Slack namespaces bots as "<team>:bot:<id>" identifiers, and
+// Chatwoot keeps bots and assistants under their own path segment.
+func automatedParticipant(p string) string {
+	return `EXISTS (
+		SELECT 1 FROM participant_identifiers bi
+		 WHERE bi.participant_id = ` + p + `.id AND (
+		       (bi.identifier_type = 'slack' AND bi.identifier_value LIKE '%:bot:%')
+		    OR (bi.identifier_type = 'chatwoot' AND (
+		           bi.identifier_value LIKE '%/agent\_bot/%' ESCAPE '\'
+		        OR bi.identifier_value LIKE '%/captain\_assistant/%' ESCAPE '\'))))`
+}
+
+// automatedMessage is true when the producer marked message m or its sender
+// p as automation. Discord stores a flag in messages.metadata. Importers
+// write no other marker.
+func (s *Store) automatedMessage(m, p string) string {
+	flag := "COALESCE(CASE WHEN json_valid(" + m + ".metadata) THEN json_extract(" + m + ".metadata, '$.automated') = 1 END, FALSE)"
+	if s.IsPostgreSQL() {
+		flag = "COALESCE(" + m + ".metadata ->> 'automated' = 'true', FALSE)"
+	}
+	return "(" + flag + " OR " + automatedParticipant(p) + ")"
 }
 
 // ownerParticipantMatch is true when participant alias op is one of the
@@ -84,6 +118,29 @@ func ownerParticipantMatch(op string) string {
 		                         AND ` + ownerIdentifierMatch("oi.identifier_type", "oi.identifier_value", "ai.address", noPrimaryEmail) + `))`
 }
 
+// ownerFamilyCTE defines owner_family for a WITH RECURSIVE clause: the
+// owner's account identities, their link clusters, and every participant
+// bound to their persons. It binds no placeholders.
+func ownerFamilyCTE() string {
+	return `owner_cluster(id) AS (
+		SELECT p.id FROM participants p WHERE ` + ownerParticipantMatch("p") + `
+		UNION
+		SELECT CASE WHEN l.participant_a = oc.id THEN l.participant_b ELSE l.participant_a END
+		FROM owner_cluster oc JOIN participant_links l ON l.participant_a = oc.id OR l.participant_b = oc.id
+	), owner_family(id) AS (
+		SELECT id FROM owner_cluster
+		UNION
+		SELECT bound.participant_id FROM owner_cluster oc
+		JOIN person_participants pp ON pp.participant_id = oc.id
+		JOIN person_participants bound ON bound.person_id = pp.person_id
+	)`
+}
+
+// inOwnerFamily is true when participant ID expression id is in owner_family.
+func inOwnerFamily(id string) string {
+	return "EXISTS (SELECT 1 FROM owner_family o WHERE o.id = " + id + ")"
+}
+
 // messageSender is the participant that sent message alias m: its
 // sender_id, else its lowest 'from' recipient.
 func messageSender(m string) string {
@@ -91,6 +148,14 @@ func messageSender(m string) string {
 		       SELECT MIN(fr.participant_id) FROM message_recipients fr
 		       WHERE fr.message_id = ` + m + `.id AND LOWER(fr.recipient_type) = 'from'
 		         AND fr.participant_id IS NOT NULL))`
+}
+
+func int64Args(ids []int64) []any {
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return args
 }
 
 // TopicAuthorsContext reads the sender of each message at request time, so
@@ -102,52 +167,62 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 	if len(messageIDs) == 0 {
 		return out, nil
 	}
-	args := make([]any, len(messageIDs))
-	for i, id := range messageIDs {
-		args[i] = id
-	}
-	query := `
+	query := `WITH RECURSIVE ` + ownerFamilyCTE() + `
 		SELECT m.id, COALESCE(m.is_from_me, FALSE), COALESCE(m.list_id, '') <> '',
-		       ` + s.automatedAuthor() + `, m.message_type,
-		       m.sent_at, COALESCE(m.subject, ''), src.source_type,
-		       p.id, COALESCE(p.email_address, ''), COALESCE(p.display_name, '')
+		       ` + s.automatedMessage("m", "p") + `, ` + inOwnerFamily("p.id") + `,
+		       m.message_type, m.sent_at, COALESCE(m.subject, ''), src.source_type,
+		       p.id, COALESCE(p.email_address, '')
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id
 		LEFT JOIN participants p ON p.id = ` + messageSender("m") + `
 		WHERE m.id IN (` + directoryPlaceholders(len(messageIDs)) + `)
 		  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), int64Args(messageIDs)...)
 	if err != nil {
 		return nil, fmt.Errorf("read topic authors: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	senders := map[int64]int64{}
 	var slackIDs []int64
 	for rows.Next() {
 		var (
-			a          TopicAuthor
-			sentAt     sql.NullTime
-			sender     sql.NullInt64
-			sourceType string
+			a                             TopicAuthor
+			fromMe, automated, ownerAlias bool
+			sentAt                        sql.NullTime
+			sender                        sql.NullInt64
+			sourceType, email             string
 		)
-		if err := rows.Scan(&a.MessageID, &a.IsFromMe, &a.ListMail, &a.Automated, &a.MessageType,
-			&sentAt, &a.Subject, &sourceType, &sender, &a.SenderEmail, &a.SenderName); err != nil {
+		if err := rows.Scan(&a.MessageID, &fromMe, &a.ListMail, &automated, &ownerAlias, &a.MessageType,
+			&sentAt, &a.Subject, &sourceType, &sender, &email); err != nil {
 			return nil, fmt.Errorf("scan topic author: %w", err)
 		}
 		if sentAt.Valid {
 			a.SentAt = &sentAt.Time
 		}
-		a.SenderID = sender.Int64
 		a.SenderAuthenticated = personSweepSourceAuthenticatesSender(sourceType)
+		a.Counts = !fromMe && sender.Valid && !automated && !ownerAlias && !automatedAddress(email)
 		out[a.MessageID] = a
-		if a.MessageType == slackMessageType && !a.Automated {
-			slackIDs = append(slackIDs, a.MessageID)
+		if a.Counts {
+			senders[a.MessageID] = sender.Int64
+			if a.MessageType == slackMessageType {
+				slackIDs = append(slackIDs, a.MessageID)
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read topic authors: %w", err)
 	}
-	if err := s.markSlackBotPayloads(ctx, out, slackIDs); err != nil {
+	if err := s.dropSlackBotPayloads(ctx, out, senders, slackIDs); err != nil {
 		return nil, err
+	}
+	contacts, err := s.topicContactsContext(ctx, senders)
+	if err != nil {
+		return nil, err
+	}
+	for id, sender := range senders {
+		a := out[id]
+		a.Contact = contacts[sender]
+		out[id] = a
 	}
 	return out, nil
 }
@@ -155,11 +230,11 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 // slackMessageType is the message_type the Slack importer writes.
 const slackMessageType = "slack"
 
-// markSlackBotPayloads marks Slack messages whose archived payload carries a
-// bot_id or the bot_message subtype. The importer files a message carrying
-// both "user" and "bot_id" under the user, so only the payload shows it. An
-// unreadable payload leaves the message counted.
-func (s *Store) markSlackBotPayloads(ctx context.Context, authors map[int64]TopicAuthor, ids []int64) error {
+// dropSlackBotPayloads stops counting Slack messages whose archived payload
+// carries a bot_id or the bot_message subtype. The importer files a message
+// carrying both "user" and "bot_id" under the user, so only the payload
+// shows it. An unreadable payload leaves the message counted.
+func (s *Store) dropSlackBotPayloads(ctx context.Context, authors map[int64]TopicAuthor, senders map[int64]int64, ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -174,190 +249,84 @@ func (s *Store) markSlackBotPayloads(ctx context.Context, authors map[int64]Topi
 		}
 		if json.Unmarshal(raw, &payload) == nil && (payload.BotID != "" || payload.Subtype == "bot_message") {
 			a := authors[id]
-			a.Automated = true
+			a.Counts = false
 			authors[id] = a
+			delete(senders, id)
 		}
 	}
 	return nil
 }
 
-// AuthorIdentitiesContext groups senders into identity families and maps
-// each sender to its family's identity. Promotion, linking, and merging bind
-// a whole link cluster to at most one person, so a saved sender's family is
-// every participant bound to its person, and an unsaved sender's family is its
-// link cluster.
-func (s *Store) AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) (map[int64]AuthorIdentity, error) {
-	out := map[int64]AuthorIdentity{}
-	if len(senderIDs) == 0 {
+// topicContactsContext maps each sender to its identity family. Promotion,
+// linking, and merging bind a whole link cluster to at most one person, so a
+// saved sender's family is every participant bound to its person, and an
+// unsaved sender's family is its link cluster. The cluster walk starts from
+// the listed senders only.
+func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int64) (map[int64]TopicContact, error) {
+	out := map[int64]TopicContact{}
+	var senders []int64
+	for _, id := range bySender {
+		if _, seen := out[id]; !seen {
+			out[id] = TopicContact{}
+			senders = append(senders, id)
+		}
+	}
+	if len(senders) == 0 {
 		return out, nil
 	}
-	clusters, err := s.ParticipantClustersContext(ctx)
+	query := `WITH RECURSIVE ` + ownerFamilyCTE() + `,
+		component(seed, id) AS (
+			SELECT p.id, p.id FROM participants p WHERE p.id IN (` + directoryPlaceholders(len(senders)) + `)
+			UNION
+			SELECT c.seed, CASE WHEN l.participant_a = c.id THEN l.participant_b ELSE l.participant_a END
+			FROM component c JOIN participant_links l ON l.participant_a = c.id OR l.participant_b = c.id
+		), seed_person(seed, person_id) AS (
+			SELECT c.seed, MIN(pp.person_id) FROM component c
+			JOIN person_participants pp ON pp.participant_id = c.id
+			GROUP BY c.seed
+		), family(seed, id) AS (
+			SELECT c.seed, c.id FROM component c
+			WHERE NOT EXISTS (SELECT 1 FROM seed_person sp WHERE sp.seed = c.seed)
+			UNION
+			SELECT sp.seed, pp.participant_id FROM seed_person sp
+			JOIN person_participants pp ON pp.person_id = sp.person_id
+		), keyed(seed, family_key) AS (
+			SELECT seed, MIN(id) FROM family GROUP BY seed
+		)
+		SELECT k.seed, k.family_key, COALESCE(sp.person_id, 0), COALESCE(per.display_name, ''),
+		       COALESCE(kp.display_name, ''), COALESCE(kp.email_address, ''),
+		       NOT EXISTS (
+		         SELECT 1 FROM family f
+		         JOIN message_recipients mr ON mr.participant_id = f.id
+		         JOIN messages m ON m.id = mr.message_id
+		         WHERE f.seed = k.seed AND LOWER(mr.recipient_type) IN ('to', 'cc', 'bcc')
+		           AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		           AND (m.is_from_me OR ` + inOwnerFamily(messageSender("m")) + `))
+		FROM keyed k
+		JOIN participants kp ON kp.id = k.family_key
+		LEFT JOIN seed_person sp ON sp.seed = k.seed
+		LEFT JOIN persons per ON per.id = sp.person_id`
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), int64Args(senders)...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read topic contacts: %w", err)
 	}
-	families, err := s.identityFamiliesContext(ctx, senderIDs, clusters)
-	if err != nil {
-		return nil, err
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var seed int64
+		var c TopicContact
+		var personName string
+		if err := rows.Scan(&seed, &c.Key, &c.PersonID, &personName, &c.Name, &c.Email, &c.OneWay); err != nil {
+			return nil, fmt.Errorf("scan topic contact: %w", err)
+		}
+		if personName != "" {
+			c.Name = personName
+		}
+		out[seed] = c
 	}
-	owners, err := s.ownerFamiliesContext(ctx, clusters)
-	if err != nil {
-		return nil, err
-	}
-	byKey, err := s.authorFlagsContext(ctx, families, owners)
-	if err != nil {
-		return nil, err
-	}
-	for _, id := range senderIDs {
-		out[id] = byKey[families[id].Key]
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read topic contacts: %w", err)
 	}
 	return out, nil
-}
-
-// identityFamiliesContext maps every member of each listed participant's
-// identity family to that family's identity.
-func (s *Store) identityFamiliesContext(
-	ctx context.Context, ids []int64, clusters map[int64]int64,
-) (map[int64]AuthorIdentity, error) {
-	families, err := s.authorPersonsContext(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	unsavedRoots := map[int64]bool{}
-	for _, id := range ids {
-		if _, saved := families[id]; !saved {
-			root := cmp.Or(clusters[id], id)
-			unsavedRoots[root] = true
-			families[id] = AuthorIdentity{Key: root}
-		}
-	}
-	for member, root := range clusters {
-		if unsavedRoots[root] {
-			families[member] = AuthorIdentity{Key: root}
-		}
-	}
-	return families, nil
-}
-
-// ownerFamiliesContext returns every member of the identity families of the
-// owner's account identities. A linked or bound alias that is not itself an
-// account identity is the owner too.
-func (s *Store) ownerFamiliesContext(ctx context.Context, clusters map[int64]int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT p.id FROM participants p WHERE `+ownerParticipantMatch("p"))
-	if err != nil {
-		return nil, fmt.Errorf("read owner participants: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan owner participant: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read owner participants: %w", err)
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	families, err := s.identityFamiliesContext(ctx, ids, clusters)
-	if err != nil {
-		return nil, err
-	}
-	return slices.Sorted(maps.Keys(families)), nil
-}
-
-// authorPersonsContext maps every participant bound to a sender's saved
-// person to that person's identity, keyed by its smallest participant ID.
-func (s *Store) authorPersonsContext(ctx context.Context, senderIDs []int64) (map[int64]AuthorIdentity, error) {
-	args := make([]any, len(senderIDs))
-	for i, id := range senderIDs {
-		args[i] = id
-	}
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT pp.participant_id, pp.person_id, COALESCE(per.display_name, '')
-		FROM person_participants pp
-		JOIN persons per ON per.id = pp.person_id
-		WHERE pp.person_id IN (SELECT person_id FROM person_participants
-		                       WHERE participant_id IN (`+directoryPlaceholders(len(senderIDs))+`))
-		ORDER BY pp.person_id, pp.participant_id`), args...)
-	if err != nil {
-		return nil, fmt.Errorf("read author persons: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	families := map[int64]AuthorIdentity{}
-	var current AuthorIdentity
-	for rows.Next() {
-		var member int64
-		var identity AuthorIdentity
-		if err := rows.Scan(&member, &identity.PersonID, &identity.PersonName); err != nil {
-			return nil, fmt.Errorf("scan author person: %w", err)
-		}
-		if identity.PersonID != current.PersonID {
-			current = identity
-			current.Key = member
-		}
-		families[member] = current
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read author persons: %w", err)
-	}
-	return families, nil
-}
-
-// authorFlagsContext marks each family that has a member in owners, or that
-// the owner wrote to, and returns each family's identity by key. A message
-// is the owner's when it is marked from me or an owner member sent it.
-func (s *Store) authorFlagsContext(
-	ctx context.Context, families map[int64]AuthorIdentity, owners []int64,
-) (map[int64]AuthorIdentity, error) {
-	members := slices.Sorted(maps.Keys(families))
-	byKey := map[int64]AuthorIdentity{}
-	for _, id := range members {
-		byKey[families[id].Key] = families[id]
-	}
-	ownerSent := "m.is_from_me"
-	if len(owners) > 0 {
-		ownerSent = "(m.is_from_me OR " + messageSender("m") + " IN (" + directoryPlaceholders(len(owners)) + "))"
-	}
-	ownerWrote := func(where string) string {
-		return `EXISTS (SELECT 1 FROM ` + where + `
-		         AND ` + ownerSent + ` AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
-	}
-	var args []any
-	for _, ids := range [][]int64{owners, owners, members} {
-		for _, id := range ids {
-			args = append(args, id)
-		}
-	}
-	flags, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT p.id,
-		       `+ownerWrote(`message_recipients mr JOIN messages m ON m.id = mr.message_id
-		         WHERE mr.participant_id = p.id AND LOWER(mr.recipient_type) IN ('to', 'cc', 'bcc')`)+`
-		       OR `+ownerWrote(`conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id
-		         WHERE cp.participant_id = p.id`)+`
-		FROM participants p
-		WHERE p.id IN (`+directoryPlaceholders(len(members))+`)`), args...)
-	if err != nil {
-		return nil, fmt.Errorf("read author identities: %w", err)
-	}
-	defer func() { _ = flags.Close() }()
-	for flags.Next() {
-		var id int64
-		var addressed bool
-		if err := flags.Scan(&id, &addressed); err != nil {
-			return nil, fmt.Errorf("scan author identity: %w", err)
-		}
-		family := byKey[families[id].Key]
-		family.Owner = family.Owner || slices.Contains(owners, id)
-		family.Addressed = family.Addressed || addressed
-		byKey[family.Key] = family
-	}
-	if err := flags.Err(); err != nil {
-		return nil, fmt.Errorf("read author identities: %w", err)
-	}
-	return byKey, nil
 }
 
 // DeclaredValueLimit caps how many ask-me-about values one read returns.
@@ -366,11 +335,11 @@ const DeclaredValueLimit = 5000
 // AskMeAboutValuesContext returns up to DeclaredValueLimit current
 // ask-me-about values the user typed or an address-book import supplied, in
 // person order, and whether more exist. Inferred and superseded values are
-// left out, and so are people bound to one of the owner's account identities.
-// The caller matches topics in Go, so matching is not limited to what SQL can
-// case-fold.
+// left out, and so are people bound to an owner_family participant or to an
+// automated participant. The caller matches topics in Go, so matching is not
+// limited to what SQL can case-fold.
 func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout, bool, error) {
-	query := `
+	query := `WITH RECURSIVE ` + ownerFamilyCTE() + `
 		SELECT v.person_id, COALESCE(per.display_name, ''), v.value_text
 		FROM person_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
@@ -379,9 +348,10 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout
 		  AND v.source IN ('user', 'carddav_import', 'vcard_import')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM person_participants bound
-		      JOIN participants op ON op.id = bound.participant_id
-		     WHERE bound.person_id = v.person_id AND ` + ownerParticipantMatch("op") + `)
-		ORDER BY v.person_id, v.ordinal
+		      JOIN participants bp ON bp.id = bound.participant_id
+		     WHERE bound.person_id = v.person_id
+		       AND (` + inOwnerFamily("bp.id") + ` OR ` + automatedParticipant("bp") + `))
+		ORDER BY v.person_id, v.ordinal, v.id
 		LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), AttributeUniversalIDAskMeAbout, DeclaredValueLimit+1)
 	if err != nil {
@@ -403,5 +373,46 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout
 	if truncated {
 		out = out[:DeclaredValueLimit]
 	}
+	automated, err := s.personsWithAutomatedAddressContext(ctx, out)
+	if err != nil {
+		return nil, false, err
+	}
+	out = slices.DeleteFunc(out, func(v PersonAskMeAbout) bool { return automated[v.PersonID] })
 	return out, truncated, nil
+}
+
+// personsWithAutomatedAddressContext reports which persons of values, which
+// are in person order, are bound to a participant whose address looks like a
+// system sender.
+func (s *Store) personsWithAutomatedAddressContext(ctx context.Context, values []PersonAskMeAbout) (map[int64]bool, error) {
+	out := map[int64]bool{}
+	var persons []int64
+	for _, v := range values {
+		if len(persons) == 0 || persons[len(persons)-1] != v.PersonID {
+			persons = append(persons, v.PersonID)
+		}
+	}
+	if len(persons) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
+		SELECT pp.person_id, COALESCE(p.email_address, '')
+		FROM person_participants pp JOIN participants p ON p.id = pp.participant_id
+		WHERE pp.person_id IN (`+directoryPlaceholders(len(persons))+`)`), int64Args(persons)...)
+	if err != nil {
+		return nil, fmt.Errorf("read declared person addresses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var person int64
+		var email string
+		if err := rows.Scan(&person, &email); err != nil {
+			return nil, fmt.Errorf("scan declared person address: %w", err)
+		}
+		out[person] = out[person] || automatedAddress(email)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read declared person addresses: %w", err)
+	}
+	return out, nil
 }

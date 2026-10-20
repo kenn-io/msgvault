@@ -78,18 +78,6 @@ func TestRankListsPeopleAndContactsSeparately(t *testing.T) {
 	assert.Equal(int64(101), contacts[0].ParticipantID)
 }
 
-func TestAutomatedSenders(t *testing.T) {
-	for _, address := range []string{
-		"noreply@example.net", "no-reply+tag@example.net", "Bot <notifications@github.com>",
-		"alerts-jira@example.net", "newsletter@example.net", "No_Reply@example.net", "mailer_daemon@example.net",
-	} {
-		assert.True(t, Automated(address), address)
-	}
-	for _, address := range []string{"ana@example.net", "newsome@example.net", "botanist@example.net", "jira@example.net", ""} {
-		assert.False(t, Automated(address), address)
-	}
-}
-
 func TestMatchesComparesWholeWords(t *testing.T) {
 	assert := assert.New(t)
 	assert.True(Matches("kubernetes networking", "Kubernetes"))

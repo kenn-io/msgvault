@@ -1,43 +1,12 @@
 package whoknows
 
 import (
-	"net/mail"
 	"strings"
 	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
-
-// automatedPatterns are sender local parts that belong to systems rather than
-// people. A local part matches when it equals a pattern or starts with one
-// followed by "-", "+", or ".". Underscores count as hyphens.
-var automatedPatterns = []string{
-	"no-reply", "noreply", "do-not-reply", "donotreply", "notification",
-	"notifications", "notify", "alert", "alerts", "newsletter", "newsletters",
-	"digest", "mailer-daemon", "postmaster", "bounce", "bounces", "automated",
-	"robot", "bot", "calendar-notification",
-}
-
-// Automated reports whether an address looks like a system sender.
-func Automated(email string) bool {
-	if a, err := mail.ParseAddress(email); err == nil {
-		email = a.Address
-	}
-	local, _, _ := strings.Cut(strings.ToLower(email), "@")
-	local, _, _ = strings.Cut(local, "+")
-	local = strings.ReplaceAll(local, "_", "-")
-	for _, pattern := range automatedPatterns {
-		if local == pattern {
-			return true
-		}
-		if strings.HasPrefix(local, pattern) && len(local) > len(pattern) &&
-			strings.ContainsRune("-.", rune(local[len(pattern)])) {
-			return true
-		}
-	}
-	return false
-}
 
 const ignoredWords = " a an the and or of in on for to with about vs versus who knows "
 

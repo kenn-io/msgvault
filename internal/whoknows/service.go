@@ -3,7 +3,6 @@
 package whoknows
 
 import (
-	"cmp"
 	"context"
 	"maps"
 	"math"
@@ -28,11 +27,10 @@ type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
 }
 
-// DataReader reads who wrote each message, who each sender is, and what
-// people say to ask them about.
+// DataReader reads who wrote each message and what people say to ask them
+// about.
 type DataReader interface {
 	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
-	AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) (map[int64]store.AuthorIdentity, error)
 	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, bool, error)
 }
 
@@ -63,6 +61,13 @@ func searchTypes(scope vector.BuildScope) (types []string, narrowed bool) {
 	return types, len(types) < len(allowed) || len(scope.SourceIDs) > 0
 }
 
+// searchResult is what one search found and where it came up short.
+type searchResult struct {
+	candidates []Candidate
+	poolFull   bool
+	unembedded bool
+}
+
 // Find retrieves messages about the topic, keeps those whose cosine
 // similarity to it reaches MinScore, credits each to the person who wrote it,
 // and ranks the result.
@@ -74,16 +79,22 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	}
 	out.Topic = p.Topic
 	types, narrowed := searchTypes(s.BuildScope)
+	found, err := s.searchAuthors(ctx, p, types)
+	if err != nil {
+		return out, err
+	}
+	candidates, truncated, err := s.addDeclared(ctx, found.candidates, p.FreeText)
+	if err != nil {
+		return out, err
+	}
 	if narrowed {
 		out.Limits = append(out.Limits, LimitIndexScope)
 	}
-	candidates, err := s.searchAuthors(ctx, p, types, &out)
-	if err != nil {
-		return out, err
+	if found.poolFull {
+		out.Limits = append(out.Limits, LimitPoolFull)
 	}
-	candidates, truncated, err := s.addDeclared(ctx, candidates, p.FreeText)
-	if err != nil {
-		return out, err
+	if found.unembedded {
+		out.Limits = append(out.Limits, LimitNotEmbedded)
 	}
 	if truncated {
 		out.Limits = append(out.Limits, LimitDeclaredTruncated)
@@ -96,13 +107,15 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	return out, nil
 }
 
-// searchAuthors runs one hybrid search, credits the messages that reach the
-// floor to their authors, and adds the limits the search ran into to out.
-func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, out *Response) ([]Candidate, error) {
+// searchAuthors runs one hybrid search and credits the messages that reach
+// the floor to their authors. The pool is full when the search filled it and
+// either a hit cleared the floor or the index can't vouch that its order is
+// cosine order, so more matching messages may lie beyond it.
+func (s *Service) searchAuthors(ctx context.Context, p Params, types []string) (searchResult, error) {
 	// An index limited to transcripts and calendar entries has no authors to
 	// search, but people can still declare the topic.
 	if len(types) == 0 {
-		return nil, nil
+		return searchResult{}, nil
 	}
 	request := hybrid.SearchRequest{
 		Mode:     hybrid.ModeHybrid,
@@ -115,26 +128,20 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 	}
 	hits, meta, err := s.Retriever.Search(ctx, request)
 	if err != nil {
-		return nil, err
+		return searchResult{}, err
 	}
 	scores, err := s.vectorScores(ctx, hits, meta)
 	if err != nil {
-		return nil, err
+		return searchResult{}, err
 	}
-	// More matching messages may lie beyond a full pool when a hit cleared
-	// the floor, or when the index can't vouch that its order is cosine order.
 	counted := similarities(scores.Scores, hits, p.MinScore)
-	if (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength) {
-		out.Limits = append(out.Limits, LimitPoolFull)
+	var result searchResult
+	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength)
+	if result.unembedded, err = s.unembedded(ctx, hits, meta.Generation.ID); err != nil {
+		return searchResult{}, err
 	}
-	unembedded, err := s.unembedded(ctx, hits, meta.Generation.ID)
-	if err != nil {
-		return nil, err
-	}
-	if unembedded {
-		out.Limits = append(out.Limits, LimitNotEmbedded)
-	}
-	return s.attribute(ctx, counted)
+	result.candidates, err = s.attribute(ctx, counted)
+	return result, err
 }
 
 // unembedded reports that a keyword-only hit has no vector in the searched
@@ -187,8 +194,8 @@ func similarities(scores map[int64]float64, hits []vector.FusedHit, floor float6
 	return out
 }
 
-// attribute credits each counted message to its author's identity family,
-// leaving out the owner, senders without an identity, and automated senders.
+// attribute credits each counted message to its author's contact. The store
+// decides which messages count.
 func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candidate, error) {
 	if len(counted) == 0 {
 		return nil, nil
@@ -201,37 +208,23 @@ func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candida
 	if err != nil {
 		return nil, err
 	}
-	human := func(id int64) (store.TopicAuthor, bool) {
-		a, ok := authors[id]
-		return a, ok && !a.IsFromMe && a.SenderID != 0 && !a.Automated && !Automated(a.SenderEmail)
-	}
-	var senders []int64
-	for _, id := range ids {
-		if a, ok := human(id); ok && !slices.Contains(senders, a.SenderID) {
-			senders = append(senders, a.SenderID)
-		}
-	}
-	identities, err := s.Data.AuthorIdentitiesContext(ctx, senders)
-	if err != nil {
-		return nil, err
-	}
 	byKey := map[int64]int{}
 	var out []Candidate
 	for _, hit := range counted {
-		a, ok := human(hit.messageID)
-		identity := identities[a.SenderID]
-		if !ok || identity.Owner {
+		a, ok := authors[hit.messageID]
+		if !ok || !a.Counts {
 			continue
 		}
-		i, exists := byKey[identity.Key]
+		contact := a.Contact
+		i, exists := byKey[contact.Key]
 		if !exists {
-			c := Candidate{ParticipantID: a.SenderID, DisplayName: a.SenderName, EmailAddress: a.SenderEmail, OneWay: !identity.Addressed}
-			if identity.PersonID != 0 {
-				c = Candidate{PersonID: identity.PersonID, DisplayName: cmp.Or(identity.PersonName, a.SenderName), OneWay: !identity.Addressed}
+			c := Candidate{PersonID: contact.PersonID, DisplayName: contact.Name, OneWay: contact.OneWay}
+			if contact.PersonID == 0 {
+				c.ParticipantID, c.EmailAddress = contact.Key, contact.Email
 			}
 			out = append(out, c)
 			i = len(out) - 1
-			byKey[identity.Key] = i
+			byKey[contact.Key] = i
 		}
 		out[i].Messages = append(out[i].Messages, Authored{
 			Similarity: hit.similarity,
