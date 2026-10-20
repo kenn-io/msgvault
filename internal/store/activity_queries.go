@@ -271,6 +271,18 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 	queryer contextRowsQuerier,
 	messageIDs []int64,
 ) ([]ActivityCandidate, error) {
+	candidates, err := s.loadActivityCandidateRowsByIDQueryerContext(ctx, queryer, messageIDs)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachActivityCounterpartsQueryerContext(ctx, queryer, candidates)
+}
+
+func (s *Store) loadActivityCandidateRowsByIDQueryerContext(
+	ctx context.Context,
+	queryer contextRowsQuerier,
+	messageIDs []int64,
+) ([]ActivityCandidate, error) {
 	unique := make(map[int64]struct{}, len(messageIDs))
 	for _, messageID := range messageIDs {
 		if messageID <= 0 {
@@ -320,7 +332,7 @@ func (s *Store) loadActivityCandidatesByIDQueryerContext(
 		}
 		candidates = append(candidates, loaded...)
 	}
-	return s.attachActivityCounterpartsQueryerContext(ctx, queryer, candidates)
+	return candidates, nil
 }
 
 func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {

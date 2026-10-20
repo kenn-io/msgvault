@@ -834,7 +834,7 @@ func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, m
 	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 		return fmt.Errorf("lock draft activity for message %d: %w", messageID, err)
 	}
-	candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, []int64{messageID})
+	candidates, err := s.loadActivityCandidateRowsByIDQueryerContext(ctx, tx, []int64{messageID})
 	if err != nil {
 		return fmt.Errorf("load draft activity for message %d: %w", messageID, err)
 	}
