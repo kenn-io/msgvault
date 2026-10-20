@@ -15519,7 +15519,6 @@ type WhoKnowsCitation struct {
 	MessageType         string     `json:"message_type" validate:"required"`
 	SenderAuthenticated bool       `json:"sender_authenticated"`
 	SentAt              *time.Time `json:"sent_at,omitempty"`
-	Snippet             *string    `json:"snippet,omitzero"`
 	Subject             *string    `json:"subject,omitzero"`
 }
 
@@ -15527,45 +15526,21 @@ func (w WhoKnowsCitation) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(w))
 }
 
-type WhoKnowsContact struct {
-	AuthoredMessages int64              `json:"authored_messages"`
-	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
-	DisplayName      *string            `json:"display_name,omitzero"`
-	EmailAddress     *string            `json:"email_address,omitzero"`
-	MessageScore     float64            `json:"message_score"`
-	ParticipantID    int64              `json:"participant_id"`
-	Rank             int64              `json:"rank"`
-	Score            float64            `json:"score"`
-}
-
-func (w WhoKnowsContact) Validate() error {
-	var errors runtime.ValidationErrors
-	for i, item := range w.Citations {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Citations[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type WhoKnowsPerson struct {
+type WhoKnowsEntry struct {
 	AskMeAbout       []string           `json:"ask_me_about,omitempty"`
 	AuthoredMessages int64              `json:"authored_messages"`
 	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
 	DeclaredBoost    float64            `json:"declared_boost"`
 	DisplayName      *string            `json:"display_name,omitzero"`
+	EmailAddress     *string            `json:"email_address,omitzero"`
 	MessageScore     float64            `json:"message_score"`
-	PersonID         int64              `json:"person_id"`
+	ParticipantID    *int64             `json:"participant_id,omitempty"`
+	PersonID         *int64             `json:"person_id,omitempty"`
 	Rank             int64              `json:"rank"`
 	Score            float64            `json:"score"`
 }
 
-func (w WhoKnowsPerson) Validate() error {
+func (w WhoKnowsEntry) Validate() error {
 	var errors runtime.ValidationErrors
 	for i, item := range w.Citations {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -15580,42 +15555,22 @@ func (w WhoKnowsPerson) Validate() error {
 	return errors
 }
 
-type WhoKnowsRequest struct {
-	// After Messages at or after this instant
-	After *time.Time `json:"after,omitempty"`
-
-	// Before Messages before this instant
-	Before *time.Time `json:"before,omitempty"`
-
-	// Evidence Citations per person; default 3
-	Evidence *int64 `json:"evidence,omitempty" validate:"omitempty,gte=1,lte=10"`
-
-	// Limit Saved people to return; default 10
-	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=50"`
-
-	// MinScore Lowest cosine similarity a message needs to count; default 0.5
-	MinScore *float64 `json:"min_score,omitempty" validate:"omitempty,gt=0,lte=1"`
-
-	// Topic Plain words; search operators are refused
-	Topic string `json:"topic" validate:"required,min=1"`
-}
-
-func (w WhoKnowsRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(w))
-}
-
 type WhoKnowsResponse struct {
-	DeclaredTruncated bool              `json:"declared_truncated"`
-	People            []WhoKnowsPerson  `json:"people" validate:"required"`
-	PoolSaturated     bool              `json:"pool_saturated"`
-	Reason            *string           `json:"reason,omitzero"`
-	SearchedMessages  int64             `json:"searched_messages"`
-	Topic             string            `json:"topic" validate:"required"`
-	UnsavedContacts   []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
+	Limits          []WhoKnowsResponseLimits `json:"limits" validate:"required"`
+	People          []WhoKnowsEntry          `json:"people" validate:"required"`
+	Topic           string                   `json:"topic" validate:"required"`
+	UnsavedContacts []WhoKnowsEntry          `json:"unsaved_contacts" validate:"required"`
 }
 
 func (w WhoKnowsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range w.Limits {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Limits[%d]", i), err)
+			}
+		}
+	}
 	for i, item := range w.People {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

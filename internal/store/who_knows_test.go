@@ -39,54 +39,33 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	ana := f.EnsureParticipant("ana@example.net", "Ana Sender", "example.net")
 	ben := f.EnsureParticipant("ben@example.net", "Ben Contractor", "example.net")
 	owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
-	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
-	_, err := f.Store.LinkParticipants(owner, alias)
-	require.NoError(err)
-	ownerPerson, _, err := f.Store.CreatePersonFromParticipant(owner)
-	require.NoError(err)
-	anaPerson, _, err := f.Store.CreatePersonFromParticipant(ana)
-	require.NoError(err)
 
 	saved := send(f, "saved", ana)
 	unsaved := send(f, "unsaved", ben, func(m *store.Message) { m.ListID = sql.NullString{String: "<list.example.net>", Valid: true} })
 	outbound := send(f, "outbound", owner)
-	aliased := send(f, "aliased", alias)
 	byEnvelope := send(f, "envelope", 0)
 	require.NoError(f.Store.ReplaceMessageRecipients(byEnvelope, "from", []int64{ben, ana}, []string{"Ben", "Ana"}))
 	deleted := send(f, "deleted", ana)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, "deleted"))
 
-	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, unsaved, outbound, aliased, byEnvelope, deleted, 999999})
+	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, unsaved, outbound, byEnvelope, deleted, 999999})
 	require.NoError(err)
-	assert.Len(got, 5, "deleted and missing messages are left out")
+	assert.Len(got, 4, "deleted and missing messages are left out")
 
-	// A saved sender with no activity index built.
 	a := got[saved]
-	require.NotNil(a.PersonID)
-	assert.Equal(anaPerson.ID, *a.PersonID)
 	assert.Equal(ana, a.SenderID)
 	assert.Equal("Ana Sender", a.SenderName)
+	assert.Equal("ana@example.net", a.SenderEmail)
 	assert.Equal("Re: saved", a.Subject)
 	assert.Equal("email", a.MessageType)
 	require.NotNil(a.SentAt)
 	assert.True(whoKnowsSentAt.Equal(*a.SentAt))
 	assert.False(a.SenderAuthenticated, "an email From header is an assertion")
+	assert.False(a.ListMail)
+	assert.False(a.IsFromMe)
 
-	// A sender bound to no person, writing through a list.
-	assert.Nil(got[unsaved].PersonID)
 	assert.True(got[unsaved].ListMail)
-	assert.False(got[saved].ListMail)
-
-	// The owner's own mail, and mail from an address bound to the owner's
-	// person that no account identity lists.
 	assert.True(got[outbound].IsFromMe)
-	assert.True(got[outbound].OwnerLinked)
-	assert.False(got[aliased].IsFromMe)
-	assert.True(got[aliased].OwnerLinked)
-	require.NotNil(got[aliased].PersonID)
-	assert.Equal(ownerPerson.ID, *got[aliased].PersonID)
-	assert.False(got[saved].OwnerLinked)
-
 	// With no sender_id, the lowest 'from' recipient is the sender.
 	assert.Equal(min(ben, ana), got[byEnvelope].SenderID)
 }
@@ -106,7 +85,7 @@ func TestTopicAuthorsReadsProducerAutomationAndAuthentication(t *testing.T) {
 			require.NoError(f.Store.SetParticipantIdentifier(sender, identifierType, identifier))
 		}
 		m := f.NewMessage().WithSourceMessageID(name).Build()
-		m.SourceID, m.ConversationID = slack.ID, conversation
+		m.SourceID, m.ConversationID, m.MessageType = slack.ID, conversation, "slack"
 		m.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := f.Store.UpsertMessage(m)
 		require.NoError(err)
@@ -127,6 +106,21 @@ func TestTopicAuthorsReadsProducerAutomationAndAuthentication(t *testing.T) {
 		"slackuser": post("slackuser", "", "slack", "T1:U1"),
 		"agentuser": post("agentuser", "", "chatwoot", "acct/agent/9"),
 	}
+	// The Slack importer files a bot relaying under a user's ID by the user,
+	// and keeps the payload that shows the bot. A payload that can't be read
+	// leaves the message counted.
+	payload := func(id int64, raw string) {
+		require.NoError(f.Store.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(raw), "slack_json"))
+	}
+	automated["relayed"] = post("relayed", "", "slack", "T1:U2")
+	payload(automated["relayed"], `{"type":"message","user":"U2","bot_id":"B2","text":"deploy finished"}`)
+	automated["bot message"] = post("botmessage", "", "", "")
+	payload(automated["bot message"], `{"type":"message","subtype":"bot_message","text":"alert"}`)
+	humans["user payload"] = post("userpayload", "", "slack", "T1:U3")
+	payload(humans["user payload"], `{"type":"message","user":"U3","text":"hello"}`)
+	humans["unreadable"] = post("unreadable", "", "", "")
+	payload(humans["unreadable"], `not json`)
+
 	ids := slices.Concat(slices.Collect(maps.Values(automated)), slices.Collect(maps.Values(humans)))
 	got, err := f.Store.TopicAuthorsContext(t.Context(), ids)
 	require.NoError(err)
@@ -139,7 +133,60 @@ func TestTopicAuthorsReadsProducerAutomationAndAuthentication(t *testing.T) {
 	assert.True(got[humans["plain"]].SenderAuthenticated, "the source sets a Slack sender")
 }
 
-func TestOwnerAddressedFindsParticipantsTheOwnerWroteTo(t *testing.T) {
+func TestAuthorIdentitiesGroupLinkedAndBoundSenders(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
+	owner := f.EnsureParticipant("owner@example.net", "Owner", "example.net")
+	ownerAlias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
+	_, err := f.Store.LinkParticipants(owner, ownerAlias)
+	require.NoError(err)
+	home := f.EnsureParticipant("dee@example.net", "Dee", "example.net")
+	work := f.EnsureParticipant("dee@work.example.net", "Dee Work", "work.example.net")
+	_, err = f.Store.LinkParticipants(home, work)
+	require.NoError(err)
+	ana := f.EnsureParticipant("ana@example.net", "Ana", "example.net")
+	anaOther := f.EnsureParticipant("ana@other.example.net", "Ana Other", "other.example.net")
+
+	senders := []int64{ownerAlias, home, work, ana, anaOther}
+	got, err := f.Store.AuthorIdentitiesContext(ctx, senders)
+	require.NoError(err)
+	assert.True(got[ownerAlias].Owner, "an address linked to the owner's is the owner before anyone is saved")
+	assert.Equal(got[home], got[work], "linked unsaved addresses are one sender")
+	assert.Equal(min(home, work), got[work].Key)
+	assert.Zero(got[home].PersonID)
+	assert.False(got[home].Owner)
+	assert.NotEqual(got[ana].Key, got[anaOther].Key)
+
+	// Saving the owner keeps the alias an owner identity. Merging Ana's two
+	// people makes one person that spans two clusters, so one sender.
+	_, _, err = f.Store.CreatePersonFromParticipant(owner)
+	require.NoError(err)
+	anaPerson, _, err := f.Store.CreatePersonFromParticipant(ana)
+	require.NoError(err)
+	otherPerson, _, err := f.Store.CreatePersonFromParticipant(anaOther)
+	require.NoError(err)
+	_, err = f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: anaPerson.ID, AbsorbedID: otherPerson.ID,
+		ExpectedSurvivorRevision: anaPerson.Revision, ExpectedAbsorbedRevision: otherPerson.Revision,
+		IdempotencyKey: "who-knows-merge", Actor: "test",
+	})
+	require.NoError(err)
+	got, err = f.Store.AuthorIdentitiesContext(ctx, senders)
+	require.NoError(err)
+	assert.True(got[ownerAlias].Owner)
+	assert.Equal(got[ana], got[anaOther])
+	assert.Equal(min(ana, anaOther), got[anaOther].Key)
+	assert.Equal(anaPerson.ID, got[anaOther].PersonID)
+
+	none, err := f.Store.AuthorIdentitiesContext(ctx, nil)
+	require.NoError(err)
+	assert.Empty(none)
+}
+
+func TestAuthorIdentitiesReportWhomTheOwnerWroteTo(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -151,8 +198,6 @@ func TestOwnerAddressedFindsParticipantsTheOwnerWroteTo(t *testing.T) {
 	vendor := f.EnsureParticipant("vendor@example.net", "Vendor", "example.net")
 	chatty := f.EnsureParticipant("chatty@example.net", "Chatty", "example.net")
 	_, err := f.Store.LinkParticipants(ana, anaOther)
-	require.NoError(err)
-	_, _, err = f.Store.CreatePersonFromParticipant(ana)
 	require.NoError(err)
 
 	mail := send(f, "to-ana", owner)
@@ -167,13 +212,12 @@ func TestOwnerAddressedFindsParticipantsTheOwnerWroteTo(t *testing.T) {
 	require.NoError(f.Store.EnsureConversationParticipant(chat, chatty, "member"))
 	send(f, "chat-post", owner, func(m *store.Message) { m.ConversationID = chat; m.MessageType = "chat" })
 
-	got, err := f.Store.OwnerAddressedContext(t.Context(), []int64{ana, cc, vendor, chatty})
+	got, err := f.Store.AuthorIdentitiesContext(t.Context(), []int64{ana, cc, vendor, chatty})
 	require.NoError(err)
-	assert.Equal(map[int64]bool{ana: true, cc: true, chatty: true}, got,
-		"ana counts through her bound second address; the vendor was never written to")
-	none, err := f.Store.OwnerAddressedContext(t.Context(), nil)
-	require.NoError(err)
-	assert.Empty(none)
+	assert.True(got[ana].Addressed, "the owner wrote to Ana's linked address")
+	assert.True(got[cc].Addressed)
+	assert.True(got[chatty].Addressed)
+	assert.False(got[vendor].Addressed, "the vendor was never written to")
 }
 
 func TestAskMeAboutValuesReadsUserValuesForNonOwners(t *testing.T) {

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"cmp"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,7 +16,11 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const whoKnowsCitationWidth = 80
+const (
+	whoKnowsCitationWidth = 80
+	// whoKnowsMinAPISchemaVersion is the first schema with GET /people/who-knows.
+	whoKnowsMinAPISchemaVersion = "3.24.0"
+)
 
 func newPersonWhoKnowsCommand() *cobra.Command {
 	var (
@@ -38,52 +41,58 @@ unlike your messages.`,
   msgvault person who-knows "tax filing" --after 2026-01-01 --json`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			body := generated.FindPeopleWhoKnowBody{Topic: strings.Join(args, " ")}
+			query := generated.FindPeopleWhoKnowQuery{Topic: strings.Join(args, " ")}
 			flags := cmd.Flags()
 			if flags.Changed("limit") {
-				body.Limit = new(int64(limit))
+				query.Limit = new(int64(limit))
 			}
 			if flags.Changed("evidence") {
-				body.Evidence = new(int64(evidence))
+				query.Evidence = new(int64(evidence))
 			}
 			if flags.Changed("min-score") {
-				body.MinScore = &minScore
+				query.MinScore = new(float32(minScore))
 			}
-			var err error
-			if body.After, err = parseDocumentSearchDate(after); err != nil {
-				return usageErr(cmd, fmt.Errorf("--after %w", err))
-			}
-			if body.Before, err = parseDocumentSearchDate(before); err != nil {
-				return usageErr(cmd, fmt.Errorf("--before %w", err))
+			for _, date := range []struct {
+				flag, value string
+				target      **string
+			}{{"--after", after, &query.After}, {"--before", before, &query.Before}} {
+				parsed, err := parseDocumentSearchDate(date.value)
+				if err != nil {
+					return usageErr(cmd, fmt.Errorf("%s %w", date.flag, err))
+				}
+				if parsed != nil {
+					*date.target = new(parsed.Format(time.RFC3339))
+				}
 			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer func() { _ = client.Close() }()
-			if err := client.RequireWhoKnows(cmd.Context()); err != nil {
-				return fmt.Errorf("who-knows: %w", err)
+			version, err := client.APISchemaVersion(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("check daemon who-knows capability: %w", err)
+			}
+			if !daemonclient.APISchemaVersionAtLeast(version, whoKnowsMinAPISchemaVersion) {
+				return fmt.Errorf("person who-knows requires daemon API schema %s or newer (daemon reports %q); upgrade the daemon",
+					whoKnowsMinAPISchemaVersion, version)
 			}
 			response, err := daemonclient.APIResponse(client,
 				func(api *apiclient.Client) (*generated.FindPeopleWhoKnowResp, error) {
 					return api.FindPeopleWhoKnowWithResponse(cmd.Context(),
-						&generated.FindPeopleWhoKnowRequestOptions{Body: &body})
+						&generated.FindPeopleWhoKnowRequestOptions{Query: &query})
 				})
 			if err != nil {
 				return err
 			}
-			if len(response.Body) == 0 {
+			if response.JSON200 == nil || len(response.Body) == 0 {
 				return errors.New("who-knows response was empty")
 			}
 			if jsonOutput {
 				_, err = cmd.OutOrStdout().Write(response.Body)
 				return err
 			}
-			var result whoknows.Response
-			if err := json.Unmarshal(response.Body, &result); err != nil {
-				return fmt.Errorf("decode who-knows response: %w", err)
-			}
-			return writeWhoKnows(cmd.OutOrStdout(), result)
+			return writeWhoKnows(cmd.OutOrStdout(), *response.JSON200)
 		},
 	}
 	f := command.Flags()
@@ -96,7 +105,7 @@ unlike your messages.`,
 	return command
 }
 
-func writeWhoKnows(w io.Writer, response whoknows.Response) error {
+func writeWhoKnows(w io.Writer, response generated.WhoKnowsResponse) error {
 	var out strings.Builder
 	renderWhoKnows(&out, response)
 	if _, err := io.WriteString(w, out.String()); err != nil {
@@ -105,66 +114,84 @@ func writeWhoKnows(w io.Writer, response whoknows.Response) error {
 	return nil
 }
 
-func renderWhoKnows(out *strings.Builder, response whoknows.Response) {
+// whoKnowsLimitLines say how each limit left the search short.
+var whoKnowsLimitLines = map[generated.WhoKnowsResponseLimits]string{
+	generated.PoolFull: fmt.Sprintf("Searched the %d closest messages; more may match. Narrow with --after or --before.",
+		whoknows.SearchPool),
+	generated.DeclaredTruncated: "Declared topics were searched only in part.",
+	generated.IndexScope:        "The vector index doesn't cover email or chat, so messages weren't searched.",
+}
+
+func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse) {
 	safe := textutil.SanitizeTerminal
 	switch {
 	case len(response.People) > 0 || len(response.UnsavedContacts) > 0:
-		renderWhoKnowsPeople(out, response)
-	case response.Reason == whoknows.ReasonIndexScope:
-		fmt.Fprintln(out, "The vector index doesn't cover email or chat, so who-knows couldn't search messages.")
-	case response.Reason == whoknows.ReasonSearchLimit:
-		fmt.Fprintf(out, "No one turned up for %q within the search limits; narrow with --after or --before.\n", safe(response.Topic))
+		renderWhoKnowsEntries(out, response)
+	case len(response.Limits) > 0:
+		fmt.Fprintf(out, "No one turned up for %q.\n", safe(response.Topic))
 	default:
 		fmt.Fprintf(out, "Nobody in your archive has written about %q.\n", safe(response.Topic))
 	}
-	if response.DeclaredTruncated {
-		fmt.Fprintln(out, "Declared topics were searched only in part.")
+	for _, limit := range response.Limits {
+		fmt.Fprintln(out, cmp.Or(whoKnowsLimitLines[limit], safe(string(limit))))
 	}
 }
 
-func renderWhoKnowsPeople(out *strings.Builder, response whoknows.Response) {
+func renderWhoKnowsEntries(out *strings.Builder, response generated.WhoKnowsResponse) {
 	safe := textutil.SanitizeTerminal
 	for _, p := range response.People {
-		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s\n",
-			p.Rank, safe(p.DisplayName), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
+		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s",
+			p.Rank, safe(whoKnowsText(p.DisplayName)), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
 		if len(p.AskMeAbout) > 0 {
-			fmt.Fprintf(out, "    declared: %s\n", safe(strings.Join(p.AskMeAbout, ", ")))
+			fmt.Fprintf(out, "  declared: %s", safe(strings.Join(p.AskMeAbout, ", ")))
 		}
+		fmt.Fprintln(out)
 		renderWhoKnowsCitations(out, p.Citations)
 	}
 	if len(response.UnsavedContacts) > 0 {
 		fmt.Fprintln(out, "Unsaved contacts")
 	}
 	for _, c := range response.UnsavedContacts {
+		var participant int64
+		if c.ParticipantID != nil {
+			participant = *c.ParticipantID
+		}
 		fmt.Fprintf(out, "#%d  %s  score %.2f  %s  msgvault person promote %d\n",
-			c.Rank, contactLabel(c), c.Score, authoredLabel(c.AuthoredMessages), c.ParticipantID)
+			c.Rank, contactLabel(c), c.Score, authoredLabel(c.AuthoredMessages), participant)
 		renderWhoKnowsCitations(out, c.Citations)
 	}
-	fmt.Fprintf(out, "Based on the %d closest messages.\n", response.SearchedMessages)
 }
 
-func authoredLabel(n int) string {
+func whoKnowsText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func authoredLabel(n int64) string {
 	if n == 0 {
 		return "declared, no messages"
 	}
 	return fmt.Sprintf("%d authored", n)
 }
 
-func contactLabel(c whoknows.Contact) string {
+func contactLabel(c generated.WhoKnowsEntry) string {
 	safe := textutil.SanitizeTerminal
-	if c.DisplayName == "" || c.EmailAddress == "" {
-		return safe(cmp.Or(c.DisplayName, c.EmailAddress))
+	name, email := whoKnowsText(c.DisplayName), whoKnowsText(c.EmailAddress)
+	if name == "" || email == "" {
+		return safe(cmp.Or(name, email))
 	}
-	return safe(c.DisplayName) + " <" + safe(c.EmailAddress) + ">"
+	return safe(name) + " <" + safe(email) + ">"
 }
 
-func renderWhoKnowsCitations(out *strings.Builder, citations []whoknows.Citation) {
+func renderWhoKnowsCitations(out *strings.Builder, citations []generated.WhoKnowsCitation) {
 	for _, c := range citations {
 		date := "undated"
 		if c.SentAt != nil {
 			date = c.SentAt.UTC().Format(time.DateOnly)
 		}
-		text := textutil.TruncateRunes(textutil.SanitizeTerminal(cmp.Or(c.Subject, c.Snippet)), whoKnowsCitationWidth)
+		text := textutil.TruncateRunes(textutil.SanitizeTerminal(whoKnowsText(c.Subject)), whoKnowsCitationWidth)
 		fmt.Fprintf(out, "    %s  %s  %s  msgvault show-message %d\n",
 			date, textutil.SanitizeTerminal(c.MessageType), text, c.MessageID)
 	}

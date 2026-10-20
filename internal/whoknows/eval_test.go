@@ -199,11 +199,9 @@ func newEvalFixture(t *testing.T) *evalFixture {
 		return hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
 			hybrid.Config{KPerSignal: kPerSignal, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	}
-	scorer, ok := backend.(vector.ChunkScoringBackend)
-	require.True(t, ok, "the vector backend scores message chunks")
 	return &evalFixture{
 		service: &Service{
-			Retriever: engine(100), Scorer: scorer, Data: st,
+			Retriever: engine(100), Data: st, L2Scores: !st.IsPostgreSQL(),
 			Now: func() time.Time { return evalNow },
 		},
 		engine: engine,
@@ -242,10 +240,10 @@ func TestFindEvaluation(t *testing.T) {
 			if len(relevant) == 0 {
 				assert.Empty(got.People, "judged: nobody wrote about it")
 				assert.Empty(got.UnsavedContacts)
-				assert.Equal(ReasonNoEvidence, got.Reason)
+				assert.Empty(got.Limits)
 				return
 			}
-			assert.Empty(got.Reason)
+			assert.Empty(got.Limits)
 			scores := eval.Evaluate(ranked, relevant, eval.CutoffsForDepth(10))
 			assert.InDelta(1.0, scores.MRR, 1e-9, "the author ranks first: %v", ranked)
 			assert.InDelta(1.0, scores.NDCG, 1e-9, "relevant people are listed in order: %v", ranked)

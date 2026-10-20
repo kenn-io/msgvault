@@ -5,7 +5,6 @@ package whoknows
 import (
 	"cmp"
 	"context"
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -15,39 +14,36 @@ import (
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
-// retrieveLimit is how many messages one search reads.
-const retrieveLimit = 200
+// SearchPool is how many messages one search reads.
+const SearchPool = 200
 
 // Retriever runs the hybrid (keyword plus meaning) message search.
 type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
 }
 
-// DataReader reads who wrote each message and what people say to ask them about.
+// DataReader reads who wrote each message, who each sender is, and what
+// people say to ask them about.
 type DataReader interface {
 	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
-	OwnerAddressedContext(ctx context.Context, participantIDs []int64) (map[int64]bool, error)
+	AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) (map[int64]store.AuthorIdentity, error)
 	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, bool, error)
-	GetMessageRawsContext(ctx context.Context, messageIDs []int64) (map[int64][]byte, error)
 }
 
 type Service struct {
 	Retriever  Retriever
-	Scorer     vector.ChunkScoringBackend
 	Data       DataReader
 	BuildScope vector.BuildScope
-	Now        func() time.Time
-}
-
-type candidateKey struct {
-	person bool
-	id     int64
+	// L2Scores reports that the vector backend scores a hit as 1 - L2
+	// distance, as sqlite-vec does, rather than 1 - cosine distance, as
+	// pgvector does.
+	L2Scores bool
+	Now      func() time.Time
 }
 
 // searchTypes are the message types worth searching for authors: everything
@@ -64,192 +60,139 @@ func searchTypes(scope vector.BuildScope) ([]string, bool) {
 // similarity to it reaches MinScore, credits each to the person who wrote it,
 // and ranks the result.
 func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
-	out := Response{Topic: req.Topic, People: []Person{}, UnsavedContacts: []Contact{}}
+	out := Response{Topic: req.Topic, Limits: []string{}, People: []Entry{}, UnsavedContacts: []Entry{}}
 	p, err := req.Resolve()
 	if err != nil {
 		return out, err
 	}
 	out.Topic = p.Topic
-	var (
-		similarity map[int64]float64
-		candidates []Candidate
-		meta       hybrid.ResultMeta
-	)
+	var candidates []Candidate
 	// An index limited to transcripts and calendar entries has no authors to
 	// search, but people can still declare the topic.
 	types, noTypes := searchTypes(s.BuildScope)
-	if !noTypes {
+	if noTypes {
+		out.Limits = append(out.Limits, LimitIndexScope)
+	} else {
 		request := hybrid.SearchRequest{
 			Mode:     hybrid.ModeHybrid,
 			FreeText: p.FreeText,
-			Limit:    retrieveLimit,
+			Limit:    SearchPool,
 			Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
 		}
 		for _, term := range p.Terms {
 			request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
 		}
-		var hits []vector.FusedHit
-		if hits, meta, err = s.Retriever.Search(ctx, request); err != nil {
+		hits, meta, err := s.Retriever.Search(ctx, request)
+		if err != nil {
 			return out, err
 		}
-		out.SearchedMessages = len(hits)
-		if similarity, err = s.similarities(ctx, hits, meta, p.MinScore); err != nil {
-			return out, err
+		counted := s.similarities(hits, p.MinScore)
+		if len(counted) > 0 && (meta.PoolSaturated || len(hits) >= SearchPool) {
+			out.Limits = append(out.Limits, LimitPoolFull)
 		}
-		if candidates, err = s.attribute(ctx, hits, similarity); err != nil {
+		if candidates, err = s.attribute(ctx, counted); err != nil {
 			return out, err
 		}
 	}
-	candidates, out.DeclaredTruncated, err = s.addDeclared(ctx, candidates, p.FreeText)
+	candidates, truncated, err := s.addDeclared(ctx, candidates, p.FreeText)
 	if err != nil {
 		return out, err
+	}
+	if truncated {
+		out.Limits = append(out.Limits, LimitDeclaredTruncated)
 	}
 	now := time.Now().UTC()
 	if s.Now != nil {
 		now = s.Now().UTC()
 	}
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
-	out.PoolSaturated = meta.PoolSaturated || out.SearchedMessages >= retrieveLimit
-	if len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
-		switch {
-		case noTypes:
-			out.Reason = ReasonIndexScope
-		case len(similarity) > 0 && out.PoolSaturated || out.DeclaredTruncated:
-			out.Reason = ReasonSearchLimit
-		default:
-			out.Reason = ReasonNoEvidence
-		}
-	}
 	return out, nil
 }
 
-// similarities scores every hit exactly, by its best chunk, and keeps those at
-// or above the floor. A hit with no embedded chunk does not count.
-func (s *Service) similarities(
-	ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta, floor float64,
-) (map[int64]float64, error) {
-	out := map[int64]float64{}
+type scoredHit struct {
+	messageID  int64
+	similarity float64
+}
+
+// similarities returns the hits whose cosine similarity to the topic reaches
+// the floor, in search order. A hit the meaning search did not return, such
+// as a keyword-only match, does not count.
+func (s *Service) similarities(hits []vector.FusedHit, floor float64) []scoredHit {
+	var out []scoredHit
 	for _, hit := range hits {
-		chunks, err := s.Scorer.ScoreMessageChunks(ctx, meta.Generation.ID, hit.MessageID, meta.QueryVector)
-		if err != nil {
-			return nil, fmt.Errorf("score message %d: %w", hit.MessageID, err)
+		if math.IsNaN(hit.VectorScore) {
+			continue
 		}
-		best := math.Inf(-1)
-		for _, c := range chunks {
-			if !math.IsNaN(c.Score) {
-				best = max(best, c.Score)
-			}
+		similarity := hit.VectorScore
+		if s.L2Scores {
+			// For unit-length vectors, as search ranking assumes, L2
+			// distance d and cosine similarity c satisfy d*d = 2 - 2c.
+			d := 1 - similarity
+			similarity = 1 - d*d/2
 		}
-		if best >= floor {
-			out[hit.MessageID] = best
+		if similarity >= floor {
+			out = append(out, scoredHit{messageID: hit.MessageID, similarity: similarity})
 		}
 	}
-	return out, nil
+	return out
 }
 
-// attribute credits each counted message to its author, leaving out the
-// owner, senders without an identity, and automated senders.
-func (s *Service) attribute(
-	ctx context.Context, hits []vector.FusedHit, similarity map[int64]float64,
-) ([]Candidate, error) {
-	if len(similarity) == 0 {
+// attribute credits each counted message to its author's identity family,
+// leaving out the owner, senders without an identity, and automated senders.
+func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candidate, error) {
+	if len(counted) == 0 {
 		return nil, nil
 	}
-	ids := make([]int64, len(hits))
-	for i, hit := range hits {
-		ids[i] = hit.MessageID
+	ids := make([]int64, len(counted))
+	for i, hit := range counted {
+		ids[i] = hit.messageID
 	}
 	authors, err := s.Data.TopicAuthorsContext(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	counted := func(id int64) bool {
+	human := func(id int64) (store.TopicAuthor, bool) {
 		a, ok := authors[id]
-		_, scored := similarity[id]
-		return ok && scored && !a.IsFromMe && !a.OwnerLinked && a.SenderID != 0 && !a.Automated &&
-			!Automated(a.SenderEmail)
+		return a, ok && !a.IsFromMe && a.SenderID != 0 && !a.Automated && !Automated(a.SenderEmail)
 	}
-	bots, err := s.slackBots(ctx, authors, counted)
+	var senders []int64
+	for _, id := range ids {
+		if a, ok := human(id); ok && !slices.Contains(senders, a.SenderID) {
+			senders = append(senders, a.SenderID)
+		}
+	}
+	identities, err := s.Data.AuthorIdentitiesContext(ctx, senders)
 	if err != nil {
 		return nil, err
 	}
-	byKey := map[candidateKey]*Candidate{}
-	participants := map[candidateKey][]int64{}
-	var order []candidateKey
-	for _, hit := range hits {
-		if !counted(hit.MessageID) || bots[hit.MessageID] {
+	byKey := map[int64]int{}
+	var out []Candidate
+	for _, hit := range counted {
+		a, ok := human(hit.messageID)
+		identity := identities[a.SenderID]
+		if !ok || identity.Owner {
 			continue
 		}
-		a := authors[hit.MessageID]
-		sim := similarity[hit.MessageID]
-		key := candidateKey{id: a.SenderID}
-		fresh := &Candidate{ParticipantID: a.SenderID, DisplayName: a.SenderName, EmailAddress: a.SenderEmail}
-		if a.PersonID != nil {
-			key = candidateKey{person: true, id: *a.PersonID}
-			fresh = &Candidate{PersonID: *a.PersonID, DisplayName: cmp.Or(a.PersonName, a.SenderName)}
-		}
-		c, exists := byKey[key]
+		i, exists := byKey[identity.Key]
 		if !exists {
-			c = fresh
-			byKey[key] = c
-			order = append(order, key)
+			c := Candidate{ParticipantID: a.SenderID, DisplayName: a.SenderName, EmailAddress: a.SenderEmail, OneWay: !identity.Addressed}
+			if identity.PersonID != 0 {
+				c = Candidate{PersonID: identity.PersonID, DisplayName: cmp.Or(identity.PersonName, a.SenderName), OneWay: !identity.Addressed}
+			}
+			out = append(out, c)
+			i = len(out) - 1
+			byKey[identity.Key] = i
 		}
-		if !slices.Contains(participants[key], a.SenderID) {
-			participants[key] = append(participants[key], a.SenderID)
-		}
-		c.Messages = append(c.Messages, Authored{
-			Similarity: sim,
+		out[i].Messages = append(out[i].Messages, Authored{
+			Similarity: hit.similarity,
 			ListMail:   a.ListMail,
 			Citation: Citation{
 				MessageID: a.MessageID, SentAt: a.SentAt, MessageType: a.MessageType,
-				Subject: a.Subject, Snippet: a.Snippet, SenderAuthenticated: a.SenderAuthenticated,
+				Subject: a.Subject, SenderAuthenticated: a.SenderAuthenticated,
 			},
 		})
 	}
-	var senders []int64
-	for _, key := range order {
-		senders = append(senders, participants[key]...)
-	}
-	addressed, err := s.Data.OwnerAddressedContext(ctx, senders)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]Candidate, len(order))
-	for i, key := range order {
-		c := byKey[key]
-		c.OneWay = !slices.ContainsFunc(participants[key], func(id int64) bool { return addressed[id] })
-		out[i] = *c
-	}
 	return out, nil
-}
-
-// slackBots returns the counted Slack messages whose archived payload marks a
-// bot. The importer files a message carrying both "user" and "bot_id" under
-// the user, so only the payload shows it. An unreadable payload leaves the
-// message counted.
-func (s *Service) slackBots(
-	ctx context.Context, authors map[int64]store.TopicAuthor, counted func(int64) bool,
-) (map[int64]bool, error) {
-	var ids []int64
-	for id, a := range authors {
-		if a.MessageType == slack.MessageType && counted(id) {
-			ids = append(ids, id)
-		}
-	}
-	bots := map[int64]bool{}
-	if len(ids) == 0 {
-		return bots, nil
-	}
-	raws, err := s.Data.GetMessageRawsContext(ctx, ids)
-	if err != nil {
-		return nil, err
-	}
-	for id, raw := range raws {
-		if slack.RawFromBot(raw) {
-			bots[id] = true
-		}
-	}
-	return bots, nil
 }
 
 // addDeclared adds each ask-me-about value that matches the topic to its

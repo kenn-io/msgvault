@@ -21,28 +21,31 @@ const (
 	DefaultEvidence = 3
 	MaxEvidence     = 10
 	DefaultMinScore = 0.5
+)
 
-	// ReasonNoEvidence marks an empty response: no message about the topic
-	// was written by anyone but the owner or an automated sender.
-	ReasonNoEvidence = "no_relevant_evidence"
-	// ReasonSearchLimit marks an empty response where the search returned its
-	// full pool and every matching message in it came from the owner or an
-	// automated sender, so the answer may lie beyond the pool.
-	ReasonSearchLimit = "search_limit"
-	// ReasonIndexScope marks an empty response where the vector index covers
-	// no message type with authors, so messages were not searched.
-	ReasonIndexScope = "index_scope"
+// Limits name the ways a search came up short, so an empty result that lists
+// one never means nobody wrote about the topic.
+const (
+	// LimitPoolFull means a message cleared the floor and the search returned
+	// its full pool, so more messages beyond it may match.
+	LimitPoolFull = "pool_full"
+	// LimitDeclaredTruncated means more declared topics exist than one
+	// request reads, so some were not searched.
+	LimitDeclaredTruncated = "declared_truncated"
+	// LimitIndexScope means the vector index covers no message type with
+	// authors, so messages were not searched.
+	LimitIndexScope = "index_scope"
 )
 
 // Request asks who in the archive has written about a topic.
 // Omitted limit, evidence, and min_score take their defaults.
 type Request struct {
-	Topic    string     `json:"topic" minLength:"1" doc:"Plain words; search operators are refused"`
-	Limit    *int       `json:"limit,omitempty" minimum:"1" maximum:"50" doc:"Saved people to return; default 10"`
-	Evidence *int       `json:"evidence,omitempty" minimum:"1" maximum:"10" doc:"Citations per person; default 3"`
-	MinScore *float64   `json:"min_score,omitempty" exclusiveMinimum:"0" maximum:"1" doc:"Lowest cosine similarity a message needs to count; default 0.5"`
-	After    *time.Time `json:"after,omitempty" doc:"Messages at or after this instant"`
-	Before   *time.Time `json:"before,omitempty" doc:"Messages before this instant"`
+	Topic    string
+	Limit    *int
+	Evidence *int
+	MinScore *float64
+	After    *time.Time
+	Before   *time.Time
 }
 
 // Citation is one message a person wrote about the topic.
@@ -53,17 +56,20 @@ type Citation struct {
 	SentAt              *time.Time `json:"sent_at,omitempty"`
 	MessageType         string     `json:"message_type"`
 	Subject             string     `json:"subject,omitempty"`
-	Snippet             string     `json:"snippet,omitempty"`
 	SenderAuthenticated bool       `json:"sender_authenticated"`
 }
 
-// Person is a saved person ranked for the topic. Score is
-// MessageScore plus DeclaredBoost. A person with a matching ask_me_about value
-// and no matching messages has zero AuthoredMessages and MessageScore.
-type Person struct {
+// Entry is a saved person (PersonID set) or an unsaved contact
+// (ParticipantID set), ranked for the topic. Promote a contact with
+// "msgvault person promote <participant_id>". Score is MessageScore plus
+// DeclaredBoost. A person with a matching ask_me_about value and no matching
+// messages has zero AuthoredMessages and MessageScore.
+type Entry struct {
 	Rank             int        `json:"rank"`
-	PersonID         int64      `json:"person_id"`
+	PersonID         int64      `json:"person_id,omitempty"`
+	ParticipantID    int64      `json:"participant_id,omitempty"`
 	DisplayName      string     `json:"display_name,omitempty"`
+	EmailAddress     string     `json:"email_address,omitempty"`
 	Score            float64    `json:"score"`
 	MessageScore     float64    `json:"message_score"`
 	DeclaredBoost    float64    `json:"declared_boost"`
@@ -72,34 +78,14 @@ type Person struct {
 	Citations        []Citation `json:"citations"`
 }
 
-// Contact is a sender bound to no saved person. Promote it with
-// "msgvault person promote <participant_id>".
-type Contact struct {
-	Rank             int        `json:"rank"`
-	ParticipantID    int64      `json:"participant_id"`
-	DisplayName      string     `json:"display_name,omitempty"`
-	EmailAddress     string     `json:"email_address,omitempty"`
-	Score            float64    `json:"score"`
-	MessageScore     float64    `json:"message_score"`
-	AuthoredMessages int        `json:"authored_messages"`
-	Citations        []Citation `json:"citations"`
-}
-
-// Response lists people first, then unsaved contacts. Reason is set
-// when both lists are empty. SearchedMessages is how many messages the search
-// returned.
+// Response lists people first, then unsaved contacts. Limits lists each way
+// the search came up short; both lists empty with no limits means nobody in
+// the archive wrote about the topic.
 type Response struct {
-	Topic            string `json:"topic"`
-	Reason           string `json:"reason,omitempty"`
-	SearchedMessages int    `json:"searched_messages"`
-	// DeclaredTruncated reports that more declared topics exist than one
-	// request reads, so some were not searched.
-	DeclaredTruncated bool `json:"declared_truncated"`
-	// PoolSaturated reports that the search returned its full pool, so a
-	// relevant author may lie beyond SearchedMessages.
-	PoolSaturated   bool      `json:"pool_saturated"`
-	People          []Person  `json:"people"`
-	UnsavedContacts []Contact `json:"unsaved_contacts"`
+	Topic           string   `json:"topic"`
+	Limits          []string `json:"limits" enum:"pool_full,declared_truncated,index_scope"`
+	People          []Entry  `json:"people"`
+	UnsavedContacts []Entry  `json:"unsaved_contacts"`
 }
 
 // Params is a validated Request with its defaults applied.

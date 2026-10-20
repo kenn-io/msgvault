@@ -231,15 +231,6 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// RawFromBot reports whether an archived message payload marks a bot author:
-// it carries a bot_id or the bot_message subtype. The importer files a message
-// that carries both "user" and "bot_id" under the user, so the participant
-// alone does not show it. An unreadable payload is not a bot.
-func RawFromBot(raw []byte) bool {
-	var m Message
-	return json.Unmarshal(raw, &m) == nil && (m.BotID != "" || m.Subtype == "bot_message")
-}
-
 // IsThreadRoot reports whether m is the root of a thread with replies.
 func (m *Message) IsThreadRoot() bool {
 	return m.ThreadTS != "" && m.ThreadTS == m.TS && m.ReplyCount > 0

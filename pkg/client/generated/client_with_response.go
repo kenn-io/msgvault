@@ -18196,10 +18196,9 @@ func (c *Client) SearchPeopleWithResponse(ctx context.Context, options *SearchPe
 func (c *Client) FindPeopleWhoKnowWithResponse(ctx context.Context, options *FindPeopleWhoKnowRequestOptions, reqEditors ...runtime.RequestEditorFn) (*FindPeopleWhoKnowResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
-		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/people/who-knows",
-		Method:      "POST",
-		Options:     options,
-		ContentType: "application/json",
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/people/who-knows",
+		Method:     "GET",
+		Options:    options,
 	}
 
 	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)

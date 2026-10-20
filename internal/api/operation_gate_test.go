@@ -833,7 +833,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyAnalyticalPosts(t *testing.T) {
 		"/api/v1/relationships/7/calendar",
 		"/api/v1/relationships/7/timeline",
 		"/api/v1/search/coverage",
-		"/api/v1/people/who-knows",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -915,7 +914,7 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
 // CardDAV account test, participant completion, evidence preparation, Saved View
-// run, and message tag endpoints are pinned non-Exploration entries, as is who-knows. Message tags
+// run, and message tag endpoints are pinned non-Exploration entries. Message tags
 // acquire the gate in their handler for writes. Each entry must remain a POST route.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
@@ -939,7 +938,7 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
-	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath, "/api/v1/people/who-knows"}
+	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath}
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

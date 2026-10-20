@@ -16531,8 +16531,6 @@ components:
         sent_at:
           format: date-time
           type: string
-        snippet:
-          type: string
         subject:
           type: string
       required:
@@ -16540,41 +16538,7 @@ components:
         - message_type
         - sender_authenticated
       type: object
-    WhoKnowsContact:
-      additionalProperties: true
-      properties:
-        authored_messages:
-          format: int64
-          type: integer
-        citations:
-          items:
-            $ref: "#/components/schemas/WhoKnowsCitation"
-          type: array
-        display_name:
-          type: string
-        email_address:
-          type: string
-        message_score:
-          format: double
-          type: number
-        participant_id:
-          format: int64
-          type: integer
-        rank:
-          format: int64
-          type: integer
-        score:
-          format: double
-          type: number
-      required:
-        - rank
-        - participant_id
-        - score
-        - message_score
-        - authored_messages
-        - citations
-      type: object
-    WhoKnowsPerson:
+    WhoKnowsEntry:
       additionalProperties: true
       properties:
         ask_me_about:
@@ -16593,9 +16557,14 @@ components:
           type: number
         display_name:
           type: string
+        email_address:
+          type: string
         message_score:
           format: double
           type: number
+        participant_id:
+          format: int64
+          type: integer
         person_id:
           format: int64
           type: integer
@@ -16607,76 +16576,36 @@ components:
           type: number
       required:
         - rank
-        - person_id
         - score
         - message_score
         - declared_boost
         - authored_messages
         - citations
       type: object
-    WhoKnowsRequest:
-      additionalProperties: false
-      properties:
-        after:
-          description: Messages at or after this instant
-          format: date-time
-          type: string
-        before:
-          description: Messages before this instant
-          format: date-time
-          type: string
-        evidence:
-          description: Citations per person; default 3
-          format: int64
-          maximum: 10
-          minimum: 1
-          type: integer
-        limit:
-          description: Saved people to return; default 10
-          format: int64
-          maximum: 50
-          minimum: 1
-          type: integer
-        min_score:
-          description: Lowest cosine similarity a message needs to count; default 0.5
-          exclusiveMinimum: 0
-          format: double
-          maximum: 1
-          type: number
-        topic:
-          description: Plain words; search operators are refused
-          minLength: 1
-          type: string
-      required:
-        - topic
-      type: object
     WhoKnowsResponse:
       additionalProperties: true
       properties:
-        declared_truncated:
-          type: boolean
+        limits:
+          items:
+            enum:
+              - pool_full
+              - declared_truncated
+              - index_scope
+            type: string
+          type: array
         people:
           items:
-            $ref: "#/components/schemas/WhoKnowsPerson"
+            $ref: "#/components/schemas/WhoKnowsEntry"
           type: array
-        pool_saturated:
-          type: boolean
-        reason:
-          type: string
-        searched_messages:
-          format: int64
-          type: integer
         topic:
           type: string
         unsaved_contacts:
           items:
-            $ref: "#/components/schemas/WhoKnowsContact"
+            $ref: "#/components/schemas/WhoKnowsEntry"
           type: array
       required:
         - topic
-        - searched_messages
-        - declared_truncated
-        - pool_saturated
+        - limits
         - people
         - unsaved_contacts
       type: object
@@ -26892,15 +26821,43 @@ paths:
       tags:
         - API
   /api/v1/people/who-knows:
-    post:
-      description: Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit, or when declared topics were searched only in part, or index_scope when the vector index covers no message type with authors. A message's From address is not a verified identity unless its citation has sender_authenticated.
+    get:
+      description: "Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. limits lists each way the search came up short: pool_full when more messages may match beyond the search pool, declared_truncated when declared topics were searched only in part, and index_scope when the vector index covers no message type with authors. Both lists empty with no limits means nobody wrote about the topic. A message's From address is not a verified identity unless its citation has sender_authenticated."
       operationId: findPeopleWhoKnow
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/WhoKnowsRequest"
-        required: true
+      parameters:
+        - description: Plain words; search operators are refused
+          in: query
+          name: topic
+          required: true
+          schema:
+            type: string
+        - description: Saved people to return, 1-50; default 10
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Citations per person, 1-10; default 3
+          in: query
+          name: evidence
+          schema:
+            format: int64
+            type: integer
+        - description: Lowest cosine similarity a message needs to count, above 0 and at most 1; default 0.5
+          in: query
+          name: min_score
+          schema:
+            type: number
+        - description: Messages at or after this time (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Messages before this time (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
       responses:
         "200":
           content:

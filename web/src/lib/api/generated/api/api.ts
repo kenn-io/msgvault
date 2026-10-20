@@ -133,6 +133,7 @@ import type {
   FilteredMessagesResponse,
   FindContactCandidatesParams,
   FindKataIssuesParams,
+  FindPeopleWhoKnowParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -468,7 +469,6 @@ import type {
   VerifyCLIParams,
   VisualBuildRequest,
   VisualRetryRequest,
-  WhoKnowsRequest,
   WhoKnowsResponse,
 } from "../models";
 
@@ -2845,20 +2845,15 @@ export const searchPeople = (
   );
 };
 /**
- * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit, or when declared topics were searched only in part, or index_scope when the vector index covers no message type with authors. A message's From address is not a verified identity unless its citation has sender_authenticated.
+ * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. limits lists each way the search came up short: pool_full when more messages may match beyond the search pool, declared_truncated when declared topics were searched only in part, and index_scope when the vector index covers no message type with authors. Both lists empty with no limits means nobody wrote about the topic. A message's From address is not a verified identity unless its citation has sender_authenticated.
  * @summary Find people who wrote about a topic
  */
 export const findPeopleWhoKnow = (
-  whoKnowsRequest: WhoKnowsRequest,
+  params: FindPeopleWhoKnowParams,
   options?: SecondParameter<typeof orvalFetch<WhoKnowsResponse>>,
 ) => {
   return orvalFetch<WhoKnowsResponse>(
-    {
-      url: `/api/v1/people/who-knows`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      data: whoKnowsRequest,
-    },
+    { url: `/api/v1/people/who-knows`, method: "GET", params },
     options,
   );
 };

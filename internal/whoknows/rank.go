@@ -88,7 +88,7 @@ func total(messages []weighted, oneWay bool) float64 {
 // ranks on the boost alone. Equal scores order by authored count, then ID.
 // Citations are the highest-weight messages first, at most p.Evidence of
 // them. Rank does no I/O.
-func Rank(candidates []Candidate, p Params, now time.Time) ([]Person, []Contact) {
+func Rank(candidates []Candidate, p Params, now time.Time) (people, contacts []Entry) {
 	var all []ranked
 	for _, c := range candidates {
 		messages := make([]weighted, len(c.Messages))
@@ -128,23 +128,19 @@ func Rank(candidates []Candidate, p Params, now time.Time) ([]Person, []Contact)
 			cmp.Compare(a.id(), b.id()),
 		)
 	})
-	people := []Person{}
-	contacts := []Contact{}
+	people, contacts = []Entry{}, []Entry{}
 	for _, r := range all {
-		if r.PersonID != 0 {
-			if len(people) < p.Limit {
-				people = append(people, Person{
-					Rank: len(people) + 1, PersonID: r.PersonID, DisplayName: r.DisplayName,
-					Score: r.score, MessageScore: r.messageScore, DeclaredBoost: r.boost,
-					AuthoredMessages: len(r.Messages), AskMeAbout: r.AskMeAbout, Citations: r.citations,
-				})
-			}
-		} else if len(contacts) < maxContacts {
-			contacts = append(contacts, Contact{
-				Rank: len(contacts) + 1, ParticipantID: r.ParticipantID, DisplayName: r.DisplayName,
-				EmailAddress: r.EmailAddress, Score: r.score, MessageScore: r.messageScore,
-				AuthoredMessages: len(r.Messages), Citations: r.citations,
-			})
+		entry := Entry{
+			PersonID: r.PersonID, ParticipantID: r.ParticipantID, DisplayName: r.DisplayName,
+			EmailAddress: r.EmailAddress, Score: r.score, MessageScore: r.messageScore, DeclaredBoost: r.boost,
+			AuthoredMessages: len(r.Messages), AskMeAbout: r.AskMeAbout, Citations: r.citations,
+		}
+		if r.PersonID != 0 && len(people) < p.Limit {
+			entry.Rank = len(people) + 1
+			people = append(people, entry)
+		} else if r.PersonID == 0 && len(contacts) < maxContacts {
+			entry.Rank = len(contacts) + 1
+			contacts = append(contacts, entry)
 		}
 	}
 	return people, contacts

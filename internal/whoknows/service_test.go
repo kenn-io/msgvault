@@ -33,32 +33,7 @@ func (r *fixedRetriever) Search(_ context.Context, request hybrid.SearchRequest)
 	r.calls++
 	r.request = request
 	hits := r.hits[:min(len(r.hits), request.Limit)]
-	meta := hybrid.ResultMeta{
-		Generation:    vector.Generation{ID: 7},
-		QueryVector:   []float32{1, 0},
-		PoolSaturated: len(hits) < len(r.hits),
-	}
-	return hits, meta, r.err
-}
-
-// fixedScorer returns one chunk per message, or none for a message without a vector.
-type fixedScorer struct {
-	vector.Backend
-
-	scores map[int64]float64
-	calls  map[int64]vector.GenerationID
-}
-
-func (s *fixedScorer) ScoreMessageChunks(_ context.Context, gen vector.GenerationID, id int64, query []float32) ([]vector.ChunkHit, error) {
-	if len(query) != 2 {
-		return nil, errors.New("the search's query vector was not passed")
-	}
-	s.calls[id] = gen
-	score, ok := s.scores[id]
-	if !ok {
-		return nil, nil
-	}
-	return []vector.ChunkHit{{ChunkIndex: 1, Score: score - .3}, {ChunkIndex: 0, Score: score}}, nil
+	return hits, hybrid.ResultMeta{PoolSaturated: len(hits) < len(r.hits)}, r.err
 }
 
 // truncatedDeclared reports that the declared read hit its cap.
@@ -74,7 +49,6 @@ type serviceFixture struct {
 	*storetest.Fixture
 
 	retriever *fixedRetriever
-	scorer    *fixedScorer
 	service   *whoknows.Service
 	owner     int64
 }
@@ -84,20 +58,19 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	f := storetest.New(t)
 	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.net", "manual"))
 	retriever := &fixedRetriever{}
-	scorer := &fixedScorer{scores: map[int64]float64{}, calls: map[int64]vector.GenerationID{}}
 	return &serviceFixture{
 		Fixture:   f,
 		retriever: retriever,
-		scorer:    scorer,
 		owner:     f.EnsureParticipant("owner@example.net", "Owner", "example.net"),
 		service: &whoknows.Service{
-			Retriever: retriever, Scorer: scorer, Data: f.Store,
+			Retriever: retriever, Data: f.Store,
 			Now: func() time.Time { return serviceNow },
 		},
 	}
 }
 
-// message stores one message from sender, scores it, and adds it to the hits.
+// message stores one message from sender and adds it to the hits with its
+// cosine similarity, or with no vector score when similarity is zero.
 func (f *serviceFixture) message(name string, sender int64, daysAgo int, similarity float64, change ...func(*store.Message)) int64 {
 	f.T.Helper()
 	m := f.NewMessage().WithSourceMessageID(name).WithSubject(name).
@@ -108,10 +81,11 @@ func (f *serviceFixture) message(name string, sender int64, daysAgo int, similar
 	}
 	id, err := f.Store.UpsertMessage(m)
 	require.NoError(f.T, err)
+	hit := vector.FusedHit{MessageID: id, BM25Score: math.NaN(), VectorScore: math.NaN()}
 	if similarity > 0 {
-		f.scorer.scores[id] = similarity
+		hit.VectorScore = similarity
 	}
-	f.retriever.hits = append(f.retriever.hits, vector.FusedHit{MessageID: id, BM25Score: math.NaN(), VectorScore: math.NaN()})
+	f.retriever.hits = append(f.retriever.hits, hit)
 	return id
 }
 
@@ -192,8 +166,7 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	require.NoError(err)
 
 	assert.Equal("Kubernetes   networking", got.Topic)
-	assert.Equal(12, got.SearchedMessages)
-	assert.Empty(got.Reason)
+	assert.Empty(got.Limits)
 	require.Len(got.People, 1)
 	person := got.People[0]
 	assert.Equal(anaPerson, person.PersonID)
@@ -206,7 +179,6 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	assert.Equal([]int64{gus, ben}, []int64{got.UnsavedContacts[0].ParticipantID, got.UnsavedContacts[1].ParticipantID})
 	assert.Equal(contractor, got.UnsavedContacts[1].Citations[0].MessageID)
 
-	assert.Equal(vector.GenerationID(7), f.scorer.calls[answered], "messages score against the search's generation")
 	request := f.retriever.request
 	assert.Equal(hybrid.ModeHybrid, request.Mode)
 	assert.Equal("Kubernetes networking", request.FreeText)
@@ -277,34 +249,29 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	f.service.BuildScope = vector.NewBuildScope([]string{"meeting_transcript", "calendar_event"}, nil)
 	got := f.find("kubernetes networking")
 	assert.Zero(f.retriever.calls)
-	assert.Empty(got.Reason)
+	assert.Equal([]string{whoknows.LimitIndexScope}, got.Limits)
 	require.Len(t, got.People, 1)
 	assert.Equal(person, got.People[0].PersonID)
-	assert.Equal(whoknows.ReasonIndexScope, f.find("sailing").Reason, "an index of no authors says so, rather than nobody")
 }
 
-func TestFindEmptyReasons(t *testing.T) {
+func TestFindReportsLimitsOnlyWhenTheSearchCameUpShort(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	ana, _ := f.saved("ana@example.net")
 
-	assert.Equal(whoknows.ReasonNoEvidence, f.find("sailboat insurance").Reason, "no hits")
+	assert.Empty(f.find("sailboat insurance").Limits, "no hits")
 	f.message("weak", ana, 1, .3)
-	assert.Equal(whoknows.ReasonNoEvidence, f.find("sailboat insurance").Reason, "nothing reaches the floor")
 	f.message("mine", f.owner, 1, .99)
-	got := f.find("sailboat insurance")
-	assert.Equal(whoknows.ReasonNoEvidence, got.Reason, "an unsaturated search that found only the owner's mail is complete")
-	assert.Equal(2, got.SearchedMessages)
+	assert.Empty(f.find("sailboat insurance").Limits, "an unsaturated search that found only the owner's mail is complete")
 
 	f.service.Data = truncatedDeclared{f.Store}
-	got = f.find("sailboat insurance")
-	assert.Equal(whoknows.ReasonSearchLimit, got.Reason, "declared topics that were not all read may hide the answer")
-	assert.True(got.DeclaredTruncated)
+	assert.Equal([]string{whoknows.LimitDeclaredTruncated}, f.find("sailboat insurance").Limits,
+		"declared topics that were not all read may hide the answer")
 }
 
 // The owner's mail can fill the whole pool. A real answer that made the pool
-// is found; one beyond it is reported as a search limit, never as nobody.
-func TestFindReportsSearchLimitWhenOwnerMailFillsThePool(t *testing.T) {
+// is found; one beyond it is reported as a limit, never as nobody.
+func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	ana, anaPerson := f.saved("ana@example.net")
@@ -316,6 +283,7 @@ func TestFindReportsSearchLimitWhenOwnerMailFillsThePool(t *testing.T) {
 	require.Len(t, got.People, 1)
 	assert.Equal(anaPerson, got.People[0].PersonID)
 	assert.Equal(answer, got.People[0].Citations[0].MessageID)
+	assert.Empty(got.Limits)
 
 	// 300 owner messages ahead of the same answer push it out of the pool.
 	for i := 150; i < 300; i++ {
@@ -323,16 +291,21 @@ func TestFindReportsSearchLimitWhenOwnerMailFillsThePool(t *testing.T) {
 	}
 	f.retriever.hits = append(
 		slices.DeleteFunc(f.retriever.hits, func(h vector.FusedHit) bool { return h.MessageID == answer }),
-		vector.FusedHit{MessageID: answer, BM25Score: math.NaN(), VectorScore: math.NaN()})
+		vector.FusedHit{MessageID: answer, BM25Score: math.NaN(), VectorScore: .8})
 	got = f.find("kubernetes networking")
 	assert.Empty(got.People)
-	assert.Equal(200, got.SearchedMessages)
-	assert.Equal(whoknows.ReasonSearchLimit, got.Reason)
-	assert.True(got.PoolSaturated)
+	assert.Equal([]string{whoknows.LimitPoolFull}, got.Limits)
+
+	// A full pool of messages below the floor is an off-topic query, not a
+	// short search.
+	for i := range f.retriever.hits {
+		f.retriever.hits[i].VectorScore = .2
+	}
+	assert.Empty(f.find("sailboat insurance").Limits)
 }
 
 // A full pool with results still says it may hide more.
-func TestFindReportsASaturatedPoolBesideResults(t *testing.T) {
+func TestFindReportsAFullPoolBesideResults(t *testing.T) {
 	f := newServiceFixture(t)
 	ana, _ := f.saved("ana@example.net")
 	f.message("answer", ana, 2, .8)
@@ -341,8 +314,54 @@ func TestFindReportsASaturatedPoolBesideResults(t *testing.T) {
 	}
 	got := f.find("kubernetes networking")
 	require.Len(t, got.People, 1)
-	assert.True(t, got.PoolSaturated)
-	assert.Equal(t, 200, got.SearchedMessages)
+	assert.Equal(t, []string{whoknows.LimitPoolFull}, got.Limits)
+}
+
+// sqlite-vec scores a hit as 1 - L2 distance. For unit-length vectors that
+// converts exactly to cosine similarity, so the floor means the same on both
+// backends.
+func TestFindReadsSQLiteScoresAsCosine(t *testing.T) {
+	assert := assert.New(t)
+	f := newServiceFixture(t)
+	f.service.L2Scores = true
+	near := f.EnsureParticipant("near@example.net", "Near", "example.net")
+	far := f.EnsureParticipant("far@example.net", "Far", "example.net")
+	l2Score := func(cosine float64) float64 { return 1 - math.Sqrt(2-2*cosine) }
+	f.message("near", near, 1, l2Score(.6))
+	f.message("far", far, 1, l2Score(.4))
+	assert.Greater(.5, l2Score(.6), "the raw score sits below the floor")
+
+	got := f.find("kubernetes networking")
+	require.Len(t, got.UnsavedContacts, 1)
+	assert.Equal(near, got.UnsavedContacts[0].ParticipantID)
+	assert.InDelta(math.Log1p(.6*math.Exp2(-1.0/180)), got.UnsavedContacts[0].MessageScore, 1e-9)
+}
+
+// Linked addresses are one sender, and so are the addresses of one saved
+// person, so each ranks once.
+func TestFindRanksLinkedAddressesOnce(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+	home := f.EnsureParticipant("dee@example.net", "Dee", "example.net")
+	work := f.EnsureParticipant("dee@work.example.net", "Dee Work", "work.example.net")
+	_, err := f.Store.LinkParticipants(home, work)
+	require.NoError(err)
+	f.message("home", home, 1, .8)
+	f.message("work", work, 2, .8)
+
+	got := f.find("kubernetes networking")
+	require.Len(got.UnsavedContacts, 1)
+	assert.Equal(2, got.UnsavedContacts[0].AuthoredMessages)
+	assert.Empty(got.People)
+
+	person, _, err := f.Store.CreatePersonFromParticipant(work)
+	require.NoError(err)
+	got = f.find("kubernetes networking")
+	require.Len(got.People, 1)
+	assert.Equal(person.ID, got.People[0].PersonID)
+	assert.Equal(2, got.People[0].AuthoredMessages)
+	assert.Empty(got.UnsavedContacts)
 }
 
 func TestFindBoundsListMailAndOneWaySenders(t *testing.T) {

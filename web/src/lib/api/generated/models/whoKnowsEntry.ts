@@ -3,13 +3,16 @@
  */
 import type { WhoKnowsCitation } from "./whoKnowsCitation";
 
-export interface WhoKnowsContact {
+export interface WhoKnowsEntry {
+  ask_me_about?: string[];
   authored_messages: number;
   citations: WhoKnowsCitation[];
+  declared_boost: number;
   display_name?: string;
   email_address?: string;
   message_score: number;
-  participant_id: number;
+  participant_id?: number;
+  person_id?: number;
   rank: number;
   score: number;
   [key: string]: unknown;
