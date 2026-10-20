@@ -30,8 +30,7 @@ import (
 func clearTelemetryVetoEnvironment(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
-		value, _ := os.LookupEnv(name)
-		t.Setenv(name, value)
+		t.Setenv(name, os.Getenv(name))
 		require.NoError(t, os.Unsetenv(name), "clear %s", name)
 	}
 }

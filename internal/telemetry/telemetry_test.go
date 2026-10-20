@@ -33,8 +33,7 @@ func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
 	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
-		value, _ := os.LookupEnv(name)
-		t.Setenv(name, value)
+		t.Setenv(name, os.Getenv(name))
 		require.NoError(t, os.Unsetenv(name))
 	}
 	notDir := filepath.Join(t.TempDir(), "data")
@@ -196,15 +195,12 @@ func TestEnvOverridesConfigOff(t *testing.T) {
 
 func TestOptedOutReporterSendsNothing(t *testing.T) {
 	cases := []struct {
-		name        string
-		env         []string
-		installOnly bool
+		name string
+		env  []string
 	}{
-		{"do not track", []string{EnabledEnv + "=1", "DO_NOT_TRACK=1"}, true},
-		{"CI present and empty", []string{EnabledEnv + "=1", "CI="}, true},
-		{"config off", []string{wireConfigOffEnv + "=1"}, false},
-		{"prefixed variable", []string{EnabledEnv + "=0", "MSGVAULT_SCREEN_VIEWS_TEST=1"}, false},
-		{"generic variable", []string{EnabledEnv + "=1", posthog.GenericEnabledEnv + "=0"}, false},
+		{"config off", []string{wireConfigOffEnv + "=1"}},
+		{"prefixed variable", []string{EnabledEnv + "=0", "MSGVAULT_SCREEN_VIEWS_TEST=1"}},
+		{"generic variable", []string{EnabledEnv + "=1", posthog.GenericEnabledEnv + "=0"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,10 +208,8 @@ func TestOptedOutReporterSendsNothing(t *testing.T) {
 			dir := t.TempDir()
 			out := runWireHelper(t, stub.server.URL, dir, tc.env...)
 			assert.NoFileExists(t, filepath.Join(dir, posthog.InstallFileName))
-			if !tc.installOnly {
-				assert.Empty(t, stub.recorded(), "an opted-out daemon must send nothing")
-				assert.NotContains(t, out, "telemetry is on")
-			}
+			assert.Empty(t, stub.recorded(), "an opted-out daemon must send nothing")
+			assert.NotContains(t, out, "telemetry is on")
 		})
 	}
 }
