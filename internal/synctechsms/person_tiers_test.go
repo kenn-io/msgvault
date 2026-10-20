@@ -102,18 +102,20 @@ func TestPersonTiersCountOnlyMessagesThatWereExchanged(t *testing.T) {
 
 // Importing a record again corrects a draft stored as sent by an older import.
 func TestReimportRewritesSendState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses>`+tierSMS(1, 3, "draft")+`</smses>`)
 	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: tierOwner, IncludeSMS: true})
 	_, err := imp.ImportPath(dir)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = f.Store.DB().Exec(`UPDATE messages SET is_sent = TRUE`)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = imp.ImportPath(dir)
-	require.NoError(t, err)
+	require.NoError(err)
 
 	var sent bool
-	require.NoError(t, f.Store.DB().QueryRow(`SELECT is_sent FROM messages WHERE message_type = 'sms'`).Scan(&sent))
-	assert.False(t, sent)
+	require.NoError(f.Store.DB().QueryRow(`SELECT is_sent FROM messages WHERE message_type = 'sms'`).Scan(&sent))
+	assert.False(sent)
 }

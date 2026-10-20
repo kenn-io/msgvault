@@ -163,22 +163,24 @@ func TestPersonTiersExplain(t *testing.T) {
 // so this runs the real command on a loaded config and a seeded archive. Mail
 // on three days, both ways, is tier 2 by default.
 func TestPersonTiersUseTheLoadedConfig(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	markDaemonCLISubprocessForTest(t)
 	home := t.TempDir()
 	st, err := store.OpenForTest(filepath.Join(home, "msgvault.db"))
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
-	require.NoError(t, err)
-	require.NoError(t, st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 	conversation, err := st.EnsureConversation(source.ID, "tier-thread", "Tier")
-	require.NoError(t, err)
+	require.NoError(err)
 	owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	friend, err := st.EnsureParticipant("friend@example.com", "Friend", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(friend)
-	require.NoError(t, err)
+	require.NoError(err)
 	for day, from := range []int64{owner, friend, friend} {
 		to := owner + friend - from
 		id, err := st.UpsertMessage(&store.Message{
@@ -187,33 +189,33 @@ func TestPersonTiersUseTheLoadedConfig(t *testing.T) {
 			SentAt:          sql.NullTime{Time: time.Now().UTC().AddDate(0, 0, -day-1), Valid: true},
 			SenderID:        sql.NullInt64{Int64: from, Valid: true},
 		})
-		require.NoError(t, err)
-		require.NoError(t, st.ReplaceMessageRecipients(id, "from", []int64{from}, []string{""}))
-		require.NoError(t, st.ReplaceMessageRecipients(id, "to", []int64{to}, []string{""}))
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{from}, []string{""}))
+		require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{to}, []string{""}))
 	}
 	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 25})
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = projector.RunOnce(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, st.Close())
+	require.NoError(err)
+	require.NoError(st.Close())
 	preview := func(toml string) (store.PersonTierPreview, string) {
 		path := filepath.Join(t.TempDir(), "config.toml")
-		require.NoError(t, os.WriteFile(path, []byte(toml), 0o600))
+		require.NoError(os.WriteFile(path, []byte(toml), 0o600))
 		cfg, err := config.Load(path, home)
-		require.NoError(t, err)
+		require.NoError(err)
 		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 		stdout, stderr, err := executePersonTiersCommandContext(ctx, defaultPersonTiersCommandDeps(), "preview", "--json")
-		require.NoError(t, err)
+		require.NoError(err)
 		var out store.PersonTierPreview
-		require.NoError(t, json.Unmarshal([]byte(stdout), &out))
+		require.NoError(json.Unmarshal([]byte(stdout), &out))
 		return out, stderr
 	}
 	listed, _ := preview("")
-	require.Len(t, listed.People, 1)
-	assert.Equal(t, person.ID, listed.People[0].PersonID)
-	assert.Equal(t, 2, listed.People[0].Tier)
+	require.Len(listed.People, 1)
+	assert.Equal(person.ID, listed.People[0].PersonID)
+	assert.Equal(2, listed.People[0].Tier)
 	raised, _ := preview("[people.tiers.tier2]\nmin_active_days_long = 4\n")
-	assert.Empty(t, raised.People, "a raised threshold from [people.tiers] drops the person")
+	assert.Empty(raised.People, "a raised threshold from [people.tiers] drops the person")
 	_, warning := preview("[activity]\ntimezone = \"America/New_York\"\n")
-	assert.Contains(t, warning, "settings_changed")
+	assert.Contains(warning, "settings_changed")
 }
