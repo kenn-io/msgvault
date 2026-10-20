@@ -315,14 +315,19 @@ or in place of "nobody":
   `--before`.
 - `Declared topics were searched only in part.` More than 5,000 declared values
   exist, and only the first 5,000 were read.
-- `The vector index doesn't cover email or chat, so messages weren't searched.`
-  Declared topics are still listed.
+- `The vector index covers only some message types or accounts; the rest
+  weren't searched.` The `[vector.embed.scope]` settings leave out a message
+  type with authors, such as chat, or some accounts. Declared topics are still
+  listed.
+- `Some matching messages aren't embedded yet, so they didn't count.` Keyword
+  search found mail synced since the last embedding run. Check progress with
+  `msgvault embeddings status` and ask again once it is done.
 
 The 0.5 default is not calibrated for any real embedding model. If a topic
 worded unlike your mail finds nobody, lower `--min-score`; if unrelated people
 appear, raise it. Vector search must be ready, and the topic goes to the
 configured embedding endpoint once. Senders are read when you run the command,
-so newly synced mail counts without an activity build. A citation's
+so newly synced mail counts once it is embedded, without an activity build. A citation's
 `sender_authenticated` is true when the source sets the sender, as chat does; an
 email From address is not a verified identity. The command does not create or
 edit profiles.

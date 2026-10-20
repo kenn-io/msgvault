@@ -168,8 +168,9 @@ topic is plain words; search operators return `400 invalid_parameter`.
 The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
 lists each way the search came up short: `pool_full` when a message matched
 and the search returned its full pool of 200, `declared_truncated` when more
-than 5,000 declared topics exist, and `index_scope` when the vector index
-covers no message type with authors. Both lists empty with no limits means
+than 5,000 declared topics exist, `index_scope` when the vector index leaves
+out some message types with authors or some accounts, and `not_embedded` when
+keyword search found messages the index has not embedded yet. Both lists empty with no limits means
 nobody wrote about the topic. Each entry has a `score` split into
 `message_score` and `declared_boost`, `authored_messages`, and `citations`,
 and sets `person_id` for a saved person or `participant_id` for an unsaved

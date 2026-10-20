@@ -124,7 +124,8 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 	got := whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
-	assert.JSONEq(`{"topic":"sailboat insurance","limits":[],"people":[],"unsaved_contacts":[]}`, got.Body.String())
+	assert.JSONEq(`{"topic":"sailboat insurance","limits":["index_scope"],"people":[],"unsaved_contacts":[]}`, got.Body.String(),
+		"the email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
 }
@@ -159,7 +160,7 @@ func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
 	assert.Equal(person.ID, body.People[0].PersonID)
 	assert.Equal(1, body.People[0].AuthoredMessages)
 	assert.Equal(id, body.People[0].Citations[0].MessageID)
-	assert.Empty(body.Limits)
+	assert.Equal([]string{whoknows.LimitIndexScope}, body.Limits)
 }
 
 func TestWhoKnowsMapsSearchErrors(t *testing.T) {

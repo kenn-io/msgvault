@@ -9,4 +9,5 @@ export const WhoKnowsResponseLimitsItem = {
   pool_full: "pool_full",
   declared_truncated: "declared_truncated",
   index_scope: "index_scope",
+  not_embedded: "not_embedded",
 } as const;

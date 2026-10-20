@@ -53,12 +53,14 @@ type cosineScorer interface {
 
 // searchTypes are the message types worth searching for authors: everything
 // but meeting transcripts and calendar entries, which have organizers and
-// attendees rather than authors.
-func searchTypes(scope vector.BuildScope) ([]string, bool) {
+// attendees rather than authors. It also reports that the index scope leaves
+// out some of those types or some accounts.
+func searchTypes(scope vector.BuildScope) (types []string, narrowed bool) {
 	allowed := slices.DeleteFunc(slices.Clone(query.KnownMessageTypes), func(t string) bool {
 		return t == meetingarchive.MessageType || t == gcal.MessageTypeCalendarEvent
 	})
-	return search.IntersectValues(allowed, scope.MessageTypes)
+	types, _ = search.IntersectValues(allowed, scope.MessageTypes)
+	return types, len(types) < len(allowed) || len(scope.SourceIDs) > 0
 }
 
 // Find retrieves messages about the topic, keeps those whose cosine
@@ -71,13 +73,12 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 		return out, err
 	}
 	out.Topic = p.Topic
-	var candidates []Candidate
-	// An index limited to transcripts and calendar entries has no authors to
-	// search, but people can still declare the topic.
-	types, noTypes := searchTypes(s.BuildScope)
-	if noTypes {
+	types, narrowed := searchTypes(s.BuildScope)
+	if narrowed {
 		out.Limits = append(out.Limits, LimitIndexScope)
-	} else if candidates, err = s.searchAuthors(ctx, p, types, &out); err != nil {
+	}
+	candidates, err := s.searchAuthors(ctx, p, types, &out)
+	if err != nil {
 		return out, err
 	}
 	candidates, truncated, err := s.addDeclared(ctx, candidates, p.FreeText)
@@ -98,6 +99,11 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 // searchAuthors runs one hybrid search, credits the messages that reach the
 // floor to their authors, and adds the limits the search ran into to out.
 func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, out *Response) ([]Candidate, error) {
+	// An index limited to transcripts and calendar entries has no authors to
+	// search, but people can still declare the topic.
+	if len(types) == 0 {
+		return nil, nil
+	}
 	request := hybrid.SearchRequest{
 		Mode:     hybrid.ModeHybrid,
 		FreeText: p.FreeText,
@@ -119,7 +125,30 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 	if len(counted) > 0 && (meta.PoolSaturated || len(hits) >= SearchPool) {
 		out.Limits = append(out.Limits, LimitPoolFull)
 	}
+	unembedded, err := s.unembedded(ctx, hits, meta.Generation.ID)
+	if err != nil {
+		return nil, err
+	}
+	if unembedded {
+		out.Limits = append(out.Limits, LimitNotEmbedded)
+	}
 	return s.attribute(ctx, counted)
+}
+
+// unembedded reports that a keyword-only hit has no vector in the searched
+// generation, as mail synced since the last embedding run has none.
+func (s *Service) unembedded(ctx context.Context, hits []vector.FusedHit, gen vector.GenerationID) (bool, error) {
+	var keywordOnly []int64
+	for _, hit := range hits {
+		if math.IsNaN(hit.VectorScore) {
+			keywordOnly = append(keywordOnly, hit.MessageID)
+		}
+	}
+	if len(keywordOnly) == 0 {
+		return false, nil
+	}
+	embedded, err := s.Index.EmbeddedMessageCountForIDs(ctx, gen, keywordOnly)
+	return embedded < int64(len(keywordOnly)), err
 }
 
 type scoredHit struct {

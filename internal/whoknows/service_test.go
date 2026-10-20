@@ -43,6 +43,13 @@ func (truncatedDeclared) AskMeAboutValuesContext(context.Context) ([]store.Perso
 	return nil, true, nil
 }
 
+// embeddedIndex reports every message as embedded.
+type embeddedIndex struct{}
+
+func (embeddedIndex) EmbeddedMessageCountForIDs(_ context.Context, _ vector.GenerationID, ids []int64) (int64, error) {
+	return int64(len(ids)), nil
+}
+
 var serviceNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 
 type serviceFixture struct {
@@ -63,7 +70,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		retriever: retriever,
 		owner:     f.EnsureParticipant("owner@example.net", "Owner", "example.net"),
 		service: &whoknows.Service{
-			Retriever: retriever, Data: f.Store,
+			Retriever: retriever, Data: f.Store, Index: embeddedIndex{},
 			Now: func() time.Time { return serviceNow },
 		},
 	}
@@ -238,8 +245,13 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	assert := assert.New(t)
 	f := newServiceFixture(t)
 	f.service.BuildScope = vector.NewBuildScope([]string{"email", "meeting_transcript"}, nil)
-	f.find("topic")
+	assert.Equal([]string{whoknows.LimitIndexScope}, f.find("topic").Limits, "an email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, f.retriever.request.Filter.MessageTypes)
+
+	// An index of some accounts leaves the others unsearched.
+	f.service.BuildScope = vector.NewBuildScope(nil, []int64{f.Source.ID})
+	assert.Equal([]string{whoknows.LimitIndexScope}, f.find("topic").Limits)
+	assert.Contains(f.retriever.request.Filter.MessageTypes, "slack")
 
 	// An index of only transcripts and events has no authors to search, but
 	// people can still declare the topic.

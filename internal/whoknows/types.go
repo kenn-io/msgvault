@@ -32,9 +32,12 @@ const (
 	// LimitDeclaredTruncated means more declared topics exist than one
 	// request reads, so some were not searched.
 	LimitDeclaredTruncated = "declared_truncated"
-	// LimitIndexScope means the vector index covers no message type with
-	// authors, so messages were not searched.
+	// LimitIndexScope means the vector index leaves out some message types
+	// with authors or some accounts, so their messages were not searched.
 	LimitIndexScope = "index_scope"
+	// LimitNotEmbedded means the keyword search found messages the vector
+	// index has not embedded yet, so they could not count.
+	LimitNotEmbedded = "not_embedded"
 )
 
 // Request asks who in the archive has written about a topic.
@@ -83,7 +86,7 @@ type Entry struct {
 // the archive wrote about the topic.
 type Response struct {
 	Topic           string   `json:"topic"`
-	Limits          []string `json:"limits" enum:"pool_full,declared_truncated,index_scope"`
+	Limits          []string `json:"limits" enum:"pool_full,declared_truncated,index_scope,not_embedded"`
 	People          []Entry  `json:"people"`
 	UnsavedContacts []Entry  `json:"unsaved_contacts"`
 }

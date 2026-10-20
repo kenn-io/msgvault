@@ -327,6 +327,19 @@ func TestFindKeywordOnlyHitsDoNotCount(t *testing.T) {
 	got, err := service.Find(t.Context(), Request{Topic: "go"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gopher@example.net"}, f.ranked(got))
+	assert.NotContains(t, got.Limits, LimitNotEmbedded, "the keyword-only hits are embedded")
+}
+
+// Mail synced since the last embedding run is found only by keyword, which
+// does not count, so the result says so rather than that nobody wrote.
+func TestFindReportsMessagesNotYetEmbedded(t *testing.T) {
+	f := newEvalFixture(t)
+	f.post(t, "fresh@example.net", "zeppelin mooring lines", nil)
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Equal(t, []string{LimitNotEmbedded}, got.Limits)
 }
 
 // The embedding client keeps provider vectors as they come, so a stored
