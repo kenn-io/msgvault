@@ -304,8 +304,9 @@ like `noreply@` or `notifications@`, or when the source marked the author as a
 bot or webhook, as Discord does, or the archived Slack message carries a
 `bot_id`. A Slack message whose stored payload can't be read still counts.
 Meeting transcripts and calendar entries are not searched. Declared topics on
-your own profile, or on a profile bound to a Slack or Chatwoot bot or a system
-address such as `noreply@`, are ignored too. Two kinds of mail earn the weight
+your own profile, or on a profile bound to a Slack or Chatwoot bot, a Discord
+webhook or application, or a system address such as `noreply@`, are ignored
+too. Two kinds of mail earn the weight
 of their best message only: list mail, and email from a sender you never wrote
 to, such as a vendor who sends many unanswered messages. A colleague you write
 to keeps every message. Chat has no direction, so a chat sender keeps every

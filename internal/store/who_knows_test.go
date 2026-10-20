@@ -325,6 +325,8 @@ func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 	slackBot, slackBotPerson := newPerson("deploys@example.net")
 	require.NoError(f.Store.SetParticipantIdentifier(slackBot, "slack", "T1:bot:B1"))
 	_, noreplyPerson := newPerson("noreply@example.net")
+	webhook, webhookPerson := newPerson("builds@example.net")
+	require.NoError(f.Store.SetParticipantIdentifier(webhook, "discord_webhook_id", "W1"))
 	setValue(asked, "Straße networking", store.ProvenanceUser)
 	setValue(inferred, "kubernetes robotics", store.ProvenanceEnrichment)
 	setValue(superseded, "old topic", store.ProvenanceUser)
@@ -332,6 +334,7 @@ func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 	setValue(ownerPerson.ID, "my own topic", store.ProvenanceUser)
 	setValue(slackBotPerson, "deploys", store.ProvenanceUser)
 	setValue(noreplyPerson, "receipts", store.ProvenanceUser)
+	setValue(webhookPerson, "release builds", store.ProvenanceUser)
 
 	got, truncated, err := f.Store.AskMeAboutValuesContext(ctx)
 	require.NoError(err)

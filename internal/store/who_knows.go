@@ -83,13 +83,15 @@ func automatedAddress(email string) bool {
 }
 
 // automatedParticipant is true when the producer marked participant alias p
-// as automation: Slack namespaces bots as "<team>:bot:<id>" identifiers, and
-// Chatwoot keeps bots and assistants under their own path segment.
+// as automation: Slack namespaces bots as "<team>:bot:<id>" identifiers,
+// Chatwoot keeps bots and assistants under their own path segment, and
+// Discord files webhooks and applications under their own identifier types.
 func automatedParticipant(p string) string {
 	return `EXISTS (
 		SELECT 1 FROM participant_identifiers bi
 		 WHERE bi.participant_id = ` + p + `.id AND (
-		       (bi.identifier_type = 'slack' AND bi.identifier_value LIKE '%:bot:%')
+		       bi.identifier_type IN ('discord_webhook_id', 'discord_application_id', 'discord_automated_id')
+		    OR (bi.identifier_type = 'slack' AND bi.identifier_value LIKE '%:bot:%')
 		    OR (bi.identifier_type = 'chatwoot' AND (
 		           bi.identifier_value LIKE '%/agent\_bot/%' ESCAPE '\'
 		        OR bi.identifier_value LIKE '%/captain\_assistant/%' ESCAPE '\'))))`
