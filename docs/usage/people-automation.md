@@ -27,7 +27,7 @@ msgvault person untrack 7
 ```
 
 To find people worth tracking, list the saved people you have exchanged
-messages with:
+messages or met with:
 
 ```bash
 msgvault person tiers preview
@@ -52,7 +52,7 @@ Preview changes nothing. `preview --json` lists the person IDs, and you track
 the ones you choose with `person track`:
 
 ```bash
-msgvault person tiers preview --tier 1 --json | jq -r '.people[] | select(.tracked | not) | .person_id'
+msgvault person tiers preview --json | jq -r '.people[] | select(.tier == 1 and (.tracked | not)) | .person_id'
 msgvault person track 7
 ```
 
