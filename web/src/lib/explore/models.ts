@@ -205,18 +205,17 @@ export function isEmailMessageType(messageType: string): boolean {
   return messageType === '' || messageType === 'email';
 }
 
-export function isValidSourceID(value: string | undefined): value is string {
-  if (value === undefined || !/^\d+$/.test(value)) return false;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0;
+/** Reads a filter ID the way the API does: trimmed, positive int64, "01" and "+1" allowed. */
+export function filterID(value: string | undefined): bigint | undefined {
+  const text = value?.trim();
+  if (text === undefined || !/^\+?\d+$/.test(text)) return undefined;
+  const id = BigInt(text);
+  return id > 0n && id <= 9223372036854775807n ? id : undefined;
 }
 
-// Filter IDs are strings with the store's positive int64 contract. Metadata
-// endpoints use JSON numbers and still require isValidSourceID's safe integers.
-export function isValidFilterID(value: string | undefined): value is string {
-  if (value === undefined || !/^\+?\d+$/.test(value)) return false;
-  const id = BigInt(value);
-  return id > 0n && id <= 9223372036854775807n;
+export function sameFilterID(a: string | undefined, b: string | undefined): boolean {
+  const id = filterID(a);
+  return id !== undefined && id === filterID(b);
 }
 
 export interface ExploreResult {

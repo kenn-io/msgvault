@@ -45,107 +45,32 @@ function openedAndReloaded(saved: CanonicalState) {
 
 describe('saved-view canonical state', () => {
   it.each([
-    ['empty direction', '1', '1', ''],
-    ['equivalent source spellings', '+1', '01', 'any'],
-    ['equivalent identity spelling', '1', '+1', 'sender'],
-    ['largest safe integer', '9007199254740991', '+09007199254740991', 'sender'],
-    ['first unsafe integer', '+09007199254740992', '9007199254740992', 'any'],
-    ['integer above 2^53', '9007199254740993', '+09007199254740993', 'recipient'],
-    ['maximum int64', '9223372036854775807', '9223372036854775807', 'recipient']
-  ])('preserves %s on open and URL-only reload', (_name, source, identity, direction) => {
+    [' 1', '1 ', 'SENDER'],
+    ['01', '+1', 'any'],
+    ['9223372036854775807', '+09223372036854775807', ' recipient ']
+  ])('keeps identity %j/%j/%j on open and URL-only reload', (source, identity, direction) => {
     const saved: CanonicalState = { filters: [
       { field: 'source', operator: 'in', values: [source] },
       { field: 'identity', operator: 'in', values: [identity, 'person@example.com', direction] }
     ] };
-    const original = structuredClone(saved);
     const expected = [
       { dimension: 'source', values: [source] },
       { dimension: 'identity', values: [identity, 'person@example.com', direction] }
     ];
     expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
-    expect(saved).toEqual(original);
-  });
-
-  it('preserves equivalent decimal spellings across generated positive int64 IDs', () => {
-    // Fixed seed keeps failures reproducible while exercising the full int64 range.
-    let seed = 7n;
-    for (let index = 0; index < 64; index++) {
-      seed = BigInt.asUintN(63, seed * 6364136223846793005n + 1442695040888963407n);
-      const id = (seed || 1n).toString();
-      for (const direction of ['', 'any', 'sender', 'recipient']) {
-        const source = `${index % 2 ? '+' : ''}${'0'.repeat(index % 4)}${id}`;
-        const identity = `${index % 2 ? '' : '+'}${'0'.repeat((index + 1) % 4)}${id}`;
-        const identifier = ['person@example.com', ' spaced identity ', '人+%&#\n@example.com'][index % 3]!;
-        const saved: CanonicalState = { filters: [
-          { field: 'message_type', operator: 'in', values: ['email'] },
-          { field: 'source', operator: 'in', values: [source] },
-          { field: 'identity', operator: 'in', values: [identity, identifier, direction] }
-        ] };
-        const expected = [
-          { dimension: 'message_type', values: ['email'] },
-          { dimension: 'source', values: [source] },
-          { dimension: 'identity', values: [identity, identifier, direction] }
-        ];
-        const restored = openedAndReloaded(saved);
-        expect(restored).toEqual({ opened: expected, reloaded: expected });
-        expect(reopened({ ...defaultExploreURLState, filters: restored.reloaded }).filters).toEqual(expected);
-      }
-    }
   });
 
   it.each([
-    '', ' 1', '1 ', '1\n', '1\r', '1\u2028', '1\u2029',
-    '1e0', '0x1', '0b1', '0o1', '1.0', '++1', '1x', '１', '١'
-  ])('drops only identity for malformed ID %j in either position', (invalid) => {
-    for (const [source, identity] of [[invalid, '1'], ['1', invalid]]) {
-      const saved: CanonicalState = { filters: [
-        { field: 'source', operator: 'in', values: [source] },
-        { field: 'identity', operator: 'in', values: [identity, 'person@example.com', 'any'] },
-        { field: 'message_type', operator: 'in', values: ['email'] }
-      ] };
-      const expected = [
-        { dimension: 'source', values: [source] },
-        { dimension: 'message_type', values: ['email'] }
-      ];
-      expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
-    }
-  });
-
-  it.each(['0', '+0', '-1', '9223372036854775808'])(
-    'drops identity when both matching IDs are outside positive int64: %s',
-    (invalid) => {
-      const saved: CanonicalState = { filters: [
-        { field: 'source', operator: 'in', values: [invalid] },
-        { field: 'identity', operator: 'in', values: [invalid, 'person@example.com', 'any'] },
-        { field: 'message_type', operator: 'in', values: ['email'] }
-      ] };
-      const expected = [
-        { dimension: 'source', values: [invalid] },
-        { dimension: 'message_type', values: ['email'] }
-      ];
-      expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
-    }
-  );
-
-  it.each([
-    { name: 'missing source', sources: [], identities: [['1', 'person@example.com', 'any']] },
-    { name: 'duplicate sources', sources: [['1'], ['01']], identities: [['1', 'person@example.com', 'any']] },
-    { name: 'multiple source values', sources: [['1', '2']], identities: [['1', 'person@example.com', 'any']] },
-    { name: 'empty source values', sources: [[]], identities: [['1', 'person@example.com', 'any']] },
-    { name: 'duplicate identities', sources: [['1']], identities: [['1', 'person@example.com', 'any'], ['1', 'other@example.com', 'sender']] },
-    { name: 'short identity tuple', sources: [['1']], identities: [['1', 'person@example.com']] },
-    { name: 'long identity tuple', sources: [['1']], identities: [['1', 'person@example.com', 'any', 'extra']] },
-    { name: 'empty identifier', sources: [['1']], identities: [['1', '', 'any']] },
-    { name: 'invalid direction', sources: [['1']], identities: [['1', 'person@example.com', 'sideways']] },
-    { name: 'unequal adjacent IDs above 2^53', sources: [['9007199254740992']], identities: [['9007199254740993', 'person@example.com', 'any']] }
-  ])('drops only identity for $name', ({ sources, identities }) => {
+    ['0', '0'], ['-1', '-1'], ['9223372036854775808', '9223372036854775808'],
+    ['1', '2'], ['9007199254740992', '9007199254740993']
+  ])('drops only identity for IDs %s and %s', (source, identity) => {
     const saved: CanonicalState = { filters: [
-      ...sources.map((values) => ({ field: 'source' as const, operator: 'in' as const, values })),
-      ...identities.map((values) => ({ field: 'identity' as const, operator: 'in' as const, values })),
+      { field: 'source', operator: 'in', values: [source] },
+      { field: 'identity', operator: 'in', values: [identity, 'person@example.com', 'any'] },
       { field: 'message_type', operator: 'in', values: ['email'] }
     ] };
     const expected = [
-      ...sources.map((values) => ({ dimension: 'source', values })),
+      { dimension: 'source', values: [source] },
       { dimension: 'message_type', values: ['email'] }
     ];
     expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });

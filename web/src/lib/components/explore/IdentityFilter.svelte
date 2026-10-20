@@ -4,7 +4,7 @@
   import { onDestroy } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, IdentityDirection, SourceIdentityResponse } from '../../explore/models';
-  import { isValidFilterID } from '../../explore/models';
+  import { filterID, sameFilterID } from '../../explore/models';
   let {
     client,
     filters,
@@ -97,19 +97,18 @@
     const sources = currentFilters.filter((filter) => filter.dimension === 'source');
     const source = sources.length === 1 ? sources[0] : undefined;
     const value = source?.values.length === 1 ? source.values[0] : undefined;
-    return isValidFilterID(value) ? value : undefined;
+    return filterID(value) === undefined ? undefined : value;
   }
   function validIdentityFilter(
     currentFilters: ExploreFilter[],
     currentSourceID: string | undefined,
   ): ExploreFilter | undefined {
     const identity = currentFilters.find((filter) => filter.dimension === 'identity');
-    return identity?.values.length === 3 &&
-      currentSourceID !== undefined && isValidFilterID(identity.values[0]) &&
-      BigInt(identity.values[0]) === BigInt(currentSourceID) ? identity : undefined;
+    return identity?.values.length === 3 && sameFilterID(identity.values[0], currentSourceID) ? identity : undefined;
   }
   function identityDirection(value: string | undefined): IdentityDirection {
-    return value === 'sender' || value === 'recipient' ? value : 'any';
+    const normalized = value?.trim().toLowerCase();
+    return normalized === 'sender' || normalized === 'recipient' ? normalized : 'any';
   }
   function withoutIdentity(currentFilters: ExploreFilter[]): ExploreFilter[] {
     return currentFilters.filter((filter) => filter.dimension !== 'identity');

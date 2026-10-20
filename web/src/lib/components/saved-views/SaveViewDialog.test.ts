@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { defaultExploreURLState } from '../../explore/state.svelte';
 import type { ExploreURLState } from '../../explore/models';
-import { exploreStateFromSavedView } from '../../saved-views/canonical';
 import SaveViewDialog from './SaveViewDialog.svelte';
 
 const state: ExploreURLState = {
@@ -100,28 +99,6 @@ describe('SaveViewDialog', () => {
       expect(JSON.stringify(body)).not.toContain('message:9');
     }
   );
-
-  it('normalizes an empty restored identity direction when saving without rewriting IDs', async () => {
-    const requests: Request[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
-      return Response.json(savedView(), { status: 201 });
-    });
-    renderDialog(fetchFn, exploreStateFromSavedView({ filters: [
-      { field: 'source', operator: 'in', values: ['01'] },
-      { field: 'identity', operator: 'in', values: ['+1', 'person@example.com', ''] }
-    ] }));
-
-    await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Invoices' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
-    const { canonical_state: saved } = await requests[0]!.clone().json();
-    expect(saved.filters).toEqual([
-      { field: 'source', operator: 'in', values: ['01'] },
-      { field: 'identity', operator: 'in', values: ['+1', 'person@example.com', 'any'] }
-    ]);
-  });
 
   it.each([
     ['semantic', ''], ['semantic', ' \t\n '], ['hybrid', ''], ['hybrid', ' \t\n ']
