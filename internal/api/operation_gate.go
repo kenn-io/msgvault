@@ -613,6 +613,9 @@ var cliRunReadOnlyCommands = map[string]bool{
 	"embeddings list":   true,
 	"embeddings status": true,
 	"documents search":  true,
+	// Tier previews only read.
+	"person tiers preview": true,
+	"person tiers explain": true,
 }
 
 // cliRunSelfGatedCommands are proxied CLI commands that acquire the
@@ -685,6 +688,9 @@ func cliRunCommandWords(args []string) string {
 	first := args[0]
 	if strings.HasPrefix(first, "-") {
 		return ""
+	}
+	if first == cliRunPersonCommand && len(args) > 2 && args[1] == "tiers" {
+		return first + " tiers " + args[2]
 	}
 	if !cliRunCommandGroups[first] {
 		return first
