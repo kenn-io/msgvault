@@ -128,6 +128,23 @@ func TestCLIAllowlistPermitsExactPersonSweepCommands(t *testing.T) {
 	}
 }
 
+func TestCLIAllowlistPermitsOnlyPersonTiersPreviewAndExplain(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		args []string
+		want bool
+	}{
+		{args: []string{"person", "tiers", "preview"}, want: true},
+		{args: []string{"person", "tiers", "explain", "7", "--json"}, want: true},
+		{args: []string{"person", "tiers"}},
+		{args: []string{"person", "tiers", "apply"}},
+		{args: []string{"person", "tiers", "reset"}},
+	}
+	for _, test := range tests {
+		assert.Equal(t, test.want, cliRunCommandAllowed(test.args), test.args)
+	}
+}
+
 func TestCLIAllowlistRejectsProviderCredentialValuesInDaemonRequest(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
