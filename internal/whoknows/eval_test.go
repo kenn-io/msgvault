@@ -355,6 +355,27 @@ func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
 	assert.Equal(t, 1, captain.AuthoredMessages)
 }
 
+func TestFindHasNoPoolLimitWhenOnlyTheBestVectorClearsTheFloor(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	filler := scaled(topic, .3)
+	filler[off] = float32(math.Sqrt(1 - .3*.3))
+	for i := range 150 {
+		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
+	}
+	match := scaled(topic, .9)
+	match[off] = float32(math.Sqrt(1 - .9*.9))
+	f.post(t, "captain@example.net", "airship tethering", match)
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	require.Len(t, got.UnsavedContacts, 1)
+	assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
+	assert.Equal(t, 1, got.UnsavedContacts[0].AuthoredMessages)
+	assert.Empty(t, got.Limits)
+}
+
 // sqlite-vec ranks the pool by L2 distance, which follows cosine order only
 // for unit-length vectors. With a provider that does not normalize, a full
 // pool where nothing reached the floor can hide a message that would, so the

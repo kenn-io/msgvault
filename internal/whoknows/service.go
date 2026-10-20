@@ -118,8 +118,8 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 
 // searchAuthors runs one hybrid search and credits the messages that reach
 // the floor to their authors. The pool is full when the search filled it and
-// either a hit cleared the floor or the index can't vouch that its order is
-// cosine order, so more matching messages may lie beyond it.
+// either its lowest vector similarity reaches the floor or the index can't
+// vouch that its order is cosine order, so more matches may lie beyond it.
 func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, owner []int64) (searchResult, error) {
 	// An index limited to transcripts and calendar entries has no authors to
 	// search, but people can still declare the topic.
@@ -145,8 +145,12 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		return searchResult{}, err
 	}
 	counted := similarities(scores.Scores, hits, p.MinScore)
+	lowest := math.Inf(1)
+	for _, score := range scores.Scores {
+		lowest = math.Min(lowest, score)
+	}
 	result := searchResult{generation: meta.Generation.ID}
-	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 || !scores.UnitLength)
+	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 && lowest >= p.MinScore || !scores.UnitLength)
 	result.candidates, err = s.attribute(ctx, counted, owner)
 	return result, err
 }
