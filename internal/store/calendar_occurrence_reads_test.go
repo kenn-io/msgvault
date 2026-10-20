@@ -141,8 +141,8 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 		{count: 0, name: "missing bounds", state: "missing bounds"},
 		{count: 2, name: "plain generated"},
 		{count: 1, name: "plain single", state: "single"},
-		{count: 1, name: "single overridden at own start", state: "single overridden", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{count: 1, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: masterContent},
+		{count: 2, name: "single overridden at own start", state: "single overridden", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{count: 2, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 1, name: "single with undecodable event", state: "single damaged"},
 		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent},
@@ -266,12 +266,10 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 			if tc.zero == "master" {
 				master = 0
 			}
+			requirements.Len(page.Occurrences, tc.count)
 			if tc.state == "single overridden" {
-				assertions.Len(page.Occurrences, tc.count)
 				_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", master))
-				requirements.ErrorIs(err, ErrCalendarOccurrenceNotFound)
-			} else {
-				requirements.Len(page.Occurrences, tc.count)
+				requirements.NoError(err)
 			}
 			if tc.state == "unsupported" || tc.state == "series budget" {
 				requirements.Len(page.Unexpandable, 1)

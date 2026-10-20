@@ -205,16 +205,6 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 	return page.Occurrences, page.Unexpandable, nil
 }
 
-func calendarEventStartIdentity(event calevent.Event) calrecur.Identity {
-	if event.AllDay {
-		return calrecur.Identity{Date: event.StartDate, AllDay: true}
-	}
-	if event.Start != nil {
-		return calrecur.Identity{Instant: event.Start.UTC()}
-	}
-	return calrecur.Identity{}
-}
-
 func calendarMissingBoundsReason(event calevent.Event) string {
 	if event.Status == calendarEventDecodeFailureStatus {
 		return "event data could not be decoded"
@@ -478,15 +468,6 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, ref string) (C
 	row, original, recurring, err := s.calendarOccurrenceAnchor(ctx, ref)
 	if err != nil {
 		return CalendarOccurrenceDetail{}, err
-	}
-	if row.Event.Kind == "single" {
-		related, err := s.calendarExceptionsAt(ctx, row, calendarEventStartIdentity(row.Event))
-		if err != nil {
-			return CalendarOccurrenceDetail{}, err
-		}
-		if len(related) > 0 {
-			return CalendarOccurrenceDetail{}, ErrCalendarOccurrenceNotFound
-		}
 	}
 	var series *calendarSeries
 	var occurrence CalendarOccurrence
