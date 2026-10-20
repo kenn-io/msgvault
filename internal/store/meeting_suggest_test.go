@@ -155,3 +155,39 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingLinksAllDayExceptionUsesSeriesZone(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-15T02:00:00Z"}}`)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(page.Occurrences, 1)
+	listed := page.Occurrences[0]
+	assert.Equal("2027-03-14T05:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-15T04:00:00Z", listed.End.UTC().Format(time.RFC3339))
+	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
+		require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+		links, err := st.MeetingLinksContext(t.Context(), note)
+		require.NoError(err)
+		require.Len(links, 1)
+		assert.True(listed.Start.Equal(links[0].Start), "resolved start must match the calendar listing")
+		assert.True(listed.End.Equal(links[0].End), "resolved end must match the calendar listing")
+		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref}, 10)
+		require.NoError(err)
+		if assert.Len(suggestions, 1) {
+			assert.Equal(note, suggestions[0].MemberMessageID)
+			assert.Equal(listed.Ref, suggestions[0].Ref)
+			assert.Equal(30, suggestions[0].OverlapMinutes)
+		}
+	}
+	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	require.NoError(err)
+	if assert.Len(suggestions, 1) {
+		assert.Equal(listed.Ref, suggestions[0].Ref)
+		assert.Equal(30, suggestions[0].OverlapMinutes)
+	}
+}

@@ -262,3 +262,55 @@ func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d", exception), suggestions[0].Ref)
 	assert.Equal(fmt.Sprintf("evt:%d", exception), linkedMeetingRefs(t, st, note)[note])
 }
+
+func TestMeetingLinksUnlinkedUIDEvidenceStaysSplitWhenEventRecurs(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "weekly@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	assert.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+	assert.Empty(linkedMeetingRefs(t, st, note)[note])
+
+	raw := strings.ReplaceAll(linkSeriesRaw, `"id":"series"`, `"id":"event"`)
+	require.NoError(st.UpsertMessageRawWithFormat(event, []byte(raw), "gcal_json"))
+	assert.Empty(linkedMeetingRefs(t, st, note)[note], "making the event repeat must preserve the unlink")
+	ref := OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}
+	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, note)[note], "a later owner link wins")
+
+	_, other := projectionFixture(t, st, "other-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	require.NoError(st.UnlinkMeetingContext(t.Context(), other, OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}))
+	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, other)[other], "unlinking another occurrence leaves the automatic match")
+}
+
+func TestMeetingLinksFormerSeriesReferenceLinksAndUnlinks(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`)
+	require.NoError(st.UpsertMessageRawWithFormat(master, []byte(singleLinkRaw("series", "weekly@example.org")), "gcal_json"))
+	from := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(page.Occurrences, 1)
+	assert.Equal(edit, page.Occurrences[0].MessageID)
+	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), page.Occurrences[0].Ref)
+	_, key, found := strings.Cut(page.Occurrences[0].Ref, "@")
+	require.True(found)
+	ref := OccurrenceRef{MessageID: master, Key: key}
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, note)[note])
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+	assert.Empty(linkedMeetingRefs(t, st, note)[note])
+	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: edit}))
+	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, note)[note], "the edit resolves through its former series")
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+	assert.Empty(linkedMeetingRefs(t, st, note)[note])
+
+	_, automatic := projectionFixture(t, st, "automatic", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
+	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, automatic)[automatic])
+	require.NoError(st.UnlinkMeetingContext(t.Context(), automatic, ref))
+	assert.Empty(linkedMeetingRefs(t, st, automatic)[automatic])
+}
