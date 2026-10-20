@@ -191,3 +191,55 @@ func TestMeetingLinksAllDayExceptionUsesSeriesZone(t *testing.T) {
 		assert.Equal(30, suggestions[0].OverlapMinutes)
 	}
 }
+
+func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+	_, master := calendarFixture(t, st, "master", raw)
+	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T00:00:00Z"}}`)
+	ref := OccurrenceRef{MessageID: master, Key: "20270314"}
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.Replace(raw, "RRULE:FREQ=WEEKLY;COUNT=3", "RRULE:FREQ=HOURLY", 1)), "gcal_json"))
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	listed := page.Occurrences[0]
+	assertions.Equal(fmt.Sprintf("evt:%d@20270314", master), listed.Ref)
+	assertions.Equal(edit, listed.MessageID)
+	assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
+	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
+
+	t.Run("saved link", func(t *testing.T) {
+		links, err := st.MeetingLinksContext(t.Context(), note)
+		require.NoError(t, err)
+		require.Len(t, links, 1)
+		assert.Equal(t, listed.Ref, links[0].Ref)
+		assert.True(t, listed.Start.Equal(links[0].Start))
+		assert.True(t, listed.End.Equal(links[0].End))
+	})
+	for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}} {
+		t.Run("suggest/"+target.Kind, func(t *testing.T) {
+			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
+			require.NoError(t, err)
+			require.Len(t, suggestions, 1)
+			assert.Equal(t, listed.Ref, suggestions[0].Ref)
+			assert.Equal(t, note, suggestions[0].MemberMessageID)
+			assert.Equal(t, 30, suggestions[0].OverlapMinutes)
+		})
+	}
+	for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
+		t.Run(fmt.Sprintf("link/%d", target.MessageID), func(t *testing.T) {
+			require.NoError(t, st.LinkMeetingContext(t.Context(), note, target))
+			links, err := st.MeetingLinksContext(t.Context(), note)
+			require.NoError(t, err)
+			require.Len(t, links, 1)
+			assert.Equal(t, listed.Ref, links[0].Ref)
+			assert.True(t, listed.Start.Equal(links[0].Start))
+			assert.True(t, listed.End.Equal(links[0].End))
+		})
+	}
+}
