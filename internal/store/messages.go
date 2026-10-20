@@ -426,8 +426,8 @@ type Message struct {
 	SenderID         sql.NullInt64
 	ReplyToMessageID sql.NullInt64
 	IsFromMe         bool
-	// IsSent records whether the message left the sender, as the source states
-	// it. Invalid keeps the stored value, or TRUE for a new row.
+	// IsSent is whether the message left the sender. Invalid keeps the stored
+	// value, or TRUE for a new row.
 	IsSent sql.NullBool
 	// IdentityDerivedIsFromMe reports that IsFromMe came from a confirmed
 	// account identity rather than a source-native sent-by-me signal.

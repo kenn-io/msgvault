@@ -90,10 +90,9 @@ type tierSignalRow struct {
 }
 
 // personTierRows reads the direct links in the long window for the page. The
-// WHERE clause is the counting rule: email and chat messages the person sent
-// to the owner or the owner sent to the person, and meetings in either
-// direction. Drafts, texts that never left the phone, and call or voicemail
-// records are not exchanged messages.
+// WHERE clause is the counting rule: sent email and chat messages between the
+// person and the owner, not drafts, texts that never left the phone, or call
+// records, and meetings in either direction.
 func personTierRows(ctx context.Context, tx *loggedTx, personIDs []int64, asOf time.Time, cfg persontiers.Config) ([]tierSignalRow, error) {
 	args := personMergeSnapshotIDArgs(personIDs)
 	args = append(args,

@@ -23,13 +23,15 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 	var counterpart int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&counterpart))
 	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	drafts, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{"DRAFT": {Name: "DRAFT", Type: "system"}})
+	require.NoError(err)
 	for i, event := range []struct {
-		days                    int
-		outbound, meeting, list bool
+		days                           int
+		outbound, meeting, list, draft bool
 	}{
-		{0, true, false, false}, {0, false, false, false}, {-364, false, false, false},
-		{-365, true, false, false}, {1, false, false, false}, {-2, false, false, true},
-		{-3, true, true, false}, {-3, false, true, false},
+		{0, true, false, false, false}, {0, false, false, false, false}, {-364, false, false, false, false},
+		{-365, true, false, false, false}, {1, false, false, false, false}, {-2, false, false, true, false},
+		{-3, true, true, false, false}, {-3, false, true, false, false}, {-4, true, false, false, true},
 	} {
 		from, to := counterpart, owner
 		if event.outbound {
@@ -45,6 +47,9 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 		}
 		id, err := f.Store.UpsertMessage(message)
 		require.NoError(err)
+		if event.draft {
+			require.NoError(f.Store.ReplaceMessageLabels(id, []int64{drafts["DRAFT"]}))
+		}
 		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, []string{"Synthetic sender"}))
 		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, []string{"Synthetic recipient"}))
 	}
@@ -104,7 +109,7 @@ func TestPersonTierReadiness(t *testing.T) {
 // tierSignals reads one person's counts through explain.
 func tierSignals(t *testing.T, f *storetest.Fixture, personID int64, asOf time.Time, cfg persontiers.Config) persontiers.Signals {
 	t.Helper()
-	explanation, err := store.ExplainPersonTierAt(t.Context(), f.Store, personID, store.PersonTierOptions{Config: cfg}, asOf)
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.TierOptionsAsOf(store.PersonTierOptions{Config: cfg}, asOf))
 	require.NoError(t, err)
 	return explanation.Signals
 }
@@ -244,34 +249,4 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 
 	assert.Equal(1, signals.InboundLong, "this account's projection still counts the person")
 	assert.True(signals.Owner)
-}
-
-// A draft the owner has not sent is not contact with the person it is
-// addressed to.
-func TestPersonTierSignalsSkipEmailDrafts(t *testing.T) {
-	require := require.New(t)
-	f, personID := newActivityQueryFixture(t)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	var counterpart int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&counterpart))
-	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{"DRAFT": {Name: "DRAFT", Type: "system"}})
-	require.NoError(err)
-	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	for i, draft := range []bool{false, true} {
-		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("tier-draft-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i-1)).Build()
-		message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
-		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{owner}, []string{"Owner"}))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{counterpart}, []string{"Counterpart"}))
-		if draft {
-			require.NoError(f.Store.ReplaceMessageLabels(id, []int64{labels["DRAFT"]}))
-		}
-	}
-	projectTierSignals(t, f, "UTC", 25)
-
-	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
-
-	assert.Equal(t, 1, signals.OutboundLong, "only the sent message counts")
-	assert.Equal(t, 1, signals.ActiveDaysLong)
 }
