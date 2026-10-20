@@ -278,8 +278,9 @@ with `msgvault show-message <id>`. Unsaved contacts are senders bound to no
 saved person; promote one with `msgvault person promote <participant-id>`.
 The topic is plain words. Search operators such as `from:` are refused.
 
-The search reads up to 200 messages that match the topic by keyword or by
-meaning, ranked by both together. A message counts when its cosine
+The search takes up to `[vector.search] k_per_signal` messages (default 100)
+that match the topic by keyword and as many that match it by meaning, and
+ranks up to 200 of them by both together. A message counts when its cosine
 similarity to the topic reaches `--min-score` (default 0.5). On SQLite the
 vector index scores by distance, so the command computes cosine similarity
 from each hit's stored vectors, whatever their length. A message found only by

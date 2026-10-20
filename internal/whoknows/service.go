@@ -19,7 +19,9 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 )
 
-// SearchPool is how many messages one search reads.
+// SearchPool caps how many fused hits one search reads. The hybrid engine
+// draws at most k_per_signal (default 100) hits from each of keyword and
+// vector search, so at most that many hits carry a vector score.
 const SearchPool = 200
 
 // Retriever runs the hybrid (keyword plus meaning) message search.
