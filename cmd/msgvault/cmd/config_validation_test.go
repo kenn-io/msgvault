@@ -137,6 +137,29 @@ func TestInvalidDaemonConfigIsNotRepeatedAfterProxiedChildFailure(t *testing.T) 
 	assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "the child already reported it: %q", stderr)
 }
 
+func TestInvalidDaemonConfigStillWarnsAfterUnrelatedProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	childStderr, err := json.Marshal(api.CLIRunEvent{Type: "stderr", Data: "Error: invalid --start timestamp\n"})
+	require.NoError(t, err)
+	childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
+	require.NoError(t, err)
+	server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
+	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
+
+	_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	require.ErrorIs(t, err, errCLISubprocessProxied)
+	assert.Equal(t, 1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
+}
+
+func TestAddSynctechSMSDriveFailsAtLoadOnInvalidDaemonConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	home := writeInvalidKataHome(t, "")
+	root := newRootCommand()
+	root.AddCommand(newAddSynctechSMSDriveCmd())
+
+	_, _, err := runRoot(t, root, "--home", home, "add-synctech-sms-drive", "pixel",
+		"--owner-phone", "+15550000001", "--folder-id", "drive-folder-id", "--google-account", "user@example.com")
+	require.ErrorContains(t, err, "load config")
+}
+
 func TestInvalidDaemonConfigKeepsIncompatibleGuidanceWhenAutostartIsOff(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	withTestVersion(t, "v1.1.0")
 	home := writeInvalidKataHome(t, "[server]\ndaemon_auto_start = false\n")

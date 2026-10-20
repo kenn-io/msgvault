@@ -39,9 +39,8 @@ config is invalid. `msgvault serve`, `msgvault daemon start`, and
 `msgvault daemon restart` fail with the config error before they stop or start
 anything. When no usable daemon is running, the on-demand start fails with the
 config error instead of launching one. Saving configuration is refused while
-the file on disk would not load cleanly, so `msgvault add-account` finishes
-OAuth and then fails at the save step on such a file. `msgvault update` also
-stays strict.
+the file on disk would not load cleanly, and the daemon's add-account API
+returns the reason when it refuses. `msgvault update` also stays strict.
 
 ## Remote Deletion Consent
 
