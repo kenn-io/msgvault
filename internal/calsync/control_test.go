@@ -133,7 +133,7 @@ func TestPersistCancelledOffsetFreeExceptionPreservesNewerDuplicateSnapshot(t *t
 	mock := gcal.NewMockAPI()
 	cal := gcal.Calendar{ID: "primary", AccessRole: "owner", TimeZone: "America/New_York"}
 	s, st := newSyncer(t, mock, Options{})
-	legacyRaw := []byte(`{"id":"instance-example","summary":"Planning","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`)
+	legacyRaw := []byte(`{"id":"instance-example","updated":"2027-03-10T12:00:00Z","summary":"Planning","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`)
 	legacyEvent, err := gcalmodel.DecodeEvent(legacyRaw)
 	requirements.NoError(err)
 	newSourceMessageID := deriveSourceMessageID(legacyEvent)
@@ -142,7 +142,7 @@ func TestPersistCancelledOffsetFreeExceptionPreservesNewerDuplicateSnapshot(t *t
 	requirements.NoError(err)
 
 	source := primarySource(t, st)
-	newerRaw := []byte(`{"id":"instance-example","summary":"Rescheduled planning","description":"Updated meeting details","location":"Room 7","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T23:00:00Z","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-10T00:30:00Z","timeZone":"America/New_York"}}`)
+	newerRaw := []byte(`{"id":"instance-example","updated":"2027-03-11T12:00:00Z","summary":"Rescheduled planning","description":"Updated meeting details","location":"Room 7","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T23:00:00Z","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-10T00:30:00Z","timeZone":"America/New_York"}}`)
 	newerEvent, err := gcalmodel.DecodeEvent(newerRaw)
 	requirements.NoError(err)
 	conversationID, err := st.EnsureConversationWithType(source.ID, conversationKey(newerEvent), gcal.ConversationType, "")
@@ -208,6 +208,73 @@ func TestPersistCancelledOffsetFreeExceptionPreservesNewerDuplicateSnapshot(t *t
 	assertions.Equal(time.Date(2027, 3, 9, 23, 0, 0, 0, time.UTC), detail.Start)
 	assertions.Equal("Room 7", detail.Location)
 	assertions.Equal("Updated meeting details", detail.Description)
+}
+
+func TestPersistCancelledOffsetFreeExceptionPreservesNewerLegacySnapshot(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	mock := gcal.NewMockAPI()
+	cal := gcal.Calendar{ID: "primary", AccessRole: "owner", TimeZone: "America/New_York"}
+	s, st := newSyncer(t, mock, Options{})
+	legacyRaw := []byte(`{"id":"instance-example","updated":"2027-03-11T12:00:00Z","summary":"Newer retained planning","description":"Newer archived details","location":"Room 12","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T23:00:00Z","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-10T00:30:00Z","timeZone":"America/New_York"}}`)
+	legacyEvent, err := gcalmodel.DecodeEvent(legacyRaw)
+	requirements.NoError(err)
+	newSourceMessageID := deriveSourceMessageID(legacyEvent)
+	legacyEvent.OriginalStartTime = gcal.EventDateTime{}
+	archivedID, err := s.PersistEvent(t.Context(), cal, legacyEvent)
+	requirements.NoError(err)
+
+	source := primarySource(t, st)
+	olderCanonicalRaw := []byte(`{"id":"instance-example","updated":"2027-03-10T12:00:00Z","summary":"Older canonical planning","description":"Older canonical details","location":"Room 6","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00Z","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00Z","timeZone":"America/New_York"}}`)
+	olderCanonicalEvent, err := gcalmodel.DecodeEvent(olderCanonicalRaw)
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, conversationKey(olderCanonicalEvent), gcal.ConversationType, "")
+	requirements.NoError(err)
+	body := serializeBody(olderCanonicalEvent)
+	duplicateID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: newSourceMessageID, MessageType: gcal.MessageTypeCalendarEvent,
+		SentAt:       eventSentAt(olderCanonicalEvent),
+		Subject:      sql.NullString{String: olderCanonicalEvent.Summary, Valid: true},
+		Snippet:      sql.NullString{String: Snippet(body), Valid: body != ""},
+		SizeEstimate: int64(len(body)),
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(archivedID, duplicateID)
+	metadata, err := json.Marshal(buildMetadata(olderCanonicalEvent, cal, testAccount), json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(duplicateID, sql.NullString{String: string(metadata), Valid: true}))
+	requirements.NoError(st.UpsertMessageBody(duplicateID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}))
+	requirements.NoError(st.UpsertMessageRawWithFormat(duplicateID, olderCanonicalRaw, gcal.RawFormat))
+	requirements.NoError(st.UpsertFTS(duplicateID, olderCanonicalEvent.Summary, body, "", "", ""))
+
+	cancelledRaw := []byte(`{"id":"instance-example","status":"cancelled","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"}}`)
+	cancelledEvent, err := gcalmodel.DecodeEvent(cancelledRaw)
+	requirements.NoError(err)
+	resyncedID, err := s.PersistEvent(t.Context(), cal, cancelledEvent)
+	requirements.NoError(err)
+	assertions.Equal(archivedID, resyncedID, "the legacy archive message ID is retained")
+
+	row, ok := getMsg(t, st, source.ID, newSourceMessageID)
+	requirements.True(ok, "the canonical recurrence key is retained")
+	assertions.Equal(archivedID, row.id)
+	assertions.Equal("Newer retained planning", row.subject.String)
+	assertions.Equal("cancelled", parseMeta(t, row)["status"])
+	assertions.Contains(bodyText(t, st, archivedID), "Newer archived details")
+	_, ok = getMsg(t, st, source.ID, legacyEvent.ID)
+	assertions.False(ok, "the legacy event.id key is removed")
+	assertions.Equal(1, countMessages(t, st, source.ID), "the event remains one archive row")
+
+	gotRaw, err := st.GetMessageRaw(archivedID)
+	requirements.NoError(err)
+	assertions.Equal(legacyRaw, gotRaw, "the latest provider snapshot is retained")
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), "evt:"+strconv.FormatInt(archivedID, 10))
+	requirements.NoError(err)
+	assertions.Equal("Newer retained planning", detail.Subject)
+	assertions.Equal("cancelled", detail.Status)
+	assertions.Equal(time.Date(2027, 3, 9, 23, 0, 0, 0, time.UTC), detail.Start)
+	assertions.Equal("Room 12", detail.Location)
+	assertions.Equal("Newer archived details", detail.Description)
 }
 
 func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotOverSparseTombstone(t *testing.T) {
