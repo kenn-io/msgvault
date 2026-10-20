@@ -1538,12 +1538,19 @@ func (c *Config) Save() error {
 	return c.saveWithHooks(configSaveHooks{})
 }
 
+// ErrSaveRefused marks a save that would rewrite a file the daemon cannot load.
+var ErrSaveRefused = errors.New("refusing to save config")
+
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 	// Saving re-encodes the decoded struct, which would drop unknown keys and
 	// default explicit zeros in a file the daemon would reject.
-	if snapshot, err := ReadConfigFile(c.ConfigFilePath()); err == nil && snapshot.Exists {
+	snapshot, err := ReadConfigFile(c.ConfigFilePath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, errConfigSymlinkTargetMissing) {
+		return fmt.Errorf("%w: %w", ErrSaveRefused, err)
+	}
+	if err == nil && snapshot.Exists {
 		if _, err := LoadConfigFile(snapshot, c.HomeDir); err != nil {
-			return fmt.Errorf("refusing to save config: %w", err)
+			return fmt.Errorf("%w: %w", ErrSaveRefused, err)
 		}
 	}
 	// Ensure home directory exists

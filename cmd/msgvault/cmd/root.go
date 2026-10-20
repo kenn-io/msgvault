@@ -252,11 +252,11 @@ func requiresStrictConfig(cmd *cobra.Command) bool {
 	return cmd.Name() == "serve" || cmd.Annotations[strictConfigAnnotation] != ""
 }
 
-// warnDaemonConfigError prints the invalid daemon-only settings once, after
-// the command ran, unless runErr already reports them. The daemon's own CLI
+// warnDaemonConfigError prints each invalid daemon-only setting once, after
+// the command ran, unless runErr already reports it. The daemon's own CLI
 // children stay quiet; their parent warned.
 func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error) {
-	if cfg == nil || errors.Is(runErr, errDaemonConfigInvalid) || isDaemonConsoleSubprocess() {
+	if cfg == nil || isDaemonConsoleSubprocess() {
 		return
 	}
 	err := cfg.DaemonConfigError()
@@ -268,6 +268,9 @@ func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error
 		errs = joined.Unwrap()
 	}
 	for _, e := range errs {
+		if runErr != nil && (errors.Is(runErr, e) || strings.Contains(runErr.Error(), e.Error())) {
+			continue
+		}
 		_, _ = fmt.Fprintf(root.ErrOrStderr(), "Warning: invalid daemon config: %v\n", e)
 	}
 }

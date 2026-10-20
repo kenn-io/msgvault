@@ -30,6 +30,8 @@ var (
 	// ErrUnsafeConfigTarget indicates a dangling, non-regular, or
 	// ownership-unsafe symlink target.
 	ErrUnsafeConfigTarget = errors.New("unsafe config target")
+	// errConfigSymlinkTargetMissing marks a symlink whose target a save would create.
+	errConfigSymlinkTargetMissing = errors.New("config symlink target does not exist")
 	// ErrInvalidConfigCandidate indicates that edited bytes were produced but
 	// the complete candidate does not satisfy the config schema or invariants.
 	ErrInvalidConfigCandidate = errors.New("invalid config candidate")
@@ -957,7 +959,7 @@ func resolveConfigTargetWithOwner(path string, owner func(fs.FileInfo) (uint64, 
 	info, err := os.Lstat(absolute)
 	if errors.Is(err, fs.ErrNotExist) {
 		if requestedSymlink {
-			return "", 0, false, fmt.Errorf("%w: config symlink target does not exist", ErrUnsafeConfigTarget)
+			return "", 0, false, fmt.Errorf("%w: %w", ErrUnsafeConfigTarget, errConfigSymlinkTargetMissing)
 		}
 		return absolute, 0o600, false, nil
 	}

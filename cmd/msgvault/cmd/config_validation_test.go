@@ -101,9 +101,6 @@ func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, even
 	return pid, requests
 }
 
-const exportCompleteEvents = "{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n" +
-	"{\"type\":\"complete\"}"
-
 func TestInvalidDaemonConfigWarnsOnceAndExportReachesDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	assert := assert.New(t)
 	require := require.New(t)
@@ -136,6 +133,16 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	assert.Contains(stdout, `"record_type":"complete"`)
 	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 	assert.True(daemon.ProcessAlive(pid), "the older daemon must keep running")
+}
+
+func TestInvalidDaemonConfigKeepsIncompatibleGuidanceWhenAutostartIsOff(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	withTestVersion(t, "v1.1.0")
+	home := writeInvalidKataHome(t, "[server]\ndaemon_auto_start = false\n")
+	serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion+1)
+
+	_, _, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	require.ErrorContains(t, err, "incompatible daemon is already running")
+	require.NotContains(t, err.Error(), "daemon config invalid")
 }
 
 func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
@@ -201,6 +208,18 @@ func TestDaemonCLIChildStaysQuietAboutInvalidDaemonConfig(t *testing.T) { //noli
 	_, stderr, err := runRoot(t, root, "--home", home, "noop")
 	require.NoError(t, err)
 	assert.Empty(t, stderr)
+}
+
+func TestInvalidDaemonConfigIsReportedOnceByStrictSetupCommand(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	home := writeInvalidKataHome(t, "")
+	setup := &cobra.Command{Use: "setup"}
+	setup.AddCommand(newSetupProvidersCommand(defaultSetupProvidersDeps(t.Context())))
+	root := newRootCommand()
+	root.AddCommand(setup)
+
+	_, stderr, err := runRoot(t, root, "--home", home, "setup", "providers", "--dry-run")
+	require.ErrorContains(t, err, "[integrations.kata]")
+	require.Equal(t, 1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
 }
 
 func TestClientCommandsFailOnInvalidClientConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger

@@ -118,3 +118,10 @@ func TestSaveRefusesFileThatLosesContentWhenReencoded(t *testing.T) {
 		})
 	}
 }
+
+func TestSaveFailsClosedWhenConfigFileCannotBeChecked(t *testing.T) {
+	cfg := NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.configPath = t.TempDir() // a directory, so the file cannot be read
+	require.ErrorContains(t, cfg.Save(), "refusing to save config")
+}

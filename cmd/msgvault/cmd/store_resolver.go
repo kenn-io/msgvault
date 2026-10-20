@@ -473,7 +473,7 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 		incompatibleGuidance = "restart or upgrade the supervised service"
 	}
 	prep, err := prepareBackgroundDaemonStart(c, restartPolicy, incompatibleGuidance, loggerFromContext(ctx))
-	if errors.Is(err, errIncompatibleDaemon) && configErr != nil {
+	if errors.Is(err, errIncompatibleDaemon) && configErr != nil && autoStart {
 		return nil, localDaemonStartupInfo{}, daemonConfigStartError(configErr)
 	}
 	if err != nil {
@@ -561,12 +561,9 @@ func ensureLocalDaemonRuntimeWithStartupCacheIntent(
 	}, nil
 }
 
-// errDaemonConfigInvalid marks a refusal to start a daemon from a config the
-// daemon would reject.
-var errDaemonConfigInvalid = errors.New("daemon config invalid")
-
+// daemonConfigStartError refuses to start a daemon from a config it would reject.
 func daemonConfigStartError(err error) error {
-	return fmt.Errorf("start background daemon: %w: %w", errDaemonConfigInvalid, err)
+	return fmt.Errorf("start background daemon: daemon config invalid: %w", err)
 }
 
 // errLocalDaemonAutoStartDisabled marks a local resolution that found no

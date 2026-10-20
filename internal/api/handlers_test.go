@@ -5151,6 +5151,26 @@ func TestHandleAddAccount(t *testing.T) {
 	assert.Equal("new@gmail.com", sched.addedAccts[0], "scheduler.AddAccount account")
 }
 
+func TestHandleAddAccountReportsRefusedSave(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	tmpDir := t.TempDir()
+	require.NoError(os.WriteFile(filepath.Join(tmpDir, "config.toml"),
+		[]byte("[integrations.kata]\nendpoint = '://invalid'\n"), 0o600))
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, HomeDir: tmpDir}
+	srv := NewServer(cfg, nil, newMockScheduler(), testLogger())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/accounts", strings.NewReader(`{"email": "new@gmail.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	require.Equal(http.StatusInternalServerError, w.Code, w.Body.String())
+	require.Contains(w.Body.String(), "refusing to save config")
+	require.Contains(w.Body.String(), "[integrations.kata]")
+	require.Empty(cfg.Accounts)
+}
+
 func TestHandleAddAccountDuplicate(t *testing.T) {
 	t.Parallel()
 	cfg := &config.Config{
