@@ -782,9 +782,10 @@ func TestRunServeAutoSwitchesToDuckDBAfterBackgroundBuild(t *testing.T) {
 	assert.Equal(api.AnalyticsModeSQLFallback, readAnalyticsMode())
 
 	close(releaseBuild)
+	// This wait includes the real cache build and opening DuckDB on busy CI runners.
 	assert.Eventually(func() bool {
 		return readAnalyticsMode() == api.AnalyticsModeDuckDB
-	}, 10*time.Second, 25*time.Millisecond, "auto mode should switch to DuckDB after cache build")
+	}, serveLifecycleTestTimeout, 25*time.Millisecond, "auto mode should switch to DuckDB after cache build")
 
 	cancel()
 	select {
