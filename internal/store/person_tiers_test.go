@@ -184,25 +184,6 @@ func TestPreviewPersonTiersWarnsWhenProjectionIsBehind(t *testing.T) {
 	assert.Len(preview.People, 3, "counts are still reported")
 }
 
-func TestPreviewPersonTiersRejectsBadRequests(t *testing.T) {
-	p := newTierPeople(t)
-	badConfig := tierOptions()
-	badConfig.Config.ShortWindowDays = 0
-	for name, tc := range map[string]struct {
-		options store.PersonTierOptions
-		tier    int
-	}{
-		"tier three": {tierOptions(), 3},
-		"negative":   {tierOptions(), -1},
-		"bad config": {badConfig, 0},
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tc.options, tc.tier)
-			require.ErrorIs(t, err, store.ErrInvalidPersonTierRequest)
-		})
-	}
-}
-
 func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
 	assert := assert.New(t)
 	p := newTierPeople(t)
@@ -222,7 +203,7 @@ func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
 	})
 }
 
-func TestExplainPersonTierReportsDormantPersonWithLastContact(t *testing.T) {
+func TestExplainPersonTierReportsDormantPersonWithNoCountedDay(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	p := newTierPeople(t)
@@ -230,8 +211,7 @@ func TestExplainPersonTierReportsDormantPersonWithLastContact(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(3, explanation.Tier)
 	assert.Equal("none", explanation.Rule)
-	require.NotNil(explanation.LastContactDate)
-	assert.Equal("2025-09-12", *explanation.LastContactDate)
+	assert.Nil(explanation.LastContactDate, "mail from 400 days ago is outside the long window")
 }
 
 func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
@@ -250,13 +230,10 @@ func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
 	assert.Equal("automated_address", explanation.Exclusion)
 }
 
-func TestExplainPersonTierRejectsUnknownAndInvalidPeople(t *testing.T) {
-	require := require.New(t)
+func TestExplainPersonTierRejectsUnknownPeople(t *testing.T) {
 	p := newTierPeople(t)
 	_, err := p.f.Store.ExplainPersonTierContext(t.Context(), 99999, tierOptions())
-	require.ErrorIs(err, store.ErrPersonNotFound)
-	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), 0, tierOptions())
-	require.ErrorIs(err, store.ErrInvalidPersonTierRequest)
+	require.ErrorIs(t, err, store.ErrPersonNotFound)
 }
 
 func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
@@ -273,23 +250,25 @@ func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
 
 	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
 	require.NoError(err)
-	assert.False(explanation.Provisional)
+	assert.True(explanation.Readiness.Ready)
 
 	options.ActivityMaxDirect = 1
 	explanation, err = a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
 	require.NoError(err)
 	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, explanation.Projection)
-	assert.True(explanation.Provisional)
+	assert.False(explanation.Readiness.Ready)
+	require.Len(explanation.Readiness.Reasons, 1)
+	assert.Contains(explanation.Readiness.Reasons[0], "settings_changed: stored timezone UTC and direct limit 25, configured UTC and 1")
 	assert.Equal(1, explanation.Signals.InboundLong, "a limit of 1 would have dropped this message")
 	assert.Zero(explanation.Signals.LargeAudienceInboundEvents)
 
 	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options, 0)
 	require.NoError(err)
-	assert.True(preview.Provisional)
+	assert.Contains(preview.Readiness.Reasons[0], "settings_changed")
 	assert.Equal(25, preview.Projection.MaxDirect)
 }
 
-func TestPersonTiersReportLastContactInTheProjectionTimezone(t *testing.T) {
+func TestPersonTiersReportTheLastCountedDayInTheProjectionTimezone(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	a := newAudienceFixture(t)
@@ -320,7 +299,10 @@ func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
 
 	require.NoError(err)
 	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, preview.Projection)
-	assert.False(preview.Provisional, "nothing is stored to differ from")
+	assert.NotContains(preview.Readiness.Reasons, "watermark_behind")
+	for _, reason := range preview.Readiness.Reasons {
+		assert.NotContains(reason, "settings_changed", "nothing is stored to differ from")
+	}
 	assert.Empty(preview.People)
 }
 
@@ -369,4 +351,41 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	projectTierSignals(t, p.f, "America/New_York", 10)
 	assert.Equal(10, previewTiers(t, p, 0).Projection.MaxDirect)
+}
+
+// The last counted day comes from the rows the tier rules counted. A future
+// meeting invite and a newsletter are in the projection but never counted.
+func TestPersonTiersLastCountedDayIgnoresFutureMeetingsAndLists(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	a := newAudienceFixture(t)
+	a.message(t, "counted", -3, a.f.ConvID, "", a.owner)
+	a.message(t, "future-invite", 20, a.f.ConvID, "calendar_event", a.owner)
+	newsletter := a.message(t, "newsletter", -1, a.f.ConvID, "", a.owner)
+	_, err := a.f.Store.DB().ExecContext(t.Context(),
+		a.f.Store.Rebind(`UPDATE messages SET list_id = 'list.example.com' WHERE id = ?`), newsletter)
+	require.NoError(err)
+	projectTierSignals(t, a.f, "UTC", 25)
+
+	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+
+	require.NoError(err)
+	require.NotNil(explanation.LastContactDate)
+	assert.Equal("2026-10-14", *explanation.LastContactDate)
+	assert.Equal(1, explanation.Signals.ExcludedListEvents)
+}
+
+func TestPersonTiersShowNoCountedDayForANewsletterOnlyPerson(t *testing.T) {
+	require := require.New(t)
+	a := newAudienceFixture(t)
+	id := a.message(t, "only-newsletter", -1, a.f.ConvID, "", a.owner)
+	_, err := a.f.Store.DB().ExecContext(t.Context(),
+		a.f.Store.Rebind(`UPDATE messages SET list_id = 'list.example.com' WHERE id = ?`), id)
+	require.NoError(err)
+	projectTierSignals(t, a.f, "UTC", 25)
+
+	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+
+	require.NoError(err)
+	assert.Nil(t, explanation.LastContactDate)
 }

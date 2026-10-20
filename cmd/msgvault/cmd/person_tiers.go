@@ -24,8 +24,7 @@ type personTiersCommandDeps struct {
 	options            func() (store.PersonTierOptions, error)
 	openStore          func() (personTiersCommandStore, func(), error)
 	isDaemonSubprocess func() bool
-	// proxy runs runArgs in the daemon and writes its stdout to out.
-	proxy func(cmd *cobra.Command, runArgs []string, out io.Writer) error
+	proxy              func(cmd *cobra.Command, runArgs []string) error
 }
 
 func defaultPersonTiersCommandDeps() personTiersCommandDeps {
@@ -59,10 +58,7 @@ func defaultPersonTiersCommandDeps() personTiersCommandDeps {
 			return nil, nil, errors.New("configuration is unavailable")
 		},
 		isDaemonSubprocess: isDaemonCLISubprocess,
-		proxy: func(cmd *cobra.Command, runArgs []string, out io.Writer) error {
-			saved := cmd.OutOrStdout()
-			cmd.SetOut(out)
-			defer cmd.SetOut(saved)
+		proxy: func(cmd *cobra.Command, runArgs []string) error {
 			return runDaemonCLICommandHTTPWithEnv(cmd, runArgs, nil, false, false)
 		},
 	}
@@ -83,26 +79,26 @@ func newPersonTiersPreviewCommand(deps personTiersCommandDeps) *cobra.Command {
 		Long: `List saved people in tier 1 (sustained two-way contact in the short window,
 90 days by default) or tier 2 (two-way contact or meetings in the long window,
 a year by default), with the rule that put each there, whether they are
-tracked, and their last contact date. Windows and thresholds come from
-[people.tiers]. Counts follow the timezone and direct
+tracked, and the latest day that counted toward the tier. Windows and
+thresholds come from [people.tiers]. Counts follow the timezone and direct
 limit the activity projection was built under. Nothing is written; pass the
 IDs from --json to "person track".`,
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
-				deps = deps.bind(command.Context())
-			}
 			if command.Flags().Changed("tier") && tier != 1 && tier != 2 {
 				return usageErr(command, errors.New("--tier must be 1 or 2"))
 			}
-			if !deps.isDaemonSubprocess() {
-				runArgs, err := daemonCLIArgsFromCobra(command, args)
+			return runPersonTiers(command, deps, args, func(st personTiersCommandStore, options store.PersonTierOptions) error {
+				preview, err := st.PreviewPersonTiersContext(command.Context(), options, tier)
 				if err != nil {
 					return err
 				}
-				return deps.proxy(command, runArgs, command.OutOrStdout())
-			}
-			return runPersonTiersPreview(command, deps, tier, jsonOutput)
+				writePersonTiersWarning(command.ErrOrStderr(), preview.Readiness)
+				if jsonOutput {
+					return printJSONTo(command.OutOrStdout(), preview)
+				}
+				return writePersonTiersPreview(command.OutOrStdout(), preview)
+			})
 		},
 	}
 	command.Flags().IntVar(&tier, "tier", 0, "Only show tier 1 or 2")
@@ -117,45 +113,40 @@ func newPersonTiersExplainCommand(deps personTiersCommandDeps) *cobra.Command {
 		Short: "Show every count behind one person's tier",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
-			if invocationFromContext(command.Context()) != nil && deps.bind != nil {
-				deps = deps.bind(command.Context())
-			}
 			personID, err := positivePersonCLIArg(command, args[0], personValue)
 			if err != nil {
 				return err
 			}
-			if !deps.isDaemonSubprocess() {
-				runArgs, err := daemonCLIArgsFromCobra(command, args)
+			return runPersonTiers(command, deps, args, func(st personTiersCommandStore, options store.PersonTierOptions) error {
+				explanation, err := st.ExplainPersonTierContext(command.Context(), personID, options)
 				if err != nil {
 					return err
 				}
-				return deps.proxy(command, runArgs, command.OutOrStdout())
-			}
-			options, err := deps.options()
-			if err != nil {
-				return err
-			}
-			st, cleanup, err := deps.openStore()
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-			explanation, err := st.ExplainPersonTierContext(command.Context(), personID, options)
-			if err != nil {
-				return err
-			}
-			writePersonTiersWarnings(command.ErrOrStderr(), explanation.Readiness, explanation.Projection, explanation.Provisional)
-			if jsonOutput {
-				return printJSONTo(command.OutOrStdout(), explanation)
-			}
-			return writePersonTierExplanation(command.OutOrStdout(), explanation)
+				writePersonTiersWarning(command.ErrOrStderr(), explanation.Readiness)
+				if jsonOutput {
+					return printJSONTo(command.OutOrStdout(), explanation)
+				}
+				return writePersonTierExplanation(command.OutOrStdout(), explanation)
+			})
 		},
 	}
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	return command
 }
 
-func runPersonTiersPreview(command *cobra.Command, deps personTiersCommandDeps, tier int, jsonOutput bool) error {
+// runPersonTiers sends the command to the daemon from the CLI. In the daemon
+// it opens the store and runs the subcommand against it.
+func runPersonTiers(command *cobra.Command, deps personTiersCommandDeps, args []string, run func(personTiersCommandStore, store.PersonTierOptions) error) error {
+	if invocationFromContext(command.Context()) != nil && deps.bind != nil {
+		deps = deps.bind(command.Context())
+	}
+	if !deps.isDaemonSubprocess() {
+		runArgs, err := daemonCLIArgsFromCobra(command, args)
+		if err != nil {
+			return err
+		}
+		return deps.proxy(command, runArgs)
+	}
 	options, err := deps.options()
 	if err != nil {
 		return err
@@ -165,25 +156,13 @@ func runPersonTiersPreview(command *cobra.Command, deps personTiersCommandDeps, 
 		return err
 	}
 	defer cleanup()
-	preview, err := st.PreviewPersonTiersContext(command.Context(), options, tier)
-	if err != nil {
-		return err
-	}
-	writePersonTiersWarnings(command.ErrOrStderr(), preview.Readiness, preview.Projection, preview.Provisional)
-	if jsonOutput {
-		return printJSONTo(command.OutOrStdout(), preview)
-	}
-	return writePersonTiersPreview(command.OutOrStdout(), preview)
+	return run(st, options)
 }
 
-func writePersonTiersWarnings(w io.Writer, readiness store.PersonTierReadiness, projection store.PersonTierProjection, provisional bool) {
+func writePersonTiersWarning(w io.Writer, readiness store.PersonTierReadiness) {
 	if !readiness.Ready {
-		_, _ = fmt.Fprintf(w, "Warning: the activity projection is behind (%s); counts may be too low.\n",
+		_, _ = fmt.Fprintf(w, "Warning: the activity projection is behind or built under other settings (%s); counts may be too low or follow the stored settings until \"msgvault activity build\" catches up.\n",
 			strings.Join(readiness.Reasons, ", "))
-	}
-	if provisional {
-		_, _ = fmt.Fprintf(w, "Warning: the [activity] settings differ from the projection's; counts follow timezone %s and direct limit %d until the projector rebuilds.\n",
-			projection.Timezone, projection.MaxDirect)
 	}
 }
 
@@ -196,7 +175,7 @@ func writePersonTiersPreview(w io.Writer, preview *store.PersonTierPreview) erro
 		return fmt.Errorf("write person tiers preview: %w", err)
 	}
 	table := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "TIER\tPERSON\tNAME\tRULE\tTRACKED\tLAST CONTACT")
+	_, _ = fmt.Fprintln(table, "TIER\tPERSON\tNAME\tRULE\tTRACKED\tLAST COUNTED")
 	for _, row := range preview.People {
 		_, _ = fmt.Fprintf(table, "%d\t%d\t%s\t%s\t%t\t%s\n", row.Tier, row.PersonID,
 			personDisplayName(row.DisplayName), row.Rule, row.Tracked, personTierDate(row.LastContactDate))
@@ -212,7 +191,7 @@ func writePersonTierExplanation(w io.Writer, e *store.PersonTierExplanation) err
 	if exclusion == "" {
 		exclusion = "-"
 	}
-	_, err := fmt.Fprintf(w, "Person: %d\nName: %s\nTier: %d\nRule: %s\nExclusion: %s\nTracked: %t\nLast contact: %s\nAs of: %s\nProjection: timezone %s, direct limit %d\n"+
+	_, err := fmt.Fprintf(w, "Person: %d\nName: %s\nTier: %d\nRule: %s\nExclusion: %s\nTracked: %t\nLast counted: %s\nAs of: %s\nProjection: timezone %s, direct limit %d\n"+
 		"Excluded list messages: %d\nLarge-audience inbound messages: %d\n",
 		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, exclusion, e.Tracked,
 		personTierDate(e.LastContactDate), e.AsOf, e.Projection.Timezone, e.Projection.MaxDirect,

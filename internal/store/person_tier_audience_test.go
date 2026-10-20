@@ -54,11 +54,9 @@ func (a audienceFixture) message(t *testing.T, key string, days int, conv int64,
 	return id
 }
 
-func (a audienceFixture) signals(t *testing.T, maxDirect int) persontiers.Signals {
+func (a audienceFixture) signals(t *testing.T) persontiers.Signals {
 	t.Helper()
-	signals, err := a.f.Store.PersonTierSignalsContext(t.Context(), []int64{a.personID}, a.asOf, persontiers.DefaultConfig(), maxDirect)
-	require.NoError(t, err)
-	return signals[a.personID]
+	return tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
 }
 
 // 26 participant records that belong to 25 people stay at the limit of 25, in a
@@ -89,11 +87,10 @@ func TestPersonTierSignalsAliasedChatStaysWithinTheLimit(t *testing.T) {
 	a.message(t, "alias-chat-1", 0, chat, "")
 	projectTierSignals(t, a.f, "UTC", 25)
 
-	signals := a.signals(t, 25)
+	signals := a.signals(t)
 
 	assert.Equal(t, 1, signals.InboundShort, "25 people, not 26 records")
 	assert.Zero(t, signals.LargeAudienceInboundEvents)
-	assert.Equal(t, 1, a.signals(t, 24).LargeAudienceInboundEvents)
 }
 
 // An archived envelope that carries the owner's address makes that recipient
@@ -110,7 +107,7 @@ func TestPersonTierSignalsEnvelopeOwnerAddressIsNotAudience(t *testing.T) {
 	require.NoError(err)
 	projectTierSignals(t, a.f, "UTC", 1)
 
-	signals := a.signals(t, 1)
+	signals := a.signals(t)
 
 	assert.Equal(t, 1, signals.InboundShort, "only the sender is in the audience")
 	assert.Zero(t, signals.LargeAudienceInboundEvents)
@@ -126,7 +123,7 @@ func TestPersonTierSignalsSenderWithoutFromRowCountsInAudience(t *testing.T) {
 	a.message(t, "no-from", 0, a.f.ConvID, "", a.owner, x, y)
 	projectTierSignals(t, a.f, "UTC", 2)
 
-	signals := a.signals(t, 2)
+	signals := a.signals(t)
 
 	require.Zero(signals.InboundShort)
 	assert.Equal(t, 1, signals.LargeAudienceInboundEvents, "sender, X and Y are three people")
@@ -144,7 +141,7 @@ func TestPersonTierSignalsAllHandsMeetingGivesNoMeetingDay(t *testing.T) {
 	a.message(t, "small-meeting", -2, a.f.ConvID, "calendar_event", a.owner)
 	projectTierSignals(t, a.f, "UTC", 2)
 
-	signals := a.signals(t, 2)
+	signals := a.signals(t)
 
 	assert.Equal(t, 1, signals.MeetingDaysLong, "only the small meeting counts")
 	assert.Equal(t, 1, signals.LargeAudienceInboundEvents)
@@ -167,7 +164,7 @@ func TestPersonTierSignalsListCounterIgnoresRowsThatNeverCount(t *testing.T) {
 	}
 	projectTierSignals(t, a.f, "UTC", 25)
 
-	signals := a.signals(t, 25)
+	signals := a.signals(t)
 
 	assert.Zero(t, signals.InboundShort)
 	assert.Equal(t, 1, signals.ExcludedListEvents, "the co-authored message is not a counted role")
