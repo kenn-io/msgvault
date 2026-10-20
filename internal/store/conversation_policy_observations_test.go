@@ -76,6 +76,31 @@ func TestColdProviderIDChangeDoesNotSupersedeFullObservation(t *testing.T) {
 		"a Cold provider ID must not retract the identity conflict supported by Full observations")
 }
 
+func TestColdProviderIDDoesNotEnrichFullObservationWithoutProviderID(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, source, full, cold, participantID := policyObservationFixture(t)
+
+	fullInput := policyObservationInput(source, &full)
+	fullInput.ProviderUserID = nil
+	first, err := s.RecordContactObservationContext(t.Context(), participantID, fullInput)
+	requirements.NoError(err)
+
+	coldInput := policyObservationInput(source, &cold)
+	coldInput.ProviderUserID = new("provider:cold-only")
+	result, err := s.RecordContactObservationContext(t.Context(), participantID, coldInput)
+	requirements.NoError(err)
+
+	assertions.False(result.Created)
+	assertions.Equal(first.Observation.Envelope.ID, result.Observation.Envelope.ID)
+	assertions.Nil(result.Observation.ProviderUserID,
+		"a Cold room cannot add its provider identity to an existing Full observation")
+	current, err := s.ListParticipantObservationsContext(t.Context(), participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 1)
+	assertions.Nil(current[0].ProviderUserID)
+}
+
 func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -140,12 +165,14 @@ func TestImportedNativePhoneIdentifiersRemainEligibleAfterColdChatRoom(t *testin
 		name           string
 		sourceType     string
 		identifierType string
+		messageType    string
 		phone          string
 		participantID  int64
 	}
 	fixtures := []nativePhone{
-		{name: "imazing-csv", sourceType: "imazing_csv", identifierType: "imazing_csv", phone: "+15550123458"},
-		{name: "synctech-sms", sourceType: "synctech_sms", identifierType: "synctech_sms", phone: "+15550123459"},
+		{name: "imazing-csv", sourceType: "imazing_csv", identifierType: "imazing_csv", messageType: "sms", phone: "+12025550158"},
+		{name: "synctech-sms", sourceType: "synctech_sms", identifierType: "synctech_sms", messageType: "sms", phone: "+12025550159"},
+		{name: "apple-messages", sourceType: "apple_messages", identifierType: "imessage", messageType: "imessage", phone: "+12025550160"},
 	}
 	for i := range fixtures {
 		fixture := &fixtures[i]
@@ -158,7 +185,7 @@ func TestImportedNativePhoneIdentifiersRemainEligibleAfterColdChatRoom(t *testin
 		requirements.NoError(err)
 		_, err = s.UpsertMessageContext(ctx, &store.Message{
 			SourceID: source.ID, ConversationID: room, SourceMessageID: "native-phone-support",
-			MessageType: "sms", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+			MessageType: fixture.messageType, SenderID: sql.NullInt64{Int64: participantID, Valid: true},
 		})
 		requirements.NoError(err)
 		requirements.NoError(s.EnsureConversationParticipantContext(ctx, full, participantID, "member"))

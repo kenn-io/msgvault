@@ -410,11 +410,12 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 func nativeParticipantIdentifierHistoryWhere(identifier string) string {
 	typeValue := identifier + `.identifier_type`
 	providerMatch := `(native_source.source_type=` + typeValue + `
+ OR (native_source.source_type='apple_messages' AND ` + typeValue + `='imessage')
  OR (native_source.source_type IN ('synctech-sms','synctech_sms') AND ` + typeValue + `='sms')
  OR (native_source.source_type IN ('google_messages','google-messages') AND ` + typeValue + ` IN ('google_messages','google-messages'))
  OR EXISTS(SELECT 1 FROM communication_services native_service WHERE native_service.slug=native_source.source_type AND native_service.slug=` + typeValue + `))`
 	return `EXISTS(SELECT 1 FROM messages native_message JOIN sources native_source ON native_source.id=native_message.source_id
- WHERE native_source.source_type IN ('imessage','whatsapp','sms','synctech-sms','synctech_sms','google_messages','google-messages','imazing_csv','google_voice','google-voice')
+	 WHERE native_source.source_type IN ('apple_messages','imessage','whatsapp','sms','synctech-sms','synctech_sms','google_messages','google-messages','imazing_csv','google_voice','google-voice')
  AND ` + providerMatch + `
  AND (native_message.sender_id=` + identifier + `.participant_id OR EXISTS(SELECT 1 FROM message_recipients native_recipient WHERE native_recipient.message_id=native_message.id AND native_recipient.participant_id=` + identifier + `.participant_id)))`
 }

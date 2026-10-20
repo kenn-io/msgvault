@@ -266,28 +266,6 @@ func (s *Store) RecordContactObservationContext(
 				}
 				// A new room support edge must reach matching even for a deduplicated value.
 				observationEnriched = true
-			} else if observation.ProviderUserID == nil {
-				if _, err := tx.ExecContext(ctx,
-					`UPDATE participant_contact_observations
-					 SET provider_user_id = ?, updated_at = `+s.dialect.Now()+`
-					 WHERE id = ?`,
-					stringValue(input.ProviderUserID), observation.Envelope.ID,
-				); err != nil {
-					return fmt.Errorf("update observation provider user ID: %w", err)
-				}
-				observation, err = getParticipantObservationTx(
-					ctx, tx, participantID, observation.Envelope.ID,
-				)
-				if err != nil {
-					return err
-				}
-				if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
-					ctx, tx,
-				); err != nil {
-					return err
-				}
-				result.Observation = observation
-				observationEnriched = true
 			} else {
 				originFull, err := observationOriginFullTx(
 					ctx, tx, input.SourceID, input.ConversationID,
@@ -302,6 +280,28 @@ func (s *Store) RecordContactObservationContext(
 					result.Observation = observation
 					observationEnriched = true
 					skipConversationSupport = true
+				} else if observation.ProviderUserID == nil {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE participant_contact_observations
+						 SET provider_user_id = ?, updated_at = `+s.dialect.Now()+`
+						 WHERE id = ?`,
+						stringValue(input.ProviderUserID), observation.Envelope.ID,
+					); err != nil {
+						return fmt.Errorf("update observation provider user ID: %w", err)
+					}
+					observation, err = getParticipantObservationTx(
+						ctx, tx, participantID, observation.Envelope.ID,
+					)
+					if err != nil {
+						return err
+					}
+					if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
+						ctx, tx,
+					); err != nil {
+						return err
+					}
+					result.Observation = observation
+					observationEnriched = true
 				} else {
 					// A Full observation with a different non-null provider ID
 					// contradicts the current row. Close it and record the new
