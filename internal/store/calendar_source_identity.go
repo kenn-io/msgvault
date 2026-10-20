@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
@@ -83,11 +84,13 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 		}
 		preserveLegacySnapshot := !completeSnapshot
 
-		if err := s.dialect.InvalidateFTSForMessage(q, legacyID); err != nil {
-			return fmt.Errorf("invalidate legacy calendar event search document: %w", err)
-		}
-		if err := s.dialect.InvalidateFTSForMessage(q, duplicateID); err != nil {
-			return fmt.Errorf("invalidate duplicate calendar event search document: %w", err)
+		if s.fts5Available {
+			if err := s.dialect.InvalidateFTSForMessage(q, legacyID); err != nil {
+				return fmt.Errorf("invalidate legacy calendar event search document: %w", err)
+			}
+			if err := s.dialect.InvalidateFTSForMessage(q, duplicateID); err != nil {
+				return fmt.Errorf("invalidate duplicate calendar event search document: %w", err)
+			}
 		}
 		if !preserveLegacySnapshot {
 			if _, err := tx.ExecContext(ctx, `UPDATE messages SET
@@ -186,35 +189,74 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 
 // completeCalendarEventSnapshotTx checks the provider metadata, body row, and
 // raw Calendar JSON that ingestEvent writes separately. Empty event bodies
-// are valid, so the body row's presence is the check. Cancelled metadata is
-// not a replacement snapshot because it can retain stale event bounds.
+// are valid, so the body row's presence is the check. The raw bounds must agree
+// with metadata because a partial update can leave either snapshot stale.
 func completeCalendarEventSnapshotTx(ctx context.Context, tx *loggedTx, messageID int64) (bool, error) {
 	var metadata sql.NullString
-	var hasBody, hasRaw bool
+	var hasBody bool
+	var storedRaw []byte
+	var compression sql.NullString
 	err := tx.QueryRowContext(ctx, `SELECT m.metadata,
 		EXISTS(SELECT 1 FROM message_bodies WHERE message_id = m.id),
-		EXISTS(SELECT 1 FROM message_raw WHERE message_id = m.id
-			AND raw_format = ? AND length(raw_data) > 0)
-		FROM messages m WHERE m.id = ?`, gcalmodel.RawFormat, messageID).Scan(&metadata, &hasBody, &hasRaw)
+		r.raw_data, r.compression
+		FROM messages m LEFT JOIN message_raw r ON r.message_id = m.id
+			AND r.raw_format = ? AND length(r.raw_data) > 0
+		WHERE m.id = ?`, gcalmodel.RawFormat, messageID).Scan(&metadata, &hasBody, &storedRaw, &compression)
 	if err != nil {
 		return false, fmt.Errorf("read duplicate calendar event snapshot completeness: %w", err)
 	}
-	if !metadata.Valid || metadata.String == "" || !hasBody || !hasRaw {
+	if !metadata.Valid || metadata.String == "" || !hasBody || len(storedRaw) == 0 {
 		return false, nil
 	}
-	return calendarEventSnapshotIsReplaceable(metadata.String), nil
+	raw, _, err := decodeMessageRawBounded(storedRaw, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return false, nil //nolint:nilerr // Unreadable raw data cannot replace retained event evidence.
+	}
+	return calendarEventSnapshotIsReplaceable(metadata.String, raw), nil
 }
 
-// calendarEventSnapshotIsReplaceable reports whether metadata describes a
-// complete non-cancelled snapshot. Cancelled rows may retain stale event bounds.
-func calendarEventSnapshotIsReplaceable(metadata string) bool {
+// calendarEventSnapshotIsReplaceable reports whether metadata and the decoded
+// provider snapshot describe the same complete bounds. Cancellation status is
+// deliberately ignored: it can be merged into metadata without replacing raw
+// event content.
+func calendarEventSnapshotIsReplaceable(metadata string, raw []byte) bool {
 	var fields struct {
-		Status string `json:"status"`
+		AllDay bool   `json:"all_day"`
 		Start  string `json:"start"`
 		End    string `json:"end"`
 	}
-	return json.Unmarshal([]byte(metadata), &fields) == nil &&
-		fields.Status != "cancelled" && fields.Start != "" && fields.End != ""
+	if json.Unmarshal([]byte(metadata), &fields) != nil || fields.Start == "" || fields.End == "" {
+		return false
+	}
+	event, err := gcalmodel.DecodeEvent(raw)
+	if err != nil || event.ID == "" || !validCalendarEventBound(event.Start) || !validCalendarEventBound(event.End) {
+		return false
+	}
+	if event.Start.IsAllDay() != event.End.IsAllDay() || fields.AllDay != event.Start.IsAllDay() {
+		return false
+	}
+	return fields.Start == calendarEventBoundString(event.Start) && fields.End == calendarEventBoundString(event.End)
+}
+
+func validCalendarEventBound(bound gcalmodel.EventDateTime) bool {
+	if bound.Date != "" {
+		if !bound.DateTime.IsZero() {
+			return false
+		}
+		_, err := time.Parse(time.DateOnly, bound.Date)
+		return err == nil
+	}
+	return !bound.DateTime.IsZero()
+}
+
+func calendarEventBoundString(bound gcalmodel.EventDateTime) string {
+	if bound.Date != "" {
+		return bound.Date
+	}
+	if !bound.DateTime.IsZero() {
+		return bound.DateTime.Format(time.RFC3339)
+	}
+	return ""
 }
 
 func calendarSourceMessageTx(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string) (int64, string, error) {

@@ -158,7 +158,12 @@ func TestPersistCancelledOffsetFreeExceptionPreservesNewerDuplicateSnapshot(t *t
 	})
 	requirements.NoError(err)
 	assertions.NotEqual(archivedID, duplicateID)
-	metadata, err := json.Marshal(buildMetadata(newerEvent, cal, testAccount), json.Deterministic(true))
+	newerMetadata := buildMetadata(newerEvent, cal, testAccount)
+	// Cancellation is merged into existing metadata without replacing the
+	// complete provider snapshot. Reconciliation must still retain that newer
+	// snapshot when its metadata status is cancelled.
+	newerMetadata.Status = gcal.StatusCancelled
+	metadata, err := json.Marshal(newerMetadata, json.Deterministic(true))
 	requirements.NoError(err)
 	requirements.NoError(st.SetMessageMetadata(duplicateID, sql.NullString{String: string(metadata), Valid: true}))
 	requirements.NoError(st.UpsertMessageBody(duplicateID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}))
@@ -302,6 +307,9 @@ func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotWhenCanonical
 	assertions.NotEqual(archivedID, tombstoneID)
 	requirements.NoError(st.UpsertMessageBody(tombstoneID, sql.NullString{String: "Stale event details", Valid: true}, sql.NullString{}))
 	metadata := buildMetadata(cancelledEvent, cal, testAccount)
+	// A partial write can leave confirmed metadata over stale cancellation raw.
+	// Matching bounds between raw and metadata are required before replacement.
+	metadata.Status = gcal.StatusConfirmed
 	metadata.Start = "2027-03-09T18:00:00-05:00"
 	metadata.End = "2027-03-09T19:00:00-05:00"
 	metadataJSON, err := json.Marshal(metadata, json.Deterministic(true))
