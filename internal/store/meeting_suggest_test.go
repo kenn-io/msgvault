@@ -214,32 +214,35 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
 
 	t.Run("saved link", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
 		links, err := st.MeetingLinksContext(t.Context(), note)
-		require.NoError(t, err)
-		require.Len(t, links, 1)
-		assert.Equal(t, listed.Ref, links[0].Ref)
-		assert.True(t, listed.Start.Equal(links[0].Start))
-		assert.True(t, listed.End.Equal(links[0].End))
+		require.NoError(err)
+		require.Len(links, 1)
+		assert.Equal(listed.Ref, links[0].Ref)
+		assert.True(listed.Start.Equal(links[0].Start))
+		assert.True(listed.End.Equal(links[0].End))
 	})
 	for _, target := range []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}} {
 		t.Run("suggest/"+target.Kind, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
-			require.NoError(t, err)
-			require.Len(t, suggestions, 1)
-			assert.Equal(t, listed.Ref, suggestions[0].Ref)
-			assert.Equal(t, note, suggestions[0].MemberMessageID)
-			assert.Equal(t, 30, suggestions[0].OverlapMinutes)
+			require.NoError(err)
+			require.Len(suggestions, 1)
+			assert.Equal(listed.Ref, suggestions[0].Ref)
+			assert.Equal(note, suggestions[0].MemberMessageID)
+			assert.Equal(30, suggestions[0].OverlapMinutes)
 		})
 	}
 	for _, target := range []OccurrenceRef{ref, {MessageID: edit}} {
 		t.Run(fmt.Sprintf("link/%d", target.MessageID), func(t *testing.T) {
-			require.NoError(t, st.LinkMeetingContext(t.Context(), note, target))
+			assert, require := assert.New(t), require.New(t)
+			require.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			links, err := st.MeetingLinksContext(t.Context(), note)
-			require.NoError(t, err)
-			require.Len(t, links, 1)
-			assert.Equal(t, listed.Ref, links[0].Ref)
-			assert.True(t, listed.Start.Equal(links[0].Start))
-			assert.True(t, listed.End.Equal(links[0].End))
+			require.NoError(err)
+			require.Len(links, 1)
+			assert.Equal(listed.Ref, links[0].Ref)
+			assert.True(listed.Start.Equal(links[0].Start))
+			assert.True(listed.End.Equal(links[0].End))
 		})
 	}
 }
