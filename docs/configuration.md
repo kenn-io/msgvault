@@ -24,16 +24,22 @@ sections; it is not a required starting configuration.
 
 Invalid TOML, wrong-typed values, and invalid values in sections that commands
 read themselves fail every command. An invalid value in a setting only the
-daemon reads does not. These are `[server]` and its `MSGVAULT_*` overrides (except
-`daemon_auto_restart` and `MSGVAULT_REMOTE_ALLOW_INSECURE`), `[web]`,
+daemon reads does not. These are `[server]` and `MSGVAULT_API_PORT` and
+`MSGVAULT_CORS_CREDENTIALS` (but not `daemon_auto_start`,
+`daemon_auto_restart`, or the other `MSGVAULT_*` overrides), `[web]`,
 `[integrations.*]`, `[carddav]`, `[carddav_connections]`,
 `[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
-`[[beeper.drafts]]`, and `[[fastmail]]`. A command prints
-`Warning: invalid daemon config: ...` to stderr and runs. For example, with
+`[[beeper.drafts]]`, and `[[fastmail]]`.
+
+A command that hits one still runs, and prints
+`Warning: invalid daemon config: ...` to stderr after it finishes. With
 `MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
-running daemon. Starting, restarting, or upgrading the daemon, saving
-configuration, and editing settings reject the file with that message. When no daemon is running, the
-on-demand start fails with the config error instead of launching one.
+running daemon, even an older compatible one, which is never replaced while the
+config is invalid. `msgvault serve`, `msgvault daemon start`, and
+`msgvault daemon restart` fail with the config error before they stop or start
+anything. When no usable daemon is running, the on-demand start fails with the
+config error instead of launching one. Saving configuration is refused while
+the file on disk would not load cleanly.
 
 ## Remote Deletion Consent
 

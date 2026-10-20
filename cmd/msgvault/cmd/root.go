@@ -112,11 +112,14 @@ Output and exit status:
 
 			// Load config first; logging options live under [log].
 			var err error
-			inv.cfg, err = config.LoadClientWithOverrides(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
+			load := config.LoadClientWithOverrides
+			if requiresStrictConfig(cmd) {
+				load = config.LoadWithOverrides
+			}
+			inv.cfg, err = load(inv.options.cfgFile, inv.options.homeDir, serveRuntimeOverrides(cmd))
 			if err != nil {
 				return fmt.Errorf("load config: %w", err)
 			}
-			warnDaemonConfigErrors(cmd, inv.cfg)
 			if err := inv.cfg.EnsureHomeDir(); err != nil {
 				return fmt.Errorf(
 					"create data directory %s: %w",
@@ -237,6 +240,36 @@ Output and exit status:
 	registerRootFlags(root)
 	registerAgentFlags(root)
 	return root
+}
+
+// strictConfigAnnotation marks the commands that start or replace a daemon.
+const strictConfigAnnotation = "msgvault/strict-config"
+
+// requiresStrictConfig reports whether cmd must fail on invalid settings that
+// only the daemon reads. Every other command loads them leniently and warns,
+// so it can still reach a running daemon.
+func requiresStrictConfig(cmd *cobra.Command) bool {
+	return cmd.Name() == "serve" || cmd.Annotations[strictConfigAnnotation] != ""
+}
+
+// warnDaemonConfigError prints the invalid daemon-only settings once, after
+// the command ran, unless runErr already reports them. The daemon's own CLI
+// children stay quiet; their parent warned.
+func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error) {
+	if cfg == nil || errors.Is(runErr, errDaemonConfigInvalid) || isDaemonConsoleSubprocess() {
+		return
+	}
+	err := cfg.DaemonConfigError()
+	if err == nil {
+		return
+	}
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	for _, e := range errs {
+		_, _ = fmt.Fprintf(root.ErrOrStderr(), "Warning: invalid daemon config: %v\n", e)
+	}
 }
 
 // skipsConfigLoad reports whether cmd must run without loading config
@@ -390,6 +423,7 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	defer recoverAndLogPanic(inv)
 
 	err := root.ExecuteContext(root.Context())
+	warnDaemonConfigError(root, inv.cfg, err)
 
 	// Record the exit outcome so users can see the per-run
 	// result in the log without parsing error messages.

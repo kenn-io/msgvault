@@ -2,15 +2,17 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -21,26 +23,33 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
-func runExportMessagesForConfig(t *testing.T, home string) (stdout, stderr string, err error) {
+const invalidKataConfig = "[integrations.kata]\nendpoint = '://invalid'\n"
+
+// runRoot executes args on root the way main does, so the post-run warning prints.
+func runRoot(t *testing.T, root *cobra.Command, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	root := newRootCommand()
-	root.AddCommand(newExportMessagesCmd(exportMessagesDeps{}))
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&errOut)
-	root.SetArgs([]string{
-		"--home", home, "export-messages",
-		"--start", "2026-10-01T00:00:00Z", "--end", "2026-10-02T00:00:00Z",
-	})
-	err = root.Execute()
-	if inv := invocationFromCommand(root); inv != nil && inv.logResult != nil {
-		inv.logResult.Close()
-	}
+	root.SetArgs(args)
+	err = executeRootContext(t.Context(), root)
 	return out.String(), errOut.String(), err
 }
 
-const invalidKataConfig = "[integrations.kata]\nendpoint = '://invalid'\n"
+func exportMessagesArgs(home string) []string {
+	return []string{
+		"--home", home, "export-messages",
+		"--start", "2026-10-01T00:00:00Z", "--end", "2026-10-02T00:00:00Z",
+	}
+}
 
+func newExportRoot() *cobra.Command {
+	root := newRootCommand()
+	root.AddCommand(newExportMessagesCmd(exportMessagesDeps{}))
+	return root
+}
+
+// writeInvalidKataHome returns a home whose config has a bad kata endpoint.
 func writeInvalidKataHome(t *testing.T, extra string) string {
 	t.Helper()
 	home := t.TempDir()
@@ -49,15 +58,59 @@ func writeInvalidKataHome(t *testing.T, extra string) string {
 	return home
 }
 
+// serveRunningDaemon records a running daemon of version in home, answering
+// pings as the stand-in process and CLI runs with the given events. The stop
+// seam fails the test if anything tries to stop it.
+func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, events ...string) (pid int, requests *atomic.Int32) {
+	t.Helper()
+	require := require.New(t)
+	standIn := startBlockingDaemonStandIn(t)
+	pid = standIn.Process.Pid
+	created, ok := processCreateTimeMillis(pid)
+	require.True(ok)
+	requests = &atomic.Int32{}
+	mux := http.NewServeMux()
+	mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{
+		Service: daemonService, Version: version, PID: pid,
+	}))
+	mux.HandleFunc("/api/v1/cli/run", daemonCLIRunTestHandler(t, requests, nil, events...))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
+	require.NoError(err)
+	_, err = daemonRuntimeStore(home).Write(daemon.RuntimeRecord{
+		PID:     pid,
+		Network: daemon.NetworkTCP,
+		Address: net.JoinHostPort(host, portText),
+		Service: daemonService,
+		Version: version,
+		Metadata: map[string]string{
+			runtimeHost:             host,
+			runtimePort:             portText,
+			runtimeAPIVersion:       strconv.Itoa(apiVersion),
+			runtimeAPISchemaVersion: api.APISchemaVersion,
+			runtimeCreateTime:       strconv.FormatInt(created, 10),
+			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
+		},
+	})
+	require.NoError(err)
+	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
+		require.FailNow("a daemon must not be stopped while the config is invalid")
+		return errors.New("unreachable")
+	})
+	return pid, requests
+}
+
+const exportCompleteEvents = "{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n" +
+	"{\"type\":\"complete\"}"
+
 func TestInvalidDaemonConfigWarnsOnceAndExportReachesDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	assert := assert.New(t)
 	require := require.New(t)
-	server, requests := newDaemonCLIRunnerTestServer(t, nil,
-		"{\"type\":\"stdout\",\"data\":\"{\\\"record_type\\\":\\\"complete\\\"}\\n\"}\n"+
-			"{\"type\":\"complete\"}\n")
+	server, requests := newDaemonCLIRunnerTestServer(t, nil, exportCompleteEvents)
 	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
 
-	stdout, stderr, err := runExportMessagesForConfig(t, home)
+	stdout, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
 	require.NoError(err)
 	assert.Equal(int32(1), requests.Load())
 	assert.Contains(stdout, `"record_type":"complete"`)
@@ -66,40 +119,94 @@ func TestInvalidDaemonConfigWarnsOnceAndExportReachesDaemon(t *testing.T) { //no
 	assert.Contains(stderr, "[integrations.kata]")
 }
 
-func TestInvalidDaemonConfigRefusesAutostart(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	assert := assert.New(t)
+	require := require.New(t)
+	withTestVersion(t, "v1.1.0")
 	home := writeInvalidKataHome(t, "")
-	// The real launcher must refuse first; a missing executable keeps a regression harmless.
-	stubStartServeBackgroundProcess(t, func(c *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		opts.ExecutablePath = filepath.Join(c.HomeDir, "missing-msgvault")
-		return startServeBackgroundProcess(c, opts)
+	pid, requests := serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion, exportCompleteEvents)
+	stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		require.FailNow("a running daemon must be reused")
+		return nil, errors.New("unreachable")
 	})
 
-	_, stderr, err := runExportMessagesForConfig(t, home)
-	require.ErrorContains(t, err, "start background daemon: daemon config invalid")
-	assert.NoFileExists(filepath.Join(home, "serve.log"))
-	assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
+	stdout, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	require.NoError(err, stderr)
+	assert.Equal(int32(1), requests.Load())
+	assert.Contains(stdout, `"record_type":"complete"`)
+	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
+	assert.True(daemon.ProcessAlive(pid), "the older daemon must keep running")
 }
 
-func TestInvalidDaemonConfigRefusesServe(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	home := writeInvalidKataHome(t, "")
-	root := newRootCommand()
-	root.AddCommand(&cobra.Command{Use: "serve", RunE: runServe})
-	var errOut bytes.Buffer
-	root.SetErr(&errOut)
-	root.SetArgs([]string{"--home", home, "serve"})
-	err := root.Execute()
-	if inv := invocationFromCommand(root); inv != nil && inv.logResult != nil {
-		inv.logResult.Close()
+func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	for _, tc := range []struct {
+		name       string
+		incompatOK bool
+	}{
+		{name: "no daemon"},
+		{name: "incompatible daemon", incompatOK: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			withTestVersion(t, "v1.1.0")
+			home := writeInvalidKataHome(t, "")
+			if tc.incompatOK {
+				serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion+1)
+			}
+			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
+				require.FailNow(t, "autostart must not launch a daemon from an invalid config")
+				return nil, errors.New("unreachable")
+			})
+
+			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+			require.ErrorContains(t, err, "start background daemon: daemon config invalid")
+			assert.NoFileExists(filepath.Join(home, "serve.log"))
+			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
+		})
 	}
-	require.ErrorContains(t, err, "daemon config invalid")
-	assert.Equal(t, 1, strings.Count(errOut.String(), "[integrations.kata]"), "report the error once: %q", errOut.String())
+}
+
+func TestInvalidDaemonConfigFailsLifecycleCommandsBeforeStoppingDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	for _, args := range [][]string{
+		{"serve"},
+		{"daemon", "start"},
+		{"daemon", "restart"},
+		{"serve", "restart"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			assert := assert.New(t)
+			withTestVersion(t, "v1.1.0")
+			home := writeInvalidKataHome(t, "")
+			pid, _ := serveRunningDaemon(t, home, "v1.1.0", daemonAPIVersion)
+
+			root := newRootCommand()
+			root.AddCommand(newDaemonCommand())
+			serve := &cobra.Command{Use: "serve", RunE: runServe}
+			addServeLifecycleCommands(serve)
+			root.AddCommand(serve)
+			_, stderr, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
+			require.ErrorContains(t, err, "load config")
+			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
+			assert.True(daemon.ProcessAlive(pid))
+		})
+	}
+}
+
+func TestDaemonCLIChildStaysQuietAboutInvalidDaemonConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	home := writeInvalidKataHome(t, "")
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	root := newRootCommand()
+	root.AddCommand(&cobra.Command{Use: "noop", Run: func(*cobra.Command, []string) {}})
+
+	_, stderr, err := runRoot(t, root, "--home", home, "noop")
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
 }
 
 func TestClientCommandsFailOnInvalidClientConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[backup]\nzstd_level = 20\n"), 0o600))
-	_, _, err := runExportMessagesForConfig(t, home)
+	_, _, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
 	require.ErrorContains(t, err, "load config")
 }
 
@@ -134,100 +241,4 @@ endpoint = "://invalid"
 	current, err := currentSemanticPersonVectorConfigSource(invocationFromContext(testCtx))()
 	require.NoError(err)
 	assert.True(current.People.Enabled)
-}
-
-// writeRunningDaemon records a running daemon of the given version in home. It
-// points at a helper process so a wrongly issued stop cannot signal the test binary.
-func writeRunningDaemon(t *testing.T, home, version string) <-chan struct{} {
-	t.Helper()
-	require := require.New(t)
-	helper := helperProcessCommand(t.Context(), "block")
-	require.NoError(helper.Start())
-	t.Cleanup(func() { _ = helper.Process.Kill() })
-	exited := make(chan struct{})
-	go func() { _ = helper.Wait(); close(exited) }()
-	created, ok := processCreateTimeMillis(helper.Process.Pid)
-	require.True(ok)
-	ping := httptest.NewServer(daemon.NewPingHandler(daemon.PingHandlerOptions{
-		Service: daemonService, Version: version, PID: helper.Process.Pid,
-	}))
-	t.Cleanup(ping.Close)
-	host, portText, err := net.SplitHostPort(ping.Listener.Addr().String())
-	require.NoError(err)
-	_, err = daemonRuntimeStore(home).Write(daemon.RuntimeRecord{
-		PID:     helper.Process.Pid,
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Version: version,
-		Metadata: map[string]string{
-			runtimeHost:             host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(daemonAPIVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       strconv.FormatInt(created, 10),
-		},
-	})
-	require.NoError(err)
-	return exited
-}
-
-func loadInvalidKataConfig(t *testing.T, home string) *config.Config {
-	t.Helper()
-	path := filepath.Join(home, "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte(invalidKataConfig), 0o600))
-	cfg, err := config.LoadClientWithOverrides(path, home, config.RuntimeOverrides{})
-	require.NoError(t, err)
-	return cfg
-}
-
-func TestDaemonStartRejectsInvalidDaemonConfigInsteadOfReusingDaemon(t *testing.T) {
-	require := require.New(t)
-	withTestVersion(t, "v1.1.0")
-	home := t.TempDir()
-	writeRunningDaemon(t, home, "v1.1.0")
-	cfg := loadInvalidKataConfig(t, home)
-
-	start := newLifecycleCommand("start", false)
-	var stdout bytes.Buffer
-	start.SetOut(&stdout)
-	start.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{homeDir: home}))
-	require.ErrorContains(start.RunE(start, nil), "daemon config invalid")
-	require.NotContains(stdout.String(), "already running")
-}
-
-func TestInvalidDaemonConfigLeavesRunningDaemonAlone(t *testing.T) {
-	for _, tc := range []struct {
-		name, daemonVersion string
-		reuse               bool
-	}{
-		{"stale daemon is not stopped", "v1.0.0", false},
-		{"compatible daemon is reused", "v1.1.0", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			withTestVersion(t, "v1.1.0")
-			home := t.TempDir()
-			exited := writeRunningDaemon(t, home, tc.daemonVersion)
-			cfg := loadInvalidKataConfig(t, home)
-			cfg.Server.DaemonAutoRestart = config.DaemonAutoRestartNewer
-
-			prep, err := prepareBackgroundDaemonStart(cfg, cfg.Server.DaemonAutoRestart, "", slog.Default())
-			if tc.reuse {
-				require.NoError(err)
-				require.NotNil(prep.Reusable)
-				return
-			}
-			require.ErrorContains(err, "daemon config invalid")
-			require.ErrorContains(err, "[integrations.kata]")
-			require.Never(func() bool {
-				select {
-				case <-exited:
-					return true
-				default:
-					return false
-				}
-			}, 200*time.Millisecond, 20*time.Millisecond, "daemon must still be running")
-		})
-	}
 }

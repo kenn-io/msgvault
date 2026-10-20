@@ -608,22 +608,7 @@ type Config struct {
 	// daemonErrs holds validation errors from settings only the daemon reads.
 	// Load joins them into its error; LoadClientWithOverrides keeps them here.
 	daemonErrs []error
-	// daemonErrsReported is set once this process has shown daemonErrs to the user.
-	daemonErrsReported bool
 }
-
-// MarkDaemonConfigReported records that the user has seen DaemonConfigErrors,
-// so a later fatal error can point at them instead of repeating them.
-func (c *Config) MarkDaemonConfigReported() { c.daemonErrsReported = true }
-
-// DaemonConfigReported reports whether MarkDaemonConfigReported was called.
-func (c *Config) DaemonConfigReported() bool { return c.daemonErrsReported }
-
-// fastmailConfigError tags the [[fastmail]] error so FastmailSourceFor can
-// find it among the recorded daemon errors.
-type fastmailConfigError struct{ error }
-
-func (e fastmailConfigError) Unwrap() error { return e.error }
 
 func (c *Config) deferDaemonError(err error) {
 	if err != nil {
@@ -631,13 +616,8 @@ func (c *Config) deferDaemonError(err error) {
 	}
 }
 
-// DaemonConfigErrors lists invalid settings that only the daemon reads, as
-// recorded by LoadClientWithOverrides.
-func (c *Config) DaemonConfigErrors() []error {
-	return slices.Clone(c.daemonErrs)
-}
-
-// DaemonConfigError joins DaemonConfigErrors, or returns nil when there are none.
+// DaemonConfigError joins the invalid settings only the daemon reads, as
+// recorded by LoadClientWithOverrides, or returns nil when there are none.
 func (c *Config) DaemonConfigError() error {
 	return errors.Join(c.daemonErrs...)
 }
@@ -1027,7 +1007,7 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 
 // LoadClientConfigFile decodes a captured snapshot for read-only use by a
 // client command. Like LoadClientWithOverrides, it records invalid daemon-only
-// settings in DaemonConfigErrors instead of failing.
+// settings in DaemonConfigError instead of failing.
 func LoadClientConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
 	return loadConfigFileLenient(snapshot, homeDir, nil)
 }
@@ -1125,9 +1105,8 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			cfg.deferDaemonError(fmt.Errorf("unknown Beeper draft config key %q", key.String()))
 		}
 	}
-	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
-		cfg.deferDaemonError(fastmailConfigError{err})
-	}
+	cfg.normalizeFastmailSources(fastmailSourceIDConfigured(content))
+	cfg.deferDaemonError(cfg.validateFastmailSources())
 	cfg.deferDaemonError(cfg.validateDraftSources(content))
 
 	// Expand ~ in paths
@@ -1331,13 +1310,21 @@ func fastmailSourceIDConfigured(content []byte) []bool {
 	return configured
 }
 
-func (c *Config) validateFastmailSources(sourceIDConfigured []bool) error {
-	seenAccounts := []string{}
-	seenSourceIDs := map[int64]bool{}
+// normalizeFastmailSources trims selectors and records which entries set
+// source_id, for every entry, so validation has no order-dependent side effects.
+func (c *Config) normalizeFastmailSources(sourceIDConfigured []bool) {
 	for i := range c.Fastmail {
 		source := &c.Fastmail[i]
 		source.Account = strings.TrimSpace(source.Account)
 		source.sourceIDConfigured = i < len(sourceIDConfigured) && sourceIDConfigured[i]
+	}
+}
+
+func (c *Config) validateFastmailSources() error {
+	seenAccounts := []string{}
+	seenSourceIDs := map[int64]bool{}
+	for i := range c.Fastmail {
+		source := &c.Fastmail[i]
 		if source.sourceIDConfigured && source.SourceID <= 0 {
 			return fmt.Errorf("[[fastmail]] entry %d: source_id must be positive", i+1)
 		}
@@ -1380,8 +1367,8 @@ var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
 // inventory to multiple ingestion sources. Explicit source ID entries take
 // precedence over account matches.
 func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
-	if configErr, ok := errors.AsType[fastmailConfigError](c.DaemonConfigError()); ok {
-		return nil, configErr.error
+	if err := c.validateFastmailSources(); err != nil {
+		return nil, err
 	}
 	if st == nil {
 		return nil, errors.New("fastmail source lookup requires a source store")
@@ -1552,10 +1539,12 @@ func (c *Config) Save() error {
 }
 
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
-	// Saving rewrites the file from the decoded struct, which drops unknown
-	// keys and replaces explicit zeros that a lenient load deferred.
-	if err := c.DaemonConfigError(); err != nil {
-		return fmt.Errorf("refusing to save config: invalid daemon config: %w", err)
+	// Saving re-encodes the decoded struct, which would drop unknown keys and
+	// default explicit zeros in a file the daemon would reject.
+	if snapshot, err := ReadConfigFile(c.ConfigFilePath()); err == nil && snapshot.Exists {
+		if _, err := LoadConfigFile(snapshot, c.HomeDir); err != nil {
+			return fmt.Errorf("refusing to save config: %w", err)
+		}
 	}
 	// Ensure home directory exists
 	if err := c.EnsureHomeDir(); err != nil {

@@ -35,7 +35,7 @@ func LoadWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, 
 }
 
 // LoadClientWithOverrides loads like LoadWithOverrides, but records invalid
-// settings that only the daemon reads in DaemonConfigErrors instead of
+// settings that only the daemon reads in DaemonConfigError instead of
 // failing, so client commands can still reach a running daemon.
 func LoadClientWithOverrides(path, home string, overrides RuntimeOverrides) (*Config, error) {
 	return loadWithOverrides(path, home, overrides)
@@ -156,11 +156,20 @@ func (s *secretSources) resolve() (string, error) {
 }
 
 func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
+	bindSupplied := o.BindAddr != nil
 	if o.BindAddr != nil {
 		c.runtimeConfigState.flags.BindAddr = new(*o.BindAddr)
-		c.overrideBindAddr(*o.BindAddr, "--bind")
+		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, *o.BindAddr)
+		c.Server.BindAddr = *o.BindAddr
+		c.bindSource = "--bind"
 	} else if v, ok := os.LookupEnv("MSGVAULT_BIND_ADDR"); ok {
-		c.overrideBindAddr(v, "MSGVAULT_BIND_ADDR")
+		bindSupplied = true
+		c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, v)
+		c.Server.BindAddr = v
+		c.bindSource = "MSGVAULT_BIND_ADDR"
+	}
+	if bindSupplied && strings.TrimSpace(c.Server.BindAddr) == "" {
+		return errors.New("server bind address is empty")
 	}
 	if o.APIPort != nil {
 		c.runtimeConfigState.flags.APIPort = new(*o.APIPort)
@@ -198,8 +207,8 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 			value, err := strconv.ParseBool(v)
 			if err != nil {
 				err = fmt.Errorf("%s must be a boolean", entry.name)
-				// Client commands read [remote] to reach the daemon, so that one stays fatal.
-				if entry.destination == &c.Remote.AllowInsecure {
+				// Only the daemon reads CORS credentials; clients read the others.
+				if entry.destination != &c.Server.CORSCredentials {
 					return err
 				}
 				c.deferDaemonError(err)
@@ -236,17 +245,6 @@ func (c *Config) applyRuntimeOverrides(o RuntimeOverrides) error {
 		}
 	}
 	return nil
-}
-
-// overrideBindAddr applies a bind address, or records an error for an empty one.
-func (c *Config) overrideBindAddr(addr, source string) {
-	if strings.TrimSpace(addr) == "" {
-		c.deferDaemonError(fmt.Errorf("%s: server bind address is empty", source))
-		return
-	}
-	c.runtimeConfigState.bindAddr.capture(c.Server.BindAddr, addr)
-	c.Server.BindAddr = addr
-	c.bindSource = source
 }
 
 func (c *Config) credentialPath(path string) string {

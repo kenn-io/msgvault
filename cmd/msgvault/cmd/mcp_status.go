@@ -39,7 +39,6 @@ func newMCPStatusCommand() *cobra.Command {
 				return err
 			}
 			inv.cfg = cfg
-			warnDaemonConfigErrors(command, cfg)
 			directory := filepath.Join(cfg.HomeDir, "mcp")
 			endpoints, err := mcpdiscovery.List(directory)
 			if err != nil {

@@ -60,6 +60,9 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 		Hidden: hidden,
 		Args:   cobra.NoArgs,
 	}
+	if name == "start" || name == "restart" {
+		cmd.Annotations = map[string]string{strictConfigAnnotation: "required"}
+	}
 	switch name {
 	case "start":
 		cmd.Short = "Start msgvault daemon in the background"
@@ -67,10 +70,6 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
-			}
-			// Check before the reuse branch reports an already running daemon.
-			if err := requireDaemonConfig(state.cfg); err != nil {
-				return err
 			}
 			return runServeStart(cmd, state.cfg)
 		}
@@ -359,8 +358,10 @@ func prepareBackgroundDaemonStart(
 	return backgroundDaemonStartPreparation{}, nil
 }
 
+var errIncompatibleDaemon = errors.New("incompatible daemon is already running")
+
 func incompatibleDaemonError(err error, guidance string) error {
-	return fmt.Errorf("incompatible daemon is already running: %w; %s", err, guidance)
+	return fmt.Errorf("%w: %w; %s", errIncompatibleDaemon, err, guidance)
 }
 
 func runServeStart(cmd *cobra.Command, c *config.Config) error {
@@ -888,9 +889,6 @@ var stopBackgroundServeStartupForRun = func(proc *backgroundServeProcess) error 
 }
 
 func startServeBackgroundProcess(c *config.Config, opts backgroundServeStartOptions) (*backgroundServeProcess, error) {
-	if err := requireDaemonConfig(c); err != nil {
-		return nil, err
-	}
 	exe := opts.ExecutablePath
 	if exe == "" {
 		var err error

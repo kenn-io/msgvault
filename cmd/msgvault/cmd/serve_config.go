@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -35,36 +34,9 @@ func resolveServeBind(address string) (string, error) {
 	return config.ResolveBindAddress(address)
 }
 
-// requireDaemonConfig rejects settings that client commands only warn about
-// but a daemon cannot start with.
-func requireDaemonConfig(cfg *config.Config) error {
-	if err := cfg.DaemonConfigError(); err != nil {
-		if cfg.DaemonConfigReported() {
-			return errors.New("daemon config invalid; see the warning above")
-		}
-		return fmt.Errorf("daemon config invalid: %w", err)
-	}
-	return nil
-}
-
-// warnDaemonConfigErrors tells a client command about invalid daemon-only
-// settings. The daemon's own CLI children stay quiet; their parent warned.
-func warnDaemonConfigErrors(cmd *cobra.Command, cfg *config.Config) {
-	if isDaemonConsoleSubprocess() {
-		return
-	}
-	for _, err := range cfg.DaemonConfigErrors() {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: invalid daemon config: %v\n", err)
-		cfg.MarkDaemonConfigReported()
-	}
-}
-
 func prepareServeConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return errors.New("configuration is unavailable")
-	}
-	if err := requireDaemonConfig(cfg); err != nil {
-		return err
 	}
 	if _, err := cfg.ResolveServerBindAddress(); err != nil {
 		return err
