@@ -93,17 +93,3 @@ func TestConversationPolicyWindowBounds(t *testing.T) {
 		})
 	}
 }
-
-func FuzzConversationOverrideIdentity(f *testing.F) {
-	f.Add("beeper", "example-account", "room")
-	f.Add("x/y", "a:b", "!room:example.com")
-	f.Fuzz(func(t *testing.T, source, account, room string) {
-		assertions := assert.New(t)
-		cfg := NewDefaultConfig()
-		cfg.ConversationPolicy.Overrides = []conversationpolicy.Override{{SourceType: source, SourceIdentifier: account, ConversationID: room, Tier: conversationpolicy.Cold}}
-		assertions.Equal(conversationpolicy.Cold, cfg.ConversationOverride(source, account, room))
-		assertions.Empty(cfg.ConversationOverride(source+"x", account, room))
-		assertions.Empty(cfg.ConversationOverride(source, account+"x", room))
-		assertions.Empty(cfg.ConversationOverride(source, account, room+"x"))
-	})
-}

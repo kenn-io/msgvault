@@ -37,6 +37,42 @@ func (s *Store) ConversationFullEligibleContext(ctx context.Context, id int64) (
 	return eligible, err
 }
 
+func observationOriginFullTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceID, conversationID *int64,
+) (bool, error) {
+	if conversationID != nil {
+		if sourceID == nil {
+			return false, errors.New("observation conversation must belong to its source")
+		}
+		var belongs bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM conversations c WHERE c.id=? AND c.source_id=?
+		)`, *conversationID, *sourceID).Scan(&belongs); err != nil {
+			return false, err
+		}
+		if !belongs {
+			return false, errors.New("observation conversation must belong to its source")
+		}
+		var eligible bool
+		err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM conversations c
+			WHERE c.id=? AND c.source_id=? AND `+FullConversationWhere("c")+`
+		)`, *conversationID, *sourceID).Scan(&eligible)
+		return eligible, err
+	}
+	if sourceID == nil {
+		return true, nil
+	}
+	var eligible bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sources s WHERE s.id=?
+		  AND s.source_type NOT IN ('beeper','slack','slackdump','discord','teams')
+	)`, *sourceID).Scan(&eligible)
+	return eligible, err
+}
+
 func (s *Store) withPolicyAttributionTxContext(ctx context.Context, fn func(*loggedTx) error) error {
 	if !s.IsPostgreSQL() {
 		release, err := s.AcquireSQLiteConversationPolicyFence(ctx, ConversationPolicyExclusive)

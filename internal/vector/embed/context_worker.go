@@ -25,7 +25,7 @@ type ContextWorkStore interface {
 	LatestEmbeddingChangeSequence(ctx context.Context) (int64, error)
 	ScanForEmbeddingScoped(ctx context.Context, target, afterID int64, limit int, messageTypes []string, sourceIDs []int64) ([]int64, error)
 	SetEmbedGenGroupIfUnchanged(ctx context.Context, stamps []store.EmbedGenStamp, metadata store.EmbedGenMetadataVersion, target int64) (bool, int, error)
-	ResetEmbedGen(ctx context.Context, ids []int64) error
+	ResetEmbedGenCoverage(ctx context.Context, ids []int64) error
 }
 
 var _ ContextWorkStore = (*store.Store)(nil)
@@ -988,7 +988,7 @@ func (w *ContextWorker) coverPreparedScopePlan(ctx context.Context, gen vector.G
 	scope := plan.scope
 	failedIDs := failedPreparedDocumentIDs(plan)
 	if len(failedIDs) != 0 {
-		if err := w.deps.Store.ResetEmbedGen(ctx, failedIDs); err != nil {
+		if err := w.deps.Store.ResetEmbedGenCoverage(ctx, failedIDs); err != nil {
 			return fmt.Errorf("reset rejected document coverage: %w", err)
 		}
 	}

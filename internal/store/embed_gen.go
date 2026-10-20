@@ -472,6 +472,18 @@ func (s *Store) SetEmbedGenIfUnchanged(ctx context.Context, items []EmbedGenStam
 // worker re-embeds it with the corrected content on its next run. Chunked
 // to stay under the driver's bind limit; idempotent.
 func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
+	return s.resetEmbedGen(ctx, ids, true)
+}
+
+// ResetEmbedGenCoverage clears generation coverage without changing the
+// message input revision. Contextual generation builds use this when a
+// provider rejects an unchanged document: an active generation can still have
+// a valid vector for the current inputs.
+func (s *Store) ResetEmbedGenCoverage(ctx context.Context, ids []int64) error {
+	return s.resetEmbedGen(ctx, ids, false)
+}
+
+func (s *Store) resetEmbedGen(ctx context.Context, ids []int64, advanceRevision bool) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -485,8 +497,11 @@ func (s *Store) ResetEmbedGen(ctx context.Context, ids []int64) error {
 			placeholders[i] = "?"
 			args = append(args, id)
 		}
-		q := `UPDATE messages SET embed_gen = NULL, embedding_revision = embedding_revision + 1 WHERE id IN (` +
-			strings.Join(placeholders, ",") + `)`
+		set := `embed_gen = NULL`
+		if advanceRevision {
+			set += `, embedding_revision = embedding_revision + 1`
+		}
+		q := `UPDATE messages SET ` + set + ` WHERE id IN (` + strings.Join(placeholders, ",") + `)`
 		if _, err := s.db.ExecContext(ctx, q, args...); err != nil {
 			return fmt.Errorf("reset embed_gen: %w", err)
 		}

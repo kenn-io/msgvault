@@ -33,6 +33,49 @@ func policyObservationInput(source int64, room *int64) store.ParticipantContactO
 	return store.ParticipantContactObservationInput{SourceID: &source, ConversationID: room, AddressKind: store.ContactAddressEmail, OriginalValue: "shared@example.org", ProviderUserID: new("provider:synthetic-user"), Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation}}
 }
 
+func TestColdProviderIDChangeDoesNotSupersedeFullObservation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, source, full, cold, participantID := policyObservationFixture(t)
+	ctx := t.Context()
+	otherParticipantID, err := s.EnsureParticipantByIdentifier(
+		"beeper", "synthetic-other-user", "Synthetic Other User",
+	)
+	requirements.NoError(err)
+
+	fullInput := policyObservationInput(source, &full)
+	fullInput.ProviderUserID = new("provider-left")
+	first, err := s.RecordContactObservationContext(ctx, participantID, fullInput)
+	requirements.NoError(err)
+
+	otherInput := policyObservationInput(source, &full)
+	otherInput.ProviderUserID = new("provider-right")
+	conflict, err := s.RecordContactObservationContext(ctx, otherParticipantID, otherInput)
+	requirements.NoError(err)
+	requirements.True(conflict.Conflicting)
+
+	coldInput := policyObservationInput(source, &cold)
+	coldInput.ProviderUserID = new("provider-right")
+	result, err := s.RecordContactObservationContext(ctx, participantID, coldInput)
+	requirements.NoError(err)
+
+	assertions.False(result.Created,
+		"a Cold observation cannot replace the same identity already supported by a Full room")
+	assertions.Equal(first.Observation.Envelope.ID, result.Observation.Envelope.ID)
+	current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 1)
+	assertions.Equal("provider-left", *current[0].ProviderUserID)
+
+	eligible, err := s.ObservationFullEligibleContext(ctx, first.Observation.Envelope.ID)
+	requirements.NoError(err)
+	assertions.True(eligible, "the Full room's identity evidence must stay eligible")
+	candidates, err := s.ListIdentityMatchCandidatesContext(ctx, nil, 10, 0)
+	requirements.NoError(err)
+	assertions.Len(candidates, 1,
+		"a Cold provider ID must not retract the identity conflict supported by Full observations")
+}
+
 func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

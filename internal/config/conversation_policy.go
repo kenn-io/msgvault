@@ -42,17 +42,6 @@ func (c *Config) ConversationParticipantLimit(sourceType string) int {
 	}
 }
 
-// ConversationOverride resolves a source-scoped declarative override. A saved
-// CLI override takes precedence at the Store boundary.
-func (c *Config) ConversationOverride(sourceType, sourceIdentifier, conversationID string) conversationpolicy.Tier {
-	for _, o := range c.ConversationPolicy.Overrides {
-		if o.SourceType == sourceType && o.SourceIdentifier == sourceIdentifier && o.ConversationID == conversationID {
-			return o.Tier
-		}
-	}
-	return ""
-}
-
 func (c *Config) validateConversationPolicy() error {
 	for _, provider := range []string{"beeper", "slack", "discord", "teams"} {
 		if c.ConversationParticipantLimit(provider) < 0 {

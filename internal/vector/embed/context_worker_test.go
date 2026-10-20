@@ -2159,6 +2159,42 @@ func TestContextWorker_DocumentTooLargeLeavesOnlyItsScopeUncovered(t *testing.T)
 	assert.Equal(t, vector.DocumentCurrent, bad.State)
 }
 
+func TestContextWorker_ReplacementGenerationRejectionPreservesActiveVectors(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	messageID := f.seed("beeper", f.chatID, time.Now().UTC(), "reject-replacement-document")
+	_, err := f.run()
+	require.NoError(t, err)
+	assert.Zero(t, f.missing())
+	var beforeRevision int64
+	require.NoError(t, f.store.DB().QueryRow(
+		`SELECT embedding_revision FROM messages WHERE id = ?`, messageID).Scan(&beforeRevision))
+	beforeHits, err := f.backend.Search(t.Context(), f.gen, []float32{1, 1, 3, 4}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, beforeHits, 1)
+	assert.Equal(t, messageID, beforeHits[0].MessageID)
+	require.NoError(t, f.backend.ActivateGeneration(t.Context(), f.gen, true))
+
+	building, err := f.backend.CreateGeneration(t.Context(), "synthetic-replacement", 4, "synthetic-replacement:4")
+	require.NoError(t, err)
+	f.client.rejectText = "reject-replacement-document"
+	result, err := f.worker.RunOnce(t.Context(), building, testEmbeddingPassScope())
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.False(t, result.Contextual.Converged,
+		"the replacement generation must remain uncovered while its provider rejects the document")
+
+	var afterRevision int64
+	require.NoError(t, f.store.DB().QueryRow(
+		`SELECT embedding_revision FROM messages WHERE id = ?`, messageID).Scan(&afterRevision))
+	assert.Equal(t, beforeRevision, afterRevision,
+		"a rejected unchanged document only needs its replacement coverage cleared")
+	afterHits, err := f.backend.Search(t.Context(), f.gen, []float32{1, 1, 3, 4}, 10, vector.Filter{})
+	require.NoError(t, err)
+	require.Len(t, afterHits, 1,
+		"reconciling a replacement generation must preserve the current generation's still-valid vectors")
+	assert.Equal(t, messageID, afterHits[0].MessageID)
+}
+
 func TestContextWorker_TokenDenseDocumentTruncatesInsteadOfBlockingActivation(t *testing.T) {
 	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
 		policy := AssemblyPolicy{MaxChunkRunes: 16384, ChatGap: 30 * time.Minute}

@@ -1202,6 +1202,60 @@ func TestParticipantDisplayNameDriftDetectedAndRepairedByDerivedRefresh(t *testi
 		"repaired cache must be clean (reason: %q)", repaired.Reason)
 }
 
+func TestRecipientSupportRefreshRestagesParticipantProjection(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	c, st := policyCacheFixture(t)
+	_, err := st.DB().Exec(`
+		INSERT INTO participants (id, email_address, display_name)
+		VALUES (3, 'recipient@example.test', 'Synthetic Recipient');
+		INSERT INTO conversation_participants (conversation_id, participant_id)
+		VALUES (2, 3)
+	`)
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(1, "to", []int64{3}, []string{"Synthetic Recipient"}))
+	analyticsDir := c.AnalyticsDir()
+	_, err = buildCache(c.DatabaseDSN(), analyticsDir, true)
+	requirements.NoError(err)
+	messagesBefore := snapshotMessagesDatasetBytes(t, analyticsDir)
+
+	duckDB, err := duckdbutil.Open(
+		context.Background(),
+		duckdbutil.BuilderPolicy(filepath.Join(c.Data.DataDir, "recipient-refresh-duckdb-tmp")),
+	)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(duckDB.Close()) }()
+	var beforeName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = 3
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&beforeName))
+	assertions.Equal("Synthetic Recipient", beforeName,
+		"the Full recipient envelope initially supports this participant name")
+
+	requirements.NoError(st.ReplaceMessageRecipients(1, "to", nil, nil))
+	staleness := cacheNeedsBuild(c.DatabaseDSN(), analyticsDir)
+	requirements.True(staleness.NeedsBuild)
+	assertions.True(staleness.HasRelatedRowDrift)
+	assertions.False(staleness.HasParticipantDisplayNameDrift,
+		"recipient evidence changes without bumping the participant display-name revision")
+
+	result, err := buildCacheAuto(c.DatabaseDSN(), analyticsDir)
+	requirements.NoError(err)
+	assertions.True(result.IdentityOnly)
+	assertions.Zero(result.ExportedCount,
+		"a recipient-only repair must refresh derived projections without re-exporting messages")
+	assertions.Equal(messagesBefore, snapshotMessagesDatasetBytes(t, analyticsDir),
+		"a related-row refresh must not rewrite message facts")
+
+	var afterName string
+	requirements.NoError(duckDB.QueryRow(`
+		SELECT display_name FROM read_parquet(?) WHERE id = 3
+	`, filepath.Join(analyticsDir, tableParticipants, "*.parquet")).Scan(&afterName))
+	assertions.Empty(afterName,
+		"removing the last Full recipient name support must withdraw it from participants.parquet")
+	assertions.False(cacheNeedsBuild(c.DatabaseDSN(), analyticsDir).NeedsBuild)
+}
+
 // TestParticipantIdentifierDriftDetectedAndRepairedByDerivedRefresh pins the
 // staleness contract for identifier-mapping changes without message
 // activity: SetParticipantIdentifier alone must surface as derived-only

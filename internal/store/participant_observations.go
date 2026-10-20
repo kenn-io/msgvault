@@ -253,6 +253,7 @@ func (s *Store) RecordContactObservationContext(
 		)
 		providerContradicted := false
 		observationEnriched := false
+		skipConversationSupport := false
 		if err == nil {
 			sameProvider := observation.ProviderUserID != nil &&
 				input.ProviderUserID != nil &&
@@ -288,15 +289,30 @@ func (s *Store) RecordContactObservationContext(
 				result.Observation = observation
 				observationEnriched = true
 			} else {
-				// A different non-null provider ID contradicts the current row.
-				// Close it and record the new binding as a fresh observation so
-				// both facts survive in history.
-				if err := s.supersedeObservationRowTx(
-					ctx, tx, observation.Envelope.ID,
-				); err != nil {
+				originFull, err := observationOriginFullTx(
+					ctx, tx, input.SourceID, input.ConversationID,
+				)
+				if err != nil {
 					return err
 				}
-				providerContradicted = true
+				if !originFull {
+					// A lower-tier observation cannot replace the one current row
+					// for this participant, source, and normalized value. Keep the
+					// Full-supported binding and do not attach the Cold room to it.
+					result.Observation = observation
+					observationEnriched = true
+					skipConversationSupport = true
+				} else {
+					// A Full observation with a different non-null provider ID
+					// contradicts the current row. Close it and record the new
+					// binding as a fresh observation so both facts survive in history.
+					if err := s.supersedeObservationRowTx(
+						ctx, tx, observation.Envelope.ID,
+					); err != nil {
+						return err
+					}
+					providerContradicted = true
+				}
 			}
 		} else if !errors.Is(err, ErrProfileValueNotFound) {
 			return err
@@ -348,8 +364,10 @@ func (s *Store) RecordContactObservationContext(
 			}
 		}
 
-		if _, err := s.recordObservationConversationTx(ctx, tx, result.Observation, input.ConversationID); err != nil {
-			return err
+		if !skipConversationSupport {
+			if _, err := s.recordObservationConversationTx(ctx, tx, result.Observation, input.ConversationID); err != nil {
+				return err
+			}
 		}
 		eligible, err := fullObservationTx(ctx, tx, result.Observation.Envelope.ID)
 		if err != nil || !eligible {
@@ -715,44 +733,73 @@ func (s *Store) SupersedeParticipantObservationContext(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
-		if err := s.lockParticipantObservationOwnerTxContext(
-			ctx, tx, participantID,
-		); err != nil {
-			return err
-		}
-		if err := s.validateProfileValueCloseTimeTx(
-			ctx, tx, "participant_contact_observations", "participant_id",
-			participantID, observationID, activeUntil,
-		); err != nil {
-			return err
-		}
-		result, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
-			SET active_until = COALESCE(active_until, ?,
-			        CASE WHEN active_from > `+s.dialect.Now()+`
-			             THEN active_from ELSE `+s.dialect.Now()+` END),
-			    superseded_at = `+s.dialect.Now()+`,
-			    updated_at = `+s.dialect.Now()+`
-			WHERE id = ? AND participant_id = ?
-			  AND superseded_at IS NULL`,
-			timeValue(activeUntil), observationID, participantID,
+		return s.supersedeParticipantObservationTxContext(
+			ctx, tx, participantID, observationID, activeUntil,
 		)
-		if err != nil {
-			return fmt.Errorf("supersede participant observation: %w", err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil {
-			return err
-		}
-		if changed == 0 {
-			return ErrProfileValueNotFound
-		}
-		if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
-			ctx, tx,
-		); err != nil {
-			return err
-		}
-		return s.bumpParticipantIdentifierRevision(ctx, tx)
 	})
+}
+
+// SupersedeParticipantObservationFromConversationContext applies automatic
+// rename supersession only while its originating room remains Full.
+func (s *Store) SupersedeParticipantObservationFromConversationContext(
+	ctx context.Context, participantID, observationID, conversationID int64,
+) error {
+	return s.withConversationPolicyIdentityTx(ctx, func(tx *loggedTx) error {
+		var eligible bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+			SELECT 1 FROM participant_contact_observations o
+			JOIN conversations c ON c.id=? AND c.source_id=o.source_id
+			WHERE o.id=? AND o.participant_id=?
+			  AND o.active_until IS NULL AND o.superseded_at IS NULL
+			  AND `+FullConversationWhere("c")+`
+		)`, conversationID, observationID, participantID).Scan(&eligible); err != nil {
+			return err
+		}
+		if !eligible {
+			return nil
+		}
+		return s.supersedeParticipantObservationTxContext(
+			ctx, tx, participantID, observationID, nil,
+		)
+	})
+}
+
+func (s *Store) supersedeParticipantObservationTxContext(
+	ctx context.Context, tx *loggedTx, participantID, observationID int64, activeUntil *time.Time,
+) error {
+	if err := s.lockParticipantObservationOwnerTxContext(ctx, tx, participantID); err != nil {
+		return err
+	}
+	if err := s.validateProfileValueCloseTimeTx(
+		ctx, tx, "participant_contact_observations", "participant_id",
+		participantID, observationID, activeUntil,
+	); err != nil {
+		return err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
+		SET active_until = COALESCE(active_until, ?,
+		        CASE WHEN active_from > `+s.dialect.Now()+`
+		             THEN active_from ELSE `+s.dialect.Now()+` END),
+		    superseded_at = `+s.dialect.Now()+`,
+		    updated_at = `+s.dialect.Now()+`
+		WHERE id = ? AND participant_id = ?
+		  AND superseded_at IS NULL`,
+		timeValue(activeUntil), observationID, participantID,
+	)
+	if err != nil {
+		return fmt.Errorf("supersede participant observation: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return ErrProfileValueNotFound
+	}
+	if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+		return err
+	}
+	return s.bumpParticipantIdentifierRevision(ctx, tx)
 }
 
 // reconcileCurrentObservationIdentityMatchesTxContext applies every cleanup

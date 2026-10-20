@@ -333,10 +333,13 @@ func refreshDerivedDatasetsOnly(
 	}
 	displayNamesChanged :=
 		participantDisplayNameRevision != state.ParticipantDisplayNameRevision
-	if identifiersChanged || displayNamesChanged {
+	participantProjectionChanged := identifiersChanged || displayNamesChanged ||
+		(repairRelated && relatedKinds.recipients)
+	if participantProjectionChanged {
 		// Participant identifiers can create participant rows, and display-name
-		// mutations change the row already present in participants.parquet. Both
-		// changes must replace that base dataset before rebuilding the directory.
+		// mutations change the row already present in participants.parquet. Recipient
+		// evidence can also change value eligibility without advancing either
+		// revision, so those repairs must refresh the same base dataset.
 		if err := derivedCopy(tableParticipants, sourceSnapshot.participantsExportSelectSQL()); err != nil {
 			return nil, fmt.Errorf("export derived participants: %w", err)
 		}
@@ -404,7 +407,7 @@ func refreshDerivedDatasetsOnly(
 		conversationChanged,
 		typesChanged,
 		identifiersChanged,
-		identifiersChanged || displayNamesChanged,
+		participantProjectionChanged,
 		personDisplayNamesChanged || identityChanged,
 	)
 	if repairRelated {

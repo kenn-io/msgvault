@@ -984,6 +984,57 @@ func TestRenamedUsernameSupersessionRetriesAfterPartialWrite(t *testing.T) {
 	}
 }
 
+func TestColdRoomUsernameDoesNotSupersedeFullRoomObservation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	sourceID := newBeeperTestSource(t, st, "telegram")
+	participantID, err := st.EnsureParticipantByIdentifier(
+		participantIdentifierType, "@telegram_alice:beeper.local", "Alice Example",
+	)
+	requirements.NoError(err)
+	fullRoom := fullBeeperObservationRoom(t, st, sourceID)
+	coldRoom, err := st.EnsureConversation(sourceID, "cold-room", "Cold Room")
+	requirements.NoError(err)
+	recorder := newObservationRecorder(st)
+	userID := "@telegram_alice:beeper.local"
+	fullContext := captureContext{
+		ConversationID: fullRoom, SourceID: sourceID,
+		AccountID: "telegram", Network: "Telegram",
+	}
+	_, err = recorder.capture(ctx, participantID, &User{
+		ID: userID, Username: "@alice_old",
+	}, fullContext)
+	requirements.NoError(err)
+
+	coldContext := fullContext
+	coldContext.ConversationID = coldRoom
+	results, err := recorder.capture(ctx, participantID, &User{
+		ID: userID, Username: "@alice_new",
+	}, coldContext)
+	requirements.NoError(err)
+	requirements.Len(results, 1)
+	assertions.True(results[0].Created, "the Cold username remains a separate observation")
+
+	current, err := st.ListParticipantObservationsContext(ctx, participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 2,
+		"a Cold rename must not close the previous username supported by a Full room")
+	assertions.ElementsMatch([]string{"alice_old", "alice_new"}, []string{
+		current[0].NormalizedValue, current[1].NormalizedValue,
+	})
+	for i := range current {
+		eligible, err := st.ObservationFullEligibleContext(ctx, current[i].Envelope.ID)
+		requirements.NoError(err)
+		if current[i].NormalizedValue == "alice_old" {
+			assertions.True(eligible, "the Full username remains eligible")
+		} else {
+			assertions.False(eligible, "the new Cold username remains stored but ineligible")
+		}
+	}
+}
+
 // installRenameSupersedeFailure makes the real database reject observation
 // close writes until the returned release function removes the trigger.
 func installRenameSupersedeFailure(t *testing.T, st *store.Store) func() {

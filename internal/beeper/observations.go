@@ -143,7 +143,7 @@ func (r *observationRecorder) capture(
 			return results, err
 		}
 		if result != nil && address.Kind == store.ContactAddressUsername {
-			if err := r.supersedeRenamed(ctx, participantID, result.Observation); err != nil {
+			if err := r.supersedeRenamed(ctx, participantID, result.Observation, cc.ConversationID); err != nil {
 				return results, err
 			}
 		}
@@ -158,7 +158,7 @@ func (r *observationRecorder) capture(
 
 // supersedeRenamed closes the participant's other current username
 // observations on the same service and scope when a new username arrives
-// under the same stable ID.
+// under the same stable ID from a Full room.
 //
 // Beeper exposes exactly one username per user per network at a time, so a
 // different value under the same (stable ID, service, scope) is a rename and
@@ -170,7 +170,7 @@ func (r *observationRecorder) capture(
 // is another person's claim on the same address and remains untouched, so
 // history never moves between people.
 func (r *observationRecorder) supersedeRenamed(
-	ctx context.Context, participantID int64, kept *store.ParticipantContactObservation,
+	ctx context.Context, participantID int64, kept *store.ParticipantContactObservation, conversationID int64,
 ) error {
 	if kept == nil || kept.ProviderUserID == nil {
 		return nil
@@ -191,8 +191,8 @@ func (r *observationRecorder) supersedeRenamed(
 			*previous.ProviderUserID != *kept.ProviderUserID:
 			continue
 		}
-		if err := r.store.SupersedeParticipantObservationContext(
-			ctx, participantID, previous.Envelope.ID, nil); err != nil {
+		if err := r.store.SupersedeParticipantObservationFromConversationContext(
+			ctx, participantID, previous.Envelope.ID, conversationID); err != nil {
 			return err
 		}
 	}
