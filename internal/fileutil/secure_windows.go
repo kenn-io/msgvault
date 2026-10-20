@@ -161,12 +161,9 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 				if err == nil {
 					continue
 				}
-				if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-					if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
-						continue
-					}
+				if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+					slog.Warn("fileutil: protected directory creation failed", "path", dir, "err", err)
 				}
-				slog.Warn("fileutil: protected directory creation failed", "path", dir, "err", err)
 			}
 		}
 		if err := secureMkdirFallback(dir, perm); err != nil {
