@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -23,6 +24,9 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/api"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/personscope"
@@ -4085,6 +4089,96 @@ func TestSearchByDomains(t *testing.T) {
 		assert.Equal(t, 101, capturedLimit, "default limit includes probe row")
 		assert.Equal(t, 0, capturedOffset, "default offset")
 	})
+}
+
+func TestListMessagesPagesPastOffsetCeiling(t *testing.T) {
+	const total = 1100
+	eng := &querytest.MockEngine{
+		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
+			var rows []query.MessageSummary
+			for id := filter.Pagination.Offset + 1; id <= total && len(rows) < filter.Pagination.Limit; id++ {
+				rows = append(rows, query.MessageSummary{ID: int64(id)})
+			}
+			return rows, nil
+		},
+	}
+	h := newTestHandlers(eng)
+
+	var got []int64
+	offset := 0
+	for range 30 {
+		resp := runTool[paginatedListMessages](t, "list_messages", h.listMessages, map[string]any{
+			"limit":  float64(50),
+			"offset": float64(offset),
+		})
+		for _, m := range resp.Data {
+			got = append(got, m.ID)
+		}
+		if !resp.HasMore {
+			break
+		}
+		offset += resp.Returned
+	}
+
+	want := make([]int64, total)
+	for i := range want {
+		want[i] = int64(i + 1)
+	}
+	assert.Equal(t, want, got)
+}
+
+func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
+	const total = 1001
+	eng := &querytest.MockEngine{
+		SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
+			var rows []query.MessageSummary
+			for id := offset + 1; id <= total && len(rows) < limit; id++ {
+				rows = append(rows, query.MessageSummary{ID: int64(id)})
+			}
+			return rows, nil
+		},
+	}
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	daemon := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
+		Config: cfg, Engine: eng, Logger: slog.New(slog.DiscardHandler),
+	}).Router())
+	defer daemon.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AllowInsecure: true, HTTPClient: daemon.Client()})
+	require.NoError(t, err)
+	defer func() { assert.NoError(t, client.Close()) }()
+	h := newTestHandlers(daemonclient.NewEngineAdapter(client))
+
+	type page struct {
+		returned int
+		hasMore  bool
+	}
+	var pages, wantPages []page
+	var got []int64
+	offset := 0
+	for range 5 {
+		resp := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains, map[string]any{
+			"domains": "example.com",
+			"limit":   float64(5000),
+			"offset":  float64(offset),
+		})
+		pages = append(pages, page{resp.Returned, resp.HasMore})
+		for _, m := range resp.Data {
+			got = append(got, m.ID)
+		}
+		if !resp.HasMore {
+			break
+		}
+		offset += resp.Returned
+	}
+
+	wantPages = []page{{499, true}, {499, true}, {3, false}}
+	assert.Equal(t, wantPages, pages)
+	want := make([]int64, total)
+	for i := range want {
+		want[i] = int64(i + 1)
+	}
+	assert.Equal(t, want, got)
 }
 
 // TestServeHTTPWithOptions_ContextCancellation verifies that the HTTP

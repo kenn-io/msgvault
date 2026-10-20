@@ -503,7 +503,7 @@ func searchLimitProperty() *jsonschema.Schema {
 }
 
 func offsetProperty() *jsonschema.Schema {
-	return nonNegativeIntegerSchema("Number of results to skip for pagination (default 0; clamped at 10000000)", 0)
+	return nonNegativeIntegerSchema("Number of results to skip for pagination (default 0)", 0)
 }
 
 const (
@@ -856,7 +856,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 			"Useful for finding all communication with a company regardless of direction. Returns data, returned, offset, and has_more; page with offset while has_more is true.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
-			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 500; zero uses the default)", 100),
+			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 499)", 100),
 			toolArgOffset:  offsetProperty(),
 			toolArgAfter:   afterProperty(),
 			toolArgBefore:  beforeProperty(),
@@ -991,12 +991,7 @@ type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {
 	Data []query.AggregateRow `json:"data"`
 }
-type searchByDomainsResponse struct {
-	Data     []query.MessageSummary `json:"data"`
-	Returned int                    `json:"returned"`
-	Offset   int                    `json:"offset"`
-	HasMore  bool                   `json:"has_more"`
-}
+type searchByDomainsResponse paginatedResponse[query.MessageSummary]
 
 type getAttachmentResponse struct {
 	Docbank  []store.DocbankAttachmentRef `json:"docbank,omitempty"`

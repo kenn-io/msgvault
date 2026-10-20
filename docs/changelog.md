@@ -21,7 +21,7 @@ All notable changes to msgvault, grouped by release.
   an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
   them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
 
-- MCP result pagination advances past offset 1000, up to a 10,000,000 offset ceiling. `search_by_domains` returns `returned`, `offset`, and `has_more` with pages capped at 500; a zero limit now consistently uses the default 100.
+- MCP message searches and `list_messages` now page past offset 1000: add `returned` to `offset` while `has_more` is true. `search_by_domains` returns `returned`, `offset`, and `has_more`, caps pages at 499 rows, and treats a zero limit as the default of 100 (through the daemon it used to return 500 rows).
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.
