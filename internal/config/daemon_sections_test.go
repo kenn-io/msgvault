@@ -17,26 +17,26 @@ func writeDaemonSectionConfig(t *testing.T, content string) string {
 }
 
 func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
-	for _, tc := range []struct{ name, content, env, mention string }{
-		{"server", "[server]\napi_port = 70000\n", "", "api_port"},
-		{"web", "[web]\ntheme = 'neon'\n", "", "[web] theme"},
-		{"kata", "[integrations.kata]\nendpoint = '://invalid'\n", "", "[integrations.kata]"},
-		{"docbank", "[integrations.docbank]\nattachment_folder = '../escape'\n", "", "docbank"},
-		{"carddav", "[carddav]\nprovider = 'other'\n", "", "carddav.provider"},
-		{"identity scoring", "[people.identity_scoring]\nbatch_size = 0\n", "", "identity_scoring.batch_size"},
-		{"identity scoring key", "[people.identity_scoring]\nbogus = 1\n", "", "unknown people.identity_scoring config key"},
-		{"draft key", "[[imap.drafts]]\nsource_id = 1\nmailbox = 'Drafts'\nbogus = 1\n", "", "unknown IMAP draft config key"},
-		{"fastmail", "[[fastmail]]\naccount = 'me@example.com'\n", "", "api_token is required"},
-		{"api port env", "", "invalid", "MSGVAULT_API_PORT"},
-		{"cors credentials env", "", "maybe", "MSGVAULT_CORS_CREDENTIALS"},
+	for _, tc := range []struct{ name, content, mention string }{
+		{"server", "[server]\napi_port = 70000\n", "api_port"},
+		{"web", "[web]\ntheme = 'neon'\n", "[web] theme"},
+		{"kata", "[integrations.kata]\nendpoint = '://invalid'\n", "[integrations.kata]"},
+		{"docbank", "[integrations.docbank]\nattachment_folder = '../escape'\n", "docbank"},
+		{"carddav", "[carddav]\nprovider = 'other'\n", "carddav.provider"},
+		{"identity scoring", "[people.identity_scoring]\nbatch_size = 0\n", "identity_scoring.batch_size"},
+		{"identity scoring key", "[people.identity_scoring]\nbogus = 1\n", "unknown people.identity_scoring config key"},
+		{"draft key", "[[imap.drafts]]\nsource_id = 1\nmailbox = 'Drafts'\nbogus = 1\n", "unknown IMAP draft config key"},
+		{"fastmail", "[[fastmail]]\naccount = 'me@example.com'\n", "api_token is required"},
+		{"api port env", "", "MSGVAULT_API_PORT"},
+		{"cors credentials env", "", "MSGVAULT_CORS_CREDENTIALS"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			switch tc.name {
 			case "api port env":
-				t.Setenv("MSGVAULT_API_PORT", tc.env)
+				t.Setenv("MSGVAULT_API_PORT", "invalid")
 			case "cors credentials env":
-				t.Setenv("MSGVAULT_CORS_CREDENTIALS", tc.env)
+				t.Setenv("MSGVAULT_CORS_CREDENTIALS", "maybe")
 			}
 			path := writeDaemonSectionConfig(t, tc.content)
 

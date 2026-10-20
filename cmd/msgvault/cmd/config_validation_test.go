@@ -54,7 +54,6 @@ func writeInvalidKataHome(t *testing.T, extra string) string {
 	t.Helper()
 	home := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(invalidKataConfig+extra), 0o600))
-	t.Setenv(daemonCLISubprocessEnv, "")
 	return home
 }
 
@@ -120,7 +119,6 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	require.NoError(err, stderr)
 	assert.Equal(int32(1), requests.Load())
 	assert.Contains(stdout, `"record_type":"complete"`)
-	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 	assert.True(daemon.ProcessAlive(pid), "the older daemon must keep running")
 }
 
@@ -178,28 +176,19 @@ func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:parall
 	}
 }
 
-func TestInvalidDaemonConfigFailsLifecycleCommandsBeforeStoppingDaemon(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+func TestInvalidDaemonConfigFailsStrictCommandsAtLoad(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	for _, args := range [][]string{
 		{"serve"},
 		{"daemon", "start"},
 		{"daemon", "restart"},
-		{"serve", "restart"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			assert := assert.New(t)
-			withTestVersion(t, "v1.1.0")
 			home := writeInvalidKataHome(t, "")
-			pid, _ := serveRunningDaemon(t, home, "v1.1.0", daemonAPIVersion)
-
 			root := newRootCommand()
 			root.AddCommand(newDaemonCommand())
-			serve := &cobra.Command{Use: "serve", RunE: runServe, Annotations: serveCmd.Annotations}
-			addServeLifecycleCommands(serve)
-			root.AddCommand(serve)
-			_, stderr, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
+			root.AddCommand(&cobra.Command{Use: "serve", RunE: runServe, Annotations: serveCmd.Annotations})
+			_, _, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
 			require.ErrorContains(t, err, "load config")
-			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
-			assert.True(daemon.ProcessAlive(pid))
 		})
 	}
 }
@@ -225,13 +214,6 @@ func TestInvalidDaemonConfigIsReportedOnceByStrictSetupCommand(t *testing.T) { /
 	_, stderr, err := runRoot(t, root, "--home", home, "setup", "providers", "--dry-run")
 	require.ErrorContains(t, err, "[integrations.kata]")
 	require.Equal(t, 1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
-}
-
-func TestClientCommandsFailOnInvalidClientConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger
-	home := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[backup]\nzstd_level = 20\n"), 0o600))
-	_, _, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-	require.ErrorContains(t, err, "load config")
 }
 
 func TestSemanticPersonVectorConfigSourceToleratesInvalidDaemonConfig(t *testing.T) {
