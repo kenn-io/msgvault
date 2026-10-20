@@ -99,7 +99,8 @@ endpoints.
 only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
 Counts cover direct email, chat, and meeting contact only. Newsletter and
-list messages, large-audience threads, and your own addresses never count.
+list messages and large-audience threads never count. A person whose address
+is one of your own in any account is never listed.
 
 ```toml
 [people.tiers]
