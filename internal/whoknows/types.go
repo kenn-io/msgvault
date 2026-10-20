@@ -103,8 +103,8 @@ type Params struct {
 }
 
 // Resolve applies defaults and validates the request. The topic must be plain
-// words: a search operator such as "from:ana" or "a | b" would narrow the
-// search by something other than meaning, so it is refused.
+// words: a search operator such as "from:ana" would narrow the search by
+// something other than meaning, so it is refused.
 func (r Request) Resolve() (Params, error) {
 	p := Params{
 		Topic:    strings.TrimSpace(r.Topic),

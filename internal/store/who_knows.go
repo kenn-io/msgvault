@@ -154,14 +154,6 @@ func messageSender(m string) string {
 		         AND fr.participant_id IS NOT NULL))`
 }
 
-func int64Args(ids []int64) []any {
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	return args
-}
-
 // discordSystemMessage is true when message alias m is a Discord message
 // whose type is a system event rather than one a member wrote.
 func (s *Store) discordSystemMessage(m string) string {
@@ -201,7 +193,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 		LEFT JOIN participants p ON p.id = ` + messageSender("m") + `
 		WHERE m.id IN (` + directoryPlaceholders(len(messageIDs)) + `)
 		  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), int64Args(messageIDs)...)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), appendInt64Args(nil, messageIDs)...)
 	if err != nil {
 		return nil, fmt.Errorf("read topic authors: %w", err)
 	}
@@ -334,7 +326,7 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 		JOIN participants kp ON kp.id = k.family_key
 		LEFT JOIN seed_person sp ON sp.seed = k.seed
 		LEFT JOIN persons per ON per.id = sp.person_id`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), int64Args(senders)...)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), appendInt64Args(nil, senders)...)
 	if err != nil {
 		return nil, fmt.Errorf("read topic contacts: %w", err)
 	}
@@ -367,13 +359,21 @@ const DeclaredValueLimit = 5000
 // automated participant. The caller matches topics in Go, so matching is not
 // limited to what SQL can case-fold.
 func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout, bool, error) {
+	args := []any{AttributeUniversalIDAskMeAbout}
+	var declared []string
+	for _, p := range AllProvenances {
+		if p.IsDeclared() {
+			declared = append(declared, "?")
+			args = append(args, string(p))
+		}
+	}
 	query := `WITH RECURSIVE ` + ownerFamilyCTE() + `
 		SELECT v.person_id, COALESCE(per.display_name, ''), v.value_text
 		FROM person_attribute_values v
 		JOIN attribute_definitions d ON d.id = v.definition_id
 		JOIN persons per ON per.id = v.person_id
 		WHERE d.universal_id = ? AND v.active_until IS NULL AND v.superseded_at IS NULL
-		  AND v.source IN ('user', 'carddav_import', 'vcard_import')
+		  AND v.source IN (` + strings.Join(declared, ", ") + `)
 		  AND NOT EXISTS (
 		    SELECT 1 FROM person_participants bound
 		      JOIN participants bp ON bp.id = bound.participant_id
@@ -381,7 +381,8 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout
 		       AND (` + inOwnerFamily("bp.id") + ` OR ` + automatedParticipant("bp") + `))
 		ORDER BY v.person_id, v.ordinal, v.id
 		LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), AttributeUniversalIDAskMeAbout, DeclaredValueLimit+1)
+	args = append(args, DeclaredValueLimit+1)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("read ask-me-about values: %w", err)
 	}
@@ -426,7 +427,7 @@ func (s *Store) personsWithAutomatedAddressContext(ctx context.Context, values [
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT pp.person_id, COALESCE(p.email_address, '')
 		FROM person_participants pp JOIN participants p ON p.id = pp.participant_id
-		WHERE pp.person_id IN (`+directoryPlaceholders(len(persons))+`)`), int64Args(persons)...)
+		WHERE pp.person_id IN (`+directoryPlaceholders(len(persons))+`)`), appendInt64Args(nil, persons)...)
 	if err != nil {
 		return nil, fmt.Errorf("read declared person addresses: %w", err)
 	}

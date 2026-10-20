@@ -141,7 +141,7 @@ func renderWhoKnowsEntries(out *strings.Builder, response generated.WhoKnowsResp
 	safe := textutil.SanitizeTerminal
 	for _, p := range response.People {
 		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s",
-			p.Rank, safe(whoKnowsText(p.DisplayName)), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
+			p.Rank, safe(pointerString(p.DisplayName)), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
 		if len(p.AskMeAbout) > 0 {
 			fmt.Fprintf(out, "  declared: %s", safe(strings.Join(p.AskMeAbout, ", ")))
 		}
@@ -162,13 +162,6 @@ func renderWhoKnowsEntries(out *strings.Builder, response generated.WhoKnowsResp
 	}
 }
 
-func whoKnowsText(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
 func authoredLabel(n int64) string {
 	if n == 0 {
 		return "declared, no messages"
@@ -178,7 +171,7 @@ func authoredLabel(n int64) string {
 
 func contactLabel(c generated.WhoKnowsEntry) string {
 	safe := textutil.SanitizeTerminal
-	name, email := whoKnowsText(c.DisplayName), whoKnowsText(c.EmailAddress)
+	name, email := pointerString(c.DisplayName), pointerString(c.EmailAddress)
 	if name == "" || email == "" {
 		return safe(cmp.Or(name, email))
 	}
@@ -191,7 +184,7 @@ func renderWhoKnowsCitations(out *strings.Builder, citations []generated.WhoKnow
 		if c.SentAt != nil {
 			date = c.SentAt.UTC().Format(time.DateOnly)
 		}
-		text := textutil.TruncateRunes(textutil.SanitizeTerminal(whoKnowsText(c.Subject)), whoKnowsCitationWidth)
+		text := textutil.TruncateRunes(textutil.SanitizeTerminal(pointerString(c.Subject)), whoKnowsCitationWidth)
 		fmt.Fprintf(out, "    %s  %s  %s  msgvault show-message %d\n",
 			date, textutil.SanitizeTerminal(c.MessageType), text, c.MessageID)
 	}
