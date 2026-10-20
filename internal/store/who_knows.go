@@ -315,7 +315,7 @@ func (s *Store) slackNonAuthoredPayloadsContext(ctx context.Context, ids []int64
 			continue
 		}
 		switch payload.Subtype {
-		case "", "thread_broadcast", "file_share", "me_message":
+		case "", "thread_broadcast", "reply_broadcast", "file_share", "me_message":
 			// These subtypes carry messages the user authored.
 		default:
 			out[id] = true

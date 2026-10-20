@@ -339,6 +339,7 @@ func TestTopicAuthorsLeaveOutSlackGeneratedEvents(t *testing.T) {
 		{"unpinned_item", false},
 		{"", true},
 		{"thread_broadcast", true},
+		{"reply_broadcast", true},
 		{"file_share", true},
 		{"me_message", true},
 	}
