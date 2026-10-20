@@ -56,9 +56,11 @@ msgvault meetings link 42 --event evt:100
 msgvault meetings unlink 42 --event evt:100
 ```
 
-`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport.
+`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, and stops a UID match from linking the note again.
 
 Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
+
+A saved choice follows the event's iCalendar UID and original occurrence time, so if a provider later changes either, for example by turning a one-off event into a series, the link can stop resolving and the event shows up as a suggestion.
 
 These commands require owner access. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
 
