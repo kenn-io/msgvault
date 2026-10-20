@@ -29,14 +29,11 @@ func newPersonWhoKnowsCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "who-knows <topic words...>",
 		Short: "Find the people who wrote about a topic",
-		Long: `Rank saved people, then unsaved contacts, by how many messages they wrote
-that match the topic by meaning and how recent those messages are. Each
-entry cites its messages; open one with 'msgvault show-message <id>'.
-Messages from you and from automated senders do not count. Needs the
-vector index; 'msgvault setup status' shows whether it is on.
-
-A message counts when its meaning similarity to the topic is at least
---min-score. Lower it for a topic worded unlike your messages.`,
+		Long: `Rank saved people, then unsaved contacts, by how many recent messages they
+wrote that match the topic by meaning. Each entry cites its messages; open one
+with 'msgvault show-message <id>'. Messages from you and from automated senders
+do not count. Needs the vector index. Lower --min-score for a topic worded
+unlike your messages.`,
 		Example: `  msgvault person who-knows "kubernetes networking"
   msgvault person who-knows "tax filing" --after 2026-01-01 --json`,
 		Args: cobra.MinimumNArgs(1),
@@ -110,18 +107,27 @@ func writeWhoKnows(w io.Writer, response whoknows.Response) error {
 
 func renderWhoKnows(out *strings.Builder, response whoknows.Response) {
 	safe := textutil.SanitizeTerminal
-	if len(response.People) == 0 && len(response.UnsavedContacts) == 0 {
-		if response.Reason == whoknows.ReasonSearchLimit {
-			fmt.Fprintf(out, "The closest %d messages about %q came from you or automated senders; narrow with --after or --before.\n",
-				response.SearchedMessages, safe(response.Topic))
-			return
-		}
+	switch {
+	case len(response.People) > 0 || len(response.UnsavedContacts) > 0:
+		renderWhoKnowsPeople(out, response)
+	case response.Reason == whoknows.ReasonSearchLimit:
+		fmt.Fprintf(out, "No one turned up for %q within the search limits; narrow with --after or --before.\n", safe(response.Topic))
+	default:
 		fmt.Fprintf(out, "Nobody in your archive has written about %q.\n", safe(response.Topic))
-		return
 	}
+	if response.DeclaredTruncated {
+		fmt.Fprintln(out, "Declared topics were searched only in part.")
+	}
+}
+
+func renderWhoKnowsPeople(out *strings.Builder, response whoknows.Response) {
+	safe := textutil.SanitizeTerminal
 	for _, p := range response.People {
 		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s\n",
 			p.Rank, safe(p.DisplayName), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
+		if len(p.AskMeAbout) > 0 {
+			fmt.Fprintf(out, "    declared: %s\n", safe(strings.Join(p.AskMeAbout, ", ")))
+		}
 		renderWhoKnowsCitations(out, p.Citations)
 	}
 	if len(response.UnsavedContacts) == 0 {
@@ -144,14 +150,10 @@ func authoredLabel(n int) string {
 
 func contactLabel(c whoknows.Contact) string {
 	safe := textutil.SanitizeTerminal
-	switch {
-	case c.DisplayName != "" && c.EmailAddress != "":
-		return safe(c.DisplayName) + " <" + safe(c.EmailAddress) + ">"
-	case c.DisplayName != "":
-		return safe(c.DisplayName)
-	default:
-		return safe(c.EmailAddress)
+	if c.DisplayName == "" || c.EmailAddress == "" {
+		return safe(cmp.Or(c.DisplayName, c.EmailAddress))
 	}
+	return safe(c.DisplayName) + " <" + safe(c.EmailAddress) + ">"
 }
 
 func renderWhoKnowsCitations(out *strings.Builder, citations []whoknows.Citation) {

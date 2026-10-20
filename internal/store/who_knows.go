@@ -4,9 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
-	"unicode"
 )
 
 // TopicAuthor is one message with the participant that sent it and the
@@ -199,35 +197,16 @@ func (s *Store) OwnerAddressedContext(ctx context.Context, participantIDs []int6
 	return out, nil
 }
 
-// AskMeAboutValuesContext returns the current ask-me-about values the user
-// typed or an address-book import supplied that contain at least one of the
-// given lower-case words, so the caller can match whole topics in Go without
-// reading every value. Inferred and superseded values are left out, and so
-// are people bound to one of the owner's account identities. A word with
-// non-ASCII letters cannot be matched case-insensitively in SQL, so it turns
-// the word filter off.
-func (s *Store) AskMeAboutValuesContext(ctx context.Context, words []string) ([]PersonAskMeAbout, error) {
-	if len(words) == 0 {
-		return nil, nil
-	}
-	args := []any{AttributeUniversalIDAskMeAbout}
-	var likes []string
-	filter := true
-	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	for _, word := range words {
-		if strings.IndexFunc(word, func(r rune) bool { return r > unicode.MaxASCII }) >= 0 {
-			filter = false
-			break
-		}
-		likes = append(likes, `LOWER(v.value_text) LIKE ? ESCAPE '\'`)
-		args = append(args, "%"+escape.Replace(word)+"%")
-	}
-	wordFilter := ""
-	if filter {
-		wordFilter = "AND (" + strings.Join(likes, " OR ") + ")"
-	} else {
-		args = args[:1]
-	}
+// DeclaredValueLimit caps how many ask-me-about values one read returns.
+const DeclaredValueLimit = 5000
+
+// AskMeAboutValuesContext returns up to DeclaredValueLimit current
+// ask-me-about values the user typed or an address-book import supplied, in
+// person order, and whether more exist. Inferred and superseded values are
+// left out, and so are people bound to one of the owner's account identities.
+// The caller matches topics in Go, so matching is not limited to what SQL can
+// case-fold.
+func (s *Store) AskMeAboutValuesContext(ctx context.Context) ([]PersonAskMeAbout, bool, error) {
 	query := `
 		SELECT v.person_id, COALESCE(per.display_name, ''), v.value_text
 		FROM person_attribute_values v
@@ -235,27 +214,31 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, words []string) ([]
 		JOIN persons per ON per.id = v.person_id
 		WHERE d.universal_id = ? AND v.active_until IS NULL AND v.superseded_at IS NULL
 		  AND v.source IN ('user', 'carddav_import', 'vcard_import')
-		  ` + wordFilter + `
 		  AND NOT EXISTS (
 		    SELECT 1 FROM person_participants bound
 		      JOIN participants op ON op.id = bound.participant_id
 		     WHERE bound.person_id = v.person_id AND ` + ownerParticipantMatch("op") + `)
-		ORDER BY v.person_id, v.ordinal`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+		ORDER BY v.person_id, v.ordinal
+		LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), AttributeUniversalIDAskMeAbout, DeclaredValueLimit+1)
 	if err != nil {
-		return nil, fmt.Errorf("read ask-me-about values: %w", err)
+		return nil, false, fmt.Errorf("read ask-me-about values: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []PersonAskMeAbout
 	for rows.Next() {
 		var v PersonAskMeAbout
 		if err := rows.Scan(&v.PersonID, &v.PersonName, &v.Value); err != nil {
-			return nil, fmt.Errorf("scan ask-me-about value: %w", err)
+			return nil, false, fmt.Errorf("scan ask-me-about value: %w", err)
 		}
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read ask-me-about values: %w", err)
+		return nil, false, fmt.Errorf("read ask-me-about values: %w", err)
 	}
-	return out, nil
+	truncated := len(out) > DeclaredValueLimit
+	if truncated {
+		out = out[:DeclaredValueLimit]
+	}
+	return out, truncated, nil
 }

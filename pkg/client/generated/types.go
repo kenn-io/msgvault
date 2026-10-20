@@ -15605,11 +15605,12 @@ func (w WhoKnowsRequest) Validate() error {
 }
 
 type WhoKnowsResponse struct {
-	People           []WhoKnowsPerson  `json:"people" validate:"required"`
-	Reason           *string           `json:"reason,omitzero"`
-	SearchedMessages int64             `json:"searched_messages"`
-	Topic            string            `json:"topic" validate:"required"`
-	UnsavedContacts  []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
+	DeclaredTruncated bool              `json:"declared_truncated"`
+	People            []WhoKnowsPerson  `json:"people" validate:"required"`
+	Reason            *string           `json:"reason,omitzero"`
+	SearchedMessages  int64             `json:"searched_messages"`
+	Topic             string            `json:"topic" validate:"required"`
+	UnsavedContacts   []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
 }
 
 func (w WhoKnowsResponse) Validate() error {

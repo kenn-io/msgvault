@@ -5,7 +5,6 @@ package whoknows
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -16,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -24,29 +24,22 @@ import (
 // retrieveLimit is how many messages one search reads.
 const retrieveLimit = 200
 
-var ErrChunkScoringUnavailable = errors.New("the vector backend cannot score message chunks")
-
 // Retriever runs the hybrid (keyword plus meaning) message search.
 type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
-}
-
-// ChunkScorer scores a message's embedded chunks against the search's query
-// vector as 1 - cosine distance.
-type ChunkScorer interface {
-	ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error)
 }
 
 // DataReader reads who wrote each message and what people say to ask them about.
 type DataReader interface {
 	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
 	OwnerAddressedContext(ctx context.Context, participantIDs []int64) (map[int64]bool, error)
-	AskMeAboutValuesContext(ctx context.Context, words []string) ([]store.PersonAskMeAbout, error)
+	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, bool, error)
+	GetMessageRawsContext(ctx context.Context, messageIDs []int64) (map[int64][]byte, error)
 }
 
 type Service struct {
 	Retriever  Retriever
-	Scorer     ChunkScorer
+	Scorer     vector.ChunkScoringBackend
 	Data       DataReader
 	BuildScope vector.BuildScope
 	Now        func() time.Time
@@ -77,12 +70,6 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 		return out, err
 	}
 	out.Topic = p.Topic
-	if s.Retriever == nil {
-		return out, vector.ErrNotEnabled
-	}
-	if s.Scorer == nil {
-		return out, ErrChunkScoringUnavailable
-	}
 	var (
 		similarity map[int64]float64
 		candidates []Candidate
@@ -112,7 +99,7 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 			return out, err
 		}
 	}
-	candidates, err = s.addDeclared(ctx, candidates, p.FreeText)
+	candidates, out.DeclaredTruncated, err = s.addDeclared(ctx, candidates, p.FreeText)
 	if err != nil {
 		return out, err
 	}
@@ -123,7 +110,8 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
 	if len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
 		out.Reason = ReasonNoEvidence
-		if len(similarity) > 0 && (meta.PoolSaturated || out.SearchedMessages >= retrieveLimit) {
+		poolFull := meta.PoolSaturated || out.SearchedMessages >= retrieveLimit
+		if len(similarity) > 0 && poolFull || out.DeclaredTruncated {
 			out.Reason = ReasonSearchLimit
 		}
 	}
@@ -170,15 +158,25 @@ func (s *Service) attribute(
 	if err != nil {
 		return nil, err
 	}
+	counted := func(id int64) bool {
+		a, ok := authors[id]
+		_, scored := similarity[id]
+		return ok && scored && !a.IsFromMe && !a.OwnerLinked && a.SenderID != 0 && !a.Automated &&
+			!Automated(a.SenderEmail)
+	}
+	bots, err := s.slackBots(ctx, authors, counted)
+	if err != nil {
+		return nil, err
+	}
 	byKey := map[candidateKey]*Candidate{}
 	participants := map[candidateKey][]int64{}
 	var order []candidateKey
 	for _, hit := range hits {
-		a, ok := authors[hit.MessageID]
-		sim, counted := similarity[hit.MessageID]
-		if !ok || !counted || a.IsFromMe || a.OwnerLinked || a.SenderID == 0 || a.Automated || Automated(a.SenderEmail) {
+		if !counted(hit.MessageID) || bots[hit.MessageID] {
 			continue
 		}
+		a := authors[hit.MessageID]
+		sim := similarity[hit.MessageID]
 		key := candidateKey{id: a.SenderID}
 		fresh := &Candidate{ParticipantID: a.SenderID, DisplayName: a.SenderName, EmailAddress: a.SenderEmail}
 		if a.PersonID != nil {
@@ -220,12 +218,44 @@ func (s *Service) attribute(
 	return out, nil
 }
 
-// addDeclared adds each ask-me-about value that matches the topic to its
-// person. A person with a match and no messages joins the candidates.
-func (s *Service) addDeclared(ctx context.Context, candidates []Candidate, freeText string) ([]Candidate, error) {
-	values, err := s.Data.AskMeAboutValuesContext(ctx, Tokens(freeText))
+// slackBots returns the counted Slack messages whose archived payload marks a
+// bot. The importer files a message carrying both "user" and "bot_id" under
+// the user, so only the payload shows it. An unreadable payload leaves the
+// message counted.
+func (s *Service) slackBots(
+	ctx context.Context, authors map[int64]store.TopicAuthor, counted func(int64) bool,
+) (map[int64]bool, error) {
+	var ids []int64
+	for id, a := range authors {
+		if a.MessageType == slack.MessageType && counted(id) {
+			ids = append(ids, id)
+		}
+	}
+	bots := map[int64]bool{}
+	if len(ids) == 0 {
+		return bots, nil
+	}
+	raws, err := s.Data.GetMessageRawsContext(ctx, ids)
 	if err != nil {
 		return nil, err
+	}
+	for id, raw := range raws {
+		if slack.RawFromBot(raw) {
+			bots[id] = true
+		}
+	}
+	return bots, nil
+}
+
+// addDeclared adds each ask-me-about value that matches the topic to its
+// person. A person with a match and no messages joins the candidates. It also
+// reports that the declared read hit its cap.
+func (s *Service) addDeclared(
+	ctx context.Context, candidates []Candidate, freeText string,
+) ([]Candidate, bool, error) {
+	values, truncated, err := s.Data.AskMeAboutValuesContext(ctx)
+	if err != nil {
+		return nil, false, err
 	}
 	index := map[int64]int{}
 	for i, c := range candidates {
@@ -245,5 +275,5 @@ func (s *Service) addDeclared(ctx context.Context, candidates []Candidate, freeT
 		}
 		candidates[i].AskMeAbout = append(candidates[i].AskMeAbout, v.Value)
 	}
-	return candidates, nil
+	return candidates, truncated, nil
 }

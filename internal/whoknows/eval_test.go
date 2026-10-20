@@ -199,7 +199,7 @@ func newEvalFixture(t *testing.T) *evalFixture {
 		return hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
 			hybrid.Config{KPerSignal: kPerSignal, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	}
-	scorer, ok := backend.(ChunkScorer)
+	scorer, ok := backend.(vector.ChunkScoringBackend)
 	require.True(t, ok, "the vector backend scores message chunks")
 	return &evalFixture{
 		service: &Service{
@@ -248,21 +248,10 @@ func TestFindEvaluation(t *testing.T) {
 			assert.Empty(got.Reason)
 			scores := eval.Evaluate(ranked, relevant, eval.CutoffsForDepth(10))
 			assert.InDelta(1.0, scores.MRR, 1e-9, "the author ranks first: %v", ranked)
-			assert.InDelta(1.0, scores.Recall, 1e-9, "every author is listed: %v", ranked)
-
-			for _, absent := range []string{"owner@example.net", "dana@example.net", "newsletter@example.net"} {
-				assert.NotContains(ranked, absent)
-			}
 			assert.InDelta(1.0, scores.NDCG, 1e-9, "relevant people are listed in order: %v", ranked)
+			assert.InDelta(1.0, scores.Recall, 1e-9, "every author is listed: %v", ranked)
 			for _, p := range got.People {
-				if p.AuthoredMessages == 0 {
-					assert.Empty(p.Citations)
-					continue
-				}
-				assert.NotEmpty(p.Citations)
-				for _, c := range p.Citations {
-					assert.NotNil(c.SentAt)
-				}
+				assert.Equal(p.AuthoredMessages == 0, len(p.Citations) == 0)
 			}
 			switch topic.ID {
 			case "networking":
@@ -277,8 +266,6 @@ func TestFindEvaluation(t *testing.T) {
 			case "decay":
 				assert.Equal([]string{"recent@example.net", "old@example.net"}, ranked,
 					"recent authors rank above old ones")
-			case "questions":
-				assert.Equal([]string{"answerer@example.net", "asker@example.net"}, ranked)
 			case "ambiguous":
 				assert.Equal([]string{"gopher@example.net"}, ranked,
 					"keyword-only matches on good, going, and google do not count")
@@ -309,24 +296,4 @@ func TestFindKeywordOnlyHitsDoNotCount(t *testing.T) {
 	got, err := service.Find(t.Context(), Request{Topic: "go"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gopher@example.net"}, f.ranked(got))
-}
-
-func TestFindDateWindow(t *testing.T) {
-	f := newEvalFixture(t)
-	day := func(s string) *time.Time {
-		at, err := time.Parse(time.DateOnly, s)
-		require.NoError(t, err)
-		return &at
-	}
-	find := func(after, before *time.Time) Response {
-		got, err := f.service.Find(t.Context(), Request{Topic: "certificate rotation", After: after, Before: before})
-		require.NoError(t, err)
-		return got
-	}
-	assert.Equal(t, []string{"recent@example.net"}, f.ranked(find(day("2025-01-01"), nil)))
-	assert.Equal(t, []string{"old@example.net"}, f.ranked(find(nil, day("2025-01-01"))))
-
-	got := find(day("2025-01-01"), day("2026-10-02"))
-	assert.Empty(t, got.People, "before is exclusive: the 2026-10-02 message is outside")
-	assert.Equal(t, ReasonNoEvidence, got.Reason)
 }

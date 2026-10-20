@@ -2877,7 +2877,7 @@ and the [API contract](api-server.md#filename-suggestions).
 
 ### person who-knows
 
-On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Needs a daemon with API schema 3.24.0 or newer.
+On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Matched declared topics print as `declared: ...`. Needs a daemon with API schema 3.24.0 or newer.
 
 ```bash
 msgvault person who-knows <topic words...> [flags]

@@ -15,7 +15,8 @@ func (s *Server) registerWhoKnowsRoutes(api huma.API) {
 	op.Description = "Ranks saved people, then unsaved contacts, by how many matching messages they wrote " +
 		"and how recent those are. Each entry cites its messages. When both lists are empty, reason is " +
 		"no_relevant_evidence, or search_limit when the closest messages all came from the owner or " +
-		"automated senders and the search hit its limit."
+		"automated senders and the search hit its limit, or when declared topics were searched only in part. " +
+		"A message's From address is not a verified identity unless its citation has sender_authenticated."
 	op.RequestBody = jsonRequestBodyFor[whoknows.Request](api)
 	op.Responses = jsonResponsesFor[whoknows.Response](api)
 	addErrorResponses(api, op.Responses, http.StatusBadRequest, http.StatusServiceUnavailable)
@@ -37,9 +38,10 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, ok := s.store.(whoknows.DataReader)
-	scorer, scorerOK := backend.(whoknows.ChunkScorer)
+	scorer, scorerOK := backend.(vector.ChunkScoringBackend)
 	if !ok || !scorerOK {
-		s.writeWhoKnowsError(w, whoknows.ErrChunkScoringUnavailable)
+		writeError(w, http.StatusServiceUnavailable, "chunk_scoring_unavailable",
+			"the vector backend cannot score message chunks")
 		return
 	}
 	service := whoknows.Service{Retriever: engine, Scorer: scorer, Data: data, BuildScope: cfg.Embed.Scope.BuildScope()}
@@ -58,9 +60,6 @@ func (s *Server) writeWhoKnowsError(w http.ResponseWriter, err error) {
 		return
 	case errors.Is(err, whoknows.ErrInvalidParameter):
 		writeError(w, http.StatusBadRequest, "invalid_parameter", err.Error())
-		return
-	case errors.Is(err, whoknows.ErrChunkScoringUnavailable):
-		writeError(w, http.StatusServiceUnavailable, "chunk_scoring_unavailable", err.Error())
 		return
 	}
 	// An embedding timeout wraps context.DeadlineExceeded, so keep it out of

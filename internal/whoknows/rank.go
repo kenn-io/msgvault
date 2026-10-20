@@ -113,11 +113,6 @@ func Rank(candidates []Candidate, p Params, now time.Time) ([]Person, []Contact)
 			if n := cmp.Compare(b.weight, a.weight); n != 0 {
 				return n
 			}
-			if a.Citation.SentAt != nil && b.Citation.SentAt != nil {
-				if n := b.Citation.SentAt.Compare(*a.Citation.SentAt); n != 0 {
-					return n
-				}
-			}
 			return cmp.Compare(a.Citation.MessageID, b.Citation.MessageID)
 		})
 		r.citations = []Citation{}

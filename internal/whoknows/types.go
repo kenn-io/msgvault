@@ -86,11 +86,14 @@ type Contact struct {
 // when both lists are empty. SearchedMessages is how many messages the search
 // returned.
 type Response struct {
-	Topic            string    `json:"topic"`
-	Reason           string    `json:"reason,omitempty"`
-	SearchedMessages int       `json:"searched_messages"`
-	People           []Person  `json:"people"`
-	UnsavedContacts  []Contact `json:"unsaved_contacts"`
+	Topic            string `json:"topic"`
+	Reason           string `json:"reason,omitempty"`
+	SearchedMessages int    `json:"searched_messages"`
+	// DeclaredTruncated reports that more declared topics exist than one
+	// request reads, so some were not searched.
+	DeclaredTruncated bool      `json:"declared_truncated"`
+	People            []Person  `json:"people"`
+	UnsavedContacts   []Contact `json:"unsaved_contacts"`
 }
 
 // Params is a validated Request with its defaults applied.

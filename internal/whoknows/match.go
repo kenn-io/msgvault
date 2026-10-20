@@ -1,9 +1,7 @@
 package whoknows
 
 import (
-	"maps"
 	"net/mail"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -66,11 +64,6 @@ func tokens(s string) map[string]bool {
 		}
 	}
 	return out
-}
-
-// Tokens returns the case-folded words of s that Matches compares, sorted.
-func Tokens(s string) []string {
-	return slices.Sorted(maps.Keys(tokens(s)))
 }
 
 // Matches reports whether one side's words all appear on the other side.

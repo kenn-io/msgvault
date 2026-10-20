@@ -282,32 +282,36 @@ The search reads the 200 closest messages. A message counts when its cosine
 similarity to the topic reaches `--min-score` (default 0.5), measured on the
 message's best chunk. Each counted message weighs its similarity times its
 recency, which halves every 180 days and stops at 0.1. The message part of the
-score is `log(1 + total weight)`. A matching `ask_me_about` value adds 0.75, so
-a saved person who declared the topic but wrote nothing about it is listed as
-"declared, no messages".
+score is `log(1 + total weight)`. A matching `ask_me_about` value you or an
+address book supplied adds 0.75 and is printed as `declared: ...`, so a saved
+person who declared the topic but wrote nothing about it is listed as
+"declared, no messages". Matching compares whole words without regard to case,
+so `strasse` finds `Straße`. A request reads at most 5,000 declared values; past
+that, the command prints "Declared topics were searched only in part."
 
 Only the author earns credit. People copied on a message, meeting attendees,
 you, and automated senders get none. A sender counts as automated when its
 address looks like `noreply@` or `notifications@`, or when the source marked
-the author as a bot or webhook, as Discord does. Meeting transcripts and
+the author as a bot or webhook, as Discord does, or the archived Slack
+message carries a `bot_id`. Meeting transcripts and
 calendar entries are not searched. Two kinds of sender earn the weight of their
 best message only: list mail, and a sender you never wrote to, such as a vendor
 who sends many unanswered messages. A colleague who answers keeps every message.
 
 A topic nobody wrote about prints `Nobody in your archive has written about
 "..."`. When the search returned its full pool and every matching message came
-from you or automated senders, the command says so and suggests `--after` or
-`--before`, because the answer may lie beyond the pool.
+from you or automated senders, or declared topics were searched only in part,
+the command says no one turned up within the search limits and suggests
+`--after` or `--before`, because the answer may lie beyond them.
 
-The 0.5 default is a starting point. It has not been calibrated for any real
-embedding model, and the cosine scale differs between models. If a topic worded
-unlike your mail finds nobody, lower `--min-score`; if unrelated people appear,
-raise it. Vector search must be ready, and the
-topic goes to the configured embedding endpoint once, like semantic message
-search. Senders are read when you run the command, so newly synced mail counts
-without an activity build. A citation's `sender_authenticated` is true when the
-source sets the sender, as chat does; an email From address is an assertion, not
-a verified identity. The command does not create or edit profiles.
+The 0.5 default is not calibrated for any real embedding model. If a topic
+worded unlike your mail finds nobody, lower `--min-score`; if unrelated people
+appear, raise it. Vector search must be ready, and the topic goes to the
+configured embedding endpoint once. Senders are read when you run the command,
+so newly synced mail counts without an activity build. A citation's
+`sender_authenticated` is true when the source sets the sender, as chat does; an
+email From address is not a verified identity. The command does not create or
+edit profiles.
 
 The owner-only [HTTP endpoint](/docs/api-server/#find-who-knows-about-a-topic)
 provides the same result. See the [CLI options](/docs/cli-reference/#person-who-knows).

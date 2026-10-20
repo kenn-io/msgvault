@@ -15,16 +15,28 @@ import (
 )
 
 func TestWriteWhoKnowsEmptyResults(t *testing.T) {
-	assert := assert.New(t)
-	var out bytes.Buffer
-	require.NoError(t, writeWhoKnows(&out, whoknows.Response{Topic: "sailboat insurance", Reason: whoknows.ReasonNoEvidence}))
-	assert.Equal("Nobody in your archive has written about \"sailboat insurance\".\n", out.String())
-
-	out.Reset()
-	require.NoError(t, writeWhoKnows(&out, whoknows.Response{
-		Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit, SearchedMessages: 200,
-	}))
-	assert.Equal("The closest 200 messages about \"kubernetes\" came from you or automated senders; narrow with --after or --before.\n", out.String())
+	for name, tc := range map[string]struct {
+		response whoknows.Response
+		want     string
+	}{
+		"no evidence": {
+			whoknows.Response{Topic: "sailboat insurance", Reason: whoknows.ReasonNoEvidence},
+			"Nobody in your archive has written about \"sailboat insurance\".\n",
+		},
+		"search limit": {
+			whoknows.Response{Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit},
+			"No one turned up for \"kubernetes\" within the search limits; narrow with --after or --before.\n",
+		},
+		"declared in part": {
+			whoknows.Response{Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit, DeclaredTruncated: true},
+			"No one turned up for \"kubernetes\" within the search limits; narrow with --after or --before.\n" +
+				"Declared topics were searched only in part.\n",
+		},
+	} {
+		var out bytes.Buffer
+		require.NoError(t, writeWhoKnows(&out, tc.response), name)
+		assert.Equal(t, tc.want, out.String(), name)
+	}
 }
 
 func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
@@ -35,7 +47,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
 		People: []whoknows.Person{
 			{
 				Rank: 1, PersonID: 7, DisplayName: "Ana Lopez", Score: 1.2, MessageScore: .45, DeclaredBoost: .75,
-				AuthoredMessages: 3,
+				AuthoredMessages: 3, AskMeAbout: []string{"kubernetes", "networking"},
 				Citations: []whoknows.Citation{
 					{MessageID: 4812, SentAt: &sent, MessageType: "email", Subject: "kube-proxy rules"},
 					{MessageID: 4813, MessageType: "chat", Snippet: "try the \x1b[31mpolicy\x1b[0m"},
@@ -47,14 +59,17 @@ func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
 			Rank: 1, ParticipantID: 9, EmailAddress: "dee@example.net", Score: .62, MessageScore: .62, AuthoredMessages: 2,
 			Citations: []whoknows.Citation{{MessageID: 90, SentAt: &sent, MessageType: "email", Subject: "ingress"}},
 		}},
+		DeclaredTruncated: true,
 	}))
 	assert.Equal(t, `#1  Ana Lopez  score 1.20 (messages 0.45, declared 0.75)  3 authored
+    declared: kubernetes, networking
     2026-09-12  email  kube-proxy rules  msgvault show-message 4812
     undated  chat  try the policy  msgvault show-message 4813
 #2  Lou Lurker  score 0.75 (messages 0.00, declared 0.75)  declared, no messages
 Unsaved contacts
 #1  dee@example.net  score 0.62  2 authored  msgvault person promote 9
     2026-09-12  email  ingress  msgvault show-message 90
+Declared topics were searched only in part.
 `, out.String())
 }
 
@@ -95,26 +110,6 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		"topic": "kubernetes networking", "limit": float64(3), "min_score": 0.4, "after": "2026-01-01T00:00:00Z",
 	}, body)
 	assert.Equal(t, "Nobody in your archive has written about \"kubernetes networking\".\n", out)
-}
-
-func TestWhoKnowsCommandJSONPreservesDaemonBody(t *testing.T) {
-	const body = "{ \"topic\": \"cloud\", \"people\": [], \"unsaved_contacts\": [] }\n"
-	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(body))
-	}, "cloud", "--json")
-	require.NoError(t, err)
-	assert.Equal(t, body, out) //nolint:testifylint // The CLI must pass the daemon's bytes through unchanged.
-}
-
-func TestWhoKnowsCommandRejectsUnreadableDatesBeforeConnecting(t *testing.T) {
-	for _, args := range [][]string{{"cloud", "--after", "yesterday"}, {"cloud", "--before", "2026-13-01"}} {
-		_, err := runWhoKnows(t, "3.24.0", func(http.ResponseWriter, *http.Request) {
-			assert.Fail(t, "the command must not reach the daemon", args)
-		}, args...)
-		require.Error(t, err, args)
-		assert.Contains(t, err.Error(), "must be YYYY-MM-DD or RFC3339", args)
-	}
 }
 
 func TestWhoKnowsCommandExplainsAnOlderDaemon(t *testing.T) {

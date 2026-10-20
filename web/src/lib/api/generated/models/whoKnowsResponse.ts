@@ -5,6 +5,7 @@ import type { WhoKnowsContact } from "./whoKnowsContact";
 import type { WhoKnowsPerson } from "./whoKnowsPerson";
 
 export interface WhoKnowsResponse {
+  declared_truncated: boolean;
   people: WhoKnowsPerson[];
   reason?: string;
   searched_messages: number;

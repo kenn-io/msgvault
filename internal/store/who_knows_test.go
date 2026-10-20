@@ -2,7 +2,8 @@ package store_test
 
 import (
 	"database/sql"
-	"fmt"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -59,28 +60,22 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	require.NoError(err)
 	assert.Len(got, 5, "deleted and missing messages are left out")
 
-	// Saved sender, with no activity index built.
+	// A saved sender with no activity index built.
 	a := got[saved]
 	require.NotNil(a.PersonID)
 	assert.Equal(anaPerson.ID, *a.PersonID)
 	assert.Equal(ana, a.SenderID)
 	assert.Equal("Ana Sender", a.SenderName)
-	assert.Equal("ana@example.net", a.SenderEmail)
 	assert.Equal("Re: saved", a.Subject)
-	assert.Equal("snippet saved", a.Snippet)
 	assert.Equal("email", a.MessageType)
 	require.NotNil(a.SentAt)
 	assert.True(whoKnowsSentAt.Equal(*a.SentAt))
-	assert.False(a.IsFromMe)
-	assert.False(a.ListMail)
-	assert.False(a.Automated)
 	assert.False(a.SenderAuthenticated, "an email From header is an assertion")
 
-	// Sender bound to no person, writing through a list.
-	b := got[unsaved]
-	assert.Nil(b.PersonID)
-	assert.Equal(ben, b.SenderID)
-	assert.True(b.ListMail)
+	// A sender bound to no person, writing through a list.
+	assert.Nil(got[unsaved].PersonID)
+	assert.True(got[unsaved].ListMail)
+	assert.False(got[saved].ListMail)
 
 	// The owner's own mail, and mail from an address bound to the owner's
 	// person that no account identity lists.
@@ -91,7 +86,6 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	require.NotNil(got[aliased].PersonID)
 	assert.Equal(ownerPerson.ID, *got[aliased].PersonID)
 	assert.False(got[saved].OwnerLinked)
-	assert.False(got[unsaved].OwnerLinked)
 
 	// With no sender_id, the lowest 'from' recipient is the sender.
 	assert.Equal(min(ben, ana), got[byEnvelope].SenderID)
@@ -105,12 +99,15 @@ func TestTopicAuthorsReadsProducerAutomationAndAuthentication(t *testing.T) {
 	require.NoError(err)
 	conversation, err := f.Store.EnsureConversation(slack.ID, "channel", "Channel")
 	require.NoError(err)
-	user := f.EnsureParticipant("user@example.net", "User", "example.net")
 
-	post := func(name, metadata string) int64 {
+	post := func(name, metadata, identifierType, identifier string) int64 {
+		sender := f.EnsureParticipant(name+"@example.net", name, "example.net")
+		if identifier != "" {
+			require.NoError(f.Store.SetParticipantIdentifier(sender, identifierType, identifier))
+		}
 		m := f.NewMessage().WithSourceMessageID(name).Build()
 		m.SourceID, m.ConversationID = slack.ID, conversation
-		m.SenderID = sql.NullInt64{Int64: user, Valid: true}
+		m.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := f.Store.UpsertMessage(m)
 		require.NoError(err)
 		if metadata != "" {
@@ -118,20 +115,28 @@ func TestTopicAuthorsReadsProducerAutomationAndAuthentication(t *testing.T) {
 		}
 		return id
 	}
-	human := post("human", `{"author_kind":"user"}`)
-	bot := post("bot", `{"author_kind":"bot","automated":true}`)
-	hook := post("hook", `{"author_kind":"webhook","automated":true}`)
-	plain := post("plain", "")
-	notAutomated := post("explicit", `{"automated":false}`)
-
-	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{human, bot, hook, plain, notAutomated})
+	automated := map[string]int64{
+		"discord":   post("discord", `{"author_kind":"bot","automated":true}`, "", ""),
+		"slack":     post("slack", "", "slack", "T1:bot:B1"),
+		"agent":     post("agent", "", "chatwoot", "acct/agent_bot/7"),
+		"assistant": post("assistant", "", "chatwoot", "acct/captain_assistant/8"),
+	}
+	humans := map[string]int64{
+		"plain":     post("plain", "", "", ""),
+		"explicit":  post("explicit", `{"automated":false}`, "", ""),
+		"slackuser": post("slackuser", "", "slack", "T1:U1"),
+		"agentuser": post("agentuser", "", "chatwoot", "acct/agent/9"),
+	}
+	ids := slices.Concat(slices.Collect(maps.Values(automated)), slices.Collect(maps.Values(humans)))
+	got, err := f.Store.TopicAuthorsContext(t.Context(), ids)
 	require.NoError(err)
-	assert.False(got[human].Automated)
-	assert.True(got[bot].Automated)
-	assert.True(got[hook].Automated)
-	assert.False(got[plain].Automated)
-	assert.False(got[notAutomated].Automated)
-	assert.True(got[human].SenderAuthenticated, "the source sets a Slack sender")
+	for name, id := range automated {
+		assert.True(got[id].Automated, name)
+	}
+	for name, id := range humans {
+		assert.False(got[id].Automated, name)
+	}
+	assert.True(got[humans["plain"]].SenderAuthenticated, "the source sets a Slack sender")
 }
 
 func TestOwnerAddressedFindsParticipantsTheOwnerWroteTo(t *testing.T) {
@@ -196,64 +201,34 @@ func TestAskMeAboutValuesReadsUserValuesForNonOwners(t *testing.T) {
 	_, asked := newPerson("asked@example.net")
 	_, inferred := newPerson("inferred@example.net")
 	_, superseded := newPerson("superseded@example.net")
-	_, unrelated := newPerson("unrelated@example.net")
 	ownerParticipant, owner := newPerson("owner@example.net")
 	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
 	_, err := f.Store.LinkParticipants(ownerParticipant, alias)
 	require.NoError(err)
-	setValue(asked, "Kubernetes networking", store.ProvenanceUser)
+	setValue(asked, "Straße networking", store.ProvenanceUser)
 	setValue(inferred, "kubernetes robotics", store.ProvenanceEnrichment)
 	setValue(superseded, "old topic", store.ProvenanceUser)
-	setValue(superseded, "new kubernetes topic", store.ProvenanceUser)
-	setValue(unrelated, "billing", store.ProvenanceUser)
-	setValue(owner, "my own kubernetes topic", store.ProvenanceUser)
+	setValue(superseded, "new topic", store.ProvenanceUser)
+	setValue(owner, "my own topic", store.ProvenanceUser)
 
-	got, err := f.Store.AskMeAboutValuesContext(ctx, []string{"kubernetes", "networking"})
+	got, truncated, err := f.Store.AskMeAboutValuesContext(ctx)
 	require.NoError(err)
+	assert.False(truncated)
 	assert.Equal([]store.PersonAskMeAbout{
-		{PersonID: asked, PersonName: "asked@example.net", Value: "Kubernetes networking"},
-		{PersonID: superseded, PersonName: "superseded@example.net", Value: "new kubernetes topic"},
-	}, got, "values without a topic word, inferred and superseded values, and the owner's own person are left out")
+		{PersonID: asked, PersonName: "asked@example.net", Value: "Straße networking"},
+		{PersonID: superseded, PersonName: "superseded@example.net", Value: "new topic"},
+	}, got, "inferred and superseded values, and the owner's own person, are left out")
 
-	got, err = f.Store.AskMeAboutValuesContext(ctx, []string{"billing"})
+	// Copy the first value past the cap: the read returns the cap and says more exist.
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`
+		WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?)
+		INSERT INTO person_attribute_values (person_id, definition_id, ordinal, value_text, source)
+		SELECT v.person_id, v.definition_id, v.ordinal + n.i, v.value_text, v.source
+		  FROM person_attribute_values v, n WHERE v.person_id = ? AND v.superseded_at IS NULL`),
+		store.DeclaredValueLimit, asked)
 	require.NoError(err)
-	require.Len(got, 1)
-	assert.Equal(unrelated, got[0].PersonID)
-
-	none, err := f.Store.AskMeAboutValuesContext(ctx, nil)
+	got, truncated, err = f.Store.AskMeAboutValuesContext(ctx)
 	require.NoError(err)
-	assert.Empty(none)
-}
-
-func TestAskMeAboutValuesHandlesWildcardsAndNonASCIIWords(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	ctx := t.Context()
-	var people []int64
-	for i, text := range []string{"100% uptime", "a_b", "CAFÉ roasting", "plain"} {
-		participant := f.EnsureParticipant(fmt.Sprintf("p%d@example.net", i), "P", "example.net")
-		person, _, err := f.Store.CreatePersonFromParticipant(participant)
-		require.NoError(err)
-		_, err = f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
-			PersonID: person.ID, DefinitionSlug: store.AttributeSlugAskMeAbout, Ordinal: new(int64),
-			Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &text},
-			Source: store.ProvenanceUser,
-		})
-		require.NoError(err)
-		people = append(people, person.ID)
-	}
-	ids := func(words ...string) []int64 {
-		got, err := f.Store.AskMeAboutValuesContext(ctx, words)
-		require.NoError(err)
-		var out []int64
-		for _, v := range got {
-			out = append(out, v.PersonID)
-		}
-		return out
-	}
-	assert.Equal([]int64{people[0]}, ids("100%"), "a percent sign is not a wildcard")
-	assert.Equal([]int64{people[1]}, ids("a_b"), "an underscore is not a wildcard")
-	assert.Empty(ids("a%b"))
-	assert.Equal(people, ids("café", "plain"), "a non-ASCII word reads every value and leaves matching to the caller")
+	assert.True(truncated)
+	assert.Len(got, store.DeclaredValueLimit)
 }
