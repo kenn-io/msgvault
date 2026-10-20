@@ -3708,6 +3708,9 @@ func TestImportedBotMessagesAreAutomatedTopicAuthors(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := testWorkspace(t)
+	// A bot relaying under a user's identity carries both fields; the importer
+	// files it under the user.
+	f.convs[0].Msgs = append(f.convs[0].Msgs, fakeMsg{TS: ts(9), User: "UALICE", BotID: "B077", Text: "relayed alert"})
 	imp, opts := testImporter(t, f)
 	st := imp.store
 	_, err := imp.Import(context.Background(), opts)
@@ -3719,10 +3722,19 @@ func TestImportedBotMessagesAreAutomatedTopicAuthors(t *testing.T) {
 			`SELECT id FROM messages WHERE source_message_id = ?`), sourceMessageID).Scan(&id))
 		return id
 	}
-	bot, person := messageID("C01:"+ts(4)), messageID("C01:"+ts(0))
-	authors, err := st.TopicAuthorsContext(context.Background(), []int64{bot, person})
+	bot, person, relay := messageID("C01:"+ts(4)), messageID("C01:"+ts(0)), messageID("C01:"+ts(9))
+	authors, err := st.TopicAuthorsContext(context.Background(), []int64{bot, person, relay})
 	require.NoError(err)
 	assert.True(authors[bot].Automated, "deploybot is a bot")
 	assert.False(authors[person].Automated)
 	assert.True(authors[bot].SenderAuthenticated, "Slack sets the sender")
+	assert.Equal(authors[person].SenderID, authors[relay].SenderID, "the relay is filed under the user")
+	assert.False(authors[relay].Automated, "only the payload shows the relay is a bot")
+
+	raws, err := st.GetMessageRawsContext(context.Background(), []int64{bot, person, relay})
+	require.NoError(err)
+	assert.True(RawFromBot(raws[bot]))
+	assert.False(RawFromBot(raws[person]))
+	assert.True(RawFromBot(raws[relay]))
+	assert.False(RawFromBot([]byte("not json")))
 }

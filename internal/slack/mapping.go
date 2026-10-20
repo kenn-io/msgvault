@@ -10,8 +10,8 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// messageType is the msgvault message_type for all Slack-archived messages.
-const messageType = "slack"
+// MessageType is the msgvault message_type for all Slack-archived messages.
+const MessageType = "slack"
 
 // sourceMessageID composes the archive identity of a Slack message. A ts is
 // only unique within its channel, hence the composite key.
@@ -164,7 +164,7 @@ func mapMessage(m *Message, channelID string, conversationID, storeSourceID int6
 		ConversationID:  conversationID,
 		SourceID:        storeSourceID,
 		SourceMessageID: sourceMessageID(channelID, m.TS),
-		MessageType:     messageType,
+		MessageType:     MessageType,
 		SentAt:          sql.NullTime{Time: t, Valid: !t.IsZero()},
 		ReceivedAt:      sql.NullTime{Time: t, Valid: !t.IsZero()},
 		IsFromMe:        isFromMe,

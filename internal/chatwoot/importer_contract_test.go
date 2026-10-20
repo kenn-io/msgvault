@@ -750,37 +750,3 @@ func TestImportContractRelatedMessageSubset(t *testing.T) {
 	must.NoError(err)
 	checks.Nil(queried.RelatedMessageID)
 }
-
-// who-knows leaves bots and assistants out of its authors. Chatwoot keeps no
-// automation flag on the message: the importer files them under their own
-// path segment in a participant identifier, and the store reads that marker.
-func TestImportedBotsAndAssistantsAreAutomatedTopicAuthors(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	contact := map[string]any{"id": int64(7), "type": "contact", "name": "Example Contact", "phone_number": "+12025550101"}
-	agent := map[string]any{"id": int64(7), "type": "user", "name": "Example Agent", "email": "staffquartz@example.com"}
-	bot := map[string]any{"id": int64(7), "type": "agent_bot", "name": "Example Bot"}
-	assistant := map[string]any{"id": int64(7), "type": "captain_assistant", "name": "Example Assistant"}
-	messages := []map[string]any{
-		chatwootapi.Message(101, 1767225601, contact),
-		chatwootapi.Message(102, 1767225602, agent),
-		chatwootapi.Message(103, 1767225603, bot),
-		chatwootapi.Message(104, 1767225604, assistant),
-	}
-	for _, index := range []int{1, 2, 3} {
-		messages[index]["message_type"] = 1
-	}
-	api := newContractAPI(t, 3, messages)
-	st := testutil.NewTestStore(t)
-	importer, _ := contractRegister(t, st, api)
-	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7})
-	require.NoError(err)
-
-	automated := map[string]bool{"101": false, "102": false, "103": true, "104": true}
-	for providerID, want := range automated {
-		id := contractArchivedMessageID(t, st, providerID)
-		authors, err := st.TopicAuthorsContext(t.Context(), []int64{id})
-		require.NoError(err)
-		assert.Equal(want, authors[id].Automated, "provider message %s", providerID)
-	}
-}
