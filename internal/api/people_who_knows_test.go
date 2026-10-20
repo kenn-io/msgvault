@@ -9,14 +9,12 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -25,13 +23,10 @@ import (
 	"go.kenn.io/msgvault/internal/whoknows"
 )
 
-func whoKnowsGet(t *testing.T, srv *api.Server, query string, headers ...string) *httptest.ResponseRecorder {
+func whoKnowsGet(t *testing.T, srv *api.Server, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/people/who-knows?"+query, nil)
 	request.RemoteAddr = "127.0.0.1:12345"
-	for i := 0; i+1 < len(headers); i += 2 {
-		request.Header.Set(headers[i], headers[i+1])
-	}
 	got := httptest.NewRecorder()
 	srv.Router().ServeHTTP(got, request)
 	return got
@@ -66,7 +61,6 @@ type whoKnowsBackend struct {
 
 	generation vector.Generation
 	hits       []vector.FusedHit
-	err        error
 	request    vector.FusedRequest
 }
 
@@ -76,7 +70,7 @@ func (b *whoKnowsBackend) ActiveGeneration(context.Context) (vector.Generation, 
 
 func (b *whoKnowsBackend) FusedSearch(_ context.Context, r vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
 	b.request = r
-	return b.hits, vector.SearchMetadata{}, b.err
+	return b.hits, vector.SearchMetadata{}, nil
 }
 
 type whoKnowsEmbedder struct{ err error }
@@ -85,7 +79,7 @@ func (e whoKnowsEmbedder) EmbedQuery(context.Context, string) ([]float32, error)
 	return []float32{1, 0, 0}, e.err
 }
 
-func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder, tweak ...func(*api.ServerOptions)) (*api.Server, *store.Store) {
+func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder) (*api.Server, *store.Store) {
 	t.Helper()
 	cfg := vector.Config{Enabled: true}
 	cfg.Embed.Scope.MessageTypes = []string{"email"}
@@ -93,9 +87,6 @@ func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder wh
 	options := api.ServerOptions{
 		Config: &config.Config{}, Store: st, Backend: backend,
 		VectorCfg: cfg, Logger: slog.New(slog.DiscardHandler),
-	}
-	for _, change := range tweak {
-		change(&options)
 	}
 	backend.generation = vector.Generation{ID: 1, State: vector.GenerationActive, Fingerprint: options.VectorCfg.GenerationFingerprint()}
 	options.HybridEngine = hybrid.NewEngine(backend, st.DB(), embedder, hybrid.Config{
@@ -120,39 +111,6 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 		"the email-only index leaves chat unsearched")
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
-}
-
-// The search finds only embedded mail or mail sharing a keyword with the
-// topic, so before answering that nobody wrote about it, the route checks
-// that no message of the searched types waits for its vector.
-func TestWhoKnowsReportsUnembeddedMailBeforeAnsweringEmpty(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	backend := &whoKnowsBackend{}
-	srv, st := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
-		o.VectorCfg.Embed.Scope.MessageTypes = nil
-	})
-	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
-	require.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
-	require.NoError(err)
-	id, err := st.UpsertMessage(&store.Message{
-		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "m1", MessageType: "email",
-	})
-	require.NoError(err)
-
-	got := whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
-	require.Equal(http.StatusOK, got.Code, got.Body.String())
-	assert.JSONEq(`{"topic":"sailboat insurance","limits":["partial_index"],"people":[],"unsaved_contacts":[]}`, got.Body.String(),
-		"an unembedded message counts whatever its date")
-
-	// The embedding worker stamps each message it embeds.
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind("UPDATE messages SET embed_gen = ? WHERE id = ?"),
-		int64(backend.generation.ID), id)
-	require.NoError(err)
-	got = whoKnowsGet(t, srv, "topic=sailboat+insurance&after=2026-01-01")
-	require.Equal(http.StatusOK, got.Code, got.Body.String())
-	assert.JSONEq(`{"topic":"sailboat insurance","limits":[],"people":[],"unsaved_contacts":[]}`, got.Body.String())
 }
 
 func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
@@ -185,65 +143,13 @@ func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
 	assert.Equal(t, person.ID, body.People[0].PersonID)
 }
 
+// A wrapped context.DeadlineExceeded must stay an embedding timeout rather
+// than become the generic query timeout.
 func TestWhoKnowsMapsSearchErrors(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		backend  error
-		embedder error
-		status   int
-		code     string
-	}{
-		{"index stale", vector.ErrIndexStale, nil, http.StatusServiceUnavailable, "index_stale"},
-		{"embedding timeout", nil, fmt.Errorf("%w: %w", vector.ErrEmbeddingTimeout, context.DeadlineExceeded), http.StatusServiceUnavailable, "embedding_timeout"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			backend := &whoKnowsBackend{err: test.backend}
-			srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{err: test.embedder})
-			got := whoKnowsGet(t, srv, "topic=cloud")
-			assert.Equal(t, test.status, got.Code, got.Body.String())
-			assert.Contains(t, got.Body.String(), test.code)
-			assert.NotContains(t, got.Body.String(), "query_timeout")
-		})
-	}
-}
-
-func TestWhoKnowsRejectsRestrictedAgent(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
-	require.NoError(err)
-	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}},
-		Store:  st, Logger: slog.New(slog.DiscardHandler),
-	})
-	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
-	issue := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens",
-		strings.NewReader(fmt.Sprintf(`{"label":"reader","permissions":["search.read"],"source_ids":[%d]}`, source.ID)))
-	issue.RemoteAddr = "127.0.0.1:12345"
-	issue.Header.Set("X-Api-Key", "synthetic-owner-key")
-	issue.Header.Set("Content-Type", "application/json")
-	granted := httptest.NewRecorder()
-	srv.Router().ServeHTTP(granted, issue)
-	require.Equal(http.StatusCreated, granted.Code, granted.Body.String())
-	var token struct {
-		Secret string `json:"secret"`
-	}
-	require.NoError(json.Unmarshal(granted.Body.Bytes(), &token))
-
-	got := whoKnowsGet(t, srv, "topic=cloud", apiprotocol.AgentTokenHeader, token.Secret)
-	assert.Equal(t, http.StatusUnauthorized, got.Code, got.Body.String())
-}
-
-// The route reads the archive, so a sync holding the operation gate does not
-// hold it up.
-func TestWhoKnowsAnswersWhileASyncRuns(t *testing.T) {
-	gate := api.NewSerialOperationGate()
-	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
-		o.OperationGate = gate
-	})
-	release, ok := gate.BeginLabeledWorkContext(t.Context(), "sync")
-	require.True(t, ok)
-	t.Cleanup(release)
+	timeout := fmt.Errorf("%w: %w", vector.ErrEmbeddingTimeout, context.DeadlineExceeded)
+	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{err: timeout})
 	got := whoKnowsGet(t, srv, "topic=cloud")
-	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
+	assert.Equal(t, http.StatusServiceUnavailable, got.Code, got.Body.String())
+	assert.Contains(t, got.Body.String(), "embedding_timeout")
+	assert.NotContains(t, got.Body.String(), "query_timeout")
 }

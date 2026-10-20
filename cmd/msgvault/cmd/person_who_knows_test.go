@@ -104,7 +104,7 @@ func runWhoKnows(t *testing.T, schema string, handler http.HandlerFunc, args ...
 
 func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	var query url.Values
-	_, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, r *http.Request) {
+	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/people/who-knows", r.URL.Path)
 		query = r.URL.Query()
@@ -117,15 +117,8 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
 		"before": {"2026-01-01T00:00:00.25Z"},
 	}, query, "a subsecond bound keeps its fraction")
-}
-
-func TestWhoKnowsCommandNamesTheThresholdWhenNobodyWrote(t *testing.T) {
-	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"topic":"sailboat insurance","limits":[],"people":[],"unsaved_contacts":[]}`))
-	}, "sailboat", "insurance", "--min-score", "0.4")
-	require.NoError(t, err)
-	assert.Equal(t, "Nobody in your archive has written about \"sailboat insurance\" (minimum similarity 0.40).\n", out)
+	assert.Equal(t, "Nobody in your archive has written about \"kubernetes networking\" (minimum similarity 0.40).\n", out,
+		"the flag value reaches the renderer")
 }
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {
