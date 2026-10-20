@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -464,6 +465,56 @@ func TestDocumentJournalDisablesAfterLastContextualGenerationSQLite(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, b.ActivateGeneration(t.Context(), ordinary, true))
 	assertDisabledAndEmpty()
+}
+
+func TestDocumentJournalCleanupWaitsForWriterSQLite(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.db")
+	st, err := store.OpenForTest(mainPath)
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	require.NoError(st.InitSchema())
+	b, err := Open(ctx, Options{
+		Path: filepath.Join(dir, "vectors.db"), MainPath: mainPath,
+		MainDB: st.DB(), Dimension: 768,
+	})
+	require.NoError(err)
+	t.Cleanup(func() { _ = b.Close() })
+	require.NoError(st.EnableEmbeddingChangeJournal(ctx))
+	writer, err := st.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	defer func() { _ = writer.Rollback() }()
+	_, err = writer.ExecContext(ctx, `
+		UPDATE embedding_change_clock SET sequence = sequence + 1 WHERE singleton = 1;
+		INSERT INTO embedding_changes (sequence, kind)
+		SELECT sequence, 'message_update' FROM embedding_change_clock WHERE singleton = 1;`)
+	require.NoError(err)
+	done := make(chan error, 1)
+	go func() { done <- b.CleanupDocumentJournalIfUnused(ctx) }()
+	select {
+	case err := <-done:
+		require.NoError(err, "cleanup must wait for the concurrent writer")
+		require.FailNow("cleanup completed while the writer still held the journal lock")
+	case <-time.After(time.Second):
+	}
+	require.NoError(writer.Commit())
+	select {
+	case err := <-done:
+		require.NoError(err)
+	case <-ctx.Done():
+		require.NoError(ctx.Err(), "cleanup must finish after the writer commits")
+	}
+	var enabled bool
+	var rows int
+	require.NoError(st.DB().QueryRowContext(ctx,
+		`SELECT enabled FROM embedding_change_clock WHERE singleton = 1`).Scan(&enabled))
+	require.NoError(st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_changes`).Scan(&rows))
+	assert.False(enabled)
+	assert.Zero(rows, "cleanup includes journal entries committed by the concurrent writer")
 }
 
 func TestDocumentJournalCleanupFailureDoesNotMaskLifecycleSQLite(t *testing.T) {
