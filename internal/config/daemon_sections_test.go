@@ -108,3 +108,34 @@ func TestFastmailSourceForReturnsFastmailConfigError(t *testing.T) {
 	_, err = cfg.FastmailSourceFor(st, source.ID)
 	require.ErrorContains(err, "api_token is required")
 }
+
+func TestSaveRefusesLenientConfigThatWouldLoseFileContent(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
+	for _, tc := range []struct{ name, content, env, want string }{
+		{name: "unknown key", content: "[people.identity_scoring]\nbatch_size = 5\nbatch_siz = 3\n", want: "batch_siz"},
+		{name: "explicit zero", content: "[people.identity_scoring]\nbatch_size = 0\n", want: "identity_scoring.batch_size"},
+		{name: "environment only", env: "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			if tc.env != "" {
+				t.Setenv("MSGVAULT_API_PORT", tc.env)
+			}
+			path := writeDaemonSectionConfig(t, tc.content)
+			cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
+			require.NoError(err)
+			before, err := os.ReadFile(path)
+			require.NoError(err)
+
+			err = cfg.Save()
+			if tc.want == "" {
+				require.NoError(err)
+				return
+			}
+			require.ErrorContains(err, "refusing to save config")
+			require.ErrorContains(err, tc.want)
+			after, err := os.ReadFile(path)
+			require.NoError(err)
+			require.Equal(before, after)
+		})
+	}
+}
