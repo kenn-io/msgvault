@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -30,9 +31,8 @@ type TopicAuthor struct {
 	SenderAuthenticated bool
 }
 
-// AuthorIdentity is the identity family of a sender: its link cluster plus
-// every participant bound to the same saved person. Senders whose families
-// share a member share one identity.
+// AuthorIdentity is the identity family of a sender: every participant
+// bound to its saved person, or its link cluster when it has none.
 type AuthorIdentity struct {
 	// Key is the smallest participant ID in the family.
 	Key int64
@@ -175,95 +175,99 @@ func (s *Store) markSlackBotPayloads(ctx context.Context, authors map[int64]Topi
 	return nil
 }
 
-// AuthorIdentitiesContext groups senders into identity families. A family is
-// a sender's link cluster plus every participant bound to the saved person of
-// a member, and senders that share a member share a family. Each sender maps
-// to its family's identity.
+// AuthorIdentitiesContext groups senders into identity families and maps
+// each sender to its family's identity. Promotion, linking, and merging bind
+// a whole link cluster to at most one person, so a saved sender's family is
+// every participant bound to its person, and an unsaved sender's family is its
+// link cluster.
 func (s *Store) AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) (map[int64]AuthorIdentity, error) {
 	out := map[int64]AuthorIdentity{}
 	if len(senderIDs) == 0 {
 		return out, nil
 	}
+	families, err := s.authorPersonsContext(ctx, senderIDs)
+	if err != nil {
+		return nil, err
+	}
 	clusters, err := s.ParticipantClustersContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	clusterMembers := map[int64][]int64{}
+	unsavedRoots := map[int64]bool{}
+	for _, id := range senderIDs {
+		if _, saved := families[id]; !saved {
+			root := cmp.Or(clusters[id], id)
+			unsavedRoots[root] = true
+			families[id] = AuthorIdentity{Key: root}
+		}
+	}
 	for member, root := range clusters {
-		clusterMembers[root] = append(clusterMembers[root], member)
-	}
-	// Union-find whose root is always the smallest member, so it is the key.
-	parent := map[int64]int64{}
-	var find func(int64) int64
-	find = func(id int64) int64 {
-		p, ok := parent[id]
-		if !ok {
-			parent[id] = id
-			return id
+		if unsavedRoots[root] {
+			families[member] = AuthorIdentity{Key: root}
 		}
-		if p == id {
-			return id
-		}
-		root := find(p)
-		parent[id] = root
-		return root
 	}
-	union := func(a, b int64) {
-		ra, rb := find(a), find(b)
-		parent[max(ra, rb)] = min(ra, rb)
+	byKey, err := s.authorFlagsContext(ctx, families)
+	if err != nil {
+		return nil, err
 	}
 	for _, id := range senderIDs {
-		find(id)
-		if root, ok := clusters[id]; ok {
-			for _, member := range clusterMembers[root] {
-				union(id, member)
-			}
-		}
+		out[id] = byKey[families[id].Key]
 	}
+	return out, nil
+}
 
-	members := slices.Sorted(maps.Keys(parent))
-	args := make([]any, len(members))
-	for i, id := range members {
+// authorPersonsContext maps every participant bound to a sender's saved
+// person to that person's identity, keyed by its smallest participant ID.
+func (s *Store) authorPersonsContext(ctx context.Context, senderIDs []int64) (map[int64]AuthorIdentity, error) {
+	args := make([]any, len(senderIDs))
+	for i, id := range senderIDs {
 		args[i] = id
 	}
-	type boundPerson struct {
-		id   int64
-		name string
-	}
-	persons := map[int64]boundPerson{} // family member to its saved person
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT mine.participant_id, sibling.participant_id, mine.person_id, COALESCE(per.display_name, '')
-		FROM person_participants mine
-		JOIN person_participants sibling ON sibling.person_id = mine.person_id
-		JOIN persons per ON per.id = mine.person_id
-		WHERE mine.participant_id IN (`+directoryPlaceholders(len(members))+`)`), args...)
+		SELECT pp.participant_id, pp.person_id, COALESCE(per.display_name, '')
+		FROM person_participants pp
+		JOIN persons per ON per.id = pp.person_id
+		WHERE pp.person_id IN (SELECT person_id FROM person_participants
+		                       WHERE participant_id IN (`+directoryPlaceholders(len(senderIDs))+`))
+		ORDER BY pp.person_id, pp.participant_id`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read author persons: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	families := map[int64]AuthorIdentity{}
+	var current AuthorIdentity
 	for rows.Next() {
-		var mine, sibling int64
-		var person boundPerson
-		if err := rows.Scan(&mine, &sibling, &person.id, &person.name); err != nil {
+		var member int64
+		var identity AuthorIdentity
+		if err := rows.Scan(&member, &identity.PersonID, &identity.PersonName); err != nil {
 			return nil, fmt.Errorf("scan author person: %w", err)
 		}
-		union(mine, sibling)
-		persons[sibling] = person
+		if identity.PersonID != current.PersonID {
+			current = identity
+			current.Key = member
+		}
+		families[member] = current
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read author persons: %w", err)
 	}
+	return families, nil
+}
 
-	members = slices.Sorted(maps.Keys(parent))
-	args = make([]any, len(members))
+// authorFlagsContext reads the owner and owner-wrote-to flags of every family
+// member and returns each family's identity by key.
+func (s *Store) authorFlagsContext(ctx context.Context, families map[int64]AuthorIdentity) (map[int64]AuthorIdentity, error) {
+	members := slices.Sorted(maps.Keys(families))
+	args := make([]any, len(members))
+	byKey := map[int64]AuthorIdentity{}
 	for i, id := range members {
 		args[i] = id
+		byKey[families[id].Key] = families[id]
 	}
 	ownerWrote := func(where string) string {
 		return `EXISTS (SELECT 1 FROM ` + where + `
 		         AND m.is_from_me AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
 	}
-	families := map[int64]AuthorIdentity{}
 	flags, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT p.id, `+ownerParticipantMatch("p")+`,
 		       `+ownerWrote(`message_recipients mr JOIN messages m ON m.id = mr.message_id
@@ -282,31 +286,15 @@ func (s *Store) AuthorIdentitiesContext(ctx context.Context, senderIDs []int64) 
 		if err := flags.Scan(&id, &owner, &addressed); err != nil {
 			return nil, fmt.Errorf("scan author identity: %w", err)
 		}
-		key := find(id)
-		family := families[key]
-		family.Key = key
+		family := byKey[families[id].Key]
 		family.Owner = family.Owner || owner
 		family.Addressed = family.Addressed || addressed
-		families[key] = family
+		byKey[family.Key] = family
 	}
 	if err := flags.Err(); err != nil {
 		return nil, fmt.Errorf("read author identities: %w", err)
 	}
-	// Members are sorted, so a family that spans two people keeps the one
-	// bound to its smallest member.
-	for _, id := range members {
-		family := families[find(id)]
-		if person, ok := persons[id]; ok && family.PersonID == 0 {
-			family.PersonID, family.PersonName = person.id, person.name
-			families[find(id)] = family
-		}
-	}
-	for _, id := range senderIDs {
-		family := families[find(id)]
-		family.Key = find(id)
-		out[id] = family
-	}
-	return out, nil
+	return byKey, nil
 }
 
 // DeclaredValueLimit caps how many ask-me-about values one read returns.
