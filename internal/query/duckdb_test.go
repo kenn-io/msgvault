@@ -1743,6 +1743,26 @@ func TestDuckDBEngine_GetTotalStats_MessageTypeFilter(t *testing.T) {
 	assert.Equal(int64(2000), stats.TotalSize, "TotalSize")
 }
 
+func TestDuckDBEngine_GetTotalStats_EmailCalendarEventMatchesListing(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	b.AddSource("test@example.com")
+	b.AddMessage(MessageOpt{Subject: "ordinary email", MessageType: messageTypeEmail, SizeEstimate: 100})
+	b.AddMessage(MessageOpt{Subject: "invite event", MessageType: "calendar_event", SizeEstimate: 300})
+	engine := b.BuildEngine()
+	ctx := context.Background()
+
+	filter := MessageFilter{MessageType: "calendar_event"}
+	rows, err := engine.ListMessages(ctx, filter)
+	require.NoError(err, "ListMessages")
+	require.Len(rows, 1)
+	stats, err := engine.GetTotalStats(ctx, StatsOptions{Filter: &filter})
+	require.NoError(err, "GetTotalStats")
+	assert.Equal(int64(len(rows)), stats.MessageCount, "MessageCount matches listing")
+	assert.Equal(int64(300), stats.TotalSize, "TotalSize")
+}
+
 func TestDuckDBEngine_GetTotalStats_SearchScope(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

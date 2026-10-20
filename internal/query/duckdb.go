@@ -1821,9 +1821,6 @@ func (e *DuckDBEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 			conditions = append(conditions, "msg.has_attachments = 1")
 		}
 	}
-	if !opts.SearchScope {
-		conditions = append(conditions, store.SourceNativeMessagesWhere("msg", "src"))
-	}
 
 	// Search filter — uses EXISTS subqueries so no row multiplication.
 	// For 1:N views (Recipients, RecipientNames, Labels), filter on the

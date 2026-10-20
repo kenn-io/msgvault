@@ -1361,9 +1361,6 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 			conditions = append(conditions, e.dialect.BoolTrueExpr("m.has_attachments"))
 		}
 	}
-	if !opts.SearchScope {
-		conditions = append(conditions, store.SourceNativeMessagesWhere("m", "sources"))
-	}
 	// Merge search conditions
 	conditions = append(conditions, searchConditions...)
 	args = append(args, searchArgs...)
