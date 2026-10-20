@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
 	"net/mail"
 	"slices"
 	"strconv"
@@ -159,6 +160,13 @@ func inOwnerFamily(id string, count int) string {
 	return id + " IN (" + directoryPlaceholders(count) + ")"
 }
 
+// ownerParticipant recognizes an account identity or a participant that sent
+// a message marked from me. The latter probes messages by sender_id.
+func ownerParticipant(id string, count int) string {
+	return "(" + inOwnerFamily(id, count) + ` OR EXISTS (
+		SELECT 1 FROM messages om WHERE om.sender_id = ` + id + ` AND om.is_from_me))`
+}
+
 // messageSender is the participant that sent message alias m: its
 // sender_id, else its lowest 'from' recipient.
 func messageSender(m string) string {
@@ -190,9 +198,9 @@ var DiscordAuthoredMessageTypes = []int{0, 19, 20, 23}
 
 // TopicAuthorsContext reads the sender of each message at request time, so
 // mail synced since the last activity build still counts. A message's sender
-// is messages.sender_id, else its lowest 'from' recipient. A sender in owner,
-// the OwnerFamilyContext set, is the owner. Deleted messages are left out of
-// the result.
+// is messages.sender_id, else its lowest 'from' recipient. A family is the
+// owner's when any member is in owner, the OwnerFamilyContext set, or sent a
+// message marked from me. Deleted messages are left out of the result.
 func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs, owner []int64) (map[int64]TopicAuthor, error) {
 	out := map[int64]TopicAuthor{}
 	if len(messageIDs) == 0 {
@@ -252,7 +260,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs, owner []int
 	}
 	for id, sender := range senders {
 		a := out[id]
-		a.Contact = contacts[sender]
+		a.Contact, a.Counts = contacts[sender]
 		out[id] = a
 	}
 	return out, nil
@@ -320,17 +328,11 @@ func (s *Store) slackNonAuthoredPayloadsContext(ctx context.Context, ids []int64
 // linking, and merging bind a whole link cluster to at most one person, so a
 // saved sender's family is every participant bound to its person, and an
 // unsaved sender's family is its link cluster. The cluster walk starts from
-// the listed senders only. The owner wrote a message when it is marked from
-// me or its sender is in owner.
+// the listed senders only. Owner families are left out. The owner wrote a
+// message when it is marked from me or its sender is in owner.
 func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int64, owner []int64) (map[int64]TopicContact, error) {
 	out := map[int64]TopicContact{}
-	var senders []int64
-	for _, id := range bySender {
-		if _, seen := out[id]; !seen {
-			out[id] = TopicContact{}
-			senders = append(senders, id)
-		}
-	}
+	senders := slices.Compact(slices.Sorted(maps.Values(bySender)))
 	if len(senders) == 0 {
 		return out, nil
 	}
@@ -364,8 +366,11 @@ func (s *Store) topicContactsContext(ctx context.Context, bySender map[int64]int
 		FROM keyed k
 		JOIN participants kp ON kp.id = k.family_key
 		LEFT JOIN seed_person sp ON sp.seed = k.seed
-		LEFT JOIN persons per ON per.id = sp.person_id`
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), appendInt64Args(appendInt64Args(nil, senders), owner)...)
+		LEFT JOIN persons per ON per.id = sp.person_id
+		WHERE NOT EXISTS (
+		  SELECT 1 FROM family f WHERE f.seed = k.seed AND ` + ownerParticipant("f.id", len(owner)) + `)`
+	args := appendInt64Args(appendInt64Args(appendInt64Args(nil, senders), owner), owner)
+	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read topic contacts: %w", err)
 	}
@@ -418,8 +423,7 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]P
 		    SELECT 1 FROM person_participants bound
 		      JOIN participants bp ON bp.id = bound.participant_id
 		     WHERE bound.person_id = v.person_id
-		       AND (` + inOwnerFamily("bp.id", len(owner)) + ` OR ` + automatedParticipant("bp") + `
-		         OR EXISTS (SELECT 1 FROM messages om WHERE om.sender_id = bp.id AND om.is_from_me)))
+		       AND (` + ownerParticipant("bp.id", len(owner)) + ` OR ` + automatedParticipant("bp") + `))
 		ORDER BY v.person_id, v.ordinal, v.id
 		LIMIT ?`
 	args = append(appendInt64Args(args, owner), DeclaredValueLimit+1)
