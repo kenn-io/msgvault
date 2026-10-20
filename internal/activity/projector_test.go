@@ -105,16 +105,12 @@ func TestProjectorFollowsDraftSendAndRedraft(t *testing.T) {
 	for _, step := range []struct {
 		name        string
 		remove, add []int64
-		isSent      *bool
 		wantContact bool
 	}{
 		{name: "draft"},
 		{name: "sent", remove: []int64{labels["DRAFT"]}, add: []int64{labels["SENT"]}, wantContact: true},
-		{name: "sent_with_draft_copy", add: []int64{labels["DRAFT"]}, wantContact: true},
-		{name: "redraft", remove: []int64{labels["SENT"]}},
-		{name: "retired_draft", remove: []int64{labels["DRAFT"]}},
-		{name: "sent_again", remove: []int64{labels["DRAFT"]}, add: []int64{labels["SENT"]}, wantContact: true},
-		{name: "unsent", isSent: new(false)},
+		{name: "archived", remove: []int64{labels["SENT"]}, wantContact: true},
+		{name: "redraft", add: []int64{labels["DRAFT"]}},
 	} {
 		t.Run(step.name, func(t *testing.T) {
 			require := require.New(t)
@@ -125,10 +121,7 @@ func TestProjectorFollowsDraftSendAndRedraft(t *testing.T) {
 			if len(step.add) > 0 {
 				require.NoError(f.Store.AddMessageLabels(messageID, step.add))
 			}
-			if step.isSent != nil {
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET is_sent = ? WHERE id = ?`), *step.isSent, messageID)
-				require.NoError(err)
-			}
+
 			_, err := projector.RunOnce(t.Context())
 			require.NoError(err)
 			state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
@@ -142,43 +135,6 @@ func TestProjectorFollowsDraftSendAndRedraft(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestProjectorKeepsArchivedIMAPSentDraft(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, messageID, personID := projectorFixture(t, time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), false)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
-	require.NoError(err)
-	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
-		"DRAFT":   {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
-		"SENT":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
-		"ARCHIVE": {Name: "Archive", Type: "system"},
-	})
-	require.NoError(err)
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
-	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
-	require.NoError(err)
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	assert.Empty(projectedActivityRefs(t, f.Store))
-
-	// Sent-over-Drafts refreshes the same row and records the saved content's origin.
-	require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}))
-	require.NoError(f.Store.RemoveMessageLabels(messageID, []int64{labels["DRAFT"]}))
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["SENT"]}))
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	assert.Equal([]string{"message:" + formatProjectorID(messageID)}, projectedActivityRefs(t, f.Store))
-
-	require.NoError(f.Store.RemoveMessageLabels(messageID, []int64{labels["SENT"]}))
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["ARCHIVE"]}))
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
-	require.NoError(err)
-	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
-	assert.Equal([]string{"message:" + formatProjectorID(messageID)}, projectedActivityRefs(t, f.Store))
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {

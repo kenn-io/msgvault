@@ -44,6 +44,7 @@ type ActivityCandidate struct {
 	LastModified     time.Time
 	DateOnly         bool
 	Eligible         bool
+	Unsent           bool
 	// SourceIsFromMe is the message's source-native ownership flag. It is
 	// authoritative for outbound classification: a source that knows the
 	// archive owner sent a message outranks counterpart resolution, which can
@@ -112,14 +113,12 @@ const activityCandidateStateCTE = `
 	)`
 
 // activityUnsentSQL keeps sent copies eligible even when dedup retained draft
-// evidence. Saved IMAP Sent content remains sent after a move to Archive.
-// draft_authored preserves unsent status after draft evidence retires.
+// evidence. Only live evidence marks a message as unsent.
 func activityUnsentSQL() string {
-	return `(NOT COALESCE(m.is_sent, TRUE) OR ((m.draft_authored OR ` + draftEvidenceSQL("m", "src") + `)
-		AND COALESCE(m.metadata ->> 'imap_content_origin', '') <> 'sent'
+	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceSQL("m", "src") + `
 		AND NOT EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
-		  AND ` + sentEvidenceLabelSQL("l", "src") + `)))`
+		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
 }
 
 var activityCandidateColumns = `
@@ -351,6 +350,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			return nil, fmt.Errorf("scan activity candidate: %w", err)
 		}
 		row.candidate.Queue.Exists = queueExists != 0
+		row.candidate.Unsent = row.unsent
 		row.candidate.TimezoneTransition.Active = timezoneActive != 0
 		row.candidate.DirectLimitTransition.Active = directLimitActive != 0
 		row.candidate.SentAt = activityTimePointer(sentAt)

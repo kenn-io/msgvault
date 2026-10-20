@@ -276,12 +276,8 @@ func sentGmailLabelSQL(l, src string) string {
 // mail the account wrote rather than received: a Sent or Drafts folder role,
 // or Gmail's SENT or DRAFT system label.
 func outboundEvidenceLabelSQL(l, src string) string {
-	return "(" + sentEvidenceLabelSQL(l, src) + " OR " + l + ".system_role = '" + LabelSystemRoleDrafts + "' OR (" +
-		src + ".source_type = 'gmail' AND " + l + ".source_label_id = 'DRAFT'))"
-}
-
-func sentEvidenceLabelSQL(l, src string) string {
-	return "(" + sentFolderLabelSQL(l) + " OR " + sentGmailLabelSQL(l, src) + ")"
+	return "(" + l + ".system_role IN ('" + LabelSystemRoleSent + "', '" + LabelSystemRoleDrafts + "') OR (" +
+		src + ".source_type = 'gmail' AND " + l + ".source_label_id IN ('SENT', 'DRAFT')))"
 }
 
 // draftEvidenceSQL is true when message m is a draft: a Drafts folder role,
@@ -522,7 +518,7 @@ func (s *Store) refreshAccountAttributionTx(
 		}
 	}
 	if draft || authored {
-		if err := requeueActivityIfUnsentChangedTx(ctx, tx, id); err != nil {
+		if err := s.requeueActivityProjectionTx(ctx, tx, id); err != nil {
 			return malformed, err
 		}
 	}
@@ -823,26 +819,30 @@ func (s *Store) refreshAccountAttributionIfOutboundChangedTx(
 	if err != nil {
 		return fmt.Errorf("read outbound evidence for message %d: %w", messageID, err)
 	}
+	if path.Valid && (path.String == accountPathInbound || path.String == accountPathSent) &&
+		(path.String == accountPathSent) != outbound {
+		_, err = s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
+		return err
+	}
 	if authored {
-		if err := requeueActivityIfUnsentChangedTx(ctx, tx, messageID); err != nil {
-			return err
-		}
+		return s.requeueActivityProjectionTx(ctx, tx, messageID)
 	}
-	if !path.Valid || (path.String != accountPathInbound && path.String != accountPathSent) ||
-		(path.String == accountPathSent) == outbound {
-		return nil
-	}
-	_, err = s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
-	return err
+	return nil
 }
 
-func requeueActivityIfUnsentChangedTx(ctx context.Context, tx *loggedTx, messageID int64) error {
+func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, messageID int64) error {
+	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+		return fmt.Errorf("lock draft activity for message %d: %w", messageID, err)
+	}
 	_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
 		SELECT m.id, 1, CURRENT_TIMESTAMP
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ? AND `+activityUnsentSQL()+` = EXISTS (
+		WHERE m.id = ? AND (EXISTS (
+			SELECT 1 FROM activity_projection_queue q
+			WHERE q.message_id = m.id AND q.revision > q.processed_revision
+		) OR `+activityUnsentSQL()+` = EXISTS (
 			SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
-		)`), messageID)
+		))`), messageID)
 	if err != nil {
 		return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
 	}

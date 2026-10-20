@@ -1496,28 +1496,162 @@ func TestLoadQueuedActivityCandidatesKeepsProjectedIneligibleRetractionDiscovera
 	assert.Greater(candidates[0].Queue.Revision, candidates[0].Queue.ProcessedRevision)
 }
 
-func TestActivityLabelReplayKeepsFormerDraftQueueDrained(t *testing.T) {
+func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
+	for _, scan := range []bool{false, true} {
+		t.Run(fmt.Sprintf("scan=%t", scan), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f, personID := activityProjectionFixture(t)
+			at := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+			id := f.NewMessage().WithSentAt(at).Create(t, f.Store)
+			labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+			if scan {
+				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+				require.NoError(f.Store.RemoveMessageLabels(id, []int64{labels["DRAFT"]}))
+			}
+			initial := activityProjectionForMessage(t, f, id, personID, at)
+			if scan {
+				initial.Event = nil
+			}
+			_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
+			require.NoError(err)
+			var candidates []store.ActivityCandidate
+			if scan {
+				candidates, err = f.Store.ScanAllActivityCandidatesContext(t.Context(), 0, 10)
+			} else {
+				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+				candidates, err = f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+			}
+			require.NoError(err)
+			require.Len(candidates, 1)
+			old := activityProjectionFromCandidate(t, candidates[0], personID, at)
+			if scan {
+				require.Equal(candidates[0].Queue.Revision, candidates[0].Queue.ProcessedRevision)
+				require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+			} else {
+				require.False(candidates[0].Eligible)
+				old.Event = nil
+				_, err = f.Store.ReconcileMessageLabels(id, []int64{labels["SENT"]}, true)
+				require.NoError(err)
+			}
+			_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{old})
+			var stale *store.ErrActivityProjectionStale
+			require.ErrorAs(err, &stale)
+			candidates, err = f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(!scan, candidates[0].Eligible)
+			if scan {
+				assert.Equal(old.Token.Queue, candidates[0].Queue)
+				assert.True(old.Token.LastModified.Equal(candidates[0].LastModified))
+			}
+			fresh := activityProjectionFromCandidate(t, candidates[0], personID, at)
+			if scan {
+				fresh.Event = nil
+			}
+			_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{fresh})
+			require.NoError(err)
+			var count int
+			require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
+			if scan {
+				assert.Zero(count)
+			} else {
+				assert.Equal(1, count)
+			}
+		})
+	}
+}
+
+func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		unsent bool
+	}{
+		{name: "draft", labels: []string{"DRAFT"}, unsent: true},
+		{name: "draft_and_sent", labels: []string{"DRAFT", "SENT"}},
+		{name: "gmail_record_and_sent", labels: []string{"SENT"}},
+		{name: "former_draft"},
+		{name: "imap_flag", unsent: true},
+		{name: "is_sent_false", unsent: true},
+		{name: "malformed_metadata", labels: []string{"DRAFT"}, unsent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "malformed_metadata" {
+				testutil.SkipIfPostgres(t, "PostgreSQL metadata rejects malformed JSON on write")
+			}
+			require := require.New(t)
+			f, _ := activityProjectionFixture(t)
+			id := f.NewMessage().WithSentAt(time.Now()).Create(t, f.Store)
+			labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+			for _, label := range tc.labels {
+				require.NoError(f.Store.AddMessageLabels(id, []int64{labels[label]}))
+			}
+			var err error
+			switch tc.name {
+			case "gmail_record_and_sent":
+				_, err = activityExec(f.Store, `INSERT INTO gmail_drafts
+					(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
+					VALUES ('draft', ?, 'draft', ?, 'message', 'thread', 1)`, f.Source.ID, id)
+			case "former_draft":
+				_, err = activityExec(f.Store, `UPDATE messages SET draft_authored = TRUE WHERE id = ?`, id)
+			case "imap_flag":
+				_, err = activityExec(f.Store, `UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+				require.NoError(err)
+				_, err = activityExec(f.Store, `INSERT INTO imap_message_memberships
+					(source_id, mailbox, uidvalidity, uid, message_id, flags)
+					VALUES (?, 'INBOX', 1, 1, ?, ?)`, f.Source.ID, id, `["\\Draft"]`)
+			case "is_sent_false":
+				_, err = activityExec(f.Store, `UPDATE messages SET is_sent = FALSE WHERE id = ?`, id)
+			case "malformed_metadata":
+				err = f.Store.SetMessageMetadata(id, sql.NullString{String: "invalid JSON", Valid: true})
+			}
+			require.NoError(err)
+			candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.Equal(t, tc.unsent, candidates[0].Unsent)
+			assert.Equal(t, !tc.unsent, candidates[0].Eligible)
+		})
+	}
+}
+
+func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 	setup := require.New(t)
 	f, personID := activityProjectionFixture(t)
 	occurredAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	messageID := f.NewMessage().WithSentAt(occurredAt).Create(t, f.Store)
-	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+	messageID := f.NewMessage().WithSourceMessageID("former-draft").WithSentAt(occurredAt).Create(t, f.Store)
+	_, err := activityExec(f.Store, `UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+	setup.NoError(err)
+	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+		"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+		"SENT":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	setup.NoError(err)
 	setup.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["DRAFT"]}))
 	setup.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["SENT"]}))
+	deltas := []store.IMAPMailboxDelta{{
+		Mailbox: "SENT",
+		State:   store.IMAPFolderState{Mailbox: "SENT", UIDValidity: 1, UIDNext: 2},
+		Memberships: []store.IMAPMembershipObservation{{
+			Mailbox: "SENT", UIDValidity: 1, UID: 1, SourceMessageID: "former-draft", Flags: []string{"\\Seen"},
+		}},
+	}}
+	setup.NoError(f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, deltas))
 	projection := activityProjectionForMessage(t, f, messageID, personID, occurredAt)
-	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
 	setup.NoError(err)
 	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
 	setup.NoError(err)
 	setup.Empty(queued)
 	cleanContactStates(t, f.Store, personID)
 
-	for _, hook := range []string{"labels", "attribution"} {
+	for _, hook := range []string{"flags", "attribution"} {
 		t.Run(hook, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			if hook == "labels" {
-				require.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["SENT"]}))
+			if hook == "flags" {
+				require.NoError(f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, deltas))
 			} else {
 				require.NoError(f.Store.RefreshAccountAttributionForTest(t.Context(), messageID))
 			}
@@ -1613,6 +1747,7 @@ func activityProjectionFromCandidate(
 	return store.ActivityProjection{
 		Token: store.ActivityProjectionToken{
 			MessageID:               candidate.MessageID,
+			Unsent:                  candidate.Unsent,
 			SourceID:                candidate.SourceID,
 			LastModified:            candidate.LastModified,
 			Queue:                   candidate.Queue,
@@ -2080,6 +2215,7 @@ func TestProjectActivityBatchRetractsAndMovesDirectEvidenceAuthoritatively(t *te
 	retraction := store.ActivityProjection{
 		Token: store.ActivityProjectionToken{
 			MessageID:               candidate.MessageID,
+			Unsent:                  candidate.Unsent,
 			SourceID:                candidate.SourceID,
 			LastModified:            candidate.LastModified,
 			Queue:                   candidate.Queue,
