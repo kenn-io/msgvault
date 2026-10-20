@@ -37,16 +37,13 @@ func TestMessageCosinesScoresAnyVectorLength(t *testing.T) {
 		{MessageID: 4, ChunkIndex: 1, Vector: vec(2, 2)},
 	}))
 
-	got, err := b.MessageCosines(ctx, gen, vec(1, 0), []int64{1, 2, 3, 4, 5})
+	got, err := b.MessageCosines(ctx, vector.Generation{ID: gen, Dimension: 768}, vec(1, 0), []int64{1, 2, 3, 4, 5})
 	require.NoError(t, err)
 	require.Len(t, got.Scores, 4, "a message with no chunk is left out")
 	assert.InDelta(t, 1, got.Scores[1], 1e-9, "length does not matter")
 	assert.InDelta(t, 1/math.Sqrt2, got.Scores[2], 1e-6)
 	assert.Zero(t, got.Scores[3], "a zero vector scores 0")
 	assert.InDelta(t, 1/math.Sqrt2, got.Scores[4], 1e-6, "the closest chunk scores the message")
-
-	_, err = b.MessageCosines(ctx, gen, []float32{1, 0}, []int64{1})
-	require.ErrorIs(t, err, vector.ErrDimensionMismatch)
 }
 
 // UnitLength says whether L2 order follows cosine order for the vectors read.
@@ -80,7 +77,7 @@ func TestMessageCosinesReportsUnitLength(t *testing.T) {
 		"scaled stored vector":  {vec(1, 0), []int64{1, 2}, false},
 		"scaled query, no ids":  {vec(2, 0), nil, false},
 	} {
-		got, err := b.MessageCosines(ctx, gen, tc.query, tc.ids)
+		got, err := b.MessageCosines(ctx, vector.Generation{ID: gen, Dimension: 768}, tc.query, tc.ids)
 		require.NoError(t, err, name)
 		assert.Equal(t, tc.want, got.UnitLength, name)
 	}

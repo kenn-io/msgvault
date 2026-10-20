@@ -51,7 +51,7 @@ type Service struct {
 // cosineScorer is an index whose search score is not cosine similarity, as
 // sqlite-vec's 1 - L2 distance is not, so it scores the hits again.
 type cosineScorer interface {
-	MessageCosines(ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
+	MessageCosines(ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
 }
 
 // searchTypes are the message types worth searching for authors: everything
@@ -171,7 +171,7 @@ func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta
 	if !ok {
 		return vector.CosineScores{Scores: scores, UnitLength: true}, nil
 	}
-	return scorer.MessageCosines(ctx, meta.Generation.ID, meta.QueryVector, slices.Sorted(maps.Keys(scores)))
+	return scorer.MessageCosines(ctx, meta.Generation, meta.QueryVector, slices.Sorted(maps.Keys(scores)))
 }
 
 // similarities returns the hits whose cosine similarity to the topic reaches

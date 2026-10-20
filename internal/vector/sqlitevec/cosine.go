@@ -4,9 +4,7 @@ package sqlitevec
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"math"
 
@@ -18,19 +16,17 @@ import (
 // 1 - L2 distance, which matches cosine only for unit-length vectors, and the
 // embedding client stores provider vectors as they come. UnitLength reports
 // that queryVec and every chunk read have length 1. A zero vector scores 0.
-// Messages with no chunk in gen are left out.
+// Messages with no chunk in gen are left out. queryVec must have gen's
+// dimension, as the search that returned the messages checked.
 func (b *Backend) MessageCosines(
-	ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64,
+	ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64,
 ) (vector.CosineScores, error) {
 	queryNorm := norm(queryVec)
 	out := vector.CosineScores{Scores: map[int64]float64{}, UnitLength: unitLength(queryNorm)}
 	if len(messageIDs) == 0 {
 		return out, nil
 	}
-	dim, err := b.queryDimension(ctx, gen, queryVec)
-	if err != nil {
-		return vector.CosineScores{}, err
-	}
+	dim := gen.Dimension
 	encoded, err := json.Marshal(messageIDs, json.Deterministic(true))
 	if err != nil {
 		return vector.CosineScores{}, fmt.Errorf("encode cosine message ids: %w", err)
@@ -41,7 +37,7 @@ func (b *Backend) MessageCosines(
 		  JOIN %s v ON v.embedding_id = e.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id IN (SELECT value FROM json_each(?))`, VectorTableName(dim)),
-		int64(gen), string(encoded))
+		int64(gen.ID), string(encoded))
 	if err != nil {
 		return vector.CosineScores{}, fmt.Errorf("load message chunks: %w", err)
 	}
@@ -67,24 +63,6 @@ func (b *Backend) MessageCosines(
 		return vector.CosineScores{}, fmt.Errorf("iterate chunk rows: %w", err)
 	}
 	return out, nil
-}
-
-// queryDimension returns gen's dimension after checking queryVec has it.
-func (b *Backend) queryDimension(ctx context.Context, gen vector.GenerationID, queryVec []float32) (int, error) {
-	var dim int
-	err := b.db.QueryRowContext(ctx,
-		`SELECT dimension FROM index_generations WHERE id = ?`, int64(gen)).Scan(&dim)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("%w: %d", vector.ErrUnknownGeneration, gen)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("lookup generation %d: %w", gen, err)
-	}
-	if len(queryVec) != dim {
-		return 0, fmt.Errorf("%w: query has %d dims, gen has %d",
-			vector.ErrDimensionMismatch, len(queryVec), dim)
-	}
-	return dim, nil
 }
 
 // norm returns the length of v.
