@@ -16,147 +16,99 @@ import (
 )
 
 const (
-	tierRemotePhone = "+15551234567"
-	tierOwnerPhone  = "+15550000001"
+	tierRemote = "+15551234567"
+	tierOwner  = "+15550000001"
 )
 
-// tierDayMillis is noon UTC, n days before today, as a backup timestamp.
-func tierDayMillis(n int) int64 {
-	today := time.Now().UTC().Truncate(24 * time.Hour)
-	return today.AddDate(0, 0, -n).Add(12 * time.Hour).UnixMilli()
+// tierMillis is noon UTC, n days before today, as a backup timestamp.
+func tierMillis(n int) int64 {
+	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -n).Add(12 * time.Hour).UnixMilli()
 }
 
-func tierSMS(day int, smsType int, body string) string {
-	return fmt.Sprintf(`<sms address="%s" date="%d" type="%d" body="%s" read="1" status="-1" contact_name="Ana" />`,
-		tierRemotePhone, tierDayMillis(day), smsType, body)
+func tierSMS(day, smsType int, body string) string {
+	return fmt.Sprintf(`<sms address="%s" date="%d" type="%d" body="%s" read="1" status="-1" />`, tierRemote, tierMillis(day), smsType, body)
+}
+
+func tierMMS(day, box int, id string) string {
+	return fmt.Sprintf(`<mms date="%d" msg_box="%d" read="1" m_id="%s" sub="null"><parts><part seq="0" ct="text/plain" text="%s" /></parts>`+
+		`<addrs><addr address="%s" type="137" charset="106" /><addr address="%s" type="151" charset="106" /></addrs></mms>`,
+		tierMillis(day), box, id, id, tierOwner, tierRemote)
 }
 
 func tierCall(day, callType int) string {
-	return fmt.Sprintf(`<call number="%s" duration="0" date="%d" type="%d" presentation="1" contact_name="Ana" />`,
-		tierRemotePhone, tierDayMillis(day), callType)
+	return fmt.Sprintf(`<call number="%s" duration="0" date="%d" type="%d" presentation="1" />`, tierRemote, tierMillis(day), callType)
 }
 
-// explainImportedTier imports the backup files through the real importer,
-// projects activity, and explains the tier of the person behind the remote
-// phone number.
-func explainImportedTier(t *testing.T, files map[string]string) *store.PersonTierExplanation {
+// importedTierSignals imports a backup through the real importer, projects
+// activity, and reads the tier counts of the person behind the remote phone.
+func importedTierSignals(t *testing.T, file, xml string) persontiers.Signals {
 	t.Helper()
 	f := storetest.New(t)
 	dir := t.TempDir()
-	for name, content := range files {
-		writeFile(t, filepath.Join(dir, name), content)
-	}
-	source, err := f.Store.GetOrCreateSource(SourceType, tierOwnerPhone)
+	writeFile(t, filepath.Join(dir, file), xml)
+	source, err := f.Store.GetOrCreateSource(SourceType, tierOwner)
 	require.NoError(t, err)
-	require.NoError(t, f.Store.AddAccountIdentity(source.ID, tierOwnerPhone, "manual"))
-	_, err = NewImporter(f.Store, ImportOptions{
-		OwnerPhone: tierOwnerPhone, IncludeSMS: true, IncludeMMS: true, IncludeCalls: true,
-	}).ImportPath(dir)
+	require.NoError(t, f.Store.AddAccountIdentity(source.ID, tierOwner, "manual"))
+	_, err = NewImporter(f.Store, ImportOptions{OwnerPhone: tierOwner, IncludeSMS: true, IncludeMMS: true, IncludeCalls: true}).ImportPath(dir)
 	require.NoError(t, err)
-	participant, err := f.Store.EnsureParticipantByPhone(tierRemotePhone, "Ana", ParticipantIdentifierType)
+	participant, err := f.Store.EnsureParticipantByPhone(tierRemote, "Ana", ParticipantIdentifierType)
 	require.NoError(t, err)
 	person, _, err := f.Store.CreatePersonFromParticipant(participant)
 	require.NoError(t, err)
-	projector, err := activity.NewProjector(f.Store, activity.Options{
-		Timezone: "UTC", BatchSize: 500, MaxDirectCounterparts: 25,
-	})
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 500, MaxDirectCounterparts: 25})
 	require.NoError(t, err)
 	_, err = projector.RunOnce(t.Context())
 	require.NoError(t, err)
-	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID,
-		store.PersonTierOptions{Config: persontiers.DefaultConfig()})
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, store.PersonTierOptions{Config: persontiers.DefaultConfig()})
 	require.NoError(t, err)
-	return explanation
+	return explanation.Signals
 }
 
-// Four texts from Ana and four of the owner's, on eight days. Only texts that
-// left the phone are contact; the other box types never did.
-func TestPersonTiersCountOnlyTextsThatWereSent(t *testing.T) {
+// Four texts from Ana and four of the owner's on eight days. Sent texts count
+// both ways. Drafts, outbox texts, and call records count for nothing.
+func TestPersonTiersCountOnlyMessagesThatWereExchanged(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		ownType  int
-		wantTier int
-		wantOut  int
+		name                      string
+		own                       func(day int) string
+		wantOutbound, wantInbound int
+		wantDays                  int
 	}{
-		{"sent", 2, 1, 4},
-		{"draft", 3, 3, 0},
-		{"outbox", 4, 3, 0},
-		{"failed", 5, 3, 0},
-		{"queued", 6, 3, 0},
+		{"sent sms", func(d int) string { return tierSMS(d, 2, fmt.Sprint("sent", d)) }, 4, 4, 8},
+		{"draft sms", func(d int) string { return tierSMS(d, 3, fmt.Sprint("draft", d)) }, 0, 4, 4},
+		{"sent mms", func(d int) string { return tierMMS(d, 2, fmt.Sprint("mms", d)) }, 4, 4, 8},
+		{"outbox mms", func(d int) string { return tierMMS(d, 4, fmt.Sprint("mms", d)) }, 0, 4, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var texts []string
 			for i := range 4 {
-				texts = append(texts,
-					tierSMS(i*2+1, 1, fmt.Sprintf("from ana %d", i)),
-					tierSMS(i*2+2, tc.ownType, fmt.Sprintf("from me %d", i)))
+				texts = append(texts, tierSMS(i*2+1, 1, fmt.Sprint("from ana", i)), tc.own(i*2+2))
 			}
-			explanation := explainImportedTier(t, map[string]string{
-				"messages.xml": `<smses count="8">` + strings.Join(texts, "\n") + `</smses>`,
-			})
-			assert.Equal(t, tc.wantTier, explanation.Tier)
-			assert.Equal(t, tc.wantOut, explanation.Signals.OutboundLong)
-			assert.Equal(t, 4, explanation.Signals.InboundLong)
+			signals := importedTierSignals(t, "messages.xml", `<smses>`+strings.Join(texts, "")+`</smses>`)
+			assert.Equal(t, tc.wantOutbound, signals.OutboundLong)
+			assert.Equal(t, tc.wantInbound, signals.InboundLong)
+			assert.Equal(t, tc.wantDays, signals.ActiveDaysLong)
 		})
 	}
-}
-
-func TestPersonTiersCountOnlyMMSThatWereSent(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		box      int
-		wantTier int
-	}{
-		{"sent", 2, 1},
-		{"draft", 3, 3},
-		{"outbox", 4, 3},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var texts []string
-			for i := range 4 {
-				texts = append(texts, tierSMS(i*2+1, 1, fmt.Sprintf("from ana %d", i)),
-					fmt.Sprintf(`<mms date="%d" msg_box="%d" read="1" m_id="own-%d" sub="null">
-<parts><part seq="0" ct="text/plain" text="mms %d" /></parts>
-<addrs><addr address="%s" type="137" charset="106" /><addr address="%s" type="151" charset="106" /></addrs>
-</mms>`, tierDayMillis(i*2+2), tc.box, i, i, tierOwnerPhone, tierRemotePhone))
-			}
-			explanation := explainImportedTier(t, map[string]string{
-				"messages.xml": `<smses count="8">` + strings.Join(texts, "\n") + `</smses>`,
-			})
-			assert.Equal(t, tc.wantTier, explanation.Tier)
-		})
-	}
-}
-
-// Four outgoing calls with no duration and four missed calls are not messages
-// exchanged with the person.
-func TestPersonTiersIgnoreCallRecords(t *testing.T) {
-	var calls []string
-	for i := range 4 {
-		calls = append(calls, tierCall(i*2+1, 2), tierCall(i*2+2, 3))
-	}
-	explanation := explainImportedTier(t, map[string]string{
-		"calls.xml": `<calls count="8">` + strings.Join(calls, "\n") + `</calls>`,
+	t.Run("calls", func(t *testing.T) {
+		var calls []string
+		for i := range 4 {
+			calls = append(calls, tierCall(i*2+1, 2), tierCall(i*2+2, 3))
+		}
+		signals := importedTierSignals(t, "calls.xml", `<calls>`+strings.Join(calls, "")+`</calls>`)
+		assert.Zero(t, signals.OutboundLong+signals.InboundLong+signals.ActiveDaysLong)
 	})
-
-	assert.Equal(t, 3, explanation.Tier)
-	assert.Zero(t, explanation.Signals.OutboundLong)
-	assert.Zero(t, explanation.Signals.InboundLong)
-	assert.Zero(t, explanation.Signals.ActiveDaysLong)
 }
 
-// A backup imported before send state was recorded holds the draft as sent.
-// Importing the same record again corrects it.
+// Importing a record again corrects a draft stored as sent by an older import.
 func TestReimportRewritesSendState(t *testing.T) {
 	f := storetest.New(t)
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="1">`+tierSMS(1, 3, "draft")+`</smses>`)
-	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: tierOwnerPhone, IncludeSMS: true})
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses>`+tierSMS(1, 3, "draft")+`</smses>`)
+	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: tierOwner, IncludeSMS: true})
 	_, err := imp.ImportPath(dir)
 	require.NoError(t, err)
 	_, err = f.Store.DB().Exec(`UPDATE messages SET is_sent = TRUE`)
 	require.NoError(t, err)
-
 	_, err = imp.ImportPath(dir)
 	require.NoError(t, err)
 

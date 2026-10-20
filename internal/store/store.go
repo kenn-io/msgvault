@@ -1906,9 +1906,8 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
-	// Synctech imports used to record drafts and other texts that never left
-	// the phone with no send state. Person tiers count only sent texts, so
-	// mark the existing ones from their retained backup record.
+	// Synctech imports used to record texts that never left the phone with no
+	// send state. Person tiers count only sent texts.
 	if err := s.runOnceMigration(
 		ctx, migrationSynctechUnsentTexts, 1, false,
 		func(ctx context.Context) error {
