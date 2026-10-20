@@ -429,6 +429,13 @@ func TestCurrentSemanticPersonVectorConfigSourceFailsClosedAfterConfigRemoval(t 
 	current, err := source()
 	requirements.NoError(err)
 	assertions.True(current.People.Enabled)
+
+	// A daemon-only setting that is invalid on disk must not fail the client read.
+	configured.Integrations.Kata.Endpoint = "://invalid"
+	requirements.NoError(configured.Save())
+	current, err = source()
+	requirements.NoError(err)
+	assertions.True(current.People.Enabled)
 	requirements.NoError(os.Remove(configured.ConfigFilePath()))
 
 	current, err = source()

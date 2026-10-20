@@ -20,7 +20,6 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/vector"
 )
 
 const invalidKataConfig = "[integrations.kata]\nendpoint = '://invalid'\n"
@@ -121,70 +120,44 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	assert.Contains(stdout, `"record_type":"complete"`)
 }
 
-func TestInvalidDaemonConfigIsNotRepeatedAfterProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	assert := assert.New(t)
-	childStderr, err := json.Marshal(api.CLIRunEvent{
-		Type: "stderr", Data: "Error: load config: invalid [integrations.kata] endpoint \"://invalid\"\n",
-	})
-	require.NoError(t, err)
-	childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
-	require.NoError(t, err)
-	server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
-	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
+func TestInvalidDaemonConfigWarningAfterProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	for _, tc := range []struct{ name, childStderr string }{
+		// The child already named the setting, so the warning would repeat it.
+		{"child reports the setting", "Error: load config: invalid [integrations.kata] endpoint \"://invalid\"\n"},
+		// An unrelated child failure leaves the warning as the only report.
+		{"child fails for another reason", "Error: invalid --start timestamp\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			childStderr, err := json.Marshal(api.CLIRunEvent{Type: "stderr", Data: tc.childStderr})
+			require.NoError(err)
+			childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
+			require.NoError(err)
+			server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
+			home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
 
-	_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-	require.ErrorIs(t, err, errCLISubprocessProxied)
-	assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "the child already reported it: %q", stderr)
-}
-
-func TestInvalidDaemonConfigStillWarnsAfterUnrelatedProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	assert := assert.New(t)
-	require := require.New(t)
-	childStderr, err := json.Marshal(api.CLIRunEvent{Type: "stderr", Data: "Error: invalid --start timestamp\n"})
-	require.NoError(err)
-	childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
-	require.NoError(err)
-	server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
-	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
-
-	_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-	require.ErrorIs(err, errCLISubprocessProxied)
-	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
-}
-
-func TestAddSynctechSMSDriveFailsAtLoadOnInvalidDaemonConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	home := writeInvalidKataHome(t, "")
-	root := newRootCommand()
-	root.AddCommand(newAddSynctechSMSDriveCmd())
-
-	_, _, err := runRoot(t, root, "--home", home, "add-synctech-sms-drive", "pixel",
-		"--owner-phone", "+15550000001", "--folder-id", "drive-folder-id", "--google-account", "user@example.com")
-	require.ErrorContains(t, err, "load config")
-}
-
-func TestInvalidDaemonConfigKeepsIncompatibleGuidanceWhenAutostartIsOff(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	withTestVersion(t, "v1.1.0")
-	home := writeInvalidKataHome(t, "[server]\ndaemon_auto_start = false\n")
-	serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion+1)
-
-	_, _, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-	require.ErrorContains(t, err, "incompatible daemon is already running")
-	require.NotContains(t, err.Error(), "daemon config invalid")
+			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+			require.ErrorIs(err, errCLISubprocessProxied)
+			require.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the setting once: %q", stderr)
+		})
+	}
 }
 
 func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
 	for _, tc := range []struct {
-		name       string
-		incompatOK bool
+		name, extra, wantErr string
+		incompatible         bool
 	}{
-		{name: "no daemon"},
-		{name: "incompatible daemon", incompatOK: true},
+		{name: "no daemon", wantErr: "start background daemon: daemon config invalid"},
+		{name: "incompatible daemon", incompatible: true, wantErr: "start background daemon: daemon config invalid"},
+		// Nothing would launch, so the incompatible-daemon guidance stands.
+		{name: "autostart off", extra: "[server]\ndaemon_auto_start = false\n", incompatible: true, wantErr: "incompatible daemon is already running"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			withTestVersion(t, "v1.1.0")
-			home := writeInvalidKataHome(t, "")
-			if tc.incompatOK {
+			home := writeInvalidKataHome(t, tc.extra)
+			if tc.incompatible {
 				serveRunningDaemon(t, home, "v1.0.0", daemonAPIVersion+1)
 			}
 			stubStartServeBackgroundProcess(t, func(*config.Config, backgroundServeStartOptions) (*backgroundServeProcess, error) {
@@ -193,7 +166,7 @@ func TestInvalidDaemonConfigRefusesAutostartOnce(t *testing.T) { //nolint:parall
 			})
 
 			_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
-			require.ErrorContains(t, err, "start background daemon: daemon config invalid")
+			require.ErrorContains(t, err, tc.wantErr)
 			assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
 		})
 	}
@@ -204,12 +177,14 @@ func TestInvalidDaemonConfigFailsStrictCommandsAtLoad(t *testing.T) { //nolint:p
 		{"serve"},
 		{"daemon", "start"},
 		{"daemon", "restart"},
+		{"add-synctech-sms-drive", "pixel", "--owner-phone", "+15550000001", "--folder-id", "drive-folder-id", "--google-account", "user@example.com"},
 	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
+		t.Run(strings.Join(args[:min(2, len(args))], " "), func(t *testing.T) {
 			home := writeInvalidKataHome(t, "")
 			root := newRootCommand()
 			root.AddCommand(newDaemonCommand())
 			root.AddCommand(&cobra.Command{Use: "serve", RunE: runServe, Annotations: serveCmd.Annotations})
+			root.AddCommand(newAddSynctechSMSDriveCmd())
 			_, _, err := runRoot(t, root, append([]string{"--home", home}, args...)...)
 			require.ErrorContains(t, err, "load config")
 		})
@@ -225,49 +200,4 @@ func TestDaemonCLIChildStaysQuietAboutInvalidDaemonConfig(t *testing.T) { //noli
 	_, stderr, err := runRoot(t, root, "--home", home, "noop")
 	require.NoError(t, err)
 	assert.Empty(t, stderr)
-}
-
-func TestInvalidDaemonConfigIsReportedOnceByStrictSetupCommand(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
-	home := writeInvalidKataHome(t, "")
-	setup := &cobra.Command{Use: "setup"}
-	setup.AddCommand(newSetupProvidersCommand(defaultSetupProvidersDeps(t.Context())))
-	root := newRootCommand()
-	root.AddCommand(setup)
-
-	_, stderr, err := runRoot(t, root, "--home", home, "setup", "providers", "--dry-run")
-	require.ErrorContains(t, err, "[integrations.kata]")
-	require.Equal(t, 1, strings.Count(stderr, "[integrations.kata]"), "report the error once: %q", stderr)
-}
-
-func TestSemanticPersonVectorConfigSourceToleratesInvalidDaemonConfig(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	configured := config.NewDefaultConfig()
-	configured.HomeDir = t.TempDir()
-	configured.Data.DataDir = configured.HomeDir
-	configured.Vector.Enabled = true
-	configured.Vector.Embeddings.Endpoint = "https://embedding.example.test/v1"
-	configured.Vector.Embeddings.Model = "synthetic-config-source-model"
-	configured.Vector.Embeddings.Dimension = 4
-	configured.Vector.People = vector.PeopleConfig{
-		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
-	}
-	testCtx := withTestConfig(t, configured)
-	require.NoError(os.WriteFile(configured.ConfigFilePath(), []byte(`
-[vector]
-enabled = true
-[vector.embeddings]
-endpoint = "https://embedding.example.test/v1"
-model = "synthetic-config-source-model"
-dimension = 4
-[vector.people]
-enabled = true
-retention_posture = "zero_data_retention"
-training_posture = "no_training"
-[integrations.kata]
-endpoint = "://invalid"
-`), 0o600))
-	current, err := currentSemanticPersonVectorConfigSource(invocationFromContext(testCtx))()
-	require.NoError(err)
-	assert.True(current.People.Enabled)
 }

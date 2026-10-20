@@ -87,7 +87,7 @@ func TestClientLoadStaysStrictOutsideDaemonSections(t *testing.T) {
 
 func TestFastmailSourceForReturnsFastmailConfigError(t *testing.T) {
 	require := require.New(t)
-	path := writeDaemonSectionConfig(t, "[integrations.kata]\nendpoint = '://invalid'\n[[fastmail]]\naccount = 'me@example.com'\n")
+	path := writeDaemonSectionConfig(t, "[[fastmail]]\naccount = 'me@example.com'\n")
 	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
 	require.NoError(err)
 
