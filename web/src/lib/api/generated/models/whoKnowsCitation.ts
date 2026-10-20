@@ -5,6 +5,7 @@
 export interface WhoKnowsCitation {
   message_id: number;
   message_type: string;
+  sender_authenticated: boolean;
   sent_at?: string;
   snippet?: string;
   subject?: string;

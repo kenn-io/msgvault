@@ -8,6 +8,7 @@ export interface WhoKnowsContact {
   citations: WhoKnowsCitation[];
   display_name?: string;
   email_address?: string;
+  message_score: number;
   participant_id: number;
   rank: number;
   score: number;

@@ -7,6 +7,7 @@ import type { WhoKnowsPerson } from "./whoKnowsPerson";
 export interface WhoKnowsResponse {
   people: WhoKnowsPerson[];
   reason?: string;
+  searched_messages: number;
   topic: string;
   unsaved_contacts: WhoKnowsContact[];
   [key: string]: unknown;

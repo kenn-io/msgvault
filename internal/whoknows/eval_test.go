@@ -31,12 +31,18 @@ var openPostgresFixtureBackend func(*testing.T, *store.Store) vector.Backend
 const embedDimension = 512
 
 // bagOfWordsEmbedder maps each word to a hashed dimension and normalizes, so
-// similarity grows with shared words. It is deterministic, and it proves
-// behavior at the default floor; it does not calibrate a real model.
+// similarity grows with shared words. It skips question filler, as a meaning
+// model would, so "who knows about X" lands near messages about X. It is
+// deterministic, and it proves behavior at the default floor; it does not
+// calibrate a real model.
 type bagOfWordsEmbedder struct{}
 
 func (bagOfWordsEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
 	return embedWords(text), nil
+}
+
+var fillerWords = map[string]bool{
+	"who": true, "knows": true, "about": true, "the": true, "a": true, "an": true,
 }
 
 func embedWords(text string) []float32 {
@@ -44,6 +50,9 @@ func embedWords(text string) []float32 {
 	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
 	}) {
+		if fillerWords[word] {
+			continue
+		}
 		h := fnv.New32a()
 		_, _ = h.Write([]byte(word))
 		v[h.Sum32()%embedDimension]++
@@ -190,10 +199,15 @@ func newEvalFixture(t *testing.T) *evalFixture {
 		return hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
 			hybrid.Config{KPerSignal: kPerSignal, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	}
+	scorer, ok := backend.(ChunkScorer)
+	require.True(t, ok, "the vector backend scores message chunks")
 	return &evalFixture{
-		service: &Service{Retriever: engine(100), Data: st, Now: func() time.Time { return evalNow }},
-		engine:  engine,
-		emails:  emails,
+		service: &Service{
+			Retriever: engine(100), Scorer: scorer, Data: st,
+			Now: func() time.Time { return evalNow },
+		},
+		engine: engine,
+		emails: emails,
 	}
 }
 
@@ -236,12 +250,15 @@ func TestFindEvaluation(t *testing.T) {
 			assert.InDelta(1.0, scores.MRR, 1e-9, "the author ranks first: %v", ranked)
 			assert.InDelta(1.0, scores.Recall, 1e-9, "every author is listed: %v", ranked)
 
-			for _, absent := range []string{
-				"owner@example.net", "dana@example.net", "newsletter@example.net", "lurker@example.net",
-			} {
+			for _, absent := range []string{"owner@example.net", "dana@example.net", "newsletter@example.net"} {
 				assert.NotContains(ranked, absent)
 			}
+			assert.InDelta(1.0, scores.NDCG, 1e-9, "relevant people are listed in order: %v", ranked)
 			for _, p := range got.People {
+				if p.AuthoredMessages == 0 {
+					assert.Empty(p.Citations)
+					continue
+				}
 				assert.NotEmpty(p.Citations)
 				for _, c := range p.Citations {
 					assert.NotNil(c.SentAt)
@@ -249,12 +266,14 @@ func TestFindEvaluation(t *testing.T) {
 			}
 			switch topic.ID {
 			case "networking":
-				assert.Equal([]string{"ana@example.net", "dee@example.net"}, ranked)
+				assert.Equal([]string{"ana@example.net", "dee@example.net", "lurker@example.net"}, ranked,
+					"authors first; a declared topic with no messages ranks on its boost")
 				require.Len(got.UnsavedContacts, 1)
 				assert.Equal("ben@example.net", got.UnsavedContacts[0].EmailAddress)
 				assert.Len(got.People[0].Citations, 3)
 				assert.Equal(5, got.People[0].AuthoredMessages)
 				assert.Equal([]string{"kubernetes"}, got.People[1].AskMeAbout)
+				assert.Zero(got.People[2].AuthoredMessages)
 			case "decay":
 				assert.Equal([]string{"recent@example.net", "old@example.net"}, ranked,
 					"recent authors rank above old ones")

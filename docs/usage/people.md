@@ -272,25 +272,40 @@ msgvault person who-knows "certificate rotation" --after 2026-01-01 --json
 ```
 
 The command lists up to 10 saved people, then up to 5 unsaved contacts. Each
-entry shows a score, the number of matching messages the person wrote, and
-dated citations you can open with `msgvault show-message <id>`. A topic nobody
-wrote about prints `Nobody in your archive has written about "..."`.
+entry shows a score split into its message part and its declared part, the
+number of matching messages the person wrote, and dated citations you can open
+with `msgvault show-message <id>`. Unsaved contacts are senders bound to no
+saved person; promote one with `msgvault person promote <participant-id>`.
+The topic is plain words. Search operators such as `from:` are refused.
 
-A message counts when its meaning similarity to the topic reaches
-`--min-score` (default 0.5); keyword-only matches do not count. Each counted
-message weighs its similarity times its recency, which halves every 180 days
-and stops at 0.1. The score is `log(1 + total weight)`, plus 0.75 when one of
-the person's `ask_me_about` values matches the topic. Equal scores order by
-message count. Only authors count: people copied on a message, meeting
-attendees, you, and automated senders such as `noreply@` get no credit.
-Unsaved contacts are senders bound to no saved person; promote one with
-`msgvault person promote <participant-id>`.
+The search reads the 200 closest messages. A message counts when its cosine
+similarity to the topic reaches `--min-score` (default 0.5), measured on the
+message's best chunk. Each counted message weighs its similarity times its
+recency, which halves every 180 days and stops at 0.1. The message part of the
+score is `log(1 + total weight)`. A matching `ask_me_about` value adds 0.75, so
+a saved person who declared the topic but wrote nothing about it is listed as
+"declared, no messages".
 
-The similarity scale depends on your embedding model. If a topic worded unlike
-your mail finds nobody, lower `--min-score`. Vector search must be ready, and
-the topic goes to the configured embedding endpoint once, like semantic
-message search. The command reads senders when you run it, so newly synced
-mail counts without an activity build. It does not create or edit profiles.
+Only the author earns credit. People copied on a message, meeting attendees,
+you, and automated senders get none. A sender counts as automated when its
+address looks like `noreply@` or `notifications@`, or when the source marked
+the author as a bot or webhook, as Discord does. Meeting transcripts and
+calendar entries are not searched. Two kinds of sender earn the weight of their
+best message only: list mail, and a sender you never wrote to, such as a vendor
+who sends many unanswered messages. A colleague who answers keeps every message.
+
+A topic nobody wrote about prints `Nobody in your archive has written about
+"..."`. When the search returned its full pool and every matching message came
+from you or automated senders, the command says so and suggests `--after` or
+`--before`, because the answer may lie beyond the pool.
+
+The cosine scale depends on your embedding model. If a topic worded unlike your
+mail finds nobody, lower `--min-score`. Vector search must be ready, and the
+topic goes to the configured embedding endpoint once, like semantic message
+search. Senders are read when you run the command, so newly synced mail counts
+without an activity build. A citation's `sender_authenticated` is true when the
+source sets the sender, as chat does; an email From address is an assertion, not
+a verified identity. The command does not create or edit profiles.
 
 The owner-only [HTTP endpoint](/docs/api-server/#find-who-knows-about-a-topic)
 provides the same result. See the [CLI options](/docs/cli-reference/#person-who-knows).

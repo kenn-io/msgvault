@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,15 +11,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/whoknows"
 )
 
 func whoKnowsPost(t *testing.T, srv *api.Server, body string, headers ...string) *httptest.ResponseRecorder {
@@ -35,11 +39,7 @@ func whoKnowsPost(t *testing.T, srv *api.Server, body string, headers ...string)
 }
 
 func TestWhoKnowsRejectsInvalidRequests(t *testing.T) {
-	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{}, Store: testutil.NewTestStore(t), Logger: slog.New(slog.DiscardHandler),
-	})
-	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
-
+	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{})
 	for body, code := range map[string]string{
 		`{"topic":"   "}`:                                          "missing_free_text",
 		`{"topic":"x","limit":0}`:                                  "invalid_parameter",
@@ -49,6 +49,7 @@ func TestWhoKnowsRejectsInvalidRequests(t *testing.T) {
 		`{"topic":"x","min_score":1.5}`:                            "invalid_parameter",
 		`{"topic":"x","after":"yesterday"}`:                        "invalid_parameter",
 		`{"topic":"x","after":"2026-02-01","before":"2026-01-01"}`: "invalid_parameter",
+		`{"topic":"from:ana networking"}`:                          "invalid_parameter",
 		`{"topic":"x","unknown":1}`:                                "bad_request",
 	} {
 		got := whoKnowsPost(t, srv, body)
@@ -72,12 +73,17 @@ type whoKnowsBackend struct {
 
 	generation vector.Generation
 	hits       []vector.FusedHit
+	scores     map[int64]float64
 	err        error
 	request    vector.FusedRequest
 }
 
 func (b *whoKnowsBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
 	return b.generation, nil
+}
+
+func (b *whoKnowsBackend) ScoreMessageChunks(_ context.Context, _ vector.GenerationID, id int64, _ []float32) ([]vector.ChunkHit, error) {
+	return []vector.ChunkHit{{Score: b.scores[id]}}, nil
 }
 
 func (b *whoKnowsBackend) FusedSearch(_ context.Context, r vector.FusedRequest) ([]vector.FusedHit, vector.SearchMetadata, error) {
@@ -91,7 +97,7 @@ func (e whoKnowsEmbedder) EmbedQuery(context.Context, string) ([]float32, error)
 	return []float32{1, 0, 0}, e.err
 }
 
-func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder) *api.Server {
+func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder) (*api.Server, *store.Store) {
 	t.Helper()
 	cfg := vector.Config{Enabled: true}
 	cfg.Embed.Scope.MessageTypes = []string{"email"}
@@ -108,19 +114,53 @@ func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder wh
 	srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
 		return vector.EmbeddingStatus{}, nil
 	}, 0)
-	return srv
+	return srv, st
 }
 
 func TestWhoKnowsReturnsEmptyListsWithReason(t *testing.T) {
 	assert := assert.New(t)
 	backend := &whoKnowsBackend{}
-	srv := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
+	srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
 	got := whoKnowsPost(t, srv, `{"topic":"sailboat insurance","after":"2026-01-01"}`)
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
-	assert.JSONEq(`{"topic":"sailboat insurance","reason":"no_relevant_evidence","people":[],"unsaved_contacts":[]}`, got.Body.String())
+	assert.JSONEq(`{"topic":"sailboat insurance","reason":"no_relevant_evidence","searched_messages":0,"people":[],"unsaved_contacts":[]}`, got.Body.String())
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
+}
+
+func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &whoKnowsBackend{scores: map[int64]float64{}}
+	srv, st := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
+	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
+	require.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+	require.NoError(err)
+	ana, err := st.EnsureParticipant("ana@example.net", "Ana Lopez", "example.net")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(ana)
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		ConversationID: conversation, SourceID: source.ID, SourceMessageID: "m1", MessageType: "email",
+		SenderID: sql.NullInt64{Int64: ana, Valid: true},
+		SentAt:   sql.NullTime{Time: time.Now().AddDate(0, 0, -3), Valid: true},
+		Subject:  sql.NullString{String: "kube-proxy rules", Valid: true},
+	})
+	require.NoError(err)
+	backend.hits = []vector.FusedHit{{MessageID: id}}
+	backend.scores[id] = .9
+
+	got := whoKnowsPost(t, srv, `{"topic":"kubernetes networking"}`)
+	require.Equal(http.StatusOK, got.Code, got.Body.String())
+	var body whoknows.Response
+	require.NoError(json.Unmarshal(got.Body.Bytes(), &body))
+	require.Len(body.People, 1)
+	assert.Equal(person.ID, body.People[0].PersonID)
+	assert.Equal(1, body.People[0].AuthoredMessages)
+	assert.Equal(id, body.People[0].Citations[0].MessageID)
+	assert.Equal(1, body.SearchedMessages)
 }
 
 func TestWhoKnowsMapsSearchErrors(t *testing.T) {
@@ -139,7 +179,7 @@ func TestWhoKnowsMapsSearchErrors(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			backend := &whoKnowsBackend{err: test.backend}
-			srv := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{err: test.embedder})
+			srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{err: test.embedder})
 			got := whoKnowsPost(t, srv, `{"topic":"cloud"}`)
 			assert.Equal(t, test.status, got.Code, got.Body.String())
 			assert.Contains(t, got.Body.String(), test.code)

@@ -15515,11 +15515,12 @@ func (v VisualTextSearchRequest) Validate() error {
 }
 
 type WhoKnowsCitation struct {
-	MessageID   int64      `json:"message_id"`
-	MessageType string     `json:"message_type" validate:"required"`
-	SentAt      *time.Time `json:"sent_at,omitempty"`
-	Snippet     *string    `json:"snippet,omitzero"`
-	Subject     *string    `json:"subject,omitzero"`
+	MessageID           int64      `json:"message_id"`
+	MessageType         string     `json:"message_type" validate:"required"`
+	SenderAuthenticated bool       `json:"sender_authenticated"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	Snippet             *string    `json:"snippet,omitzero"`
+	Subject             *string    `json:"subject,omitzero"`
 }
 
 func (w WhoKnowsCitation) Validate() error {
@@ -15531,6 +15532,7 @@ type WhoKnowsContact struct {
 	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
 	DisplayName      *string            `json:"display_name,omitzero"`
 	EmailAddress     *string            `json:"email_address,omitzero"`
+	MessageScore     float64            `json:"message_score"`
 	ParticipantID    int64              `json:"participant_id"`
 	Rank             int64              `json:"rank"`
 	Score            float64            `json:"score"`
@@ -15555,7 +15557,9 @@ type WhoKnowsPerson struct {
 	AskMeAbout       []string           `json:"ask_me_about,omitempty"`
 	AuthoredMessages int64              `json:"authored_messages"`
 	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
+	DeclaredBoost    float64            `json:"declared_boost"`
 	DisplayName      *string            `json:"display_name,omitzero"`
+	MessageScore     float64            `json:"message_score"`
 	PersonID         int64              `json:"person_id"`
 	Rank             int64              `json:"rank"`
 	Score            float64            `json:"score"`
@@ -15589,10 +15593,10 @@ type WhoKnowsRequest struct {
 	// Limit Saved people to return; default 10
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=50"`
 
-	// MinScore Lowest meaning similarity a message needs to count; default 0.5
+	// MinScore Lowest cosine similarity a message needs to count; default 0.5
 	MinScore *float64 `json:"min_score,omitempty" validate:"omitempty,gt=0,lte=1"`
 
-	// Topic Free-text topic
+	// Topic Plain words; search operators are refused
 	Topic string `json:"topic" validate:"required,min=1"`
 }
 
@@ -15601,10 +15605,11 @@ func (w WhoKnowsRequest) Validate() error {
 }
 
 type WhoKnowsResponse struct {
-	People          []WhoKnowsPerson  `json:"people" validate:"required"`
-	Reason          *string           `json:"reason,omitzero"`
-	Topic           string            `json:"topic" validate:"required"`
-	UnsavedContacts []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
+	People           []WhoKnowsPerson  `json:"people" validate:"required"`
+	Reason           *string           `json:"reason,omitzero"`
+	SearchedMessages int64             `json:"searched_messages"`
+	Topic            string            `json:"topic" validate:"required"`
+	UnsavedContacts  []WhoKnowsContact `json:"unsaved_contacts" validate:"required"`
 }
 
 func (w WhoKnowsResponse) Validate() error {

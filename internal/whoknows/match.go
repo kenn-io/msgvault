@@ -11,13 +11,12 @@ import (
 
 // automatedPatterns are sender local parts that belong to systems rather than
 // people. A local part matches when it equals a pattern or starts with one
-// followed by "-", "+", ".", or "_".
+// followed by "-", "+", or ".". Underscores count as hyphens.
 var automatedPatterns = []string{
 	"no-reply", "noreply", "do-not-reply", "donotreply", "notification",
 	"notifications", "notify", "alert", "alerts", "newsletter", "newsletters",
-	"news", "digest", "mailer-daemon", "postmaster", "bounce", "bounces",
-	"updates", "automated", "robot", "bot", "calendar-notification", "jira",
-	"github", "gitlab", "linear", "notion", "slack", "zoom", "calendar",
+	"digest", "mailer-daemon", "postmaster", "bounce", "bounces", "automated",
+	"robot", "bot", "calendar-notification",
 }
 
 // Automated reports whether an address looks like a system sender.
@@ -27,12 +26,13 @@ func Automated(email string) bool {
 	}
 	local, _, _ := strings.Cut(strings.ToLower(email), "@")
 	local, _, _ = strings.Cut(local, "+")
+	local = strings.ReplaceAll(local, "_", "-")
 	for _, pattern := range automatedPatterns {
 		if local == pattern {
 			return true
 		}
 		if strings.HasPrefix(local, pattern) && len(local) > len(pattern) &&
-			strings.ContainsRune("-+._", rune(local[len(pattern)])) {
+			strings.ContainsRune("-.", rune(local[len(pattern)])) {
 			return true
 		}
 	}

@@ -6,12 +6,15 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/meetingarchive"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -21,21 +24,29 @@ import (
 // retrieveLimit is how many messages one search reads.
 const retrieveLimit = 200
 
-var ErrPersonScopeUnavailable = errors.New("people resolution is unavailable")
+var ErrChunkScoringUnavailable = errors.New("the vector backend cannot score message chunks")
 
 // Retriever runs the hybrid (keyword plus meaning) message search.
 type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
 }
 
+// ChunkScorer scores a message's embedded chunks against the search's query
+// vector as 1 - cosine distance.
+type ChunkScorer interface {
+	ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error)
+}
+
 // DataReader reads who wrote each message and what people say to ask them about.
 type DataReader interface {
 	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
-	AskMeAboutValuesContext(ctx context.Context, personIDs []int64) ([]store.PersonAskMeAbout, error)
+	OwnerAddressedContext(ctx context.Context, participantIDs []int64) (map[int64]bool, error)
+	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, error)
 }
 
 type Service struct {
 	Retriever  Retriever
+	Scorer     ChunkScorer
 	Data       DataReader
 	BuildScope vector.BuildScope
 	Now        func() time.Time
@@ -46,133 +57,192 @@ type candidateKey struct {
 	id     int64
 }
 
-// Find retrieves messages about the topic, keeps those whose meaning
-// similarity reaches MinScore, credits each to the person who wrote it, and
-// ranks the result. Keyword-only hits carry no similarity and do not count.
+// searchTypes are the message types worth searching for authors: everything
+// but meeting transcripts and calendar entries, which have organizers and
+// attendees rather than authors.
+func searchTypes(scope vector.BuildScope) ([]string, bool) {
+	allowed := slices.DeleteFunc(slices.Clone(query.KnownMessageTypes), func(t string) bool {
+		return t == meetingarchive.MessageType || t == gcal.MessageTypeCalendarEvent
+	})
+	return search.IntersectValues(allowed, scope.MessageTypes)
+}
+
+// Find retrieves messages about the topic, keeps those whose cosine
+// similarity to it reaches MinScore, credits each to the person who wrote it,
+// and ranks the result.
 func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
+	out := Response{Topic: req.Topic, People: []Person{}, UnsavedContacts: []Contact{}}
 	p, err := req.Resolve()
-	out := Response{Topic: strings.TrimSpace(req.Topic), People: []Person{}, UnsavedContacts: []Contact{}}
 	if err != nil {
 		return out, err
 	}
-	terms := search.Parse(p.Topic).TextTerms
-	freeText := strings.Join(terms, " ")
-	if strings.TrimSpace(freeText) == "" {
-		return out, ErrMissingFreeText
-	}
+	out.Topic = p.Topic
 	if s.Retriever == nil {
 		return out, vector.ErrNotEnabled
 	}
-	if s.Data == nil {
-		return out, ErrPersonScopeUnavailable
+	if s.Scorer == nil {
+		return out, ErrChunkScoringUnavailable
+	}
+	types, empty := searchTypes(s.BuildScope)
+	if empty {
+		out.Reason = ReasonNoEvidence
+		return out, nil
 	}
 	request := hybrid.SearchRequest{
 		Mode:     hybrid.ModeHybrid,
-		FreeText: freeText,
+		FreeText: p.FreeText,
 		Limit:    retrieveLimit,
-		Filter: vector.Filter{
-			After: p.After, Before: p.Before,
-			MessageTypes: slices.Clone(s.BuildScope.MessageTypes),
-		},
+		Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
 	}
-	for _, term := range terms {
+	for _, term := range search.Parse(p.Topic).TextTerms {
 		request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
 	}
-	hits, _, err := s.Retriever.Search(ctx, request)
+	hits, meta, err := s.Retriever.Search(ctx, request)
 	if err != nil {
 		return out, err
 	}
-	similarity := map[int64]float64{}
-	ids := []int64{}
-	for _, hit := range hits {
-		v := hit.VectorScore
-		if math.IsNaN(v) || math.IsInf(v, 0) || v < p.MinScore {
-			continue
-		}
-		if _, seen := similarity[hit.MessageID]; !seen {
-			ids = append(ids, hit.MessageID)
-		}
-		similarity[hit.MessageID] = max(similarity[hit.MessageID], v)
+	out.SearchedMessages = len(hits)
+
+	similarity, err := s.similarities(ctx, hits, meta, p.MinScore)
+	if err != nil {
+		return out, err
 	}
-	if len(ids) > 0 {
-		authors, err := s.Data.TopicAuthorsContext(ctx, ids)
-		if err != nil {
-			return out, err
-		}
-		candidates, err := s.attribute(ctx, ids, authors, similarity, freeText)
-		if err != nil {
-			return out, err
-		}
-		now := time.Now().UTC()
-		if s.Now != nil {
-			now = s.Now().UTC()
-		}
-		out.People, out.UnsavedContacts = Rank(candidates, p, now)
+	candidates, err := s.attribute(ctx, hits, similarity)
+	if err != nil {
+		return out, err
 	}
+	candidates, err = s.addDeclared(ctx, candidates, p.FreeText)
+	if err != nil {
+		return out, err
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	out.People, out.UnsavedContacts = Rank(candidates, p, now)
 	if len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
 		out.Reason = ReasonNoEvidence
+		if len(similarity) > 0 && (meta.PoolSaturated || len(hits) >= retrieveLimit) {
+			out.Reason = ReasonSearchLimit
+		}
+	}
+	return out, nil
+}
+
+// similarities scores every hit exactly, by its best chunk, and keeps those at
+// or above the floor. A hit with no embedded chunk does not count.
+func (s *Service) similarities(
+	ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta, floor float64,
+) (map[int64]float64, error) {
+	out := map[int64]float64{}
+	for _, hit := range hits {
+		chunks, err := s.Scorer.ScoreMessageChunks(ctx, meta.Generation.ID, hit.MessageID, meta.QueryVector)
+		if err != nil {
+			return nil, fmt.Errorf("score message %d: %w", hit.MessageID, err)
+		}
+		best := math.Inf(-1)
+		for _, c := range chunks {
+			if !math.IsNaN(c.Score) {
+				best = max(best, c.Score)
+			}
+		}
+		if best >= floor {
+			out[hit.MessageID] = best
+		}
 	}
 	return out, nil
 }
 
 // attribute credits each counted message to its author, leaving out the
-// owner, meeting transcripts, and automated senders.
+// owner, senders without an identity, and automated senders.
 func (s *Service) attribute(
-	ctx context.Context, ids []int64, authors map[int64]store.TopicAuthor,
-	similarity map[int64]float64, freeText string,
+	ctx context.Context, hits []vector.FusedHit, similarity map[int64]float64,
 ) ([]Candidate, error) {
+	if len(similarity) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, len(hits))
+	for i, hit := range hits {
+		ids[i] = hit.MessageID
+	}
+	authors, err := s.Data.TopicAuthorsContext(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	byKey := map[candidateKey]*Candidate{}
+	participants := map[candidateKey][]int64{}
 	var order []candidateKey
-	for _, id := range ids {
-		a, ok := authors[id]
-		if !ok || a.IsFromMe || a.OwnerLinked || a.SenderID == 0 ||
-			a.MessageType == meetingarchive.MessageType || Automated(a.SenderEmail) {
+	for _, hit := range hits {
+		a, ok := authors[hit.MessageID]
+		sim, counted := similarity[hit.MessageID]
+		if !ok || !counted || a.IsFromMe || a.SenderID == 0 || a.Automated || Automated(a.SenderEmail) {
 			continue
 		}
 		key := candidateKey{id: a.SenderID}
-		c := &Candidate{
-			ParticipantID: a.SenderID,
-			DisplayName:   a.SenderName,
-			EmailAddress:  a.SenderEmail,
-		}
+		fresh := &Candidate{ParticipantID: a.SenderID, DisplayName: a.SenderName, EmailAddress: a.SenderEmail}
 		if a.PersonID != nil {
 			key = candidateKey{person: true, id: *a.PersonID}
-			c = &Candidate{PersonID: *a.PersonID, DisplayName: cmp.Or(a.PersonName, a.SenderName)}
+			fresh = &Candidate{PersonID: *a.PersonID, DisplayName: cmp.Or(a.PersonName, a.SenderName)}
 		}
-		if existing, ok := byKey[key]; ok {
-			c = existing
-		} else {
+		c, exists := byKey[key]
+		if !exists {
+			c = fresh
 			byKey[key] = c
 			order = append(order, key)
 		}
+		if !slices.Contains(participants[key], a.SenderID) {
+			participants[key] = append(participants[key], a.SenderID)
+		}
 		c.Messages = append(c.Messages, Authored{
-			Similarity: similarity[id],
+			Similarity: sim,
+			ListMail:   a.ListMail,
 			Citation: Citation{
-				MessageID: id, SentAt: a.SentAt, MessageType: a.MessageType,
-				Subject: a.Subject, Snippet: a.Snippet,
+				MessageID: a.MessageID, SentAt: a.SentAt, MessageType: a.MessageType,
+				Subject: a.Subject, Snippet: a.Snippet, SenderAuthenticated: a.SenderAuthenticated,
 			},
 		})
 	}
-	var personIDs []int64
+	var senders []int64
 	for _, key := range order {
-		if key.person {
-			personIDs = append(personIDs, key.id)
-		}
+		senders = append(senders, participants[key]...)
 	}
-	if len(personIDs) > 0 {
-		values, err := s.Data.AskMeAboutValuesContext(ctx, personIDs)
-		if err != nil {
-			return nil, err
-		}
-		for _, v := range values {
-			if c := byKey[candidateKey{person: true, id: v.PersonID}]; c != nil && Matches(freeText, v.Value) {
-				c.AskMeAbout = append(c.AskMeAbout, v.Value)
-			}
-		}
+	addressed, err := s.Data.OwnerAddressedContext(ctx, senders)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]Candidate, len(order))
 	for i, key := range order {
-		out[i] = *byKey[key]
+		c := byKey[key]
+		c.OneWay = !slices.ContainsFunc(participants[key], func(id int64) bool { return addressed[id] })
+		out[i] = *c
 	}
 	return out, nil
+}
+
+// addDeclared adds each ask-me-about value that matches the topic to its
+// person. A person with a match and no messages joins the candidates.
+func (s *Service) addDeclared(ctx context.Context, candidates []Candidate, freeText string) ([]Candidate, error) {
+	values, err := s.Data.AskMeAboutValuesContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	index := map[int64]int{}
+	for i, c := range candidates {
+		if c.PersonID != 0 {
+			index[c.PersonID] = i
+		}
+	}
+	for _, v := range values {
+		if !Matches(freeText, v.Value) {
+			continue
+		}
+		i, ok := index[v.PersonID]
+		if !ok {
+			candidates = append(candidates, Candidate{PersonID: v.PersonID, DisplayName: v.PersonName})
+			i = len(candidates) - 1
+			index[v.PersonID] = i
+		}
+		candidates[i].AskMeAbout = append(candidates[i].AskMeAbout, v.Value)
+	}
+	return candidates, nil
 }

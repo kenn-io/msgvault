@@ -2845,7 +2845,7 @@ export const searchPeople = (
   );
 };
 /**
- * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. A topic nobody wrote about returns empty lists with reason no_relevant_evidence.
+ * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit.
  * @summary Find people who wrote about a topic
  */
 export const findPeopleWhoKnow = (

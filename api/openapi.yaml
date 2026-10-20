@@ -16526,6 +16526,8 @@ components:
           type: integer
         message_type:
           type: string
+        sender_authenticated:
+          type: boolean
         sent_at:
           format: date-time
           type: string
@@ -16536,6 +16538,7 @@ components:
       required:
         - message_id
         - message_type
+        - sender_authenticated
       type: object
     WhoKnowsContact:
       additionalProperties: true
@@ -16551,6 +16554,9 @@ components:
           type: string
         email_address:
           type: string
+        message_score:
+          format: double
+          type: number
         participant_id:
           format: int64
           type: integer
@@ -16564,6 +16570,7 @@ components:
         - rank
         - participant_id
         - score
+        - message_score
         - authored_messages
         - citations
       type: object
@@ -16581,8 +16588,14 @@ components:
           items:
             $ref: "#/components/schemas/WhoKnowsCitation"
           type: array
+        declared_boost:
+          format: double
+          type: number
         display_name:
           type: string
+        message_score:
+          format: double
+          type: number
         person_id:
           format: int64
           type: integer
@@ -16596,6 +16609,8 @@ components:
         - rank
         - person_id
         - score
+        - message_score
+        - declared_boost
         - authored_messages
         - citations
       type: object
@@ -16621,13 +16636,13 @@ components:
           minimum: 1
           type: integer
         min_score:
-          description: Lowest meaning similarity a message needs to count; default 0.5
+          description: Lowest cosine similarity a message needs to count; default 0.5
           exclusiveMinimum: 0
           format: double
           maximum: 1
           type: number
         topic:
-          description: Free-text topic
+          description: Plain words; search operators are refused
           minLength: 1
           type: string
       required:
@@ -16642,6 +16657,9 @@ components:
           type: array
         reason:
           type: string
+        searched_messages:
+          format: int64
+          type: integer
         topic:
           type: string
         unsaved_contacts:
@@ -16650,6 +16668,7 @@ components:
           type: array
       required:
         - topic
+        - searched_messages
         - people
         - unsaved_contacts
       type: object
@@ -16660,7 +16679,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -26866,7 +26885,7 @@ paths:
         - API
   /api/v1/people/who-knows:
     post:
-      description: Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. A topic nobody wrote about returns empty lists with reason no_relevant_evidence.
+      description: Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit.
       operationId: findPeopleWhoKnow
       requestBody:
         content:

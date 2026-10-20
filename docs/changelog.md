@@ -13,7 +13,7 @@ All notable changes to msgvault, grouped by release.
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.
 - On Windows, private folders such as token, export and spool folders are created owner-only from the start. If Windows rejects those permissions, the folder is restricted right after creation, with a warning logged if that also fails. If creating one fails, the error names the folder's absolute path.
 - Vector search scores on SQLite are now cosine similarities (`1 - cosine distance`), as on PostgreSQL. `min_score` and the vector scores in `--explain` output use the same scale on both. Result order is unchanged.
-- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `POST /api/v1/people/who-knows`, in schema 3.23.0.
+- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `POST /api/v1/people/who-knows`, in schema 3.24.0.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.

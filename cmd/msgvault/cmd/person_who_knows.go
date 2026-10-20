@@ -64,6 +64,9 @@ A message counts when its meaning similarity to the topic is at least
 				return err
 			}
 			defer func() { _ = client.Close() }()
+			if err := client.RequireWhoKnows(cmd.Context()); err != nil {
+				return fmt.Errorf("who-knows: %w", err)
+			}
 			body := generated.FindPeopleWhoKnowBody{Topic: request.Topic}
 			body.Limit = int64Pointer(request.Limit)
 			body.Evidence = int64Pointer(request.Evidence)
@@ -126,12 +129,17 @@ func writeWhoKnows(w io.Writer, response whoknows.Response) error {
 func renderWhoKnows(out *strings.Builder, response whoknows.Response) {
 	safe := textutil.SanitizeTerminal
 	if len(response.People) == 0 && len(response.UnsavedContacts) == 0 {
+		if response.Reason == whoknows.ReasonSearchLimit {
+			fmt.Fprintf(out, "The closest %d messages about %q came from you or automated senders; narrow with --after or --before.\n",
+				response.SearchedMessages, safe(response.Topic))
+			return
+		}
 		fmt.Fprintf(out, "Nobody in your archive has written about %q.\n", safe(response.Topic))
 		return
 	}
 	for _, p := range response.People {
-		fmt.Fprintf(out, "#%d  %s  score %.2f  %d authored\n",
-			p.Rank, safe(p.DisplayName), p.Score, p.AuthoredMessages)
+		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s\n",
+			p.Rank, safe(p.DisplayName), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
 		renderWhoKnowsCitations(out, p.Citations)
 	}
 	if len(response.UnsavedContacts) == 0 {
@@ -139,9 +147,28 @@ func renderWhoKnows(out *strings.Builder, response whoknows.Response) {
 	}
 	fmt.Fprintln(out, "Unsaved contacts")
 	for _, c := range response.UnsavedContacts {
-		fmt.Fprintf(out, "#%d  %s <%s>  score %.2f  %d authored  msgvault person promote %d\n",
-			c.Rank, safe(c.DisplayName), safe(c.EmailAddress), c.Score, c.AuthoredMessages, c.ParticipantID)
+		fmt.Fprintf(out, "#%d  %s  score %.2f  %s  msgvault person promote %d\n",
+			c.Rank, contactLabel(c), c.Score, authoredLabel(c.AuthoredMessages), c.ParticipantID)
 		renderWhoKnowsCitations(out, c.Citations)
+	}
+}
+
+func authoredLabel(n int) string {
+	if n == 0 {
+		return "declared, no messages"
+	}
+	return fmt.Sprintf("%d authored", n)
+}
+
+func contactLabel(c whoknows.Contact) string {
+	safe := textutil.SanitizeTerminal
+	switch {
+	case c.DisplayName != "" && c.EmailAddress != "":
+		return safe(c.DisplayName) + " <" + safe(c.EmailAddress) + ">"
+	case c.DisplayName != "":
+		return safe(c.DisplayName)
+	default:
+		return safe(c.EmailAddress)
 	}
 }
 

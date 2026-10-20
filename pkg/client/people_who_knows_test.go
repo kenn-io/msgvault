@@ -16,13 +16,15 @@ import (
 // client must decode and validate that response, and an explicit empty string.
 func TestGeneratedWhoKnowsResponseDecodesEmptyStrings(t *testing.T) {
 	for name, body := range map[string]string{
-		"omitted": `{"topic":"cloud","people":[{"rank":1,"person_id":7,"score":1.2,"authored_messages":1,
-			"citations":[{"message_id":3,"message_type":"email"}]}],
-			"unsaved_contacts":[{"rank":1,"participant_id":9,"score":0.8,"authored_messages":2,
-			"citations":[{"message_id":4,"message_type":"chat","sent_at":"2026-10-01T09:00:00Z"}]}]}`,
-		"explicit": `{"topic":"cloud","people":[{"rank":1,"person_id":7,"display_name":"","score":1.2,"authored_messages":1,
-			"citations":[{"message_id":3,"message_type":"email","subject":"","snippet":""}]}],"unsaved_contacts":[]}`,
-		"empty": `{"topic":"cloud","reason":"no_relevant_evidence","people":[],"unsaved_contacts":[]}`,
+		"omitted": `{"topic":"cloud","searched_messages":4,
+			"people":[{"rank":1,"person_id":7,"score":1.2,"message_score":0.45,"declared_boost":0.75,"authored_messages":1,
+			"citations":[{"message_id":3,"message_type":"email","sender_authenticated":false}]}],
+			"unsaved_contacts":[{"rank":1,"participant_id":9,"score":0.8,"message_score":0.8,"authored_messages":2,
+			"citations":[{"message_id":4,"message_type":"chat","sent_at":"2026-10-01T09:00:00Z","sender_authenticated":true}]}]}`,
+		"explicit": `{"topic":"cloud","searched_messages":1,
+			"people":[{"rank":1,"person_id":7,"display_name":"","score":1.2,"message_score":1.2,"declared_boost":0,"authored_messages":1,
+			"citations":[{"message_id":3,"message_type":"email","subject":"","snippet":"","sender_authenticated":false}]}],"unsaved_contacts":[]}`,
+		"empty": `{"topic":"cloud","reason":"search_limit","searched_messages":200,"people":[],"unsaved_contacts":[]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			var response generated.WhoKnowsResponse
@@ -42,7 +44,7 @@ func TestGeneratedWhoKnowsRequestSendsOnlySetFields(t *testing.T) {
 		assert.Equal("/api/v1/people/who-knows", r.URL.Path)
 		assert.NoError(json.NewDecoder(r.Body).Decode(&got))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"topic":"cloud","people":[],"unsaved_contacts":[]}`))
+		_, _ = w.Write([]byte(`{"topic":"cloud","searched_messages":0,"people":[],"unsaved_contacts":[]}`))
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(server.URL)

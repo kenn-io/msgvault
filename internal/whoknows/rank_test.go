@@ -59,17 +59,75 @@ func TestRankRecencyFloor(t *testing.T) {
 	assert.InDelta(t, math.Log1p(.1), people[1].Score, 1e-9)
 }
 
-func TestRankAskMeAboutBoostNeedsAuthoredMessages(t *testing.T) {
+func TestRankAskMeAboutBoostsAndListsDeclaredOnlyPeople(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	declared := person(1, authored(1, 10, .9))
 	declared.AskMeAbout = []string{"kubernetes"}
 	plain := person(2, authored(2, 10, .9))
 	only := Candidate{PersonID: 3, DisplayName: "declared only", AskMeAbout: []string{"kubernetes"}}
 	people, _ := Rank([]Candidate{plain, only, declared}, rankParams(), rankNow)
-	require.Len(t, people, 2, "a declared value adds no one")
+	require.Len(people, 3)
+
 	assert.Equal(int64(1), people[0].PersonID)
-	assert.Equal([]string{"kubernetes"}, people[0].AskMeAbout)
-	assert.InDelta(people[1].Score+.75, people[0].Score, 1e-9)
+	assert.InDelta(people[2].MessageScore, people[0].MessageScore, 1e-9)
+	assert.InDelta(.75, people[0].DeclaredBoost, 1e-9)
+	assert.InDelta(people[0].MessageScore+.75, people[0].Score, 1e-9)
+
+	assert.Equal(int64(3), people[1].PersonID)
+	assert.Zero(people[1].AuthoredMessages)
+	assert.Zero(people[1].MessageScore)
+	assert.InDelta(.75, people[1].Score, 1e-9, "declared-only ranks on the boost alone")
+	assert.Empty(people[1].Citations)
+	assert.NotNil(people[1].Citations)
+	assert.Equal([]string{"kubernetes"}, people[1].AskMeAbout)
+
+	assert.Equal(int64(2), people[2].PersonID)
+	assert.Zero(people[2].DeclaredBoost)
+}
+
+func TestRankListMailEarnsOneMessageAndDirectAnswersAllCount(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	digest := Candidate{PersonID: 1, DisplayName: "digest"}
+	for i := range 12 {
+		a := authored(int64(i+1), 1, .9)
+		a.ListMail = true
+		digest.Messages = append(digest.Messages, a)
+	}
+	answerer := person(2, authored(100, 3, .9), authored(101, 5, .9))
+	people, _ := Rank([]Candidate{digest, answerer}, rankParams(), rankNow)
+	require.Len(people, 2)
+	assert.Equal(int64(2), people[0].PersonID, "two answers beat twelve digests")
+	assert.Equal(12, people[1].AuthoredMessages)
+	assert.InDelta(math.Log1p(.9*recency(digest.Messages[0].Citation.SentAt, rankNow)), people[1].MessageScore, 1e-9)
+
+	mixed := person(3, authored(200, 3, .9), authored(201, 5, .9))
+	listed := authored(202, 2, .9)
+	listed.ListMail = true
+	mixed.Messages = append(mixed.Messages, listed, listed)
+	mixed.Messages[3].Citation.MessageID = 203
+	people, _ = Rank([]Candidate{mixed}, rankParams(), rankNow)
+	direct := .9*recency(mixed.Messages[0].Citation.SentAt, rankNow) + .9*recency(mixed.Messages[1].Citation.SentAt, rankNow)
+	assert.InDelta(math.Log1p(direct+.9*recency(listed.Citation.SentAt, rankNow)), people[0].MessageScore, 1e-9)
+}
+
+func TestRankOneWaySenderEarnsOneMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	vendor := Candidate{PersonID: 1, DisplayName: "vendor", OneWay: true}
+	for i := range 30 {
+		vendor.Messages = append(vendor.Messages, authored(int64(i+1), 1, .9))
+	}
+	var twoWay []Authored
+	for i := range 10 {
+		twoWay = append(twoWay, authored(int64(100+i), 2, .9))
+	}
+	people, _ := Rank([]Candidate{vendor, person(2, twoWay...)}, rankParams(), rankNow)
+	require.Len(people, 2)
+	assert.Equal(int64(2), people[0].PersonID, "ten answers beat thirty unanswered messages")
+	assert.Equal(30, people[1].AuthoredMessages)
+	assert.InDelta(math.Log1p(.9*recency(vendor.Messages[0].Citation.SentAt, rankNow)), people[1].MessageScore, 1e-9)
 }
 
 func TestRankTiesAreDeterministic(t *testing.T) {
@@ -124,11 +182,11 @@ func TestRankListsPeopleAndContactsSeparately(t *testing.T) {
 func TestAutomatedSenders(t *testing.T) {
 	for _, address := range []string{
 		"noreply@example.net", "no-reply+tag@example.net", "Bot <notifications@github.com>",
-		"jira-alerts@example.net", "newsletter@example.net",
+		"alerts-jira@example.net", "newsletter@example.net", "No_Reply@example.net", "mailer_daemon@example.net",
 	} {
 		assert.True(t, Automated(address), address)
 	}
-	for _, address := range []string{"ana@example.net", "newsome@example.net", "botanist@example.net", ""} {
+	for _, address := range []string{"ana@example.net", "newsome@example.net", "botanist@example.net", "jira@example.net", ""} {
 		assert.False(t, Automated(address), address)
 	}
 }

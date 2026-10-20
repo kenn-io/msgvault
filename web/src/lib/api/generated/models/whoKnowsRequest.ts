@@ -20,13 +20,13 @@ export interface WhoKnowsRequest {
    */
   limit?: number;
   /**
-   * Lowest meaning similarity a message needs to count; default 0.5
+   * Lowest cosine similarity a message needs to count; default 0.5
    * @maximum 1
    * @exclusiveMinimum 0
    */
   min_score?: number;
   /**
-   * Free-text topic
+   * Plain words; search operators are refused
    * @minLength 1
    */
   topic: string;

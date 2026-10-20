@@ -14,42 +14,62 @@ import (
 	"go.kenn.io/msgvault/internal/whoknows"
 )
 
-func TestWriteWhoKnowsEmptyResult(t *testing.T) {
+func TestWriteWhoKnowsEmptyResults(t *testing.T) {
+	assert := assert.New(t)
 	var out bytes.Buffer
-	require.NoError(t, writeWhoKnows(&out, whoknows.Response{Topic: "sailboat insurance"}))
-	assert.Equal(t, "Nobody in your archive has written about \"sailboat insurance\".\n", out.String())
+	require.NoError(t, writeWhoKnows(&out, whoknows.Response{Topic: "sailboat insurance", Reason: whoknows.ReasonNoEvidence}))
+	assert.Equal("Nobody in your archive has written about \"sailboat insurance\".\n", out.String())
+
+	out.Reset()
+	require.NoError(t, writeWhoKnows(&out, whoknows.Response{
+		Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit, SearchedMessages: 200,
+	}))
+	assert.Equal("The closest 200 messages about \"kubernetes\" came from you or automated senders; narrow with --after or --before.\n", out.String())
 }
 
-func TestWriteWhoKnowsListsCitationsAndPromoteHint(t *testing.T) {
+func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
 	sent := time.Date(2026, 9, 12, 15, 4, 0, 0, time.UTC)
 	var out bytes.Buffer
 	require.NoError(t, writeWhoKnows(&out, whoknows.Response{
 		Topic: "kubernetes networking",
-		People: []whoknows.Person{{
-			Rank: 1, PersonID: 7, DisplayName: "Ana Lopez", Score: 2.314, AuthoredMessages: 6,
-			Citations: []whoknows.Citation{
-				{MessageID: 4812, SentAt: &sent, MessageType: "email", Subject: "kube-proxy rules"},
-				{MessageID: 4813, MessageType: "chat", Snippet: "try the \x1b[31mpolicy\x1b[0m"},
+		People: []whoknows.Person{
+			{
+				Rank: 1, PersonID: 7, DisplayName: "Ana Lopez", Score: 1.2, MessageScore: .45, DeclaredBoost: .75,
+				AuthoredMessages: 3,
+				Citations: []whoknows.Citation{
+					{MessageID: 4812, SentAt: &sent, MessageType: "email", Subject: "kube-proxy rules"},
+					{MessageID: 4813, MessageType: "chat", Snippet: "try the \x1b[31mpolicy\x1b[0m"},
+				},
 			},
-		}},
+			{Rank: 2, PersonID: 8, DisplayName: "Lou Lurker", Score: .75, DeclaredBoost: .75, Citations: []whoknows.Citation{}},
+		},
 		UnsavedContacts: []whoknows.Contact{{
-			Rank: 1, ParticipantID: 4812, DisplayName: "Ben Cho", EmailAddress: "ben@example.net",
-			Score: 1.8, AuthoredMessages: 9,
+			Rank: 1, ParticipantID: 9, EmailAddress: "dee@example.net", Score: .62, MessageScore: .62, AuthoredMessages: 2,
 			Citations: []whoknows.Citation{{MessageID: 90, SentAt: &sent, MessageType: "email", Subject: "ingress"}},
 		}},
 	}))
-	assert.Equal(t, `#1  Ana Lopez  score 2.31  6 authored
+	assert.Equal(t, `#1  Ana Lopez  score 1.20 (messages 0.45, declared 0.75)  3 authored
     2026-09-12  email  kube-proxy rules  msgvault show-message 4812
     undated  chat  try the policy  msgvault show-message 4813
+#2  Lou Lurker  score 0.75 (messages 0.00, declared 0.75)  declared, no messages
 Unsaved contacts
-#1  Ben Cho <ben@example.net>  score 1.80  9 authored  msgvault person promote 4812
+#1  dee@example.net  score 0.62  2 authored  msgvault person promote 9
     2026-09-12  email  ingress  msgvault show-message 90
 `, out.String())
 }
 
-func runWhoKnows(t *testing.T, handler http.HandlerFunc, args ...string) (string, error) {
+// runWhoKnows runs the command against a daemon that reports schema and
+// answers the who-knows route with handler.
+func runWhoKnows(t *testing.T, schema string, handler http.HandlerFunc, args ...string) (string, error) {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"` + schema + `"}`))
+			return
+		}
+		handler(w, r)
+	}))
 	t.Cleanup(server.Close)
 	command := newPersonWhoKnowsCommand()
 	command.SetContext(withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}}))
@@ -63,7 +83,7 @@ func runWhoKnows(t *testing.T, handler http.HandlerFunc, args ...string) (string
 
 func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	var body map[string]any
-	out, err := runWhoKnows(t, func(w http.ResponseWriter, r *http.Request) {
+	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/api/v1/people/who-knows", r.URL.Path)
 		assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
@@ -79,7 +99,7 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 
 func TestWhoKnowsCommandJSONPreservesDaemonBody(t *testing.T) {
 	const body = "{ \"topic\": \"cloud\", \"people\": [], \"unsaved_contacts\": [] }\n"
-	out, err := runWhoKnows(t, func(w http.ResponseWriter, _ *http.Request) {
+	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
 	}, "cloud", "--json")
@@ -95,9 +115,18 @@ func TestWhoKnowsCommandRejectsBadFlagsBeforeConnecting(t *testing.T) {
 		{"cloud", "--evidence", "0"},
 		{"cloud", "--after", "2026-02-01", "--before", "2026-01-01"},
 	} {
-		_, err := runWhoKnows(t, func(http.ResponseWriter, *http.Request) {
+		_, err := runWhoKnows(t, "3.24.0", func(http.ResponseWriter, *http.Request) {
 			assert.Fail(t, "the command must not reach the daemon", args)
 		}, args...)
 		assert.ErrorIs(t, err, whoknows.ErrInvalidParameter, args)
 	}
+}
+
+func TestWhoKnowsCommandExplainsAnOlderDaemon(t *testing.T) {
+	_, err := runWhoKnows(t, "3.23.0", func(http.ResponseWriter, *http.Request) {
+		assert.Fail(t, "an old daemon has no who-knows route")
+	}, "cloud")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires daemon API schema 3.24.0 or newer")
+	assert.Contains(t, err.Error(), `"3.23.0"`)
 }

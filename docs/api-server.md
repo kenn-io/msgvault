@@ -161,14 +161,20 @@ Restricted agent tokens cannot use it.
 
 The JSON body takes `topic` (required) and optional `limit` (1-50), `evidence`
 (1-10), `min_score` (above 0, at most 1), `after`, and `before`, as in the
-[CLI options](cli-reference.md#person-who-knows). The response holds `topic`,
-`people`, `unsaved_contacts`, and a `reason` of `no_relevant_evidence` when both
-lists are empty. Each entry has a `score`, `authored_messages`, and `citations`.
+[CLI options](cli-reference.md#person-who-knows). The topic is plain words;
+search operators return `400 invalid_parameter`. The response holds `topic`,
+`searched_messages`, `people`, `unsaved_contacts`, and a `reason` when both
+lists are empty: `no_relevant_evidence`, or `search_limit` when the search
+returned its full pool and every matching message came from the owner or
+automated senders. Each entry has a `score` split into `message_score` and
+`declared_boost`, `authored_messages`, and `citations`. A citation's
+`sender_authenticated` is true only when the source sets the sender.
 
 Invalid values return `400 invalid_parameter`; a topic with no free text returns
 `400 missing_free_text`. Vector search failures keep their usual
 `503 vector_not_enabled`, `index_stale`, `index_building`, and
-`embedding_timeout` errors.
+`embedding_timeout` errors, and a backend that cannot score message chunks
+returns `503 chunk_scoring_unavailable`.
 
 See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
 
@@ -177,7 +183,7 @@ See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -196,9 +202,10 @@ Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
 
+Schema 3.24.0 adds [`POST /api/v1/people/who-knows`](#find-who-knows-about-a-topic).
+
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
-routes, delivery receipts and status states. It also adds
-[`POST /api/v1/people/who-knows`](#find-who-knows-about-a-topic).
+routes, delivery receipts and status states.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.

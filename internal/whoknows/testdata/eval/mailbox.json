@@ -8,7 +8,7 @@
     {"email": "dana@example.net", "name": "Dana Manager", "saved": true, "ask_me_about": []},
     {"email": "ben@example.net", "name": "Ben Contractor", "saved": false, "ask_me_about": []},
     {"email": "newsletter@example.net", "name": "Weekly Digest", "saved": true, "ask_me_about": []},
-    {"email": "lurker@example.net", "name": "Lou Lurker", "saved": true, "ask_me_about": ["kubernetes networking", "sailboat insurance"]},
+    {"email": "lurker@example.net", "name": "Lou Lurker", "saved": true, "ask_me_about": ["kubernetes networking"]},
     {"email": "recent@example.net", "name": "Rae Recent", "saved": true, "ask_me_about": []},
     {"email": "old@example.net", "name": "Olly Old", "saved": true, "ask_me_about": []},
     {"email": "answerer@example.net", "name": "Ari Answerer", "saved": true, "ask_me_about": []},

@@ -13,6 +13,10 @@ func (a *storeAPIAdapter) TopicAuthorsContext(ctx context.Context, ids []int64) 
 	return a.store.TopicAuthorsContext(ctx, ids)
 }
 
-func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context, ids []int64) ([]store.PersonAskMeAbout, error) {
-	return a.store.AskMeAboutValuesContext(ctx, ids)
+func (a *storeAPIAdapter) OwnerAddressedContext(ctx context.Context, ids []int64) (map[int64]bool, error) {
+	return a.store.OwnerAddressedContext(ctx, ids)
+}
+
+func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, error) {
+	return a.store.AskMeAboutValuesContext(ctx)
 }

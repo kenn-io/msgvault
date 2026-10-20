@@ -2877,7 +2877,7 @@ and the [API contract](api-server.md#filename-suggestions).
 
 ### person who-knows
 
-On unreleased `main`, find the people who wrote about a topic:
+On unreleased `main`, find the people who wrote about a topic. Search operators in the topic are refused. Needs a daemon with API schema 3.24.0 or newer.
 
 ```bash
 msgvault person who-knows <topic words...> [flags]
@@ -2887,7 +2887,7 @@ msgvault person who-knows <topic words...> [flags]
 |---|---|---|
 | `--limit` | `10` | Saved people, 1-50 |
 | `--evidence` | `3` | Citations per person, 1-10 |
-| `--min-score` | `0.5` | Lowest meaning similarity a message needs to count, above 0 and at most 1 |
+| `--min-score` | `0.5` | Lowest cosine similarity a message needs to count, above 0 and at most 1 |
 | `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after is inclusive, before is exclusive |
 | `--json` | false | Return the API JSON |
 

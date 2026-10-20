@@ -7,7 +7,9 @@ export interface WhoKnowsPerson {
   ask_me_about?: string[];
   authored_messages: number;
   citations: WhoKnowsCitation[];
+  declared_boost: number;
   display_name?: string;
+  message_score: number;
   person_id: number;
   rank: number;
   score: number;
