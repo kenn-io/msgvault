@@ -68,7 +68,6 @@ type activityCandidateRow struct {
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
-	unsent              bool
 }
 
 const activityCandidateStateCTE = `
@@ -341,7 +340,7 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&row.deletedFromSourceAt,
 			&row.metadata,
 			&row.candidate.SourceIsFromMe,
-			&row.unsent,
+			&row.candidate.Unsent,
 			&row.candidate.IdentityRevision,
 			&row.candidate.AccountIdentityRevision,
 			&timezoneActive,
@@ -357,7 +356,6 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			return nil, fmt.Errorf("scan activity candidate: %w", err)
 		}
 		row.candidate.Queue.Exists = queueExists != 0
-		row.candidate.Unsent = row.unsent
 		row.candidate.TimezoneTransition.Active = timezoneActive != 0
 		row.candidate.DirectLimitTransition.Active = directLimitActive != 0
 		row.candidate.SentAt = activityTimePointer(sentAt)
@@ -397,7 +395,7 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
-		!cancelled && !row.unsent
+		!cancelled && !row.candidate.Unsent
 }
 
 func activityUsableTime(value *time.Time) bool {

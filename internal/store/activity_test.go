@@ -1676,6 +1676,72 @@ func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 	assert.False(t, state.Stale)
 }
 
+func TestActivityFlagReplayKeepsIneligibleFormerDraftQueueDrained(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		update string
+	}{
+		{"missing timestamp", "sent_at = NULL, received_at = NULL, internal_date = NULL"},
+		{"zero timestamp", "sent_at = ?, received_at = NULL, internal_date = NULL"},
+		{"deleted", "deleted_at = ?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			f, personID := activityProjectionFixture(t)
+			occurredAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+			messageID := f.NewMessage().WithSourceMessageID("former-draft").WithSentAt(occurredAt).Create(t, f.Store)
+			_, err := activityExec(f.Store, `UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+			require.NoError(err)
+			labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+				"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+				"SENT":  {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["DRAFT"]}))
+			require.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["SENT"]}))
+			deltas := []store.IMAPMailboxDelta{{
+				Mailbox: "SENT",
+				State:   store.IMAPFolderState{Mailbox: "SENT", UIDValidity: 1, UIDNext: 2},
+				Memberships: []store.IMAPMembershipObservation{{
+					Mailbox: "SENT", UIDValidity: 1, UID: 1, SourceMessageID: "former-draft", Flags: []string{"\\Seen"},
+				}},
+			}}
+			require.NoError(f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, deltas))
+			args := []any{messageID}
+			if tc.name != "missing timestamp" {
+				instant := occurredAt
+				if tc.name == "zero timestamp" {
+					instant = time.Time{}
+				}
+				args = []any{instant, messageID}
+			}
+			_, err = activityExec(f.Store, `UPDATE messages SET `+tc.update+` WHERE id = ?`, args...)
+			require.NoError(err)
+			candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+			require.NoError(err)
+			require.Len(candidates, 1)
+			require.False(candidates[0].Unsent)
+			require.False(candidates[0].Eligible)
+			projection := activityProjectionFromCandidate(t, candidates[0], personID, occurredAt)
+			projection.Event = nil
+			_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+			require.NoError(err)
+			queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+			require.NoError(err)
+			require.Empty(queued)
+			cleanContactStates(t, f.Store, personID)
+
+			require.NoError(f.Store.ApplyIMAPMailboxDeltas(f.Source.ID, deltas))
+			queued, err = f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+			require.NoError(err)
+			assert.Empty(t, queued)
+			state, err := f.Store.ContactStateContext(t.Context(), personID, occurredAt)
+			require.NoError(err)
+			assert.False(t, state.Stale)
+		})
+	}
+}
+
 func activityProjectionFixture(
 	t *testing.T,
 ) (*storetest.Fixture, int64) {

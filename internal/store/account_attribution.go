@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/emailattribution"
 )
@@ -834,15 +835,23 @@ func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, m
 	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 		return fmt.Errorf("lock draft activity for message %d: %w", messageID, err)
 	}
+	hasTimestamp := `(m.sent_at <> ? OR m.received_at <> ? OR m.internal_date <> ?)`
+	if s.dialect.DriverName() != postgresDriverName {
+		hasTimestamp = `(julianday(m.sent_at) <> julianday(?) OR julianday(m.received_at) <> julianday(?) OR julianday(m.internal_date) <> julianday(?))`
+	}
 	_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
 		SELECT m.id, 1, CURRENT_TIMESTAMP
 		FROM messages m JOIN sources src ON src.id = m.source_id
 		WHERE m.id = ? AND (EXISTS (
 			SELECT 1 FROM activity_projection_queue q
 			WHERE q.message_id = m.id AND q.revision > q.processed_revision
-		) OR `+s.activityUnsentSQL()+` = EXISTS (
+		) OR CASE WHEN `+s.activityUnsentSQL()+` THEN EXISTS (
 			SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
-		))`), messageID)
+		) ELSE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			AND `+hasTimestamp+` AND NOT EXISTS (
+				SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
+			)
+		END)`), messageID, time.Time{}, time.Time{}, time.Time{})
 	if err != nil {
 		return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
 	}
