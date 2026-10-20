@@ -153,8 +153,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 	messages := batchEvents(t, stub)
 	require.Len(messages, 2)
 	kitKeys := []string{"$process_person_profile", "$geoip_disable", "application", "source", "version", "commit", "goos", "goarch", "install_age_hours"}
-	sdkKeys := []string{"$lib", "$lib_version", "$os", "$go_version"}
-	optionalSDKKeys := []string{"$os_version", "$os_distro"}
+	sdkKeys := []string{"$lib", "$lib_version"}
 	events := make([]string, 0, len(messages))
 	for _, message := range messages {
 		events = append(events, fmt.Sprint(message["event"]))
@@ -171,7 +170,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 		}
 		for key := range props {
 			allowed := slices.Contains(kitKeys, key) || slices.Contains(sdkKeys, key) ||
-				slices.Contains(optionalSDKKeys, key) || slices.Contains(eventKeys, key)
+				slices.Contains(eventKeys, key)
 			assert.True(allowed, "unexpected property %q on %v", key, message["event"])
 		}
 		assert.Equal("msgvault", props["application"])

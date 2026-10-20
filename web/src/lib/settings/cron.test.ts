@@ -31,14 +31,18 @@ describe('parseCron', () => {
     ['0 25 * * *', 'Hour: 25 is above the maximum of 23.'],
     ['0 0 0 * *', 'Day: 0 is below the minimum of 1.'],
     ['0 0 * 13 *', 'Month: 13 is above the maximum of 12.'],
-    ['0 0 * * 7', 'Weekday: 7 is above the maximum of 6.'],
+    ['0 0 * * 8', 'Weekday: 8 is above the maximum of 7.'],
     ['0 0 * * funday', 'Weekday: "funday" is not a weekday.'],
-    ['10-5 * * * *', 'Minute: 10 comes after 5.'],
     ['*/0 * * * *', 'Minute: step in */0 must be at least 1.'],
+    ['*/60 * * * *', 'Minute: step in */60 must be less than 60.'],
+    ['55/10 * * * *', 'Minute: step in 55/10 must be less than 5.'],
+    ['0 0 * * */8', 'Weekday: step in */8 must be less than 8.'],
     ['1-2-3 * * * *', 'Minute: too many hyphens in 1-2-3.'],
     ['1/2/3 * * * *', 'Minute: too many slashes in 1/2/3.'],
     [', * * * *', 'Minute: a value is missing.'],
     ['CRON_TZ=UTC', 'Enter five fields: minute, hour, day, month, and weekday.'],
+    ['CRON_TZ= 0 3 * * *', 'Enter a time zone name after the equals sign.'],
+    ['CRON_TZ=Bad*Zone 0 3 * * *', '"Bad*Zone" is not a time zone name.'],
   ])('rejects %j with a plain message', (expression, message) => {
     const parsed = parseCron(expression);
     expect(parsed.fields).toBeUndefined();
@@ -70,10 +74,18 @@ describe('parseCron', () => {
     expect(describeCron('CRON_TZ=Mars/Olympus 0 3 * * *')).toBe('At 03:00 every day, Mars/Olympus time');
   });
 
-  it('reads a prefix with no zone name as UTC, like the daemon', () => {
-    expect(parseCron('CRON_TZ= 0 3 * * *').zone).toBe('UTC');
-    expect(splitCron('TZ= 0 3 * * *')).toEqual({ zone: 'UTC', expression: '0 3 * * *' });
-    expect(describeCron('CRON_TZ= 0 3 * * *')).toBe('At 03:00 every day, UTC time');
+  it('rejects a schedule longer than the daemon reads', () => {
+    expect(parseCron(`0${',0'.repeat(600)} 3 * * *`).error).toBe('A schedule can be at most 1024 bytes long.');
+  });
+
+  it('reads a quoted zone name without its quotes, like the daemon', () => {
+    expect(parseCron('TZ="Europe/Berlin" 0 3 * * *').zone).toBe('Europe/Berlin');
+    expect(splitCron("TZ='UTC' 0 3 * * *")).toEqual({ zone: 'UTC', expression: '0 3 * * *' });
+  });
+
+  it('reads 7 as Sunday and ranges that wrap past the end of a field', () => {
+    expect(parseCron('0 9 * * 5-7').fields?.[4].terms).toEqual([{ start: 5, end: 7, step: 1, all: false }]);
+    expect(parseCron('0 22-2 * * *').fields?.[1].terms).toEqual([{ start: 22, end: 2, step: 1, all: false }]);
   });
 
   it('agrees with the daemon parser on the shared corpus', () => {
@@ -120,6 +132,33 @@ describe('describeCron', () => {
     ['30 */5 * * *', 'At 00:30, 05:30, 10:30, 15:30, and 20:30 every day'],
     ['*/20 * * * *', 'Every 20 minutes'],
     ['0 4 * * */3', 'At 04:00 on Sunday, Wednesday, and Saturday'],
+    ['0 4 * * */7', 'At 04:00 on Sundays'],
+    ['0 2 * * 7', 'At 02:00 on Sundays'],
+    ['0 9 * * 5-7', 'At 09:00 Friday to Sunday'],
+    ['0 9 * * 5-7/2', 'At 09:00 on Sunday and Friday'],
+    ['0 9 * * fri-mon', 'At 09:00 Friday to Monday'],
+    ['0 9 * * 0-7', 'At 09:00 every day'],
+    ['0 9 1 * 0-7', 'At 09:00 every day'],
+    ['0 22-2 * * *', 'At 00:00, 01:00, 02:00, 22:00, and 23:00 every day'],
+    ['*/30 22-2 * * *', 'Every 30 minutes from 22:00 to 02:59'],
+    ['50-5/10 * * * *', 'At :00 and :50 past every hour'],
+    ['0 4 * nov-feb *', 'At 04:00 every day November to February'],
+    // The daemon reads an endpoint past the end of the field as the start
+    // of the next lap, so these match what it runs.
+    ['*/30 24-2 * * *', 'Every 30 minutes from 00:00 to 02:59'],
+    ['0 4 * 13-2 *', 'At 04:00 every day January to February'],
+    ['0 4 * * 8-1', 'At 04:00 Sunday to Monday'],
+    ['0 4 28-0 * *', 'At 04:00 on the 28th, 29th, 30th, and 31st of the month'],
+    ['70-5 * * * *', 'Never runs'],
+    // When both day fields are restricted the daemon runs on a day matching
+    // either one, so an empty range in one leaves the other in charge.
+    ['0 4 40-3 * mon', 'At 04:00 on Mondays'],
+    ['0 4 1 * 20-1', 'At 04:00 on the 1st of the month'],
+    ['0 4 40-3 * 0-7', 'At 04:00 every day'],
+    ['0 4 40-3 * *', 'Never runs'],
+    ['0 4 40-3 * */1', 'Never runs'],
+    ['0 4 * * 20-1', 'Never runs'],
+    ['0 4 40-3 * 20-1', 'Never runs'],
     ['CRON_TZ=America/New_York 0 3 * * *', 'At 03:00 every day, America/New York time'],
     ['TZ=UTC */15 * * * *', 'Every 15 minutes, UTC time'],
   ])('describes %s as %s', (expression, description) => {

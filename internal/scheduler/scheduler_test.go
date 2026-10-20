@@ -3139,6 +3139,9 @@ func TestRescheduleErrorRecordsFailureAndQueuesFollowUp(t *testing.T) {
 		assert := assert.New(t)
 		failure := errors.New("synthetic upload failure")
 		var runs int
+		// The follow-up starts before TriggerJob returns and clears LastError
+		// on success, so hold it until the failure has been read.
+		followUp := make(chan struct{})
 		s := New(nil)
 		defer func() { <-s.Stop().Done() }()
 		require.NoError(s.AddJob(Job{Name: "bounded", Schedule: "0 0 * * *", Run: func(context.Context) error {
@@ -3146,12 +3149,14 @@ func TestRescheduleErrorRecordsFailureAndQueuesFollowUp(t *testing.T) {
 			if runs == 1 {
 				return &RescheduleError{Err: failure}
 			}
+			<-followUp
 			return nil
 		}}))
 		err := s.TriggerJob("bounded")
 		require.ErrorIs(err, failure)
 		require.ErrorIs(err, ErrReschedule)
 		assert.Equal(failure.Error(), s.JobStatus()[0].LastError)
+		close(followUp)
 		synctest.Wait()
 		assert.Equal(2, runs, "a failed pass with more work still gets a follow-up")
 		assert.Empty(s.JobStatus()[0].LastError)

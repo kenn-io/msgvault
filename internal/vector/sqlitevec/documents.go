@@ -470,21 +470,22 @@ func (b *Backend) CleanupDocumentJournalIfUnused(ctx context.Context) error {
 		return fmt.Errorf("open coordinated contextual journal cleanup: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin contextual journal cleanup: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 
+	// Inspect outside the transaction so its first statement can wait for the writer lock.
 	var schemaReady int
-	if err := tx.QueryRowContext(ctx, `
+	if err := conn.QueryRowContext(ctx, `
 		SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_change_clock')
 		   AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embedding_changes')`).Scan(&schemaReady); err != nil {
 		return fmt.Errorf("inspect contextual journal schema: %w", err)
 	}
 	if schemaReady == 0 {
-		return tx.Commit()
+		return nil
 	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin contextual journal cleanup: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
 		return fmt.Errorf("lock contextual journal for cleanup: %w", err)

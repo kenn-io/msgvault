@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,7 +8,19 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content.
+- Invalid PDF diagnostics now report `PDF structure could not be validated`.
+- Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
+- msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
+
+- [Cron schedules](configuration.md#cron-schedules) use go-cron instead of
+  the unmaintained robfig/cron. A run in the hour that clocks skip for
+  daylight saving now starts after the jump instead of being skipped for the
+  day, and `msgvault serve` runs a schedule in a repeated hour once.
+- Schedules accept 7 as Sunday and ranges that wrap around, such as `22-2`.
+- Schedules with a step as large as its range, such as `*/60 * * * *`, and
+  an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
+  them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
+
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.

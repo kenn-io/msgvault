@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -334,6 +334,49 @@ client_secrets = "C:/Users/you/Downloads/client_secret.json"
 # Single-quoted string (backslashes are literal)
 client_secrets = 'C:\Users\you\Downloads\client_secret.json'
 ```
+
+## Cron schedules
+
+Every `schedule` and `cron` key in this file uses the same five-field cron
+format. msgvault parses it with [go-cron](https://github.com/netresearch/go-cron)
+and keeps go-cron's rules as they are, so go-cron's documentation answers edge
+cases. The Web UI schedule editor follows the same rules.
+
+| Field | Values |
+|---|---|
+| Minute | 0-59 |
+| Hour | 0-23 |
+| Day of month | 1-31 |
+| Month | 1-12 or `jan`-`dec` |
+| Day of week | 0-7 or `sun`-`sat`; 0 and 7 are both Sunday |
+
+Each field takes `*` or `?`, a number or name, a range (`9-17`), a comma list
+(`0,30`), or a step (`*/15`, `5/20`, `0-30/10`).
+
+- A range whose start comes after its end wraps around. `22-2` in the hour
+  field covers 22:00 to 02:59, and `fri-mon` covers Friday to Monday.
+- A step must be smaller than the range it steps through. go-cron rejects
+  `*/60 * * * *` and `0 */24 * * *`; write `0 * * * *` and `0 0 * * *`.
+- When both day fields are restricted, a day that matches either one runs.
+  `0 4 1 * mon` runs on the 1st of the month and on every Monday.
+- Descriptors such as `@hourly`, seconds and year fields, and the `L`, `W`,
+  `#`, and `H` extensions are rejected.
+- msgvault adds one check of its own. A field made only of commas, such as
+  `,`, is rejected because go-cron accepts it but never runs it.
+
+Schedules run in the daemon's local time. To run one in another zone, start it
+with `CRON_TZ=` or `TZ=`, an IANA zone name, and a space:
+`CRON_TZ=Europe/Berlin 0 3 * * *`. The zone name may be quoted, as in
+`TZ="UTC" 0 3 * * *`. An empty name, such as `CRON_TZ= 0 3 * * *`, is
+rejected.
+
+Daylight saving time changes how a schedule in the affected hour runs:
+
+- When clocks skip an hour, a run in that hour starts after the jump at the
+  same minute. In New York, `30 2 * * *` runs at 03:30 on the spring-forward
+  day.
+- When clocks repeat an hour, `msgvault serve` runs a schedule in that hour
+  once, on the first pass. `sync-muesli --watch` runs it on both passes.
 
 ## Sections
 
@@ -2093,8 +2136,9 @@ features once published. No startup hook or entrypoint wrapper is required.
 - `sync_finished` after each successful manual archive sync, including no-change runs
   and remote Muesli scans. Runs that pause for Omi cooldown or a time budget don't count
   on any surface. The daemon reports browser-started sync completions even
-  after you leave Sources. The CLI reports its own completions with a best-effort
-  250 ms bound. Delivery failures leave
+  after you leave Sources. The CLI sends its search, message-open, and sync reports
+  in the background and waits at most 50 ms in total for them at exit, so reports
+  to a slow or distant remote daemon may be lost. Delivery failures leave
   successful commands successful. CLI actions require a terminal on stdin, stdout,
   or stderr, so a person can pipe output while unattended runs stay excluded. Agent shells
   (Codex, Claude Code), `--agent-url` delegated runs, daemon subprocesses, probes, hooks,
@@ -2104,8 +2148,9 @@ features once published. No startup hook or entrypoint wrapper is required.
   terminal UI exits normally or after an interrupt. Browser sessions add visible
   time across tab switches;
   terminal sessions measure UI runtime. Returning after 30 minutes hidden starts
-  a fresh browser session. Delivery is best effort; terminal delivery has a
-  three-second request timeout. Terminal startup failures, forced termination,
+  a fresh browser session. Delivery is best effort; terminal exit waits at most
+  50 ms for the report, so a slow or distant remote daemon may miss it.
+  Terminal startup failures, forced termination,
   or crashes may send nothing.
   Time spent signed out doesn't count. Earlier signed-in time carries across
   signing in again, and a tab that closes or expires while signed out sends nothing.
@@ -2133,8 +2178,7 @@ that blocks storage, can also each send one. Each event carries only:
 - a random install ID kept in `telemetry-install.json` in the data directory, and
   the whole hours since it was created
 - metadata the PostHog Go library adds itself: library name and version (`$lib`,
-  `$lib_version`), OS name, Go version, and where available the OS version and
-  distribution
+  `$lib_version`)
 
 Events exclude message content, contact records, account or source identifiers,
 filenames, and search text. They ask PostHog to skip person profiles and location lookup. The

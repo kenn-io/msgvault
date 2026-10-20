@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -156,6 +157,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					t.Cleanup(func() { showMessageJSON, showMessageBodyOnly = oldJSON, oldBody })
 				}
 				err := run(cmd)
+				invocationFromCommand(cmd).sends.Wait(time.Second)
 				if fails || outputFails {
 					require.Error(err)
 					if outputFails {
@@ -185,6 +187,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				if action == "search" {
 					searchOffset = 1
 					require.NoError(run(cmd))
+					invocationFromCommand(cmd).sends.Wait(time.Second)
 					assert.Len(events, 1, "continuation pages do not count")
 				}
 			})
@@ -200,20 +203,64 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
-	synctest.Test(t, func(t *testing.T) {
-		client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-			assert.Equal(t, "/api/v1/telemetry/events", r.URL.Path)
-			<-r.Context().Done()
-			return nil, r.Context().Err()
-		})}})
-		require.NoError(t, err)
-		cmd := &cobra.Command{Use: "search"}
-		cmd.SetContext(t.Context())
-		cmd.SetOut(os.Stdout)
-		start := time.Now()
-		reportCLIAction(cmd, client, "search_run", "search_type", "text")
-		assert.Equal(t, 250*time.Millisecond, time.Since(start))
-	})
+	for _, tc := range []struct {
+		name        string
+		delay, want time.Duration
+	}{
+		{name: "stalled", delay: time.Second, want: 50 * time.Millisecond},
+		{name: "healthy", delay: 5 * time.Millisecond, want: 5 * time.Millisecond},
+		{name: "completed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				release := make(chan struct{})
+				requests := 0
+				mux := http.NewServeMux()
+				registerStatsProbeHandler(mux)
+				mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
+					_, _ = w.Write([]byte(`{"results":[]}`))
+				})
+				mux.HandleFunc("/api/v1/telemetry/events", func(w http.ResponseWriter, _ *http.Request) {
+					requests++
+					if tc.name == "stalled" {
+						<-release
+					} else {
+						time.Sleep(tc.delay)
+					}
+					w.WriteHeader(http.StatusAccepted)
+				})
+				server := httptest.NewTestServer(t, mux)
+				transport := http.DefaultTransport
+				http.DefaultTransport = server.Client().Transport
+				t.Cleanup(func() { http.DefaultTransport = transport })
+				resetSearchFlags()
+				t.Cleanup(resetSearchFlags)
+				var exitStart time.Time
+				root := &cobra.Command{Use: "search", RunE: func(cmd *cobra.Command, _ []string) error {
+					inv := invocationFromCommand(cmd)
+					inv.cfg = &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}}
+					err := runHTTPSearch(cmd, "needle")
+					if tc.name == "completed" {
+						synctest.Wait()
+					}
+					exitStart = time.Now()
+					return err
+				}}
+				root.SetArgs([]string{})
+				root.SetOut(io.Discard)
+				root.SetErr(io.Discard)
+				root.SetIn(os.Stdin)
+				require.NoError(executeRootContext(context.Background(), root))
+				elapsed := time.Since(exitStart)
+				synctest.Wait()
+				assert.Equal(tc.want, elapsed)
+				assert.Equal(1, requests)
+				close(release)
+				invocationFromCommand(root).sends.Wait(time.Second)
+			})
+		})
+	}
 }
 
 func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
@@ -291,6 +338,7 @@ func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
 			cfg.Telemetry.Enabled = &tc.configEnabled
 			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			reportCLIAction(cmd, client, "search_run", "search_type", "text")
+			invocationFromCommand(cmd).sends.Wait(time.Second)
 		})
 	}
 }

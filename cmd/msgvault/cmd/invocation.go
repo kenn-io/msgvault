@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/logging"
 )
@@ -47,6 +48,7 @@ type invocation struct {
 	cfg       *config.Config
 	logger    *slog.Logger
 	logResult *logging.Result
+	sends     *posthog.SendGroup
 }
 
 type invocationContextKey struct{}
@@ -54,6 +56,7 @@ type invocationContextKey struct{}
 func newInvocation() *invocation {
 	return &invocation{
 		logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		sends:  &posthog.SendGroup{},
 	}
 }
 

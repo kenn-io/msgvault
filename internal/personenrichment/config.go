@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	"go.kenn.io/msgvault/internal/cronexpr"
 )
 
 const (
@@ -85,8 +85,7 @@ func (c *Config) ApplyDefaults() {
 }
 
 func (c Config) Validate() error {
-	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
-	if _, err := parser.Parse(c.Schedule); err != nil {
+	if _, err := cronexpr.Parser.Parse(c.Schedule); err != nil {
 		return fmt.Errorf("invalid [people.enrichment] schedule %q: %w", c.Schedule, err)
 	}
 	if c.BatchSize <= 0 {
