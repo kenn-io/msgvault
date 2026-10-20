@@ -2,9 +2,9 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,23 +76,12 @@ func serveRunningDaemon(t *testing.T, home, version string, apiVersion int, even
 	mux.HandleFunc("/api/v1/cli/run", daemonCLIRunTestHandler(t, requests, nil, events...))
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	host, portText, err := net.SplitHostPort(server.Listener.Addr().String())
-	require.NoError(err)
-	_, err = daemonRuntimeStore(home).Write(daemon.RuntimeRecord{
-		PID:     pid,
-		Network: daemon.NetworkTCP,
-		Address: net.JoinHostPort(host, portText),
-		Service: daemonService,
-		Version: version,
-		Metadata: map[string]string{
-			runtimeHost:             host,
-			runtimePort:             portText,
-			runtimeAPIVersion:       strconv.Itoa(apiVersion),
-			runtimeAPISchemaVersion: api.APISchemaVersion,
-			runtimeCreateTime:       strconv.FormatInt(created, 10),
-			runtimeAuthFingerprint:  daemonAPIKeyFingerprint(""),
-		},
-	})
+	rt := daemonRuntimeForHTTPServer(t, server, daemonAPIKeyFingerprint(""))
+	rt.Record.PID = pid
+	rt.Record.Version = version
+	rt.Record.Metadata[runtimeAPIVersion] = strconv.Itoa(apiVersion)
+	rt.Record.Metadata[runtimeCreateTime] = strconv.FormatInt(created, 10)
+	_, err := daemonRuntimeStore(home).Write(rt.Record)
 	require.NoError(err)
 	stubStopDaemonRuntimeForUpgrade(t, func(config.Config, *DaemonRuntime, *slog.Logger) error {
 		require.FailNow("a daemon must not be stopped while the config is invalid")
@@ -133,6 +122,22 @@ func TestInvalidDaemonConfigReusesOlderCompatibleDaemon(t *testing.T) { //nolint
 	assert.Contains(stdout, `"record_type":"complete"`)
 	assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 	assert.True(daemon.ProcessAlive(pid), "the older daemon must keep running")
+}
+
+func TestInvalidDaemonConfigIsNotRepeatedAfterProxiedChildFailure(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
+	assert := assert.New(t)
+	childStderr, err := json.Marshal(api.CLIRunEvent{
+		Type: "stderr", Data: "Error: load config: invalid [integrations.kata] endpoint \"://invalid\"\n",
+	})
+	require.NoError(t, err)
+	childExit, err := json.Marshal(api.CLIRunEvent{Type: "error", Error: cliSubprocessExitSentinel})
+	require.NoError(t, err)
+	server, _ := newDaemonCLIRunnerTestServer(t, nil, string(childStderr), string(childExit))
+	home := writeInvalidKataHome(t, "\n[remote]\nurl = '"+server.URL+"'\nallow_insecure = true\n")
+
+	_, stderr, err := runRoot(t, newExportRoot(), exportMessagesArgs(home)...)
+	require.ErrorIs(t, err, errCLISubprocessProxied)
+	assert.Equal(1, strings.Count(stderr, "[integrations.kata]"), "the child already reported it: %q", stderr)
 }
 
 func TestInvalidDaemonConfigKeepsIncompatibleGuidanceWhenAutostartIsOff(t *testing.T) { //nolint:paralleltest // root startup changes the process logger and environment
@@ -188,7 +193,7 @@ func TestInvalidDaemonConfigFailsLifecycleCommandsBeforeStoppingDaemon(t *testin
 
 			root := newRootCommand()
 			root.AddCommand(newDaemonCommand())
-			serve := &cobra.Command{Use: "serve", RunE: runServe}
+			serve := &cobra.Command{Use: "serve", RunE: runServe, Annotations: serveCmd.Annotations}
 			addServeLifecycleCommands(serve)
 			root.AddCommand(serve)
 			_, stderr, err := runRoot(t, root, append([]string{"--home", home}, args...)...)

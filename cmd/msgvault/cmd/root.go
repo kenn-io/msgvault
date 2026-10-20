@@ -249,14 +249,15 @@ const strictConfigAnnotation = "msgvault/strict-config"
 // only the daemon reads. Every other command loads them leniently and warns,
 // so it can still reach a running daemon.
 func requiresStrictConfig(cmd *cobra.Command) bool {
-	return cmd.Name() == "serve" || cmd.Annotations[strictConfigAnnotation] != ""
+	return cmd.Annotations[strictConfigAnnotation] != ""
 }
 
 // warnDaemonConfigError prints each invalid daemon-only setting once, after
-// the command ran, unless runErr already reports it. The daemon's own CLI
+// the command ran, unless runErr already reports it or a proxied child
+// failure streamed its own error. The daemon's own CLI
 // children stay quiet; their parent warned.
 func warnDaemonConfigError(root *cobra.Command, cfg *config.Config, runErr error) {
-	if cfg == nil || isDaemonConsoleSubprocess() {
+	if cfg == nil || isDaemonConsoleSubprocess() || errors.Is(runErr, errCLISubprocessProxied) {
 		return
 	}
 	err := cfg.DaemonConfigError()

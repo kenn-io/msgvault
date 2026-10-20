@@ -14,6 +14,7 @@ All notable changes to msgvault, grouped by release.
 - On Windows, private folders such as token, export and spool folders are created owner-only from the start. If Windows rejects those permissions, the folder is restricted right after creation, with a warning logged if that also fails. If creating one fails, the error names the folder's absolute path.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
+- A bad value in a setting only the daemon reads, such as `[integrations.kata] endpoint` or `MSGVAULT_API_PORT`, no longer stops other commands. They print a warning and reach the running daemon, including an older compatible one. `serve`, `daemon start`, `daemon restart`, and saving configuration still reject the file; see [Validation](configuration.md#validation).
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
 
