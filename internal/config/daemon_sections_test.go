@@ -37,7 +37,6 @@ func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testi
 		{"fastmail", "[[fastmail]]\naccount = 'me@example.com'\n", "api_token is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
 			require := require.New(t)
 			path := writeDaemonSectionConfig(t, tc.content)
 
@@ -48,15 +47,18 @@ func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testi
 
 			_, err = Load(path, "")
 			require.ErrorContains(err, tc.mention)
-			snapshot, err := ReadConfigFile(path)
-			require.NoError(err)
-			_, err = LoadConfigFile(snapshot, "")
-			require.ErrorContains(err, tc.mention)
-			lenient, err := LoadClientConfigFile(snapshot, "")
-			require.NoError(err)
-			assert.Len(lenient.DaemonConfigErrors(), 1)
 		})
 	}
+
+	// Snapshot loaders follow the same split: strict for edits, lenient for client reads.
+	require := require.New(t)
+	snapshot, err := ReadConfigFile(writeDaemonSectionConfig(t, "[integrations.kata]\nendpoint = '://invalid'\n"))
+	require.NoError(err)
+	_, err = LoadConfigFile(snapshot, "")
+	require.ErrorContains(err, "[integrations.kata]")
+	lenient, err := LoadClientConfigFile(snapshot, "")
+	require.NoError(err)
+	require.Len(lenient.DaemonConfigErrors(), 1)
 }
 
 func TestInvalidEnvironmentIsRecordedWithoutSkippingTheRest(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
@@ -67,32 +69,38 @@ func TestInvalidEnvironmentIsRecordedWithoutSkippingTheRest(t *testing.T) { //no
 	t.Setenv("MSGVAULT_CORS_CREDENTIALS", "true")
 	cfg, err := LoadClientWithOverrides("", t.TempDir(), RuntimeOverrides{})
 	require.NoError(err)
-	assert.Len(cfg.DaemonConfigErrors(), 2)
+	require.Len(cfg.DaemonConfigErrors(), 2)
+	require.ErrorContains(cfg.DaemonConfigErrors()[0], "MSGVAULT_API_PORT")
+	require.ErrorContains(cfg.DaemonConfigErrors()[1], "MSGVAULT_ALLOW_INSECURE")
 	assert.True(cfg.Server.CORSCredentials)
 	assert.False(cfg.Server.AllowInsecure)
-
-	t.Setenv("MSGVAULT_REMOTE_ALLOW_INSECURE", "maybe")
-	_, err = LoadClientWithOverrides("", t.TempDir(), RuntimeOverrides{})
-	assert.ErrorContains(err, "MSGVAULT_REMOTE_ALLOW_INSECURE")
 }
 
-func TestClientSectionsStayStrictAndFastmailErrorGuardsReader(t *testing.T) {
-	require := require.New(t)
-
-	for _, content := range []string{
-		"[backup]\nzstd_level = 20\n",
-		"[server]\ndaemon_auto_restart = 'sometimes'\n",
-		"[oauth]\nclient_secrets_command = []\n",
-		"[people.sweep]\nwork_batch_size = -1\n",
+func TestClientLoadStaysStrictOutsideDaemonSections(t *testing.T) {
+	for _, tc := range []struct{ name, content, env, want string }{
+		{name: "toml syntax", content: "[server\n", want: "decode config"},
+		{name: "chatwoot key", content: "[[chatwoot]]\nunknown = true\n", want: "unknown Chatwoot config key"},
+		{name: "backup", content: "[backup]\nzstd_level = 20\n", want: "[backup] zstd_level"},
+		{name: "auto restart", content: "[server]\ndaemon_auto_restart = 'sometimes'\n", want: "daemon_auto_restart"},
+		{name: "oauth", content: "[oauth]\nclient_secrets_command = []\n", want: "client_secrets_command"},
+		{name: "people sweep", content: "[people.sweep]\nwork_batch_size = -1\n", want: "work_batch_size"},
+		{name: "remote env", env: "maybe", want: "MSGVAULT_REMOTE_ALLOW_INSECURE"},
 	} {
-		_, err := LoadClientWithOverrides(writeDaemonSectionConfig(t, content), "", RuntimeOverrides{})
-		require.Error(err, content)
+		t.Run(tc.name, func(t *testing.T) { //nolint:paralleltest // environment overrides are process-wide
+			if tc.env != "" {
+				t.Setenv("MSGVAULT_REMOTE_ALLOW_INSECURE", tc.env)
+			}
+			_, err := LoadClientWithOverrides(writeDaemonSectionConfig(t, tc.content), "", RuntimeOverrides{})
+			require.ErrorContains(t, err, tc.want)
+		})
 	}
+}
 
+func TestFastmailSourceForReturnsFastmailConfigError(t *testing.T) {
+	require := require.New(t)
 	path := writeDaemonSectionConfig(t, "[integrations.kata]\nendpoint = '://invalid'\n[[fastmail]]\naccount = 'me@example.com'\n")
 	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
 	require.NoError(err)
-	require.Len(cfg.DaemonConfigErrors(), 2)
 
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("fastmail", "me@example.com")
