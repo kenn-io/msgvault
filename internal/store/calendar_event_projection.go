@@ -23,10 +23,22 @@ const calendarEventProjectionVersion = 1
 const calendarEventDecodeFailureStatus = "decode_error"
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
+	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false)
+}
+
+// refreshCalendarEventProjectionFromProviderWith records that an importer has
+// observed provider evidence for this message. Evidence freshness can change
+// even when the normalized event projection is unchanged.
+func (s *Store) refreshCalendarEventProjectionFromProviderWith(ctx context.Context, tx *loggedTx, messageID int64) error {
+	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true)
+}
+
+func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *loggedTx, messageID int64, providerEvidence bool) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var messageType, metadata sql.NullString
 	var sourceID int64
-	err := q.QueryRow(`SELECT message_type, metadata, source_id FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &sourceID)
+	var lastModified time.Time
+	err := q.QueryRow(`SELECT message_type, metadata, source_id, last_modified FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &sourceID, &lastModified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -80,6 +92,11 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	sum := sha256.Sum256(canonical)
 	hash := hex.EncodeToString(sum[:])
 	if exists && oldVersion == calendarEventProjectionVersion && oldHash == hash {
+		if providerEvidence {
+			if _, err := q.Exec(`UPDATE calendar_events SET snapshot_updated_at = `+s.dialect.ContentChangedNow()+` WHERE message_id = ?`, messageID); err != nil {
+				return fmt.Errorf("advance calendar snapshot freshness: %w", err)
+			}
+		}
 		return nil
 	}
 	recurrenceEnd := calendarRecurrenceEnd(ctx, event)
@@ -106,8 +123,20 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		updates = append(updates, column+" = excluded."+column)
 	}
 	columns = append(columns, "snapshot_updated_at")
-	updates = append(updates, "snapshot_updated_at = "+s.dialect.ContentChangedNow())
-	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + placeholders(len(values)) + "," + s.dialect.ContentChangedNow() + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
+	var insertValues string
+	if providerEvidence {
+		insertValues = placeholders(len(values)) + "," + s.dialect.ContentChangedNow()
+		updates = append(updates, "snapshot_updated_at = "+s.dialect.ContentChangedNow())
+	} else {
+		// Projection rebuilds and source-configuration refreshes change derived
+		// fields without observing newer provider evidence. Keep an existing
+		// watermark, or seed a newly created projection from the message's
+		// archived write time until the freshness migration can do so.
+		values = append(values, s.dialect.TimestampParam(lastModified))
+		insertValues = placeholders(len(values))
+		updates = append(updates, "snapshot_updated_at = calendar_events.snapshot_updated_at")
+	}
+	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + insertValues + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
 	if _, err := q.Exec(query, values...); err != nil {
 		return fmt.Errorf("write calendar projection: %w", err)
 	}

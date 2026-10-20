@@ -67,7 +67,7 @@ func TestMeetingExceptionFreshnessBeforeWindowFiltering(t *testing.T) {
 	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
 	firstRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
 	secondRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00-04:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"}}`
-	_, first := calendarFixture(t, st, "instance", firstRaw)
+	firstData, first := calendarFixture(t, st, "instance", firstRaw)
 	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
 	requirements.NotEqual(first, second)
 
@@ -79,14 +79,37 @@ func TestMeetingExceptionFreshnessBeforeWindowFiltering(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, newer, second)
 	requirements.NoError(err)
+	var firstBeforeRefresh, secondBeforeRefresh time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&firstBeforeRefresh))
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, second).Scan(&secondBeforeRefresh))
+	requirements.NoError(st.UpdateSourceSyncConfig(firstData.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"America/New_York"}`))
+	var firstAfterRefresh, secondAfterRefresh time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&firstAfterRefresh))
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, second).Scan(&secondAfterRefresh))
+	assertions.True(firstAfterRefresh.Equal(firstBeforeRefresh), "source-zone refresh must preserve the first provider snapshot time")
+	assertions.True(secondAfterRefresh.Equal(secondBeforeRefresh), "source-zone refresh must preserve the second provider snapshot time")
+
+	// A is re-imported after B even though its normalized occurrence projection
+	// matches its earlier A snapshot. The provider observation still makes A
+	// the current alias.
+	requirements.NoError(st.UpsertMessageRawWithFormat(first, []byte(firstRaw), "gcal_json"))
+	var fresh time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&fresh))
+	requirements.True(fresh.After(secondBeforeRefresh), "an A-to-B-to-A provider import must refresh A even when its projection hash is unchanged")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	restored, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(restored.Occurrences, 1)
+	assertions.Equal(first, restored.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(12*time.Hour), restored.Occurrences[0].Start)
+
 	updated := strings.Replace(firstRaw, `"2027-03-14T12:00:00Z"`, `"2027-04-01T12:00:00Z"`, 1)
 	updated = strings.Replace(updated, `"2027-03-14T13:00:00Z"`, `"2027-04-01T13:00:00Z"`, 1)
 	requirements.NoError(st.UpsertMessageRawWithFormat(first, []byte(updated), "gcal_json"))
-	var fresh time.Time
+	fresh = time.Time{}
 	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&fresh))
-	requirements.True(fresh.After(newer), "an in-place projection update must supersede a higher-ID alias")
+	requirements.True(fresh.After(secondBeforeRefresh), "an in-place projection update must supersede a higher-ID alias")
 
-	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	oldWindow, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	assertions.Empty(oldWindow.Occurrences, "the old alias must not be resurrected after the winning move leaves the window")
@@ -415,6 +438,38 @@ func TestMeetingLinksOrphanDecisionAfterMasterArrives(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
 	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
 	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
+}
+
+func TestMeetingLinksOrphanExceptionUsesFreshestAlias(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	firstRaw := `{"id":"instance","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	secondRaw := strings.Replace(firstRaw, `"2027-03-14T12:00:00Z"`, `"2027-03-14T14:00:00Z"`, 1)
+	secondRaw = strings.Replace(secondRaw, `"2027-03-14T13:00:00Z"`, `"2027-03-14T15:00:00Z"`, 1)
+	_, first := calendarFixture(t, st, "instance", firstRaw)
+	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
+	older := time.Now().UTC().Add(-time.Minute)
+	newer := older.Add(time.Minute)
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older, first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, newer, second)
+	requirements.NoError(err)
+
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(second, page.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(14*time.Hour), page.Occurrences[0].Start)
+
+	_, note := projectionFixture(t, st, "orphan-note", "plaud_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: page.Occurrences[0].MessageID}))
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", second), links[0].Ref)
+	assertions.Equal(from.Add(14*time.Hour), links[0].Start)
+	assertions.Equal(from.Add(15*time.Hour), links[0].End)
 }
 
 func TestMeetingLinksActualRecurrenceBudget(t *testing.T) {

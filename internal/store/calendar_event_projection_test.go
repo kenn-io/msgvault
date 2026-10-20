@@ -104,14 +104,44 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	assertions.Empty(calendarRows(t, st, id))
 }
 
-func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
-	requirements := require.New(t)
+func TestCalendarEventProviderFreshnessAdvancesForUnprojectedChanges(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	data, _ := calendarFixture(t, st, "unchanged", calendarRaw)
-	rejectCalendarWrites(t, st)
-	// Canonical persistence also skips an identical typed projection.
-	_, err := st.PersistMessage(data)
+	_, id := calendarFixture(t, st, "unprojected-change", calendarRaw)
+	older := time.Now().UTC().Add(-time.Minute)
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older, id)
 	requirements.NoError(err)
+	var oldHash string
+	requirements.NoError(st.db.QueryRow(`SELECT content_hash FROM calendar_events WHERE message_id = ?`, id).Scan(&oldHash))
+
+	// Google revision and summary changes are provider evidence even though the
+	// normalized occurrence projection does not include either field.
+	updatedRaw := strings.Replace(calendarRaw, `"description":"Raw description"`, `"description":"Raw description","summary":"Updated summary","updated":"2027-03-02T18:00:00Z"`, 1)
+	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(updatedRaw), "gcal_json"))
+	var fresh time.Time
+	var newHash string
+	requirements.NoError(st.db.QueryRow(`SELECT content_hash, snapshot_updated_at FROM calendar_events WHERE message_id = ?`, id).Scan(&newHash, &fresh))
+	assertions.Equal(oldHash, newHash, "provider-only changes leave normalized projection content unchanged")
+	assertions.True(fresh.After(older), "provider-only changes must advance snapshot freshness")
+}
+
+func TestCalendarEventProjectionRebuildPreservesSnapshotFreshness(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "rebuild-freshness", calendarRaw)
+	older := time.Now().UTC().Add(-time.Minute)
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older, id)
+	requirements.NoError(err)
+	var before time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, id).Scan(&before))
+	// A projection version bump causes the normal migration reader to rebuild
+	// the row from raw evidence. Reconstruction must retain its provider time.
+	_, err = st.db.Exec(`UPDATE calendar_events SET projection_version = ? WHERE message_id = ?`, calendarEventProjectionVersion-1, id)
+	requirements.NoError(err)
+	requirements.NoError(st.backfillCalendarEventProjectionsContext(t.Context()))
+	var after time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, id).Scan(&after))
+	assertions.True(after.Equal(before), "projection rebuilds must not replace provider freshness")
 }
 
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
@@ -191,8 +221,7 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 }
 
 func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
+	assertions, requirements := assert.New(t), require.New(t)
 
 	st := newRFC822IDBackfillBackendStore(t)
 	_, id := calendarFixture(t, st, "upgrade", calendarRaw)
@@ -214,13 +243,25 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite subset copy")
 	}
-	requirements := require.New(t)
+	assertions, requirements := assert.New(t), require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")
 	st, err := OpenForTest(path)
 	requirements.NoError(err)
 	requirements.NoError(st.InitSchemaContext(t.Context()))
 	_, id := calendarFixture(t, st, "subset", calendarRaw)
-	// Stale derived data must not be copied or trusted.
+	firstRaw := `{"id":"instance","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	secondRaw := strings.Replace(firstRaw, `"2027-03-14T12:00:00Z"`, `"2027-03-14T14:00:00Z"`, 1)
+	secondRaw = strings.Replace(secondRaw, `"2027-03-14T13:00:00Z"`, `"2027-03-14T15:00:00Z"`, 1)
+	_, first := calendarFixture(t, st, "instance", firstRaw)
+	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
+	firstFresh := time.Now().UTC()
+	secondFresh := firstFresh.Add(-time.Minute)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, firstFresh, first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, secondFresh, second)
+	requirements.NoError(err)
+	// The event projection is carried only to preserve provider freshness. Its
+	// derived fields are marked stale and rebuilt from raw before the copy opens.
 	_, err = st.db.Exec(`UPDATE calendar_events SET provider_event_id = 'stale'`)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
@@ -232,7 +273,17 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	defer func() { requirements.NoError(copied.Close()) }()
 	rows := calendarRows(t, copied, id)
 	requirements.Len(rows, 1)
-	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
+	assertions.Equal("event-example", rows[0].Event.ProviderEventID)
+	var copiedFirstFresh, copiedSecondFresh time.Time
+	requirements.NoError(copied.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&copiedFirstFresh))
+	requirements.NoError(copied.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, second).Scan(&copiedSecondFresh))
+	assertions.True(copiedFirstFresh.After(copiedSecondFresh), "subset reconstruction must preserve provider snapshot ordering even when it opposes message ID order")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := copied.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(first, page.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(12*time.Hour), page.Occurrences[0].Start)
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {

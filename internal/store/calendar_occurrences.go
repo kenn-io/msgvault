@@ -245,15 +245,30 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	return resolved, bounded, nil
 }
 
-// The newest archived snapshot wins for each original occurrence. Message ID
-// breaks equal timestamp ties and gives legacy snapshots a deterministic order.
-func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
-	overrides := make(map[string]CalendarEventRow, len(rows))
+type calendarExceptionAliasKey struct {
+	sourceID         int64
+	seriesProviderID string
+	originalStart    string
+}
+
+func calendarExceptionKey(row CalendarEventRow) calendarExceptionAliasKey {
+	key := calendarExceptionAliasKey{sourceID: row.SourceID, seriesProviderID: row.Event.SeriesProviderID}
+	if row.Event.Original != nil {
+		key.originalStart = row.Event.Original.Key()
+	}
+	return key
+}
+
+// The newest archived snapshot wins for each source, series, and original
+// occurrence. Message ID breaks equal timestamp ties and gives legacy
+// snapshots a deterministic order.
+func calendarExceptionOverrides(rows []CalendarEventRow) map[calendarExceptionAliasKey]CalendarEventRow {
+	overrides := make(map[calendarExceptionAliasKey]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		if row.Event.Original == nil {
 			continue
 		}
-		key := row.Event.Original.Key()
+		key := calendarExceptionKey(row)
 		current, exists := overrides[key]
 		if !exists || row.SnapshotUpdatedAt.After(current.SnapshotUpdatedAt) ||
 			row.SnapshotUpdatedAt.Equal(current.SnapshotUpdatedAt) && row.MessageID > current.MessageID {
@@ -271,7 +286,7 @@ func canonicalCalendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow 
 			out = append(out, row)
 			continue
 		}
-		if override := overrides[row.Event.Original.Key()]; override.MessageID == row.MessageID {
+		if override := overrides[calendarExceptionKey(row)]; override.MessageID == row.MessageID {
 			out = append(out, row)
 		}
 	}

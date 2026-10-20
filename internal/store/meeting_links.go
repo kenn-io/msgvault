@@ -136,6 +136,19 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 				masterCancelled = masters[0].Event.Status == meetingCancelledStatus
 			}
 		} else if row.Event.Original != nil {
+			originalColumn, originalValue := "e.original_start_at", any(row.Event.Original.Instant)
+			if row.Event.Original.AllDay {
+				originalColumn, originalValue = "e.original_start_date", row.Event.Original.Date
+			}
+			aliases, err := meetingEventRows(ctx, r, `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND `+originalColumn+` = ?`, []any{row.SourceID, row.Event.SeriesProviderID, originalValue}, budget)
+			if err != nil {
+				return linkOccurrence{}, err
+			}
+			canonical := canonicalCalendarExceptionRows(aliases)
+			if len(canonical) == 0 {
+				return linkOccurrence{}, sql.ErrNoRows
+			}
+			row = canonical[0]
 			if row.Event.Start == nil || row.Event.End == nil {
 				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 			}
@@ -184,7 +197,8 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
+	key := calendarExceptionAliasKey{sourceID: row.SourceID, seriesProviderID: row.Event.ProviderEventID, originalStart: ref.Key}
+	if x, ok := calendarExceptionOverrides(moved)[key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)

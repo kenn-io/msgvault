@@ -103,7 +103,8 @@ const (
 
 // backfillCalendarEventSnapshotFreshness seeds the alias-selection watermark
 // for projections created before snapshot_updated_at existed. New and changed
-// projections receive the database clock in refreshCalendarEventProjectionWith.
+// provider snapshots receive the database clock when they are imported; a
+// rebuilt projection inherits its archived message timestamp.
 func (s *Store) backfillCalendarEventSnapshotFreshness(ctx context.Context) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if _, err := tx.ExecContext(ctx, `

@@ -965,7 +965,7 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
-		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
+		return s.refreshCalendarEventProjectionFromProviderWith(ctx, tx, messageID)
 	})
 }
 
@@ -1446,7 +1446,7 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
-		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
+		if err := s.refreshCalendarEventProjectionFromProviderWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2441,7 +2441,7 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
-	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+	if err := s.refreshCalendarEventProjectionFromProviderWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -6160,7 +6160,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
-		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+		if err := s.refreshCalendarEventProjectionFromProviderWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {
