@@ -202,11 +202,14 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET embed_gen = ?"), int64(generation))
 	require.NoError(t, err)
 
+	coverage, ok := backend.(vector.FilteredCoverageBackend)
+	require.True(t, ok, "backend must report filtered coverage")
+
 	engine := hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
 		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	return &evalFixture{
 		service: &Service{
-			Retriever: engine, Data: st, Index: backend.(vector.FilteredCoverageBackend),
+			Retriever: engine, Data: st, Index: coverage,
 			Now: func() time.Time { return evalNow },
 		},
 		emails: emails, store: st, backend: backend,
