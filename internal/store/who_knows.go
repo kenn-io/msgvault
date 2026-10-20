@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/mail"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,8 +15,9 @@ import (
 // TopicAuthor is one message with the contact that wrote it.
 type TopicAuthor struct {
 	MessageID int64
-	// Counts is false for a message the owner sent, one with no sender, and
-	// one an automated sender wrote. Contact is set only when Counts is true.
+	// Counts is false for a message the owner sent, one with no sender, one
+	// an automated sender wrote, and a Discord system message. Contact is set
+	// only when Counts is true.
 	Counts      bool
 	ListMail    bool
 	MessageType string
@@ -160,6 +162,26 @@ func int64Args(ids []int64) []any {
 	return args
 }
 
+// discordSystemMessage is true when message alias m is a Discord message
+// whose type is a system event rather than one a member wrote.
+func (s *Store) discordSystemMessage(m string) string {
+	kind := "CASE WHEN json_valid(" + m + ".metadata) THEN json_extract(" + m + ".metadata, '$.discord_message_type') END"
+	if s.IsPostgreSQL() {
+		kind = "CAST(" + m + ".metadata ->> 'discord_message_type' AS BIGINT)"
+	}
+	authored := make([]string, len(DiscordAuthoredMessageTypes))
+	for i, t := range DiscordAuthoredMessageTypes {
+		authored[i] = strconv.Itoa(t)
+	}
+	return "COALESCE(CASE WHEN " + m + ".message_type = '" + discordMessageType + "' THEN " +
+		kind + " NOT IN (" + strings.Join(authored, ", ") + ") END, FALSE)"
+}
+
+// DiscordAuthoredMessageTypes are the Discord message types a member writes:
+// default, reply, slash command, and context menu command. Every other type
+// is a system event, such as a channel rename or a thread start.
+var DiscordAuthoredMessageTypes = []int{0, 19, 20, 23}
+
 // TopicAuthorsContext reads the sender of each message at request time, so
 // mail synced since the last activity build still counts. A message's sender
 // is messages.sender_id, else its lowest 'from' recipient. Deleted messages
@@ -171,7 +193,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 	}
 	query := `WITH RECURSIVE ` + ownerFamilyCTE() + `
 		SELECT m.id, COALESCE(m.is_from_me, FALSE), COALESCE(m.list_id, '') <> '',
-		       ` + s.automatedMessage("m", "p") + `, ` + inOwnerFamily("p.id") + `,
+		       ` + s.automatedMessage("m", "p") + `, ` + inOwnerFamily("p.id") + `, ` + s.discordSystemMessage("m") + `,
 		       m.message_type, m.sent_at, COALESCE(m.subject, ''), src.source_type,
 		       p.id, COALESCE(p.email_address, '')
 		FROM messages m
@@ -188,13 +210,13 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 	var slackIDs []int64
 	for rows.Next() {
 		var (
-			a                             TopicAuthor
-			fromMe, automated, ownerAlias bool
-			sentAt                        sql.NullTime
-			sender                        sql.NullInt64
-			sourceType, email             string
+			a                                     TopicAuthor
+			fromMe, automated, ownerAlias, system bool
+			sentAt                                sql.NullTime
+			sender                                sql.NullInt64
+			sourceType, email                     string
 		)
-		if err := rows.Scan(&a.MessageID, &fromMe, &a.ListMail, &automated, &ownerAlias, &a.MessageType,
+		if err := rows.Scan(&a.MessageID, &fromMe, &a.ListMail, &automated, &ownerAlias, &system, &a.MessageType,
 			&sentAt, &a.Subject, &sourceType, &sender, &email); err != nil {
 			return nil, fmt.Errorf("scan topic author: %w", err)
 		}
@@ -202,7 +224,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 			a.SentAt = &sentAt.Time
 		}
 		a.SenderAuthenticated = personSweepSourceAuthenticatesSender(sourceType)
-		a.Counts = !fromMe && sender.Valid && !automated && !ownerAlias && !automatedAddress(email)
+		a.Counts = !fromMe && sender.Valid && !automated && !system && !ownerAlias && !automatedAddress(email)
 		out[a.MessageID] = a
 		if a.Counts {
 			senders[a.MessageID] = sender.Int64
@@ -229,8 +251,12 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs []int64) (ma
 	return out, nil
 }
 
-// slackMessageType is the message_type the Slack importer writes.
-const slackMessageType = "slack"
+// slackMessageType and discordMessageType are the message_type values the
+// Slack and Discord importers write.
+const (
+	slackMessageType   = "slack"
+	discordMessageType = "discord"
+)
 
 // dropSlackBotPayloads stops counting Slack messages whose archived payload
 // carries a bot_id or the bot_message subtype. The importer files a message

@@ -163,6 +163,45 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 	assert.True(got[humans["slack user"]].SenderAuthenticated, "the source sets a Slack sender")
 }
 
+// A Discord system message, such as a channel rename or a thread start, names
+// the member who caused it but is not something they wrote.
+func TestTopicAuthorsLeaveOutDiscordSystemMessages(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	chat, err := f.Store.GetOrCreateSource("discord", "guild")
+	require.NoError(err)
+	channel, err := f.Store.EnsureConversation(chat.ID, "channel", "Channel")
+	require.NoError(err)
+	member := f.EnsureParticipant("member@example.net", "Member", "example.net")
+	post := func(name string, discordType int) int64 {
+		id := send(f, name, member, func(m *store.Message) {
+			m.SourceID, m.ConversationID, m.MessageType = chat.ID, channel, "discord"
+		})
+		require.NoError(f.Store.SetMessageMetadata(id, sql.NullString{
+			String: fmt.Sprintf(`{"discord_message_type":%d}`, discordType), Valid: true}))
+		return id
+	}
+	authored := map[string]int64{"default": post("default", 0), "reply": post("reply", 19)}
+	system := map[string]int64{"channel rename": post("rename", 4), "thread created": post("thread", 18)}
+
+	var ids []int64
+	for _, id := range authored {
+		ids = append(ids, id)
+	}
+	for _, id := range system {
+		ids = append(ids, id)
+	}
+	got, err := f.Store.TopicAuthorsContext(t.Context(), ids)
+	require.NoError(err)
+	for name, id := range authored {
+		assert.True(got[id].Counts, name)
+	}
+	for name, id := range system {
+		assert.False(got[id].Counts, name)
+	}
+}
+
 // The Slack importer files a message carrying both "user" and "bot_id" under
 // the user, and keeps the payload that shows the bot.
 func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
