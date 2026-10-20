@@ -29,9 +29,6 @@ func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testi
 		{"identity scoring", "[people.identity_scoring]\nbatch_size = 0\n", "identity_scoring.batch_size"},
 		{"imap drafts", "[[imap.drafts]]\nmailbox = 'Drafts'\n", "imap.drafts"},
 		{"fastmail", "[[fastmail]]\naccount = 'me@example.com'\n", "api_token is required"},
-		{"oauth client", "[oauth]\nclient_secrets_command = []\n", "client_secrets_command"},
-		{"oauth tokens", "[oauth.tokens]\nread_command = ['read']\n", "tokens.write_command"},
-		{"people sweep", "[people.sweep]\nwork_batch_size = -1\n", "work_batch_size"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -48,7 +45,10 @@ func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testi
 			snapshot, err := ReadConfigFile(path)
 			require.NoError(err)
 			_, err = LoadConfigFile(snapshot, "")
-			assert.ErrorContains(err, tc.mention)
+			require.ErrorContains(err, tc.mention)
+			lenient, err := LoadClientConfigFile(snapshot, "")
+			require.NoError(err)
+			assert.Len(lenient.DaemonConfigErrors(), 1)
 		})
 	}
 }
@@ -74,8 +74,15 @@ func TestClientSectionsStayStrictAndDaemonErrorsGuardReaders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, err := LoadClientWithOverrides(writeDaemonSectionConfig(t, "[backup]\nzstd_level = 20\n"), "", RuntimeOverrides{})
-	require.Error(err)
+	for _, content := range []string{
+		"[backup]\nzstd_level = 20\n",
+		"[server]\ndaemon_auto_restart = 'sometimes'\n",
+		"[oauth]\nclient_secrets_command = []\n",
+		"[people.sweep]\nwork_batch_size = -1\n",
+	} {
+		_, err := LoadClientWithOverrides(writeDaemonSectionConfig(t, content), "", RuntimeOverrides{})
+		require.Error(err, content)
+	}
 
 	path := writeDaemonSectionConfig(t, "[integrations.kata]\nendpoint = '://invalid'\n[[fastmail]]\naccount = 'me@example.com'\n")
 	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
@@ -94,17 +101,4 @@ func TestClientSectionsStayStrictAndDaemonErrorsGuardReaders(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(err)
 	assert.Equal(before, after)
-}
-
-func TestCredentialsForRejectsInvalidClientCommand(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	oauth := OAuthConfig{
-		ClientSecretsCommand: []string{},
-		Apps:                 map[string]OAuthApp{"work": {ClientSecrets: "a.json", ClientSecretsCommand: []string{"cat"}}},
-	}
-	_, err := oauth.CredentialsFor("")
-	require.ErrorContains(err, "client_secrets_command")
-	_, err = oauth.CredentialsFor("work")
-	assert.ErrorContains(err, "apps.work: client_secrets and client_secrets_command are mutually exclusive")
 }

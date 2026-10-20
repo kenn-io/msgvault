@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
 )
 
 func runExportMessagesForConfig(t *testing.T, home string) (stdout, stderr string, err error) {
@@ -44,8 +45,6 @@ func TestDaemonOnlyConfigErrorsWarnClientAndStopServe(t *testing.T) { //nolint:p
 		{name: "docbank", content: "[integrations.docbank]\nattachment_folder = '../escape'\n", mention: "docbank"},
 		{name: "api port env", env: "invalid", mention: "MSGVAULT_API_PORT"},
 		{name: "fastmail", content: "[[fastmail]]\naccount = 'me@example.com'\n", mention: "[[fastmail]]"},
-		{name: "oauth client", content: "[oauth]\nclient_secrets_command = []\n", mention: "client_secrets_command"},
-		{name: "people sweep", content: "[people.sweep]\nwork_batch_size = -1\n", mention: "work_batch_size"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -60,7 +59,7 @@ func TestDaemonOnlyConfigErrorsWarnClientAndStopServe(t *testing.T) { //nolint:p
 			require.NoError(err)
 			assert.Contains(stdout, `"record_type":"complete"`)
 			assert.NotContains(stdout, "Warning")
-			assert.Equal(1, strings.Count(stderr, "Warning: ignoring invalid daemon config:"), stderr)
+			assert.Equal(1, strings.Count(stderr, "Warning: invalid daemon config:"), stderr)
 			assert.Contains(stderr, tc.mention)
 
 			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
@@ -85,7 +84,14 @@ func TestDaemonOnlyConfigErrorsWarnClientAndStopServe(t *testing.T) { //nolint:p
 }
 
 func TestClientCommandsStillFailOnInvalidClientConfig(t *testing.T) { //nolint:paralleltest // root startup changes the process logger
-	for _, content := range []string{"[server\n", "[chatwoot]\nunknown = true\n", "[backup]\nzstd_level = 20\n"} {
+	for _, content := range []string{
+		"[server\n",
+		"[chatwoot]\nunknown = true\n",
+		"[backup]\nzstd_level = 20\n",
+		"[server]\ndaemon_auto_restart = 'sometimes'\n",
+		"[oauth]\nclient_secrets_command = []\n",
+		"[people.sweep]\nwork_batch_size = -1\n",
+	} {
 		t.Run(content, func(t *testing.T) {
 			home := t.TempDir()
 			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(content), 0o600))
@@ -110,4 +116,41 @@ func TestStartServeBackgroundProcessRejectsInvalidDaemonConfigBeforeSpawning(t *
 	require.ErrorContains(err, "daemon config invalid")
 	require.ErrorContains(err, "[integrations.kata]")
 	assert.NoFileExists(filepath.Join(cfg.Data.DataDir, "serve.log"))
+}
+
+func TestSemanticPersonVectorConfigSourceToleratesInvalidDaemonConfig(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	configured := config.NewDefaultConfig()
+	configured.HomeDir = t.TempDir()
+	configured.Data.DataDir = configured.HomeDir
+	configured.Vector.Enabled = true
+	configured.Vector.Embeddings.Endpoint = "https://embedding.example.test/v1"
+	configured.Vector.Embeddings.Model = "synthetic-config-source-model"
+	configured.Vector.Embeddings.Dimension = 4
+	configured.Vector.People = vector.PeopleConfig{
+		Enabled: true, RetentionPosture: "zero_data_retention", TrainingPosture: "no_training",
+	}
+	configured.Integrations.Kata.Endpoint = "://invalid"
+	testCtx := withTestConfig(t, configured)
+	require.NoError(configured.Save())
+	current, err := currentSemanticPersonVectorConfigSource(invocationFromContext(testCtx))()
+	require.NoError(err)
+	assert.True(current.People.Enabled)
+}
+
+func TestDaemonStartRejectsInvalidDaemonConfigBeforeReusingDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	home := filepath.Join(t.TempDir(), "home")
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[integrations.kata]\nendpoint = '://invalid'\n"), 0o600))
+	loaded, err := config.LoadClientWithOverrides(path, home, config.RuntimeOverrides{})
+	require.NoError(err)
+
+	start := newLifecycleCommand("start", false)
+	start.SetContext(testInvocationContext(t.Context(), loaded, invocationOptions{homeDir: home}))
+	err = start.RunE(start, nil)
+	require.ErrorContains(err, "daemon config invalid")
+	assert.NoDirExists(home)
 }

@@ -22,18 +22,18 @@ sections; it is not a required starting configuration.
 
 ### Validation
 
-Invalid TOML, unknown keys, and invalid values in sections that commands read
-themselves fail every command. An invalid value in a setting only the daemon
-reads does not. These are `[server]` and its `MSGVAULT_*` overrides (except
-`MSGVAULT_REMOTE_ALLOW_INSECURE`), `[web]`, `[integrations.*]`, `[carddav]`,
-`[carddav_connections]`, `[oauth]` client credentials and token commands,
-`[people.sweep]`, `[people.identity_scoring]`, `[[imap.drafts]]`,
-`[[gmail.drafts]]`, `[[beeper.drafts]]`, and `[[fastmail]]`. A command prints
-`Warning: ignoring invalid daemon config: ...` to stderr and runs. For example,
-with `MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
+Invalid TOML, wrong-typed values, and invalid values in sections that commands
+read themselves fail every command. Unknown keys fail only where the decoder
+already rejects them. An invalid value in a setting only the daemon reads does
+not. These are `[server]` and its `MSGVAULT_*` overrides (except
+`daemon_auto_restart` and `MSGVAULT_REMOTE_ALLOW_INSECURE`), `[web]`,
+`[integrations.*]`, `[carddav]`, `[carddav_connections]`,
+`[people.identity_scoring]`, `[[imap.drafts]]`, `[[gmail.drafts]]`,
+`[[beeper.drafts]]`, and `[[fastmail]]`. A command prints
+`Warning: invalid daemon config: ...` to stderr and runs. For example, with
+`MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
 running daemon. Starting, restarting, or upgrading the daemon, saving
-configuration, and editing settings still reject the file with that message.
-
+configuration, and editing settings reject the file with that message.
 
 ## Remote Deletion Consent
 

@@ -182,9 +182,6 @@ func newPersonSweepRunCommand(deps personSweepCommandDeps) *cobra.Command {
 			if !config.Enabled {
 				return errors.New("people sweep is disabled")
 			}
-			if err := config.Validate(); err != nil {
-				return err
-			}
 			resolvedLimit := limit
 			if !command.Flags().Changed("limit") && resolvedLimit > config.WorkBatchSize {
 				resolvedLimit = config.WorkBatchSize

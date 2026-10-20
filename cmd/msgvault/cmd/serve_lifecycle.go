@@ -68,6 +68,10 @@ func newLifecycleCommand(name string, hidden bool) *cobra.Command {
 			if state == nil || state.cfg == nil {
 				return errors.New("configuration is unavailable")
 			}
+			// Check before the reuse branch reports an already running daemon.
+			if err := requireDaemonConfig(state.cfg); err != nil {
+				return err
+			}
 			return runServeStart(cmd, state.cfg)
 		}
 	case statusValue:

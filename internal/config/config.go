@@ -307,14 +307,8 @@ func (s *ServerConfig) Validate() error {
 		}
 		clientIDs[client.ClientID] = true
 	}
-	switch s.DaemonAutoRestart {
-	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
-	default:
-		return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
-			s.DaemonAutoRestart,
-			DaemonAutoRestartNewer,
-			DaemonAutoRestartNever,
-			DaemonAutoRestartAlways)
+	if err := s.validateDaemonAutoRestart(); err != nil {
+		return err
 	}
 	for _, entry := range s.TrustedProxies {
 		if entry == "" {
@@ -328,6 +322,20 @@ func (s *ServerConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// validateDaemonAutoRestart checks the policy client commands read to decide
+// whether to replace a running daemon, so it fails every load.
+func (s *ServerConfig) validateDaemonAutoRestart() error {
+	switch s.DaemonAutoRestart {
+	case DaemonAutoRestartNewer, DaemonAutoRestartNever, DaemonAutoRestartAlways:
+		return nil
+	}
+	return fmt.Errorf("invalid [server] daemon_auto_restart %q (want %q, %q, or %q)",
+		s.DaemonAutoRestart,
+		DaemonAutoRestartNewer,
+		DaemonAutoRestartNever,
+		DaemonAutoRestartAlways)
 }
 
 // IsLoopback returns true if the bind address is a loopback address.
@@ -594,9 +602,14 @@ type Config struct {
 	runtimeConfigState runtimeConfigState
 	// daemonErrs holds validation errors from settings only the daemon reads.
 	// Load joins them into its error; LoadClientWithOverrides keeps them here.
-	daemonErrs  []error
-	fastmailErr error
+	daemonErrs []error
 }
+
+// fastmailConfigError tags the [[fastmail]] error so FastmailSourceFor can
+// find it among the recorded daemon errors.
+type fastmailConfigError struct{ error }
+
+func (e fastmailConfigError) Unwrap() error { return e.error }
 
 func (c *Config) deferDaemonError(err error) {
 	if err != nil {
@@ -610,9 +623,14 @@ func (c *Config) DaemonConfigErrors() []error {
 	return slices.Clone(c.daemonErrs)
 }
 
+// DaemonConfigError joins DaemonConfigErrors, or returns nil when there are none.
+func (c *Config) DaemonConfigError() error {
+	return errors.Join(c.daemonErrs...)
+}
+
 // requireDaemonValid returns the config, or the recorded daemon errors.
 func (c *Config) requireDaemonValid() (*Config, error) {
-	if err := errors.Join(c.daemonErrs...); err != nil {
+	if err := c.DaemonConfigError(); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -986,6 +1004,21 @@ func (c *Config) ReloadConfigFile(snapshot ConfigFile) (*Config, error) {
 }
 
 func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
+	cfg, err := loadConfigFileLenient(snapshot, homeDir, overrides)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.requireDaemonValid()
+}
+
+// LoadClientConfigFile decodes a captured snapshot for read-only use by a
+// client command. Like LoadClientWithOverrides, it records invalid daemon-only
+// settings in DaemonConfigErrors instead of failing.
+func LoadClientConfigFile(snapshot ConfigFile, homeDir string) (*Config, error) {
+	return loadConfigFileLenient(snapshot, homeDir, nil)
+}
+
+func loadConfigFileLenient(snapshot ConfigFile, homeDir string, overrides *RuntimeOverrides) (*Config, error) {
 	cfg := NewDefaultConfig()
 	if homeDir != "" {
 		homeDir = expandPath(homeDir)
@@ -1009,13 +1042,9 @@ func loadConfigFile(snapshot ConfigFile, homeDir string, overrides *RuntimeOverr
 			}
 			cfg.deferDaemonError(cfg.Server.Validate())
 		}
-		return cfg.requireDaemonValid()
+		return cfg, nil
 	}
-	cfg, err := decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
-	if err != nil {
-		return nil, err
-	}
-	return cfg.requireDaemonValid()
+	return decodeConfig(cfg, decodePath, true, homeDir != "", snapshot.Content, overrides)
 }
 
 func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content []byte, overrides *RuntimeOverrides) (*Config, error) {
@@ -1082,8 +1111,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
 		}
 	}
-	cfg.fastmailErr = cfg.validateFastmailSources(fastmailSourceIDConfigured(content))
-	cfg.deferDaemonError(cfg.fastmailErr)
+	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {
+		cfg.deferDaemonError(fastmailConfigError{err})
+	}
 	cfg.deferDaemonError(cfg.validateDraftSources(content))
 
 	// Expand ~ in paths
@@ -1156,7 +1186,10 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Server.ApplyDefaults()
 	cfg.Discord.ApplyDefaults()
 	if err := cfg.OAuth.Validate(); err != nil {
-		cfg.deferDaemonError(fmt.Errorf("oauth: %w", err))
+		return nil, fmt.Errorf("oauth: %w", err)
+	}
+	if err := cfg.Server.validateDaemonAutoRestart(); err != nil {
+		return nil, err
 	}
 	cfg.deferDaemonError(cfg.Server.Validate())
 	cfg.Analytics.ApplyDefaults()
@@ -1180,7 +1213,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	if err := cfg.Activity.Validate(); err != nil {
 		return nil, err
 	}
-	cfg.deferDaemonError(cfg.People.Sweep.Validate())
+	if err := cfg.People.Sweep.Validate(); err != nil {
+		return nil, err
+	}
 	cfg.People.Enrichment.ApplyDefaults()
 	if err := cfg.People.Enrichment.Validate(); err != nil {
 		return nil, err
@@ -1331,8 +1366,8 @@ var ErrFastmailSourceLookup = errors.New("fastmail source lookup failed")
 // inventory to multiple ingestion sources. Explicit source ID entries take
 // precedence over account matches.
 func (c *Config) FastmailSourceFor(st FastmailSourceStore, sourceID int64) (*FastmailSource, error) {
-	if c.fastmailErr != nil {
-		return nil, c.fastmailErr
+	if configErr, ok := errors.AsType[fastmailConfigError](c.DaemonConfigError()); ok {
+		return nil, configErr.error
 	}
 	if st == nil {
 		return nil, errors.New("fastmail source lookup requires a source store")
@@ -1504,7 +1539,7 @@ func (c *Config) Save() error {
 
 func (c *Config) saveWithHooks(hooks configSaveHooks) error {
 	// A lenient load can't rewrite a file the daemon would reject.
-	if err := errors.Join(c.daemonErrs...); err != nil {
+	if err := c.DaemonConfigError(); err != nil {
 		return fmt.Errorf("refusing to save invalid config: %w", err)
 	}
 	// Ensure home directory exists
