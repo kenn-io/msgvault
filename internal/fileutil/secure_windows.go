@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -121,8 +122,6 @@ func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
 // SecureMkdirAll creates a directory path and all parents that do not yet exist.
 // For owner-only modes, every new directory is created with a protected DACL
 // granting access only to the current user. Existing directories are unchanged.
-// If protected creation fails, creation falls back to os.Mkdir and best-effort
-// DACL restriction. Restriction failures are logged as warnings.
 func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
@@ -145,45 +144,36 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 		return nil
 	}
 
-	var attributes *windows.SecurityAttributes
-	if descriptor, err := protectedDirectoryDescriptor(path); err == nil {
-		attributes = &windows.SecurityAttributes{
-			Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
-			SecurityDescriptor: descriptor,
-		}
-	} else {
-		slog.Warn("fileutil: protected directory creation unavailable", "path", path, "err", err)
-	}
-	for _, dir := range slices.Backward(missing) {
-		if attributes != nil {
-			if path16, err := windows.UTF16PtrFromString(dir); err == nil {
-				err = windows.CreateDirectory(path16, attributes)
-				if err == nil {
-					continue
-				}
-				if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-					slog.Warn("fileutil: protected directory creation failed", "path", dir, "err", err)
-				}
-			}
-		}
-		if err := secureMkdirFallback(dir, perm); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func secureMkdirFallback(path string, perm os.FileMode) error {
-	if err := os.Mkdir(path, perm); err != nil {
-		if os.IsExist(err) {
-			if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-				return nil
-			}
-		}
+	descriptor, err := protectedDirectoryDescriptor(path)
+	if err != nil {
 		return err
 	}
-	if err := restrictToCurrentUser(path); err != nil {
-		slog.Warn("fileutil: best-effort DACL failed", "path", path, "err", err)
+	attributes := &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+	}
+	for _, dir := range slices.Backward(missing) {
+		createPath := dir
+		// CreateDirectory needs the extended prefix to accept long absolute paths.
+		if filepath.IsAbs(dir) && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
+			if strings.HasPrefix(dir, `\\`) {
+				createPath = `\\?\UNC\` + dir[2:]
+			} else {
+				createPath = `\\?\` + dir
+			}
+		}
+		path16, err := windows.UTF16PtrFromString(createPath)
+		if err != nil {
+			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+		}
+		if err := windows.CreateDirectory(path16, attributes); err != nil {
+			if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+				if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
+					continue
+				}
+			}
+			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+		}
 	}
 	return nil
 }

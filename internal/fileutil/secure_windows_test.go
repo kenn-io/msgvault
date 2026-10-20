@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -91,7 +92,7 @@ func assertProtectedDirectory(t *testing.T, path string) {
 	require.NoError(windows.GetAce(dacl, 0, &ace))
 	assert.Equal(uint8(windows.ACCESS_ALLOWED_ACE_TYPE), ace.Header.AceType)
 	assert.Zero(ace.Header.AceFlags & windows.INHERITED_ACE)
-	assert.Equal(uint32(FileAllAccess), ace.Mask)
+	assert.Equal(uint32(FileAllAccess), uint32(ace.Mask))
 	// #nosec G103 -- GetAce supplies an access-allowed ACE with a contiguous SID at SidStart.
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	assert.True(aceSID.Equals(user.User.Sid))
@@ -118,13 +119,19 @@ func TestSecureMkdirAllConcurrentCreation(t *testing.T) {
 	require.True(info.IsDir())
 }
 
-func TestSecureMkdirFallbackExistingPath(t *testing.T) {
+func TestSecureMkdirAllLongPath(t *testing.T) {
 	require := require.New(t)
-	dir := t.TempDir()
-	require.NoError(secureMkdirFallback(dir, 0o700))
-	file := filepath.Join(dir, "file")
-	require.NoError(os.WriteFile(file, nil, 0o600))
-	require.Error(secureMkdirFallback(file, 0o700))
+	root, err := filepath.Abs(t.TempDir())
+	require.NoError(err)
+	path := filepath.Join(root, strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100))
+	require.Greater(len(path), 260)
+	require.NoError(SecureMkdirAll(path, 0o700))
+	require.DirExists(path)
+	if strings.HasPrefix(path, `\\`) {
+		assertProtectedDirectory(t, `\\?\UNC\`+path[2:])
+	} else {
+		assertProtectedDirectory(t, `\\?\`+path)
+	}
 }
 
 func TestSecureMkdirAllRejectsFileComponent(t *testing.T) {
