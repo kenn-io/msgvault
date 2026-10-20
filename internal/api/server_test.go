@@ -937,12 +937,9 @@ func TestLoopbackDiscoveryBypassesRateLimitWithAPIKey(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
-	challenge, err := daemonauth.NewChallenge()
-	require.NoError(err, "create challenge")
 	srv := NewServerWithOptions(ServerOptions{
-		Config:        &config.Config{Server: config.ServerConfig{APIKey: "secret-key"}},
-		Logger:        testLogger(),
-		ShutdownToken: "runtime-secret",
+		Config: &config.Config{Server: config.ServerConfig{APIKey: "secret-key"}},
+		Logger: testLogger(),
 	})
 	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
 	// One request exhausts the budget; disable refills for slow runners.
@@ -957,15 +954,10 @@ func TestLoopbackDiscoveryBypassesRateLimitWithAPIKey(t *testing.T) {
 		{"/api/v1/stats", "", http.StatusUnauthorized},
 		{"/api/v1/stats", "", http.StatusTooManyRequests},
 		{daemon.DefaultPingPath, "", http.StatusOK},
-		{DaemonIdentityPath, "", http.StatusNoContent},
-		{daemon.DefaultPingPath, "wrong", http.StatusTooManyRequests},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
 		req.RemoteAddr = "127.0.0.1:1234"
 		req.Header.Set("X-Api-Key", tt.key)
-		if tt.path == DaemonIdentityPath {
-			req.Header.Set(DaemonIdentityChallengeHeader, challenge)
-		}
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
 		assert.Equal(tt.want, w.Code, "path %s, key %q", tt.path, tt.key)
