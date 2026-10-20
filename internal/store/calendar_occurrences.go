@@ -60,7 +60,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if row.Event.Kind == "series" || row.Event.Kind == "single" {
 			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == meetingExceptionKind {
 			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
 			exceptions[key] = append(exceptions[key], row)
 		}
@@ -108,12 +108,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			return page, err
 		}
 		e := row.Event
-		if e.Kind == "exception" && e.Original == nil {
+		if e.Kind == meetingExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
 		switch e.Kind {
-		case "exception", "single":
-			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
+		case meetingExceptionKind, "single":
+			if e.Kind == meetingExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
 			if e.Start != nil && e.End != nil {
@@ -121,7 +121,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			} else {
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
-			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
+			if e.Kind == meetingExceptionKind || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
 			}
 			fallthrough
@@ -154,7 +154,7 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 	if event.Status == calendarEventDecodeFailureStatus {
 		return "event data could not be decoded"
 	}
-	if event.Kind == "exception" {
+	if event.Kind == meetingExceptionKind {
 		return "missing series master and event bounds"
 	}
 	return "missing event bounds"

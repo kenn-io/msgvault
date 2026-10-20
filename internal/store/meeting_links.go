@@ -14,6 +14,7 @@ import (
 
 const (
 	meetingSeriesKind       = "series"
+	meetingExceptionKind    = "exception"
 	meetingCancelledStatus  = "cancelled"
 	meetingEvidenceSplitKey = "*"
 )
@@ -124,7 +125,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		return linkOccurrence{}, sql.ErrNoRows
 	}
 	row := rows[0]
-	if row.Event.Kind == "exception" && row.Event.Original != nil && ref.Key == "" {
+	if row.Event.Kind == meetingExceptionKind && row.Event.Original != nil && ref.Key == "" {
 		masters, err := meetingEventRows(ctx, r, `e.kind IN ('series', 'single') AND m.source_id = ? AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
 		if err != nil {
 			return linkOccurrence{}, err
@@ -302,7 +303,7 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 	var out []linkOccurrence
 candidatesLoop:
 	for _, row := range rows {
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == meetingExceptionKind {
 			for _, master := range rows {
 				if master.Event.Kind == meetingSeriesKind && master.SourceID == row.SourceID && master.Event.ProviderEventID == row.Event.SeriesProviderID {
 					continue candidatesLoop
@@ -495,7 +496,7 @@ func (s *Store) meetingSplitIdentities(ctx context.Context, r reboundReader, ide
 	}
 	identities := []meetingIdentity{identity}
 	for _, row := range rows {
-		if row.Event.Kind != "exception" || row.Event.Start == nil || row.Event.End == nil {
+		if row.Event.Kind != meetingExceptionKind || row.Event.Start == nil || row.Event.End == nil {
 			continue
 		}
 		if row.Event.Original != nil && row.Event.Original.Key() != identity.OccurrenceKey {
@@ -518,7 +519,7 @@ func (s *Store) resolveMeetingIdentity(ctx context.Context, r reboundReader, ide
 	var out []linkOccurrence
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID, Key: identity.OccurrenceKey}
-		if row.Event.Kind == "exception" {
+		if row.Event.Kind == meetingExceptionKind {
 			if row.Event.Original != nil && row.Event.Original.Key() != identity.OccurrenceKey {
 				continue
 			}
