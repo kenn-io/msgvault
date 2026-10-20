@@ -139,8 +139,8 @@ func renderWhoKnows(out *strings.Builder, response generated.WhoKnowsResponse, m
 func renderWhoKnowsEntries(out *strings.Builder, response generated.WhoKnowsResponse) {
 	safe := textutil.SanitizeTerminal
 	for _, p := range response.People {
-		fmt.Fprintf(out, "#%d  %s  score %.2f (messages %.2f, declared %.2f)  %s",
-			p.Rank, safe(pointerString(p.DisplayName)), p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
+		fmt.Fprintf(out, "#%d  %s (person %d)  score %.2f (messages %.2f, declared %.2f)  %s",
+			p.Rank, safe(pointerString(p.DisplayName)), *p.PersonID, p.Score, p.MessageScore, p.DeclaredBoost, authoredLabel(p.AuthoredMessages))
 		if len(p.AskMeAbout) > 0 {
 			fmt.Fprintf(out, "  declared: %s", safe(strings.Join(p.AskMeAbout, ", ")))
 		}
