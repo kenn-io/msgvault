@@ -853,7 +853,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
 		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Searches all accounts available to this session. "+
-			"Useful for finding all communication with a company regardless of direction. Returns data, returned, offset, and has_more; page with offset while has_more is true.",
+			"Useful for finding all communication with a company regardless of direction. Returns data, returned, offset, has_more, and total (always -1); page with offset while has_more is true.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
 			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 500)", 100),

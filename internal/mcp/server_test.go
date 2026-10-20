@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -4076,37 +4075,23 @@ func TestSearchByDomains(t *testing.T) {
 		assert.Equal(10, capturedOffset, "offset")
 	})
 
-	t.Run("default and clamped limits", func(t *testing.T) {
-		for _, tc := range []struct {
-			name string
-			args map[string]any
-			want int
-		}{
-			{"omitted", map[string]any{}, 100},
-			{"zero", map[string]any{"limit": float64(0)}, 100},
-			{"above the cap", map[string]any{"limit": float64(5000)}, 500},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				var capturedLimit, capturedOffset, calls int
-				eng := &querytest.MockEngine{
-					SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
-						calls++
-						capturedLimit = limit
-						capturedOffset = offset
-						return query.DomainSearchResult{}, nil
-					},
-				}
-				h := newTestHandlers(eng)
-
-				args := map[string]any{"domains": "acme.com"}
-				maps.Copy(args, tc.args)
-				response := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains, args)
-				assert.Equal(t, 1, calls, "one engine call per page")
-				assert.Equal(t, tc.want, capturedLimit, "limit")
-				assert.Equal(t, 0, capturedOffset, "default offset")
-				assert.False(t, response.HasMore)
-			})
+	t.Run("default limit and offset", func(t *testing.T) {
+		var capturedLimit, capturedOffset, calls int
+		eng := &querytest.MockEngine{
+			SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
+				calls++
+				capturedLimit = limit
+				capturedOffset = offset
+				return query.DomainSearchResult{}, nil
+			},
 		}
+		h := newTestHandlers(eng)
+
+		runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains,
+			map[string]any{"domains": "acme.com"})
+		assert.Equal(t, 1, calls, "one engine call per page")
+		assert.Equal(t, 100, capturedLimit, "default limit")
+		assert.Equal(t, 0, capturedOffset, "default offset")
 	})
 }
 

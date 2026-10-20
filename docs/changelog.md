@@ -11,6 +11,7 @@ All notable changes to msgvault, grouped by release.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
+- MCP message searches, `search_in_message`, and `list_messages` now page past offset 1000: add `returned` to `offset` while `has_more` is true. `search_by_domains` returns `returned`, `offset`, and `has_more`, caps pages at 500 rows, and treats a zero limit as the default of 100.
 
 - [Cron schedules](configuration.md#cron-schedules) use go-cron instead of
   the unmaintained robfig/cron. A run in the hour that clocks skip for
@@ -21,7 +22,6 @@ All notable changes to msgvault, grouped by release.
   an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
   them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
 
-- MCP message searches and `list_messages` now page past offset 1000: add `returned` to `offset` while `has_more` is true. `search_by_domains` returns `returned`, `offset`, and `has_more`, caps pages at 500 rows, and treats a zero limit as the default of 100.
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.

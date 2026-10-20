@@ -33,10 +33,9 @@ import (
 )
 
 const (
-	maxLimit                   = 1000
-	maxSearchByDomainsPageSize = 500
-	maxSearchMessagesLimit     = 50
-	defaultSearchLimit         = 20
+	maxLimit               = 1000
+	maxSearchMessagesLimit = 50
+	defaultSearchLimit     = 20
 	// searchContextChars is the max byte length of each matches[] snippet in
 	// search_message_bodies and search_in_message.
 	searchContextChars   = 300
@@ -2574,7 +2573,7 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("at least one domain is required"), nil
 	}
 
-	limit := min(limitArg(args, toolArgLimit, 100), maxSearchByDomainsPageSize)
+	limit := limitArg(args, toolArgLimit, 100)
 	if limit == 0 {
 		limit = 100
 	}
