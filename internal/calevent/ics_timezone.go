@@ -405,8 +405,11 @@ func validateICSOffset(obs *ical.Component, zone string, at time.Time) error {
 	return nil
 }
 
-// Historical daylight time may have ended permanently. The range check
-// verifies the active offset and any transitions affecting this event.
+// Historical daylight time may have ended permanently, and a winter-only
+// definition may carry no DAYLIGHT at all. The kind check in
+// validateICSObservances still requires DAYLIGHT for a summer DTSTART, and the
+// range check rejects recurrences that cross a transition. Any DAYLIGHT that is
+// supplied must still match the zone.
 func validateICSDaylight(comp *ical.Component, loc *time.Location, at time.Time) error {
 	standard, daylight := nearbyICSOffsets(at)
 	if daylight == nil {
@@ -416,7 +419,10 @@ func validateICSDaylight(comp *ical.Component, loc *time.Location, at time.Time)
 	if err != nil {
 		return err
 	}
-	if obs != nil && standard != nil {
+	if obs == nil {
+		return nil
+	}
+	if standard != nil {
 		from, fromErr := icsObservanceOffsetField(obs, "TZOFFSETFROM")
 		to, toErr := icsObservanceOffset(obs)
 		if fromErr == nil && toErr == nil && from == *standard && to == *daylight {

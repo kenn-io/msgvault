@@ -123,11 +123,41 @@ func TestICSTimeZoneDaylightOffsets(t *testing.T) {
 	}
 }
 
-func TestICSTimeZoneWinterSeriesRequiresDaylight(t *testing.T) {
+func TestICSTimeZoneWinterSeriesCrossingDSTRequiresDaylight(t *testing.T) {
 	raw := "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:America/New_York\r\nBEGIN:STANDARD\r\nDTSTART:19701101T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:winter@example.com\r\nDTSTART;TZID=America/New_York:20270102T090000\r\nRRULE:FREQ=DAILY;COUNT=365\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	components, err := ParseICS([]byte(raw), "", "UTC")
-	require.ErrorContains(t, err, "VTIMEZONE DAYLIGHT")
+	require.ErrorContains(t, err, "VTIMEZONE transition dates contradict America/New_York in event range")
 	assert.Empty(t, components)
+}
+
+func TestICSTimeZoneStandardOnlyDefinition(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, recurrence, wantErr string
+	}{
+		{"standalone January event", "20270115T090000", "", ""},
+		{"bounded winter series", "20270104T090000", "RRULE:FREQ=DAILY;COUNT=30\r\n", ""},
+		{"summer event", "20270715T090000", "", "VTIMEZONE DAYLIGHT contradicts America/New_York near DTSTART"},
+		{"series crossing spring DST", "20270102T090000", "RRULE:FREQ=DAILY;COUNT=365\r\n", "VTIMEZONE transition dates contradict America/New_York in event range"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+				"BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\n" +
+				"BEGIN:STANDARD\r\nDTSTART:19701101T020000\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\n" +
+				"END:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:standard-only@example.test\r\n" +
+				"DTSTART;TZID=America/New_York:" + tc.start + "\r\nDURATION:PT30M\r\n" + tc.recurrence +
+				"END:VEVENT\r\nEND:VCALENDAR\r\n"
+			assertions, requirements := assert.New(t), require.New(t)
+			components, err := ParseICS([]byte(raw), "", "UTC")
+			if tc.wantErr != "" {
+				requirements.ErrorContains(err, tc.wantErr)
+				assertions.Empty(components)
+				return
+			}
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			assertions.Equal("America/New_York", components[0].Event.EventTimeZone)
+		})
+	}
 }
 
 func TestICSTimeZoneRejectsTransitionDateMismatch(t *testing.T) {
