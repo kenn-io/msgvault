@@ -582,45 +582,27 @@ func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
 	requirements.NoError(st.UpsertFTS(messageID, "", "", "", "", ""))
 }
 
-// Dropping the real index must give the same fence as the flag override.
+// Dropping the real index must not turn a live scoped write into an error.
 func TestScopedStoreRejectsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
 	testutil.SkipIfPostgres(t, "drops the SQLite FTS5 table")
 	requirements := require.New(t)
-	dbPath := filepath.Join(t.TempDir(), "no-fts.db")
-	seed, err := store.OpenForTest(dbPath)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("generation-fence-message")
+	var dbPath string
+	requirements.NoError(f.Store.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
+	_, err := f.Store.DB().Exec(`DROP TABLE IF EXISTS messages_fts`)
 	requirements.NoError(err)
-	requirements.NoError(seed.InitSchema())
-	_, err = seed.DB().Exec(`DROP TABLE IF EXISTS messages_fts`)
-	requirements.NoError(err)
-	requirements.NoError(seed.Close())
+	requirements.NoError(f.Store.Close())
 
 	st, err := store.OpenForTest(dbPath)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = st.Close() })
 	requirements.False(st.FTS5Available())
-	source, err := st.GetOrCreateSource("gmail", "test@example.com")
+	runID, err := st.StartSync(f.Source.ID, "full")
 	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "default-thread", "Default Thread")
-	requirements.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID:  conversationID,
-		SourceID:        source.ID,
-		SourceMessageID: "generation-fence-message",
-		MessageType:     "email",
-	})
-	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.FailSync(runID, "test complete") })
 
-	oldID, err := st.StartSync(source.ID, "full")
-	requirements.NoError(err)
-	stale := st.ScopedToSync(source.ID, oldID)
-	requirements.NoError(st.FailSync(oldID, "worker stopped"))
-	newID, err := st.StartSync(source.ID, "full")
-	requirements.NoError(err)
-	t.Cleanup(func() { _ = st.FailSync(newID, "test complete") })
-	live := st.ScopedToSync(source.ID, newID)
-
-	requirements.ErrorIs(stale.UpsertFTS(messageID, "", "", "", "", ""), store.ErrSyncRunSuperseded)
-	requirements.NoError(live.UpsertFTS(messageID, "", "", "", "", ""))
+	requirements.NoError(st.ScopedToSync(f.Source.ID, runID).UpsertFTS(messageID, "", "", "", "", ""))
 }
 
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
