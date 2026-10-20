@@ -282,15 +282,14 @@ func (s *Server) resolveSearchCoverageGeneration(
 	}
 	switch {
 	case errors.Is(err, vector.ErrIndexStale):
-		active, activeErr := backend.ActiveGeneration(ctx)
-		if activeErr != nil {
-			return SearchCoverageUnavailable, "The active vector generation could not be read", nil, false
-		}
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		fullBuildAvailable := buildingErr == nil && (building == nil ||
 			expectedFingerprint == "" || building.Fingerprint == expectedFingerprint)
-		advice, restart := s.staleAdvice(ctx, backend)
-		return SearchCoverageStale, err.Error() + "; " + advice, &active, fullBuildAvailable && !restart
+		restart := strings.HasSuffix(detail, vectorRestartAdvice)
+		if !restart {
+			detail = err.Error()
+		}
+		return SearchCoverageStale, detail, &generation, fullBuildAvailable && !restart
 	case errors.Is(err, vector.ErrIndexBuilding):
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		if buildingErr != nil || building == nil {

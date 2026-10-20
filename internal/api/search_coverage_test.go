@@ -831,7 +831,9 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 				Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
 				Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
 			})
+			checks := 0
 			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+				checks++
 				if restart {
 					return "model-b", nil
 				}
@@ -839,13 +841,18 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 			})
 			body := getSearchCoverage(t, srv, `{}`)
 			assert.Equal(SearchCoverageStale, body.Status)
+			assert.Equal("model-b", body.VectorFingerprint)
 			if restart {
 				assert.Contains(body.Detail, "msgvault daemon restart")
 				assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
 			} else {
-				assert.Contains(body.Detail, "--full-rebuild")
+				assert.NotContains(body.Detail, "--full-rebuild")
 				assert.Contains(body.Actions, SearchCoverageActionBuildIndex)
 			}
+			again := getSearchCoverage(t, srv, `{}`)
+			assert.Equal(body.Detail, again.Detail)
+			assert.Equal(body.Actions, again.Actions)
+			assert.Equal(1, checks, "coverage reuses the stored stale advice")
 		})
 	}
 }

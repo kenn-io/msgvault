@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/operations"
@@ -142,6 +143,8 @@ func (s *Server) SetVectorScopeDrift(detail string) {
 	s.vectorStaleLatch = true
 }
 
+const vectorRestartAdvice = "the embedding settings in config.toml changed after the daemon started; run `msgvault daemon restart` to search with them"
+
 const vectorRebuildAdvice = "if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild"
 
 // SetVectorRestartFingerprint installs the daemon's startup config resolver.
@@ -157,10 +160,12 @@ func (s *Server) staleAdvice(ctx context.Context, backend vector.Backend) (strin
 	s.vectorMu.RUnlock()
 	if resolve != nil && backend != nil {
 		fingerprint, err := resolve(ctx)
-		if err == nil {
+		if err != nil {
+			s.logger.Warn("could not resolve embedding settings after restart; using rebuild advice", "error", err)
+		} else {
 			active, err := backend.ActiveGeneration(ctx)
 			if err == nil && fingerprint == active.Fingerprint {
-				return "the embedding settings in config.toml changed after the daemon started; run `msgvault daemon restart` to search with them", true
+				return vectorRestartAdvice, true
 			}
 		}
 	}
@@ -169,7 +174,19 @@ func (s *Server) staleAdvice(ctx context.Context, backend vector.Backend) (strin
 
 // MarkVectorIndexStale records the mismatch and returns its recovery advice.
 func (s *Server) MarkVectorIndexStale(ctx context.Context, mismatch error) string {
-	_, backend, _ := s.vectorComponents()
+	s.vectorMu.Lock()
+	stale := s.vectorStatus == VectorStatusStale
+	detail := s.vectorErr
+	if s.vectorStaleLatch || (stale && time.Now().Before(s.vectorFreshNextCheck)) {
+		s.vectorMu.Unlock()
+		if strings.HasSuffix(detail, vectorRestartAdvice) {
+			return vectorRestartAdvice
+		}
+		return vectorRebuildAdvice
+	}
+	s.vectorFreshNextCheck = time.Now().Add(vectorFreshnessCheckInterval)
+	backend := s.backend
+	s.vectorMu.Unlock()
 	advice, _ := s.staleAdvice(ctx, backend)
 	s.SetVectorStale(mismatch.Error() + "; " + advice)
 	return advice
@@ -203,15 +220,7 @@ func (s *Server) refreshVectorStatusIfStale(ctx context.Context) {
 	}
 	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err != nil {
 		if errors.Is(err, vector.ErrIndexStale) {
-			s.vectorMu.Lock()
-			due := !time.Now().Before(s.vectorFreshNextCheck)
-			if due {
-				s.vectorFreshNextCheck = time.Now().Add(vectorFreshnessCheckInterval)
-			}
-			s.vectorMu.Unlock()
-			if due {
-				s.MarkVectorIndexStale(ctx, err)
-			}
+			s.MarkVectorIndexStale(ctx, err)
 		}
 		return
 	}

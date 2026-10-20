@@ -1145,3 +1145,25 @@ message_types = %s
 		})
 	}
 }
+
+func TestRestartVectorFingerprintDisabled(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "model-a"
+dimension = 4
+`), 0600))
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	resolve := restartVectorFingerprint(testutil.NewTestStore(t), &invocation{cfg: cfg})
+	require.NoError(os.WriteFile(path, []byte("[vector]\nenabled = false\n"), 0600))
+	fingerprint, err := resolve(t.Context())
+	require.ErrorIs(err, vector.ErrNotEnabled)
+	assert.Empty(fingerprint)
+}

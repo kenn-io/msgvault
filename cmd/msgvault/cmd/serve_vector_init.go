@@ -503,6 +503,9 @@ func restartVectorFingerprint(s *store.Store, state *invocation) func(context.Co
 		if err != nil {
 			return "", err
 		}
+		if !loaded.Vector.Enabled {
+			return "", vector.ErrNotEnabled
+		}
 		resolved, err := resolvedVectorConfig(s, loaded.Vector)
 		if err != nil {
 			return "", err
