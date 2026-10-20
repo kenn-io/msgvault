@@ -386,8 +386,10 @@ const DeclaredValueLimit = 5000
 // ask-me-about values the user typed or an address-book import supplied, in
 // person order, and whether more exist. Inferred and superseded values are
 // left out, and so are people bound to a participant in owner, the
-// OwnerFamilyContext set, or to an automated participant, including a Slack
-// user whose latest message is a bot's. The caller matches
+// OwnerFamilyContext set, to a participant that sent a message marked from
+// me, which finds the owner in an archive without account identities, or to
+// an automated participant, including a Slack user whose latest message is a
+// bot's. The caller matches
 // topics in Go, so matching is not limited to what SQL can case-fold.
 func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]PersonAskMeAbout, bool, error) {
 	args := []any{AttributeUniversalIDAskMeAbout}
@@ -408,7 +410,8 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]P
 		    SELECT 1 FROM person_participants bound
 		      JOIN participants bp ON bp.id = bound.participant_id
 		     WHERE bound.person_id = v.person_id
-		       AND (` + inOwnerFamily("bp.id", len(owner)) + ` OR ` + automatedParticipant("bp") + `))
+		       AND (` + inOwnerFamily("bp.id", len(owner)) + ` OR ` + automatedParticipant("bp") + `
+		         OR EXISTS (SELECT 1 FROM messages om WHERE om.sender_id = bp.id AND om.is_from_me)))
 		ORDER BY v.person_id, v.ordinal, v.id
 		LIMIT ?`
 	args = append(appendInt64Args(args, owner), DeclaredValueLimit+1)

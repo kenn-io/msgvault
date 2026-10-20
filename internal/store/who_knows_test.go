@@ -494,3 +494,37 @@ func TestAskMeAboutValuesLeaveOutSlackBotUsers(t *testing.T) {
 	assert.Equal([]store.PersonAskMeAbout{{PersonID: ana, PersonName: "ana", Value: "deploys"}}, got,
 		"the bot user is left out")
 }
+
+// An iMessage-only archive has no account identities, so only the owner's
+// is_from_me messages show which participant is the owner.
+func TestAskMeAboutValuesLeaveOutOwnerWithoutAccountIdentity(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	newPerson := func(handle string, isFromMe bool) int64 {
+		participant := f.EnsureParticipant(handle, handle, "example.net")
+		send(f, handle, participant, func(m *store.Message) { m.IsFromMe = isFromMe })
+		person, _, err := f.Store.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+		topic := "pod networking"
+		_, err = f.Store.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+			PersonID:       person.ID,
+			DefinitionSlug: store.AttributeSlugAskMeAbout,
+			Ordinal:        new(int64),
+			Value:          store.AttributeValue{Type: store.AttributeValueText, Text: &topic},
+			Source:         store.ProvenanceUser,
+		})
+		require.NoError(err)
+		return person.ID
+	}
+	newPerson("owner@example.net", true)
+	ana := newPerson("ana@example.net", false)
+
+	owner := ownerOf(f)
+	require.Empty(owner, "no account identity names the owner")
+	got, _, err := f.Store.AskMeAboutValuesContext(ctx, owner)
+	require.NoError(err)
+	assert.Equal([]store.PersonAskMeAbout{{PersonID: ana, PersonName: "ana@example.net", Value: "pod networking"}}, got,
+		"the person who sent the owner's messages is left out")
+}
