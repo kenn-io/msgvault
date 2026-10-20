@@ -9,14 +9,18 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
+
+const calendarEventMessageType = "calendar_event"
 
 // ReconcileCalendarEventSourceMessageIDContext adopts recurring exceptions
 // that were archived under event.id before their original start could be
 // resolved. If the canonical recurrence key already exists, its newer
-// populated snapshot replaces the legacy row's content while the archive
-// message ID is retained. A sparse cancellation tombstone does not replace
-// that content.
+// complete snapshot replaces the legacy row's content while the archive
+// message ID is retained. Incomplete rows and sparse cancellation tombstones
+// do not replace that content.
 func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 	ctx context.Context,
 	sourceID int64,
@@ -38,7 +42,7 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 		if err != nil {
 			return fmt.Errorf("find legacy calendar event: %w", err)
 		}
-		if legacyType != "calendar_event" {
+		if legacyType != calendarEventMessageType {
 			return nil
 		}
 		if err := s.requireSyncMessageSourceTx(q, legacyID); err != nil {
@@ -59,7 +63,7 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 		if err != nil {
 			return fmt.Errorf("find canonical calendar event: %w", err)
 		}
-		if duplicateType != "calendar_event" {
+		if duplicateType != calendarEventMessageType {
 			return fmt.Errorf("new calendar event identity %q belongs to message type %q", newSourceMessageID, duplicateType)
 		}
 		if err := s.requireSyncMessageSourceTx(q, duplicateID); err != nil {
@@ -73,10 +77,11 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 				return fmt.Errorf("lock calendar event %d snapshot: %w", id, err)
 			}
 		}
-		preserveLegacySnapshot, err := sparseCancelledCalendarEventTx(ctx, tx, duplicateID)
+		completeSnapshot, err := completeCalendarEventSnapshotTx(ctx, tx, duplicateID)
 		if err != nil {
 			return err
 		}
+		preserveLegacySnapshot := !completeSnapshot
 
 		if err := s.dialect.InvalidateFTSForMessage(q, legacyID); err != nil {
 			return fmt.Errorf("invalidate legacy calendar event search document: %w", err)
@@ -179,26 +184,32 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 	})
 }
 
-func sparseCancelledCalendarEventTx(ctx context.Context, tx *loggedTx, messageID int64) (bool, error) {
+// completeCalendarEventSnapshotTx checks the provider metadata, body row, and
+// raw Calendar JSON that ingestEvent writes separately. Empty event bodies
+// are valid, so the body row's presence is the check.
+func completeCalendarEventSnapshotTx(ctx context.Context, tx *loggedTx, messageID int64) (bool, error) {
 	var metadata sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT metadata FROM messages WHERE id = ?`, messageID).Scan(&metadata)
+	var hasBody, hasRaw bool
+	err := tx.QueryRowContext(ctx, `SELECT m.metadata,
+		EXISTS(SELECT 1 FROM message_bodies WHERE message_id = m.id),
+		EXISTS(SELECT 1 FROM message_raw WHERE message_id = m.id
+			AND raw_format = ? AND length(raw_data) > 0)
+		FROM messages m WHERE m.id = ?`, gcalmodel.RawFormat, messageID).Scan(&metadata, &hasBody, &hasRaw)
 	if err != nil {
-		return false, fmt.Errorf("read duplicate calendar event snapshot: %w", err)
+		return false, fmt.Errorf("read duplicate calendar event snapshot completeness: %w", err)
 	}
-	if !metadata.Valid || metadata.String == "" {
+	if !metadata.Valid || metadata.String == "" || !hasBody || !hasRaw {
 		return false, nil
 	}
 	var fields struct {
-		Status string `json:"status"`
-		Start  string `json:"start"`
-		End    string `json:"end"`
+		Start string `json:"start"`
+		End   string `json:"end"`
 	}
 	if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-		return false, fmt.Errorf("decode duplicate calendar event metadata: %w", err)
+		return false, nil
 	}
-	return fields.Status == "cancelled" && fields.Start == "" && fields.End == "", nil
+	return fields.Start != "" && fields.End != "", nil
 }
-
 func calendarSourceMessageTx(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string) (int64, string, error) {
 	var messageID int64
 	var messageType string
@@ -272,7 +283,7 @@ func calendarEventFTSDocTx(ctx context.Context, tx *loggedTx, messageID int64) (
 			continue
 		}
 		switch recipientType {
-		case "from":
+		case meetingSenderRole:
 			fromAddrs = append(fromAddrs, email)
 		case "to":
 			toAddrs = append(toAddrs, email)
