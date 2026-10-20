@@ -246,6 +246,20 @@ func TestFindMatchesDeclaredTopicsInGo(t *testing.T) {
 	require.Len(t, got.People, 1, "case folding in Go matches ss to ß")
 	assert.Equal(germanPerson, got.People[0].PersonID)
 	assert.Equal([]string{"Straße"}, got.People[0].AskMeAbout)
+
+	// A declared-only person needs every topic word in a value; an author's
+	// boost needs only shared words.
+	_, salesPerson := f.saved("sales@example.net")
+	f.declare(salesPerson, "sales")
+	got = f.find("sales tax filing")
+	assert.Empty(got.People, "'sales' does not answer 'sales tax filing'")
+	taxAuthor, taxPerson := f.saved("tax@example.net")
+	f.declare(taxPerson, "sales")
+	f.message("tax", taxAuthor, 2, .8)
+	got = f.find("sales tax filing")
+	require.Len(t, got.People, 1)
+	assert.Equal(taxPerson, got.People[0].PersonID)
+	assert.InDelta(.75, got.People[0].DeclaredBoost, 1e-9)
 }
 
 func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
@@ -266,7 +280,7 @@ func TestFindRestrictsMessageTypesToTheIndexScope(t *testing.T) {
 	assert.Empty(got.Reason)
 	require.Len(t, got.People, 1)
 	assert.Equal(person, got.People[0].PersonID)
-	assert.Equal(whoknows.ReasonNoEvidence, f.find("sailing").Reason)
+	assert.Equal(whoknows.ReasonIndexScope, f.find("sailing").Reason, "an index of no authors says so, rather than nobody")
 }
 
 func TestFindEmptyReasons(t *testing.T) {
@@ -314,6 +328,21 @@ func TestFindReportsSearchLimitWhenOwnerMailFillsThePool(t *testing.T) {
 	assert.Empty(got.People)
 	assert.Equal(200, got.SearchedMessages)
 	assert.Equal(whoknows.ReasonSearchLimit, got.Reason)
+	assert.True(got.PoolSaturated)
+}
+
+// A full pool with results still says it may hide more.
+func TestFindReportsASaturatedPoolBesideResults(t *testing.T) {
+	f := newServiceFixture(t)
+	ana, _ := f.saved("ana@example.net")
+	f.message("answer", ana, 2, .8)
+	for i := range 200 {
+		f.message(fmt.Sprintf("mine-%d", i), f.owner, 1, .9)
+	}
+	got := f.find("kubernetes networking")
+	require.Len(t, got.People, 1)
+	assert.True(t, got.PoolSaturated)
+	assert.Equal(t, 200, got.SearchedMessages)
 }
 
 func TestFindBoundsListMailAndOneWaySenders(t *testing.T) {

@@ -164,10 +164,12 @@ The JSON body takes `topic` (required) and optional `limit` (1-50), `evidence`
 real embedding models), and RFC3339 `after` and `before`, as in the
 [CLI options](cli-reference.md#person-who-knows). The topic is plain words;
 search operators return `400 invalid_parameter`. The response holds `topic`,
-`searched_messages`, `declared_truncated`, `people`, `unsaved_contacts`, and a
+`searched_messages`, `pool_saturated`, `declared_truncated`, `people`, `unsaved_contacts`, and a
 `reason` when both lists are empty: `no_relevant_evidence`, or `search_limit`
 when the search returned its full pool and every matching message came from the
-owner or automated senders, or `declared_truncated` is true. The request reads
+owner or automated senders, or `declared_truncated` is true, or `index_scope`
+when the vector index covers no message type with authors.
+`pool_saturated` is true when the search returned its full pool. The request reads
 at most 5,000 declared topics; `declared_truncated` says more exist. Each entry has a `score` split into `message_score` and
 `declared_boost`, `authored_messages`, and `citations`. A citation's
 `sender_authenticated` is true only when the source sets the sender; an email
@@ -175,7 +177,8 @@ From address is not a verified identity.
 
 A topic with no free text returns `400 missing_free_text`. Vector search
 failures keep their usual `503` errors, and a backend that cannot score message
-chunks returns `503 chunk_scoring_unavailable`. See
+chunks returns `503 chunk_scoring_unavailable`; a store without the reads
+returns `503 who_knows_unavailable`. See
 [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
 
 ## API compatibility

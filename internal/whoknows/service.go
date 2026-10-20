@@ -77,7 +77,8 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	)
 	// An index limited to transcripts and calendar entries has no authors to
 	// search, but people can still declare the topic.
-	if types, empty := searchTypes(s.BuildScope); !empty {
+	types, noTypes := searchTypes(s.BuildScope)
+	if !noTypes {
 		request := hybrid.SearchRequest{
 			Mode:     hybrid.ModeHybrid,
 			FreeText: p.FreeText,
@@ -108,11 +109,15 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 		now = s.Now().UTC()
 	}
 	out.People, out.UnsavedContacts = Rank(candidates, p, now)
+	out.PoolSaturated = meta.PoolSaturated || out.SearchedMessages >= retrieveLimit
 	if len(out.People) == 0 && len(out.UnsavedContacts) == 0 {
-		out.Reason = ReasonNoEvidence
-		poolFull := meta.PoolSaturated || out.SearchedMessages >= retrieveLimit
-		if len(similarity) > 0 && poolFull || out.DeclaredTruncated {
+		switch {
+		case noTypes:
+			out.Reason = ReasonIndexScope
+		case len(similarity) > 0 && out.PoolSaturated || out.DeclaredTruncated:
 			out.Reason = ReasonSearchLimit
+		default:
+			out.Reason = ReasonNoEvidence
 		}
 	}
 	return out, nil
@@ -258,13 +263,18 @@ func (s *Service) addDeclared(
 		return nil, false, err
 	}
 	index := map[int64]int{}
+	authored := map[int64]bool{}
 	for i, c := range candidates {
 		if c.PersonID != 0 {
 			index[c.PersonID] = i
+			authored[c.PersonID] = true
 		}
 	}
 	for _, v := range values {
-		if !Matches(freeText, v.Value) {
+		// A person with matching messages gets a boost from a value that
+		// shares words with the topic. A declared-only person needs a value
+		// that names every topic word, so "sales" does not answer "sales tax".
+		if !Matches(freeText, v.Value) || !authored[v.PersonID] && !Covers(v.Value, freeText) {
 			continue
 		}
 		i, ok := index[v.PersonID]

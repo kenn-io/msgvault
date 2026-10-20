@@ -27,6 +27,10 @@ func TestWriteWhoKnowsEmptyResults(t *testing.T) {
 			whoknows.Response{Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit},
 			"No one turned up for \"kubernetes\" within the search limits; narrow with --after or --before.\n",
 		},
+		"index scope": {
+			whoknows.Response{Topic: "kubernetes", Reason: whoknows.ReasonIndexScope},
+			"The vector index doesn't cover email or chat, so who-knows couldn't search messages.\n",
+		},
 		"declared in part": {
 			whoknows.Response{Topic: "kubernetes", Reason: whoknows.ReasonSearchLimit, DeclaredTruncated: true},
 			"No one turned up for \"kubernetes\" within the search limits; narrow with --after or --before.\n" +
@@ -43,7 +47,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
 	sent := time.Date(2026, 9, 12, 15, 4, 0, 0, time.UTC)
 	var out bytes.Buffer
 	require.NoError(t, writeWhoKnows(&out, whoknows.Response{
-		Topic: "kubernetes networking",
+		Topic: "kubernetes networking", SearchedMessages: 200, PoolSaturated: true,
 		People: []whoknows.Person{
 			{
 				Rank: 1, PersonID: 7, DisplayName: "Ana Lopez", Score: 1.2, MessageScore: .45, DeclaredBoost: .75,
@@ -69,6 +73,7 @@ func TestWriteWhoKnowsListsCitationsDeclaredOnlyAndPromoteHint(t *testing.T) {
 Unsaved contacts
 #1  dee@example.net  score 0.62  2 authored  msgvault person promote 9
     2026-09-12  email  ingress  msgvault show-message 90
+Based on the 200 closest messages.
 Declared topics were searched only in part.
 `, out.String())
 }

@@ -110,6 +110,8 @@ func renderWhoKnows(out *strings.Builder, response whoknows.Response) {
 	switch {
 	case len(response.People) > 0 || len(response.UnsavedContacts) > 0:
 		renderWhoKnowsPeople(out, response)
+	case response.Reason == whoknows.ReasonIndexScope:
+		fmt.Fprintln(out, "The vector index doesn't cover email or chat, so who-knows couldn't search messages.")
 	case response.Reason == whoknows.ReasonSearchLimit:
 		fmt.Fprintf(out, "No one turned up for %q within the search limits; narrow with --after or --before.\n", safe(response.Topic))
 	default:
@@ -130,15 +132,15 @@ func renderWhoKnowsPeople(out *strings.Builder, response whoknows.Response) {
 		}
 		renderWhoKnowsCitations(out, p.Citations)
 	}
-	if len(response.UnsavedContacts) == 0 {
-		return
+	if len(response.UnsavedContacts) > 0 {
+		fmt.Fprintln(out, "Unsaved contacts")
 	}
-	fmt.Fprintln(out, "Unsaved contacts")
 	for _, c := range response.UnsavedContacts {
 		fmt.Fprintf(out, "#%d  %s  score %.2f  %s  msgvault person promote %d\n",
 			c.Rank, contactLabel(c), c.Score, authoredLabel(c.AuthoredMessages), c.ParticipantID)
 		renderWhoKnowsCitations(out, c.Citations)
 	}
+	fmt.Fprintf(out, "Based on the %d closest messages.\n", response.SearchedMessages)
 }
 
 func authoredLabel(n int) string {

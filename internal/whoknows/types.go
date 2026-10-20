@@ -29,6 +29,9 @@ const (
 	// full pool and every matching message in it came from the owner or an
 	// automated sender, so the answer may lie beyond the pool.
 	ReasonSearchLimit = "search_limit"
+	// ReasonIndexScope marks an empty response where the vector index covers
+	// no message type with authors, so messages were not searched.
+	ReasonIndexScope = "index_scope"
 )
 
 // Request asks who in the archive has written about a topic.
@@ -91,9 +94,12 @@ type Response struct {
 	SearchedMessages int    `json:"searched_messages"`
 	// DeclaredTruncated reports that more declared topics exist than one
 	// request reads, so some were not searched.
-	DeclaredTruncated bool      `json:"declared_truncated"`
-	People            []Person  `json:"people"`
-	UnsavedContacts   []Contact `json:"unsaved_contacts"`
+	DeclaredTruncated bool `json:"declared_truncated"`
+	// PoolSaturated reports that the search returned its full pool, so a
+	// relevant author may lie beyond SearchedMessages.
+	PoolSaturated   bool      `json:"pool_saturated"`
+	People          []Person  `json:"people"`
+	UnsavedContacts []Contact `json:"unsaved_contacts"`
 }
 
 // Params is a validated Request with its defaults applied.

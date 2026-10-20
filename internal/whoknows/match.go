@@ -39,7 +39,7 @@ func Automated(email string) bool {
 	return false
 }
 
-const ignoredWords = " a an the and or of in on for to with about vs versus "
+const ignoredWords = " a an the and or of in on for to with about vs versus who knows "
 
 // tokens splits text into case-folded words. A trailing run of "+" or "#"
 // stays part of its word, so "C++" and "C#" differ from "C".
@@ -66,19 +66,23 @@ func tokens(s string) map[string]bool {
 	return out
 }
 
+func subset(x, y map[string]bool) bool {
+	for k := range x {
+		if !y[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // Matches reports whether one side's words all appear on the other side.
 func Matches(topic, value string) bool {
 	a, b := tokens(topic), tokens(value)
-	if len(a) == 0 || len(b) == 0 {
-		return false
-	}
-	subset := func(x, y map[string]bool) bool {
-		for k := range x {
-			if !y[k] {
-				return false
-			}
-		}
-		return true
-	}
-	return subset(a, b) || subset(b, a)
+	return len(a) > 0 && len(b) > 0 && (subset(a, b) || subset(b, a))
+}
+
+// Covers reports whether every word of topic appears in value.
+func Covers(value, topic string) bool {
+	t := tokens(topic)
+	return len(t) > 0 && subset(t, tokens(value))
 }

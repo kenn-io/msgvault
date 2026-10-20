@@ -92,7 +92,7 @@ func (e whoKnowsEmbedder) EmbedQuery(context.Context, string) ([]float32, error)
 	return []float32{1, 0, 0}, e.err
 }
 
-func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder) (*api.Server, *store.Store) {
+func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder whoKnowsEmbedder, tweak ...func(*api.ServerOptions)) (*api.Server, *store.Store) {
 	t.Helper()
 	cfg := vector.Config{Enabled: true}
 	cfg.Embed.Scope.MessageTypes = []string{"email"}
@@ -101,10 +101,14 @@ func newWhoKnowsVectorServer(t *testing.T, backend *whoKnowsBackend, embedder wh
 	engine := hybrid.NewEngine(backend, st.DB(), embedder, hybrid.Config{
 		KPerSignal: 100, RRFK: 60, BuildScope: cfg.Embed.Scope.BuildScope(),
 	})
-	srv := api.NewServerWithOptions(api.ServerOptions{
+	options := api.ServerOptions{
 		Config: &config.Config{}, Store: st, HybridEngine: engine, Backend: backend,
 		VectorCfg: cfg, Logger: slog.New(slog.DiscardHandler),
-	})
+	}
+	for _, change := range tweak {
+		change(&options)
+	}
+	srv := api.NewServerWithOptions(options)
 	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
 	srv.SetEmbeddingStatus(func(context.Context, int64) (vector.EmbeddingStatus, error) {
 		return vector.EmbeddingStatus{}, nil
@@ -119,7 +123,7 @@ func TestWhoKnowsReturnsEmptyListsWithReason(t *testing.T) {
 	got := whoKnowsPost(t, srv, `{"topic":"sailboat insurance","after":"2026-01-01T00:00:00Z"}`)
 	require.Equal(t, http.StatusOK, got.Code, got.Body.String())
 	assert.Equal("no-store", got.Header().Get("Cache-Control"))
-	assert.JSONEq(`{"topic":"sailboat insurance","reason":"no_relevant_evidence","searched_messages":0,"declared_truncated":false,"people":[],"unsaved_contacts":[]}`, got.Body.String())
+	assert.JSONEq(`{"topic":"sailboat insurance","reason":"no_relevant_evidence","searched_messages":0,"declared_truncated":false,"pool_saturated":false,"people":[],"unsaved_contacts":[]}`, got.Body.String())
 	assert.Equal([]string{"email"}, backend.request.Filter.MessageTypes)
 	require.NotNil(t, backend.request.Filter.After)
 }
@@ -208,4 +212,27 @@ func TestWhoKnowsRejectsRestrictedAgent(t *testing.T) {
 
 	got := whoKnowsPost(t, srv, `{"topic":"cloud"}`, apiprotocol.AgentTokenHeader, token.Secret)
 	assert.Equal(t, http.StatusUnauthorized, got.Code, got.Body.String())
+}
+
+// bareBackend has no ScoreMessageChunks; bareStore has no who-knows reads.
+type bareBackend struct{ vector.Backend }
+
+type bareStore struct{ api.MessageStore }
+
+func TestWhoKnowsNamesWhichCapabilityIsMissing(t *testing.T) {
+	assert := assert.New(t)
+	backend := &whoKnowsBackend{}
+	srv, _ := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
+		o.Store = bareStore{o.Store}
+	})
+	got := whoKnowsPost(t, srv, `{"topic":"cloud"}`)
+	assert.Equal(http.StatusServiceUnavailable, got.Code)
+	assert.Contains(got.Body.String(), "who_knows_unavailable")
+
+	srv, _ = newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{}, func(o *api.ServerOptions) {
+		o.Backend = bareBackend{backend}
+	})
+	got = whoKnowsPost(t, srv, `{"topic":"cloud"}`)
+	assert.Equal(http.StatusServiceUnavailable, got.Code)
+	assert.Contains(got.Body.String(), "chunk_scoring_unavailable")
 }

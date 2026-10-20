@@ -286,14 +286,17 @@ score is `log(1 + total weight)`. A matching `ask_me_about` value you or an
 address book supplied adds 0.75 and is printed as `declared: ...`, so a saved
 person who declared the topic but wrote nothing about it is listed as
 "declared, no messages". Matching compares whole words without regard to case,
-so `strasse` finds `Straße`. A request reads at most 5,000 declared values; past
+so `strasse` finds `Straße`. A person with no matching messages is listed only
+when a value names every word of the topic; `sales` does not answer `sales tax
+filing`. A request reads at most 5,000 declared values; past
 that, the command prints "Declared topics were searched only in part."
 
 Only the author earns credit. People copied on a message, meeting attendees,
 you, and automated senders get none. A sender counts as automated when its
 address looks like `noreply@` or `notifications@`, or when the source marked
 the author as a bot or webhook, as Discord does, or the archived Slack
-message carries a `bot_id`. Meeting transcripts and
+message carries a `bot_id`. A Slack message whose stored payload can't be read
+still counts. Meeting transcripts and
 calendar entries are not searched. Two kinds of sender earn the weight of their
 best message only: list mail, and a sender you never wrote to, such as a vendor
 who sends many unanswered messages. A colleague who answers keeps every message.
@@ -302,7 +305,10 @@ A topic nobody wrote about prints `Nobody in your archive has written about
 "..."`. When the search returned its full pool and every matching message came
 from you or automated senders, or declared topics were searched only in part,
 the command says no one turned up within the search limits and suggests
-`--after` or `--before`, because the answer may lie beyond them.
+`--after` or `--before`, because the answer may lie beyond them. Every result
+list ends with "Based on the N closest messages", since an author outside those
+messages is not listed. If the vector index covers no message type with authors,
+the command says it couldn't search messages.
 
 The 0.5 default is not calibrated for any real embedding model. If a topic
 worded unlike your mail finds nobody, lower `--min-score`; if unrelated people

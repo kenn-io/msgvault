@@ -15607,6 +15607,7 @@ func (w WhoKnowsRequest) Validate() error {
 type WhoKnowsResponse struct {
 	DeclaredTruncated bool              `json:"declared_truncated"`
 	People            []WhoKnowsPerson  `json:"people" validate:"required"`
+	PoolSaturated     bool              `json:"pool_saturated"`
 	Reason            *string           `json:"reason,omitzero"`
 	SearchedMessages  int64             `json:"searched_messages"`
 	Topic             string            `json:"topic" validate:"required"`

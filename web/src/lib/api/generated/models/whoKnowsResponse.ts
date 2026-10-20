@@ -7,6 +7,7 @@ import type { WhoKnowsPerson } from "./whoKnowsPerson";
 export interface WhoKnowsResponse {
   declared_truncated: boolean;
   people: WhoKnowsPerson[];
+  pool_saturated: boolean;
   reason?: string;
   searched_messages: number;
   topic: string;

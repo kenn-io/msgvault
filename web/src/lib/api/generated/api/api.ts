@@ -2845,7 +2845,7 @@ export const searchPeople = (
   );
 };
 /**
- * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit, or when declared topics were searched only in part. A message's From address is not a verified identity unless its citation has sender_authenticated.
+ * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. When both lists are empty, reason is no_relevant_evidence, or search_limit when the closest messages all came from the owner or automated senders and the search hit its limit, or when declared topics were searched only in part, or index_scope when the vector index covers no message type with authors. A message's From address is not a verified identity unless its citation has sender_authenticated.
  * @summary Find people who wrote about a topic
  */
 export const findPeopleWhoKnow = (
