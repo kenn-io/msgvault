@@ -77,6 +77,7 @@ func TestPersonTiersCountOnlyMessagesThatWereExchanged(t *testing.T) {
 		{"draft sms", func(d int) string { return tierSMS(d, 3, fmt.Sprint("draft", d)) }, 0, 4, 4},
 		{"sent mms", func(d int) string { return tierMMS(d, 2, fmt.Sprint("mms", d)) }, 4, 4, 8},
 		{"outbox mms", func(d int) string { return tierMMS(d, 4, fmt.Sprint("mms", d)) }, 0, 4, 4},
+		{"failed mms", func(d int) string { return tierMMS(d, 5, fmt.Sprint("mms", d)) }, 0, 4, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var texts []string

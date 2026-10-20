@@ -73,7 +73,7 @@ func synctechTextUnsent(record synctechTextRecord) bool {
 		return false
 	}
 	if record.messageType == "mms" {
-		return sendstate.MMSUnsent(status.MessageBox)
+		return sendstate.MMSUnsent(sendstate.MMSBox(status.MessageBox))
 	}
-	return sendstate.SMSUnsent(status.Type)
+	return sendstate.SMSUnsent(sendstate.SMSType(status.Type))
 }
