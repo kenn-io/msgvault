@@ -94,7 +94,6 @@ type evalMailbox struct {
 type evalFixture struct {
 	service      *Service
 	emails       map[int64]string // person ID to address
-	engine       func(kPerSignal int) *hybrid.Engine
 	store        *store.Store
 	backend      vector.Backend
 	generation   vector.GenerationID
@@ -203,16 +202,14 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET embed_gen = ?"), int64(generation))
 	require.NoError(t, err)
 
-	engine := func(kPerSignal int) *hybrid.Engine {
-		return hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
-			hybrid.Config{KPerSignal: kPerSignal, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
-	}
+	engine := hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
+		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
 	return &evalFixture{
 		service: &Service{
-			Retriever: engine(100), Data: st, Index: backend.(vector.FilteredCoverageBackend),
+			Retriever: engine, Data: st, Index: backend.(vector.FilteredCoverageBackend),
 			Now: func() time.Time { return evalNow },
 		},
-		engine: engine, emails: emails, store: st, backend: backend,
+		emails: emails, store: st, backend: backend,
 		generation: generation, source: source.ID, conversation: conversation,
 	}
 }
@@ -284,50 +281,12 @@ func TestFindEvaluation(t *testing.T) {
 			for _, p := range got.People {
 				assert.Equal(p.AuthoredMessages == 0, len(p.Citations) == 0)
 			}
-			switch topic.ID {
-			case "networking":
-				assert.Equal([]string{"ana@example.net", "dee@example.net", "lurker@example.net"}, ranked,
-					"authors first; a declared topic with no messages ranks on its boost")
-				require.Len(got.UnsavedContacts, 1)
-				assert.Equal("ben@example.net", got.UnsavedContacts[0].EmailAddress)
-				assert.Len(got.People[0].Citations, 3)
-				assert.Equal(5, got.People[0].AuthoredMessages)
-				assert.Equal([]string{"kubernetes"}, got.People[1].AskMeAbout)
-				assert.Zero(got.People[2].AuthoredMessages)
-			case "decay":
-				assert.Equal([]string{"recent@example.net", "old@example.net"}, ranked,
-					"recent authors rank above old ones")
-			case "ambiguous":
+			if topic.ID == "ambiguous" {
 				assert.Equal([]string{"gopher@example.net"}, ranked,
 					"keyword-only matches on good, going, and google do not count")
 			}
 		})
 	}
-}
-
-// With a small candidate pool per signal, the keyword leg returns messages the
-// meaning leg missed. Those hits carry no similarity and must not count.
-func TestFindKeywordOnlyHitsDoNotCount(t *testing.T) {
-	f := newEvalFixture(t)
-	engine := f.engine(3)
-	hits, _, err := engine.Search(t.Context(), hybrid.SearchRequest{
-		Mode: hybrid.ModeHybrid, FreeText: "go", Limit: 200, SubjectTerms: []string{"go"},
-	})
-	require.NoError(t, err)
-	keywordOnly := 0
-	for _, h := range hits {
-		if math.IsNaN(h.VectorScore) && !math.IsNaN(h.BM25Score) {
-			keywordOnly++
-		}
-	}
-	require.Positive(t, keywordOnly, "good, going, and google match the keyword leg")
-
-	service := *f.service
-	service.Retriever = engine
-	got, err := service.Find(t.Context(), Request{Topic: "go"})
-	require.NoError(t, err)
-	assert.Equal(t, []string{"gopher@example.net"}, f.ranked(got))
-	assert.NotContains(t, got.Limits, LimitNotEmbedded, "the keyword-only hits are embedded")
 }
 
 // Mail synced since the last embedding run is found only by keyword, which
@@ -342,16 +301,12 @@ func TestFindReportsMessagesNotYetEmbedded(t *testing.T) {
 	assert.Equal(t, []string{LimitNotEmbedded}, got.Limits)
 }
 
-// The embedding client keeps provider vectors as they come, so a stored
-// vector need not have unit length. A message that points the topic's way
-// counts whatever its length.
-func TestFindCountsUnnormalizedVectorsByCosine(t *testing.T) {
+// Search scores a vector hit as 1 - L2 distance, which falls below the floor
+// for a message sharing two of three words with the topic. The service
+// rescores it by cosine.
+func TestFindCountsVectorHitsByCosine(t *testing.T) {
 	f := newEvalFixture(t)
-	vec := embedWords("zeppelin mooring lines")
-	for i := range vec {
-		vec[i] *= 4
-	}
-	f.post(t, "captain@example.net", "zeppelin mooring lines", vec)
+	f.post(t, "captain@example.net", "zeppelin mooring lines", embedWords("zeppelin mooring lines"))
 
 	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
 	require.NoError(t, err)

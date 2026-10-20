@@ -16,7 +16,10 @@ import (
 
 func TestMessageCosinesScoresAnyVectorLength(t *testing.T) {
 	ctx := context.Background()
-	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 768, MainDB: openMainDBWithOneMessage(t)})
+	main := openMainDBWithOneMessage(t)
+	_, err := main.Exec(`INSERT INTO messages (id) VALUES (2), (3), (4)`)
+	require.NoError(t, err)
+	b, err := Open(ctx, Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 768, MainDB: main})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	gen, err := b.CreateGeneration(ctx, "model", 768, "")

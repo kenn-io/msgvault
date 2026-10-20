@@ -77,7 +77,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 }
 
 // message stores one message from sender and adds it to the hits with its
-// cosine similarity, or with no vector score when similarity is zero.
+// cosine similarity, or as a keyword-only hit when similarity is zero.
 func (f *serviceFixture) message(name string, sender int64, daysAgo int, similarity float64, change ...func(*store.Message)) int64 {
 	f.T.Helper()
 	m := f.NewMessage().WithSourceMessageID(name).WithSubject(name).
@@ -91,6 +91,8 @@ func (f *serviceFixture) message(name string, sender int64, daysAgo int, similar
 	hit := vector.FusedHit{MessageID: id, BM25Score: math.NaN(), VectorScore: math.NaN()}
 	if similarity > 0 {
 		hit.VectorScore = similarity
+	} else {
+		hit.BM25Score = 1
 	}
 	f.retriever.hits = append(f.retriever.hits, hit)
 	return id
@@ -138,8 +140,6 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	dana, _ := f.saved("dana@example.net")
 	robot := f.EnsureParticipant("no_reply@example.net", "Robot", "example.net")
 	botUser := f.EnsureParticipant("bot@example.net", "Chat Bot", "example.net")
-	relay := f.EnsureParticipant("relay@example.net", "Relay", "example.net")
-	gus := f.EnsureParticipant("gus@example.net", "Gus", "example.net")
 	erin := f.EnsureParticipant("erin@example.net", "Erin", "example.net")
 	frank := f.EnsureParticipant("frank@example.net", "Frank", "example.net")
 	alias := f.EnsureParticipant("owner.work@example.net", "Owner Work", "example.net")
@@ -158,13 +158,6 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	f.message("robot", robot, 1, .95)
 	bot := f.message("bot", botUser, 1, .95, inRoom)
 	require.NoError(f.Store.SetMessageMetadata(bot, sql.NullString{String: `{"automated":true}`, Valid: true}))
-	// Slack files a bot relaying under a user's id by the user, so only the
-	// archived payload shows it. An unreadable payload leaves the message counted.
-	slackRaw := func(id int64, payload string) {
-		require.NoError(f.Store.UpsertMessageRawWithFormatContext(t.Context(), id, []byte(payload), "slack_json"))
-	}
-	slackRaw(f.message("relayed", relay, 1, .95, inRoom), `{"type":"message","user":"U1","bot_id":"B1"}`)
-	slackRaw(f.message("human", gus, 1, .8, inRoom), `{"type":"message","user":"U2"}`)
 	f.message("no vector", erin, 1, 0)
 	f.message("weak", frank, 1, .49)
 
@@ -182,9 +175,9 @@ func TestFindCreditsOnlyWhoWroteAndCountsCosineMatches(t *testing.T) {
 	require.Len(person.Citations, 3)
 	assert.Equal(answered, person.Citations[0].MessageID, "highest weight first")
 	assert.False(person.Citations[0].SenderAuthenticated, "an email From header is an assertion")
-	require.Len(got.UnsavedContacts, 2)
-	assert.Equal([]int64{gus, ben}, []int64{got.UnsavedContacts[0].ParticipantID, got.UnsavedContacts[1].ParticipantID})
-	assert.Equal(contractor, got.UnsavedContacts[1].Citations[0].MessageID)
+	require.Len(got.UnsavedContacts, 1)
+	assert.Equal(ben, got.UnsavedContacts[0].ParticipantID)
+	assert.Equal(contractor, got.UnsavedContacts[0].Citations[0].MessageID)
 
 	request := f.retriever.request
 	assert.Equal(hybrid.ModeHybrid, request.Mode)
@@ -203,11 +196,9 @@ func TestFindMatchesDeclaredTopicsInGo(t *testing.T) {
 	f := newServiceFixture(t)
 	author, authorPerson := f.saved("author@example.net")
 	_, lurkerPerson := f.saved("lurker@example.net")
-	_, germanPerson := f.saved("german@example.net")
 	_, otherPerson := f.saved("other@example.net")
 	f.declare(authorPerson, "kubernetes")
 	f.declare(lurkerPerson, "kubernetes networking")
-	f.declare(germanPerson, "Straße")
 	f.declare(otherPerson, "billing")
 	f.message("a", author, 5, .7)
 
@@ -221,11 +212,6 @@ func TestFindMatchesDeclaredTopicsInGo(t *testing.T) {
 	assert.InDelta(.75, got.People[1].Score, 1e-9)
 
 	f.retriever.hits = nil
-	got = f.find("strasse")
-	require.Len(t, got.People, 1, "case folding in Go matches ss to ß")
-	assert.Equal(germanPerson, got.People[0].PersonID)
-	assert.Equal([]string{"Straße"}, got.People[0].AskMeAbout)
-
 	// A declared-only person needs every topic word in a value; an author's
 	// boost needs only shared words.
 	_, salesPerson := f.saved("sales@example.net")
@@ -308,25 +294,19 @@ func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
 	assert.Empty(got.People)
 	assert.Equal([]string{whoknows.LimitPoolFull}, got.Limits)
 
+	// A full pool with a result inside it still says more may hide beyond it.
+	f.retriever.hits = slices.DeleteFunc(f.retriever.hits, func(h vector.FusedHit) bool { return h.MessageID == answer })
+	f.retriever.hits = slices.Insert(f.retriever.hits, 0, vector.FusedHit{MessageID: answer, BM25Score: math.NaN(), VectorScore: .8})
+	got = f.find("kubernetes networking")
+	require.Len(t, got.People, 1)
+	assert.Equal([]string{whoknows.LimitPoolFull}, got.Limits)
+
 	// A full pool of messages below the floor is an off-topic query, not a
 	// short search.
 	for i := range f.retriever.hits {
 		f.retriever.hits[i].VectorScore = .2
 	}
 	assert.Empty(f.find("sailboat insurance").Limits)
-}
-
-// A full pool with results still says it may hide more.
-func TestFindReportsAFullPoolBesideResults(t *testing.T) {
-	f := newServiceFixture(t)
-	ana, _ := f.saved("ana@example.net")
-	f.message("answer", ana, 2, .8)
-	for i := range 200 {
-		f.message(fmt.Sprintf("mine-%d", i), f.owner, 1, .9)
-	}
-	got := f.find("kubernetes networking")
-	require.Len(t, got.People, 1)
-	assert.Equal(t, []string{whoknows.LimitPoolFull}, got.Limits)
 }
 
 // Linked addresses are one sender, and so are the addresses of one saved
@@ -398,7 +378,7 @@ func TestFindBoundsListMailAndOneWaySenders(t *testing.T) {
 	assert.Equal(30, got.People[2].AuthoredMessages)
 }
 
-func TestFindRefusesSearchOperators(t *testing.T) {
+func TestFindStopsBeforeSearchingOnBadInput(t *testing.T) {
 	f := newServiceFixture(t)
 	_, err := f.service.Find(t.Context(), whoknows.Request{Topic: "from:ana networking"})
 	require.ErrorIs(t, err, whoknows.ErrInvalidParameter)

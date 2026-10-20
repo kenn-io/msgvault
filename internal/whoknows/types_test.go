@@ -22,10 +22,11 @@ func TestResolve(t *testing.T) {
 		require.NoError(err, topic)
 	}
 
-	zero, high, early, late := 0, 51, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	zero, high, none, early, late := 0, 51, 0.0, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	for name, request := range map[string]Request{
 		"limit":            {Topic: "x", Limit: &high},
 		"evidence":         {Topic: "x", Evidence: &zero},
+		"min score":        {Topic: "x", MinScore: &none},
 		"after not before": {Topic: "x", After: &late, Before: &early},
 		"sender operator":  {Topic: "from:ana networking"},
 		"date operator":    {Topic: "networking after:2026-01-01"},

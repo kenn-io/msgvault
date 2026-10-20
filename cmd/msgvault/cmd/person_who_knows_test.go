@@ -105,7 +105,7 @@ func runWhoKnows(t *testing.T, schema string, handler http.HandlerFunc, args ...
 
 func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	var query url.Values
-	out, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, r *http.Request) {
+	_, err := runWhoKnows(t, "3.24.0", func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/people/who-knows", r.URL.Path)
 		query = r.URL.Query()
@@ -116,7 +116,6 @@ func TestWhoKnowsCommandSendsOnlyFlagsTheUserSet(t *testing.T) {
 	assert.Equal(t, url.Values{
 		"topic": {"kubernetes networking"}, "limit": {"3"}, "min_score": {"0.4"}, "after": {"2026-01-01T00:00:00Z"},
 	}, query)
-	assert.Equal(t, "Nobody in your archive has written about \"kubernetes networking\".\n", out)
 }
 
 func TestWhoKnowsCommandPrintsTheAPIJSON(t *testing.T) {

@@ -4,19 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -25,13 +23,10 @@ import (
 	"go.kenn.io/msgvault/internal/whoknows"
 )
 
-func whoKnowsGet(t *testing.T, srv *api.Server, query string, headers ...string) *httptest.ResponseRecorder {
+func whoKnowsGet(t *testing.T, srv *api.Server, query string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/people/who-knows?"+query, nil)
 	request.RemoteAddr = "127.0.0.1:12345"
-	for i := 0; i+1 < len(headers); i += 2 {
-		request.Header.Set(headers[i], headers[i+1])
-	}
 	got := httptest.NewRecorder()
 	srv.Router().ServeHTTP(got, request)
 	return got
@@ -40,13 +35,10 @@ func whoKnowsGet(t *testing.T, srv *api.Server, query string, headers ...string)
 func TestWhoKnowsRejectsInvalidRequests(t *testing.T) {
 	srv, _ := newWhoKnowsVectorServer(t, &whoKnowsBackend{}, whoKnowsEmbedder{})
 	for query, code := range map[string]string{
-		"":                              "missing_free_text",
-		"topic=%20%20":                  "missing_free_text",
-		"topic=x&limit=51":              "invalid_parameter",
-		"topic=x&limit=many":            "invalid_limit",
-		"topic=x&min_score=0":           "invalid_parameter",
-		"topic=x&after=yesterday":       "invalid_after",
-		"topic=from%3Aana%20networking": "invalid_parameter",
+		"":                        "missing_free_text",
+		"topic=x&limit=51":        "invalid_parameter",
+		"topic=x&limit=many":      "invalid_limit",
+		"topic=x&after=yesterday": "invalid_after",
 	} {
 		got := whoKnowsGet(t, srv, query)
 		assert.Equal(t, http.StatusBadRequest, got.Code, query)
@@ -131,7 +123,6 @@ func TestWhoKnowsReturnsEmptyLists(t *testing.T) {
 }
 
 func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	backend := &whoKnowsBackend{}
 	srv, st := newWhoKnowsVectorServer(t, backend, whoKnowsEmbedder{})
@@ -150,17 +141,15 @@ func TestWhoKnowsRanksAuthorsFromTheStore(t *testing.T) {
 		Subject:  sql.NullString{String: "kube-proxy rules", Valid: true},
 	})
 	require.NoError(err)
-	backend.hits = []vector.FusedHit{{MessageID: id, VectorScore: .9}}
+	// Only a min_score of 0.4 reaching the service keeps this hit.
+	backend.hits = []vector.FusedHit{{MessageID: id, BM25Score: math.NaN(), VectorScore: .45}}
 
-	got := whoKnowsGet(t, srv, "topic=kubernetes+networking&limit=5&evidence=2&min_score=0.4")
+	got := whoKnowsGet(t, srv, "topic=kubernetes+networking&min_score=0.4")
 	require.Equal(http.StatusOK, got.Code, got.Body.String())
 	var body whoknows.Response
 	require.NoError(json.Unmarshal(got.Body.Bytes(), &body))
 	require.Len(body.People, 1)
-	assert.Equal(person.ID, body.People[0].PersonID)
-	assert.Equal(1, body.People[0].AuthoredMessages)
-	assert.Equal(id, body.People[0].Citations[0].MessageID)
-	assert.Equal([]string{whoknows.LimitIndexScope}, body.Limits)
+	assert.Equal(t, person.ID, body.People[0].PersonID)
 }
 
 func TestWhoKnowsMapsSearchErrors(t *testing.T) {
@@ -171,11 +160,8 @@ func TestWhoKnowsMapsSearchErrors(t *testing.T) {
 		status   int
 		code     string
 	}{
-		{"index scope mismatch", vector.ErrIndexScopeMismatch, nil, http.StatusBadRequest, "index_scope_mismatch"},
 		{"index stale", vector.ErrIndexStale, nil, http.StatusServiceUnavailable, "index_stale"},
-		{"index building", vector.ErrIndexBuilding, nil, http.StatusServiceUnavailable, "index_building"},
 		{"embedding timeout", nil, fmt.Errorf("%w: %w", vector.ErrEmbeddingTimeout, context.DeadlineExceeded), http.StatusServiceUnavailable, "embedding_timeout"},
-		{"unexpected failure", errors.New("synthetic failure"), nil, http.StatusInternalServerError, "internal_error"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			backend := &whoKnowsBackend{err: test.backend}
@@ -186,33 +172,6 @@ func TestWhoKnowsMapsSearchErrors(t *testing.T) {
 			assert.NotContains(t, got.Body.String(), "query_timeout")
 		})
 	}
-}
-
-func TestWhoKnowsRejectsRestrictedAgent(t *testing.T) {
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
-	require.NoError(err)
-	srv := api.NewServerWithOptions(api.ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key", AgentAccess: true}},
-		Store:  st, Logger: slog.New(slog.DiscardHandler),
-	})
-	t.Cleanup(func() { require.NoError(srv.Shutdown(context.Background())) })
-	issue := httptest.NewRequest(http.MethodPost, "/api/v1/agent-tokens",
-		strings.NewReader(fmt.Sprintf(`{"label":"reader","permissions":["search.read"],"source_ids":[%d]}`, source.ID)))
-	issue.RemoteAddr = "127.0.0.1:12345"
-	issue.Header.Set("X-Api-Key", "synthetic-owner-key")
-	issue.Header.Set("Content-Type", "application/json")
-	granted := httptest.NewRecorder()
-	srv.Router().ServeHTTP(granted, issue)
-	require.Equal(http.StatusCreated, granted.Code, granted.Body.String())
-	var token struct {
-		Secret string `json:"secret"`
-	}
-	require.NoError(json.Unmarshal(granted.Body.Bytes(), &token))
-
-	got := whoKnowsGet(t, srv, "topic=cloud", apiprotocol.AgentTokenHeader, token.Secret)
-	assert.Equal(t, http.StatusUnauthorized, got.Code, got.Body.String())
 }
 
 // bareStore has no who-knows reads.

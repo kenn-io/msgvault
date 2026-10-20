@@ -1,6 +1,7 @@
 package whoknows
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestRankListsPeopleAndContactsSeparately(t *testing.T) {
 	}
 	for i := int64(1); i <= 7; i++ {
 		all = append(all, Candidate{
-			ParticipantID: 100 + i, EmailAddress: "contact@example.net",
+			ParticipantID: 100 + i, EmailAddress: fmt.Sprintf("contact-%d@example.net", i),
 			Messages: []Authored{authored(100+i, 0, .9)},
 		})
 	}
@@ -96,5 +97,6 @@ func TestMatchesComparesWholeWords(t *testing.T) {
 	assert.True(Matches("C++ templates", "c++ templates"))
 	assert.False(Matches("C++ templates", "C templates"))
 	assert.False(Matches("go", "google"))
+	assert.True(Matches("strasse", "Straße"), "case folding matches ss to ß")
 	assert.False(Matches("the of", "the"), "stop words alone never match")
 }
