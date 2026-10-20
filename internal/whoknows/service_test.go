@@ -39,7 +39,7 @@ func (r *fixedRetriever) Search(_ context.Context, request hybrid.SearchRequest)
 // truncatedDeclared reports that the declared read hit its cap.
 type truncatedDeclared struct{ whoknows.DataReader }
 
-func (truncatedDeclared) AskMeAboutValuesContext(context.Context) ([]store.PersonAskMeAbout, bool, error) {
+func (truncatedDeclared) AskMeAboutValuesContext(context.Context, []int64) ([]store.PersonAskMeAbout, bool, error) {
 	return nil, true, nil
 }
 

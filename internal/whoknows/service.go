@@ -27,11 +27,12 @@ type Retriever interface {
 	Search(ctx context.Context, request hybrid.SearchRequest) ([]vector.FusedHit, hybrid.ResultMeta, error)
 }
 
-// DataReader reads who wrote each message and what people say to ask them
-// about.
+// DataReader reads the owner's participants, who wrote each message, and what
+// people say to ask them about.
 type DataReader interface {
-	TopicAuthorsContext(ctx context.Context, messageIDs []int64) (map[int64]store.TopicAuthor, error)
-	AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, bool, error)
+	OwnerFamilyContext(ctx context.Context) ([]int64, error)
+	TopicAuthorsContext(ctx context.Context, messageIDs, owner []int64) (map[int64]store.TopicAuthor, error)
+	AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]store.PersonAskMeAbout, bool, error)
 }
 
 type Service struct {
@@ -78,12 +79,16 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 		return out, err
 	}
 	out.Topic = p.Topic
-	types, narrowed := searchTypes(s.BuildScope)
-	found, err := s.searchAuthors(ctx, p, types)
+	owner, err := s.Data.OwnerFamilyContext(ctx)
 	if err != nil {
 		return out, err
 	}
-	candidates, truncated, err := s.addDeclared(ctx, found.candidates, p.FreeText)
+	types, narrowed := searchTypes(s.BuildScope)
+	found, err := s.searchAuthors(ctx, p, types, owner)
+	if err != nil {
+		return out, err
+	}
+	candidates, truncated, err := s.addDeclared(ctx, found.candidates, p.FreeText, owner)
 	if err != nil {
 		return out, err
 	}
@@ -108,7 +113,7 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 // the floor to their authors. The pool is full when the search filled it and
 // either a hit cleared the floor or the index can't vouch that its order is
 // cosine order, so more matching messages may lie beyond it.
-func (s *Service) searchAuthors(ctx context.Context, p Params, types []string) (searchResult, error) {
+func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, owner []int64) (searchResult, error) {
 	// An index limited to transcripts and calendar entries has no authors to
 	// search, but people can still declare the topic.
 	if len(types) == 0 {
@@ -137,7 +142,7 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string) (
 	if result.unembedded, err = s.unembedded(ctx, hits, meta.Generation.ID); err != nil {
 		return searchResult{}, err
 	}
-	result.candidates, err = s.attribute(ctx, counted)
+	result.candidates, err = s.attribute(ctx, counted, owner)
 	return result, err
 }
 
@@ -193,7 +198,7 @@ func similarities(scores map[int64]float64, hits []vector.FusedHit, floor float6
 
 // attribute credits each counted message to its author's contact. The store
 // decides which messages count.
-func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candidate, error) {
+func (s *Service) attribute(ctx context.Context, counted []scoredHit, owner []int64) ([]Candidate, error) {
 	if len(counted) == 0 {
 		return nil, nil
 	}
@@ -201,7 +206,7 @@ func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candida
 	for i, hit := range counted {
 		ids[i] = hit.messageID
 	}
-	authors, err := s.Data.TopicAuthorsContext(ctx, ids)
+	authors, err := s.Data.TopicAuthorsContext(ctx, ids, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -239,9 +244,9 @@ func (s *Service) attribute(ctx context.Context, counted []scoredHit) ([]Candida
 // person. A person with a match and no messages joins the candidates. It also
 // reports that the declared read hit its cap.
 func (s *Service) addDeclared(
-	ctx context.Context, candidates []Candidate, freeText string,
+	ctx context.Context, candidates []Candidate, freeText string, owner []int64,
 ) ([]Candidate, bool, error) {
-	values, truncated, err := s.Data.AskMeAboutValuesContext(ctx)
+	values, truncated, err := s.Data.AskMeAboutValuesContext(ctx, owner)
 	if err != nil {
 		return nil, false, err
 	}

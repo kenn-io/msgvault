@@ -9,10 +9,14 @@ import (
 
 var _ whoknows.DataReader = (*storeAPIAdapter)(nil)
 
-func (a *storeAPIAdapter) TopicAuthorsContext(ctx context.Context, ids []int64) (map[int64]store.TopicAuthor, error) {
-	return a.store.TopicAuthorsContext(ctx, ids)
+func (a *storeAPIAdapter) OwnerFamilyContext(ctx context.Context) ([]int64, error) {
+	return a.store.OwnerFamilyContext(ctx)
 }
 
-func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context) ([]store.PersonAskMeAbout, bool, error) {
-	return a.store.AskMeAboutValuesContext(ctx)
+func (a *storeAPIAdapter) TopicAuthorsContext(ctx context.Context, ids, owner []int64) (map[int64]store.TopicAuthor, error) {
+	return a.store.TopicAuthorsContext(ctx, ids, owner)
+}
+
+func (a *storeAPIAdapter) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]store.PersonAskMeAbout, bool, error) {
+	return a.store.AskMeAboutValuesContext(ctx, owner)
 }

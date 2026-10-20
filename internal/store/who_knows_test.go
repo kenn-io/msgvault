@@ -31,6 +31,14 @@ func send(f *storetest.Fixture, name string, sender int64, change ...func(*store
 	return id
 }
 
+// ownerOf reads the owner's participants, as a who-knows request does.
+func ownerOf(f *storetest.Fixture) []int64 {
+	f.T.Helper()
+	owner, err := f.Store.OwnerFamilyContext(f.T.Context())
+	require.NoError(f.T, err)
+	return owner
+}
+
 // contactsOf stores one message from each sender and returns the contact
 // each message is credited to, by sender.
 func contactsOf(f *storetest.Fixture, senders ...int64) map[int64]store.TopicContact {
@@ -41,7 +49,7 @@ func contactsOf(f *storetest.Fixture, senders ...int64) map[int64]store.TopicCon
 		ids[sender] = send(f, fmt.Sprintf("from-%d", sender), sender)
 		messages = append(messages, ids[sender])
 	}
-	got, err := f.Store.TopicAuthorsContext(f.T.Context(), messages)
+	got, err := f.Store.TopicAuthorsContext(f.T.Context(), messages, ownerOf(f))
 	require.NoError(f.T, err)
 	out := map[int64]store.TopicContact{}
 	for sender, id := range ids {
@@ -69,7 +77,7 @@ func TestTopicAuthorsReadsSendersAtRequestTime(t *testing.T) {
 	deleted := send(f, "deleted", ana)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, "deleted"))
 
-	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, list, fromMe, senderless, byEnvelope, deleted, 999999})
+	got, err := f.Store.TopicAuthorsContext(ctx, []int64{saved, list, fromMe, senderless, byEnvelope, deleted, 999999}, ownerOf(f))
 	require.NoError(err)
 	assert.Len(got, 5, "deleted and missing messages are left out")
 
@@ -152,7 +160,7 @@ func TestTopicAuthorsLeaveOutAutomatedSenders(t *testing.T) {
 	for _, id := range humans {
 		ids = append(ids, id)
 	}
-	got, err := f.Store.TopicAuthorsContext(t.Context(), ids)
+	got, err := f.Store.TopicAuthorsContext(t.Context(), ids, ownerOf(f))
 	require.NoError(err)
 	for name, id := range automated {
 		assert.False(got[id].Counts, name)
@@ -192,7 +200,7 @@ func TestTopicAuthorsLeaveOutDiscordSystemMessages(t *testing.T) {
 	for _, id := range system {
 		ids = append(ids, id)
 	}
-	got, err := f.Store.TopicAuthorsContext(t.Context(), ids)
+	got, err := f.Store.TopicAuthorsContext(t.Context(), ids, ownerOf(f))
 	require.NoError(err)
 	for name, id := range authored {
 		assert.True(got[id].Counts, name)
@@ -232,7 +240,7 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 			summary.SourceID, "C1:"+ts).Scan(&id))
 		ids[ts] = id
 	}
-	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{ids["1790000000.000001"], ids["1790000000.000002"]})
+	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{ids["1790000000.000001"], ids["1790000000.000002"]}, ownerOf(f))
 	require.NoError(err)
 	assert.True(got[ids["1790000000.000001"]].Counts, "Ana's own message")
 	assert.False(got[ids["1790000000.000002"]].Counts, "a bot posting as Ana")
@@ -249,15 +257,27 @@ func TestTopicAuthorsLeaveOutAddressesLinkedToTheOwner(t *testing.T) {
 	require.NoError(err)
 	fromAlias := send(f, "from-alias", alias)
 
-	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias})
+	got, err := f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
 	require.NoError(err)
 	assert.False(got[fromAlias].Counts, "an address linked to the owner's is the owner before anyone is saved")
 
 	_, _, err = f.Store.CreatePersonFromParticipant(owner)
 	require.NoError(err)
-	got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias})
+	got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromAlias}, ownerOf(f))
 	require.NoError(err)
 	assert.False(got[fromAlias].Counts, "and after the owner is saved")
+
+	// A chat account identity names the owner by identifier.
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "T1:UOWNER", "manual"))
+	chatOwner, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UOWNER", "Owner")
+	require.NoError(err)
+	chatOther, err := f.Store.EnsureParticipantByIdentifier("slack", "T1:UANA", "Ana")
+	require.NoError(err)
+	fromChatOwner, fromChatOther := send(f, "from-chat-owner", chatOwner), send(f, "from-chat-other", chatOther)
+	got, err = f.Store.TopicAuthorsContext(t.Context(), []int64{fromChatOwner, fromChatOther}, ownerOf(f))
+	require.NoError(err)
+	assert.False(got[fromChatOwner].Counts, "the owner's chat identity")
+	assert.True(got[fromChatOther].Counts)
 }
 
 func TestTopicContactsGroupLinkedAndBoundSenders(t *testing.T) {
@@ -375,7 +395,7 @@ func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 	setValue(noreplyPerson, "receipts", store.ProvenanceUser)
 	setValue(webhookPerson, "release builds", store.ProvenanceUser)
 
-	got, truncated, err := f.Store.AskMeAboutValuesContext(ctx)
+	got, truncated, err := f.Store.AskMeAboutValuesContext(ctx, ownerOf(f))
 	require.NoError(err)
 	assert.False(truncated)
 	assert.Equal([]store.PersonAskMeAbout{
@@ -391,7 +411,7 @@ func TestAskMeAboutValuesReadsUserValuesForPeopleWhoCount(t *testing.T) {
 		  FROM person_attribute_values v, n WHERE v.person_id = ? AND v.superseded_at IS NULL`),
 		store.DeclaredValueLimit, asked)
 	require.NoError(err)
-	got, truncated, err = f.Store.AskMeAboutValuesContext(ctx)
+	got, truncated, err = f.Store.AskMeAboutValuesContext(ctx, ownerOf(f))
 	require.NoError(err)
 	assert.True(truncated)
 	assert.Len(got, store.DeclaredValueLimit)
