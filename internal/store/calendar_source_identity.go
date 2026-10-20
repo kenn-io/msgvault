@@ -186,7 +186,8 @@ func (s *Store) ReconcileCalendarEventSourceMessageIDContext(
 
 // completeCalendarEventSnapshotTx checks the provider metadata, body row, and
 // raw Calendar JSON that ingestEvent writes separately. Empty event bodies
-// are valid, so the body row's presence is the check.
+// are valid, so the body row's presence is the check. Cancelled metadata is
+// not a replacement snapshot because it can retain stale event bounds.
 func completeCalendarEventSnapshotTx(ctx context.Context, tx *loggedTx, messageID int64) (bool, error) {
 	var metadata sql.NullString
 	var hasBody, hasRaw bool
@@ -201,15 +202,21 @@ func completeCalendarEventSnapshotTx(ctx context.Context, tx *loggedTx, messageI
 	if !metadata.Valid || metadata.String == "" || !hasBody || !hasRaw {
 		return false, nil
 	}
-	var fields struct {
-		Start string `json:"start"`
-		End   string `json:"end"`
-	}
-	if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-		return false, nil
-	}
-	return fields.Start != "" && fields.End != "", nil
+	return calendarEventSnapshotIsReplaceable(metadata.String), nil
 }
+
+// calendarEventSnapshotIsReplaceable reports whether metadata describes a
+// complete non-cancelled snapshot. Cancelled rows may retain stale event bounds.
+func calendarEventSnapshotIsReplaceable(metadata string) bool {
+	var fields struct {
+		Status string `json:"status"`
+		Start  string `json:"start"`
+		End    string `json:"end"`
+	}
+	return json.Unmarshal([]byte(metadata), &fields) == nil &&
+		fields.Status != "cancelled" && fields.Start != "" && fields.End != ""
+}
+
 func calendarSourceMessageTx(ctx context.Context, tx *loggedTx, sourceID int64, sourceMessageID string) (int64, string, error) {
 	var messageID int64
 	var messageType string

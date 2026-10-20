@@ -231,6 +231,7 @@ func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotOverSparseTom
 	})
 	requirements.NoError(err)
 	assertions.NotEqual(archivedID, tombstoneID)
+	requirements.NoError(st.UpsertMessageBody(tombstoneID, sql.NullString{String: serializeBody(cancelledEvent), Valid: true}, sql.NullString{}))
 	metadata, err := json.Marshal(buildMetadata(cancelledEvent, cal, testAccount), json.Deterministic(true))
 	requirements.NoError(err)
 	requirements.NoError(st.SetMessageMetadata(tombstoneID, sql.NullString{String: string(metadata), Valid: true}))
@@ -271,6 +272,54 @@ func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotOverSparseTom
 		}
 		assertions.True(retainedFound, "the retained event details remain searchable")
 	}
+}
+
+func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotWhenCanonicalRawBoundsAreStale(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	mock := gcal.NewMockAPI()
+	cal := gcal.Calendar{ID: "primary", AccessRole: "owner", TimeZone: "America/New_York"}
+	s, st := newSyncer(t, mock, Options{})
+	legacyRaw := []byte(`{"id":"instance-example","summary":"Planning","description":"Retained event details","location":"Room 7","status":"confirmed","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`)
+	legacyEvent, err := gcalmodel.DecodeEvent(legacyRaw)
+	requirements.NoError(err)
+	newSourceMessageID := deriveSourceMessageID(legacyEvent)
+	legacyEvent.OriginalStartTime = gcal.EventDateTime{}
+	archivedID, err := s.PersistEvent(t.Context(), cal, legacyEvent)
+	requirements.NoError(err)
+
+	source := primarySource(t, st)
+	cancelledRaw := []byte(`{"id":"instance-example","summary":"Stale cancellation","description":"Stale event details","status":"cancelled","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-09T18:00:00","timeZone":"America/New_York"}}`)
+	cancelledEvent, err := gcalmodel.DecodeEvent([]byte(`{"id":"instance-example","status":"cancelled","recurringEventId":"series-example","originalStartTime":{"dateTime":"2027-03-09T17:00:00","timeZone":"America/New_York"}}`))
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, conversationKey(cancelledEvent), gcal.ConversationType, "")
+	requirements.NoError(err)
+	tombstoneID, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: newSourceMessageID,
+		MessageType: gcal.MessageTypeCalendarEvent, Subject: sql.NullString{String: "Stale cancellation", Valid: true},
+	})
+	requirements.NoError(err)
+	assertions.NotEqual(archivedID, tombstoneID)
+	requirements.NoError(st.UpsertMessageBody(tombstoneID, sql.NullString{String: "Stale event details", Valid: true}, sql.NullString{}))
+	metadata := buildMetadata(cancelledEvent, cal, testAccount)
+	metadata.Start = "2027-03-09T18:00:00-05:00"
+	metadata.End = "2027-03-09T19:00:00-05:00"
+	metadataJSON, err := json.Marshal(metadata, json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(tombstoneID, sql.NullString{String: string(metadataJSON), Valid: true}))
+	requirements.NoError(st.UpsertMessageRawWithFormat(tombstoneID, cancelledRaw, gcal.RawFormat))
+
+	resyncedID, err := s.PersistEvent(t.Context(), cal, cancelledEvent)
+	requirements.NoError(err)
+	assertions.Equal(archivedID, resyncedID)
+	row, ok := getMsg(t, st, source.ID, newSourceMessageID)
+	requirements.True(ok)
+	assertions.Equal("Planning", row.subject.String)
+	assertions.Contains(bodyText(t, st, archivedID), "Retained event details")
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), "evt:"+strconv.FormatInt(archivedID, 10))
+	requirements.NoError(err)
+	assertions.Equal("cancelled", detail.Status)
+	assertions.Equal(time.Date(2027, 3, 9, 22, 0, 0, 0, time.UTC), detail.Start)
 }
 
 func TestPersistCancelledOffsetFreeExceptionPreservesLegacySnapshotAfterInterruptedCanonicalInsert(t *testing.T) {

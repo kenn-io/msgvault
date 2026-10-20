@@ -350,7 +350,13 @@ func TestCalendarEventDetailCommand(t *testing.T) {
 
 func TestCalendarEventsPagingCommand(t *testing.T) {
 	assertions := assert.New(t)
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{NextCursor: "next-page"}}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
+		Occurrences: []store.CalendarOccurrence{{
+			Ref: "evt:42", MessageID: 42, Subject: "Planning", AllDay: true,
+			StartDate: "2027-03-01", EndDate: "2027-03-02", Status: "confirmed",
+		}},
+		NextCursor: "next-page",
+	}}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -359,5 +365,9 @@ func TestCalendarEventsPagingCommand(t *testing.T) {
 	require.NotNil(t, fake.query.Limit)
 	assertions.Equal(1, *fake.query.Limit)
 	assertions.Equal("previous-page", fake.query.Cursor)
+	assertions.Contains(out.String(), "START")
+	assertions.Contains(out.String(), "2027-03-01")
+	assertions.Contains(out.String(), "evt:42")
+	assertions.Contains(out.String(), "Planning")
 	assertions.Contains(out.String(), "\nnext cursor: next-page\n")
 }
