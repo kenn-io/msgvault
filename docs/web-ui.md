@@ -95,6 +95,26 @@ on an encrypted private network is supported as an explicit tradeoff, but the UI
 warns that its session cookie travels without TLS. `HttpOnly` and
 `SameSite=Strict` do not encrypt that traffic.
 
+## Related email copies
+
+Open an email's **Related copies** panel to inspect copies connected by explicit
+MIME identifiers, source-local Gmail threads, or local links. Copies are grouped
+by account and link to their archived message. The panel reports handling
+and reasons for uncertainty. It starts collapsed; complete singletons keep
+only **Link related copies** visible.
+
+Select exact copies and choose **Preview handled** to review a local handling
+decision before confirming it. **Link related copies** also accepts other
+archive message IDs, so you can connect previously separate families. These
+decisions do not change provider threads or labels. Use the saved decision's
+undo action or **Decision history** to remove a local decision. If evidence
+changes after a preview, preview again before saving.
+
+**Download originals ZIP** includes the available archived MIME bytes and a
+provenance manifest. Missing or unreadable originals and truncated families are
+explicitly marked incomplete. See [email families](api-server.md#email-families)
+for the evidence rules, bounds, decision history and export contract.
+
 ## Explore and search
 
 <figure class="screenshot" data-lightbox>
