@@ -236,9 +236,14 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 // deriveSourceMessageID is the idempotency key: a standalone event or series
 // master uses event.id; a recurring instance/exception/cancellation uses
 // recurringEventId|originalStartTime so each occurrence upserts independently
-// and a single cancelled occurrence flags only its own row.
+// and a single cancelled occurrence flags only its own row. An original start
+// that was only resolved from an offset-free dateTime plus timeZone keeps
+// event.id, the key archives held before such values decoded to an instant.
 func deriveSourceMessageID(ev gcal.Event) string {
 	if ev.RecurringEventID != "" {
+		if orig := ev.OriginalStartTime; orig.Date == "" && !orig.DateTime.IsZero() && orig.ResolvedFromTimeZone {
+			return ev.ID
+		}
 		if key := originalStartKey(ev.OriginalStartTime); key != "" {
 			return ev.RecurringEventID + "|" + key
 		}
