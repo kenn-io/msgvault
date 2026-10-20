@@ -143,6 +143,7 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 			root.SetErr(&stderr)
 			done := captureStdout(t)
 			err := root.Execute()
+			invocationFromCommand(root).sends.Wait(time.Second)
 			out := done()
 			if tc.wantError != "" || tc.offset > 0 {
 				assert.Empty(events)

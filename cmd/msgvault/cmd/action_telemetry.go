@@ -29,16 +29,23 @@ func reportCLIAction(cmd *cobra.Command, client *daemonclient.Client, event, pro
 	if !humanCLIAction(cmd) {
 		return
 	}
+	inv := invocationFromCommand(cmd)
+	if inv == nil {
+		return
+	}
 	enabled := true
-	if inv := invocationFromCommand(cmd); inv != nil && inv.cfg != nil {
+	if inv.cfg != nil {
 		enabled = inv.cfg.Telemetry.EnabledOrDefault()
 	}
 	if !telemetry.Enabled(enabled) {
 		return
 	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), 250*time.Millisecond)
-	defer cancel()
-	_ = sendActionTelemetry(ctx, client, "cli", event, property, value)
+	ctx := cmd.Context()
+	inv.sends.Go(func() {
+		ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		defer cancel()
+		_ = sendActionTelemetry(ctx, client, "cli", event, property, value)
+	})
 }
 
 // reportCLISyncFinished counts a completed manual sync. The Muesli completion

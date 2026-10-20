@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,7 +8,9 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content.
+- Invalid PDF diagnostics now report `PDF structure could not be validated`.
+- Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
+- msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
 
 - [Cron schedules](configuration.md#cron-schedules) use go-cron instead of
   the unmaintained robfig/cron. A run in the hour that clocks skip for
