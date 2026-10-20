@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -301,6 +302,70 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 	require.NoError(err)
 	assert.Equal([]store.PersonAskMeAbout{{PersonID: anaPerson, PersonName: "ana", Value: "deploys"}}, values,
 		"the bot user is left out")
+}
+
+func TestTopicAuthorsLeaveOutSlackGeneratedEvents(t *testing.T) {
+	f := storetest.New(t)
+	ctx := t.Context()
+	export := t.TempDir()
+	write := func(name, body string) {
+		path := filepath.Join(export, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o750))
+		require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
+	}
+	write("users.json", `[
+		{"id":"UOWNER","team_id":"T1","name":"owner","profile":{"email":"owner@example.net"}},
+		{"id":"UANA","team_id":"T1","name":"ana","profile":{"email":"ana@example.net"}}]`)
+	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA"]}]`)
+	cases := []struct {
+		subtype string
+		counts  bool
+	}{
+		{"channel_join", false},
+		{"channel_leave", false},
+		{"channel_topic", false},
+		{"channel_purpose", false},
+		{"channel_name", false},
+		{"channel_archive", false},
+		{"channel_unarchive", false},
+		{"group_join", false},
+		{"group_leave", false},
+		{"group_topic", false},
+		{"group_purpose", false},
+		{"group_name", false},
+		{"group_archive", false},
+		{"group_unarchive", false},
+		{"pinned_item", false},
+		{"unpinned_item", false},
+		{"", true},
+		{"thread_broadcast", true},
+		{"file_share", true},
+		{"me_message", true},
+	}
+	messages := make([]string, len(cases))
+	for i, tc := range cases {
+		text := "pod networking"
+		if tc.subtype == "channel_join" {
+			text = "<@UANA> has joined the channel"
+		}
+		messages[i] = fmt.Sprintf(`{"type":"message","ts":"1790000000.%06d","user":"UANA","subtype":%q,"text":%q}`, i+1, tc.subtype, text)
+	}
+	write("general/2026-10-01.json", "["+strings.Join(messages, ",")+"]")
+	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
+	require.NoError(t, err)
+	owner := ownerOf(f)
+	for i, tc := range cases {
+		t.Run(fmt.Sprintf("%02d_%s", i, tc.subtype), func(t *testing.T) {
+			require := require.New(t)
+			var id int64
+			require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+				`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+				summary.SourceID, fmt.Sprintf("C1:1790000000.%06d", i+1)).Scan(&id))
+			got, err := f.Store.TopicAuthorsContext(ctx, []int64{id}, owner)
+			require.NoError(err)
+			assert.Equal(t, tc.counts, got[id].Counts, "credit only Ana's authored messages")
+		})
+	}
 }
 
 func TestTopicAuthorsLeaveOutAddressesLinkedToTheOwner(t *testing.T) {

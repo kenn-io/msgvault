@@ -243,7 +243,7 @@ func (s *Store) TopicAuthorsContext(ctx context.Context, messageIDs, owner []int
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read topic authors: %w", err)
 	}
-	if err := s.dropSlackBotPayloads(ctx, out, senders, slackIDs); err != nil {
+	if err := s.dropSlackNonAuthoredPayloads(ctx, out, senders, slackIDs); err != nil {
 		return nil, err
 	}
 	contacts, err := s.topicContactsContext(ctx, senders, owner)
@@ -265,16 +265,16 @@ const (
 	discordMessageType = "discord"
 )
 
-// dropSlackBotPayloads stops counting Slack messages whose archived payload
-// carries a bot_id or the bot_message subtype. The importer files a message
-// carrying both "user" and "bot_id" under the user, so only the payload
-// shows it. An unreadable payload leaves the message counted.
-func (s *Store) dropSlackBotPayloads(ctx context.Context, authors map[int64]TopicAuthor, senders map[int64]int64, ids []int64) error {
-	bots, err := s.slackBotPayloadsContext(ctx, ids)
+// dropSlackNonAuthoredPayloads stops counting Slack bot messages and generated
+// events. The importer files these under the user when the payload carries a
+// "user" field, so only the payload shows it. An unreadable payload leaves
+// the message counted.
+func (s *Store) dropSlackNonAuthoredPayloads(ctx context.Context, authors map[int64]TopicAuthor, senders map[int64]int64, ids []int64) error {
+	excluded, err := s.slackNonAuthoredPayloadsContext(ctx, ids)
 	if err != nil {
 		return err
 	}
-	for id := range bots {
+	for id := range excluded {
 		a := authors[id]
 		a.Counts = false
 		authors[id] = a
@@ -283,10 +283,9 @@ func (s *Store) dropSlackBotPayloads(ctx context.Context, authors map[int64]Topi
 	return nil
 }
 
-// slackBotPayloadsContext returns which Slack messages of ids have an
-// archived payload that carries a bot_id or the bot_message subtype. An
-// unreadable payload is not a bot's.
-func (s *Store) slackBotPayloadsContext(ctx context.Context, ids []int64) (map[int64]bool, error) {
+// slackNonAuthoredPayloadsContext returns which Slack messages of ids have an
+// archived bot or generated-event payload. Unreadable payloads are left out.
+func (s *Store) slackNonAuthoredPayloadsContext(ctx context.Context, ids []int64) (map[int64]bool, error) {
 	out := map[int64]bool{}
 	if len(ids) == 0 {
 		return out, nil
@@ -300,7 +299,17 @@ func (s *Store) slackBotPayloadsContext(ctx context.Context, ids []int64) (map[i
 			BotID   string `json:"bot_id"`
 			Subtype string `json:"subtype"`
 		}
-		if json.Unmarshal(raw, &payload) == nil && (payload.BotID != "" || payload.Subtype == "bot_message") {
+		if json.Unmarshal(raw, &payload) != nil {
+			continue
+		}
+		if payload.BotID != "" {
+			out[id] = true
+			continue
+		}
+		switch payload.Subtype {
+		case "", "thread_broadcast", "file_share", "me_message":
+			// These subtypes carry messages the user authored.
+		default:
 			out[id] = true
 		}
 	}
