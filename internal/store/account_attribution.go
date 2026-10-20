@@ -522,8 +522,8 @@ func (s *Store) refreshAccountAttributionTx(
 		}
 	}
 	if draft || authored {
-		if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`SELECT id, 1, CURRENT_TIMESTAMP FROM messages WHERE id = ?`), id); err != nil {
-			return malformed, fmt.Errorf("requeue draft activity for message %d: %w", id, err)
+		if err := requeueActivityIfUnsentChangedTx(ctx, tx, id); err != nil {
+			return malformed, err
 		}
 	}
 
@@ -824,8 +824,8 @@ func (s *Store) refreshAccountAttributionIfOutboundChangedTx(
 		return fmt.Errorf("read outbound evidence for message %d: %w", messageID, err)
 	}
 	if authored {
-		if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`SELECT id, 1, CURRENT_TIMESTAMP FROM messages WHERE id = ?`), messageID); err != nil {
-			return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
+		if err := requeueActivityIfUnsentChangedTx(ctx, tx, messageID); err != nil {
+			return err
 		}
 	}
 	if !path.Valid || (path.String != accountPathInbound && path.String != accountPathSent) ||
@@ -834,6 +834,19 @@ func (s *Store) refreshAccountAttributionIfOutboundChangedTx(
 	}
 	_, err = s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
 	return err
+}
+
+func requeueActivityIfUnsentChangedTx(ctx context.Context, tx *loggedTx, messageID int64) error {
+	_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
+		SELECT m.id, 1, CURRENT_TIMESTAMP
+		FROM messages m JOIN sources src ON src.id = m.source_id
+		WHERE m.id = ? AND `+activityUnsentSQL()+` = EXISTS (
+			SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
+		)`), messageID)
+	if err != nil {
+		return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
+	}
+	return nil
 }
 
 // labelOutboundFlips collects messages of one source whose labels changed

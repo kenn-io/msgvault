@@ -1496,6 +1496,41 @@ func TestLoadQueuedActivityCandidatesKeepsProjectedIneligibleRetractionDiscovera
 	assert.Greater(candidates[0].Queue.Revision, candidates[0].Queue.ProcessedRevision)
 }
 
+func TestActivityLabelReplayKeepsFormerDraftQueueDrained(t *testing.T) {
+	setup := require.New(t)
+	f, personID := activityProjectionFixture(t)
+	occurredAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	messageID := f.NewMessage().WithSentAt(occurredAt).Create(t, f.Store)
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+	setup.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["DRAFT"]}))
+	setup.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["SENT"]}))
+	projection := activityProjectionForMessage(t, f, messageID, personID, occurredAt)
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+	setup.NoError(err)
+	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	setup.NoError(err)
+	setup.Empty(queued)
+	cleanContactStates(t, f.Store, personID)
+
+	for _, hook := range []string{"labels", "attribution"} {
+		t.Run(hook, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			if hook == "labels" {
+				require.NoError(f.Store.ReplaceMessageLabels(messageID, []int64{labels["SENT"]}))
+			} else {
+				require.NoError(f.Store.RefreshAccountAttributionForTest(t.Context(), messageID))
+			}
+			queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+			require.NoError(err)
+			assert.Empty(queued)
+		})
+	}
+	state, err := f.Store.ContactStateContext(t.Context(), personID, occurredAt)
+	setup.NoError(err)
+	assert.False(t, state.Stale)
+}
+
 func activityProjectionFixture(
 	t *testing.T,
 ) (*storetest.Fixture, int64) {
