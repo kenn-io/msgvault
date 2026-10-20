@@ -293,6 +293,8 @@ an author for `kubernetes networking`. A saved person with no matching
 messages is listed, as "declared, no messages", only when a value holds every
 word of the topic; `sales` does not answer `sales tax filing`. Matching
 compares whole words without regard to case, so `strasse` finds `Straße`.
+Declared values have no date, so `--after` and `--before` narrow only the
+messages, never the declared topics.
 
 Only the author earns credit. People copied on a message, meeting attendees,
 you, and automated senders get none. Addresses linked to one another, or bound
