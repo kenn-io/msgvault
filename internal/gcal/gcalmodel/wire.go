@@ -41,21 +41,24 @@ func (w *wireEventDateTime) toEventDateTime() EventDateTime {
 	if w == nil {
 		return EventDateTime{}
 	}
-	return EventDateTime{DateTime: parseEventDateTime(w.DateTime, w.TimeZone), Date: w.Date, TimeZone: w.TimeZone}
+	t, resolved := parseEventDateTime(w.DateTime, w.TimeZone)
+	return EventDateTime{DateTime: t, Date: w.Date, TimeZone: w.TimeZone, ResolvedFromTimeZone: resolved}
 }
 
-func parseEventDateTime(value, zone string) time.Time {
+// parseEventDateTime parses an RFC3339 dateTime, or resolves an offset-free one
+// through zone. resolved reports the latter.
+func parseEventDateTime(value, zone string) (t time.Time, resolved bool) {
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
-		return t
+		return t, false
 	}
 	if zone != "" {
 		if loc, err := time.LoadLocation(zone); err == nil {
 			if t, err := time.ParseInLocation("2006-01-02T15:04:05", value, loc); err == nil {
-				return t
+				return t, true
 			}
 		}
 	}
-	return time.Time{}
+	return time.Time{}, false
 }
 
 type wireEvent struct {
