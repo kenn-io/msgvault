@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/synctechsms/sendstate"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -152,7 +151,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	// Unsent texts are owner-authored and stay on the owner's side.
-	fromMe := sendstate.SMSFromOwner(sms.Type)
+	fromMe := SMSFromOwner(sms.Type)
 	senderID := remoteID
 	recipientIDs := []int64{ownerID}
 	if fromMe {
@@ -170,7 +169,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !sendstate.SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, !SMSUnsent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -183,7 +182,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 		return 0, 0, err
 	}
 	// Unsent messages belong to the owner, as in importSMS.
-	fromMe := sendstate.MMSFromOwner(mms.MessageBox)
+	fromMe := MMSFromOwner(mms.MessageBox)
 	convID, err := i.ensureConversation(sourceID, textConversationKey(participantIDs), mms.ContactName.String)
 	if err != nil {
 		return 0, 0, err
@@ -200,7 +199,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	}
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
-	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, !sendstate.MMSUnsent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, !MMSUnsent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -305,7 +304,7 @@ func (i *Importer) mmsParticipants(mms MMS, ownerID int64) ([]int64, int64, []in
 	ids := []int64{ownerID}
 	senderID := ownerID
 	// Unsent messages belong to the owner, as in importSMS.
-	fromMe := sendstate.MMSFromOwner(mms.MessageBox)
+	fromMe := MMSFromOwner(mms.MessageBox)
 	var recipients []int64
 	for _, addr := range mms.Addresses {
 		if strings.TrimSpace(addr.Address) == "" || addr.Address == "insert-address-token" {
