@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/synctechsms/sendstate"
 )
 
 func TestParseSMSBackup(t *testing.T) {
@@ -23,7 +22,7 @@ func TestParseSMSBackup(t *testing.T) {
 	require.Len(doc.SMS, 2)
 	assert.Equal("+15551234567", doc.SMS[0].Address, "first SMS parsed incorrectly: %#v", doc.SMS[0])
 	assert.Equal("hello", doc.SMS[0].Body, "first SMS parsed incorrectly: %#v", doc.SMS[0])
-	assert.Equal(sendstate.SMSTypeInbox, doc.SMS[0].Type, "first SMS parsed incorrectly: %#v", doc.SMS[0])
+	assert.Equal(SMSTypeInbox, doc.SMS[0].Type, "first SMS parsed incorrectly: %#v", doc.SMS[0])
 	want := time.UnixMilli(1717214400123).UTC()
 	assert.True(doc.SMS[0].Timestamp.Equal(want), "Timestamp = %s, want %s", doc.SMS[0].Timestamp, want)
 	assert.False(doc.SMS[0].Subject.Valid, "literal null subject should become invalid NullString")
@@ -50,7 +49,7 @@ func TestParseMMSBackupWithTextMediaAndRecipients(t *testing.T) {
 	require.NoError(err, "Parse")
 	require.Len(doc.MMS, 1)
 	m := doc.MMS[0]
-	assert.Equal(sendstate.MMSBoxInbox, m.MessageBox, "MMS metadata parsed incorrectly: %#v", m)
+	assert.Equal(MMSBoxInbox, m.MessageBox, "MMS metadata parsed incorrectly: %#v", m)
 	assert.Equal("Group subject", m.Subject.String, "MMS metadata parsed incorrectly: %#v", m)
 	assert.True(m.Subject.Valid, "MMS metadata parsed incorrectly: %#v", m)
 	require.Len(m.Parts, 2, "MMS parts: %#v", m.Parts)

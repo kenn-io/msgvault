@@ -100,7 +100,8 @@ only to change which saved people it lists. Tier 1 is sustained two-way contact
 in the short window. Tier 2 is two-way contact in the long window, or meetings.
 Counts cover meetings and the email and chat messages that were sent or
 received. Drafts, texts that never left your phone, and call or voicemail
-records don't count. A group chat at or under `[activity]
+records don't count. Archives imported before this change pick up the
+unsent-text fix when you import the Synctech backup again. A group chat at or under `[activity]
 max_direct_counterparts` counts for each member. By default, newsletter and
 list messages are left out (`exclude_list_messages = false` counts them), and so
 are messages sent to more people than that limit. A person whose address is one
