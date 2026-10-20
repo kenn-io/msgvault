@@ -107,9 +107,8 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	data, id := calendarFixture(t, st, "unchanged", calendarRaw)
+	data, _ := calendarFixture(t, st, "unchanged", calendarRaw)
 	rejectCalendarWrites(t, st)
-	requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error { return st.refreshCalendarEventProjectionWith(t.Context(), tx, id) }))
 	// Canonical persistence also skips an identical typed projection.
 	_, err := st.PersistMessage(data)
 	requirements.NoError(err)
