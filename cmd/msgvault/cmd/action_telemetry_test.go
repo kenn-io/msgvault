@@ -27,11 +27,21 @@ import (
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
+func clearTelemetryVetoEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
+		value, _ := os.LookupEnv(name)
+		t.Setenv(name, value)
+		require.NoError(t, os.Unsetenv(name), "clear %s", name)
+	}
+}
+
 func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
@@ -200,6 +210,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })

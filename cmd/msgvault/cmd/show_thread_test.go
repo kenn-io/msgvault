@@ -77,6 +77,7 @@ func TestShowThreadPaginationAndIdentity(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
