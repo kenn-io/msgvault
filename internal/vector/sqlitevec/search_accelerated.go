@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 
 	"go.kenn.io/msgvault/internal/vector"
@@ -301,16 +302,14 @@ func (b *Backend) searchExactFilteredPopulation(
 		return nil, fmt.Errorf("encode exact-filter message IDs: %w", err)
 	}
 	rows, err := queryer.QueryContext(ctx, `SELECT e.message_id,
-		MIN(vec1_l2_distance(?, a.embedding)) AS distance,
-		MIN(vec_distance_cosine(?, a.embedding)) AS cosine_distance
+		MIN(vec1_l2_distance(?, a.embedding)) AS distance
 		FROM embeddings e
 		JOIN `+accelerator.TableName+` a ON a.rowid = e.embedding_id
 		WHERE e.generation_id = ?
 		  AND e.message_id IN (SELECT value FROM json_each(?))
 		GROUP BY e.message_id
 		ORDER BY distance ASC, e.message_id ASC
-		LIMIT ?`, float32SliceBlob(queryVec), float32SliceBlob(queryVec),
-		int64(accelerator.GenerationID), string(blob), k)
+		LIMIT ?`, float32SliceBlob(queryVec), int64(accelerator.GenerationID), string(blob), k)
 	if err != nil {
 		return nil, fmt.Errorf("query exact-filter population: %w", err)
 	}
@@ -318,11 +317,11 @@ func (b *Backend) searchExactFilteredPopulation(
 	hits := make([]vector.Hit, 0, min(k, len(messageIDs)))
 	for rows.Next() {
 		var hit vector.Hit
-		var l2, cosine float64
-		if err := rows.Scan(&hit.MessageID, &l2, &cosine); err != nil {
+		var distance float64
+		if err := rows.Scan(&hit.MessageID, &distance); err != nil {
 			return nil, fmt.Errorf("scan exact-filter hit: %w", err)
 		}
-		hit.Score = 1 - cosine
+		hit.Score = 1 - math.Sqrt(distance)
 		hit.Rank = len(hits) + 1
 		hits = append(hits, hit)
 	}
@@ -389,7 +388,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 		live[messageID] = struct{}{}
 	}
 	queryBlob := float32SliceBlob(queryVec)
-	stmt, err := queryer.PrepareContext(ctx, `SELECT vec_distance_cosine(?, embedding)
+	stmt, err := queryer.PrepareContext(ctx, `SELECT vec1_l2_distance(?, embedding)
 		FROM `+accelerator.TableName+` WHERE rowid = ?`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare accelerator exact rerank: %w", err)
@@ -410,7 +409,7 @@ func (b *Backend) rerankAcceleratedCandidates(
 	}
 	hits := make([]vector.Hit, 0, len(best))
 	for messageID, distance := range best {
-		hits = append(hits, vector.Hit{MessageID: messageID, Score: 1 - distance})
+		hits = append(hits, vector.Hit{MessageID: messageID, Score: 1 - math.Sqrt(distance)})
 	}
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Score == hits[j].Score {

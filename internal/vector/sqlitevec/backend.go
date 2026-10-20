@@ -1169,8 +1169,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		// rest. Order applies after the group, so the ranking is by
 		// best-chunk distance per message.
 		q := fmt.Sprintf(`
-			SELECT e.message_id, MIN(v.distance) AS distance,
-			       MIN(vec_distance_cosine(v.embedding, ?)) AS cosine_distance
+			SELECT e.message_id, MIN(v.distance) AS distance
 			  FROM %s v
 			  JOIN embeddings e ON e.embedding_id = v.embedding_id
 			 WHERE v.generation_id = ?
@@ -1187,8 +1186,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 			if fetch > chunkCeiling {
 				fetch = chunkCeiling
 			}
-			queryBlob := float32SliceBlob(queryVec)
-			hits, err := b.scanHits(ctx, q, queryBlob, int64(gen), queryBlob, fetch)
+			hits, err := b.scanHits(ctx, q, int64(gen), float32SliceBlob(queryVec), fetch)
 			if err != nil {
 				return nil, err
 			}
@@ -1255,8 +1253,7 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 	}
 
 	q := fmt.Sprintf(`
-		SELECT e.message_id, MIN(v.distance) AS distance,
-		       MIN(vec_distance_cosine(v.embedding, ?)) AS cosine_distance
+		SELECT e.message_id, MIN(v.distance) AS distance
 		  FROM %s v
 		  JOIN embeddings e ON e.embedding_id = v.embedding_id
 		 WHERE v.generation_id = ?
@@ -1272,9 +1269,8 @@ func (b *Backend) searchExact(ctx context.Context, gen vector.GenerationID, quer
 		if fetch > chunkCeiling {
 			fetch = chunkCeiling
 		}
-		allArgs := make([]any, 0, 4+len(filterArgs))
-		queryBlob := float32SliceBlob(queryVec)
-		allArgs = append(allArgs, queryBlob, int64(gen), queryBlob, fetch)
+		allArgs := make([]any, 0, 3+len(filterArgs))
+		allArgs = append(allArgs, int64(gen), float32SliceBlob(queryVec), fetch)
 		allArgs = append(allArgs, filterArgs...)
 
 		hits, err := b.scanHits(ctx, q, allArgs...)
@@ -1318,13 +1314,13 @@ func (b *Backend) scanHits(ctx context.Context, query string, args ...any) ([]ve
 	var hits []vector.Hit
 	for i := 1; rows.Next(); i++ {
 		var id int64
-		var l2, cosine float64
-		if err := rows.Scan(&id, &l2, &cosine); err != nil {
+		var dist float64
+		if err := rows.Scan(&id, &dist); err != nil {
 			return nil, fmt.Errorf("scan hit: %w", err)
 		}
 		hits = append(hits, vector.Hit{
 			MessageID: id,
-			Score:     1.0 - cosine,
+			Score:     1.0 - dist,
 			Rank:      i,
 		})
 	}
@@ -2157,7 +2153,7 @@ func (b *Backend) EmbeddedMessageCountForSnapshot(
 }
 
 // ScoreMessageChunks scores every embedded chunk of messageID in gen
-// against queryVec. Results are sorted by score descending (best first).
+// against queryVec as 1 - cosine distance, like the pgvector backend. Results are sorted by score descending (best first).
 func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationID, messageID int64, queryVec []float32) ([]vector.ChunkHit, error) {
 	if len(queryVec) == 0 {
 		return nil, errors.New("score message chunks: empty query vector")
@@ -2179,14 +2175,15 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	vecTable := VectorTableName(dim)
 
 	q := fmt.Sprintf(`
-		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis, v.embedding
+		SELECT e.chunk_index, e.chunk_char_start, e.chunk_char_end, e.source_basis,
+		       vec_distance_cosine(v.embedding, ?)
 		  FROM embeddings e
 		  JOIN %s v ON v.embedding_id = e.embedding_id
 		 WHERE v.generation_id = ?
 		   AND e.message_id = ?
 		 ORDER BY e.chunk_index ASC`, vecTable)
 
-	rows, err := b.db.QueryContext(ctx, q, int64(gen), messageID)
+	rows, err := b.db.QueryContext(ctx, q, float32SliceBlob(queryVec), int64(gen), messageID)
 	if err != nil {
 		return nil, fmt.Errorf("load message chunks: %w", err)
 	}
@@ -2196,21 +2193,16 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 	for rows.Next() {
 		var idx, start, end int
 		var basis vector.SourceBasis
-		var blob []byte
-		if err := rows.Scan(&idx, &start, &end, &basis, &blob); err != nil {
+		var distance float64
+		if err := rows.Scan(&idx, &start, &end, &basis, &distance); err != nil {
 			return nil, fmt.Errorf("scan chunk row: %w", err)
 		}
-		vec, err := blobToFloat32(blob, dim)
-		if err != nil {
-			return nil, fmt.Errorf("decode chunk %d vector: %w", idx, err)
-		}
-		dist := cosineDistance(vec, queryVec)
 		hits = append(hits, vector.ChunkHit{
 			ChunkIndex:     idx,
 			ChunkCharStart: start,
 			ChunkCharEnd:   end,
 			SourceBasis:    basis,
-			Score:          1.0 - dist,
+			Score:          1.0 - distance,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -2224,20 +2216,4 @@ func (b *Backend) ScoreMessageChunks(ctx context.Context, gen vector.GenerationI
 		return hits[i].ChunkIndex < hits[j].ChunkIndex
 	})
 	return hits, nil
-}
-
-// cosineDistance returns 1 minus the cosine similarity of two equal-length
-// vectors, so scores match pgvector's 1 - cosine distance. A zero vector has
-// no direction and is maximally distant.
-func cosineDistance(a, b []float32) float64 {
-	var dot, normA, normB float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
-	}
-	if normA == 0 || normB == 0 {
-		return 1
-	}
-	return 1 - dot/(math.Sqrt(normA)*math.Sqrt(normB))
 }

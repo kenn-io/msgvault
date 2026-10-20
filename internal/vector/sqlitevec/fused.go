@@ -425,8 +425,7 @@ WITH
     SELECT * FROM bm25 WHERE rnk <= %d
   ),
   ann_chunks AS (
-    SELECT ve.message_id, MIN(v.distance) AS vec_dist,
-           MIN(vec_distance_cosine(v.embedding, :query_vec)) AS cos_dist
+    SELECT ve.message_id, MIN(v.distance) AS vec_dist
       FROM %s v
       JOIN vec.embeddings ve ON ve.embedding_id = v.embedding_id
      WHERE :query_vec IS NOT NULL
@@ -441,7 +440,7 @@ WITH
      GROUP BY ve.message_id
   ),
   ann AS (
-    SELECT message_id, vec_dist, cos_dist,
+    SELECT message_id, vec_dist,
            ROW_NUMBER() OVER (ORDER BY vec_dist) AS rnk
       FROM ann_chunks
   ),
@@ -453,7 +452,7 @@ WITH
            COALESCE(1.0 / (:rrf_k + b.rnk), 0.0) +
            COALESCE(1.0 / (:rrf_k + v.rnk), 0.0) AS rrf_score,
            b.bm25_raw AS bm25_score,
-           CASE WHEN v.cos_dist IS NULL THEN NULL ELSE 1.0 - v.cos_dist END AS vector_score
+           CASE WHEN v.vec_dist IS NULL THEN NULL ELSE 1.0 - v.vec_dist END AS vector_score
       FROM bm25_used b
       FULL OUTER JOIN ann_used v USING (message_id)
   )
