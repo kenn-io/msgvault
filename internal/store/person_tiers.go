@@ -111,7 +111,7 @@ func (s *Store) PreviewPersonTiersContext(ctx context.Context, options PersonTie
 				}
 				preview.People = append(preview.People, PersonTierRow{
 					PersonID: id, DisplayName: names[id], Tier: d.Tier, Rule: d.Rule,
-					Tracked: tracked[id], LastContactDate: lastCounted(signals[id]),
+					Tracked: tracked[id], LastContactDate: stringPtrOrNil(signals[id].LastDate),
 				})
 			}
 		}
@@ -127,15 +127,7 @@ func comparePersonTierRows(a, b PersonTierRow) int {
 	if a.Tier != b.Tier {
 		return a.Tier - b.Tier
 	}
-	switch {
-	case a.LastContactDate == nil && b.LastContactDate != nil:
-		return 1
-	case a.LastContactDate != nil && b.LastContactDate == nil:
-		return -1
-	case a.LastContactDate != nil && b.LastContactDate != nil:
-		return strings.Compare(*b.LastContactDate, *a.LastContactDate)
-	}
-	return 0
+	return strings.Compare(*b.LastContactDate, *a.LastContactDate)
 }
 
 // personTierPageContext returns the next saved people after afterID, in ID
@@ -203,7 +195,7 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 		explanation.Thresholds = d.Thresholds
 		explanation.Signals = signals[personID]
 		explanation.Tracked = tracked[personID]
-		explanation.LastContactDate = lastCounted(signals[personID])
+		explanation.LastContactDate = stringPtrOrNil(signals[personID].LastDate)
 		return nil
 	})
 	if err != nil {
@@ -280,13 +272,6 @@ func (s *Store) personTierPageData(ctx context.Context, tx *loggedTx, ids []int6
 	}
 	tracked, err := trackedPersonIDs(ctx, tx, ids)
 	return signals, tracked, err
-}
-
-func lastCounted(s persontiers.Signals) *string {
-	if s.LastDate == "" {
-		return nil
-	}
-	return &s.LastDate
 }
 
 func trackedPersonIDs(ctx context.Context, tx *loggedTx, ids []int64) (map[int64]bool, error) {

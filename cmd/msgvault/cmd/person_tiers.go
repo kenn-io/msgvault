@@ -173,7 +173,7 @@ func writePersonTiersPreview(w io.Writer, preview *store.PersonTierPreview) erro
 	_, _ = fmt.Fprintln(table, "TIER\tPERSON\tNAME\tRULE\tTRACKED\tLAST COUNTED")
 	for _, row := range preview.People {
 		_, _ = fmt.Fprintf(table, "%d\t%d\t%s\t%s\t%t\t%s\n", row.Tier, row.PersonID,
-			personDisplayName(row.DisplayName), row.Rule, row.Tracked, personTierDate(row.LastContactDate))
+			personDisplayName(row.DisplayName), row.Rule, row.Tracked, optionalCLIString(row.LastContactDate))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write person tiers preview: %w", err)
@@ -189,7 +189,7 @@ func writePersonTierExplanation(w io.Writer, e *store.PersonTierExplanation) err
 	_, err := fmt.Fprintf(w, "Person: %d\nName: %s\nTier: %d\nRule: %s\nExclusion: %s\nTracked: %t\nLast counted: %s\nAs of: %s\nProjection: timezone %s, direct limit %d\n"+
 		"Excluded list messages: %d\nLarge-audience inbound messages: %d\n",
 		e.PersonID, personDisplayName(e.DisplayName), e.Tier, e.Rule, exclusion, e.Tracked,
-		personTierDate(e.LastContactDate), e.AsOf, e.Projection.Timezone, e.Projection.MaxDirect,
+		optionalCLIString(e.LastContactDate), e.AsOf, e.Projection.Timezone, e.Projection.MaxDirect,
 		e.Signals.ExcludedListEvents, e.Signals.LargeAudienceInboundEvents)
 	if err != nil {
 		return fmt.Errorf("write person tier explanation: %w", err)
@@ -207,11 +207,4 @@ func writePersonTierExplanation(w io.Writer, e *store.PersonTierExplanation) err
 		return fmt.Errorf("write person tier thresholds: %w", err)
 	}
 	return nil
-}
-
-func personTierDate(date *string) string {
-	if date == nil {
-		return "-"
-	}
-	return *date
 }
