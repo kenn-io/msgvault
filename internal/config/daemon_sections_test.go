@@ -28,6 +28,12 @@ func TestInvalidDaemonSectionsAreRecordedForClientsAndRejectedElsewhere(t *testi
 		{"carddav connections", "[carddav_connections.default]\nprovider = 'google'\n", "carddav_connections"},
 		{"identity scoring", "[people.identity_scoring]\nbatch_size = 0\n", "identity_scoring.batch_size"},
 		{"imap drafts", "[[imap.drafts]]\nmailbox = 'Drafts'\n", "imap.drafts"},
+		{"carddav password", "[carddav]\npassword = 'secret'\n", "[carddav] password is not allowed"},
+		{"carddav connection password", "[carddav_connections.work]\npassword = 'secret'\n", "carddav_connections passwords"},
+		{"identity scoring key", "[people.identity_scoring]\nbogus = 1\n", "unknown people.identity_scoring config key"},
+		{"imap draft key", "[[imap.drafts]]\nsource_id = 1\nmailbox = 'Drafts'\nbogus = 1\n", "unknown IMAP draft config key"},
+		{"gmail draft key", "[[gmail.drafts]]\nsource_id = 1\nbogus = 1\n", "unknown Gmail draft config key"},
+		{"beeper draft key", "[[beeper.drafts]]\nsource_id = 1\nbogus = 1\n", "unknown Beeper draft config key"},
 		{"fastmail", "[[fastmail]]\naccount = 'me@example.com'\n", "api_token is required"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

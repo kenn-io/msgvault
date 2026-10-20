@@ -608,7 +608,16 @@ type Config struct {
 	// daemonErrs holds validation errors from settings only the daemon reads.
 	// Load joins them into its error; LoadClientWithOverrides keeps them here.
 	daemonErrs []error
+	// daemonErrsReported is set once this process has shown daemonErrs to the user.
+	daemonErrsReported bool
 }
+
+// MarkDaemonConfigReported records that the user has seen DaemonConfigErrors,
+// so a later fatal error can point at them instead of repeating them.
+func (c *Config) MarkDaemonConfigReported() { c.daemonErrsReported = true }
+
+// DaemonConfigReported reports whether MarkDaemonConfigReported was called.
+func (c *Config) DaemonConfigReported() bool { return c.daemonErrsReported }
 
 // fastmailConfigError tags the [[fastmail]] error so FastmailSourceFor can
 // find it among the recorded daemon errors.
@@ -1098,22 +1107,22 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
 		if key.String() == "carddav.password" {
-			return nil, errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json")
+			cfg.deferDaemonError(errors.New("[carddav] password is not allowed in config; store it in tokens/carddav.json"))
 		}
 		if len(key) >= 3 && key[0] == "carddav_connections" && key[2] == "password" {
-			return nil, errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files")
+			cfg.deferDaemonError(errors.New("carddav_connections passwords are not allowed in config; store them in private connection token files"))
 		}
 		if strings.HasPrefix(key.String(), "people.identity_scoring.") {
-			return nil, fmt.Errorf("unknown people.identity_scoring config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown people.identity_scoring config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "imap.drafts.") {
-			return nil, fmt.Errorf("unknown IMAP draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown IMAP draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "gmail.drafts.") {
-			return nil, fmt.Errorf("unknown Gmail draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Gmail draft config key %q", key.String()))
 		}
 		if strings.HasPrefix(key.String(), "beeper.drafts.") {
-			return nil, fmt.Errorf("unknown Beeper draft config key %q", key.String())
+			cfg.deferDaemonError(fmt.Errorf("unknown Beeper draft config key %q", key.String()))
 		}
 	}
 	if err := cfg.validateFastmailSources(fastmailSourceIDConfigured(content)); err != nil {

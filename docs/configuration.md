@@ -31,8 +31,9 @@ daemon reads does not. These are `[server]` and its `MSGVAULT_*` overrides (exce
 `[[beeper.drafts]]`, and `[[fastmail]]`. A command prints
 `Warning: invalid daemon config: ...` to stderr and runs. For example, with
 `MSGVAULT_API_PORT=invalid`, `msgvault stats` warns and still reaches the
-running daemon. Starting, restarting, or upgrading the daemon, saving
-configuration, and editing settings reject the file with that message.
+running daemon. Starting, restarting, or upgrading the daemon and editing
+settings reject the file with that message. When no daemon is running, the
+on-demand start fails with the config error instead of launching one.
 
 ## Remote Deletion Consent
 
