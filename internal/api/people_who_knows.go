@@ -75,7 +75,7 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 		s.rejectBadParam(w, err)
 		return
 	}
-	engine, _, cfg := s.vectorComponents()
+	engine, backend, cfg := s.vectorComponents()
 	if engine == nil {
 		s.writeVectorUnavailable(w)
 		return
@@ -83,29 +83,20 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 	if !s.vectorSearchPreflight(r.Context(), w) {
 		return
 	}
-	data, ok := s.store.(whoKnowsStore)
-	if !ok {
+	data, ok := s.store.(whoknows.DataReader)
+	index, indexed := backend.(vector.FilteredCoverageBackend)
+	if !ok || !indexed {
 		writeError(w, http.StatusServiceUnavailable, "who_knows_unavailable",
-			"the archive store cannot read who-knows data")
+			"the archive cannot read who-knows data")
 		return
 	}
-	// The vector backend follows the archive database: pgvector scores
-	// PostgreSQL hits by cosine distance, sqlite-vec scores SQLite hits by
-	// L2 distance.
-	service := whoknows.Service{
-		Retriever: engine, Data: data, BuildScope: cfg.Embed.Scope.BuildScope(), L2Scores: !data.IsPostgreSQL(),
-	}
+	service := whoknows.Service{Retriever: engine, Data: data, Index: index, BuildScope: cfg.Embed.Scope.BuildScope()}
 	response, err := service.Find(r.Context(), request)
 	if err != nil {
 		s.writeWhoKnowsError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-type whoKnowsStore interface {
-	whoknows.DataReader
-	IsPostgreSQL() bool
 }
 
 func (s *Server) writeWhoKnowsError(w http.ResponseWriter, err error) {

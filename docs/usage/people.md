@@ -280,10 +280,9 @@ The topic is plain words. Search operators such as `from:` are refused.
 
 The search reads the 200 closest messages. A message counts when its cosine
 similarity to the topic reaches `--min-score` (default 0.5). On SQLite the
-vector index scores by distance, which the command converts to cosine
-similarity; that holds for unit-length embeddings, as
-[search ranking](../architecture/search-ranking.md) assumes. A message found
-only by keyword does not count. Each counted message weighs its similarity
+vector index scores by distance, so the command computes cosine similarity
+from each hit's stored vectors, whatever their length. A message found only by
+keyword does not count. Each counted message weighs its similarity
 times its recency, which halves every 180 days and stops at 0.1. The message
 part of the score is `log(1 + total weight)`.
 

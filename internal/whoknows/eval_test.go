@@ -92,9 +92,14 @@ type evalMailbox struct {
 }
 
 type evalFixture struct {
-	service *Service
-	emails  map[int64]string // person ID to address
-	engine  func(kPerSignal int) *hybrid.Engine
+	service      *Service
+	emails       map[int64]string // person ID to address
+	engine       func(kPerSignal int) *hybrid.Engine
+	store        *store.Store
+	backend      vector.Backend
+	generation   vector.GenerationID
+	source       int64
+	conversation int64
 }
 
 var evalNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
@@ -194,6 +199,9 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	}
 	require.NoError(t, backend.Upsert(ctx, generation, chunks))
 	require.NoError(t, backend.ActivateGeneration(ctx, generation, true))
+	// The embedding worker stamps each message it embeds.
+	_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET embed_gen = ?"), int64(generation))
+	require.NoError(t, err)
 
 	engine := func(kPerSignal int) *hybrid.Engine {
 		return hybrid.NewEngine(backend, st.DB(), bagOfWordsEmbedder{},
@@ -201,12 +209,37 @@ func newEvalFixture(t *testing.T) *evalFixture {
 	}
 	return &evalFixture{
 		service: &Service{
-			Retriever: engine(100), Data: st, L2Scores: !st.IsPostgreSQL(),
+			Retriever: engine(100), Data: st, Index: backend.(vector.FilteredCoverageBackend),
 			Now: func() time.Time { return evalNow },
 		},
-		engine: engine,
-		emails: emails,
+		engine: engine, emails: emails, store: st, backend: backend,
+		generation: generation, source: source.ID, conversation: conversation,
 	}
+}
+
+// post stores an email from a new sender, indexed for keyword search. Unless
+// vec is nil, it also embeds the email as vec and stamps it, as the embedding
+// worker does; mail synced since the last embedding run has neither.
+func (f *evalFixture) post(t *testing.T, from, text string, vec []float32) int64 {
+	t.Helper()
+	sender, err := f.store.EnsureParticipant(from, from, "example.net")
+	require.NoError(t, err)
+	id, err := f.store.UpsertMessage(&store.Message{
+		ConversationID: f.conversation, SourceID: f.source, SourceMessageID: from, MessageType: "email",
+		SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		SentAt:   sql.NullTime{Time: evalNow, Valid: true},
+		Subject:  sql.NullString{String: text, Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.store.UpsertFTS(id, text, text, from, "", ""))
+	if vec != nil {
+		require.NoError(t, f.backend.Upsert(t.Context(), f.generation,
+			[]vector.Chunk{{MessageID: id, Vector: vec, SourceCharLen: len(text)}}))
+		_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE messages SET embed_gen = ? WHERE id = ?"),
+			int64(f.generation), id)
+		require.NoError(t, err)
+	}
+	return id
 }
 
 func (f *evalFixture) ranked(response Response) []string {
@@ -294,4 +327,23 @@ func TestFindKeywordOnlyHitsDoNotCount(t *testing.T) {
 	got, err := service.Find(t.Context(), Request{Topic: "go"})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gopher@example.net"}, f.ranked(got))
+}
+
+// The embedding client keeps provider vectors as they come, so a stored
+// vector need not have unit length. A message that points the topic's way
+// counts whatever its length.
+func TestFindCountsUnnormalizedVectorsByCosine(t *testing.T) {
+	f := newEvalFixture(t)
+	vec := embedWords("zeppelin mooring lines")
+	for i := range vec {
+		vec[i] *= 4
+	}
+	f.post(t, "captain@example.net", "zeppelin mooring lines", vec)
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	require.Len(t, got.UnsavedContacts, 1)
+	assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
+	// Two of three words shared: cosine 2/sqrt(6), sent today.
+	assert.InDelta(t, math.Log1p(2/math.Sqrt(6)), got.UnsavedContacts[0].MessageScore, 1e-6)
 }

@@ -5,6 +5,7 @@ package whoknows
 import (
 	"cmp"
 	"context"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -36,14 +37,18 @@ type DataReader interface {
 }
 
 type Service struct {
-	Retriever  Retriever
-	Data       DataReader
+	Retriever Retriever
+	Data      DataReader
+	// Index is the vector backend the search reads.
+	Index      vector.FilteredCoverageBackend
 	BuildScope vector.BuildScope
-	// L2Scores reports that the vector backend scores a hit as 1 - L2
-	// distance, as sqlite-vec does, rather than 1 - cosine distance, as
-	// pgvector does.
-	L2Scores bool
-	Now      func() time.Time
+	Now        func() time.Time
+}
+
+// cosineScorer is an index whose search score is not cosine similarity, as
+// sqlite-vec's 1 - L2 distance is not, so it scores the hits again.
+type cosineScorer interface {
+	MessageCosines(ctx context.Context, gen vector.GenerationID, queryVec []float32, messageIDs []int64) (map[int64]float64, error)
 }
 
 // searchTypes are the message types worth searching for authors: everything
@@ -72,27 +77,8 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	types, noTypes := searchTypes(s.BuildScope)
 	if noTypes {
 		out.Limits = append(out.Limits, LimitIndexScope)
-	} else {
-		request := hybrid.SearchRequest{
-			Mode:     hybrid.ModeHybrid,
-			FreeText: p.FreeText,
-			Limit:    SearchPool,
-			Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
-		}
-		for _, term := range p.Terms {
-			request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
-		}
-		hits, meta, err := s.Retriever.Search(ctx, request)
-		if err != nil {
-			return out, err
-		}
-		counted := s.similarities(hits, p.MinScore)
-		if len(counted) > 0 && (meta.PoolSaturated || len(hits) >= SearchPool) {
-			out.Limits = append(out.Limits, LimitPoolFull)
-		}
-		if candidates, err = s.attribute(ctx, counted); err != nil {
-			return out, err
-		}
+	} else if candidates, err = s.searchAuthors(ctx, p, types, &out); err != nil {
+		return out, err
 	}
 	candidates, truncated, err := s.addDeclared(ctx, candidates, p.FreeText)
 	if err != nil {
@@ -109,28 +95,60 @@ func (s *Service) Find(ctx context.Context, req Request) (Response, error) {
 	return out, nil
 }
 
+// searchAuthors runs one hybrid search, credits the messages that reach the
+// floor to their authors, and adds the limits the search ran into to out.
+func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, out *Response) ([]Candidate, error) {
+	request := hybrid.SearchRequest{
+		Mode:     hybrid.ModeHybrid,
+		FreeText: p.FreeText,
+		Limit:    SearchPool,
+		Filter:   vector.Filter{After: p.After, Before: p.Before, MessageTypes: types},
+	}
+	for _, term := range p.Terms {
+		request.SubjectTerms = append(request.SubjectTerms, strings.ToLower(term))
+	}
+	hits, meta, err := s.Retriever.Search(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	scores, err := s.vectorScores(ctx, hits, meta)
+	if err != nil {
+		return nil, err
+	}
+	counted := similarities(scores, hits, p.MinScore)
+	if len(counted) > 0 && (meta.PoolSaturated || len(hits) >= SearchPool) {
+		out.Limits = append(out.Limits, LimitPoolFull)
+	}
+	return s.attribute(ctx, counted)
+}
+
 type scoredHit struct {
 	messageID  int64
 	similarity float64
 }
 
+// vectorScores maps each hit the meaning search returned to its cosine
+// similarity to the topic. A keyword-only hit has none.
+func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta) (map[int64]float64, error) {
+	scores := map[int64]float64{}
+	for _, hit := range hits {
+		if !math.IsNaN(hit.VectorScore) {
+			scores[hit.MessageID] = hit.VectorScore
+		}
+	}
+	scorer, ok := s.Index.(cosineScorer)
+	if !ok || len(scores) == 0 {
+		return scores, nil
+	}
+	return scorer.MessageCosines(ctx, meta.Generation.ID, meta.QueryVector, slices.Collect(maps.Keys(scores)))
+}
+
 // similarities returns the hits whose cosine similarity to the topic reaches
-// the floor, in search order. A hit the meaning search did not return, such
-// as a keyword-only match, does not count.
-func (s *Service) similarities(hits []vector.FusedHit, floor float64) []scoredHit {
+// the floor, in search order. A hit with no score does not count.
+func similarities(scores map[int64]float64, hits []vector.FusedHit, floor float64) []scoredHit {
 	var out []scoredHit
 	for _, hit := range hits {
-		if math.IsNaN(hit.VectorScore) {
-			continue
-		}
-		similarity := hit.VectorScore
-		if s.L2Scores {
-			// For unit-length vectors, as search ranking assumes, L2
-			// distance d and cosine similarity c satisfy d*d = 2 - 2c.
-			d := 1 - similarity
-			similarity = 1 - d*d/2
-		}
-		if similarity >= floor {
+		if similarity, ok := scores[hit.MessageID]; ok && similarity >= floor {
 			out = append(out, scoredHit{messageID: hit.MessageID, similarity: similarity})
 		}
 	}

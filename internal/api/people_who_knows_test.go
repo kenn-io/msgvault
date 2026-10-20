@@ -82,6 +82,11 @@ func (b *whoKnowsBackend) FusedSearch(_ context.Context, r vector.FusedRequest) 
 	return b.hits, vector.SearchMetadata{}, b.err
 }
 
+// EmbeddedMessageCountForIDs reports every message as embedded.
+func (b *whoKnowsBackend) EmbeddedMessageCountForIDs(_ context.Context, _ vector.GenerationID, ids []int64) (int64, error) {
+	return int64(len(ids)), nil
+}
+
 type whoKnowsEmbedder struct{ err error }
 
 func (e whoKnowsEmbedder) EmbedQuery(context.Context, string) ([]float32, error) {

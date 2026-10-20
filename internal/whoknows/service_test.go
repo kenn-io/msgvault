@@ -317,26 +317,6 @@ func TestFindReportsAFullPoolBesideResults(t *testing.T) {
 	assert.Equal(t, []string{whoknows.LimitPoolFull}, got.Limits)
 }
 
-// sqlite-vec scores a hit as 1 - L2 distance. For unit-length vectors that
-// converts exactly to cosine similarity, so the floor means the same on both
-// backends.
-func TestFindReadsSQLiteScoresAsCosine(t *testing.T) {
-	assert := assert.New(t)
-	f := newServiceFixture(t)
-	f.service.L2Scores = true
-	near := f.EnsureParticipant("near@example.net", "Near", "example.net")
-	far := f.EnsureParticipant("far@example.net", "Far", "example.net")
-	l2Score := func(cosine float64) float64 { return 1 - math.Sqrt(2-2*cosine) }
-	f.message("near", near, 1, l2Score(.6))
-	f.message("far", far, 1, l2Score(.4))
-	assert.Greater(.5, l2Score(.6), "the raw score sits below the floor")
-
-	got := f.find("kubernetes networking")
-	require.Len(t, got.UnsavedContacts, 1)
-	assert.Equal(near, got.UnsavedContacts[0].ParticipantID)
-	assert.InDelta(math.Log1p(.6*math.Exp2(-1.0/180)), got.UnsavedContacts[0].MessageScore, 1e-9)
-}
-
 // Linked addresses are one sender, and so are the addresses of one saved
 // person, so each ranks once.
 func TestFindRanksLinkedAddressesOnce(t *testing.T) {
