@@ -2232,11 +2232,9 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	return jsonResult(aggregateResponse{Data: nonNilSlice(rows)})
 }
 
-// limitArg extracts a non-negative integer limit from a map, with a default.
-// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
-// result sets.
 // intArg extracts a non-negative integer from args without the maxLimit clamp
-// used by limitArg. Suitable for body-text offsets and similar unbounded values.
+// used by limitArg. It reads unbounded non-negative integers such as
+// pagination and body offsets.
 func intArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {
@@ -2248,6 +2246,9 @@ func intArg(args map[string]any, key string, def int) int {
 	return int(v)
 }
 
+// limitArg extracts a non-negative integer limit from a map, with a default.
+// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
+// result sets.
 func limitArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {

@@ -4095,20 +4095,15 @@ func TestSearchByDomains(t *testing.T) {
 	})
 }
 
-// sequentialMessages returns up to limit summaries with IDs offset+1 through total.
-func sequentialMessages(total, offset, limit int) []query.MessageSummary {
-	var rows []query.MessageSummary
-	for id := offset + 1; id <= total && len(rows) < limit; id++ {
-		rows = append(rows, query.MessageSummary{ID: int64(id)})
-	}
-	return rows
-}
-
 func TestListMessagesPagesPastOffsetCeiling(t *testing.T) {
 	const total = 1100
 	eng := &querytest.MockEngine{
 		ListMessagesFunc: func(_ context.Context, filter query.MessageFilter) ([]query.MessageSummary, error) {
-			return sequentialMessages(total, filter.Pagination.Offset, filter.Pagination.Limit), nil
+			var rows []query.MessageSummary
+			for id := filter.Pagination.Offset + 1; id <= total && len(rows) < filter.Pagination.Limit; id++ {
+				rows = append(rows, query.MessageSummary{ID: int64(id)})
+			}
+			return rows, nil
 		},
 	}
 	h := newTestHandlers(eng)
