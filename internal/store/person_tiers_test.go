@@ -1,0 +1,325 @@
+package store_test
+
+import (
+	"database/sql"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/persontiers"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
+)
+
+var tierAsOf = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+
+func tierOptions() store.PersonTierOptions {
+	return store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: tierAsOf}
+}
+
+// newTierPerson saves a person bound to a new participant and returns the
+// person and participant IDs.
+func newTierPerson(t *testing.T, f *storetest.Fixture, name string) (int64, int64) {
+	t.Helper()
+	require := require.New(t)
+	participant := f.EnsureParticipant(name+"@example.com", name, "example.com")
+	person, created, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(err)
+	require.True(created)
+	return person.ID, participant
+}
+
+// seedTierMail writes one message per entry. A negative day offset is that
+// many days before tierAsOf; outbound entries are sent by the owner.
+func seedTierMail(t *testing.T, f *storetest.Fixture, participant int64, owner int64, mail []tierMail) {
+	t.Helper()
+	require := require.New(t)
+	for i, m := range mail {
+		from, to := participant, owner
+		if m.outbound {
+			from, to = owner, participant
+		}
+		message := f.NewMessage().
+			WithSourceMessageID(fmt.Sprintf("tier-preview-%d-%d", participant, i)).
+			WithSentAt(tierAsOf.AddDate(0, 0, m.day)).Build()
+		message.SenderID = sql.NullInt64{Int64: from, Valid: true}
+		id, err := f.Store.UpsertMessage(message)
+		require.NoError(err)
+		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+	}
+}
+
+type tierMail struct {
+	day      int
+	outbound bool
+}
+
+// alternating returns one message a day on the given offsets, outbound on
+// even positions.
+func alternating(days ...int) []tierMail {
+	mail := make([]tierMail, len(days))
+	for i, day := range days {
+		mail[i] = tierMail{day: day, outbound: i%2 == 0}
+	}
+	return mail
+}
+
+type tierPeople struct {
+	f                                      *storetest.Fixture
+	frequent, regular, oneWay, old, latest int64
+}
+
+// newTierPeople saves five people: frequent (tier 1), regular (tier 2), oneWay
+// (inbound only, tier 3), old (mail only 400 days ago, tier 3) and latest
+// (tier 1 with the newest contact, saved last).
+func newTierPeople(t *testing.T) tierPeople {
+	t.Helper()
+	f := storetest.New(t)
+	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	p := tierPeople{f: f}
+	var frequentParticipant, regularParticipant, oneWayParticipant, oldParticipant int64
+	p.frequent, frequentParticipant = newTierPerson(t, f, "frequent")
+	seedTierMail(t, f, frequentParticipant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	p.regular, regularParticipant = newTierPerson(t, f, "regular")
+	seedTierMail(t, f, regularParticipant, owner, alternating(-100, -120, -140, -160))
+	p.oneWay, oneWayParticipant = newTierPerson(t, f, "oneway")
+	seedTierMail(t, f, oneWayParticipant, owner, []tierMail{{-1, false}, {-2, false}, {-3, false}, {-4, false}})
+	p.old, oldParticipant = newTierPerson(t, f, "old")
+	seedTierMail(t, f, oldParticipant, owner, alternating(-400, -401))
+	var latestParticipant int64
+	p.latest, latestParticipant = newTierPerson(t, f, "latest")
+	seedTierMail(t, f, latestParticipant, owner, alternating(0, -2, -4, -6, -8, -10, -12, -14))
+	projectTierSignals(t, f, "UTC", 25)
+	return p
+}
+
+func previewTiers(t *testing.T, p tierPeople, tier int) *store.PersonTierPreview {
+	t.Helper()
+	preview, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), tier)
+	require.NoError(t, err)
+	return preview
+}
+
+func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	_, err := p.f.Store.SetPersonTrackingContext(t.Context(), p.regular, true)
+	require.NoError(err)
+
+	preview := previewTiers(t, p, 0)
+
+	assert.Equal("2026-10-17", preview.AsOf)
+	assert.True(preview.Readiness.Ready)
+	require.Len(preview.People, 3)
+	frequent, regular := preview.People[1], preview.People[2]
+	assert.Equal(p.frequent, frequent.PersonID)
+	require.NotNil(frequent.DisplayName)
+	assert.Equal("frequent", *frequent.DisplayName)
+	assert.Equal(1, frequent.Tier)
+	assert.Equal("tier1_intensity", frequent.Rule)
+	assert.False(frequent.Tracked)
+	require.NotNil(frequent.LastContactDate)
+	assert.Equal("2026-10-16", *frequent.LastContactDate)
+	assert.Equal(p.regular, regular.PersonID)
+	assert.Equal(2, regular.Tier)
+	assert.Equal("tier2_two_way", regular.Rule)
+	assert.True(regular.Tracked)
+}
+
+func TestPreviewPersonTiersOrdersByTierThenMostRecentContact(t *testing.T) {
+	p := newTierPeople(t)
+	var ids []int64
+	for _, row := range previewTiers(t, p, 0).People {
+		ids = append(ids, row.PersonID)
+	}
+	// "latest" was saved last but has the newest contact in tier 1.
+	assert.Equal(t, []int64{p.latest, p.frequent, p.regular}, ids)
+}
+
+func TestPreviewPersonTiersFiltersByTier(t *testing.T) {
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	tierOne := previewTiers(t, p, 1)
+	require.Len(t, tierOne.People, 2)
+	assert.Equal(p.latest, tierOne.People[0].PersonID)
+	assert.Equal(p.frequent, tierOne.People[1].PersonID)
+	tierTwo := previewTiers(t, p, 2)
+	require.Len(t, tierTwo.People, 1)
+	assert.Equal(p.regular, tierTwo.People[0].PersonID)
+}
+
+func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	// Bare profiles with no participants fill the first page.
+	for i := range 500 {
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO persons (vcard_uid) VALUES (?)`), fmt.Sprintf("bulk-%d", i))
+		require.NoError(err)
+	}
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	// The last saved person sits on the second page of 500.
+	late, lateParticipant := newTierPerson(t, f, "late")
+	seedTierMail(t, f, lateParticipant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	projectTierSignals(t, f, "UTC", 25)
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
+	require.NoError(err)
+	require.Len(preview.People, 1)
+	assert.Equal(late, preview.People[0].PersonID)
+}
+
+func TestPreviewPersonTiersWarnsWhenProjectionIsBehind(t *testing.T) {
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	p.f.CreateMessage("unprojected-tier-message")
+	preview := previewTiers(t, p, 0)
+	assert.False(preview.Readiness.Ready)
+	assert.Contains(preview.Readiness.Reasons, "watermark_behind")
+	assert.Len(preview.People, 3, "counts are still reported")
+}
+
+func TestPreviewPersonTiersRejectsBadRequests(t *testing.T) {
+	p := newTierPeople(t)
+	badConfig := tierOptions()
+	badConfig.Config.ShortWindowDays = 0
+	for name, tc := range map[string]struct {
+		options store.PersonTierOptions
+		tier    int
+	}{
+		"tier three": {tierOptions(), 3},
+		"negative":   {tierOptions(), -1},
+		"bad config": {badConfig, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := p.f.Store.PreviewPersonTiersContext(t.Context(), tc.options, tc.tier)
+			require.ErrorIs(t, err, store.ErrInvalidPersonTierRequest)
+		})
+	}
+}
+
+func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
+	require.NoError(t, err)
+	assert.Equal(2, explanation.Tier)
+	assert.Equal("tier2_two_way", explanation.Rule)
+	assert.Empty(explanation.Exclusion)
+	assert.Equal(2, explanation.Signals.OutboundLong)
+	assert.Equal(2, explanation.Signals.InboundLong)
+	assert.Equal(4, explanation.Signals.ActiveDaysLong)
+	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
+		Name: "tier2.min_active_days_long", Observed: 4, Required: 3, Enabled: true, Met: true,
+	})
+	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
+		Name: "tier1.min_outbound_short", Observed: 0, Required: 2, Enabled: true,
+	})
+}
+
+func TestExplainPersonTierReportsDormantPersonWithLastContact(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	p := newTierPeople(t)
+	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.old, tierOptions())
+	require.NoError(err)
+	assert.Equal(3, explanation.Tier)
+	assert.Equal("none", explanation.Rule)
+	require.NotNil(explanation.LastContactDate)
+	assert.Equal("2025-09-12", *explanation.LastContactDate)
+}
+
+func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	personID, participant := newTierPerson(t, f, "noreply")
+	seedTierMail(t, f, participant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	projectTierSignals(t, f, "UTC", 25)
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, tierOptions())
+	require.NoError(err)
+	assert.Equal(3, explanation.Tier)
+	assert.Equal("tier1_intensity", explanation.Rule)
+	assert.Equal("automated_address", explanation.Exclusion)
+}
+
+func TestExplainPersonTierRejectsUnknownAndInvalidPeople(t *testing.T) {
+	require := require.New(t)
+	p := newTierPeople(t)
+	_, err := p.f.Store.ExplainPersonTierContext(t.Context(), 99999, tierOptions())
+	require.ErrorIs(err, store.ErrPersonNotFound)
+	_, err = p.f.Store.ExplainPersonTierContext(t.Context(), 0, tierOptions())
+	require.ErrorIs(err, store.ErrInvalidPersonTierRequest)
+}
+
+func TestPersonTiersFollowTheStoredProjectionNotTheConfig(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	a := newAudienceFixture(t)
+	x := a.f.EnsureParticipant("x@example.com", "X", "example.com")
+	y := a.f.EnsureParticipant("y@example.com", "Y", "example.com")
+	a.message(t, "stored-limit", -1, a.f.ConvID, "", a.owner, x, y)
+	projectTierSignals(t, a.f, "UTC", 25)
+	options := store.PersonTierOptions{
+		Config: persontiers.DefaultConfig(), AsOf: tierAsOf, ActivityTimezone: "UTC", ActivityMaxDirect: 25,
+	}
+
+	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
+	require.NoError(err)
+	assert.False(explanation.Provisional)
+
+	options.ActivityMaxDirect = 1
+	explanation, err = a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, options)
+	require.NoError(err)
+	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, explanation.Projection)
+	assert.True(explanation.Provisional)
+	assert.Equal(1, explanation.Signals.InboundLong, "a limit of 1 would have dropped this message")
+	assert.Zero(explanation.Signals.LargeAudienceInboundEvents)
+
+	preview, err := a.f.Store.PreviewPersonTiersContext(t.Context(), options, 0)
+	require.NoError(err)
+	assert.True(preview.Provisional)
+	assert.Equal(25, preview.Projection.MaxDirect)
+}
+
+func TestPersonTiersReportLastContactInTheProjectionTimezone(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	a := newAudienceFixture(t)
+	// 02:30 UTC on the 17th is still the evening of the 16th in New York.
+	id := a.f.NewMessage().WithSourceMessageID("late-evening").
+		WithSentAt(time.Date(2026, 10, 17, 2, 30, 0, 0, time.UTC)).Create(t, a.f.Store)
+	require.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{a.sender}, nil))
+	require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{a.owner}, nil))
+	projectTierSignals(t, a.f, "America/New_York", 25)
+
+	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
+
+	require.NoError(err)
+	assert.Equal("America/New_York", explanation.Projection.Timezone)
+	require.NotNil(explanation.LastContactDate)
+	assert.Equal("2026-10-16", *explanation.LastContactDate)
+	assert.Equal("2026-10-17", explanation.AsOf)
+}
+
+func TestPreviewPersonTiersBeforeAnyProjectionUsesDefaults(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	options := tierOptions()
+	options.ActivityTimezone, options.ActivityMaxDirect = "America/New_York", 10
+
+	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), options, 0)
+
+	require.NoError(err)
+	assert.Equal(store.PersonTierProjection{Timezone: "UTC", MaxDirect: 25}, preview.Projection)
+	assert.False(preview.Provisional, "nothing is stored to differ from")
+	assert.Empty(preview.People)
+}
