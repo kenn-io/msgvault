@@ -24,7 +24,8 @@ import type {
   OperationStatusAuthority,
   OperationState
 } from './models';
-import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue, trimSpace } from './models';
+import { DEFAULT_EXPLORE_COLUMNS, identityDirection, sameFilterID, singleSourceValue } from './models';
+import { trimAttributeText } from '../directory/attribute-text';
 import { isCalendarDate } from '../directory/dates';
 import { isGroupingDimension, validateGroupingChain } from '../grouping/catalog';
 import { hasValidSearchAuthority, predicateFingerprint } from './selection';
@@ -243,7 +244,7 @@ function filters(value: unknown): ExploreFilter[] {
   const validIdentity = identity !== undefined &&
     identity.values.length === 3 &&
     sameFilterID(identity.values[0], sourceValue) &&
-    trimSpace(identity.values[1]!) !== '' &&
+    trimAttributeText(identity.values[1]!) !== '' &&
     identityDirection(identity.values[2]) !== undefined;
   return copied.filter((filter) => filter.dimension !== 'identity' || validIdentity);
 }

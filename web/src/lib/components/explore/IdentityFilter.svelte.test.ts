@@ -20,13 +20,16 @@ function catalog(identities: string[] = ['primary@example.test', 'shop@example.t
 
 describe('IdentityFilter', () => {
   it.each([
-    ['+14', '014', 'SENDER'],
-    ['14', '+14', 'recipient'],
-    ['9007199254740993', '+09007199254740993', 'sender'],
-    ['\u00851', '1', 'any'],
-    [['1', ' 1'], '1', 'any'],
-    ['1', '1', 'any', ' shop@example.test ']
-  ])('keeps restored source %j and identity %j selected', async (source, identitySource, direction, identifier = 'shop@example.test') => {
+    { source: '+14', identitySource: '014', direction: 'SENDER', requested: '14', label: 'Sent via' },
+    { source: '14', identitySource: '+14', direction: 'recipient', requested: '14', label: 'Received via' },
+    { source: '14', identitySource: '14', direction: 'RECİPİENT', requested: '14', label: 'Received via' },
+    { source: '9007199254740993', identitySource: '+09007199254740993', direction: 'sender', label: 'Sent via' },
+    { source: '\u00851', identitySource: '1', direction: 'any', requested: '1', label: 'Any' },
+    { source: ['1', ' 1'], identitySource: '1', direction: 'any', requested: '1', label: 'Any' },
+    { source: '1', identitySource: '1', direction: 'any', requested: '1', label: 'Any', identifier: ' shop@example.test ' }
+  ])('keeps restored source $source and identity $identitySource selected', async ({
+    source, identitySource, direction, requested, label, identifier = 'shop@example.test'
+  }) => {
     const onChange = vi.fn<(filters: ExploreFilter[]) => void>();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
     render(IdentityFilter, {
@@ -39,14 +42,18 @@ describe('IdentityFilter', () => {
     });
 
     const identity = await screen.findByRole('combobox', { name: /^Identity: shop@example\.test/ });
+    expect(screen.getByRole('combobox', { name: `Identity direction: ${label}` })).toBeDefined();
     await waitFor(() => expect(identity).toHaveProperty('disabled', false));
-    expect(onChange).not.toHaveBeenCalled();
-    if (identitySource.includes('9007199254740993')) {
+    if (requested === undefined) {
       // The catalog endpoint takes a JSON-number ID; never request a rounded source.
       expect(fetchFn).not.toHaveBeenCalled();
     } else {
+      expect(fetchFn).toHaveBeenCalledOnce();
+      expect(new URL((fetchFn.mock.calls[0]![0] as Request).url).pathname)
+        .toBe(`/api/v1/sources/${requested}/identities`);
       expect(identity.getAttribute('aria-label')).not.toContain('unavailable');
     }
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it('appears only for exactly one source and does not create source or account options', async () => {

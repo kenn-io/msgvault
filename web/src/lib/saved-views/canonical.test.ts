@@ -48,6 +48,7 @@ describe('saved-view canonical state', () => {
     [' 1', '1 ', 'SENDER'],
     ['01', '+1', 'any'],
     ['9223372036854775807', '+09223372036854775807', ' recipient '],
+    ['1', '1', 'RECİPİENT'],
     ['\u00851', '1', 'any'],
     [['1', ' 1'], '1', 'sender']
   ])('keeps identity %j/%j/%j on open and URL-only reload', (source, identity, direction) => {

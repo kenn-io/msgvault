@@ -4,7 +4,8 @@
   import { onDestroy } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter, IdentityDirection, SourceIdentityResponse } from '../../explore/models';
-  import { filterID, identityDirection, sameFilterID, singleSourceValue, trimSpace } from '../../explore/models';
+  import { filterID, identityDirection, sameFilterID, singleSourceValue } from '../../explore/models';
+  import { trimAttributeText } from '../../directory/attribute-text';
   let {
     client,
     filters,
@@ -22,7 +23,7 @@
   const sourceID = $derived(singleSourceID(filters));
   const selectedIdentity = $derived(validIdentityFilter(filters, sourceID));
   const storedIdentifier = $derived(selectedIdentity?.values[1] ?? '');
-  const identifier = $derived(trimSpace(storedIdentifier));
+  const identifier = $derived(trimAttributeText(storedIdentifier));
   const direction = $derived(identityDirection(selectedIdentity?.values[2]) ?? 'any');
   const identityOptions = $derived([
     { value: '', label: 'Any confirmed identity' },
@@ -59,7 +60,7 @@
     const numericSourceID = Number(bigSourceID);
     // The catalog client takes a JSON-number ID. Keep the restored filter
     // usable without requesting a different source through a rounded number.
-    if (!Number.isSafeInteger(numericSourceID) || BigInt(numericSourceID) !== bigSourceID) {
+    if (!Number.isSafeInteger(numericSourceID)) {
       loading = false;
       error = 'Unable to load confirmed identities.';
       return;
