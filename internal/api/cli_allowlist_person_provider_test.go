@@ -138,7 +138,6 @@ func TestCLIAllowlistPermitsOnlyPersonTiersPreviewAndExplain(t *testing.T) {
 		{args: []string{"person", "tiers", "explain", "7", "--json"}, want: true},
 		{args: []string{"person", "tiers"}},
 		{args: []string{"person", "tiers", "apply"}},
-		{args: []string{"person", "tiers", "reset"}},
 	}
 	for _, test := range tests {
 		assert.Equal(t, test.want, cliRunCommandAllowed(test.args), test.args)

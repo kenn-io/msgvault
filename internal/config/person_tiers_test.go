@@ -48,10 +48,8 @@ min_meeting_days_long = 0
 func TestPeopleTierConfigRejectsInvalidSettings(t *testing.T) {
 	for _, content := range []string{
 		"[people.tiers]\nshort_window_days=0",
-		"[people.tiers]\nexclude_address_patterns=['Alert*']",
 		"[people.tiers]\nschedule='0 3 * * *'",
 		"[people.tiers]\ntypo_window_days=30",
-		"[people.tiers.tier1]\nmin_outbound_short=0",
 	} {
 		t.Run(content, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.toml")

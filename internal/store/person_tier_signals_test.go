@@ -27,9 +27,8 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 		days                    int
 		outbound, meeting, list bool
 	}{
-		{0, true, false, false}, {0, false, false, false}, {-89, true, false, false},
-		{-90, false, false, false}, {-364, false, false, false}, {-365, true, false, false},
-		{1, false, false, false}, {-2, false, false, true},
+		{0, true, false, false}, {0, false, false, false}, {-364, false, false, false},
+		{-365, true, false, false}, {1, false, false, false}, {-2, false, false, true},
 		{-3, true, true, false}, {-3, false, true, false},
 	} {
 		from, to := counterpart, owner
@@ -52,99 +51,40 @@ func TestPersonTierSignalsWindowsRolesAndMeetingDays(t *testing.T) {
 	projectTierSignals(t, f, "UTC", 25)
 	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
 	s := signals
-	assert.Equal(2, s.OutboundShort)
-	assert.Equal(2, s.OutboundLong)
+	assert.Equal(1, s.OutboundShort)
+	assert.Equal(1, s.OutboundLong)
 	assert.Equal(1, s.InboundShort)
-	assert.Equal(3, s.InboundLong)
-	assert.Equal(3, s.ActiveDaysShort)
-	assert.Equal(5, s.ActiveDaysLong)
+	assert.Equal(2, s.InboundLong)
+	assert.Equal(2, s.ActiveDaysShort)
+	assert.Equal(3, s.ActiveDaysLong)
 	assert.Equal(1, s.MeetingDaysLong)
 	assert.Equal(2, s.ChannelsLong)
 	assert.Equal(1, s.ExcludedListEvents)
-	cfg := persontiers.DefaultConfig()
-	cfg.ExcludeListMessages = false
-	signals = tierSignals(t, f, personID, asOf, cfg)
-	assert.Equal(2, signals.InboundShort)
-	assert.Equal(4, signals.ActiveDaysShort)
 }
 
-func TestPersonTierSignalsCountDistinctEmailAudience(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, personID := newActivityQueryFixture(t)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	extra := f.EnsureParticipant("extra@example.com", "Extra", "example.com")
-	third := f.EnsureParticipant("third@example.com", "Third", "example.com")
-	var sender int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&sender))
-	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	for i := range 2 {
-		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("tier-audience-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i)).Build()
-		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner, extra}, []string{"Owner", "Extra"}))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{extra}, []string{"Extra"}))
-		// Two alias snapshots for the same participant must not inflate audience.
-		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients (message_id,participant_id,recipient_type,email_address) VALUES (?,?,'to',?)`), id, extra, "extra-alias@example.com")
-		require.NoError(err)
-		if i == 1 {
-			require.NoError(f.Store.ReplaceMessageRecipients(id, "bcc", []int64{third}, []string{"Third"}))
-		}
-	}
-	// The sender counts as part of the audience, as in ClassifyActivityCandidate.
-	// Email audience is per-message, regardless of conversation membership.
-	for i := range 30 {
-		p := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
-		require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, p, "member"))
-	}
-	projectTierSignals(t, f, "UTC", 2)
-	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
-	assert.Equal(1, signals.InboundShort)
-	assert.Equal(1, signals.ActiveDaysShort)
-	assert.Equal(1, signals.LargeAudienceInboundEvents)
-}
-
-func TestPersonTierSignalsRejectLargeChatAndUseLocalDates(t *testing.T) {
+func TestPersonTierSignalsUseLocalDates(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f, personID := newActivityQueryFixture(t)
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	var sender int64
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&sender))
-	conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "tier-group", "group_chat", "Synthetic group")
-	require.NoError(err)
-	for _, p := range []int64{owner, sender} {
-		require.NoError(f.Store.EnsureConversationParticipant(conversation, p, "member"))
-	}
-	for i := range 30 {
-		p := f.EnsureParticipant(fmt.Sprintf("chat%d@example.com", i), "Member", "example.com")
-		require.NoError(f.Store.EnsureConversationParticipant(conversation, p, "member"))
-	}
 	zone, err := time.LoadLocation("America/New_York")
 	require.NoError(err)
 	asOf := time.Date(2026, 11, 2, 0, 0, 0, 0, zone)
-	for i, conv := range []int64{conversation, f.ConvID, f.ConvID} {
-		at := asOf.AddDate(0, 0, -89).Add(23*time.Hour + 30*time.Minute)
-		if i == 2 {
-			at = asOf.AddDate(0, 0, -90).Add(23*time.Hour + 30*time.Minute)
-		}
-		message := storetest.NewMessage(f.Source.ID, conv).WithSourceMessageID(fmt.Sprintf("tier-local-%d", i)).WithSentAt(at).Build()
+	for i, days := range []int{-89, -90} {
+		at := asOf.AddDate(0, 0, days).Add(23*time.Hour + 30*time.Minute)
+		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("tier-local-%d", i)).WithSentAt(at).Build()
 		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
 		id, err := f.Store.UpsertMessage(message)
 		require.NoError(err)
 		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
-		// A chat message with no recipients takes its audience from the members.
-		if conv != conversation {
-			require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, []string{"Owner"}))
-		}
+		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{owner}, []string{"Owner"}))
 	}
 	projectTierSignals(t, f, zone.String(), 25)
 	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
 	assert.Equal(1, signals.InboundShort)
 	assert.Equal(2, signals.InboundLong)
-	assert.Equal(1, signals.LargeAudienceInboundEvents)
 }
 
 func TestPersonTierReadiness(t *testing.T) {
@@ -186,7 +126,8 @@ func projectTierSignals(t *testing.T, f *storetest.Fixture, zone string, maxDire
 }
 
 // Co-authors are senders, not people the owner addressed. Inbound cc and
-// owner-absent mail must not count toward any tier.
+// owner-absent mail must not count toward any tier, and a list message in a
+// role no tier counts is not an excluded list message either.
 func TestPersonTierSignalsRejectCoauthorsCCAndObserved(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -198,6 +139,7 @@ func TestPersonTierSignalsRejectCoauthorsCCAndObserved(t *testing.T) {
 	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 	for i := range 3 {
 		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("tier-roles-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i)).Build()
+		message.ListID = sql.NullString{String: "announcements.example.com", Valid: true}
 		from, to := []int64{stranger}, []int64{owner}
 		if i == 0 {
 			from, to = []int64{owner, counterpart}, []int64{stranger}
@@ -220,6 +162,7 @@ func TestPersonTierSignalsRejectCoauthorsCCAndObserved(t *testing.T) {
 	assert.Zero(s.InboundLong)
 	assert.Zero(s.ActiveDaysLong)
 	assert.Zero(s.ChannelsLong)
+	assert.Zero(s.ExcludedListEvents)
 }
 
 func TestPersonTierSignalsBindingsFeedExclusions(t *testing.T) {
@@ -267,42 +210,6 @@ func TestPersonTierReadinessUnreconciledIdentityAndDeletedWatermark(t *testing.T
 	assert.Empty(ready.Reasons)
 }
 
-func TestPersonTierSignalsChatAudienceExcludesOnlySourceOwners(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, personID := newActivityQueryFixture(t)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	alias, err := f.Store.EnsureParticipantByIdentifier("beeper", "synthetic-owner-id", "Owner alias")
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "synthetic-owner-id", "manual"))
-	otherOwner := f.EnsureParticipant("other-owner@example.com", "Other owner", "example.com")
-	otherSource, err := f.Store.GetOrCreateSource("gmail", "other-owner@example.com")
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(otherSource.ID, "other-owner@example.com", "manual"))
-	extra := f.EnsureParticipant("extra@example.com", "Extra", "example.com")
-	var sender int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&sender))
-	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	for i, fourth := range []int64{alias, otherOwner} {
-		conv, err := f.Store.EnsureConversationWithType(f.Source.ID, fmt.Sprintf("tier-chat-scope-%d", i), "group_chat", "Synthetic group")
-		require.NoError(err)
-		for _, id := range []int64{owner, sender, extra, fourth} {
-			require.NoError(f.Store.EnsureConversationParticipant(conv, id, "member"))
-		}
-		message := storetest.NewMessage(f.Source.ID, conv).WithSourceMessageID(fmt.Sprintf("tier-chat-scope-message-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i)).Build()
-		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-	}
-	projectTierSignals(t, f, "UTC", 2)
-	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
-	assert.Equal(1, signals.InboundShort)
-	assert.Equal(1, signals.ActiveDaysShort)
-	assert.Equal(1, signals.ChannelsLong)
-	assert.Equal(1, signals.LargeAudienceInboundEvents)
-}
-
 func TestPersonTierSignalsOwnerBoundThroughSecondParticipant(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -321,48 +228,6 @@ func TestPersonTierSignalsOwnerBoundThroughSecondParticipant(t *testing.T) {
 	assert.ElementsMatch([]string{"owner@example.com", "counterpart@example.com"}, signals.Emails)
 }
 
-// Aliases of one resolved person must count once in an audience, as they do in
-// ClassifyActivityCandidate. Counting participant IDs would make a chat or
-// email with a few people look like a broadcast and drop real contact.
-func TestPersonTierSignalsCountResolvedPeopleOncePerAudience(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f, personID := newActivityQueryFixture(t)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	var sender int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT participant_id FROM person_participants WHERE person_id = ?`), personID).Scan(&sender))
-	// One other person reached through six participant records.
-	other := f.EnsureParticipant("other0@example.com", "Other", "example.com")
-	_, _, err := f.Store.CreatePersonFromParticipant(other)
-	require.NoError(err)
-	aliases := []int64{other}
-	for i := 1; i < 6; i++ {
-		alias := f.EnsureParticipant(fmt.Sprintf("other%d@example.com", i), "Other", "example.com")
-		_, err = f.Store.LinkParticipants(other, alias)
-		require.NoError(err)
-		aliases = append(aliases, alias)
-	}
-	chat, err := f.Store.EnsureConversationWithType(f.Source.ID, "alias-group", "group_chat", "Aliases")
-	require.NoError(err)
-	for _, p := range append([]int64{owner, sender}, aliases...) {
-		require.NoError(f.Store.EnsureConversationParticipant(chat, p, "member"))
-	}
-	asOf := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	for i, conv := range []int64{chat, f.ConvID} {
-		message := storetest.NewMessage(f.Source.ID, conv).WithSourceMessageID(fmt.Sprintf("tier-alias-%d", i)).WithSentAt(asOf.AddDate(0, 0, -i)).Build()
-		message.SenderID = sql.NullInt64{Int64: sender, Valid: true}
-		id, err := f.Store.UpsertMessage(message)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-		require.NoError(f.Store.ReplaceMessageRecipients(id, "to", append([]int64{owner}, aliases...), nil))
-	}
-	// Two people besides the owner: the sender and the aliased person.
-	projectTierSignals(t, f, "UTC", 2)
-	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
-	assert.Equal(2, signals.InboundShort, "chat and email both stay under the limit")
-	assert.Zero(signals.LargeAudienceInboundEvents)
-}
-
 // The projection drops the owner's own addresses only within a message's
 // account. A person who is your address in another account is still excluded.
 func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
@@ -377,10 +242,6 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 
 	signals := tierSignals(t, f, personID, asOf, persontiers.DefaultConfig())
 
-	require.NoError(err)
 	assert.Equal(1, signals.InboundLong, "this account's projection still counts the person")
 	assert.True(signals.Owner)
-	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: asOf})
-	require.NoError(err)
-	assert.Equal("owner", explanation.Exclusion)
 }

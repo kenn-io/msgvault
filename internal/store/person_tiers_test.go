@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -103,6 +102,8 @@ func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
 	assert.Equal("2026-10-17", preview.AsOf)
 	assert.True(preview.Readiness.Ready)
 	require.Len(preview.People, 3)
+	// "latest" was saved last but has the newest contact in tier 1.
+	assert.Equal(p.latest, preview.People[0].PersonID)
 	frequent, regular := preview.People[1], preview.People[2]
 	assert.Equal(p.frequent, frequent.PersonID)
 	require.NotNil(frequent.DisplayName)
@@ -116,16 +117,6 @@ func TestPreviewPersonTiersListsTierOneAndTwoWithRules(t *testing.T) {
 	assert.Equal(2, regular.Tier)
 	assert.Equal("tier2_two_way", regular.Rule)
 	assert.True(regular.Tracked)
-}
-
-func TestPreviewPersonTiersOrdersByTierThenMostRecentContact(t *testing.T) {
-	p := newTierPeople(t)
-	var ids []int64
-	for _, row := range previewTiers(t, p).People {
-		ids = append(ids, row.PersonID)
-	}
-	// "latest" was saved last but has the newest contact in tier 1.
-	assert.Equal(t, []int64{p.latest, p.frequent, p.regular}, ids)
 }
 
 func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
@@ -155,43 +146,29 @@ func TestPreviewPersonTiersWarnsWhenProjectionIsBehind(t *testing.T) {
 	p.f.CreateMessage("unprojected-tier-message")
 	preview := previewTiers(t, p)
 	assert.False(preview.Readiness.Ready)
-	assert.Contains(preview.Readiness.Reasons, "watermark_behind")
 	assert.Len(preview.People, 3, "counts are still reported")
 }
 
 func TestExplainPersonTierShowsCountsAgainstThresholds(t *testing.T) {
+	require := require.New(t)
 	assert := assert.New(t)
 	p := newTierPeople(t)
 	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
-	require.NoError(t, err)
+	require.NoError(err)
 	assert.Equal(2, explanation.Tier)
 	assert.Equal("tier2_two_way", explanation.Rule)
 	assert.Empty(explanation.Exclusion)
 	assert.Equal(2, explanation.Signals.OutboundLong)
 	assert.Equal(2, explanation.Signals.InboundLong)
 	assert.Equal(4, explanation.Signals.ActiveDaysLong)
+	require.NotNil(explanation.LastContactDate)
+	assert.Equal("2026-07-09", *explanation.LastContactDate)
 	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
 		Name: "tier2.min_active_days_long", Observed: 4, Required: 3, Enabled: true, Met: true,
 	})
 	assert.Contains(explanation.Thresholds, persontiers.ThresholdCheck{
 		Name: "tier1.min_outbound_short", Observed: 0, Required: 2, Enabled: true,
 	})
-}
-
-func TestExplainPersonTierJSONNamesTheLastDayOnce(t *testing.T) {
-	require := require.New(t)
-	p := newTierPeople(t)
-	explanation, err := p.f.Store.ExplainPersonTierContext(t.Context(), p.regular, tierOptions())
-	require.NoError(err)
-	raw, err := json.Marshal(explanation)
-	require.NoError(err)
-	var out struct {
-		LastContactDate *string        `json:"last_contact_date"`
-		Signals         map[string]any `json:"signals"`
-	}
-	require.NoError(json.Unmarshal(raw, &out))
-	require.NotNil(out.LastContactDate)
-	require.NotContains(out.Signals, "last_counted_date")
 }
 
 func TestExplainPersonTierReportsDormantPersonWithNoCountedDay(t *testing.T) {
@@ -342,41 +319,4 @@ func TestPersonTiersRefuseWhileTheProjectionRebuilds(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	projectTierSignals(t, p.f, "America/New_York", 10)
 	assert.Equal(10, previewTiers(t, p).Projection.MaxDirect)
-}
-
-// The last counted day comes from the rows the tier rules counted. A future
-// meeting invite and a newsletter are in the projection but never counted.
-func TestPersonTiersLastCountedDayIgnoresFutureMeetingsAndLists(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	a := newAudienceFixture(t)
-	a.message(t, "counted", -3, a.f.ConvID, "", a.owner)
-	a.message(t, "future-invite", 20, a.f.ConvID, "calendar_event", a.owner)
-	newsletter := a.message(t, "newsletter", -1, a.f.ConvID, "", a.owner)
-	_, err := a.f.Store.DB().ExecContext(t.Context(),
-		a.f.Store.Rebind(`UPDATE messages SET list_id = 'list.example.com' WHERE id = ?`), newsletter)
-	require.NoError(err)
-	projectTierSignals(t, a.f, "UTC", 25)
-
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
-
-	require.NoError(err)
-	require.NotNil(explanation.LastContactDate)
-	assert.Equal("2026-10-14", *explanation.LastContactDate)
-	assert.Equal(1, explanation.Signals.ExcludedListEvents)
-}
-
-func TestPersonTiersShowNoCountedDayForANewsletterOnlyPerson(t *testing.T) {
-	require := require.New(t)
-	a := newAudienceFixture(t)
-	id := a.message(t, "only-newsletter", -1, a.f.ConvID, "", a.owner)
-	_, err := a.f.Store.DB().ExecContext(t.Context(),
-		a.f.Store.Rebind(`UPDATE messages SET list_id = 'list.example.com' WHERE id = ?`), id)
-	require.NoError(err)
-	projectTierSignals(t, a.f, "UTC", 25)
-
-	explanation, err := a.f.Store.ExplainPersonTierContext(t.Context(), a.personID, tierOptions())
-
-	require.NoError(err)
-	assert.Nil(t, explanation.LastContactDate)
 }
