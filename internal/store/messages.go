@@ -2454,7 +2454,7 @@ func (s *Store) persistMessageWith(
 	}
 
 	for _, rs := range data.Recipients {
-		if err := replaceMessageRecipientsTx(q, messageID, rs); err != nil {
+		if err := replaceMessageRecipientsTx(q, s.dialect, messageID, rs); err != nil {
 			return 0, fmt.Errorf("store %s recipients: %w", rs.Type, err)
 		}
 	}
@@ -2679,13 +2679,19 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 // ReplaceMessageRecipientsContext honors cancellation during ReplaceMessageRecipients.
 func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
+		// Contextual coverage takes this clock before locking message rows. The
+		// recipient invalidation below also updates messages, so acquire the same
+		// lock first to preserve that order.
+		if err := s.lockEmbeddingChangeClockSharedTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMessageForRecipientWrite(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
-		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, messageID, RecipientSet{
+		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, RecipientSet{
 			Type:           recipientType,
 			ParticipantIDs: participantIDs,
 			DisplayNames:   displayNames,
@@ -2722,13 +2728,26 @@ func (s *Store) lockMessageForRecipientWrite(q querier, messageID int64) error {
 	return nil
 }
 
-func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) error {
+func (s *Store) lockEmbeddingChangeClockSharedTxContext(ctx context.Context, tx *loggedTx) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(
+		hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
+		return fmt.Errorf("lock embedding-change clock for recipient write: %w", err)
+	}
+	return nil
+}
+
+func replaceMessageRecipientsTx(tx querier, dialect Dialect, messageID int64, rs RecipientSet) error {
 	unchanged, err := messageRecipientEnvelopeUnchangedWith(tx, messageID, rs)
 	if err != nil {
 		return err
 	}
 	if !unchanged {
-		if err := invalidateEnvelopeContextWith(tx, "support.id=? AND mr.recipient_type=?", messageID, rs.Type); err != nil {
+		if err := invalidateEnvelopeContextWithIncomingParticipants(
+			tx, dialect, "support.id=? AND mr.recipient_type=?", []any{messageID, rs.Type}, messageID, rs.ParticipantIDs,
+		); err != nil {
 			return err
 		}
 	}

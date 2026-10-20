@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -452,18 +453,61 @@ func FullParticipantDisplaySQL(alias string) string {
 // their stamps before removing support, inside the same write transaction.
 // Selection fragments are fixed SQL supplied by Store mutation paths.
 func invalidateEnvelopeContextWith(q querier, selection string, args ...any) error {
-	_, err := q.Exec(`WITH affected_participants AS (
+	_, err := q.Exec(envelopeContextInvalidationSQL(selection, ""), args...)
+	return err
+}
+
+func invalidateEnvelopeContextWithIncomingParticipants(
+	q querier, dialect Dialect, selection string, args []any, supportMessageID int64, participantIDs []int64,
+) error {
+	seen := make(map[int64]struct{}, len(participantIDs))
+	uniqueIDs := make([]int64, 0, len(participantIDs))
+	for _, id := range participantIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return invalidateEnvelopeContextWith(q, selection, args...)
+	}
+	encodedIDs, err := json.Marshal(uniqueIDs)
+	if err != nil {
+		return fmt.Errorf("encode incoming envelope participants: %w", err)
+	}
+	incomingParticipants := `SELECT CAST(value AS BIGINT) AS participant_id FROM json_each(?)`
+	if dialect.DriverName() == postgresDriverName {
+		incomingParticipants = `SELECT CAST(value AS BIGINT) AS participant_id
+ FROM jsonb_array_elements_text(CAST(? AS JSONB)) AS incoming(value)`
+	}
+	queryArgs := []any{string(encodedIDs)}
+	queryArgs = append(queryArgs, args...)
+	queryArgs = append(queryArgs, supportMessageID)
+	_, err = q.Exec(envelopeContextInvalidationSQL(selection, incomingParticipants), queryArgs...)
+	return err
+}
+
+func envelopeContextInvalidationSQL(selection, incomingParticipants string) string {
+	incomingCTE := ""
+	incomingSelection := ""
+	if incomingParticipants != "" {
+		incomingCTE = `incoming_participants AS (` + incomingParticipants + `), `
+		incomingSelection = ` UNION SELECT incoming.participant_id
+ FROM incoming_participants incoming
+ WHERE EXISTS(SELECT 1 FROM messages incoming_support WHERE incoming_support.id=? AND ` + LiveMessagesWhere("incoming_support", true) + ` AND ` + FullMessageWhere("incoming_support") + `)`
+	}
+	return `WITH ` + incomingCTE + `affected_participants AS (
  SELECT mr.participant_id FROM message_recipients mr
  JOIN messages support ON support.id=mr.message_id
- WHERE `+selection+` AND `+LiveMessagesWhere("support", true)+` AND `+FullMessageWhere("support")+`
+ WHERE ` + selection + ` AND ` + LiveMessagesWhere("support", true) + ` AND ` + FullMessageWhere("support") + incomingSelection + `
  ), affected_rooms AS (
  SELECT conversation_id FROM conversation_participants WHERE participant_id IN (SELECT participant_id FROM affected_participants)
  UNION SELECT conversation_id FROM messages WHERE sender_id IN (SELECT participant_id FROM affected_participants)
  )
  UPDATE messages SET embed_gen=NULL, embedding_revision=embedding_revision+1
  WHERE message_type='beeper' AND conversation_id IN (SELECT conversation_id FROM affected_rooms)
- AND `+FullMessageWhere("messages"), args...)
-	return err
+ AND ` + FullMessageWhere("messages")
 }
 
 // tombstoneEnvelopeMessagesWith covers provider tombstones and dedup hiding.

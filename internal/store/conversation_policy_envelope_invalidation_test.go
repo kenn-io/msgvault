@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -97,5 +98,79 @@ func TestConversationPolicyEnvelopeWithdrawalInvalidatesSharedContext(t *testing
 				assert.Greater(revision, before, "stale vectors must fail message revision visibility")
 			}
 		})
+	}
+}
+
+func TestConversationPolicyRecipientAdditionInvalidatesSharedContext(t *testing.T) {
+	for _, recipientType := range []string{"from", "to"} {
+		for _, recipientCount := range []int{1, 301} {
+			name := "one recipient"
+			if recipientCount > 1 {
+				name = "large recipient set"
+			}
+			t.Run(recipientType+"/"+name, func(t *testing.T) {
+				assertions := assert.New(t)
+				requirements := require.New(t)
+
+				s := testutil.NewTestStore(t)
+				source, err := s.GetOrCreateSource("beeper", "recipient-addition-context")
+				requirements.NoError(err)
+				supportRoom, err := s.EnsureConversation(source.ID, "support", "Support")
+				requirements.NoError(err)
+				targetRoom, err := s.EnsureConversation(source.ID, "target", "Target")
+				requirements.NoError(err)
+				requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "support", conversationpolicy.Full))
+				requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, "target", conversationpolicy.Full))
+
+				participantID, err := s.EnsureParticipantByIdentifier(
+					"beeper", "synthetic:shared-recipient", "Synthetic Shared Recipient")
+				requirements.NoError(err)
+				requirements.NoError(s.EnsureConversationParticipantContext(t.Context(), targetRoom, participantID, "member"))
+
+				supportMessageID, err := s.UpsertMessage(&store.Message{
+					SourceID: source.ID, ConversationID: supportRoom,
+					SourceMessageID: "support-envelope", MessageType: "beeper",
+				})
+				requirements.NoError(err)
+				targetMessageID, err := s.UpsertMessage(&store.Message{
+					SourceID: source.ID, ConversationID: targetRoom,
+					SourceMessageID: "target-context", MessageType: "beeper",
+				})
+				requirements.NoError(err)
+				requirements.NoError(s.SetEmbedGen(t.Context(), []int64{targetMessageID}, 73))
+
+				var eligible bool
+				requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT `+
+					store.FullParticipantNameWhere("p.id", "p.display_name")+
+					` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+				assertions.False(eligible, "the name has no Full envelope support yet")
+				var beforeRevision int64
+				requirements.NoError(s.DB().QueryRow(s.Rebind(
+					`SELECT embedding_revision FROM messages WHERE id=?`), targetMessageID).Scan(&beforeRevision))
+
+				participantIDs := []int64{participantID}
+				displayNames := []string{"Synthetic Shared Recipient"}
+				for i := 1; i < recipientCount; i++ {
+					fillerID, err := s.EnsureParticipantByIdentifier(
+						"beeper", "synthetic:shared-recipient-"+strconv.Itoa(i), "Synthetic Filler")
+					requirements.NoError(err)
+					participantIDs = append(participantIDs, fillerID)
+					displayNames = append(displayNames, "Synthetic Filler")
+				}
+				requirements.NoError(s.ReplaceMessageRecipients(
+					supportMessageID, recipientType, participantIDs, displayNames))
+
+				requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT `+
+					store.FullParticipantNameWhere("p.id", "p.display_name")+
+					` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+				assertions.True(eligible, "the first Full envelope now supports the name")
+				var afterGen sql.NullInt64
+				var afterRevision int64
+				requirements.NoError(s.DB().QueryRow(s.Rebind(
+					`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), targetMessageID).Scan(&afterGen, &afterRevision))
+				assertions.False(afterGen.Valid, "context that can now contain the newly eligible name must be rebuilt")
+				assertions.Greater(afterRevision, beforeRevision, "in-flight contextual publication must fail its revision check")
+			})
+		}
 	}
 }

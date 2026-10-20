@@ -330,7 +330,7 @@ func (s *Store) ApplySenderRepairContext(
 			recipientSet.DisplayNames[i] = addr.displayName
 			recipientSet.EmailAddresses[i] = addr.email
 		}
-		if err := replaceMessageRecipientsTx(q, messageID, recipientSet); err != nil {
+		if err := replaceMessageRecipientsTx(q, s.dialect, messageID, recipientSet); err != nil {
 			return fmt.Errorf("replace message %d From recipient: %w", messageID, err)
 		}
 		if err := refreshMessageAttributionWith(q, messageID); err != nil {
