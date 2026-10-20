@@ -2290,6 +2290,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventSnapshotFreshness, 1, false, s.backfillCalendarEventSnapshotFreshness); err != nil {
+		return fmt.Errorf("initialize calendar snapshot freshness: %w", err)
+	}
 
 	// Probe availability through the dialect so it works uniformly for
 	// backends that carry FTS inside their main schema. The probe is a query

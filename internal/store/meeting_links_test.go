@@ -61,6 +61,64 @@ func TestMeetingLinksSuccessiveExceptionTimestampForms(t *testing.T) {
 	}
 }
 
+func TestMeetingExceptionFreshnessBeforeWindowFiltering(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+	firstRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	secondRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00-04:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"}}`
+	_, first := calendarFixture(t, st, "instance", firstRaw)
+	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
+	requirements.NotEqual(first, second)
+
+	// The later alias initially wins. Updating the lower-ID alias in place must
+	// refresh its persisted snapshot time and make it the canonical exception.
+	older := time.Now().UTC().Add(-2 * time.Minute)
+	newer := older.Add(time.Minute)
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, older, first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, newer, second)
+	requirements.NoError(err)
+	updated := strings.Replace(firstRaw, `"2027-03-14T12:00:00Z"`, `"2027-04-01T12:00:00Z"`, 1)
+	updated = strings.Replace(updated, `"2027-03-14T13:00:00Z"`, `"2027-04-01T13:00:00Z"`, 1)
+	requirements.NoError(st.UpsertMessageRawWithFormat(first, []byte(updated), "gcal_json"))
+	var fresh time.Time
+	requirements.NoError(st.db.QueryRow(`SELECT snapshot_updated_at FROM calendar_events WHERE message_id = ?`, first).Scan(&fresh))
+	requirements.True(fresh.After(newer), "an in-place projection update must supersede a higher-ID alias")
+
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	oldWindow, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	assertions.Empty(oldWindow.Occurrences, "the old alias must not be resurrected after the winning move leaves the window")
+	newWindowStart := time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)
+	newWindow, err := st.ListCalendarOccurrencesContext(t.Context(), newWindowStart, newWindowStart.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(newWindow.Occurrences, 1)
+	assertions.Equal(first, newWindow.Occurrences[0].MessageID)
+	assertions.Equal(master, newWindow.Occurrences[0].SeriesMessageID)
+	assertions.Equal(newWindowStart.Add(12*time.Hour), newWindow.Occurrences[0].Start)
+
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	budget := calrecur.RequestReadBudget
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: second}, &budget)
+	requirements.NoError(err)
+	assertions.Equal(first, resolved.Row.MessageID)
+	assertions.Equal(newWindow.Occurrences[0].Start, resolved.Start)
+
+	_, movedNote := projectionFixture(t, st, "moved-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-04-01T12:30:00Z"}}`)
+	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: movedNote}, 10)
+	requirements.NoError(err)
+	requirements.Len(suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), suggestions[0].Ref)
+
+	_, oldNote := projectionFixture(t, st, "old-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T12:30:00Z"}}`)
+	suggestions, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: oldNote}, 10)
+	requirements.NoError(err)
+	assertions.Empty(suggestions, "note suggestions must not use stale aliases")
+}
+
 func TestMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

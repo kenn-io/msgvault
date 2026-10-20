@@ -18,6 +18,7 @@ import (
 // startup on a large archive).
 const (
 	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
+	migrationCalendarEventSnapshotFreshness = "calendar_event_snapshot_freshness_v1"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
@@ -99,6 +100,24 @@ const (
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 )
+
+// backfillCalendarEventSnapshotFreshness seeds the alias-selection watermark
+// for projections created before snapshot_updated_at existed. New and changed
+// projections receive the database clock in refreshCalendarEventProjectionWith.
+func (s *Store) backfillCalendarEventSnapshotFreshness(ctx context.Context) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE calendar_events
+			SET snapshot_updated_at = (
+				SELECT m.last_modified FROM messages m WHERE m.id = calendar_events.message_id
+			)
+			WHERE snapshot_updated_at = '1970-01-01 00:00:00'
+		`); err != nil {
+			return fmt.Errorf("backfill calendar snapshot freshness: %w", err)
+		}
+		return nil
+	})
+}
 
 func (s *Store) backfillSyncRunResumeMetadata(
 	ctx context.Context, tx *loggedTx,

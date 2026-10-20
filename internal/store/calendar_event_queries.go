@@ -22,6 +22,7 @@ type CalendarEventRow struct {
 	Subject             string
 	ICalUID             string
 	DeletedFromSource   bool
+	SnapshotUpdatedAt   time.Time
 	Event               calevent.Event
 }
 
@@ -33,7 +34,7 @@ const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subjec
  m.deleted_from_source_at IS NOT NULL,
  %s, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
- e.event_time_zone, e.calendar_time_zone, e.recurrence_json
+ e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.snapshot_updated_at
  ` + calendarEventFrom
 
 const calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
@@ -85,17 +86,20 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	for result.Next() {
 		var row CalendarEventRow
 		e := &row.Event
-		var original, start, end sql.NullTime
+		var original, start, end, snapshotUpdatedAt sql.NullTime
 		var originalDate, recurrence string
 		var uid sql.NullString
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
-			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
+			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &snapshotUpdatedAt)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
 		}
 		row.ICalUID = uid.String
+		if snapshotUpdatedAt.Valid {
+			row.SnapshotUpdatedAt = snapshotUpdatedAt.Time.UTC()
+		}
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
 		} else if original.Valid {
@@ -180,7 +184,7 @@ func calendarEventRowsInWindow(ctx context.Context, r reboundReader, from, to ti
 	if err != nil {
 		return nil, err
 	}
-	exceptions, err := queryCalendarExceptionsInWindow(ctx, r, lower, upper)
+	exceptions, err := queryCalendarExceptionsInWindow(ctx, r, lower, upper, "", nil, maxCalendarExceptions)
 	if err != nil {
 		return nil, err
 	}
@@ -238,12 +242,28 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r reboundReader, predi
 	return rows, err
 }
 
-func queryCalendarExceptionsInWindow(ctx context.Context, r reboundReader, lower, upper time.Time) ([]CalendarEventRow, error) {
-	predicate, args := calendarExceptionWindow(r.dialect, lower, upper)
-	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarExceptions)
+func queryCalendarExceptionsInWindow(ctx context.Context, r reboundReader, lower, upper time.Time, extraPredicate string, extraArgs []any, budget int) ([]CalendarEventRow, error) {
+	windowPredicate, args := calendarExceptionWindowFor(r.dialect, lower, upper, "e", "m")
+	visible := func(messageAlias string) string {
+		return messageAlias + `.deleted_at IS NULL AND NOT EXISTS (
+   SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = ` + messageAlias + `.id)`
+	}
+	keyMatch := `newer.series_provider_id = e.series_provider_id AND (
+	  ((e.series_provider_id = '' OR (e.original_start_at IS NULL AND e.original_start_date = '')) AND newer.message_id = e.message_id) OR
+	  (e.series_provider_id <> '' AND (e.original_start_at IS NOT NULL OR e.original_start_date <> '') AND
+	   (newer.original_start_at = e.original_start_at OR (newer.original_start_at IS NULL AND e.original_start_at IS NULL)) AND newer.original_start_date = e.original_start_date))`
+	predicate := windowPredicate + ` AND NOT EXISTS (SELECT 1 FROM calendar_events newer JOIN messages nm ON nm.id = newer.message_id
+	   WHERE newer.kind = 'exception' AND ` + visible("nm") + ` AND nm.source_id = m.source_id AND ` + keyMatch + `
+     AND (newer.snapshot_updated_at > e.snapshot_updated_at OR
+       (newer.snapshot_updated_at = e.snapshot_updated_at AND newer.message_id > e.message_id)))`
+	if extraPredicate != "" {
+		predicate += " AND (" + extraPredicate + ")"
+		args = append(args, extraArgs...)
+	}
+	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, budget)
 }
 
-func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, []any) {
+func calendarExceptionWindowFor(dialect Dialect, lower, upper time.Time, eventAlias, messageAlias string) (string, []any) {
 	// Calendar projections store UTC instants; SQLite compares these bounds as text.
 	lower, upper = lower.UTC(), upper.UTC()
 	// A shortened series may end before the window. Look up each exception's
@@ -251,29 +271,30 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
 	// unrelated series or charging them against the series budget.
 	// Resolve source visibility by message ID so PostgreSQL can use the provider
 	// index first instead of scanning the source's messages for every exception.
-	timedEnd := `julianday(e.original_start_at) + (julianday(p.end_at) - julianday(p.start_at)) >= julianday(?)`
-	dateEnd := `julianday(e.original_start_date) + (julianday(p.end_date) - julianday(p.start_date)) >= julianday(?)`
+	timedEnd := `julianday(` + eventAlias + `.original_start_at) + (julianday(p.end_at) - julianday(p.start_at)) >= julianday(?)`
+	dateEnd := `julianday(` + eventAlias + `.original_start_date) + (julianday(p.end_date) - julianday(p.start_date)) >= julianday(?)`
 	if dialect.DriverName() == postgresDriverName {
-		timedEnd = `e.original_start_at + (p.end_at - p.start_at) >= ?`
-		dateEnd = `NULLIF(e.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
+		timedEnd = eventAlias + `.original_start_at + (p.end_at - p.start_at) >= ?`
+		dateEnd = `NULLIF(` + eventAlias + `.original_start_date, '')::date + (NULLIF(p.end_date, '')::date - NULLIF(p.start_date, '')::date) >= ?::date`
 	}
-	predicate := `e.kind = 'exception' AND ((e.start_at < ? AND e.end_at >= ?) OR
-  (e.start_at IS NULL AND e.end_at >= ?) OR
-  (e.end_at IS NULL AND e.start_at < ?) OR
-  (e.original_start_at >= ? AND e.original_start_at < ?) OR
-   (e.original_start_date >= ? AND e.original_start_date < ?) OR
+	predicate := eventAlias + `.kind = 'exception' AND ((` + eventAlias + `.start_at < ? AND ` + eventAlias + `.end_at >= ?) OR
+  (` + eventAlias + `.start_at IS NULL AND ` + eventAlias + `.end_at >= ?) OR
+  (` + eventAlias + `.end_at IS NULL AND ` + eventAlias + `.start_at < ?) OR
+  (` + eventAlias + `.original_start_at >= ? AND ` + eventAlias + `.original_start_at < ?) OR
+   (` + eventAlias + `.original_start_date >= ? AND ` + eventAlias + `.original_start_date < ?) OR
    EXISTS (SELECT 1 FROM calendar_events p
-    WHERE p.kind IN ('series', 'single') AND p.provider_event_id = e.series_provider_id
+    WHERE p.kind IN ('series', 'single') AND p.provider_event_id = ` + eventAlias + `.series_provider_id
     AND (SELECT pm.source_id FROM messages pm WHERE pm.id = p.message_id AND pm.deleted_at IS NULL
-     AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = pm.id)) = m.source_id
-    AND ((e.original_start_at < ? AND ` + timedEnd + `) OR
-    (e.original_start_date < ? AND ` + dateEnd + `))) OR
-   (e.original_start_at IS NULL AND e.original_start_date = ''))`
+     AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = pm.id)) = ` + messageAlias + `.source_id
+    AND ((` + eventAlias + `.original_start_at < ? AND ` + timedEnd + `) OR
+    (` + eventAlias + `.original_start_date < ? AND ` + dateEnd + `))) OR
+   (` + eventAlias + `.original_start_at IS NULL AND ` + eventAlias + `.original_start_date = ''))`
 	dateLower, dateUpper := lower.Format(time.DateOnly), upper.AddDate(0, 0, 1).Format(time.DateOnly)
-	return predicate, []any{
+	args := []any{
 		upper, lower, lower, upper, lower, upper, dateLower, dateUpper,
 		upper, dialect.TimestampParam(lower), dateUpper, dateLower,
 	}
+	return predicate, args
 }
 
 // Only sparse cancellations inherit omitted details from the master.

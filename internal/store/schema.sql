@@ -4693,7 +4693,8 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
-    recurrence_end_at DATETIME
+    recurrence_end_at DATETIME,
+    snapshot_updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00'
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);

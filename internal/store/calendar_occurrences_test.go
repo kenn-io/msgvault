@@ -509,6 +509,38 @@ func TestListCalendarOccurrencesUnexpandableKeepsEditedExceptions(t *testing.T) 
 	}
 }
 
+func TestUnsupportedCalendarFallbackUsesNewestExceptionSnapshot(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
+	firstRaw := `{"id":"instance","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	secondRaw := strings.Replace(firstRaw, `"2027-03-14T12:00:00Z"`, `"2027-03-14T14:00:00Z"`, 1)
+	secondRaw = strings.Replace(secondRaw, `"2027-03-14T13:00:00Z"`, `"2027-03-14T15:00:00Z"`, 1)
+	_, first := calendarFixture(t, st, "instance", firstRaw)
+	_, second := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", secondRaw)
+	now := time.Now().UTC()
+	_, err := st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, now, first)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE calendar_events SET snapshot_updated_at = ? WHERE message_id = ?`, now.Add(-time.Minute), second)
+	requirements.NoError(err)
+
+	rows := calendarRows(t, st, master, first, second)
+	byID := make(map[int64]CalendarEventRow, len(rows))
+	for _, row := range rows {
+		byID[row.MessageID] = row
+	}
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	occurrences, _, reason, err := expandCalendarSeries(ctx, byID[master], []CalendarEventRow{byID[second], byID[first]}, from, from.AddDate(0, 0, 1), 100)
+	requirements.NoError(err)
+	assertions.Equal("unsupported recurrence", reason)
+	requirements.Len(occurrences, 1)
+	assertions.Equal(first, occurrences[0].ExceptionRef)
+	assertions.Equal(from.Add(12*time.Hour), occurrences[0].Start)
+}
+
 func TestListCalendarOccurrencesUnexpandableKeepsCancelledExceptions(t *testing.T) {
 	for _, tc := range []struct{ recurrence, reason string }{
 		{"RRULE:FREQ=HOURLY", "unsupported recurrence"},

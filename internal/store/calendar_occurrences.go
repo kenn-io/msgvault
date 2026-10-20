@@ -206,6 +206,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 // Keep unidentified edits and edits of a former series type alongside resolved overrides.
 // Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
+	rows = canonicalCalendarExceptionRows(rows)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
@@ -244,15 +245,37 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	return resolved, bounded, nil
 }
 
-// Rows arrive in message ID order; the last archived row wins for each original.
+// The newest archived snapshot wins for each original occurrence. Message ID
+// breaks equal timestamp ties and gives legacy snapshots a deterministic order.
 func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
 	overrides := make(map[string]CalendarEventRow, len(rows))
 	for _, row := range rows {
-		if row.Event.Original != nil {
-			overrides[row.Event.Original.Key()] = row
+		if row.Event.Original == nil {
+			continue
+		}
+		key := row.Event.Original.Key()
+		current, exists := overrides[key]
+		if !exists || row.SnapshotUpdatedAt.After(current.SnapshotUpdatedAt) ||
+			row.SnapshotUpdatedAt.Equal(current.SnapshotUpdatedAt) && row.MessageID > current.MessageID {
+			overrides[key] = row
 		}
 	}
 	return overrides
+}
+
+func canonicalCalendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
+	overrides := calendarExceptionOverrides(rows)
+	out := make([]CalendarEventRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Event.Original == nil {
+			out = append(out, row)
+			continue
+		}
+		if override := overrides[row.Event.Original.Key()]; override.MessageID == row.MessageID {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func calendarRecurrenceBudgetError() error {

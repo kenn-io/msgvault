@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 func TestMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
@@ -244,5 +245,33 @@ func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 			assert.True(listed.Start.Equal(links[0].Start))
 			assert.True(listed.End.Equal(links[0].End))
 		})
+	}
+}
+
+func TestMeetingSuggestionsUnidentifiedExceptionInheritMasterCancellation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","status":"cancelled","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	_, exception := calendarFixture(t, st, "exception", `{"id":"unidentified","iCalUID":"weekly@example.org","recurringEventId":"weekly","status":"confirmed","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:15:00Z"}}`)
+
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	budget := calrecur.RequestReadBudget
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: exception}, &budget)
+	requirements.NoError(err)
+	assertions.Equal("cancelled", resolved.Row.Event.Status)
+
+	exceptionRef := OccurrenceRef{MessageID: exception}
+	seriesRef := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
+	for _, ref := range []MeetingLinkRef{
+		{Kind: "evt", OccurrenceRef: exceptionRef},
+		{Kind: "evt", OccurrenceRef: seriesRef},
+		{Kind: "msg", MessageID: note},
+	} {
+		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
+		requirements.NoError(err)
+		assertions.Empty(suggestions, "cancelled master occurrences must not be suggested for %s", ref.Kind)
 	}
 }
