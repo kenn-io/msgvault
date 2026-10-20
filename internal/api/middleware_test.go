@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -367,173 +368,26 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 		path       string
 		header     string
 	}{
-		{
-			name:       "keyless loopback exempt",
-			remoteAddr: "127.0.0.1:1234",
-			want:       true,
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-		},
-		{
-			name:       "key configured valid key loopback exempt",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     key,
-			want:       true,
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "reader key loopback exempt",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     remoteClientTestReaderKey,
-			want:       true,
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "key configured missing key loopback limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-		},
-		{
-			name:       "key configured bad key loopback limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "wrong",
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "key configured valid key non-loopback limited",
-			apiKey:     key,
-			remoteAddr: "203.0.113.7:1234",
-			reqKey:     key,
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "keyless non-loopback limited",
-			remoteAddr: "203.0.113.7:1234",
-			method:     http.MethodGet,
-			path:       "/api/v1/stats",
-		},
-		{
-			name:       "keyless loopback ping exempt",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			want:       true,
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-		},
-		{
-			name:       "keyless IPv6 loopback ping exempt",
-			apiKey:     key,
-			remoteAddr: "[::1]:1234",
-			want:       true,
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-		},
-		{
-			name:       "keyless loopback identity exempt",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			want:       true,
-			method:     http.MethodGet,
-			path:       DaemonIdentityPath,
-		},
-		{
-			name:       "wrong key loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "wrong",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "wrong key loopback identity limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "wrong",
-			method:     http.MethodGet,
-			path:       DaemonIdentityPath,
-			header:     "X-Api-Key",
-		},
-		{
-			name:       "wrong authorization loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "Bearer wrong",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     "Authorization",
-		},
-		{
-			name:       "wrong authorization loopback identity limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "Bearer wrong",
-			method:     http.MethodGet,
-			path:       DaemonIdentityPath,
-			header:     "Authorization",
-		},
-		{
-			name:       "agent token loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "wrong",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     apiprotocol.AgentTokenHeader,
-		},
-		{
-			name:       "empty agent token loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     apiprotocol.AgentTokenHeader,
-		},
-		{
-			name:       "session cookie loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     sessionCookieName + "=wrong",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     "Cookie",
-		},
-		{
-			name:       "runtime token loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			reqKey:     "wrong",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-			header:     apiprotocol.DaemonRuntimeTokenHeader,
-		},
-		{
-			name:       "keyless non-loopback ping limited",
-			apiKey:     key,
-			remoteAddr: "203.0.113.7:1234",
-			method:     http.MethodGet,
-			path:       daemon.DefaultPingPath,
-		},
-		{
-			name:       "keyless loopback POST ping limited",
-			apiKey:     key,
-			remoteAddr: "127.0.0.1:1234",
-			method:     http.MethodPost,
-			path:       daemon.DefaultPingPath,
-		},
+		{name: "keyless loopback exempt", remoteAddr: "127.0.0.1:1234", want: true},
+		{name: "key configured valid key loopback exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: key, want: true, header: "X-Api-Key"},
+		{name: "reader key loopback exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: remoteClientTestReaderKey, want: true, header: "X-Api-Key"},
+		{name: "key configured missing key loopback limited", apiKey: key, remoteAddr: "127.0.0.1:1234"},
+		{name: "key configured bad key loopback limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "wrong", header: "X-Api-Key"},
+		{name: "key configured valid key non-loopback limited", apiKey: key, remoteAddr: "203.0.113.7:1234", reqKey: key, header: "X-Api-Key"},
+		{name: "keyless non-loopback limited", remoteAddr: "203.0.113.7:1234"},
+		{name: "keyless loopback ping exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", want: true, path: daemon.DefaultPingPath},
+		{name: "keyless IPv6 loopback ping exempt", apiKey: key, remoteAddr: "[::1]:1234", want: true, path: daemon.DefaultPingPath},
+		{name: "keyless loopback identity exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", want: true, path: DaemonIdentityPath},
+		{name: "wrong key loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "wrong", path: daemon.DefaultPingPath, header: "X-Api-Key"},
+		{name: "wrong key loopback identity limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "wrong", path: DaemonIdentityPath, header: "X-Api-Key"},
+		{name: "wrong authorization loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "Bearer wrong", path: daemon.DefaultPingPath, header: "Authorization"},
+		{name: "wrong authorization loopback identity limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "Bearer wrong", path: DaemonIdentityPath, header: "Authorization"},
+		{name: "agent token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "wrong", path: daemon.DefaultPingPath, header: apiprotocol.AgentTokenHeader},
+		{name: "empty agent token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", path: daemon.DefaultPingPath, header: apiprotocol.AgentTokenHeader},
+		{name: "session cookie loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: sessionCookieName + "=wrong", path: daemon.DefaultPingPath, header: "Cookie"},
+		{name: "runtime token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", reqKey: "wrong", path: daemon.DefaultPingPath, header: apiprotocol.DaemonRuntimeTokenHeader},
+		{name: "keyless non-loopback ping limited", apiKey: key, remoteAddr: "203.0.113.7:1234", path: daemon.DefaultPingPath},
+		{name: "keyless loopback POST ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", method: http.MethodPost, path: daemon.DefaultPingPath},
 	}
 
 	for _, tt := range tests {
@@ -542,7 +396,7 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey, RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: remoteClientTestReaderKey}}}},
 				nil, nil, testLogger(),
 			)
-			req := httptest.NewRequest(tt.method, tt.path, nil)
+			req := httptest.NewRequest(tt.method, cmp.Or(tt.path, "/api/v1/stats"), nil)
 			req.RemoteAddr = tt.remoteAddr
 			if tt.header != "" {
 				req.Header.Set(tt.header, tt.reqKey)
