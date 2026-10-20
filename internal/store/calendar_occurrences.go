@@ -145,6 +145,12 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			}
 			fallthrough
 		case "series":
+			for _, exception := range exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}] {
+				edit := exception.Event
+				if edit.Original != nil && edit.Original.AllDay != e.AllDay && (edit.Start == nil || edit.End == nil) {
+					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
+				}
+			}
 			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
@@ -260,7 +266,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 		}
 		// A retained edit's old value type cannot identify a current instance.
 		// Its recorded bounds were already kept above.
-		if exception.Original.AllDay != set.AllDay && exception.Start != nil && exception.End != nil {
+		if exception.Original.AllDay != set.AllDay {
 			continue
 		}
 		o, err := calrecur.EffectiveException(*set, exception, duration, days)
