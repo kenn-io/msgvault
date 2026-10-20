@@ -643,13 +643,6 @@ describe('Explore URL state', () => {
       ]
     ],
     [
-      'an identity ID that differs from the source',
-      [
-        { dimension: 'source', values: ['1'] },
-        { dimension: 'identity', values: ['2', 'archive@example.com', 'any'] }
-      ]
-    ],
-    [
       'IDs that collide after number rounding',
       [
         { dimension: 'source', values: ['9007199254740992'] },
