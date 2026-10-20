@@ -388,9 +388,8 @@ const DeclaredValueLimit = 5000
 // left out, and so are people bound to a participant in owner, the
 // OwnerFamilyContext set, to a participant that sent a message marked from
 // me, which finds the owner in an archive without account identities, or to
-// an automated participant, including a Slack user whose latest message is a
-// bot's. The caller matches
-// topics in Go, so matching is not limited to what SQL can case-fold.
+// an automated participant. The caller matches topics in Go, so matching is
+// not limited to what SQL can case-fold.
 func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]PersonAskMeAbout, bool, error) {
 	args := []any{AttributeUniversalIDAskMeAbout}
 	var declared []string
@@ -439,61 +438,8 @@ func (s *Store) AskMeAboutValuesContext(ctx context.Context, owner []int64) ([]P
 	if err != nil {
 		return nil, false, err
 	}
-	bots, err := s.personsPostingAsSlackBotsContext(ctx, out)
-	if err != nil {
-		return nil, false, err
-	}
-	out = slices.DeleteFunc(out, func(v PersonAskMeAbout) bool { return automated[v.PersonID] || bots[v.PersonID] })
+	out = slices.DeleteFunc(out, func(v PersonAskMeAbout) bool { return automated[v.PersonID] })
 	return out, truncated, nil
-}
-
-// personsPostingAsSlackBotsContext reports which persons of values, which
-// are in person order, are bound to a participant whose latest Slack message
-// has a bot's payload. The importer files a bot user under a plain user
-// identifier, so only the payload shows it.
-func (s *Store) personsPostingAsSlackBotsContext(ctx context.Context, values []PersonAskMeAbout) (map[int64]bool, error) {
-	out := map[int64]bool{}
-	persons := distinctPersons(values)
-	if len(persons) == 0 {
-		return out, nil
-	}
-	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT pp.person_id, (
-		         SELECT m.id FROM messages m
-		          WHERE m.sender_id = pp.participant_id AND m.message_type = '`+slackMessageType+`'
-		            AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		          ORDER BY CASE WHEN m.sent_at IS NULL THEN 1 ELSE 0 END, m.sent_at DESC, m.id DESC
-		          LIMIT 1)
-		FROM person_participants pp
-		WHERE pp.person_id IN (`+directoryPlaceholders(len(persons))+`)`), appendInt64Args(nil, persons)...)
-	if err != nil {
-		return nil, fmt.Errorf("read declared persons' Slack messages: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	byMessage := map[int64]int64{}
-	var latest []int64
-	for rows.Next() {
-		var person int64
-		var message sql.NullInt64
-		if err := rows.Scan(&person, &message); err != nil {
-			return nil, fmt.Errorf("scan declared person's Slack message: %w", err)
-		}
-		if message.Valid {
-			byMessage[message.Int64] = person
-			latest = append(latest, message.Int64)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("read declared persons' Slack messages: %w", err)
-	}
-	bots, err := s.slackBotPayloadsContext(ctx, latest)
-	if err != nil {
-		return nil, err
-	}
-	for id := range bots {
-		out[byMessage[id]] = true
-	}
-	return out, nil
 }
 
 // distinctPersons returns the person IDs of values, which are in person

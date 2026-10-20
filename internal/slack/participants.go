@@ -124,6 +124,11 @@ func (r *participantResolver) resolveID(ctx context.Context, userID string) (int
 	if err != nil {
 		return 0, err
 	}
+	if known && u.IsBot {
+		if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, r.identifierValue("bot:"+userID)); err != nil {
+			return 0, err
+		}
+	}
 	r.fallback[userID] = pid
 	return pid, nil
 }

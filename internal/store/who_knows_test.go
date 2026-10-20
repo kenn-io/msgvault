@@ -239,10 +239,8 @@ func TestTopicAuthorsLeaveOutDiscordSystemMessages(t *testing.T) {
 }
 
 // The Slack importer files a message carrying both "user" and "bot_id" under
-// the user, and a bot user (is_bot) under a plain user identifier. It keeps
-// the payload that shows the bot, so a post counts only as its payload allows,
-// and a declared topic counts only for a person whose latest Slack message is
-// not a bot's.
+// the user. A message's bot payload excludes that post, while the user's
+// is_bot classification decides whether their declared topics count.
 func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -260,9 +258,9 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 		{"id":"UBOT","team_id":"T1","name":"deploys","is_bot":true,"profile":{"real_name":"Deploys"}}]`)
 	write("channels.json", `[{"id":"C1","name":"general","is_channel":true,"is_member":true,"members":["UOWNER","UANA","UBOT"]}]`)
 	write("general/2026-10-01.json", `[
-		{"type":"message","ts":"1790000000.000001","user":"UANA","bot_id":"B1","text":"deploy finished"},
-		{"type":"message","ts":"1790000000.000002","user":"UANA","text":"pod networking notes"},
-		{"type":"message","ts":"1790000000.000003","user":"UBOT","bot_id":"B1","text":"deploy finished"}]`)
+		{"type":"message","ts":"1790000000.000001","user":"UANA","text":"pod networking notes"},
+		{"type":"message","ts":"1790000000.000002","user":"UANA","bot_id":"B1","text":"deploy finished"},
+		{"type":"message","ts":"1790000000.000003","user":"UBOT","text":"deploy finished"}]`)
 	summary, err := slack.ImportSlackdump(ctx, f.Store, export, slack.SlackdumpImportOptions{Me: "owner@example.net"})
 	require.NoError(err)
 
@@ -275,7 +273,7 @@ func TestTopicAuthorsLeaveOutSlackBotsPostingAsAUser(t *testing.T) {
 			summary.SourceID, "C1:"+ts).Scan(&id, &sender))
 		ids[ts], senders[ts] = id, sender
 	}
-	botAsAna, anaOwn, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
+	anaOwn, botAsAna, botUser := ids["1790000000.000001"], ids["1790000000.000002"], ids["1790000000.000003"]
 	got, err := f.Store.TopicAuthorsContext(ctx, []int64{botAsAna, anaOwn, botUser}, ownerOf(f))
 	require.NoError(err)
 	assert.False(got[botAsAna].Counts, "a bot posting as Ana")
