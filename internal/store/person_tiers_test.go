@@ -19,18 +19,6 @@ func tierOptions() store.PersonTierOptions {
 	return store.PersonTierOptions{Config: persontiers.DefaultConfig(), AsOf: tierAsOf}
 }
 
-// newTierPerson saves a person bound to a new participant and returns the
-// person and participant IDs.
-func newTierPerson(t *testing.T, f *storetest.Fixture, name string) (int64, int64) {
-	t.Helper()
-	require := require.New(t)
-	participant := f.EnsureParticipant(name+"@example.com", name, "example.com")
-	person, created, err := f.Store.CreatePersonFromParticipant(participant)
-	require.NoError(err)
-	require.True(created)
-	return person.ID, participant
-}
-
 // seedTierMail writes one message per entry. A negative day offset is that
 // many days before tierAsOf; outbound entries are sent by the owner.
 func seedTierMail(t *testing.T, f *storetest.Fixture, participant int64, owner int64, mail []tierMail) {
@@ -81,18 +69,16 @@ func newTierPeople(t *testing.T) tierPeople {
 	require.NoError(t, f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	p := tierPeople{f: f}
-	var frequentParticipant, regularParticipant, oneWayParticipant, oldParticipant int64
-	p.frequent, frequentParticipant = newTierPerson(t, f, "frequent")
-	seedTierMail(t, f, frequentParticipant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
-	p.regular, regularParticipant = newTierPerson(t, f, "regular")
-	seedTierMail(t, f, regularParticipant, owner, alternating(-100, -120, -140, -160))
-	p.oneWay, oneWayParticipant = newTierPerson(t, f, "oneway")
-	seedTierMail(t, f, oneWayParticipant, owner, []tierMail{{-1, false}, {-2, false}, {-3, false}, {-4, false}})
-	p.old, oldParticipant = newTierPerson(t, f, "old")
-	seedTierMail(t, f, oldParticipant, owner, alternating(-400, -401))
-	var latestParticipant int64
-	p.latest, latestParticipant = newTierPerson(t, f, "latest")
-	seedTierMail(t, f, latestParticipant, owner, alternating(0, -2, -4, -6, -8, -10, -12, -14))
+	save := func(name string, mail []tierMail) int64 {
+		person := mustPromotedPerson(t, f.Store, name+"@example.com", name)
+		seedTierMail(t, f, person.ParticipantIDs[0], owner, mail)
+		return person.ID
+	}
+	p.frequent = save("frequent", alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	p.regular = save("regular", alternating(-100, -120, -140, -160))
+	p.oneWay = save("oneway", []tierMail{{-1, false}, {-2, false}, {-3, false}, {-4, false}})
+	p.old = save("old", alternating(-400, -401))
+	p.latest = save("latest", alternating(0, -2, -4, -6, -8, -10, -12, -14))
 	projectTierSignals(t, f, "UTC", 25)
 	return p
 }
@@ -165,13 +151,13 @@ func TestPreviewPersonTiersReadsMoreSavedPeopleThanOnePage(t *testing.T) {
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
 	// The last saved person sits on the second page of 500.
-	late, lateParticipant := newTierPerson(t, f, "late")
-	seedTierMail(t, f, lateParticipant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	late := mustPromotedPerson(t, f.Store, "late@example.com", "late")
+	seedTierMail(t, f, late.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
 	preview, err := f.Store.PreviewPersonTiersContext(t.Context(), tierOptions(), 0)
 	require.NoError(err)
 	require.Len(preview.People, 1)
-	assert.Equal(late, preview.People[0].PersonID)
+	assert.Equal(late.ID, preview.People[0].PersonID)
 }
 
 func TestPreviewPersonTiersWarnsWhenProjectionIsBehind(t *testing.T) {
@@ -220,10 +206,10 @@ func TestExplainPersonTierNamesTheExclusion(t *testing.T) {
 	f := storetest.New(t)
 	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
-	personID, participant := newTierPerson(t, f, "noreply")
-	seedTierMail(t, f, participant, owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
+	person := mustPromotedPerson(t, f.Store, "noreply@example.com", "noreply")
+	seedTierMail(t, f, person.ParticipantIDs[0], owner, alternating(-1, -2, -3, -4, -5, -6, -7, -8))
 	projectTierSignals(t, f, "UTC", 25)
-	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), personID, tierOptions())
+	explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
 	require.NoError(err)
 	assert.Equal(3, explanation.Tier)
 	assert.Equal("tier1_intensity", explanation.Rule)
