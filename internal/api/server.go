@@ -1495,7 +1495,9 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 // limiter. Loopback origin alone is not sufficient: a same-host reverse proxy,
 // SSH tunnel, or TLS terminator forwarding to loopback makes remote traffic
 // arrive as 127.0.0.1, which would otherwise brute-force the API key
-// unthrottled. A loopback request is exempt only when it is trusted — either
+// unthrottled. Keyless GET discovery probes for ping and daemon identity are
+// exempt on loopback because neither route accepts a credential. Other
+// loopback requests are exempt only when trusted — either
 // no API key is configured (pure local mode, the TUI/CLI autostart case) or it
 // carries a valid API key (an authenticated local client). apiRequestAuthorized
 // returns true in exactly those two cases, so it is reused here to avoid the
@@ -1503,6 +1505,9 @@ func (w *trackingResponseWriter) WroteHeader() bool {
 func (s *Server) loopbackRateLimitExempt(r *http.Request) bool {
 	if r.Method == http.MethodPost && r.URL.Path == sessionLoginPath {
 		return false
+	}
+	if isLoopbackRequest(r) && r.Method == http.MethodGet && (r.URL.Path == "/api/ping" || r.URL.Path == DaemonIdentityPath) {
+		return true
 	}
 	return isLoopbackRequest(r) && (s.apiRequestAuthorized(r) || s.remoteClientRequest(r))
 }
