@@ -13,7 +13,10 @@ type ActivityClassification struct {
 	Direction     ActivityDirection
 	OwnerSourceID *int64
 	OwnerAddress  string
-	Persons       []ActivityEventPerson
+	// Broadcast reports that the people on the message, counting each resolved
+	// person once and leaving out the owner, outnumber the direct limit.
+	Broadcast bool
+	Persons   []ActivityEventPerson
 }
 
 // ClassifyActivityCandidate applies the same pure rules used by the external
@@ -100,6 +103,7 @@ func ClassifyActivityCandidate(
 		nonOwnerIDs[key] = struct{}{}
 	}
 	broadcast := len(nonOwnerIDs) > maxDirectCounterparts
+	result.Broadcast = broadcast
 	for _, counterpart := range counterparts {
 		if ownerLinked(counterpart) || counterpart.PersonID == nil {
 			continue
