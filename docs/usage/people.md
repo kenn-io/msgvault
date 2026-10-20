@@ -285,7 +285,8 @@ A message counts when its cosine similarity to the topic reaches
 `--min-score` (default 0.5). On SQLite the
 vector index scores by distance, so the command computes cosine similarity
 from each hit's stored vectors, whatever their length. A message found only by
-keyword does not count. Each counted message weighs its similarity
+keyword counts if its stored vector clears the same floor. A message without
+a stored vector does not count. Each counted message weighs its similarity
 times its recency, which halves every 180 days and stops at 0.1. The message
 part of the score is `log(1 + total weight)`.
 

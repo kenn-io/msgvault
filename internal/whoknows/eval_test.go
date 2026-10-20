@@ -363,6 +363,43 @@ func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
 	assert.Equal(t, 1, captain.AuthoredMessages)
 }
 
+func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	for i := range 100 {
+		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+	}
+	_, err := f.store.DB().ExecContext(t.Context(), `UPDATE messages SET sender_id =
+		(SELECT id FROM participants WHERE email_address = 'owner@example.net')
+		WHERE subject = 'airship tethering'`)
+	require.NoError(t, err)
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	match := scaled(topic, .8)
+	match[off] = .6
+	anaID := f.post(t, "ana@example.net", "zeppelin mooring", match)
+	f.post(t, "zero@example.net", "zeppelin mooring", make([]float32, embedDimension))
+	missingID := f.post(t, "missing@example.net", "zeppelin mooring", match)
+	require.NoError(t, f.backend.Delete(t.Context(), f.generation, []int64{missingID}))
+
+	// Verify that the real hybrid search finds Ana only through keywords.
+	hits, _, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	ana := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == anaID })
+	require.NotEqual(t, -1, ana)
+	require.True(t, math.IsNaN(hits[ana].VectorScore), "owner messages filled the vector pool")
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	require.Len(t, got.People, 1)
+	assert.Equal(t, []string{"ana@example.net"}, f.ranked(got))
+	assert.Equal(t, 1, got.People[0].AuthoredMessages)
+	require.Len(t, got.People[0].Citations, 1)
+	assert.Equal(t, anaID, got.People[0].Citations[0].MessageID)
+	assert.Empty(t, got.UnsavedContacts, "keyword hits with zero or missing vectors do not count")
+}
+
 func TestFindHasNoPoolLimitWhenOnlyTheBestVectorClearsTheFloor(t *testing.T) {
 	f := newEvalFixture(t)
 	topic := embedWords("zeppelin mooring")

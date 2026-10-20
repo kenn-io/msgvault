@@ -4,7 +4,6 @@ package whoknows
 
 import (
 	"context"
-	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -47,8 +46,8 @@ type Service struct {
 	Now        func() time.Time
 }
 
-// cosineScorer is an index whose search score is not cosine similarity, as
-// sqlite-vec's 1 - L2 distance is not, so it scores the hits again.
+// cosineScorer scores retrieved messages from their stored vectors, including
+// messages found only through keywords.
 type cosineScorer interface {
 	MessageCosines(ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
 }
@@ -169,21 +168,23 @@ type scoredHit struct {
 	similarity float64
 }
 
-// vectorScores maps each hit the meaning search returned to its cosine
-// similarity to the topic. A keyword-only hit has none. A backend that
-// ranks by cosine distance, as pgvector does, scores hits by cosine already.
+// vectorScores maps each embedded hit to its cosine similarity to the topic.
+// Backends without a cosine scorer use the meaning search's scores.
 func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta hybrid.ResultMeta) (vector.CosineScores, error) {
+	if scorer, ok := s.Index.(cosineScorer); ok {
+		ids := make([]int64, len(hits))
+		for i, hit := range hits {
+			ids[i] = hit.MessageID
+		}
+		return scorer.MessageCosines(ctx, meta.Generation, meta.QueryVector, ids)
+	}
 	scores := map[int64]float64{}
 	for _, hit := range hits {
 		if !math.IsNaN(hit.VectorScore) {
 			scores[hit.MessageID] = hit.VectorScore
 		}
 	}
-	scorer, ok := s.Index.(cosineScorer)
-	if !ok {
-		return vector.CosineScores{Scores: scores, UnitLength: true}, nil
-	}
-	return scorer.MessageCosines(ctx, meta.Generation, meta.QueryVector, slices.Sorted(maps.Keys(scores)))
+	return vector.CosineScores{Scores: scores, UnitLength: true}, nil
 }
 
 // similarities returns the hits whose cosine similarity to the topic reaches
