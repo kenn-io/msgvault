@@ -48,18 +48,16 @@ may be out of date. While it rebuilds after a change to `[activity] timezone` or
 `max_direct_counterparts`, both ask you to retry once it finishes. Change the
 windows and thresholds in [`[people.tiers]`](/docs/configuration/#people-tiers).
 
-Preview changes nothing. To track everyone in tier 1 who is not tracked yet,
-pass the IDs from `--json` to `person track`:
+Preview changes nothing. `preview --json` lists the person IDs, and you track
+the ones you choose with `person track`:
 
 ```bash
-msgvault person tiers preview --tier 1 --json \
-  | jq -r '.people[] | select(.tracked | not) | .person_id' \
-  | while read -r id; do msgvault person track "$id"; done
+msgvault person tiers preview --tier 1 --json | jq -r '.people[] | select(.tracked | not) | .person_id'
+msgvault person track 7
 ```
 
-The loop does nothing when the list is empty. msgvault keeps no record of
-`person untrack`, so someone you untracked earlier shows as untracked here.
-Read the list and pick the IDs yourself.
+msgvault keeps no record of `person untrack`, so someone you untracked earlier
+shows as untracked here. Read the list and pick the IDs yourself.
 
 Tracking makes a profile eligible for automatic maintenance. It does not itself
 grant provider consent, enable a provider, or enroll a person in briefs.

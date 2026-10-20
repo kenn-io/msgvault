@@ -39,3 +39,13 @@ func TestConfigValidation(t *testing.T) {
 	c.Tier2.MinMeetingDaysLong = 0
 	require.NoError(t, c.Validate())
 }
+
+func TestConfigValidationNamesTheFirstBadThresholdInAFixedOrder(t *testing.T) {
+	c := DefaultConfig()
+	c.Tier2.MinActiveDaysLong = 0
+	c.Tier1.MinInboundShort = 0
+	c.Tier1.MinOutboundShort = 0
+	for range 20 {
+		assert.ErrorContains(t, c.Validate(), "tier1.min_outbound_short")
+	}
+}
