@@ -17,6 +17,50 @@ import (
 
 const linkSeriesRaw = `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
 
+func TestMeetingLinksSuccessiveExceptionTimestampForms(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+			imports := []struct{ key, original string }{
+				{"instance", `{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"}`},
+				{"series|2027-03-14T10:00:00Z", `{"dateTime":"2027-03-14T06:00:00-04:00","timeZone":"America/New_York"}`},
+			}
+			if reverse {
+				imports[0], imports[1] = imports[1], imports[0]
+			}
+			var aliases []int64
+			for i, imported := range imports {
+				// calsync.deriveSourceMessageID retains the provider ID for
+				// offset-free originals and uses series|instant for explicit offsets.
+				raw := fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":%s,"start":{"dateTime":"2027-03-14T%d:00:00Z"},"end":{"dateTime":"2027-03-14T%d:00:00Z"}}`, imported.original, 12+i*2, 13+i*2)
+				_, id := calendarFixture(t, st, imported.key, raw)
+				aliases = append(aliases, id)
+			}
+			requirements.NotEqual(aliases[0], aliases[1], "successive imports retain both archive keys")
+			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 1)
+			listed := page.Occurrences[0]
+			requirements.Equal(aliases[1], listed.MessageID)
+			requirements.Equal(from.Add(14*time.Hour), listed.Start)
+			requirements.Equal(from.Add(15*time.Hour), listed.End)
+			ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+			requirements.NoError(err)
+			defer release()
+			for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314T100000Z"}, {MessageID: aliases[0]}, {MessageID: aliases[1]}} {
+				budget := calrecur.RequestReadBudget
+				resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), ref, &budget)
+				requirements.NoError(err)
+				assertions.Equal(listed.Start, resolved.Start, "reference %v", ref)
+				assertions.Equal(listed.End, resolved.End, "reference %v", ref)
+			}
+		})
+	}
+}
+
 func TestMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
