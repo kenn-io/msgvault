@@ -9,7 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
-- Anonymous telemetry now honors `DO_NOT_TRACK` and stays off whenever `CI` is present or the build version isn't plain `vX.Y.Z` or `X.Y.Z`. The terminal UI also honors client opt-outs before forwarding screen, action, and session events to the daemon.
+- Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
 

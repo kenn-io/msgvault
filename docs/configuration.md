@@ -2115,7 +2115,7 @@ features once published. No startup hook or entrypoint wrapper is required.
 
 ## Telemetry
 
-`msgvault serve` sends anonymous usage telemetry to PostHog by default:
+`msgvault serve` sends anonymous usage telemetry to PostHog:
 
 - `daemon_active` when the daemon starts, then once on each later UTC day
   while it runs.
@@ -2159,37 +2159,30 @@ For `app_opened`, the web UI records the day it last reported in browser storage
 browser keeps separately for each daemon address. With the default
 `api_port = 0`, the daemon picks a new port each time it starts, so the web UI
 reports again after a daemon restart. Tabs that open together, or a browser
-that blocks storage, can also each send one. Each event contains `event`, `distinct_id`, `uuid`,
-`timestamp`, and `properties`, as listed in [kit's field table](https://github.com/kenn-io/kit/blob/v0.39.0/telemetry/posthog/fields.md).
-`event` is one of the names above, `distinct_id` is the random install ID,
-`uuid` is a random event ID, and `timestamp` is the UTC capture time.
-The batch envelope contains `api_key`, the public project key, and `batch`, the events.
-Each event's `properties` contains only:
+that blocks storage, can also each send one. Each event carries only:
 
-- the product name and source (`application=msgvault`, `source=daemon`)
-- on `app_opened`, `surface=web`
-- on `message_opened` and `search_run`, `surface=web|tui|cli`;
-  `sync_finished` uses `surface=web|cli`. `search_run` also requires
+- the product name and source (`msgvault`, `daemon`)
+- on `app_opened`, the surface (`web`)
+- on core actions, `surface=web|tui|cli`; `search_run` also requires
   `search_type=text|semantic|hybrid`. Invalid required values drop the event; extra
   properties are stripped. Query text, message IDs, and archive content stay local.
-- on `session_ended`, `surface=web|tui` and `duration_bucket`:
+- on `session_ended`, the surface (`web` or `tui`) and `duration_bucket`:
   `under_1m` below one minute, `1_to_5m` below five minutes, `5_to_30m` through
   30 minutes, and `over_30m` above 30 minutes
-- on `screen_viewed`, the first `surface=web|tui` and a fixed `screen` name:
+- on `screen_viewed`, the first surface (`web` or `tui`) and a fixed screen name:
   `everything`, `directory`, `directory_review`, `files`, `operations`,
   `relationships`, `saved_views`, `sources`, `deletions`, `settings`, `message`,
   `email`, `texts`, or `meetings`. Unknown names are dropped.
-- the release `version` and `commit`
-- the operating system (`goos`) and CPU architecture (`goarch`)
-- `install_age_hours`, the whole hours since the random install ID was created
+- the msgvault version and commit
+- the operating system and CPU architecture
+- a random install ID kept in `telemetry-install.json` in the data directory, and
+  the whole hours since it was created
 - metadata the PostHog Go library adds itself: library name and version (`$lib`,
   `$lib_version`)
-- `$process_person_profile=false` and `$geoip_disable=true`, which ask PostHog
-  to skip person profiles and location lookup
 
 Events exclude message content, contact records, account or source identifiers,
-filenames, and search text. The daemon queues each event and sends it in the
-background, so an event can be lost
+filenames, and search text. They ask PostHog to skip person profiles and location lookup. The
+daemon queues each event and sends it in the background, so an event can be lost
 if the network is down or the daemon stops first.
 
 When telemetry is on, `msgvault serve` says so in its startup output and log.
@@ -2201,27 +2194,13 @@ enabled = false
 ```
 
 `MSGVAULT_TELEMETRY_ENABLED` in the environment that starts the daemon
-overrides the config when nonempty: `0`, `false`, `no`, or `off` turns telemetry
-off, and any other nonempty value turns it on. `TELEMETRY_ENABLED` accepts the
-same off values. Environment values are trimmed and case-insensitive.
-Any present `DO_NOT_TRACK` except `0` or `false`, including an empty value,
-turns reporting off. Any present `CI`, including an empty value, also turns it off.
-Reporting requires a plain release version, `vX.Y.Z` or `X.Y.Z`, with numeric
-components. Source, dev, prerelease, and dirty versions send nothing.
-These gates take precedence over enabling settings. Builds made with the
-`kit_posthog_disabled` tag also send nothing.
-
-The CLI and terminal UI also check their own configuration and environment before
-forwarding usage events to the selected local or remote daemon. An opt-out in the
-client suppresses those events even when the daemon's telemetry is enabled.
-The daemon's configuration and environment control its independent reporting,
-including daily pings and events from other clients. Restart the daemon after
-changing its settings. A CLI command that starts a local daemon passes its
-environment to it.
-
-The daemon keeps its random install ID in `telemetry-install.json` in the data
-directory. It can create this file when no opt-out is active, including in a
-source or dev build whose version prevents reporting.
+overrides the config: `0`, `false`, `no` or `off` turns telemetry off, and any
+other value turns it on. `TELEMETRY_ENABLED=0` and `DO_NOT_TRACK=1` also turn
+it off, and so does running in CI. Restart the daemon after changing these. The
+CLI and terminal UI honor the same opt-outs in their own environment. A CLI
+command that starts a local daemon passes its environment to it. Only release
+builds send telemetry, and builds made with the `kit_posthog_disabled` tag never
+do.
 
 ## File Locations
 
@@ -2241,7 +2220,7 @@ home; `[log].dir` can override the log location.
 | `logs/` | Structured log files (when [file logging](/docs/configuration/#log) is enabled) |
 | `analytics/` | Parquet cache files for Web UI and TUI analytical views |
 | `omi/` | Omi request pacing and provider cooldowns per backend and API key, shared by scheduled and manual syncs |
-| `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); can be created when no opt-out is active, including by source or dev builds whose versions prevent reporting |
+| `telemetry-install.json` | Random anonymous install ID for [telemetry](#telemetry); created unless telemetry is turned off |
 | `telemetry-screen-views.json` | Current UTC day's screen, search, and message claims; created only while telemetry is on |
 
 ## Example configuration

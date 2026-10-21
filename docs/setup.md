@@ -26,8 +26,6 @@ powershell -ExecutionPolicy ByPass -c "irm https://msgvault.io/install.ps1 | iex
 
 The installer detects your OS and architecture, downloads the latest release from [GitHub Releases](https://github.com/kenn-io/msgvault/releases), verifies the SHA-256 checksum, and installs the binary.
 
-The daemon sends anonymous usage telemetry by default. See [sent fields and opt-outs](configuration.md#telemetry).
-
 Windows releases include native AMD64 and ARM64 packages. On Windows ARM64,
 the PowerShell installer selects the native package when the release provides
 one and falls back to the AMD64 package under emulation for older releases.
