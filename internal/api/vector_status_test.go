@@ -205,14 +205,53 @@ func (b *resolvingVectorBackend) ActiveGeneration(ctx context.Context) (vector.G
 	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
 }
 
+func TestRefreshVectorStatusAbortsDiagnosisOnce(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		cfg := vector.Config{Enabled: true}
+		backend := &resolvingVectorBackend{fingerprint: cfg.GenerationFingerprint() + ":ssrc-3"}
+		srv := NewServerWithOptions(testServerOptions(t, backend))
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		srv.SetVectorFeatures(nil, nil, backend, cfg)
+		status, _ := srv.VectorStatus()
+		require.Equal(t, VectorStatusReady, status)
+		var calls atomic.Int32
+		srv.SetVectorRestartFingerprint(func(ctx context.Context) (string, error) {
+			calls.Add(1)
+			<-ctx.Done()
+			return "", ctx.Err()
+		})
+		done := make(chan struct{})
+		go func() {
+			srv.refreshVectorStatus(t.Context())
+			close(done)
+		}()
+		time.Sleep(vectorStaleDiagnosisTimeout)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			assert.Fail("refreshVectorStatus must return after one diagnosis timeout")
+		}
+		assert.Equal(int32(1), calls.Load())
+		status, detail := srv.VectorStatus()
+		assert.Equal(VectorStatusStale, status)
+		assert.True(strings.HasSuffix(detail, vectorUncheckedAdvice), "detail must end with unchecked advice")
+	})
+}
+
 func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
 	t.Parallel()
 	t.Run("timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			started := make(chan struct{})
+			var calls atomic.Int32
 			backend := &resolvingVectorBackend{
 				activeGeneration: func(ctx context.Context) (vector.Generation, error) {
-					close(started)
+					if calls.Add(1) == 1 {
+						close(started)
+					}
 					<-ctx.Done()
 					return vector.Generation{}, ctx.Err()
 				},
@@ -239,6 +278,9 @@ func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
 			assert.Equal(t, VectorStatusStale, status)
 			assert.Contains(t, detail, vector.ErrIndexStale.Error())
 			assert.NotContains(t, detail, vectorRebuildAdvice)
+			assert.Equal(t, vectorUncheckedAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))
+			assert.Equal(t, int32(1), calls.Load(), "cached advice must avoid another backend call")
+			time.Sleep(vectorUncheckedRetryDelay)
 			backend.activeGeneration = nil
 			backend.fingerprint = "model-b"
 			assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))

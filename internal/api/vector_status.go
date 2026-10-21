@@ -150,6 +150,16 @@ const vectorRebuildAdvice = "if this is a one-off account-scoped generation, set
 
 const vectorUncheckedAdvice = "the daemon could not yet check whether a restart or a rebuild fixes this; retry in a moment for the recovery step"
 
+func cachedStaleAdvice(detail string) string {
+	if strings.HasSuffix(detail, vectorRestartAdvice) {
+		return vectorRestartAdvice
+	}
+	if strings.HasSuffix(detail, vectorUncheckedAdvice) {
+		return vectorUncheckedAdvice
+	}
+	return vectorRebuildAdvice
+}
+
 // SetVectorRestartFingerprint installs the daemon's startup config resolver.
 func (s *Server) SetVectorRestartFingerprint(fn func(context.Context) (string, error)) {
 	s.vectorMu.Lock()
@@ -194,10 +204,7 @@ func (s *Server) markVectorIndexStale(ctx context.Context, mismatch error) strin
 	detail := s.vectorErr
 	if s.vectorStaleLatch || (stale && time.Now().Before(s.vectorFreshNextCheck)) {
 		s.vectorMu.Unlock()
-		if strings.HasSuffix(detail, vectorRestartAdvice) {
-			return vectorRestartAdvice
-		}
-		return vectorRebuildAdvice
+		return cachedStaleAdvice(detail)
 	}
 	s.vectorFreshNextCheck = time.Now().Add(vectorFreshnessCheckInterval)
 	backend := s.backend
@@ -206,7 +213,7 @@ func (s *Server) markVectorIndexStale(ctx context.Context, mismatch error) strin
 	if !restart && ctx.Err() != nil {
 		advice = vectorUncheckedAdvice
 		s.vectorMu.Lock()
-		s.vectorFreshNextCheck = time.Time{}
+		s.vectorFreshNextCheck = time.Now().Add(vectorUncheckedRetryDelay)
 		s.vectorMu.Unlock()
 	}
 	s.SetVectorStale(mismatch.Error() + "; " + advice)
@@ -306,6 +313,8 @@ func (s *Server) maybeCheckVectorScopeDrift(ctx context.Context) {
 const vectorFreshnessCheckInterval = time.Minute
 
 const vectorStaleDiagnosisTimeout = 30 * time.Second
+
+const vectorUncheckedRetryDelay = 5 * time.Second
 
 // maybeRefreshVectorFreshness is the ready→stale counterpart of
 // refreshVectorStatusIfStale. A daemon-proxied one-off scoped build (or any
