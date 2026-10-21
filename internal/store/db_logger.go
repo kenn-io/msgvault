@@ -228,7 +228,8 @@ type loggedTx struct {
 	rebind func(string) string
 	// attribution records the locks withAttributionTxContext took before the
 	// sync fence; nil for every other transaction.
-	attribution *attributionLockState
+	attribution      *attributionLockState
+	mcpEventsWritten bool
 
 	// Set only after this transaction successfully fences a running sync run.
 	syncGenerationFenced bool

@@ -1855,6 +1855,32 @@ type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
 
+type ListMCPCalendarSourcesResponse []CalendarSource
+
+type ListMCPCalendarSourcesErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventResponse = Envelope
+
+type GetMCPEventErrorResponse = MCPEventsErrorResponse
+
+type ListMCPEventsResponse = ListResult
+
+type ListMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventMessageResponse = CliMessageResponse
+
+type GetMCPEventMessageErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventsStatusResponse []SubscriptionStatus
+
+type GetMCPEventsStatusErrorResponse = MCPEventsErrorResponse
+
+type SubscribeMCPEventsResponse = SubscribeResult
+
+type SubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type UnsubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
+
 type SearchMediaResponse = MediaSearchResponse
 
 type SearchMediaErrorResponse = ErrorResponse
@@ -5677,6 +5703,61 @@ type GetMCPCapabilitiesResp struct {
 	StatusCode   int
 	JSON200      *GetMCPCapabilitiesResponse
 	JSONDefault  *GetMCPCapabilitiesErrorResponse
+}
+
+type ListMCPCalendarSourcesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPCalendarSourcesResponse
+	JSONDefault  *ListMCPCalendarSourcesErrorResponse
+}
+
+type GetMCPEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventResponse
+	JSONDefault  *GetMCPEventErrorResponse
+}
+
+type ListMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPEventsResponse
+	JSONDefault  *ListMCPEventsErrorResponse
+}
+
+type GetMCPEventMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventMessageResponse
+	JSONDefault  *GetMCPEventMessageErrorResponse
+}
+
+type GetMCPEventsStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventsStatusResponse
+	JSONDefault  *GetMCPEventsStatusErrorResponse
+}
+
+type SubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SubscribeMCPEventsResponse
+	JSONDefault  *SubscribeMCPEventsErrorResponse
+}
+
+type UnsubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSONDefault  *UnsubscribeMCPEventsErrorResponse
 }
 
 type SearchMediaResp struct {
