@@ -274,7 +274,7 @@
       visualImageRevision,
     });
     signature;
-    if (signature === requestSignature) return resubmitSearch();
+    if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
     unacknowledgedRestorationEpoch = restorationEpoch;
@@ -422,16 +422,6 @@
     void loadPage(currentGeneration, undefined, signal).then((loaded) => {
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
-  }
-  function resubmitSearch(): void {
-    if (!submitted || loading) return;
-    if (untrack(() => error || unavailable)) return reloadListing();
-    submitted = false;
-    const count = untrack(() => rows.length);
-    reportWhenVisible(() => {
-      void reportSearch(client, predicate.query ?? '', predicate.search_mode ?? 'full_text', hostedVisualSearch ? undefined : count);
-      if (hostedVisualSearch && count === 0) void reportAction(client, 'search_empty', 'search_type', 'semantic');
-    }, controller?.signal);
   }
   async function loadPage(
     currentGeneration: number,

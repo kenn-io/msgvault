@@ -904,28 +904,6 @@ describe('AppShell', () => {
       expect(events.find((event) => event.event === 'search_empty')?.properties).toEqual({ surface: 'web', search_type: 'text' });
     });
 
-    it.each([false, true])('keeps the current results when Enter submits an unchanged query, empty=%s', async (empty) => {
-      const state = shellState('everything');
-      state.commitSearch('needle', 'full_text');
-      let searches = 0;
-      const media = new IntegrationReadiness(async () => false);
-      const client = createAPIClient(async input => {
-        const path = new URL((input as Request).url).pathname;
-        if (path.endsWith('/explore')) searches += 1;
-        return Response.json(exploreResponse({ rows: empty ? [] : [entry(1)], total_count: empty ? 0 : 1 }));
-      });
-      const view = render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
-      await waitFor(() => expect(media.absent).toBe(true));
-      await waitFor(() => expect(telemetryEvents.some(event => event.event === 'search_run')).toBe(true));
-      if (!empty) await screen.findByText('Synthetic subject 1');
-      expect(searches).toBe(1);
-      await fireEvent.submit(screen.getByRole('search', { name: 'Search Everything' }));
-      await tick();
-      expect(searches).toBe(1);
-      await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'search_empty')).toHaveLength(empty ? 1 : 0));
-      view.unmount(); state.destroy(); media.dispose();
-    });
-
     it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
       const state = shellState('everything');

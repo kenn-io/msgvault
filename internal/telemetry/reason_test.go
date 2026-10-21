@@ -1,4 +1,4 @@
-package syncerr
+package telemetry
 
 import (
 	"context"
@@ -59,7 +59,7 @@ func TestReason(t *testing.T) {
 		{&gmail.StatusError{StatusCode: 500}, "other"},
 		{context.DeadlineExceeded, "network"},
 	} {
-		assert.Equal(t, tc.want, Reason(fmt.Errorf("sync: %w", tc.err)))
+		assert.Equal(t, tc.want, reason(fmt.Errorf("sync: %w", tc.err)))
 	}
 }
 
@@ -136,7 +136,7 @@ func TestProviderFailureReasons(t *testing.T) {
 				t.Cleanup(func() { http.DefaultTransport = transport })
 				err := tc.run(t.Context(), "https://example.com")
 				require.Error(t, err)
-				assert.Equal(t, tc.want, Reason(err))
+				assert.Equal(t, tc.want, reason(err))
 			})
 		})
 	}

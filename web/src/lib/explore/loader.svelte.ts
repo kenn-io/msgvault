@@ -87,7 +87,6 @@ export class ExploreLoader {
   private readonly api: ExploreAPI;
   private readonly callbacks: ExploreLoaderCallbacks;
   submitted = $state(false);
-  private submittedSearch = '';
   private requestGeneration = 0;
   private requestController: AbortController | undefined;
   private pagePredicate: ReturnType<ExploreState['predicate']> | undefined;
@@ -122,25 +121,14 @@ export class ExploreLoader {
     $effect(() => this.runLoad(requestFingerprint));
   }
 
-  resubmit(query: string, mode: ExploreSearchMode): boolean {
-    this.submittedSearch = JSON.stringify([query, mode]);
-    const current = this.state.current;
-    if ((current.workspace !== 'everything' && !(current.workspace === 'files' && current.groupingChain.length > 0)) || query !== current.query || mode !== current.searchMode) return false;
-    if (this.loading) return true;
-    if (!this.result || this.error || this.unavailable || this.resultFingerprint !== predicateFingerprint(this.state.predicate())) { this.retry(); return true; }
-    this.submittedSearch = '';
-    this.callbacks.onSearchAccepted?.(query, mode, this.requestController!.signal, this.rows.length + this.groupRows.length);
-    return true;
-  }
-
   private runLoad(requestFingerprint: string): void {
+    const submitted = untrack(() => this.submitted);
+    this.submitted = false;
     this.clearCacheBuildRetry();
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
     void this.#retryRevision;
     const predicate = untrack(() => this.state.predicate());
-    const search = JSON.stringify([predicate.query ?? '', predicate.search_mode ?? 'full_text']);
-    if (this.submittedSearch !== search) this.submittedSearch = '';
     const fingerprint = requestFingerprint;
     if (fingerprint !== this.selectionFingerprint) {
       this.callbacks.onPredicateChange();
@@ -150,7 +138,7 @@ export class ExploreLoader {
     const fileFilenameQuery = this.state.current.fileFilenameQuery;
     const fileMIMEFamilies = this.state.current.fileMIMEFamilies;
     if (!this.callbacks.isEnabled() || (workspace !== 'everything' && !filesGrouping)) {
-      this.submittedSearch = '';
+      if (workspace === 'files' && !filesGrouping) this.submitted = submitted;
       this.requestGeneration += 1;
       this.requestController?.abort();
       this.loading = false;
@@ -166,7 +154,6 @@ export class ExploreLoader {
       }
       return;
     }
-    this.submitted = false;
     this.requestController?.abort();
     this.requestController = new AbortController();
     const controller = this.requestController;
@@ -210,6 +197,9 @@ export class ExploreLoader {
     void request
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
+        if (loaded.status !== 'unavailable') {
+          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal, submitted ? loaded.result.rows.length : undefined);
+        }
         if (loaded.status === 'unavailable') {
           this.rows = [];
           this.groupRows = [];
@@ -219,14 +209,13 @@ export class ExploreLoader {
             this.cacheBuildRetry = setTimeout(() => {
               this.cacheBuildRetry = undefined;
               if (generation === this.requestGeneration && !controller.signal.aborted) {
+                this.submitted = submitted;
                 this.#retryRevision += 1;
               }
             }, CACHE_BUILD_RETRY_DELAY_MS);
           }
           return;
         }
-        this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal, this.submittedSearch === search ? loaded.result.rows.length : undefined);
-        this.submittedSearch = '';
         if (this.pageKind === 'entries') {
           const entryResult = loaded.result as ExploreResult;
           this.result = entryResult;
@@ -255,7 +244,6 @@ export class ExploreLoader {
       })
       .catch((cause: unknown) => {
         if (generation !== this.requestGeneration) return;
-        this.submittedSearch = '';
         if (cause instanceof DOMException && cause.name === 'AbortError') return;
         this.rows = [];
         this.groupRows = [];

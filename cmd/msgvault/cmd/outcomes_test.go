@@ -3,16 +3,50 @@ package cmd
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestOmiOutageOutlastingBudget(t *testing.T) {
+	st := storetest.New(t)
+	_, err := st.Store.GetOrCreateSource("omi", "work")
+	require.NoError(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		transport := http.DefaultTransport
+		http.DefaultTransport = server.Client().Transport
+		t.Cleanup(func() { http.DefaultTransport = transport })
+		ctx := testInvocationContext(t.Context(), lifecycleTestConfig(t.TempDir()), invocationOptions{})
+		var events []map[string]any
+		invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+			assert.Equal(t, "sync_failed", event)
+			events = append(events, props)
+			return nil
+		}}
+		ctx, cancel := context.WithTimeoutCause(ctx, 5*time.Minute, jobctx.ErrRunBudgetExceeded)
+		defer cancel()
+		err := runConfiguredOmiSync(ctx, st.Store, t.TempDir(), config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic", BaseURL: server.URL})
+		require.ErrorContains(err, "503")
+		require.ErrorIs(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)
+		require.Len(events, 1)
+		assert.Equal(t, "omi", events[0]["sync_source"])
+	})
+}
 
 func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 	for _, tt := range []struct {
