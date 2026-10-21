@@ -150,7 +150,16 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	if st.IsPostgreSQL() {
 		explain = "EXPLAIN "
 	}
-	rows, err := st.db.QueryContext(t.Context(), explain+query, args...)
+	// The fixture tables are tiny, so PostgreSQL prefers a sequential scan
+	// unless the planner is told to take an index when one can serve the query.
+	tx, err := st.db.BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	if st.IsPostgreSQL() {
+		_, err = tx.ExecContext(t.Context(), "SET LOCAL enable_seqscan = off")
+		requirements.NoError(err)
+	}
+	rows, err := tx.QueryContext(t.Context(), explain+query, args...)
 	requirements.NoError(err)
 	defer func() { requirements.NoError(rows.Close()) }()
 	var plan []string
