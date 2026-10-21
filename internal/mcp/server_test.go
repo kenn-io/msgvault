@@ -3409,7 +3409,7 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, resultText(t, r), "matches multiple sources")
 	})
 
-	accounts := []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@gmail.com"}}
+	accounts := []query.AccountInfo{{ID: 1, SourceType: "gmail", Identifier: "alice@example.com"}}
 	page := func(from, n int) []query.MessageSummary {
 		rows := make([]query.MessageSummary, n)
 		for i := range rows {
@@ -3436,7 +3436,7 @@ func TestStageDeletion(t *testing.T) {
 				&querytest.MockEngine{GetDeletionTargetsByFilterFunc: func(_ context.Context, f query.MessageFilter) ([]query.DeletionTarget, error) {
 					targets := make([]query.DeletionTarget, f.Pagination.Limit)
 					for i := range targets {
-						targets[i] = query.DeletionTarget{MessageID: int64(i + 1), SourceID: 1, SourceType: "gmail", SourceIdentifier: "alice@gmail.com", SourceMessageID: fmt.Sprintf("gmail-%d", i)}
+						targets[i] = query.DeletionTarget{MessageID: int64(i + 1), SourceID: 1, SourceType: "gmail", SourceIdentifier: "alice@example.com", SourceMessageID: fmt.Sprintf("gmail-%d", i)}
 					}
 					return targets, nil
 				}},
