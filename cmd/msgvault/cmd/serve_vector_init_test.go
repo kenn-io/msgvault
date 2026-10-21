@@ -1111,33 +1111,6 @@ func visualInvocationKeys(t *testing.T, st *store.Store) []string {
 	return keys
 }
 
-func TestRestartVectorFingerprintCancelledScopeAccount(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource("gmail", "a@example.com")
-	require.NoError(err)
-	home := t.TempDir()
-	path := filepath.Join(home, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[vector]
-enabled = true
-[vector.embeddings]
-endpoint = "http://127.0.0.1:11434/v1"
-model = "model-a"
-dimension = 4
-[vector.embed.scope]
-accounts = ["a@example.com"]
-`), 0600))
-	cfg, err := config.Load(path, home)
-	require.NoError(err)
-	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	_, err = resolve(ctx)
-	require.ErrorIs(err, context.Canceled)
-}
-
 func TestRestartVectorFingerprintMatchesStartup(t *testing.T) {
 	t.Parallel()
 	must := require.New(t)
@@ -1168,24 +1141,28 @@ message_types = ["email"]
 	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
 	initial, err := resolve(t.Context())
 	must.NoError(err)
+	cancelledCtx, cancel := context.WithCancel(t.Context())
+	cancel()
 	for _, test := range []struct {
 		name, accounts, model string
+		ctx                   context.Context
 		same                  bool
 		wantErr               error
 	}{
-		{name: "reordered accounts", accounts: `["b@example.com", "a@example.com"]`, model: "model-a", same: true},
-		{name: "model", accounts: `["a@example.com", "b@example.com"]`, model: "model-b"},
-		{name: "disabled", wantErr: vector.ErrNotEnabled},
+		{name: "reordered accounts", accounts: `["b@example.com", "a@example.com"]`, model: "model-a", ctx: t.Context(), same: true},
+		{name: "model", accounts: `["a@example.com", "b@example.com"]`, model: "model-b", ctx: t.Context()},
+		{name: "disabled", ctx: t.Context(), wantErr: vector.ErrNotEnabled},
+		{name: "cancelled context", accounts: `["a@example.com"]`, model: "model-a", ctx: cancelledCtx, wantErr: context.Canceled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			if test.wantErr != nil {
+			if errors.Is(test.wantErr, vector.ErrNotEnabled) {
 				require.NoError(os.WriteFile(path, []byte("[vector]\nenabled = false\n"), 0600))
 			} else {
 				writeConfig(test.accounts, test.model)
 			}
-			got, err := resolve(t.Context())
+			got, err := resolve(test.ctx)
 			if test.wantErr != nil {
 				require.ErrorIs(err, test.wantErr)
 				assert.Empty(got)
