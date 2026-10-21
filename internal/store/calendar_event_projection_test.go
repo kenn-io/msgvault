@@ -22,6 +22,11 @@ const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTi
 
 func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...string) (*MessagePersistData, int64) {
 	t.Helper()
+	return calendarFixtureWithSubject(t, st, key, raw, "Example event", calendars...)
+}
+
+func calendarFixtureWithSubject(t *testing.T, st *Store, key, raw, subject string, calendars ...string) (*MessagePersistData, int64) {
+	t.Helper()
 	calendar := "calendar@example.com"
 	if len(calendars) > 0 {
 		calendar = calendars[0]
@@ -37,8 +42,8 @@ func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...stri
 		event.ICalUID = ""
 	}
 	data := &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: "Example event", Valid: true}},
-		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: "Example event"},
+		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: subject, Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: subject},
 		RawMIME:      []byte(raw), RawFormat: "gcal_json",
 		Metadata: &sql.NullString{String: fmt.Sprintf(`{"calendar_id":%q,"ical_uid":%q}`, calendar, event.ICalUID), Valid: true},
 	}
@@ -338,6 +343,117 @@ func TestListingKeepsInheritedCancellationDetailsWhenRawAliasIsSparse(t *testing
 	assertions.Equal("Edited title", page.Occurrences[0].Subject)
 	requirements.Len(page.Occurrences[0].Attendees, 1)
 	assertions.Equal("edited@example.org", page.Occurrences[0].Attendees[0].Email)
+}
+
+func TestCompleteCancellationAliasInheritsFreshMissingDetails(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	freshRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"summary":"Fresh title","organizer":{"email":"fresh-organizer@example.org"},"attendees":[{"email":"fresh@example.org"}]}`
+	_, fresh := calendarFixture(t, st, "fresh-alias", freshRaw)
+	_, err := st.db.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, "Fresh title", fresh)
+	requirements.NoError(err)
+	cancelledRaw := `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"}}`
+	_, cancelled := calendarFixtureWithSubject(t, st, "cancelled-alias", cancelledRaw, "")
+	rows := calendarRows(t, st, cancelled)
+	requirements.Len(rows, 1)
+	requirements.Len(rows[0].Event.Attendees, 2)
+	assertions.Equal("fresh@example.org", rows[0].Event.Attendees[0].Email)
+	assertions.Equal("fresh-organizer@example.org", rows[0].Event.Attendees[1].Email)
+	assertions.Equal("Fresh title", rows[0].Subject, "an omitted cancellation summary inherits the freshest alias")
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("Fresh title", page.Occurrences[0].Subject)
+	requirements.Len(page.Occurrences[0].Attendees, 2)
+	assertions.Equal("fresh@example.org", page.Occurrences[0].Attendees[0].Email)
+}
+
+func TestProviderCancellationMergesExplicitFieldsWithInheritedDetails(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	freshRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"summary":"Fresh title","organizer":{"email":"old-organizer@example.org"},"attendees":[{"email":"old@example.org"}]}`
+	_, fresh := calendarFixture(t, st, "fresh-alias", freshRaw)
+	_, err := st.db.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, "Fresh title", fresh)
+	requirements.NoError(err)
+	cancelledRaw := `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","summary":"","organizer":{"email":"new-organizer@example.org"},"attendees":[{"email":"new@example.org"}]}`
+	_, cancelled := calendarFixture(t, st, "cancelled-alias", `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
+	_, err = st.db.Exec(`UPDATE messages SET subject = '' WHERE id = ?`, cancelled)
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageRawWithFormat(cancelled, []byte(cancelledRaw), "gcal_json"))
+	rows := calendarRows(t, st, cancelled)
+	requirements.Len(rows, 1)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2027, 3, 14, 15, 0, 0, 0, time.UTC), *rows[0].Event.End)
+	requirements.Len(rows[0].Event.Attendees, 2)
+	assertions.Equal("new@example.org", rows[0].Event.Attendees[0].Email)
+	assertions.Equal("new-organizer@example.org", rows[0].Event.Attendees[1].Email)
+	assertions.Empty(rows[0].Subject, "an explicitly empty provider summary must remain empty")
+}
+
+func TestCancelledAllDayExceptionRecomputesBoundsAfterSourceZoneChange(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "all-day-exception", `{"id":"instance","iCalUID":"allday@example.org","recurringEventId":"missing-series","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"},"summary":"All-day exception"}`)
+	metadata, err := st.GetMessageMetadata(event)
+	requirements.NoError(err)
+	var fields map[string]any
+	requirements.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+	fields["status"] = "cancelled"
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: string(encoded), Valid: true}))
+	_, note := projectionFixture(t, st, "all-day-note", "plaud_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"America/Los_Angeles"}`))
+
+	wantStart := time.Date(2027, 3, 14, 8, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2027, 3, 15, 7, 0, 0, 0, time.UTC)
+	rows := calendarRows(t, st, event)
+	requirements.Len(rows, 1)
+	assertions.Equal("America/Los_Angeles", rows[0].Event.CalendarTimeZone)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(wantStart, *rows[0].Event.Start)
+	assertions.Equal(wantEnd, *rows[0].Event.End)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(wantStart, page.Occurrences[0].Start)
+	assertions.Equal(wantEnd, page.Occurrences[0].End)
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(wantStart, links[0].Start)
+	assertions.Equal(wantEnd, links[0].End)
+}
+
+func TestUIDlessCancellationAliasKeepsSavedSplitAcrossSourceReimport(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	originalRaw := `{"id":"instance","iCalUID":"orphan@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	data, original := calendarFixture(t, st, "instance", originalRaw)
+	_, note := projectionFixture(t, st, "uidless-cancel-note", "plaud_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: original}))
+	cancelledRaw := `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`
+	_, cancelled := calendarFixture(t, st, "series|2027-03-14T10:00:00Z", cancelledRaw)
+	rows := calendarRows(t, st, cancelled)
+	requirements.Len(rows, 1)
+	assertions.Equal("orphan@example.org", rows[0].ICalUID)
+	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: cancelled}))
+	var uid, decision string
+	requirements.NoError(st.db.QueryRow(`SELECT target_ical_uid, decision FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&uid, &decision))
+	assertions.Equal("orphan@example.org", uid)
+	assertions.Equal("split", decision)
+
+	requirements.NoError(st.RemoveSource(data.Message.SourceID))
+	calendarFixture(t, st, "instance", originalRaw)
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	assertions.Empty(links, "the saved UID split remains effective after source reimport")
 }
 
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {

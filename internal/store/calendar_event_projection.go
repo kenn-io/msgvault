@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -90,19 +91,41 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	if !ok {
 		return clearProjection()
 	}
-	// Rebuilds and config refreshes must keep the selected alias snapshot. The
-	// cancelled message's own raw payload can be older while still having bounds.
-	if event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil &&
-		(cancellationMetadata || !providerEvidence || event.Start == nil && event.End == nil) {
+	// A cancellation alias can supply some fields and omit others. Always select
+	// the freshest complete alias, then overlay only fields present in newly
+	// observed provider JSON. Metadata changes and projection rebuilds have no
+	// new provider fields to overlay.
+	if event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil {
+		if eventUIDMissing(metadata) {
+			uid, err := s.freshestCalendarExceptionUIDWith(ctx, tx, sourceID, event)
+			if err != nil {
+				return err
+			}
+			if uid != "" {
+				updatedMetadata, changed, err := mergeCalendarEventUID(metadata, uid)
+				if err != nil {
+					return fmt.Errorf("preserve cancellation event iCalUID: %w", err)
+				}
+				if changed {
+					if err := setMessageMetadataWith(q, s.dialect, messageID, sql.NullString{String: string(updatedMetadata), Valid: true}); err != nil {
+						return fmt.Errorf("preserve cancellation event iCalUID: %w", err)
+					}
+				}
+			}
+		}
 		latest, found, err := s.freshestCalendarExceptionDetailsWith(ctx, tx, sourceID, event)
 		if err != nil {
 			return err
 		}
 		if found {
 			status, providerID, seriesID, original := event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original
-			event = latest.Event
+			rawFields := calendarRawFields(stored, compression)
+			event, err = mergeCancelledCalendarException(latest.Event, event, rawFields, providerEvidence && !cancellationMetadata)
+			if err != nil {
+				return err
+			}
 			event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original = status, providerID, seriesID, original
-			if cancellationMetadata || latest.Subject != "" && (!subject.Valid || subject.String == "") {
+			if cancellationMetadata || rawFields["summary"] == nil && latest.Subject != "" && (!subject.Valid || subject.String == "") {
 				if _, err := q.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, latest.Subject, messageID); err != nil {
 					return fmt.Errorf("preserve cancellation event subject: %w", err)
 				}
@@ -187,17 +210,17 @@ func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *lo
 	}
 	predicate := `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + originalColumn + ` = ? AND
 		((e.start_at IS NOT NULL AND e.end_at IS NOT NULL) OR (e.start_date <> '' AND e.end_date <> ''))`
-	query := `SELECT e.message_id ` + calendarEventFrom + `(` + predicate + `) ORDER BY e.snapshot_updated_at DESC, e.message_id DESC LIMIT 1`
 	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
-	var messageID int64
-	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&messageID)
+	query := `SELECT e.message_id ` + calendarEventFrom + `(` + predicate + `) ORDER BY e.snapshot_updated_at DESC, e.message_id DESC LIMIT 1`
+	var selectedID int64
+	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&selectedID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CalendarEventRow{}, false, nil
 	}
 	if err != nil {
 		return CalendarEventRow{}, false, fmt.Errorf("find freshest calendar exception details: %w", err)
 	}
-	rows, err := queryCalendarEventRows(ctx, r, `e.message_id = ?`, []any{messageID}, 1)
+	rows, err := queryCalendarEventRows(ctx, r, `e.message_id = ?`, []any{selectedID}, 1)
 	if err != nil {
 		return CalendarEventRow{}, false, err
 	}
@@ -205,6 +228,153 @@ func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *lo
 		return CalendarEventRow{}, false, nil
 	}
 	return rows[0], true, nil
+}
+
+func (s *Store) freshestCalendarExceptionUIDWith(ctx context.Context, tx *loggedTx, sourceID int64, event calevent.Event) (string, error) {
+	if event.Original == nil {
+		return "", nil
+	}
+	originalColumn, originalValue := "e.original_start_at", any(event.Original.Instant)
+	if event.Original.AllDay {
+		originalColumn, originalValue = "e.original_start_date", event.Original.Date
+	}
+	uid := calendarUIDExpression(s.dialect, "m.metadata")
+	predicate := `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + originalColumn + ` = ? AND ` + uid + ` IS NOT NULL AND ` + uid + ` <> ''`
+	query := `SELECT ` + uid + ` ` + calendarEventFrom + `(` + predicate + `) ORDER BY e.snapshot_updated_at DESC, e.message_id DESC LIMIT 1`
+	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
+	var value sql.NullString
+	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("find freshest calendar exception iCalUID: %w", err)
+	}
+	return value.String, nil
+}
+
+func eventUIDMissing(metadata sql.NullString) bool {
+	if !metadata.Valid || metadata.String == "" {
+		return true
+	}
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
+		return false
+	}
+	var value string
+	if err := json.Unmarshal(fields["ical_uid"], &value); err != nil {
+		return true
+	}
+	return value == ""
+}
+
+func mergeCalendarEventUID(metadata sql.NullString, uid string) ([]byte, bool, error) {
+	if uid == "" || metadata.Valid && !eventUIDMissing(metadata) {
+		return nil, false, nil
+	}
+	fields := make(map[string]jsontext.Value)
+	if metadata.Valid && metadata.String != "" {
+		if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
+			return nil, false, fmt.Errorf("decode calendar metadata for iCalUID: %w", err)
+		}
+	}
+	if fields == nil {
+		fields = make(map[string]jsontext.Value)
+	}
+	value, err := json.Marshal(uid)
+	if err != nil {
+		return nil, false, err
+	}
+	fields["ical_uid"] = jsontext.Value(value)
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	if err != nil {
+		return nil, false, err
+	}
+	return encoded, true, nil
+}
+
+func calendarRawFields(stored []byte, compression sql.NullString) map[string]jsontext.Value {
+	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return nil
+	}
+	var fields map[string]jsontext.Value
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil
+	}
+	return fields
+}
+
+func mergeCancelledCalendarException(latest, current calevent.Event, rawFields map[string]jsontext.Value, overlayProviderFields bool) (calevent.Event, error) {
+	merged := latest
+	merged.CalendarTimeZone = current.CalendarTimeZone
+	if overlayProviderFields {
+		if rawFields["start"] != nil {
+			merged.AllDay = current.AllDay
+			merged.Start, merged.StartDate, merged.EventTimeZone = current.Start, current.StartDate, current.EventTimeZone
+		}
+		if rawFields["end"] != nil {
+			merged.End, merged.EndDate = current.End, current.EndDate
+		}
+		if rawFields["recurrence"] != nil {
+			merged.Recurrence = current.Recurrence
+		}
+		if rawFields["attendees"] != nil {
+			merged.Attendees = current.Attendees
+		} else if rawFields["organizer"] != nil {
+			merged.Attendees = mergeCalendarOrganizer(latest.Attendees, current.Attendees)
+		}
+	}
+	if merged.AllDay && merged.StartDate != "" && merged.EndDate != "" {
+		start, end, err := calendarAllDayBounds(merged.StartDate, merged.EndDate, merged.CalendarTimeZone)
+		if err != nil {
+			return calevent.Event{}, err
+		}
+		merged.Start, merged.End = start, end
+	}
+	return merged, nil
+}
+
+func mergeCalendarOrganizer(previous, current []calevent.Attendee) []calevent.Attendee {
+	var organizers []calevent.Attendee
+	organizerEmails := make(map[string]struct{})
+	for _, attendee := range current {
+		if attendee.Role == "organizer" {
+			organizers = append(organizers, attendee)
+			organizerEmails[attendee.Email] = struct{}{}
+		}
+	}
+	merged := make([]calevent.Attendee, 0, len(previous)+len(organizers))
+	for _, attendee := range previous {
+		if attendee.Role == "organizer" {
+			continue
+		}
+		if _, replaced := organizerEmails[attendee.Email]; replaced {
+			continue
+		}
+		merged = append(merged, attendee)
+	}
+	return append(merged, organizers...)
+}
+
+func calendarAllDayBounds(startDate, endDate, zone string) (*time.Time, *time.Time, error) {
+	location := time.UTC
+	if zone != "" {
+		loaded, err := time.LoadLocation(zone)
+		if err != nil {
+			return nil, nil, fmt.Errorf("calendar time zone: %w", err)
+		}
+		location = loaded
+	}
+	start, _, err := calrecur.CivilDateBoundary(startDate, location)
+	if err != nil {
+		return nil, nil, fmt.Errorf("calendar all-day start: %w", err)
+	}
+	end, _, err := calrecur.CivilDateBoundary(endDate, location)
+	if err != nil {
+		return nil, nil, fmt.Errorf("calendar all-day end: %w", err)
+	}
+	return &start, &end, nil
 }
 
 func decodeCalendarProjection(stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
