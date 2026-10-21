@@ -5864,7 +5864,6 @@ type GmailIDsResponse struct {
 	AppliedSourceIds []int64          `json:"applied_source_ids,omitempty"`
 	GmailIds         []string         `json:"gmail_ids" validate:"required"`
 	MatchedCount     *int64           `json:"matched_count,omitempty"`
-	MaxResults       *int64           `json:"max_results,omitempty"`
 	SearchMode       *string          `json:"search_mode,omitzero"`
 	SearchQuery      *string          `json:"search_query,omitzero"`
 	Targets          []DeletionTarget `json:"targets,omitempty"`

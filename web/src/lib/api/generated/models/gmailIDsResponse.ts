@@ -7,7 +7,6 @@ export interface GmailIDsResponse {
   applied_source_ids?: number[];
   gmail_ids: string[];
   matched_count?: number;
-  max_results?: number;
   search_mode?: string;
   search_query?: string;
   targets?: DeletionTarget[];

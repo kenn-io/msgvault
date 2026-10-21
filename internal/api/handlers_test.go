@@ -5564,8 +5564,19 @@ func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
 	assertions.Equal([]string{"gmail-one"}, resp.GmailIDs)
 	assertions.Equal("bodyneedle", resp.SearchQuery)
 	assertions.Equal("fast", resp.SearchMode)
-	requirements.NotNil(resp.MaxResults)
-	assertions.Equal(int64(query.MaxDeletionTargetSearchResults), *resp.MaxResults)
+}
+
+func TestHandleGmailIDsByFilterRejectsEmptyMaxResults(t *testing.T) {
+	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?q=subject:newsletter&search_mode=fast&max_results=", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	var resp struct {
+		Error string `json:"error"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, "invalid_max_results", resp.Error)
 }
 
 func TestHandleGmailIDsByFilterResolvesDisplayedAggregateSearch(t *testing.T) {

@@ -1,16 +1,20 @@
 package query
 
 import (
+	"strings"
+
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // deletableSourceTypesSQL is the SQL list of source types whose mail can be
-// staged for deletion at the source.
+// staged by interactive deletion flows, which support Gmail and Graph only.
+// Bounded MCP staging also accepts IMAP because delete-staged has an IMAP client.
 const deletableSourceTypesSQL = "('gmail', 'msmail')"
 
-// executableDeletionSourceTypesSQL matches delete-staged's canDeleteAtSource.
-const executableDeletionSourceTypesSQL = "('gmail', 'imap', 'msmail')"
+// executableDeletionSourceTypesSQL uses the same source types as delete-staged.
+var executableDeletionSourceTypesSQL = "('" + strings.Join(sourceops.ExecutableDeletionSourceTypes(), "', '") + "')"
 
 // searchMessageVisibilityWhere returns the message visibility predicate for
 // the lexical Search path. An explicit scope wins; the zero value keeps the

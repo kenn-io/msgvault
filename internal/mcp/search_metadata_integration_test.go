@@ -115,6 +115,27 @@ func TestSearchMetadataSingleRequestSQLiteStatements(t *testing.T) {
 	}
 }
 
+func TestBoundedDeletionSearchFiltersLabelsWithoutEnrichingResults(t *testing.T) {
+	for _, mode := range []query.DeletionSearchMode{query.DeletionSearchFast, query.DeletionSearchDeep} {
+		t.Run(string(mode), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			db, observer := sqlobserve.Open(t, nil)
+			seedMetadataSearch(t, db)
+			_, err := db.Exec(`INSERT INTO labels (id, name) VALUES (1, 'chosen'); INSERT INTO message_labels (message_id, label_id) VALUES (2, 1)`)
+			requirements.NoError(err)
+			engine := query.NewSQLiteEngine(db)
+			observer.Reset()
+			targets, matched, err := engine.GetDeletionTargetsBySearchBounded(t.Context(), search.Parse("after:2023-01-01"), query.MessageFilter{Label: "chosen"}, mode, 10)
+			requirements.NoError(err)
+			assertions.Equal(1, matched)
+			requirements.Len(targets, 1)
+			assertions.Equal("two", targets[0].SourceMessageID)
+			assertions.Len(observer.Statements(), 2, "search and target hydration need no label enrichment query")
+		})
+	}
+}
+
 func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert := assert.New(t)
 	db, observer := sqlobserve.Open(t, nil)
@@ -203,7 +224,7 @@ func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
 	requirements.NoError(err)
 	for i := range 3 {
 		f.NewMessage().WithSourceMessageID(fmt.Sprintf("imap-%d", i)).WithSubject("imapneedle").Create(t, f.Store)
@@ -218,4 +239,25 @@ func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
 	assertions.Equal("imap", saver.manifest.Source.Type)
 	assertions.ElementsMatch([]string{"imap-0", "imap-1", "imap-2"}, saver.manifest.GmailIDs)
 	assertions.Equal(int32(1), boundedRequests.Load())
+}
+
+func TestStageDeletionThroughOlderDaemonExplainsUpgrade(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal("/api/v1/health", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"api_schema_version":"3.23.0"}`))
+		assertions.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	engine, err := daemonclient.NewEngine(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	saver := &captureDeletionManifestSaver{}
+	h := &handlers{engine: engine, manifestSaver: saver}
+	result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+	assertions.Contains(resultText(t, result), "requires daemon API schema 3.24.0 or newer")
+	assertions.Contains(resultText(t, result), "upgrade the daemon and retry")
+	assertions.Nil(saver.manifest)
 }

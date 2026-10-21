@@ -1,8 +1,6 @@
 package query
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -20,17 +18,6 @@ type rebindRecordingDialect struct {
 	Dialect
 
 	queries []string
-}
-
-type recordingSQLReader struct {
-	store.SQLReader
-
-	argumentCounts []int
-}
-
-func (r *recordingSQLReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	r.argumentCounts = append(r.argumentCounts, len(args))
-	return r.SQLReader.QueryContext(ctx, query, args...)
 }
 
 func (d *rebindRecordingDialect) Rebind(query string) string {
@@ -1023,26 +1010,6 @@ func TestGetDeletionTargetsBySearchBoundedSkipsSourceDeletedBeforeLimit(t *testi
 	requirements.Len(targets, 1)
 	assertions.Equal(1, matched)
 	assertions.Equal(activeID, targets[0].MessageID)
-}
-
-func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
-	assertions := assert.New(t)
-	env := newTestEnv(t)
-	reader := &recordingSQLReader{SQLReader: env.DB}
-	messages := make([]MessageSummary, inListChunkSize+1)
-	for i := range messages {
-		messages[i].ID = env.AddMessage(dbtest.MessageOpts{Subject: "label chunk"})
-	}
-
-	firstLabel := env.AddLabel(dbtest.LabelOpts{Name: "first chunk"})
-	lastLabel := env.AddLabel(dbtest.LabelOpts{Name: "second chunk"})
-	env.AddMessageLabel(messages[0].ID, firstLabel)
-	env.AddMessageLabel(messages[inListChunkSize].ID, lastLabel)
-
-	require.NoError(t, fetchLabelsForMessageList(env.Ctx, reader, SQLiteQueryDialect{}.Rebind, "", messages))
-	assertions.Equal([]int{inListChunkSize, 1}, reader.argumentCounts)
-	assertions.Equal([]string{"first chunk"}, messages[0].Labels)
-	assertions.Equal([]string{"second chunk"}, messages[inListChunkSize].Labels)
 }
 
 func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) {

@@ -6385,9 +6385,6 @@ components:
         matched_count:
           format: int64
           type: integer
-        max_results:
-          format: int64
-          type: integer
         search_mode:
           type: string
         search_query:

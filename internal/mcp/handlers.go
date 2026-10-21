@@ -2408,11 +2408,13 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			return dependencyError("search messages for deletion", errors.New("query engine requires bounded deletion search support"))
 		}
 		filter := query.MessageFilter{}
-		selection.applyToFilter(&filter)
 		var matched int
 		targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, mode, maxStageDeletionResults+1)
 		if err == nil && mode == query.DeletionSearchFast && matched == 0 && q.HasTextTerms() {
 			targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, query.DeletionSearchDeep, maxStageDeletionResults+1)
+		}
+		if errors.Is(err, daemonclient.ErrBoundedDeletionSearchUnsupported) {
+			return toolErrorResult(err.Error()), nil
 		}
 		if err != nil {
 			return dependencyError("search messages for deletion", err)
@@ -2450,6 +2452,10 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			return nil, newInternalError("filter messages for deletion", err)
 		}
 
+		if len(targets) > maxStageDeletionResults {
+			return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
+		}
+
 		// Build description from filters
 		var parts []string
 		if fromStr != "" {
@@ -2476,9 +2482,6 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		}
 	}
 
-	if len(targets) > maxStageDeletionResults {
-		return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
-	}
 	if len(targets) == 0 {
 		return toolErrorResult("no messages match the specified criteria"), nil
 	}

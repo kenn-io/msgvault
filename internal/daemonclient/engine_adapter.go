@@ -20,6 +20,9 @@ import (
 // ErrNotSupported is returned for operations not available through the daemon API.
 var ErrNotSupported = errors.New("operation not supported through daemon API")
 
+// ErrBoundedDeletionSearchUnsupported means the daemon needs an upgrade for bounded staging.
+var ErrBoundedDeletionSearchUnsupported = errors.New("bounded deletion search unsupported")
+
 // ErrMessageRawNotFound means the daemon holds the message but no raw data.
 var ErrMessageRawNotFound = errors.New("message raw data not found")
 
@@ -1295,9 +1298,6 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
 		return []query.DeletionTarget{}, 0, nil
 	}
-	if maxResults < 1 || maxResults > query.MaxDeletionTargetSearchResults {
-		return nil, 0, fmt.Errorf("bounded deletion search limit must be between 1 and %d", query.MaxDeletionTargetSearchResults)
-	}
 	if mode != query.DeletionSearchFast && mode != query.DeletionSearchDeep {
 		return nil, 0, fmt.Errorf("unsupported bounded deletion search mode %q", mode)
 	}
@@ -1314,7 +1314,7 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 		return nil, 0, fmt.Errorf("check bounded daemon search-aware deletion capability: %w", err)
 	}
 	if !compatible {
-		return nil, 0, fmt.Errorf("bounded search-aware deletion resolution requires daemon API schema %s or newer", boundedDeletionSearchMinAPISchemaVersion)
+		return nil, 0, fmt.Errorf("%w: bounded search-aware deletion resolution requires daemon API schema %s or newer; upgrade the daemon and retry", ErrBoundedDeletionSearchUnsupported, boundedDeletionSearchMinAPISchemaVersion)
 	}
 	modeString := string(mode)
 	limit := int64(maxResults)
@@ -1330,12 +1330,8 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 	}
 	if stringValue(resp.JSON200.SearchQuery) != queryString ||
 		stringValue(resp.JSON200.SearchMode) != modeString ||
-		resp.JSON200.MatchedCount == nil ||
-		resp.JSON200.MaxResults == nil || *resp.JSON200.MaxResults != limit {
+		resp.JSON200.MatchedCount == nil {
 		return nil, 0, errors.New("daemon did not confirm the bounded deletion search scope; upgrade the daemon and retry")
-	}
-	if len(resp.JSON200.Targets) > maxResults {
-		return nil, 0, fmt.Errorf("daemon returned %d deletion targets above the %d-row limit", len(resp.JSON200.Targets), maxResults)
 	}
 	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
 		return nil, 0, err

@@ -277,7 +277,6 @@ type GmailIDsResponse struct {
 	SearchQuery      string                 `json:"search_query,omitempty"`
 	SearchMode       string                 `json:"search_mode,omitempty"`
 	MatchedCount     *int64                 `json:"matched_count,omitempty"`
-	MaxResults       *int64                 `json:"max_results,omitempty"`
 	AppliedSourceIDs []int64                `json:"applied_source_ids,omitempty"`
 }
 
@@ -3359,6 +3358,10 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	searchMode := strings.TrimSpace(r.URL.Query().Get("search_mode"))
 	var maxResults *int64
+	if r.URL.Query().Has("max_results") && r.URL.Query().Get("max_results") == "" {
+		writeError(w, http.StatusBadRequest, "invalid_max_results", "max_results must be an integer")
+		return
+	}
 	if value, provided, err := queryInt64(r, "max_results"); err != nil {
 		s.rejectBadParam(w, err)
 		return
@@ -3399,9 +3402,6 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 				targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(
 					r.Context(), parsed, filter, query.DeletionSearchMode(searchMode), int(*maxResults),
 				)
-				if err == nil && len(targets) > int(*maxResults) {
-					err = fmt.Errorf("bounded deletion search returned %d targets above its %d-row limit", len(targets), *maxResults)
-				}
 				break
 			}
 			resolver, ok := engine.(query.DeletionTargetSearchResolver)
@@ -3456,7 +3456,6 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		Targets:          targets,
 		SearchQuery:      searchQuery,
 		SearchMode:       searchMode,
-		MaxResults:       maxResults,
 		AppliedSourceIDs: append([]int64(nil), filter.SourceIDs...),
 	})
 }

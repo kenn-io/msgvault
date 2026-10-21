@@ -62,9 +62,6 @@ func resolveBoundedDeletionTargets(
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(messages) > maxResults {
-		return nil, 0, fmt.Errorf("bounded deletion search returned %d rows above its %d-row limit", len(messages), maxResults)
-	}
 	if len(messages) == 0 {
 		return []DeletionTarget{}, 0, nil
 	}

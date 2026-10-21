@@ -1776,7 +1776,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearchBounded(
 ) ([]DeletionTarget, int, error) {
 	return resolveBoundedDeletionTargets(
 		ctx, searchQuery, filter, mode, maxResults,
-		e.SearchFast, e.SearchDeep, func(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
+		e.searchFastWithoutLabels, e.searchDeepWithoutLabels, func(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
 			return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
 				return e.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
 			})
@@ -2295,6 +2295,16 @@ func (e *SQLiteEngine) SearchDeep(
 	return e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
 }
 
+func (e *SQLiteEngine) searchDeepWithoutLabels(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
+	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, q, filter)
+	return e.executeSearchQueryWithoutLabels(ctx, conditions, args, ftsJoin, limit, offset)
+}
+
+func (e *SQLiteEngine) searchFastWithoutLabels(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
+	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
+	return e.executeSearchQueryWithoutLabels(ctx, conditions, args, ftsJoin, limit, offset)
+}
+
 // SearchDeepWithStats builds the body-aware predicate once and reuses it for
 // messages, count, and stats so all three describe the same filtered set.
 func (e *SQLiteEngine) SearchDeepWithStats(
@@ -2327,6 +2337,21 @@ func (e *SQLiteEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 // optional FTS join, returning paginated MessageSummary results. Shared
 // by Search and SearchFast.
 func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, error) {
+	results, err := e.executeSearchQueryWithoutLabels(ctx, conditions, args, ftsJoin, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	// Fetch labels for results
+	if len(results) > 0 {
+		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
+			return nil, fmt.Errorf("fetch labels: %w", err)
+		}
+	}
+
+	return results, nil
+}
+
+func (e *SQLiteEngine) executeSearchQueryWithoutLabels(ctx context.Context, conditions []string, args []any, ftsJoin string, limit, offset int) ([]MessageSummary, error) {
 	if limit == 0 {
 		limit = 100
 	}
@@ -2384,13 +2409,6 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate messages: %w", err)
-	}
-
-	// Fetch labels for results
-	if len(results) > 0 {
-		if err := e.fetchLabelsForMessages(ctx, results); err != nil {
-			return nil, fmt.Errorf("fetch labels: %w", err)
-		}
 	}
 
 	return results, nil

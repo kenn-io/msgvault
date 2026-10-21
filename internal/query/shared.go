@@ -181,51 +181,40 @@ func fetchLabelsForMessageList(ctx context.Context, db store.SQLReader, rebind r
 		return nil
 	}
 
+	ids := make([]any, len(messages))
+	placeholders := make([]string, len(messages))
 	idToIndex := make(map[int64]int)
 	for i, msg := range messages {
+		ids[i] = msg.ID
+		placeholders[i] = "?"
 		idToIndex[msg.ID] = i
 	}
 
-	for start := 0; start < len(messages); start += inListChunkSize {
-		end := min(start+inListChunkSize, len(messages))
-		chunk := messages[start:end]
-		ids := make([]any, len(chunk))
-		placeholders := make([]string, len(chunk))
-		for i, msg := range chunk {
-			ids[i] = msg.ID
-			placeholders[i] = "?"
-		}
+	query := fmt.Sprintf(`
+		SELECT ml.message_id, l.name
+		FROM %smessage_labels ml
+		JOIN %slabels l ON l.id = ml.label_id
+		WHERE ml.message_id IN (%s)
+	`, tablePrefix, tablePrefix, strings.Join(placeholders, ","))
 
-		query := fmt.Sprintf(`
-			SELECT ml.message_id, l.name
-			FROM %smessage_labels ml
-			JOIN %slabels l ON l.id = ml.label_id
-			WHERE ml.message_id IN (%s)
-		`, tablePrefix, tablePrefix, strings.Join(placeholders, ","))
+	rows, err := db.QueryContext(ctx, rebind(query), ids...)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
 
-		if err := func() error {
-			rows, err := db.QueryContext(ctx, rebind(query), ids...)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var msgID int64
-				var labelName string
-				if err := rows.Scan(&msgID, &labelName); err != nil {
-					return err
-				}
-				if idx, ok := idToIndex[msgID]; ok {
-					messages[idx].Labels = append(messages[idx].Labels, labelName)
-				}
-			}
-			return rows.Err()
-		}(); err != nil {
+	for rows.Next() {
+		var msgID int64
+		var labelName string
+		if err := rows.Scan(&msgID, &labelName); err != nil {
 			return err
+		}
+		if idx, ok := idToIndex[msgID]; ok {
+			messages[idx].Labels = append(messages[idx].Labels, labelName)
 		}
 	}
 
-	return nil
+	return rows.Err()
 }
 
 // fetchParticipantsForMessageList adds recipients to message summaries using a batch query.

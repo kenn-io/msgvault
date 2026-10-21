@@ -1030,7 +1030,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 			assertions.Equal(`[{"source_id":7,"unattributed":true}]`, r.URL.Query().Get("account_scopes"))
 			writeJSONResponse(t, w, map[string]any{
 				"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
-				"search_mode": "fast", "max_results": 100001, "matched_count": 2,
+				"search_mode": "fast", "matched_count": 2,
 				"targets": []map[string]any{{
 					"message_id": 1, "source_id": 7, "source_type": "gmail",
 					"source_identifier": "account@example.test", "source_message_id": "gm-1",
@@ -2759,7 +2759,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedRequiresMatchedCount(t *testing.
 		case "/api/v1/health":
 			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.24.0"})
 		case "/api/v1/messages/gmail-ids":
-			writeJSONResponse(t, w, map[string]any{"gmail_ids": []string{}, "search_query": "needle", "search_mode": "fast", "max_results": 100001})
+			writeJSONResponse(t, w, map[string]any{"gmail_ids": []string{}, "search_query": "needle", "search_mode": "fast"})
 		default:
 			http.NotFound(w, r)
 		}
