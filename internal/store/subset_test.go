@@ -1456,6 +1456,47 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubsetPreservesLoopMessageOrderAndRetiredCutoffCeiling(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+	sourceDB, err := sql.Open(sqliteutil.DriverName(), sourcePath+"?_foreign_keys=ON")
+	require.NoError(err)
+	for messageID := int64(1); messageID <= 5; messageID++ {
+		_, err = sourceDB.Exec(`INSERT INTO loop_message_order (id, message_id) VALUES (?, ?)`, 1000+messageID, messageID)
+		require.NoError(err)
+	}
+	_, err = sourceDB.Exec(`INSERT INTO loop_conversation_decisions
+		(conversation_id, state, through_at, through_message_id, through_order_id)
+		VALUES (1, 'done', '2024-01-01 01:00:00', 0, 2000)`)
+	require.NoError(err)
+	require.NoError(sourceDB.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubset(sourcePath, destinationDir, 5, false)
+	require.NoError(err)
+	destinationPath := filepath.Join(destinationDir, "msgvault.db")
+	destination, err := Open(destinationPath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	require.NoError(destination.InitSchema())
+
+	var copiedOrder, copiedCutoff int64
+	require.NoError(destination.DB().QueryRow(`SELECT id FROM loop_message_order WHERE message_id = 1`).Scan(&copiedOrder))
+	require.NoError(destination.DB().QueryRow(`SELECT through_order_id FROM loop_conversation_decisions WHERE conversation_id = 1`).Scan(&copiedCutoff))
+	assert.Equal(int64(1001), copiedOrder, "subset keeps the source token for a selected message")
+	assert.Equal(int64(2000), copiedCutoff, "subset keeps a retired cutoff's ordering boundary")
+
+	newID, err := destination.UpsertMessage(&Message{
+		SourceID: 1, ConversationID: 1, SourceMessageID: "after-subset", MessageType: "email",
+	})
+	require.NoError(err)
+	var newOrder int64
+	require.NoError(destination.DB().QueryRow(destination.Rebind(
+		`SELECT id FROM loop_message_order WHERE message_id = ?`), newID).Scan(&newOrder))
+	assert.Greater(newOrder, copiedCutoff, "new tokens start above retired cutoffs copied into the subset")
+}
+
 func TestCopySubsetCopiesPortableSourceMergeMarkersForSelectedRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -5445,4 +5486,106 @@ func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	_, found, err = destination.GetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(99))
 	requirements.NoError(err)
 	assert.False(t, found, "markers for sources outside the subset stay behind")
+}
+
+func TestSubsetCopiesLoopDecisions(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(source.MarkMessageDeleted(1, "msg_4"))
+	for messageID := int64(1); messageID <= 4; messageID++ {
+		_, err = source.DB().Exec(`INSERT INTO loop_message_order (id, message_id) VALUES (?, ?)`, 1000+messageID, messageID)
+		require.NoError(err)
+	}
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_conversation_decisions
+		(conversation_id, state, through_at, through_message_id, through_order_id)
+		VALUES (1, 'done', CURRENT_TIMESTAMP, 4, 1004)`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_decision_covered_orders (conversation_id, order_id) VALUES (1, 1002)`)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 3, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var state string
+	var messageID, orderID, coveredOrder int64
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT state, through_message_id, through_order_id
+		 FROM loop_conversation_decisions WHERE conversation_id = 1`).Scan(&state, &messageID, &orderID))
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT order_id FROM loop_decision_covered_orders WHERE conversation_id = 1`).Scan(&coveredOrder))
+	require.Equal(LoopStateDone, state)
+	require.Zero(messageID, "a cutoff message outside the subset cannot remain an identity match")
+	require.Equal(int64(1004), orderID, "the subset retains the original timestamp/order coverage boundary")
+	require.Equal(int64(1002), coveredOrder, "coverage tokens survive when their message identity is omitted")
+}
+
+func TestSubsetMigratesLegacyLoopDecisionWhenItsAnchorIsOmitted(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(source.MarkMessageDeleted(1, "msg_4"))
+	_, err = source.DB().ExecContext(ctx, `DROP TABLE loop_decision_covered_orders`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `DROP TABLE loop_conversation_decisions`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `ALTER TABLE loop_decisions DROP COLUMN through_order_id`)
+	require.NoError(err)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_decisions
+		(anchor_message_id, state, through_at, through_message_id)
+		VALUES (4, 'done', CURRENT_TIMESTAMP, 4)`)
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 3, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var state string
+	var messageID, orderID int64
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT state, through_message_id, through_order_id FROM loop_conversation_decisions WHERE conversation_id = 2`).
+		Scan(&state, &messageID, &orderID))
+	require.Equal(LoopStateDone, state)
+	require.Zero(messageID, "the omitted anchor identity is cleared")
+	require.Equal(int64(4), orderID, "the legacy order cutoff survives anchor omission")
+	var covered int
+	require.NoError(destination.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM loop_decision_covered_orders WHERE conversation_id = 2`).Scan(&covered))
+	require.Positive(covered, "selected questions from the retained conversation stay covered")
+}
+
+func TestCopySubsetRepairsCopiedSynctechSendState(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(source.InitSchema())
+	_, err = source.DB().Exec(`UPDATE sources SET source_type = 'synctech_sms' WHERE id = 1`)
+	require.NoError(err)
+	_, err = source.DB().Exec(`UPDATE messages SET message_type = 'sms', is_sent = TRUE WHERE id = 1`)
+	require.NoError(err)
+	require.NoError(source.UpsertMessageRawWithFormat(1, []byte(`{"Type":3}`), "synctech_sms_xml_json"))
+	require.NoError(source.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var isSent bool
+	require.NoError(destination.DB().QueryRow(`SELECT is_sent FROM messages WHERE id = 1`).Scan(&isSent))
+	assert.False(isSent, "the copied draft is repaired after the source migration ledger is copied")
 }

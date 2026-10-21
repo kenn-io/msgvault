@@ -684,6 +684,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_path TEXT`, "account_path"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_sent BOOLEAN DEFAULT TRUE`, "messages.is_sent"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS canonical_id TEXT`, "canonical_id"},
@@ -784,6 +785,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS dispatch_authorized_at TIMESTAMPTZ`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN IF NOT EXISTS has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE loop_decisions ADD COLUMN IF NOT EXISTS through_order_id BIGINT NOT NULL DEFAULT 0`, "loop_decisions.through_order_id"},
 	}
 }
 
@@ -2393,6 +2395,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
+	"loop_decisions", "loop_conversation_decisions", "loop_decision_covered_orders",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

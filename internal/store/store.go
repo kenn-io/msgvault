@@ -1634,6 +1634,25 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(ctx, migrationLoopDecisionOrdering, 1, false, func(ctx context.Context) error {
+		if _, err := s.db.ExecContext(ctx, `UPDATE loop_decisions
+			SET through_order_id = through_message_id
+			WHERE through_order_id = 0 AND through_message_id > 0`); err != nil {
+			return fmt.Errorf("backfill loop decision ordering boundary: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("migrate loop decision ordering boundary: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationLoopMessageOrdering, 1, false, s.migrateLoopMessageOrdering); err != nil {
+		return fmt.Errorf("migrate loop message ordering: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationLoopConversationDecisions, 1, false, s.migrateLoopConversationDecisions); err != nil {
+		return fmt.Errorf("migrate loop decisions by conversation: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationSynctechUnsentMessages, 1, false, s.migrateSynctechUnsentMessages); err != nil {
+		return fmt.Errorf("migrate Synctech unsent messages: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in

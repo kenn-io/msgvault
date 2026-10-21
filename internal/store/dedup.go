@@ -568,6 +568,11 @@ func (s *Store) MergeDuplicates(
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
 			}
 		}
+		for _, dupID := range duplicateIDs {
+			if err := copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
+				return err
+			}
+		}
 		if result.RawMIMEBackfilled > 0 {
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err

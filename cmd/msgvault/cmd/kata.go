@@ -41,7 +41,7 @@ func newKataCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writePersonAgendaJSON(cmd, result)
+			return writeCommandJSON(cmd, result)
 		},
 	}
 	prepare.Flags().StringVar(&prepareInput, "input", "-", "JSON request file, or - for stdin")
@@ -121,7 +121,7 @@ func newKataCmd() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return writePersonAgendaJSON(cmd, result)
+				return writeCommandJSON(cmd, result)
 			}
 			out := cmd.OutOrStdout()
 			for _, issue := range result.Issues {
@@ -157,7 +157,7 @@ func newKataCmd() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return writePersonAgendaJSON(cmd, result)
+				return writeCommandJSON(cmd, result)
 			}
 			return writeKataIssueContext(cmd.OutOrStdout(), result)
 		},
@@ -224,7 +224,7 @@ func readKataInput[T any](cmd *cobra.Command, path string) (T, error) {
 
 func writeKataIssue(cmd *cobra.Command, result generated.KataIssueResponse, jsonOutput bool) error {
 	if jsonOutput {
-		return writePersonAgendaJSON(cmd, result)
+		return writeCommandJSON(cmd, result)
 	}
 	replayed := ""
 	if result.Replayed {

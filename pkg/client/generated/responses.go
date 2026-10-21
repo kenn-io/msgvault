@@ -1689,6 +1689,54 @@ type TestTaskIntegrationResponse = TaskIntegrationStatusResponse
 
 type TestTaskIntegrationErrorResponse = ErrorResponse
 
+type ListLoopsResponse = LoopListResponse
+
+type ListLoopsErrorResponse = ErrorResponse
+
+type ListLoopsErrorResponseJSON = ErrorResponse
+
+type ListLoopsErrorResponseJSON403 = ErrorResponse
+
+type ListLoopsErrorResponseJSON500 = ErrorResponse
+
+type ListLoopsErrorResponseJSON503 = ErrorResponse
+
+type MarkLoopDoneResponse = LoopDecisionResponse
+
+type MarkLoopDoneErrorResponse = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON403 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON404 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON413 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON415 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON500 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSON503 = ErrorResponse
+
+type SnoozeLoopResponse = LoopDecisionResponse
+
+type SnoozeLoopErrorResponse = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON403 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON404 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON413 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON415 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON500 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSON503 = ErrorResponse
+
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
@@ -5129,6 +5177,48 @@ type TestTaskIntegrationResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *TestTaskIntegrationResponse
+}
+
+type ListLoopsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListLoopsResponse
+	JSON400      *ListLoopsErrorResponse
+	JSON401      *ListLoopsErrorResponseJSON
+	JSON403      *ListLoopsErrorResponseJSON403
+	JSON500      *ListLoopsErrorResponseJSON500
+	JSON503      *ListLoopsErrorResponseJSON503
+}
+
+type MarkLoopDoneResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *MarkLoopDoneResponse
+	JSON400      *MarkLoopDoneErrorResponse
+	JSON401      *MarkLoopDoneErrorResponseJSON
+	JSON403      *MarkLoopDoneErrorResponseJSON403
+	JSON404      *MarkLoopDoneErrorResponseJSON404
+	JSON413      *MarkLoopDoneErrorResponseJSON413
+	JSON415      *MarkLoopDoneErrorResponseJSON415
+	JSON500      *MarkLoopDoneErrorResponseJSON500
+	JSON503      *MarkLoopDoneErrorResponseJSON503
+}
+
+type SnoozeLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SnoozeLoopResponse
+	JSON400      *SnoozeLoopErrorResponse
+	JSON401      *SnoozeLoopErrorResponseJSON
+	JSON403      *SnoozeLoopErrorResponseJSON403
+	JSON404      *SnoozeLoopErrorResponseJSON404
+	JSON413      *SnoozeLoopErrorResponseJSON413
+	JSON415      *SnoozeLoopErrorResponseJSON415
+	JSON500      *SnoozeLoopErrorResponseJSON500
+	JSON503      *SnoozeLoopErrorResponseJSON503
 }
 
 type GetMCPCapabilitiesResp struct {

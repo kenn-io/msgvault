@@ -5626,6 +5626,147 @@ func (o *SearchIntegrationTasksRequestOptions) GetHeader() (map[string]string, e
 	return nil, nil
 }
 
+// ListLoopsRequestOptions is the options needed to make a request to ListLoops.
+type ListLoopsRequestOptions struct {
+	Query *ListLoopsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListLoopsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListLoopsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListLoopsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListLoopsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListLoopsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// MarkLoopDoneRequestOptions is the options needed to make a request to MarkLoopDone.
+type MarkLoopDoneRequestOptions struct {
+	PathParams *MarkLoopDonePath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *MarkLoopDoneRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *MarkLoopDoneRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *MarkLoopDoneRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *MarkLoopDoneRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *MarkLoopDoneRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SnoozeLoopRequestOptions is the options needed to make a request to SnoozeLoop.
+type SnoozeLoopRequestOptions struct {
+	PathParams *SnoozeLoopPath
+	Body       *SnoozeLoopBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SnoozeLoopRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SnoozeLoopRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *SnoozeLoopRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SnoozeLoopRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *SnoozeLoopRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SearchMediaRequestOptions is the options needed to make a request to SearchMedia.
 type SearchMediaRequestOptions struct {
 	Query *SearchMediaQuery

@@ -152,6 +152,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if err := copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
 			return err
 		}
+		if err := copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ? WHERE reply_to_message_id = ?`, m.survivor, m.id); err != nil {
 			return err
 		}

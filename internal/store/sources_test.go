@@ -1464,6 +1464,10 @@ func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 		"SELECT COUNT(*) FROM messages WHERE "+store.LiveMessagesWhere("", true),
 	).Scan(&n), "post-migration live count")
 	assert.Equal(t, 1, n, "post-migration live count")
+	var isSent bool
+	require.NoError(st.DB().QueryRow("SELECT is_sent FROM messages WHERE id = 1").Scan(&isSent),
+		"legacy send-state column")
+	assert.True(t, isSent, "legacy rows retain the canonical sent default")
 
 	// Confirm delete_batch_id is also queryable post-migration so
 	// DeleteAllDeduped's distinct-batch count works on upgraded DBs.

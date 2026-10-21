@@ -1757,6 +1757,32 @@ func TestMigrateSourceMessageIDRepointsRepliesBeforeDeletingDuplicate(t *testing
 	assert.Equal(0, legacyCount, "legacy duplicate should be deleted")
 }
 
+func TestMigrateSourceMessageIDTransfersLoopDecisionBeforeDeletingLegacyTeamsChatCopy(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+
+	source, err := st.GetOrCreateSource("teams", "user@example.com")
+	require.NoError(err)
+	convID, err := st.EnsureConversationWithType(source.ID, "19:x@thread.v2", "direct_chat", "DM")
+	require.NoError(err)
+	legacyID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
+	scopedID := insertStoreTestMessage(t, st, source.ID, convID, "chat:19:x@thread.v2:m1")
+	throughAt := time.Date(2026, time.October, 15, 10, 0, 0, 0, time.UTC)
+	_, err = st.MarkLoopDoneContext(t.Context(), legacyID, store.LoopMessage{
+		ID: legacyID, OccurredAt: throughAt,
+	})
+	require.NoError(err)
+
+	require.NoError(st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"))
+	var state string
+	var throughID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT state, through_message_id
+		FROM loop_conversation_decisions WHERE conversation_id = ?`), convID).Scan(&state, &throughID))
+	assert.Equal(store.LoopStateDone, state)
+	assert.Equal(scopedID, throughID)
+}
+
 func TestListUnresolvedMessageRepliesReturnsOnlyUnlinkedProviderMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

@@ -1140,6 +1140,58 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type LoopDecisionResponseState string
+
+const (
+	Done    LoopDecisionResponseState = "done"
+	Snoozed LoopDecisionResponseState = "snoozed"
+)
+
+// Validate checks if the LoopDecisionResponseState value is valid
+func (l LoopDecisionResponseState) Validate() error {
+	switch l {
+	case Done, Snoozed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))
+	}
+}
+
+type LoopItemChannel string
+
+const (
+	Chat  LoopItemChannel = "chat"
+	Email LoopItemChannel = "email"
+)
+
+// Validate checks if the LoopItemChannel value is valid
+func (l LoopItemChannel) Validate() error {
+	switch l {
+	case Chat, Email:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemChannel value, got: %v", l))
+	}
+}
+
+// LoopItemKind reply_owed waits on you; awaiting_reply waits on them
+type LoopItemKind string
+
+const (
+	AwaitingReply LoopItemKind = "awaiting_reply"
+	ReplyOwed     LoopItemKind = "reply_owed"
+)
+
+// Validate checks if the LoopItemKind value is valid
+func (l LoopItemKind) Validate() error {
+	switch l {
+	case AwaitingReply, ReplyOwed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopItemKind value, got: %v", l))
+	}
+}
+
 type MediaSearchResultOrigin string
 
 const (
@@ -1914,22 +1966,22 @@ func (o OrganizationCategoryBodySource) Validate() error {
 type OrganizationContactPointBodyContactKind string
 
 const (
-	Calendar     OrganizationContactPointBodyContactKind = "calendar"
-	ContactURI   OrganizationContactPointBodyContactKind = "contact_uri"
-	Email        OrganizationContactPointBodyContactKind = "email"
-	Impp         OrganizationContactPointBodyContactKind = "impp"
-	Language     OrganizationContactPointBodyContactKind = "language"
-	OrgDirectory OrganizationContactPointBodyContactKind = "org_directory"
-	Phone        OrganizationContactPointBodyContactKind = "phone"
-	Social       OrganizationContactPointBodyContactKind = "social"
-	URL          OrganizationContactPointBodyContactKind = "url"
-	Username     OrganizationContactPointBodyContactKind = "username"
+	Calendar                                     OrganizationContactPointBodyContactKind = "calendar"
+	ContactURI                                   OrganizationContactPointBodyContactKind = "contact_uri"
+	Impp                                         OrganizationContactPointBodyContactKind = "impp"
+	Language                                     OrganizationContactPointBodyContactKind = "language"
+	OrgDirectory                                 OrganizationContactPointBodyContactKind = "org_directory"
+	OrganizationContactPointBodyContactKindEmail OrganizationContactPointBodyContactKind = "email"
+	Phone                                        OrganizationContactPointBodyContactKind = "phone"
+	Social                                       OrganizationContactPointBodyContactKind = "social"
+	URL                                          OrganizationContactPointBodyContactKind = "url"
+	Username                                     OrganizationContactPointBodyContactKind = "username"
 )
 
 // Validate checks if the OrganizationContactPointBodyContactKind value is valid
 func (o OrganizationContactPointBodyContactKind) Validate() error {
 	switch o {
-	case Calendar, ContactURI, Email, Impp, Language, OrgDirectory, Phone, Social, URL, Username:
+	case Calendar, ContactURI, Impp, Language, OrgDirectory, OrganizationContactPointBodyContactKindEmail, Phone, Social, URL, Username:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OrganizationContactPointBodyContactKind value, got: %v", o))

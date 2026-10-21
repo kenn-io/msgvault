@@ -171,7 +171,8 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 		return 0, err
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
-	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe, sms.Timestamp, sms.Body, sms.Body, 0, sms)
+	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe,
+		smsWasSent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -201,7 +202,8 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	}
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
-	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe, mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
+	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe,
+		mmsWasSent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -241,10 +243,11 @@ func (i *Importer) importCall(sourceID int64, call Call) (int64, error) {
 	}
 	body := fmt.Sprintf("Call %s, %d seconds", callTypeLabel(call.Type), call.DurationSeconds)
 	msgID := stableID("call", remoteAddress, call.Timestamp.String(), fmt.Sprint(call.Type), strconv.Itoa(call.DurationSeconds))
-	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe, call.Timestamp, body, body, 0, call)
+	return i.upsertTextMessage(sourceID, convID, msgID, "synctech_sms_call", senderID, recipientIDs, fromMe,
+		true, call.Timestamp, body, body, 0, call)
 }
 
-func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
+func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, messageType string, senderID int64, recipientIDs []int64, fromMe, isSent bool, sentAt time.Time, body, subject string, attachmentCount int, raw any) (int64, error) {
 	msgID, err := i.store.UpsertMessage(&store.Message{
 		ConversationID:  convID,
 		SourceID:        sourceID,
@@ -261,6 +264,9 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
+	}
+	if err := i.store.SetMessageSentState(msgID, isSent); err != nil {
+		return 0, fmt.Errorf("record message send state: %w", err)
 	}
 	if body != "" {
 		if err := i.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
@@ -287,6 +293,19 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 			"error", err)
 	}
 	return msgID, nil
+}
+
+func smsWasSent(kind SMSType) bool {
+	switch kind {
+	case SMSTypeDraft, SMSTypeOutbox, SMSTypeFailed, SMSTypeQueued:
+		return false
+	default:
+		return true
+	}
+}
+
+func mmsWasSent(box MMSBox) bool {
+	return box != MMSBoxDraft && box != MMSBoxOutbox
 }
 
 func (i *Importer) participantID(address, displayName string) (int64, error) {

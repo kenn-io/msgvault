@@ -12,6 +12,7 @@ All notable changes to msgvault, grouped by release.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.
 - On Windows, private folders such as token, export and spool folders are created owner-only from the start. If Windows rejects those permissions, the folder is restricted right after creation, with a warning logged if that also fails. If creating one fails, the error names the folder's absolute path.
+- [Open loops](usage/open-loops.md) list the conversations waiting on your reply and the replies you are waiting on, and keep each one until someone answers. `msgvault loops list`, `done`, and `snooze` manage them, and the Directory person page shows a read-only Open loops card. Each list reads the archive as it is, so a reply that just synced to the same conversation clears its loop, and conversations with a message in the last 30 days list. They need archive schema version 13 and HTTP API schema 3.24.0.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
