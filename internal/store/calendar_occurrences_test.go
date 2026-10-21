@@ -473,12 +473,70 @@ func TestListCalendarOccurrencesMultiDayExceptions(t *testing.T) {
 	}
 }
 
+func TestListCalendarOccurrencesExceptionZone(t *testing.T) {
+	for _, tc := range []struct {
+		name, bounds, wantStart, wantEnd string
+		wantAllDay                       bool
+		wantIndex                        int
+	}{
+		{
+			name:      "all-day calendar zone",
+			bounds:    `"start":{"date":"2027-03-09"},"end":{"date":"2027-03-10"}`,
+			wantStart: "2027-03-08T15:00:00Z", wantEnd: "2027-03-09T15:00:00Z",
+			wantAllDay: true,
+		},
+		{
+			name:      "omitted bounds inherit master zone",
+			bounds:    `"status":"cancelled"`,
+			wantStart: "2027-03-09T14:00:00Z", wantEnd: "2027-03-09T15:00:00Z",
+			wantIndex: 1,
+		},
+		{
+			name:      "timed explicit zone",
+			bounds:    `"start":{"dateTime":"2027-03-09T09:00:00","timeZone":"Asia/Tokyo"},"end":{"dateTime":"2027-03-09T10:00:00","timeZone":"Asia/Tokyo"}`,
+			wantStart: "2027-03-09T00:00:00Z", wantEnd: "2027-03-09T01:00:00Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+			_, exception := calendarFixture(t, st, "exception", fmt.Sprintf(`{"id":"exception","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00-05:00"},%s}`, tc.bounds))
+			_, single := calendarFixture(t, st, "single", `{"id":"single","start":{"dateTime":"2027-03-09T03:00:00Z"},"end":{"dateTime":"2027-03-09T04:00:00Z"}}`)
+			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
+			if tc.wantAllDay {
+				rows := calendarRows(t, st, exception)
+				requirements.Len(rows, 1)
+				assertions.Empty(rows[0].Event.EventTimeZone)
+				assertions.Equal("Asia/Tokyo", rows[0].Event.CalendarTimeZone)
+				assertions.Equal(tc.wantStart, rows[0].Event.Start.UTC().Format(time.RFC3339))
+				assertions.Equal(tc.wantEnd, rows[0].Event.End.UTC().Format(time.RFC3339))
+			}
+			from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			requirements.NoError(err)
+			assertions.Empty(page.Unexpandable)
+			requirements.Len(page.Occurrences, 2)
+			assertions.Equal(exception, page.Occurrences[tc.wantIndex].MessageID, "exception sort position")
+			assertions.Equal(single, page.Occurrences[1-tc.wantIndex].MessageID, "single event sort position")
+			for _, occurrence := range page.Occurrences {
+				if occurrence.MessageID != exception {
+					continue
+				}
+				assertions.Equal(master, occurrence.SeriesMessageID)
+				assertions.Equal(tc.wantAllDay, occurrence.AllDay)
+				assertions.Equal(tc.wantStart, occurrence.Start.UTC().Format(time.RFC3339))
+				assertions.Equal(tc.wantEnd, occurrence.End.UTC().Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, original, wantStart, wantEnd string
 	}{
 		{"all day", `{"date":"2027-03-02","timeZone":"America/New_York"}`, `{"date":"2027-03-03","timeZone":"America/New_York"}`, `{"date":"2027-03-09"}`, "2027-03-09T05:00:00Z", "2027-03-10T05:00:00Z"},
-		{"timed", `{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-09T09:00:00-05:00"}`, "2027-03-09T14:00:00Z", "2027-03-09T15:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)

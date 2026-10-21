@@ -102,7 +102,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				if o.AllDay {
 					start, end = o.StartDate, o.EndDate
 				}
-				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", start, end, normalizeSearchTableText(calendarOccurrenceStatus(o)), o.MessageID, normalizeSearchTableText(o.Subject)); err != nil {
+				if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\n", start, end, calendarOccurrenceStatus(o), o.MessageID, normalizeSearchTableText(o.Subject)); err != nil {
 					return fmt.Errorf("write calendar events: %w", err)
 				}
 			}
