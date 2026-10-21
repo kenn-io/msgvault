@@ -306,17 +306,17 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 		st, notionmeetings.SourceType, source.Identifier, notRegistered,
 	)
 	if err != nil {
-		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, err)
+		return err
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	if strings.TrimSpace(source.Token) == "" {
-		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, fmt.Errorf("notion meeting source %q has no token", source.Identifier))
+		return fmt.Errorf("notion meeting source %q has no token", source.Identifier)
 	}
 	accountEmail, err := source.EffectiveAccountEmail()
 	if err != nil {
-		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, err)
+		return err
 	}
 	client, users := configuredNotionClients(source)
 	importer := notionmeetings.NewImporter(st, client).WithUserSource(users)

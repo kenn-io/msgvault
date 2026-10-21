@@ -49,46 +49,6 @@ func TestScheduledBeeperAccountsKeepIndependentFailuresAcrossPartialPass(t *test
 	assert.Equal(3, events, "a stopped attempt still records a real error after recovery")
 }
 
-func TestScheduledBeeperMissingTokenRecordsOnlyEligibleAccountFailures(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Beeper.Accounts = []string{"signal", "telegram", "excluded", "history", "reanchor"}
-	cfg.Beeper.ExcludeAccounts = []string{"excluded"}
-	state := testInvocationWithConfig(cfg)
-	for _, account := range []string{"signal", "telegram", "excluded", "not-included", "history", "reanchor"} {
-		source, err := st.GetOrCreateSource(sourceTypeBeeper, account)
-		require.NoError(err)
-		switch account {
-		case "history":
-			_, err = st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{HistoryOnly: new(true)})
-			require.NoError(err)
-		case "reanchor":
-			require.NoError(st.SetArchiveMarker(t.Context(), store.BeeperReanchorMarkerKey(source.ID), "manual verification required"))
-		}
-	}
-	var events []map[string]any
-	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-		assert.Equal("sync_failed", event)
-		events = append(events, props)
-		return nil
-	}}
-	ctx := withInvocation(t.Context(), state)
-
-	for range 2 {
-		err := runConfiguredBeeperSync(ctx, st)
-		require.ErrorContains(err, "no Beeper Desktop token found")
-	}
-	assert.Equal([]map[string]any{{"sync_source": "beeper", "reason": "other"}, {"sync_source": "beeper", "reason": "other"}}, events)
-	state.syncFailures.Record(t.Context(), sourceTypeBeeper, "signal", nil)
-
-	err := runConfiguredBeeperSync(ctx, st)
-	require.Error(err)
-
-	assert.Len(events, 3, "recovery clears only that account's outage")
-}
-
 func TestResolveBeeperSyncAccountsValidatesAndDeduplicatesExplicitIDs(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

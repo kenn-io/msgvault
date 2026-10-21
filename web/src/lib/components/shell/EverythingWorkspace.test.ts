@@ -1763,7 +1763,7 @@ describe('EverythingWorkspace', () => {
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/results changed/i);
     expect(screen.queryByText('Synthetic subject 2')).toBeNull();
-    expect(fetchFn.mock.calls.filter(([input]) => !new URL((input as Request).url).pathname.endsWith('/telemetry/events'))).toHaveLength(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     rendered.unmount();
     state.destroy();
   });
@@ -1786,7 +1786,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'End' });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Network disconnected.');
-    expect(fetchFn.mock.calls.filter(([input]) => !new URL((input as Request).url).pathname.endsWith('/telemetry/events'))).toHaveLength(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     rendered.unmount();
     state.destroy();
   });
@@ -1856,7 +1856,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(grid.scrollTop).toBe(1189 * 36 + 3));
     expect(state.current.activeRow).toBe('message:1200');
     expect(state.current.scrollAnchor).toEqual({ key: 'message:1190', offset: 3 });
-    expect(fetchFn.mock.calls.filter(([input]) => !new URL((input as Request).url).pathname.endsWith('/telemetry/events'))).toHaveLength(5);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
     rendered.unmount();
     state.destroy();
   });
@@ -1914,7 +1914,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'End' });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Cache publication changed.');
-    expect(fetchFn.mock.calls.filter(([input]) => !new URL((input as Request).url).pathname.endsWith('/telemetry/events'))).toHaveLength(2);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
     rendered.unmount();
     state.destroy();
   });
@@ -1940,7 +1940,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'End' });
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/cursor|progress/i);
-    expect(requests.filter(request => !new URL(request.url).pathname.endsWith('/telemetry/events'))).toHaveLength(2);
+    expect(requests).toHaveLength(2);
     rendered.unmount();
     state.destroy();
   });
@@ -1966,7 +1966,7 @@ describe('EverythingWorkspace', () => {
     await fireEvent.keyDown(grid, { key: 'End' });
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/no row progress/i);
-    expect(requests.filter(request => !new URL(request.url).pathname.endsWith('/telemetry/events'))).toHaveLength(2);
+    expect(requests).toHaveLength(2);
     rendered.unmount();
     state.destroy();
   });
@@ -2359,7 +2359,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(grid.scrollTop).toBe(1189 * 36 + 3));
     expect(state.current.activeRow).toBe('group:source:1200');
     expect(state.current.scrollAnchor).toEqual({ key: 'group:source:1190', offset: 3 });
-    expect(fetchFn.mock.calls.filter(([input]) => !new URL((input as Request).url).pathname.endsWith('/telemetry/events'))).toHaveLength(5);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
     rendered.unmount();
     state.destroy();
   });

@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
-	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -37,33 +36,4 @@ func TestScheduledSourceOutcomesCountEachType(t *testing.T) {
 	}
 	require.Error(runScheduledSync(ctx, "synthetic@example.com", st.Store, oauthFailure, state))
 	assert.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}, {"sync_source": "imap", "reason": "other"}}, events)
-}
-
-func TestMeetingSetupFailuresAreRecorded(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := storetest.New(t)
-	ctx := testInvocationContext(t.Context(), config.NewDefaultConfig(), invocationOptions{})
-	state := invocationFromContext(ctx)
-	var sources []any
-	state.syncFailures = &telemetry.SyncFailures{Capture: func(_ string, props map[string]any) error {
-		sources = append(sources, props["sync_source"])
-		return nil
-	}}
-	for _, sourceType := range []string{"granola", "notion_meetings", "omi", "twenty"} {
-		_, err := st.Store.GetOrCreateSource(sourceType, "work")
-		require.NoError(err)
-	}
-	require.ErrorContains(runConfiguredGranolaSync(ctx, st.Store, config.GranolaSource{Identifier: "work"}), "has no api_key")
-	require.ErrorContains(runConfiguredNotionMeetingsSync(ctx, st.Store, config.NotionMeetingsSource{Identifier: "work"}), "has no token")
-	for range 2 {
-		require.ErrorContains(runConfiguredOmiSync(ctx, st.Store, t.TempDir(), config.OmiSource{Identifier: "work"}), "has no api_key")
-		require.ErrorContains(runConfiguredTwentySync(ctx, st.Store, config.TwentySource{Identifier: "work", AccountEmail: "owner@example.com", BaseURL: "https://api.example.com"}), "api_key")
-	}
-	_, err := registerPlaudAccount(st.Store, "work", "owner@example.com", "owner@example.com")
-	require.NoError(err)
-	for range 2 {
-		require.ErrorContains(runConfiguredPlaudSync(ctx, st.Store, config.PlaudSource{Identifier: "work", AccountEmail: "changed@example.com"}), "owner differs")
-	}
-	assert.Equal([]any{"granola", "notion_meetings", "omi", "twenty", plaud.SourceType}, sources)
 }

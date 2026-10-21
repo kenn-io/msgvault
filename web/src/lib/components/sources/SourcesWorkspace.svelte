@@ -46,7 +46,6 @@
   let statusError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
-  const clickedSync = new Map<number, number | undefined>();
   $effect(() => { if (triggerError) return reportError(() => client, () => 'sync'); });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -144,10 +143,6 @@
       let advanced = false;
       const nextProgress = new Map<number, number>();
       for (const source of next) {
-        if (clickedSync.has(source.id) && source.latest_sync && source.latest_sync.id !== clickedSync.get(source.id) && source.latest_sync.status !== 'running') {
-          clickedSync.delete(source.id);
-          if (source.latest_sync.status === 'failed') reportError(() => client, () => 'sync', requestController.signal);
-        }
         if (!source.active_sync) continue;
         const processed = source.active_sync.messages_processed;
         nextProgress.set(source.id, processed);
@@ -256,7 +251,6 @@
       }
       stopPolling();
       pollDelay = MIN_POLL_MS;
-      clickedSync.set(source.id, source.latest_sync?.id);
       awaitingSourceID = source.id;
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;

@@ -58,7 +58,7 @@ func TestReason(t *testing.T) {
 		{&msgraph.ThrottledError{}, "rate_limited"},
 		{errors.New("invalid_grant status 401 429"), "other"},
 		{&gmail.StatusError{StatusCode: 500}, "other"},
-		{fmt.Errorf("dial tcp: %w", &gmail.StatusError{StatusCode: 500}), "other"},
+		{context.DeadlineExceeded, "network"},
 	} {
 		assert.Equal(t, tc.want, Reason(fmt.Errorf("sync: %w", tc.err)))
 	}

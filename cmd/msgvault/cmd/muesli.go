@@ -261,7 +261,7 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 		source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
 	if err != nil {
-		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
+		return err
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil

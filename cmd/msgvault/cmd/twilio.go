@@ -259,7 +259,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 	}
 	client, accountEmail, err := newTwilioSourceClient(source)
 	if err != nil {
-		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
+		return err
 	}
 	summary, importErr := twilio.NewImporter(st, client).Import(ctx, twilio.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,

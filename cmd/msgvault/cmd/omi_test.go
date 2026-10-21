@@ -693,6 +693,7 @@ func TestScheduledOmiCooldownDefersWithoutFailure(t *testing.T) {
 	defer func() { <-sched.Stop().Done() }()
 	require.NoError(registerScheduledOmiJob(sched, state, st, config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL, Enabled: true, Schedule: "0 0 1 1 *"}))
 	require.Error(sched.TriggerJob("omi:work"))
+	assert.Equal(1, events)
 	require.NotEmpty(sched.JobStatus()[0].LastError)
 	require.NoError(sched.TriggerJob("omi:work"))
 	assert.Equal(2, requests)

@@ -219,28 +219,26 @@ describe('FilesWorkspace', () => {
     expect(grid.contains(await screen.findByRole('row', { name: /fixture.pdf/ }))).toBe(true);
   });
 
-  it('preserves an empty search submission through cache preparation', async () => {
+  it('retries a building analytical cache and renders files when it becomes ready', async () => {
     vi.useFakeTimers();
     let calls = 0;
-    const events = telemetryEvents;
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => {
       calls += 1;
       if (calls === 1) return Response.json({
         error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
         readiness: 'building', recovery_action: ''
       }, { status: 503 });
-      return Response.json({ ...response(), files: [], total_count: 0 });
+      return Response.json(response());
     });
     const rendered = render(FilesWorkspace, {
-      client: createAPIClient(fetchFn), submitted: true, predicate: { query: 'missing', filters: [], presentation: 'table' },
+      client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
     });
 
     expect(await screen.findByText('Preparing analytical cache…')).toBeDefined();
     expect(screen.queryByText('Analytical cache unavailable')).toBeNull();
     await vi.advanceTimersByTimeAsync(1_000);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1);
+    expect(await screen.findByText('fixture.pdf')).toBeDefined();
     expect(calls).toBe(2);
 
     rendered.unmount();

@@ -1399,9 +1399,6 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			updated.messageReportedDay = day
 			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
 		}
-		if updated.inlineSearchError != "" && updated.inlineSearchError != m.inlineSearchError {
-			command = tea.Batch(command, updated.reportActionCmd("error_shown", "kind", "search"))
-		}
 		if updated.modal == modalError && m.modal != modalError {
 			updated.submittedQuery = ""
 			kind := "other"

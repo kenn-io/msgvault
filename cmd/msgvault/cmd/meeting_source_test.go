@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -347,41 +346,6 @@ func TestMeetingSyncRunFinish(t *testing.T) {
 				require.ErrorIs(err, context.Canceled)
 			}
 			assert.Equal(t, tc.wantRefreshes, refreshes)
-		})
-	}
-}
-
-func TestUnregisteredMeetingSyncReportsOutage(t *testing.T) {
-	for _, sourceType := range []string{"granola", "notion_meetings", "circleback", "muesli", "twenty"} {
-		t.Run(sourceType, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
-			var events []string
-			state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-				assert.Equal(t, "sync_failed", event)
-				source, ok := props["sync_source"].(string)
-				require.True(t, ok)
-				events = append(events, source)
-				return nil
-			}}
-			ctx := withInvocation(t.Context(), state)
-			for range 2 {
-				var err error
-				switch sourceType {
-				case "granola":
-					err = runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work"})
-				case "notion_meetings":
-					err = runConfiguredNotionMeetingsSync(ctx, st, config.NotionMeetingsSource{Identifier: "work"})
-				case "circleback":
-					err = runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{Identifier: "work"})
-				case "muesli":
-					err = runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"})
-				case "twenty":
-					err = runConfiguredTwentySync(ctx, st, config.TwentySource{Identifier: "work"})
-				}
-				require.ErrorContains(t, err, "not registered")
-			}
-			assert.Equal(t, []string{sourceType}, events)
 		})
 	}
 }

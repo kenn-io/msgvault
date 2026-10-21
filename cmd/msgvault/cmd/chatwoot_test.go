@@ -79,12 +79,12 @@ func TestChatwootInboxesFailIndependently(t *testing.T) {
 }
 
 func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
-	for _, mode := range []string{"missing token", "authentication rejected", "all excluded"} {
+	for _, mode := range []string{"authentication rejected", "all excluded"} {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
-			t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "")
+			t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal("/api/v1/accounts/9/inboxes", r.URL.Path)
 				http.Error(w, "invalid credentials", http.StatusUnauthorized)
@@ -92,11 +92,8 @@ func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
 			t.Cleanup(server.Close)
 			src := config.ChatwootSource{URL: server.URL, AccountID: 9, APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN",
 				Inboxes: []int64{7, 8}, ExcludeInboxes: []int64{8}}
-			want, message := 1, "needs EXAMPLE_CHATWOOT_TOKEN"
+			want, message := 1, "discover Chatwoot inboxes"
 			switch mode {
-			case "authentication rejected":
-				t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
-				message = "discover Chatwoot inboxes"
 			case "all excluded":
 				src.ExcludeInboxes = []int64{7, 8}
 				want, message = 0, "no included Chatwoot inboxes"

@@ -2,8 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/matrix"
-	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -47,12 +44,12 @@ func TestSyncFailureTransitions(t *testing.T) {
 	defer cancel()
 	failures.Record(budgetCtx, "gmail", "synthetic", context.DeadlineExceeded)
 	assert.Empty(events)
-	failure := errors.New("synthetic private detail")
+	failure := context.DeadlineExceeded
 	failures.Record(t.Context(), "gmail", "synthetic", failure)
 	failures.Record(budgetCtx, "gmail", "synthetic", nil)
 	failures.Record(t.Context(), "gmail", "synthetic", context.Canceled)
 	failures.Record(t.Context(), "gmail", "synthetic", failure)
-	require.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}}, events)
+	require.Equal([]map[string]any{{"sync_source": "gmail", "reason": "network"}}, events)
 	failures.Record(t.Context(), "imap", "synthetic", failure)
 	assert.Len(events, 2, "different source types sharing an identifier have separate outages")
 	failures.Record(t.Context(), "gmail", "synthetic", nil)
@@ -90,7 +87,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 			assert.Equal(t, sourceType, properties["sync_source"], sourceType)
 		}
 		// File imports have no scheduled sync and deliberately use the fallback.
-		for _, sourceType := range []string{imazingcsv.SourceType, meetingimport.SourceType, "mbox", "apple-mail", "pst", "eml", "maildir", "whatsapp", "apple_messages", "facebook_messenger", "google-groups", "hey"} {
+		for _, sourceType := range []string{imazingcsv.SourceType, "unlisted"} {
 			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 			assert.Equal(t, "other", properties["sync_source"], sourceType)
 		}
@@ -113,11 +110,4 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 	for range 2 {
 		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": "unlisted", "reason": "unlisted", "private": "synthetic"}))
 	}
-}
-
-func TestProviderTimeoutStartsOutage(t *testing.T) {
-	var events []map[string]any
-	failures := &SyncFailures{Capture: func(_ string, props map[string]any) error { events = append(events, props); return nil }}
-	failures.Record(t.Context(), "granola", "work", fmt.Errorf("http request: %w", context.DeadlineExceeded))
-	assert.Equal(t, []map[string]any{{"sync_source": "granola", "reason": "network"}}, events)
 }

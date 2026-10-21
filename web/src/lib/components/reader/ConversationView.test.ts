@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
 import MessagePage from './MessagePage.svelte';
-import MessageCard from './MessageCard.svelte';
 
 const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
@@ -36,25 +35,6 @@ function omittedMessage(id: number) {
 }
 
 describe('ConversationView', () => {
-  it('keeps a displayed body error quiet across card dependencies and remounts', async () => {
-    const client = createAPIClient(async input => new URL((input as Request).url).pathname.includes('/messages/')
-      ? Response.json({ message: 'Synthetic body failure' }, { status: 500 })
-      : Response.json({ id: 7, anchor_id: 2, messages: [omittedMessage(2)], has_before: false, has_after: false, total: 1 }));
-    const view = render(ConversationView, { client, conversationId: 7, anchorId: 2 });
-    await screen.findByRole('alert');
-    await waitFor(() => expect(telemetryEvents).toHaveLength(1));
-    view.unmount();
-    const props = { client, message: { id: 2, conversationId: 7, subject: 'Synthetic', sender: '', recipients: [], sentAt: '', snippet: '', body: '', attachments: [] }, expanded: true, bodyError: 'Synthetic body failure' };
-    const card = render(MessageCard, props);
-    await screen.findByRole('alert');
-    await card.rerender({ expanded: false });
-    await card.rerender({ expanded: true });
-    expect(telemetryEvents).toHaveLength(1);
-    card.unmount();
-    render(MessageCard, props);
-    await screen.findByRole('alert');
-    expect(telemetryEvents).toHaveLength(1);
-  });
   it('loads the thread with the anchor expanded and the rest as one-line collapsed cards', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

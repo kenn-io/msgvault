@@ -1896,7 +1896,7 @@ func TestAcceptedSearchActions(t *testing.T) {
 				}
 			}
 			assert.Equal(tc.want, events)
-			if tc.enter && tc.mode == modeEmail {
+			if tc.name == "submitted pending" {
 				events = nil
 				updated, _ := m.Update(keyTab())
 				m = asModel(t, updated)

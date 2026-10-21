@@ -1758,7 +1758,7 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 	if err := m.searchInputValidationError(queryStr); err != nil {
 		m.inlineSearchLoading = false
 		m.inlineSearchError = err.Error()
-		return m, nil
+		return m, m.reportActionCmd("error_shown", "kind", "search")
 	}
 	aggregateReloadNeeded := (m.level == levelAggregates || m.level == levelDrillDown) &&
 		(queryStr != m.searchQuery || m.inlineSearchLoading)

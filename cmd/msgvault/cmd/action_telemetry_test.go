@@ -179,12 +179,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					showMessageJSON, showMessageBodyOnly = outcome.json, outcome.body
 					t.Cleanup(func() { showMessageJSON, showMessageBodyOnly = oldJSON, oldBody })
 				}
-				doneOutput := captureStdout(t)
 				err := run(cmd)
-				output := doneOutput()
-				if action == "search" && !fails && !outcome.nonempty {
-					assert.Contains(output, "No messages found.")
-				}
 				invocationFromCommand(cmd).sends.Wait(time.Second)
 				if fails || outputFails {
 					require.Error(err)

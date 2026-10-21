@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFailedAggregatePreviewKeepsFilter(t *testing.T) {
+func TestFailedAggregatePreviewDoesNotCountEmptyOnEnter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := NewBuilder().Build()
@@ -78,32 +78,6 @@ func TestSupersededSubmissionDoesNotCountLaterPreview(t *testing.T) {
 	}
 }
 
-func TestDelayedEmailFailureDuringTextsSearchRetainsEmailQuery(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	m := NewBuilder().Build()
-	m.width, m.height = 100, 24
-	m.textEngine = meetingModeTextEngine{}
-	m.searchQuery = "email needle"
-	delayed := dataLoadedMsg{
-		requestID: m.aggregateRequestID, presentationGeneration: m.presentationGeneration,
-		err: errors.New("synthetic delayed email failure"),
-	}
-	m = cycleToMode(t, m, modeTexts)
-	updated, _ := m.Update(key('/'))
-	m = asModel(t, updated)
-	require.True(m.inlineSearchActive)
-	m.searchInput.SetValue("text needle")
-	updated, _ = m.Update(delayed)
-	m = asModel(t, updated)
-	assert.Equal("email needle", m.searchQuery)
-	assert.Equal("text needle", m.searchInput.Value())
-	assert.Equal(modalNone, m.modal)
-	updated, _ = m.Update(keyEsc())
-	m = cycleToMode(t, asModel(t, updated), modeEmail)
-	assert.Equal("email needle", m.searchQuery, "returning to Email keeps its filter")
-}
-
 func TestErrorShownOnModalTransition(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -143,26 +117,35 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 	}
 }
 
-func TestInlineValidationErrorShownOnce(t *testing.T) {
-	m := NewBuilder().Build()
-	m.width, m.height = 100, 24
-	m.inlineSearchActive = true
-	m.searchMode = searchModeSemantic
-	m.searchInput.SetValue("from:alice@example.com")
-	var kinds []string
-	m.reportAction = func(_ context.Context, event, property, value string) error {
-		if event == "error_shown" {
-			kinds = append(kinds, value)
-		}
-		return nil
-	}
-	for range 2 {
-		updated, cmd := m.Update(keyEnter())
-		m = asModel(t, updated)
-		if cmd != nil {
-			_ = runBatchCommand(t, cmd)
-		}
-		require.Contains(t, m.inlineSearchError, "semantic search requires free text")
-		assert.Equal(t, []string{"search"}, kinds)
+func TestInvalidTypedPreviewReportsOnlyOnEnter(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		mode  searchModeKind
+	}{{`after:"`, searchModeFast}, {"from:x", searchModeSemantic}} {
+		t.Run(tc.query, func(t *testing.T) {
+			m := NewBuilder().Build()
+			m.width, m.height, m.inlineSearchActive, m.searchMode = 100, 24, true, tc.mode
+			m.searchInput.SetValue(tc.query)
+			var kinds []string
+			m.reportAction = func(_ context.Context, event, property, value string) error {
+				assert.Equal(t, "error_shown", event)
+				assert.Equal(t, "kind", property)
+				kinds = append(kinds, value)
+				return nil
+			}
+			for i, msg := range []tea.Msg{searchDebounceMsg{query: tc.query, debounceID: m.inlineSearchDebounce}, keyEnter()} {
+				updated, cmd := m.Update(msg)
+				m = asModel(t, updated)
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
+				require.NotEmpty(t, m.inlineSearchError)
+				if i == 0 {
+					assert.Empty(t, kinds)
+				} else {
+					assert.Equal(t, []string{"search"}, kinds)
+				}
+			}
+		})
 	}
 }
