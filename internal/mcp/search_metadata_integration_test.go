@@ -148,37 +148,48 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		})
 		require.NoError(t, err)
 	}
+	var metadataIDs, bodyIDs []string
 	for i := range 600 {
-		persist(fmt.Sprintf("meta-%03d", i), "selectionmarker", "filler")
+		id := fmt.Sprintf("meta-%03d", i)
+		persist(id, "selectionmarker", "filler")
+		metadataIDs = append(metadataIDs, id)
 	}
 	for i := range 150 {
-		persist(fmt.Sprintf("body-%03d", i), "plain", "bodyneedle")
+		id := fmt.Sprintf("body-%03d", i)
+		persist(id, "plain", "bodyneedle")
+		bodyIDs = append(bodyIDs, id)
 	}
 	var requests atomic.Int32
 	var boundedRequests atomic.Int32
 	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
 		&boundedRequests, "203.0.113.9:4242", st)
 
-	stage := func(t *testing.T, args map[string]any) *captureDeletionManifestSaver {
+	stage := func(t *testing.T, args map[string]any) (*captureDeletionManifestSaver, stageDeletionResponse) {
 		t.Helper()
 		saver := &captureDeletionManifestSaver{}
 		h := &handlers{engine: daemon, manifestSaver: saver}
-		runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, args)
+		result := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, args)
 		require.NotNil(t, saver.manifest)
-		return saver
+		return saver, result
 	}
 
 	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
+		assert := assert.New(t)
 		before := boundedRequests.Load()
-		stage(t, map[string]any{"query": "subject:selectionmarker"})
-		assert.Equal(t, before+1, boundedRequests.Load())
-		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
+		saver, result := stage(t, map[string]any{"query": "subject:selectionmarker"})
+		assert.ElementsMatch(metadataIDs, saver.manifest.GmailIDs)
+		assert.Equal(600, result.MessageCount)
+		assert.Equal(before+1, boundedRequests.Load())
+		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
 	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
+		assert := assert.New(t)
 		before := boundedRequests.Load()
-		stage(t, map[string]any{"query": "bodyneedle"})
-		assert.Equal(t, before+2, boundedRequests.Load())
-		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
+		saver, result := stage(t, map[string]any{"query": "bodyneedle"})
+		assert.ElementsMatch(bodyIDs, saver.manifest.GmailIDs)
+		assert.Equal(150, result.MessageCount)
+		assert.Equal(before+2, boundedRequests.Load())
+		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
 }
 
