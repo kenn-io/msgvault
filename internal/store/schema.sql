@@ -4697,7 +4697,6 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     snapshot_updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00'
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
-CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_alias ON calendar_events(series_provider_id, original_start_date, original_start_at, snapshot_updated_at, message_id) WHERE kind = 'exception';
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);

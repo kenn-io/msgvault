@@ -106,13 +106,17 @@ const (
 // provider snapshots receive the database clock when they are imported; a
 // rebuilt projection inherits its archived message timestamp.
 func (s *Store) backfillCalendarEventSnapshotFreshness(ctx context.Context) error {
+	epoch := "'1970-01-01 00:00:00'"
+	if s.IsPostgreSQL() {
+		epoch = "to_timestamp(0)"
+	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE calendar_events
 			SET snapshot_updated_at = (
 				SELECT m.last_modified FROM messages m WHERE m.id = calendar_events.message_id
 			)
-			WHERE snapshot_updated_at = '1970-01-01 00:00:00'
+			WHERE snapshot_updated_at = `+epoch+`
 		`); err != nil {
 			return fmt.Errorf("backfill calendar snapshot freshness: %w", err)
 		}
