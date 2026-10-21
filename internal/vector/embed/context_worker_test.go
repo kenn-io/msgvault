@@ -4,6 +4,7 @@ package embed
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -54,6 +56,32 @@ type contextFenceRacePublisher struct {
 	vector.DocumentPublisher
 
 	beforeFence func() error
+}
+
+type contextCancelCheckpointPublisher struct {
+	vector.DocumentPublisher
+
+	cancel context.CancelFunc
+}
+
+func (p *contextCancelCheckpointPublisher) SetDocumentJournalCursor(
+	ctx context.Context, gen vector.GenerationID, cursor string,
+) error {
+	if cursor != "" && p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
+	}
+	return errors.Join(p.DocumentPublisher.SetDocumentJournalCursor(ctx, gen, cursor), ctx.Err())
+}
+
+func (p *contextCancelCheckpointPublisher) SetDocumentReconcileCursor(
+	ctx context.Context, gen vector.GenerationID, cursor string,
+) error {
+	if cursor != "" && p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
+	}
+	return errors.Join(p.DocumentPublisher.SetDocumentReconcileCursor(ctx, gen, cursor), ctx.Err())
 }
 
 type countingContextAssembler struct {
@@ -2352,6 +2380,78 @@ func TestContextWorker_CrashBoundariesReplayIdempotently(t *testing.T) {
 	}
 }
 
+func TestContextWorkerPartialPublicationCheckpointPreservesPublishFailure(t *testing.T) {
+	paths := []struct {
+		name   string
+		cursor string
+		stored bool
+	}{
+		{name: "journal"},
+		{name: "ordinary discovery"},
+		{name: "ordinary RunOnce"},
+		{name: "source reconciliation", cursor: "source:0"},
+		{name: "ledger reconciliation", cursor: "orphan:", stored: true},
+	}
+	for _, path := range paths {
+		t.Run(path.name, func(t *testing.T) {
+			f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+				deps.ChangeBatchSize = 64
+				deps.ReconcileBatchSize = 64
+			})
+			_, err := f.run()
+			require.NoError(t, err, "initialize contextual journal tracking before seeding messages")
+			ids := make([]int64, 0, 2)
+			for i := range 2 {
+				conversation, err := f.store.EnsureConversation(
+					f.sourceID, fmt.Sprintf("partial-checkpoint-%d", i), fmt.Sprintf("Partial %d", i),
+				)
+				require.NoError(t, err)
+				ids = append(ids, f.seed("email", conversation,
+					time.Date(2026, 10, 1, 9, i, 0, 0, time.UTC), fmt.Sprintf("initial %d", i)))
+			}
+			if path.stored {
+				_, err := f.run()
+				require.NoError(t, err)
+				for i, id := range ids {
+					require.NoError(t, f.store.UpsertMessageBody(id,
+						sql.NullString{String: fmt.Sprintf("updated %d", i), Valid: true}, sql.NullString{}))
+				}
+			}
+			if path.cursor != "" {
+				require.NoError(t, f.backend.SetDocumentReconcileCursor(t.Context(), f.gen, path.cursor))
+			}
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			f.deps.Client = &contextPartialSemanticFake{}
+			f.restartWorker()
+			if path.name == "ordinary RunOnce" {
+				f.worker.deps.Hooks.BeforePublish = func() error { cancel(); return nil }
+			} else {
+				f.worker.deps.Publisher = &contextCancelCheckpointPublisher{DocumentPublisher: f.backend, cancel: cancel}
+			}
+
+			var result RunResult
+			var runErr error
+			switch path.name {
+			case "journal":
+				runErr = f.worker.drainJournal(ctx, f.gen, &result)
+			case "ordinary RunOnce":
+				_, runErr = f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+			case "ordinary discovery":
+				runErr = f.worker.drainOrdinaryDiscovery(ctx, f.gen, &result)
+			case "source reconciliation", "ledger reconciliation":
+				runErr = f.worker.reconcile(ctx, f.gen, &result)
+			default:
+				require.FailNowf(t, "unknown partial checkpoint path", "got %q", path.name)
+			}
+
+			require.ErrorIs(t, runErr, context.Canceled)
+			require.ErrorContains(t, runErr, "synthetic later packed request failure")
+		})
+	}
+}
+
 func TestContextWorker_BackstopReconcilesBelowWatermarkAndOrphanWithBoundedCursor(t *testing.T) {
 	f := newContextWorkerFixture(t, nil)
 	conversationID, err := f.store.EnsureConversation(f.sourceID, "mail", "Mail")
@@ -2644,4 +2744,223 @@ func TestContextWorker_ClosesSourceSnapshotBeforeSemanticCall(t *testing.T) {
 	f.seed("email", f.chatID, time.Now().UTC(), "mail")
 	_, err := f.run()
 	require.NoError(t, err)
+}
+
+type contextWatermarkStopPublisher struct {
+	vector.DocumentPublisher
+
+	cancel   context.CancelFunc
+	sequence int64
+}
+
+func (p contextWatermarkStopPublisher) AdvanceDocumentChangeWatermark(ctx context.Context, gen vector.GenerationID, sequence int64) error {
+	err := p.DocumentPublisher.AdvanceDocumentChangeWatermark(ctx, gen, sequence)
+	if err == nil && sequence == p.sequence {
+		p.cancel()
+	}
+	return err
+}
+
+func TestContextWorkerMetadataOnlyWatermarkRecordsProgress(t *testing.T) {
+	require := require.New(t)
+	f := newContextWorkerFixture(t, nil)
+	excluded, err := f.store.GetOrCreateSource("test", "excluded-context@example.test")
+	require.NoError(err)
+	conversation, err := f.store.EnsureConversationWithType(excluded.ID, "excluded", "beeper", "Excluded")
+	require.NoError(err)
+	f.seedForSource(excluded.ID, "beeper", conversation, time.Now().UTC(), "excluded message")
+	f.worker.deps.BuildScope = vector.NewBuildScope(nil, []int64{f.sourceID})
+	_, err = f.run()
+	require.NoError(err)
+	_, err = f.store.DB().Exec(`UPDATE conversations SET title = 'Renamed excluded conversation' WHERE id = ?`, conversation)
+	require.NoError(err)
+	sequence := latestContextSequence(t, f.store)
+	changes, err := f.store.ScanEmbeddingChanges(t.Context(), sequence-1, 1)
+	require.NoError(err)
+	require.Len(changes, 1)
+	require.Equal(store.EmbeddingChangeConversationTitle, changes[0].Kind)
+	relevant := f.seed("beeper", f.chatID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), "later relevant work")
+	ctx, cancel := context.WithCancel(jobctx.WithProgress(t.Context()))
+	defer cancel()
+	f.worker.deps.Publisher = contextWatermarkStopPublisher{DocumentPublisher: f.backend, cancel: cancel, sequence: sequence}
+	_, err = f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.ErrorIs(err, context.Canceled)
+	assert.True(t, jobctx.HasProgress(ctx), "the saved metadata watermark permits a scheduler continuation")
+	assert.Zero(t, f.client.Calls(), "the stopped pass has not reached the relevant message")
+	f.worker.deps.Publisher = f.backend
+	result, err := f.run()
+	require.NoError(err)
+	assert.True(t, result.Contextual.Converged)
+	var generation int64
+	require.NoError(f.store.DB().QueryRow(`SELECT embed_gen FROM messages WHERE id = ?`, relevant).Scan(&generation))
+	assert.Equal(t, int64(f.gen), generation)
+}
+
+func TestContextWorkerZeroWatermarkRetriesDoNotRecordProgress(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	f.seed("beeper", f.chatID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), "retry with an untracked source")
+	assert.Zero(t, latestContextSequence(t, f.store), "the source was imported before journal capture")
+
+	var cancelBudget context.CancelCauseFunc
+	f.client.err = context.Canceled
+	f.client.before = func() { cancelBudget(jobctx.ErrRunBudgetExceeded) }
+	f.restartWorker()
+
+	for attempt := range 2 {
+		ctx := jobctx.WithProgress(t.Context())
+		ctx, cancel := context.WithCancelCause(ctx)
+		cancelBudget = cancel
+		_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+		require.ErrorIs(t, err, context.Canceled, "attempt %d must stop inside its provider request", attempt+1)
+		assert.False(t, jobctx.HasProgress(ctx), "an unchanged zero watermark cannot schedule an immediate continuation")
+		assert.Zero(t, f.progress().ChangeSequence)
+		assert.Empty(t, f.progress().ReconcileCursor)
+		cancel(jobctx.ErrRunBudgetExceeded)
+	}
+	assert.Equal(t, 2, f.client.Calls(), "each pass retries because no provider response was saved")
+}
+
+func TestContextWorkerCleansCheckpointForDeletedUnpublishedDocument(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+		deps.Hooks.BeforePublish = func() error {
+			cancel()
+			return nil
+		}
+	})
+	messageID := f.seed("beeper", f.chatID, time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), "checkpoint before deletion")
+	_, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+	require.ErrorIs(t, err, context.Canceled, "publication must stop after saving the provider response")
+	var checkpoints int
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	require.Positive(t, checkpoints, "the completed provider response remains available for resumption")
+	var documents int
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_documents WHERE generation_id = ?`, int64(f.gen)).Scan(&documents))
+	assert.Zero(t, documents, "the interrupted pass has not published a document")
+
+	_, err = f.store.DB().Exec(`UPDATE messages SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?`, messageID)
+	require.NoError(t, err)
+	f.deps.Hooks.BeforePublish = nil
+	f.restartWorker()
+	result, err := f.run()
+	require.NoError(t, err)
+	require.NotNil(t, result.Contextual)
+	assert.True(t, result.Contextual.Converged)
+	assert.Equal(t, 1, f.client.Calls(), "resumption must not embed a document deleted before publication")
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints WHERE generation_id = ?`, int64(f.gen)).Scan(&checkpoints))
+	assert.Zero(t, checkpoints, "reconciliation removes the checkpoint owner that no longer has a source document")
+}
+
+// A chat whose windows need two provider requests keeps the first request's
+// vectors when the pass stops before the second one finishes, and the next
+// pass sends only the unfinished request.
+func TestContextWorker_StoppedPassReusesCompletedRequest(t *testing.T) {
+	for _, stop := range []string{
+		"yield", "runtime limit", "publication failure and unrelated journal page", "yield and publication failure",
+	} {
+		t.Run(stop, func(t *testing.T) {
+			require := require.New(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			ctx, requestYield := jobctx.WithPreemption(ctx)
+			var requests []string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Inputs [][]string `json:"inputs"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+				requests = append(requests, strings.Join(request.Inputs[0], " "))
+				switch {
+				case len(requests) == 1 && (stop == "yield" || stop == "yield and publication failure"):
+					requestYield()
+				case len(requests) == 2 && stop == "runtime limit":
+					cancel()
+					<-r.Context().Done()
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, err := w.Write([]byte(`{"data":[{"index":0,"data":[{"index":0,"embedding":[1,2,3,4]}]}]}`))
+				assert.NoError(t, err)
+			}))
+			defer server.Close()
+			f := newContextWorkerFixture(t, func(deps *ContextWorkerDeps) {
+				deps.Client = NewVoyageClient(VoyageConfig{
+					Endpoint: server.URL, Model: "voyage-context-4", Dimension: 4, MaxRetries: 1,
+					Limits: RequestLimits{MaxDocuments: 1},
+				})
+				if stop == "publication failure and unrelated journal page" {
+					deps.ChangeBatchSize = 1
+				}
+				if stop == "publication failure and unrelated journal page" || stop == "yield and publication failure" {
+					deps.Hooks.BeforePublish = func() error { return errors.New("publication interrupted") }
+				}
+			})
+			day := time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC)
+			f.seed("beeper", f.chatID, day, "morning window")
+			f.seed("beeper", f.chatID, day.Add(2*time.Hour), "afternoon window")
+			stopped, err := f.worker.RunOnce(ctx, f.gen, testEmbeddingPassScope())
+			switch stop {
+			case "yield":
+				require.NoError(err)
+				require.Len(requests, 1)
+			case "runtime limit":
+				require.Error(err)
+				assert.Zero(t, stopped.Failed, "cancellation leaves content failures unstamped")
+				require.Len(requests, 2)
+			case "yield and publication failure":
+				require.ErrorContains(err, "publication interrupted")
+				require.NotErrorIs(err, jobctx.ErrYieldedToWaiter)
+				require.Len(requests, 1)
+				f.deps.Hooks.BeforePublish = nil
+			default:
+				require.ErrorContains(err, "publication interrupted")
+				require.Len(requests, 2)
+				f.seed("email", f.chatID, day, "unrelated journal message")
+				f.deps.Hooks.BeforePublish = nil
+			}
+			first := requests[0]
+			f.restartWorker()
+			requests = nil
+			result, err := f.run()
+			require.NoError(err)
+			assert.NotContains(t, requests, first, "the completed request is not sent again")
+			assert.Len(t, requests, 1, "only unfinished or unrelated work needs a request")
+			assert.True(t, result.Contextual.Converged)
+			assert.Zero(t, f.missing())
+			var saved int
+			require.NoError(f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+			assert.Zero(t, saved, "publication releases all checkpoint owners")
+		})
+	}
+}
+
+func TestContextResponseSaveIncludesEveryOwnerBeforeReuse(t *testing.T) {
+	f := newContextWorkerFixture(t, nil)
+	input := DocumentInput{Chunks: []string{"shared synthetic input"}}
+	key := savedDocumentKey(input)
+	page := &contextEmbeddingPage{
+		gen: f.gen, checkpoints: f.backend.EmbeddingCheckpoints(),
+		identities: map[[sha256.Size]byte][]savedDocumentIdentity{
+			key: {{owner: "context:first", revision: "r1"}, {owner: "context:second", revision: "r1"}},
+		},
+	}
+	_, err := f.backend.DB().Exec(`CREATE TRIGGER fail_second_owner BEFORE INSERT ON embedding_checkpoints
+		WHEN NEW.owner = 'context:second' BEGIN SELECT RAISE(ABORT, 'second owner unavailable'); END`)
+	require.NoError(t, err)
+	ctx := jobctx.WithProgress(t.Context())
+	_, err = f.worker.embedDocumentsMeasured(ctx, []DocumentInput{input}, page)
+	require.ErrorContains(t, err, "second owner unavailable")
+	assert.False(t, jobctx.HasProgress(ctx))
+	var saved int
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+	assert.Zero(t, saved, "the whole provider response rolls back")
+	_, err = f.backend.DB().Exec(`DROP TRIGGER fail_second_owner`)
+	require.NoError(t, err)
+	vectors, err := f.worker.embedDocumentsMeasured(ctx, []DocumentInput{input}, page)
+	require.NoError(t, err)
+	assert.Equal(t, [][][]float32{{{1, 1, 3, 4}}}, vectors)
+	assert.Equal(t, 2, f.client.Calls(), "the rolled-back response cannot be reused from memory")
+	assert.True(t, jobctx.HasProgress(ctx))
+	require.NoError(t, f.backend.DB().QueryRow(`SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+	assert.Equal(t, 2, saved, "all owners sharing the input commit together")
 }

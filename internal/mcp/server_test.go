@@ -4331,3 +4331,7 @@ func TestStageDeletionPipeORUsesSearch(t *testing.T) {
 		})
 	}
 }
+
+func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{}
+}
