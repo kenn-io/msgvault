@@ -89,11 +89,12 @@ func TestParse_DeclaredUTF8WithMalformedAttachment(t *testing.T) {
 	raw := []byte("Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
 		"--outer\r\n" + charsetPart(t, "utf-8", "quoted-printable", charsetHTML) + "\r\n" +
 		"--outer\r\nContent-Type: text/plain; charset=utf-7\r\nContent-Disposition: attachment; filename=broken.txt\r\n\r\n" + charsetText + " +invalid!\r\n--outer--\r\n")
+	assert := assert.New(t)
 	msg := mustParse(t, raw)
-	assert.Equal(t, charsetHTML, msg.BodyHTML)
-	assert.Equal(t, charsetText, msg.BodyText)
+	assert.Equal(charsetHTML, msg.BodyHTML)
+	assert.Equal(charsetText, msg.BodyText)
 	require.Len(t, msg.Attachments, 1)
-	assert.Equal(t, "broken.txt", msg.Attachments[0].Filename)
+	assert.Equal("broken.txt", msg.Attachments[0].Filename)
 }
 
 func TestParse_InvalidDeclaredUTF8StillRecovered(t *testing.T) {
