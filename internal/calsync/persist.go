@@ -190,12 +190,19 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 // never seen, it inserts a minimal tombstone whose metadata records the
 // cancellation. Returns (messageID, insertedNew).
 func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
-	smid := deriveSourceMessageID(ev)
-	existing, err := s.store.MessageExistsBatch(sourceID, []string{smid})
+	keys := []string{deriveSourceMessageID(ev), ev.ID}
+	if orig := ev.OriginalStartTime; ev.RecurringEventID != "" && orig.Date == "" && !orig.DateTime.IsZero() {
+		keys = append(keys, ev.RecurringEventID+"|"+originalStartKey(orig))
+	}
+	existing, err := s.store.MessageExistsBatch(sourceID, keys)
 	if err != nil {
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
 	}
-	if id, ok := existing[smid]; ok {
+	for _, key := range keys {
+		id, ok := existing[key]
+		if !ok {
+			continue
+		}
 		merged, err := mergeStatusCancelled(s.store, id)
 		if err != nil {
 			return 0, false, err
