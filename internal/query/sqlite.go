@@ -1776,12 +1776,14 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearchBounded(
 ) ([]DeletionTarget, int, error) {
 	return resolveBoundedDeletionTargets(
 		ctx, searchQuery, filter, mode, maxResults,
-		e.searchFastWithoutLabels, e.searchDeepWithoutLabels, func(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
-			return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
-				return e.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
-			})
-		},
+		e.searchFastWithoutLabels, e.searchDeepWithoutLabels, e.executableDeletionTargetsByMessageIDs,
 	)
+}
+
+func (e *SQLiteEngine) executableDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
+	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+		return e.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
+	})
 }
 
 // GetDeletionTargetsByAggregateSearch resolves the message set that produced

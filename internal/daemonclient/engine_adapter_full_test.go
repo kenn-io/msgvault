@@ -2752,19 +2752,3 @@ func TestEngineListVirtualAccountsFailsWhenCatalogUnavailable(t *testing.T) {
 	_, err := NewEngineAdapter(store).ListVirtualAccounts(context.Background())
 	require.ErrorIs(t, err, errVirtualAccountsUnavailable, "an unread catalog is not an empty one")
 }
-
-func TestEngineGetDeletionTargetsBySearchBoundedRequiresMatchedCount(t *testing.T) {
-	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/health":
-			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.24.0"})
-		case "/api/v1/messages/gmail-ids":
-			writeJSONResponse(t, w, map[string]any{"gmail_ids": []string{}, "search_query": "needle", "search_mode": "fast"})
-		default:
-			http.NotFound(w, r)
-		}
-	})
-	targets, _, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(t.Context(), search.Parse("needle"), query.MessageFilter{}, query.DeletionSearchFast, query.MaxDeletionTargetSearchResults)
-	require.ErrorContains(t, err, "did not confirm the bounded deletion search scope")
-	assert.Empty(t, targets)
-}

@@ -9,7 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
-- MCP [`stage_deletion`](usage/chat.md#staged-deletion-via-mcp) stages every match of a query that its source can delete, including through a daemon, instead of 500 metadata or 100 full-text matches. It includes IMAP mail, skips archive-only mail and matches from sources that cannot delete, and reports `skipped_count`. It refuses selections over 100,000 search matches or with none deletable without saving a batch.
+- MCP [`stage_deletion`](usage/chat.md#staged-deletion-via-mcp) stages every match of a query that its source can delete, including through a daemon, instead of 500 metadata or 100 full-text matches. Query staging includes IMAP mail, skips matches no longer in the archive, archive-only mail, and matches from sources that cannot delete, and reports `skipped_count`. It refuses selections over 100,000 search matches or with none deletable without saving a batch. Structured filters continue to stage eligible Gmail and Microsoft Graph mail without reporting `skipped_count`.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.

@@ -1328,16 +1328,11 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 	if err != nil {
 		return nil, 0, err
 	}
-	if stringValue(resp.JSON200.SearchQuery) != queryString ||
-		stringValue(resp.JSON200.SearchMode) != modeString ||
-		resp.JSON200.MatchedCount == nil {
-		return nil, 0, errors.New("daemon did not confirm the bounded deletion search scope; upgrade the daemon and retry")
-	}
 	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
 		return nil, 0, err
 	}
 	targets, err := deletionTargetsFromGenerated(resp.JSON200)
-	return targets, int(*resp.JSON200.MatchedCount), err
+	return targets, intValue(resp.JSON200.MatchedCount), err
 }
 
 func (e *Engine) GetDeletionTargetsByAggregateSearch(

@@ -2608,11 +2608,7 @@ func (e *DuckDBEngine) GetDeletionTargetsBySearchBounded(
 		ctx, searchQuery, filter, mode, maxResults,
 		func(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 			return e.searchFast(ctx, q, filter, limit, offset, false)
-		}, e.sqliteEngine.searchDeepWithoutLabels, func(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
-			return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
-				return e.sqliteEngine.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
-			})
-		},
+		}, e.sqliteEngine.searchDeepWithoutLabels, e.sqliteEngine.executableDeletionTargetsByMessageIDs,
 	)
 }
 
@@ -2646,12 +2642,10 @@ func (e *DuckDBEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids [
 		return nil, err
 	}
 	defer release()
-	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
-		return e.deletionTargetsForMessageIDChunk(ctx, ids, deletableSourceTypesSQL)
-	})
+	return deletionTargetsByMessageIDsChunked(ctx, ids, e.deletionTargetsForMessageIDChunk)
 }
 
-func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64, sourceTypesSQL string) ([]deletionTargetRow, error) {
+func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -2663,7 +2657,7 @@ func (e *DuckDBEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		SELECT msg.id, msg.source_id, COALESCE(src.source_type, 'gmail'), src.account_email,
 		       msg.source_message_id, msg.sent_at
 		FROM msg
-		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+sourceTypesSQL+`
+		JOIN src ON src.id = msg.source_id AND COALESCE(src.source_type, 'gmail') IN `+deletableSourceTypesSQL+`
 		       WHERE %s AND %s AND NOT msg.archive_only AND COALESCE(msg.source_message_id, '') <> '' AND msg.id IN (%s)
 	`, e.parquetCTEs(), store.LiveMessagesWhere("msg", true), emailOnlyFilterMsg, strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, q, args...)

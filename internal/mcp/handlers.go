@@ -2531,7 +2531,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	}
 
 	if skipped > 0 {
-		resp.NextStep = fmt.Sprintf("%d of %d matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped. ", skipped, skipped+len(targets)) + resp.NextStep
+		resp.NextStep = fmt.Sprintf("%d of %d matching item(s) were skipped because they are no longer in the archive or cannot be deleted from their source. ", skipped, skipped+len(targets)) + resp.NextStep
 	}
 	return jsonResult(resp)
 }

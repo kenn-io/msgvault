@@ -227,7 +227,7 @@ func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
 	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
 	requirements.NoError(err)
 	for i := range 3 {
-		f.NewMessage().WithSourceMessageID(fmt.Sprintf("imap-%d", i)).WithSubject("imapneedle").Create(t, f.Store)
+		f.NewMessage().WithSourceMessageID(fmt.Sprintf("INBOX|%d", i+1)).WithSubject("imapneedle").Create(t, f.Store)
 	}
 	var boundedRequests atomic.Int32
 	daemon := metadataDaemonWithPeer(t, query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), nil, &boundedRequests, "", f.Store)
@@ -237,7 +237,7 @@ func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
 	assertions.Equal(3, resp.MessageCount)
 	requirements.NotNil(saver.manifest)
 	assertions.Equal("imap", saver.manifest.Source.Type)
-	assertions.ElementsMatch([]string{"imap-0", "imap-1", "imap-2"}, saver.manifest.GmailIDs)
+	assertions.ElementsMatch([]string{"INBOX|1", "INBOX|2", "INBOX|3"}, saver.manifest.GmailIDs)
 	assertions.Equal(int32(1), boundedRequests.Load())
 }
 
