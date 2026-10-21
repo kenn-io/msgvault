@@ -178,7 +178,9 @@ func (s *Server) staleAdvice(ctx context.Context, backend vector.Backend) (strin
 // rather than the caller's request.
 func (s *Server) MarkVectorIndexStale(ctx context.Context, mismatch error) string {
 	v, _, _ := s.vectorStaleFlight.Do("stale", func() (any, error) {
-		return s.markVectorIndexStale(store.WithRequestID(s.importContext, store.RequestIDFromContext(ctx)), mismatch), nil
+		diagnosisCtx, cancel := context.WithTimeout(s.importContext, vectorStaleDiagnosisTimeout)
+		defer cancel()
+		return s.markVectorIndexStale(store.WithRequestID(diagnosisCtx, store.RequestIDFromContext(ctx)), mismatch), nil
 	})
 	advice, _ := v.(string)
 	return advice
@@ -294,6 +296,8 @@ func (s *Server) maybeCheckVectorScopeDrift(ctx context.Context) {
 // check costs one backend generation lookup and runs on health, stats, and
 // search preflight paths, so it fires at most once per interval.
 const vectorFreshnessCheckInterval = time.Minute
+
+const vectorStaleDiagnosisTimeout = 30 * time.Second
 
 // maybeRefreshVectorFreshness is the ready→stale counterpart of
 // refreshVectorStatusIfStale. A daemon-proxied one-off scoped build (or any

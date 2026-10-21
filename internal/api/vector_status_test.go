@@ -226,6 +226,36 @@ func TestMarkVectorIndexStaleCancelledCallerGetsRestartAdvice(t *testing.T) {
 
 func TestMarkVectorIndexStaleShutdownCancelsDiagnosis(t *testing.T) {
 	t.Parallel()
+	t.Run("timeout without shutdown", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			backend := &resolvingVectorBackend{
+				activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+					close(started)
+					<-ctx.Done()
+					return vector.Generation{}, ctx.Err()
+				},
+			}
+			srv := NewServerWithOptions(testServerOptions(t, backend))
+			defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+			done := make(chan string, 1)
+			go func() {
+				done <- srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+			}()
+			<-started
+			synctest.Wait()
+			assert.Empty(t, done, "diagnosis must wait for the backend before the timeout")
+			time.Sleep(30 * time.Second)
+			synctest.Wait()
+			select {
+			case advice := <-done:
+				assert.Equal(t, vectorRebuildAdvice, advice)
+			default:
+				assert.Fail(t, "MarkVectorIndexStale must return after the diagnosis timeout without shutdown")
+			}
+		})
+	})
 	synctest.Test(t, func(t *testing.T) {
 		started := make(chan struct{})
 		backend := &resolvingVectorBackend{
