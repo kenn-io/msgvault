@@ -60,6 +60,19 @@ type eventMetadata struct {
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
+	if ev.RecurringEventID != "" {
+		keys := candidateSourceMessageIDs(ev)
+		existing, err := s.store.MessageExistsBatch(sourceID, keys)
+		if err != nil {
+			return 0, fmt.Errorf("lookup existing event: %w", err)
+		}
+		for _, key := range keys {
+			if _, ok := existing[key]; ok {
+				smid = key
+				break
+			}
+		}
+	}
 	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
 		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
@@ -190,10 +203,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 // never seen, it inserts a minimal tombstone whose metadata records the
 // cancellation. Returns (messageID, insertedNew).
 func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
-	keys := []string{deriveSourceMessageID(ev), ev.ID}
-	if orig := ev.OriginalStartTime; ev.RecurringEventID != "" && orig.Date == "" && !orig.DateTime.IsZero() {
-		keys = append(keys, ev.RecurringEventID+"|"+originalStartKey(orig))
-	}
+	keys := candidateSourceMessageIDs(ev)
 	existing, err := s.store.MessageExistsBatch(sourceID, keys)
 	if err != nil {
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
@@ -259,6 +269,16 @@ func deriveSourceMessageID(ev gcal.Event) string {
 		}
 	}
 	return ev.ID
+}
+
+// candidateSourceMessageIDs includes both keys a timed occurrence can use when
+// its original start switches between offset-free and offset-bearing values.
+func candidateSourceMessageIDs(ev gcal.Event) []string {
+	keys := []string{deriveSourceMessageID(ev), ev.ID}
+	if orig := ev.OriginalStartTime; ev.RecurringEventID != "" && orig.Date == "" && !orig.DateTime.IsZero() {
+		keys = append(keys, ev.RecurringEventID+"|"+originalStartKey(orig))
+	}
+	return keys
 }
 
 func originalStartKey(dt gcal.EventDateTime) string {
