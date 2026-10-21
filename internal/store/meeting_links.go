@@ -243,9 +243,9 @@ func exceptionBoundsFor(set *calrecur.Set, duration time.Duration, days int, row
 	if set == nil || e.Original == nil || e.Original.AllDay != set.AllDay || bounded && !e.AllDay {
 		return o, nil
 	}
-	// An omitted event zone inherits the master's zone.
+	// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
 	var zone *time.Location
-	if e.EventTimeZone != "" {
+	if e.EventTimeZone != "" || e.StartDate != "" || e.EndDate != "" {
 		var err error
 		zone, err = calendarEventZone(e)
 		if err != nil {

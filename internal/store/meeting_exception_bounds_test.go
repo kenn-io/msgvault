@@ -108,20 +108,20 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksAllDayExceptionOverSeriesBudget(t *testing.T) {
+func TestMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"daily","iCalUID":"daily@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`)
 	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"daily@example.org","recurringEventId":"daily","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-15T02:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	requirements.NoError(err)
 	requirements.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
 	assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: calrecur.ErrBudgetExceeded.Error()}}, page.Unexpandable)
-	assertions.Equal("2027-03-14T05:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-	assertions.Equal("2027-03-15T04:00:00Z", listed.End.UTC().Format(time.RFC3339))
+	assertions.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 		links, err := st.MeetingLinksContext(t.Context(), note)
