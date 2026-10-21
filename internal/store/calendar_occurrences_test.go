@@ -49,6 +49,89 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
+
+func TestListCalendarOccurrencesUsesFreshestExceptionAlias(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	dataA, aliasA := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-10T09:00:00Z"},"end":{"dateTime":"2027-03-10T10:00:00Z"}}`)
+	_, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-04-09T09:00:00Z"},"end":{"dateTime":"2027-04-09T10:00:00Z"}}`)
+	setCalendarEventLastModified(t, st, aliasA, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, aliasB, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	dataA.RawMIME = []byte(`{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"status":"cancelled"}`)
+	_, err := st.PersistMessage(dataA)
+	require.NoError(err)
+	var observedA, observedB time.Time
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasA).Scan(&observedA))
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasB).Scan(&observedB))
+	assert.True(observedA.After(observedB), "reimporting alias A must make its provider observation newer than alias B")
+
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(err)
+	assert.Empty(page.Unexpandable)
+	require.Len(page.Occurrences, 3)
+	var cancellation *CalendarOccurrence
+	for i := range page.Occurrences {
+		if page.Occurrences[i].MessageID == aliasA {
+			cancellation = &page.Occurrences[i]
+		}
+		assert.NotEqual(aliasB, page.Occurrences[i].MessageID)
+	}
+	require.NotNil(cancellation)
+	assert.Equal(master, cancellation.SeriesMessageID)
+	assert.Equal("cancelled", cancellation.Status)
+	assert.Equal("2027-03-09T09:00:00Z", cancellation.Start.Format(time.RFC3339))
+}
+
+func TestListCalendarOccurrencesResolvesAliasesBeforeWindowFiltering(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=12"]}`)
+	_, stale := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
+	_, current := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-05-10T09:00:00Z"},"end":{"dateTime":"2027-05-10T10:00:00Z"}}`)
+	setCalendarEventLastModified(t, st, stale, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, current, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	march := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), march, march.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Empty(page.Occurrences, "the old in-window move must not reappear after a newer alias moved it out")
+
+	may := time.Date(2027, 5, 10, 0, 0, 0, 0, time.UTC)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), may, may.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(page.Occurrences, 1)
+	assert.Equal(master, page.Occurrences[0].SeriesMessageID)
+	assert.Equal(current, page.Occurrences[0].MessageID)
+	assert.Equal("2027-05-10T09:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+}
+
+func TestListCalendarOccurrencesDeduplicatesAliasesInBoundedFallback(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
+	_, aliasA := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T10:00:00Z"},"end":{"dateTime":"2027-03-09T11:00:00Z"}}`)
+	_, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T13:00:00Z"}}`)
+	setCalendarEventLastModified(t, st, aliasA, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, aliasB, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, page.Unexpandable)
+	require.Len(page.Occurrences, 1)
+	assert.Equal(aliasA, page.Occurrences[0].MessageID)
+	assert.Equal("2027-03-09T10:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+}
+
+func setCalendarEventLastModified(t *testing.T, st *Store, messageID int64, at time.Time) {
+	t.Helper()
+	_, err := st.db.Exec(st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), at, messageID)
+	require.NoError(t, err)
+}
+
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

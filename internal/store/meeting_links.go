@@ -88,6 +88,12 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	if err != nil {
 		return nil, err
 	}
+	allRelated, err := queryCalendarExceptionAliases(ctx, r, related, len(related)+max(*budget, 0))
+	if err != nil {
+		return nil, err
+	}
+	*budget -= len(allRelated) - len(related)
+	related = calendarExceptionRows(allRelated)
 	expanded, count, reason, err := expandCalendarSeries(ctx, master, related, from, to, *budget)
 	*budget -= count
 	if err != nil {

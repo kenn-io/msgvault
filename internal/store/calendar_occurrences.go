@@ -206,7 +206,8 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 // Keep unidentified edits and edits of a former series type alongside resolved overrides.
 // Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
-	for _, row := range rows {
+	exceptions := calendarExceptionRows(rows)
+	for _, row := range exceptions {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
 		}
@@ -225,9 +226,12 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	if set == nil {
 		return nil, bounded, nil
 	}
-	for _, exception := range calendarExceptionOverrides(rows) {
+	for _, exception := range exceptions {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
+		}
+		if exception.Event.Original == nil {
+			continue
 		}
 		// A retained edit's old value type cannot identify a current instance.
 		// Its recorded bounds were already kept above.
@@ -244,15 +248,55 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	return resolved, bounded, nil
 }
 
-// Rows arrive in message ID order; the last archived row wins for each original.
+// Freshness is tied to the source message's database-maintained observation
+// timestamp. Message IDs only break ties between snapshots observed together.
 func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
 	overrides := make(map[string]CalendarEventRow, len(rows))
 	for _, row := range rows {
-		if row.Event.Original != nil {
-			overrides[row.Event.Original.Key()] = row
+		if row.Event.Original == nil {
+			continue
+		}
+		key := row.Event.Original.Key()
+		current, exists := overrides[key]
+		if !exists || row.LastModified.After(current.LastModified) ||
+			row.LastModified.Equal(current.LastModified) && row.MessageID > current.MessageID {
+			overrides[key] = row
 		}
 	}
 	return overrides
+}
+
+// Identified snapshots collapse to their freshest alias. Exceptions without
+// an original identity remain independent bounded occurrences.
+func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
+	type identity struct {
+		sourceID int64
+		seriesID string
+		key      string
+	}
+	identified := make(map[identity]CalendarEventRow, len(rows))
+	byID := make(map[int64]CalendarEventRow, len(rows))
+	for _, row := range rows {
+		if row.Event.Original == nil {
+			byID[row.MessageID] = row
+			continue
+		}
+		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
+		current, exists := identified[key]
+		if !exists || row.LastModified.After(current.LastModified) ||
+			row.LastModified.Equal(current.LastModified) && row.MessageID > current.MessageID {
+			identified[key] = row
+		}
+	}
+	for _, row := range identified {
+		byID[row.MessageID] = row
+	}
+	exceptions := make([]CalendarEventRow, 0, len(byID))
+	for _, row := range byID {
+		exceptions = append(exceptions, row)
+	}
+	slices.SortFunc(exceptions, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
+	return exceptions
 }
 
 func calendarRecurrenceBudgetError() error {

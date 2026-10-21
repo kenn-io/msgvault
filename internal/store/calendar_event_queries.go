@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
@@ -19,6 +20,7 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 
 type CalendarEventRow struct {
 	MessageID, SourceID int64
+	LastModified        time.Time
 	Subject             string
 	ICalUID             string
 	DeletedFromSource   bool
@@ -29,7 +31,7 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
+const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), m.last_modified,
  m.deleted_from_source_at IS NOT NULL,
  %s, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
@@ -85,15 +87,18 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	for result.Next() {
 		var row CalendarEventRow
 		e := &row.Event
-		var original, start, end sql.NullTime
+		var original, start, end, lastModified sql.NullTime
 		var originalDate, recurrence string
 		var uid sql.NullString
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &lastModified, &row.DeletedFromSource,
 			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
+		}
+		if lastModified.Valid {
+			row.LastModified = lastModified.Time
 		}
 		row.ICalUID = uid.String
 		if originalDate != "" {
@@ -184,6 +189,11 @@ func calendarEventRowsInWindow(ctx context.Context, r reboundReader, from, to ti
 	if err != nil {
 		return nil, err
 	}
+	exceptions, err = queryCalendarExceptionAliases(ctx, r, exceptions, maxCalendarExceptions)
+	if err != nil {
+		return nil, err
+	}
+	exceptions = calendarExceptionRows(exceptions)
 	byID := make(map[int64]CalendarEventRow, len(masters)+len(singles)+len(exceptions))
 	for _, rows := range [][]CalendarEventRow{masters, singles, exceptions} {
 		for _, row := range rows {
@@ -241,6 +251,94 @@ func queryCalendarSeriesWithinBudget(ctx context.Context, r reboundReader, predi
 func queryCalendarExceptionsInWindow(ctx context.Context, r reboundReader, lower, upper time.Time) ([]CalendarEventRow, error) {
 	predicate, args := calendarExceptionWindow(r.dialect, lower, upper)
 	return queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, maxCalendarExceptions)
+}
+
+// queryCalendarExceptionAliases includes every visible snapshot for the
+// occurrence identities represented by candidates. A moved alias can be
+// outside the requested window while an older snapshot remains inside it.
+func queryCalendarExceptionAliases(ctx context.Context, r reboundReader, candidates []CalendarEventRow, limit int) ([]CalendarEventRow, error) {
+	type identity struct {
+		sourceID int64
+		seriesID string
+		key      string
+	}
+
+	byID := make(map[int64]CalendarEventRow, len(candidates))
+	for _, row := range candidates {
+		byID[row.MessageID] = row
+	}
+	if len(byID) > limit {
+		return nil, fmt.Errorf("%w; narrow the window", ErrQueryTooBroad)
+	}
+
+	identities := make(map[identity]CalendarEventRow)
+	for _, row := range candidates {
+		if row.Event.Original == nil {
+			continue
+		}
+		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
+		identities[key] = row
+	}
+	if len(identities) == 0 {
+		return candidates, nil
+	}
+
+	const identityBatchSize = 250 // Three parameters per identity, below SQLite's common bind limit.
+	identityRows := make([]CalendarEventRow, 0, len(identities))
+	for _, row := range identities {
+		identityRows = append(identityRows, row)
+	}
+	slices.SortFunc(identityRows, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
+	batch := make([]CalendarEventRow, 0, identityBatchSize)
+	queryBatch := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		terms := make([]string, 0, len(batch))
+		args := make([]any, 0, len(batch)*3)
+		for _, candidate := range batch {
+			original := candidate.Event.Original
+			if original.AllDay {
+				terms = append(terms, `(e.series_provider_id = ? AND m.source_id = ? AND e.original_start_date = ?)`)
+				args = append(args, candidate.Event.SeriesProviderID, candidate.SourceID, original.Date)
+				continue
+			}
+			terms = append(terms, `(e.series_provider_id = ? AND m.source_id = ? AND e.original_start_at = ?)`)
+			args = append(args, candidate.Event.SeriesProviderID, candidate.SourceID, original.Instant)
+		}
+		predicate := `e.kind = 'exception' AND (` + strings.Join(terms, ` OR `) + `)`
+		aliases, err := queryCalendarEventRowsWithinBudget(ctx, r, predicate, args, limit)
+		if err != nil {
+			return err
+		}
+		for _, alias := range aliases {
+			byID[alias.MessageID] = alias
+		}
+		if len(byID) > limit {
+			return fmt.Errorf("%w; narrow the window", ErrQueryTooBroad)
+		}
+		batch = batch[:0]
+		return nil
+	}
+
+	for _, candidate := range identityRows {
+		batch = append(batch, candidate)
+		if len(batch) == identityBatchSize {
+			if err := queryBatch(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := queryBatch(); err != nil {
+		return nil, err
+	}
+
+	rows := make([]CalendarEventRow, 0, len(byID))
+	for _, row := range byID {
+		rows = append(rows, row)
+	}
+	slices.SortFunc(rows, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
+	return rows, nil
 }
 
 func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, []any) {
