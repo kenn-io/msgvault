@@ -120,8 +120,9 @@ func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // SecureMkdirAll creates a directory path and all parents that do not yet exist.
-// For owner-only modes, every new directory is created with a protected DACL
-// granting access only to the current user. Existing directories are unchanged.
+// For owner-only modes, each directory it creates gets a protected DACL granting
+// access only to the current user. Existing directories, including one another
+// process creates first, keep their permissions.
 func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
@@ -159,7 +160,8 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	}
 	for _, dir := range slices.Backward(missing) {
 		createPath := dir
-		// Like os, prefix only long paths: the prefix also disables normalization.
+		// The prefix disables Win32 path normalization, which filepath.Abs has
+		// already applied. Use it only where Win32 needs it, as os does.
 		if len(dir) >= 248 && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
 			if strings.HasPrefix(dir, `\\`) {
 				createPath = `\\?\UNC\` + dir[2:]
