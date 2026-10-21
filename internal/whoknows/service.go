@@ -198,7 +198,7 @@ func (s *Service) vectorScores(ctx context.Context, hits []vector.FusedHit, meta
 			scores[hit.MessageID] = hit.VectorScore
 		}
 	}
-	return vector.CosineScores{Scores: scores, UnitLength: true}, nil
+	return vector.CosineScores{Scores: scores}, nil
 }
 
 // similarities returns the hits whose cosine similarity to the topic reaches

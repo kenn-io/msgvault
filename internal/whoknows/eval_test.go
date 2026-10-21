@@ -531,7 +531,6 @@ func TestFindReportsSaturatedSQLitePoolWithHiddenNonUnitMatch(t *testing.T) {
 	require.True(t, ok)
 	scores, err := scorer.MessageCosines(t.Context(), vector.Generation{ID: f.generation, Dimension: embedDimension}, topic, ids)
 	require.NoError(t, err)
-	assert.True(t, scores.UnitLength, "the returned candidates alone all have unit-length vectors")
 	for _, hit := range hits {
 		if !math.IsNaN(hit.VectorScore) {
 			assert.InDelta(t, .3, scores.Scores[hit.MessageID], 1e-5)

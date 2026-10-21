@@ -19,15 +19,14 @@ func (*Backend) CosineSearchOrderGuaranteed() bool { return false }
 // MessageCosines returns, for each listed message embedded in gen, the
 // cosine similarity of its closest chunk to queryVec. Search scores a hit as
 // 1 - L2 distance, whose ordering matches cosine for unit-length vectors. The
-// embedding client stores provider vectors as they come. UnitLength reports
-// that queryVec and every chunk read have length 1. A zero vector scores 0.
-// Messages with no chunk in gen are left out. queryVec must have gen's
+// embedding client stores provider vectors as they come. A zero vector scores
+// 0. Messages with no chunk in gen are left out. queryVec must have gen's
 // dimension, as the search that returned the messages checked.
 func (b *Backend) MessageCosines(
 	ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64,
 ) (vector.CosineScores, error) {
 	queryNorm := norm(queryVec)
-	out := vector.CosineScores{Scores: map[int64]float64{}, UnitLength: unitLength(queryNorm)}
+	out := vector.CosineScores{Scores: map[int64]float64{}}
 	if len(messageIDs) == 0 {
 		return out, nil
 	}
@@ -58,7 +57,6 @@ func (b *Backend) MessageCosines(
 			return vector.CosineScores{}, fmt.Errorf("decode message %d chunk vector: %w", id, err)
 		}
 		vecNorm := norm(vec)
-		out.UnitLength = out.UnitLength && unitLength(vecNorm)
 		score := cosine(vec, queryVec, vecNorm, queryNorm)
 		if best, seen := out.Scores[id]; !seen || score > best {
 			out.Scores[id] = score
@@ -78,9 +76,6 @@ func norm(v []float32) float64 {
 	}
 	return math.Sqrt(sum)
 }
-
-// unitLength reports that a length is 1, within float32 rounding.
-func unitLength(n float64) bool { return math.Abs(n-1) <= 1e-3 }
 
 // cosine returns the cosine similarity of two equal-length vectors with
 // lengths normA and normB, or 0 when either is zero.

@@ -41,7 +41,6 @@ func TestMessageCosinesScoresStoredChunks(t *testing.T) {
 	got, err := b.MessageCosines(ctx, generation, vec(1, 0), ids)
 	require.NoError(err)
 	require.Len(got.Scores, 4, "missing chunks and other generations do not count")
-	assert.True(got.UnitLength, "pgvector search follows cosine order")
 	assert.InDelta(1, got.Scores[1], 1e-9, "vector length does not change cosine")
 	assert.InDelta(-1, got.Scores[2], 1e-9)
 	assert.Zero(got.Scores[3], "a stored zero vector scores zero")

@@ -14,13 +14,12 @@ import (
 func (*Backend) CosineSearchOrderGuaranteed() bool { return true }
 
 // MessageCosines returns each embedded message's best chunk cosine in gen.
-// Messages without chunks are omitted. Zero vectors score 0. UnitLength is
-// true because pgvector's search order already follows cosine distance.
+// Messages without chunks are omitted. Zero vectors score 0.
 // queryVec must have gen's dimension, as checked by the preceding search.
 func (b *Backend) MessageCosines(
 	ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64,
 ) (vector.CosineScores, error) {
-	out := vector.CosineScores{Scores: map[int64]float64{}, UnitLength: true}
+	out := vector.CosineScores{Scores: map[int64]float64{}}
 	if len(messageIDs) == 0 {
 		return out, nil
 	}
