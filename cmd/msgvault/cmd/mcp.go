@@ -215,6 +215,9 @@ const personTierMinAPISchemaVersion = "3.33.0"
 
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
+// emailFamilyMinAPISchemaVersion adds the related-copies route.
+const emailFamilyMinAPISchemaVersion = "3.26.0"
+
 // archiveSQLMinAPISchemaVersion adds SQL confined to archive analytics files.
 const archiveSQLMinAPISchemaVersion = "2.31.0"
 
@@ -320,6 +323,9 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, contactRoutesMinAPISchemaVersion) {
 		opts.ContactRoutesBackend = st
+	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, emailFamilyMinAPISchemaVersion) {
+		opts.EmailFamilyBackend = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, personAgendaMinAPISchemaVersion) {
 		opts.PersonAgendaBackend = st

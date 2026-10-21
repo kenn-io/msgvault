@@ -65,3 +65,18 @@ func TestRepairDerivedSourceRebuildsEmail(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("Rebuilt archive", body)
 }
+
+// The store owns what repair derives; this checks the command runs it and says so.
+func TestRepairDerivedSourceReportsEmailLinkage(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("imap", "repair@example.test")
+	require.NoError(err)
+	conv, err := st.EnsureConversation(src.ID, "thread", "Repair")
+	require.NoError(err)
+	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: &store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "mail", MessageType: "email"}})
+	require.NoError(err)
+	var out bytes.Buffer
+	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
+	assert.Contains(t, out.String(), "email linkage derived for 1 messages")
+}

@@ -6,6 +6,10 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- Related copies: the email reader's **Related copies** panel, `msgvault family show <id>` and the MCP tool `get_email_family` list an email's other archived copies, replies and forwards across accounts, with the header evidence that connects each one. They read Message-ID, In-Reply-To, References and attached-original identifiers, which archive schema 31 indexes in the new `email_link_keys` table, plus the provider threads of the email and its exact copies for Gmail and Google Groups. Existing emails are indexed on the next sync or by `repair-derived`; until then the output says some related emails may be missing. Only the owner can read it. API schema 3.44.0 adds `GET /api/v1/messages/{id}/family`.
+
 ## 0.23.0
 <small>2026-11-04</small>
 
