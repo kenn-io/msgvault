@@ -57,39 +57,6 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksUnidentifiedExceptionsWithSameUIDKeepDistinctIdentity(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, _ = calendarFixture(t, st, "master", linkSeriesRaw)
-	_, first := calendarFixture(t, st, "first", `{"id":"edit-a","iCalUID":"weekly@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
-	_, second := calendarFixture(t, st, "second", `{"id":"edit-b","iCalUID":"weekly@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	firstRef, secondRef := OccurrenceRef{MessageID: first}, OccurrenceRef{MessageID: second}
-
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, firstRef))
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, secondRef))
-	links, err := st.MeetingLinksContext(t.Context(), note)
-	requirements.NoError(err)
-	requirements.Len(links, 2)
-	assertions.Equal(formatMeetingOccurrence(firstRef), links[0].Ref)
-	assertions.Equal("2027-03-14T12:00:00Z", links[0].Start.Format(time.RFC3339))
-	assertions.Equal(formatMeetingOccurrence(secondRef), links[1].Ref)
-	assertions.Equal("2027-03-14T14:00:00Z", links[1].Start.Format(time.RFC3339))
-
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, firstRef))
-	links, err = st.MeetingLinksContext(t.Context(), note)
-	requirements.NoError(err)
-	requirements.Len(links, 1)
-	assertions.Equal(formatMeetingOccurrence(secondRef), links[0].Ref)
-
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, firstRef))
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, secondRef))
-	links, err = st.MeetingLinksContext(t.Context(), note)
-	requirements.NoError(err)
-	requirements.Len(links, 1)
-	assertions.Equal(formatMeetingOccurrence(firstRef), links[0].Ref)
-}
-
 func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

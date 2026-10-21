@@ -206,15 +206,11 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 // Keep unidentified edits and edits of a former series type alongside resolved overrides.
 // Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
-	overrides := calendarExceptionOverrides(rows)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
 		}
 		e := row.Event
-		if e.Original != nil && overrides[e.Original.Key()].MessageID != row.MessageID {
-			continue
-		}
 		if e.Start != nil && e.End != nil {
 			o, err := exceptionBoundsFor(set, duration, days, row)
 			if err != nil {
@@ -229,7 +225,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	if set == nil {
 		return nil, bounded, nil
 	}
-	for _, exception := range overrides {
+	for _, exception := range calendarExceptionOverrides(rows) {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
 		}
@@ -248,27 +244,15 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	return resolved, bounded, nil
 }
 
-// The freshest archived snapshot wins for each original; message ID breaks ties.
+// Rows arrive in message ID order; the last archived row wins for each original.
 func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
 	overrides := make(map[string]CalendarEventRow, len(rows))
 	for _, row := range rows {
-		if row.Event.Original == nil {
-			continue
-		}
-		key := row.Event.Original.Key()
-		current, ok := overrides[key]
-		if !ok || calendarExceptionSnapshotNewer(row, current) {
-			overrides[key] = row
+		if row.Event.Original != nil {
+			overrides[row.Event.Original.Key()] = row
 		}
 	}
 	return overrides
-}
-
-func calendarExceptionSnapshotNewer(candidate, current CalendarEventRow) bool {
-	if !candidate.SnapshotUpdatedAt.Equal(current.SnapshotUpdatedAt) {
-		return candidate.SnapshotUpdatedAt.After(current.SnapshotUpdatedAt)
-	}
-	return candidate.MessageID > current.MessageID
 }
 
 func calendarRecurrenceBudgetError() error {

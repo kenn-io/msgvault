@@ -1490,8 +1490,7 @@ CREATE TABLE IF NOT EXISTS messages (
     -- last_modified above, which bumps on ANY change to the row, this moves
     -- only when the message's own content, routing, or lifecycle actually
     -- changes value -- see MessagesContentColumns in content_columns.go for
-    -- the message columns, plus the body and raw-snapshot triggers installed
-    -- by EnsureTriggers. It exists so a
+    -- the list and the reason each column is in or out. It exists so a
     -- consumer maintaining an incremental copy of the archive can page "what
     -- changed since X?" without being woken by internal bookkeeping such as
     -- embedding watermarks or index versions.
@@ -4700,8 +4699,6 @@ CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(seri
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
-CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_original_at ON calendar_events(series_provider_id, original_start_at) WHERE kind = 'exception';
-CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_original_date ON calendar_events(series_provider_id, original_start_date) WHERE kind = 'exception';
 CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
     ordinal INTEGER NOT NULL,

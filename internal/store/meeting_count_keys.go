@@ -98,9 +98,6 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID}
 		if row.Event.Kind == meetingSeriesKind {
-			if identity.OccurrenceKey == "" || (identity.EventMessageID != 0 && identity.EventMessageID != row.MessageID) {
-				continue
-			}
 			ref.Key = identity.OccurrenceKey
 		}
 		occurrence, err := resolveMeetingOccurrence(ctx, r, ref, &budget)

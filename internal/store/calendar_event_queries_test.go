@@ -9,7 +9,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -149,71 +148,6 @@ func TestCalendarExceptionsOriginalAndEffectiveWindows(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
-}
-
-func TestCalendarExceptionSnapshotFreshnessPrecedesWindowFiltering(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	masterRaw := `{"id":"weekly","iCalUID":"weekly@example.test","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=2"]}`
-	_, master := calendarFixture(t, st, "master", masterRaw)
-	aliasA := `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00","timeZone":"UTC"},"start":{"dateTime":"2027-04-02T09:00:00Z"},"end":{"dateTime":"2027-04-02T10:00:00Z"}}`
-	aliasB := `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00Z"},"start":{"dateTime":"2027-05-02T09:00:00Z"},"end":{"dateTime":"2027-05-02T10:00:00Z"}}`
-	_, olderID := calendarFixture(t, st, "alias-a", aliasA)
-	_, newerID := calendarFixture(t, st, "alias-b", aliasB)
-	// Fix the fixture watermarks so the higher-ID alias is initially newer,
-	// then verify a raw-only reimport of the lower-ID alias advances freshness.
-	_, err := st.db.Exec(`UPDATE messages SET content_changed_at = ? WHERE id = ?`, time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), olderID)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`UPDATE messages SET content_changed_at = ? WHERE id = ?`, time.Date(2000, 1, 2, 0, 0, 0, 0, time.UTC), newerID)
-	requirements.NoError(err)
-
-	april := time.Date(2027, 4, 2, 0, 0, 0, 0, time.UTC)
-	may := time.Date(2027, 5, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), april, april.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	assertions.Empty(page.Occurrences, "the older April alias must not survive the newer May alias")
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), may, may.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal(newerID, page.Occurrences[0].MessageID)
-
-	var oldHash string
-	requirements.NoError(st.db.QueryRow(`SELECT content_hash FROM calendar_events WHERE message_id = ?`, olderID).Scan(&oldHash))
-	var oldFreshness time.Time
-	requirements.NoError(st.db.QueryRow(`SELECT content_changed_at FROM messages WHERE id = ?`, olderID).Scan(&oldFreshness))
-	refreshedA := strings.Replace(aliasA, `"originalStartTime"`, `"updated":"2027-03-10T00:00:00Z","originalStartTime"`, 1)
-	requirements.NoError(st.UpsertMessageRawWithFormat(olderID, []byte(refreshedA), "gcal_json"))
-	var refreshedHash string
-	requirements.NoError(st.db.QueryRow(`SELECT content_hash FROM calendar_events WHERE message_id = ?`, olderID).Scan(&refreshedHash))
-	assertions.Equal(oldHash, refreshedHash, "provider metadata outside the projection must not alter its content hash")
-	var refreshedFreshness time.Time
-	requirements.NoError(st.db.QueryRow(`SELECT content_changed_at FROM messages WHERE id = ?`, olderID).Scan(&refreshedFreshness))
-	assertions.True(refreshedFreshness.After(oldFreshness), "raw snapshot updates must advance freshness even when the projection is unchanged")
-
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), april, april.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal(olderID, page.Occurrences[0].MessageID)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), may, may.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	assertions.Empty(page.Occurrences, "the fresher April snapshot must suppress the stale May alias")
-
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-	requirements.NoError(err)
-	budget := calrecur.RequestReadBudget
-	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: master, Key: "20270302T090000Z"}, &budget)
-	release()
-	requirements.NoError(err)
-	assertions.Equal(olderID, resolved.Row.MessageID, "saved occurrence references must resolve through the freshest alias")
-
-	cancelledA := `{"id":"alias-a","updated":"2027-03-11T00:00:00Z","status":"cancelled","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-02T09:00:00","timeZone":"UTC"}}`
-	requirements.NoError(st.UpsertMessageRawWithFormat(olderID, []byte(cancelledA), "gcal_json"))
-	original := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), original, original.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal(olderID, page.Occurrences[0].MessageID)
-	assertions.Equal("cancelled", page.Occurrences[0].Status)
 }
 
 func TestCalendarExceptionsPartialBounds(t *testing.T) {

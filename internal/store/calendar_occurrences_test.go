@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -49,26 +48,6 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
-}
-
-func TestResolveCalendarExceptionsDeduplicatesBoundedAliases(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	original := &calrecur.Identity{Instant: time.Date(2027, 3, 2, 9, 0, 0, 0, time.UTC)}
-	start := func(value string) *time.Time {
-		parsed, err := time.Parse(time.RFC3339, value)
-		requirements.NoError(err)
-		return &parsed
-	}
-	rows := []CalendarEventRow{
-		{MessageID: 20, SnapshotUpdatedAt: time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), Event: calevent.Event{Kind: meetingExceptionKind, SeriesProviderID: "weekly", Original: original, Start: start("2027-04-02T09:00:00Z"), End: start("2027-04-02T10:00:00Z")}},
-		{MessageID: 10, SnapshotUpdatedAt: time.Date(2000, 1, 2, 0, 0, 0, 0, time.UTC), Event: calevent.Event{Kind: meetingExceptionKind, SeriesProviderID: "weekly", Original: original, Start: start("2027-05-02T09:00:00Z"), End: start("2027-05-02T10:00:00Z")}},
-		{MessageID: 30, SnapshotUpdatedAt: time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC), Event: calevent.Event{Kind: meetingExceptionKind, Start: start("2027-06-02T09:00:00Z"), End: start("2027-06-02T10:00:00Z")}},
-	}
-	_, bounded, err := resolveCalendarExceptions(t.Context(), nil, rows, 0, 0)
-	requirements.NoError(err)
-	requirements.Len(bounded, 2)
-	assertions.Equal(*rows[1].Event.Start, bounded[0].Start, "the latest identified alias supplies the bounded occurrence")
-	assertions.Equal(*rows[2].Event.Start, bounded[1].Start, "exceptions without an original identity remain independent")
 }
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)

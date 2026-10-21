@@ -530,38 +530,6 @@ func TestMeetingLinksTwoOccurrenceAliases(t *testing.T) {
 	assertions.Equal("2027-03-14T12:00:00Z", links[0].Start.Format(time.RFC3339))
 }
 
-func TestMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, _ = calendarFixture(t, st, "master", `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
-	_, first := calendarFixture(t, st, "first", `{"id":"first-edit","iCalUID":"weekly@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
-	_, second := calendarFixture(t, st, "second", `{"id":"second-edit","iCalUID":"weekly@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-21T12:00:00Z"},"end":{"dateTime":"2027-03-21T13:00:00Z"}}`)
-	_, secondNote := projectionFixture(t, st, "second-note", "plaud_json", `{}`)
-	_, firstNote := projectionFixture(t, st, "first-note", "plaud_json", `{}`)
-
-	requirements.NoError(st.LinkMeetingContext(t.Context(), secondNote, OccurrenceRef{MessageID: second}))
-	requirements.NoError(st.LinkMeetingContext(t.Context(), firstNote, OccurrenceRef{MessageID: first}))
-	secondLinks, err := st.MeetingLinksContext(t.Context(), secondNote)
-	requirements.NoError(err)
-	requirements.Len(secondLinks, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", second), secondLinks[0].Ref)
-	assertions.Equal(time.Date(2027, 3, 21, 12, 0, 0, 0, time.UTC), secondLinks[0].Start)
-	firstLinks, err := st.MeetingLinksContext(t.Context(), firstNote)
-	requirements.NoError(err)
-	requirements.Len(firstLinks, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", first), firstLinks[0].Ref)
-	assertions.Equal(time.Date(2027, 3, 14, 12, 0, 0, 0, time.UTC), firstLinks[0].Start)
-
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), secondNote, OccurrenceRef{MessageID: second}))
-	secondLinks, err = st.MeetingLinksContext(t.Context(), secondNote)
-	requirements.NoError(err)
-	assertions.Empty(secondLinks)
-	firstLinks, err = st.MeetingLinksContext(t.Context(), firstNote)
-	requirements.NoError(err)
-	requirements.Len(firstLinks, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", first), firstLinks[0].Ref, "unlinking one unidentified exception must leave the other link intact")
-}
-
 func TestMeetingLinksOrphanSplitAfterMasterArrives(t *testing.T) {
 	for _, uid := range []string{"", "orphan@example.org"} {
 		t.Run(uid, func(t *testing.T) {

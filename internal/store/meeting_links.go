@@ -62,12 +62,6 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	id := meetingIdentity{ICalUID: row.ICalUID, OccurrenceKey: key}
-	// Without an original start, exceptions have no stable occurrence slot to
-	// distinguish them. Keep each bounded snapshot addressable by its message.
-	if row.Event.Kind == meetingExceptionKind && row.Event.Original == nil {
-		id.ICalUID = ""
-		id.OccurrenceKey = ""
-	}
 	// Occurrence keys represent whole seconds. Keep fractional exceptions
 	// addressable by their message instead of querying a truncated original start.
 	if original := row.Event.Original; key != "" && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
