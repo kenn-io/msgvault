@@ -172,7 +172,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := s.refreshSourceCalendarEventsTx(ctx, tx, into); err != nil {
 		return err
 	}
-	if err := remapHiddenCalendarMeetingDecisionsTx(ctx, tx, from, into); err != nil {
+	if err := remapHiddenCalendarMeetingDecisionsTx(ctx, tx, into); err != nil {
 		return err
 	}
 	// Source-local receipts, sync runs, cursors, re-anchor markers, import receipts

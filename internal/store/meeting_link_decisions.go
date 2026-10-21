@@ -154,7 +154,7 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 	return nil
 }
 
-func remapHiddenCalendarMeetingDecisionsTx(ctx context.Context, tx *loggedTx, from, into int64) error {
+func remapHiddenCalendarMeetingDecisionsTx(ctx context.Context, tx *loggedTx, into int64) error {
 	rows, err := tx.QueryContext(ctx, `SELECT d.member_message_id, d.target_message_id, d.target_ical_uid, d.occurrence_key, d.decision, d.created_at,
 	 (SELECT candidate_message.id FROM calendar_events other_event JOIN messages candidate_message ON candidate_message.id = other_event.message_id
 	  WHERE other_event.provider_event_id = e.provider_event_id
@@ -165,11 +165,10 @@ func remapHiddenCalendarMeetingDecisionsTx(ctx context.Context, tx *loggedTx, fr
  JOIN messages m ON m.id = d.target_message_id
  JOIN calendar_events e ON e.message_id = m.id
  JOIN source_merge_archive_only_messages am ON am.message_id = m.id
- JOIN source_merge_messages sm ON sm.message_id = m.id
  WHERE d.target_ical_uid = '' AND m.source_id = ? AND m.deleted_at IS NULL
-   AND e.provider_event_id != '' AND sm.original_source_id = ?
+   AND e.provider_event_id != ''
    AND NOT (`+calendarEventVisibility("e", "m")+`)
- ORDER BY d.created_at, d.member_message_id, d.target_message_id, d.occurrence_key`, into, from)
+ ORDER BY d.created_at, d.member_message_id, d.target_message_id, d.occurrence_key`, into)
 	if err != nil {
 		return fmt.Errorf("find hidden calendar meeting decisions: %w", err)
 	}

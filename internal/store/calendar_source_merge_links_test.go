@@ -87,3 +87,53 @@ func TestMeetingLinksUIDLessCalendarSourceMergeRemapsDecisions(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingLinksUIDLessCalendarSourceMergeRemapsPreviouslyMergedDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind string
+	}{
+		{name: "successive merges into one destination", kind: "successive"},
+		{name: "chain destination into another source", kind: "chain"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"id":"shared","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+
+			var visibleSourceID, visible int64
+			if tc.kind == "successive" {
+				visibleSource, event := calendarFixture(t, st, "earlier-copy", raw, "earlier-copy")
+				visibleSourceID, visible = visibleSource.Message.SourceID, event
+			} else {
+				visibleSource, event := calendarFixture(t, st, "destination-copy", raw, "destination")
+				visibleSourceID, visible = visibleSource.Message.SourceID, event
+			}
+			history, incoming := calendarFixture(t, st, "history-event", raw, "history")
+			middle, err := st.GetOrCreateSource("gcal", "middle")
+			requirements.NoError(err)
+			_, note := projectionFixture(t, st, "note", "twenty_json", `{}`)
+			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: incoming}))
+
+			_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: middle.ID})
+			requirements.NoError(err)
+			assertions.Equal(fmt.Sprintf("evt:%d", incoming), linkedMeetingRefs(t, st, note)[note], "the original event remains visible after the first merge")
+
+			secondFrom, secondInto := visibleSourceID, middle.ID
+			if tc.kind == "chain" {
+				secondFrom, secondInto = middle.ID, visibleSourceID
+			}
+			_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: secondFrom, IntoSourceID: secondInto})
+			requirements.NoError(err)
+
+			var target int64
+			requirements.NoError(st.db.QueryRow(`SELECT target_message_id FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&target))
+			assertions.Equal(visible, target)
+			assertions.Equal(fmt.Sprintf("evt:%d", visible), linkedMeetingRefs(t, st, note)[note])
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 1)
+			assertions.Equal(visible, page.Occurrences[0].MessageID)
+		})
+	}
+}
