@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -46,6 +47,52 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
 	assert.False(state.Stale)
+}
+
+func TestProjectorImportsCallObservationWithoutChatContactLinks(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	evidence := callhistory.Evidence{Provider: "teams", Account: "example"}
+	source, err := f.Store.GetOrCreateSource(callhistory.SourceType, evidence.SourceIdentifier())
+	require.NoError(err)
+	peerID, err := f.Store.EnsureParticipantByIdentifier("teams", "peer", "Example Peer")
+	require.NoError(err)
+	_, created, err := f.Store.CreatePersonFromParticipantContext(t.Context(), peerID)
+	require.NoError(err)
+	require.True(created)
+	messageID, err := f.Store.PutCallObservationContext(t.Context(), source.ID, callhistory.Observation{
+		RecordID: "event-1",
+
+		Version: 1, Provider: "teams", Account: "example", NativeCallID: "call-1",
+		Kind: "call", Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
+		OccurredAt: time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC), Precision: "instant",
+
+		Participants: []callhistory.Participant{{ID: peerID, Participation: "joined"}},
+		Raw:          []byte(`{"id":"event-1"}`),
+	})
+	require.NoError(err)
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+
+	var refKind, channel, direction, ownerAddress string
+	var ownerSourceID sql.NullInt64
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT ref_kind, channel, direction, owner_source_id, owner_address
+		FROM activity_events WHERE message_id = ?
+	`), messageID).Scan(&refKind, &channel, &direction, &ownerSourceID, &ownerAddress))
+	assert.Equal(string(store.RefKindMessage), refKind)
+	assert.Equal(string(store.ChannelOther), channel)
+	assert.Equal(string(store.DirectionObserved), direction)
+	assert.False(ownerSourceID.Valid)
+	assert.Empty(ownerAddress)
+	var links int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?
+	`), messageID).Scan(&links))
+	assert.Zero(links, "call roster evidence does not create ordinary chat contact links")
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {

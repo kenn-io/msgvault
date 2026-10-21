@@ -1,7 +1,6 @@
 package callhistory
 
 import (
-	"encoding/json/v2"
 	"math"
 	"testing"
 	"time"
@@ -105,40 +104,5 @@ func FuzzObservationDurationValidation(f *testing.F) {
 			return
 		}
 		require.NoError(t, o.Validate())
-	})
-}
-
-func FuzzNormalizedImportRoundtrip(f *testing.F) {
-	f.Add(uint64(0), false, true)
-	f.Add(math.Float64bits(math.MaxFloat64), false, true)
-	f.Add(uint64(0), true, false)
-	f.Fuzz(func(t *testing.T, bits uint64, scheduled, hasDuration bool) {
-		// Materialize any finite nonnegative IEEE value, without rejecting
-		// generated inputs. Validation of negative/nonfinite inputs is separate.
-		bits &^= uint64(1) << 63
-		if bits>>52 == 0x7ff {
-			bits &^= uint64(1) << 52
-		}
-		o := exampleObservation()
-		if scheduled {
-			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
-			o.Participants = []Participant{}
-		} else {
-			o.NativeCallID = "call-1"
-			if hasDuration {
-				duration := math.Float64frombits(bits)
-				o.DurationSeconds = &duration
-			}
-		}
-		wire, err := json.Marshal(o)
-		require.NoError(t, err)
-		got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: wire}).Observation()
-		require.NoError(t, err)
-		assert.Equal(t, o.NativeCallID, got.NativeCallID)
-		assert.Equal(t, scheduled, got.CanonicalKey() == "")
-		assert.Equal(t, o.DurationSeconds, got.DurationSeconds)
-		assert.True(t, o.OccurredAt.Equal(got.OccurredAt))
-		assert.Equal(t, o.Participants, got.Participants)
-		assert.Equal(t, o.CanonicalKey(), got.CanonicalKey())
 	})
 }

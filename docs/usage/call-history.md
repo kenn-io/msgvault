@@ -45,12 +45,71 @@ Supported formats:
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
 | `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; every binding stays invited even when the RSVP says accepted. Recurring masters and events without a start are rejected. |
+| `teams` | One archived Graph `systemEventMessage` with a started/ended call detail, `callId`, `callEventType`, and `createdDateTime`. Include `chatId` or complete `channelIdentity`; reply IDs retain `replyToId`. Bind exact user IDs from an ended event’s `callParticipants` to existing archive participants. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. An observation allows 100 participants and 32 phone/link entry
 points. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
+
+## Import an archived Teams event
+
+Teams sync already preserves the original Graph message JSON. Export one
+archived message by its numeric archive ID using the existing raw-byte export
+command (the command name also covers email):
+
+```sh
+msgvault export-eml 123 --output teams-message.json
+jq '{format: "teams", account: "owner@example.com", record: ., bindings: {"example-peer": 42}}' teams-message.json > teams-call.json
+msgvault calls import teams-call.json
+```
+
+Use a consistent account namespace, such as the connected Teams account’s
+address. Bindings map Graph user IDs to **existing participant IDs**, not person
+IDs. Omit bindings to retain unassociated evidence. This synthetic request
+shows the required context and an ended-event roster:
+
+```json
+{
+  "format": "teams",
+  "account": "owner@example.com",
+  "record": {
+    "id": "example-message",
+    "chatId": "example-chat",
+    "messageType": "systemEventMessage",
+    "createdDateTime": "2026-10-01T10:00:00Z",
+    "eventDetail": {
+      "@odata.type": "#microsoft.graph.callEndedEventMessageDetail",
+      "callId": "example-call",
+      "callEventType": "call",
+      "callDuration": "PT1M30S",
+      "callParticipants": [{"participant": {"user": {"id": "example-peer"}}}]
+    }
+  },
+  "bindings": {"example-peer": 42}
+}
+```
+
+The adapter accepts `callStartedEventMessageDetail` and
+`callEndedEventMessageDetail`. Ended-event roster bindings are joined
+participants. A started event accepts no bindings and establishes no attendance.
+The initiator and chat membership never supply an attended roster. Direction,
+answer state, and owner participation stay unknown, so these events alone do
+not increase answered counts. Future `callEventType` values stay unknown too.
+
+For an ended event, its creation timestamp is the end; the explicit duration
+reconstructs a start. Without duration, the event timestamp remains the
+occurrence time. Durations use fixed ISO 8601 days/hours/minutes/seconds, up to
+Go’s duration limit (about 290 years), with nanosecond precision. Calendar
+months/years, negative values, and overflow are rejected. Duration is for the
+call, not per-person talk time. Missing duration differs from explicit zero.
+
+Normal Teams sync does not automatically create these observations or propagate
+later source deletions into supplied call records. Its raw archive can retain
+the earlier event after deletion. A full supplied event with `deletedDateTime`
+withdraws that observation; a bare deletion notice is insufficient. No new
+Graph scopes or organization-wide `callRecords` access are needed.
 
 ## Read the evidence and counts
 
