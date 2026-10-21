@@ -43,6 +43,7 @@ import (
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	webapp "go.kenn.io/msgvault/internal/web"
+	"golang.org/x/sync/singleflight"
 )
 
 // MessageStore defines the store operations the API needs.
@@ -413,6 +414,8 @@ type Server struct {
 	vectorScopeCheck         func(ctx context.Context) (string, error)
 	vectorScopeNextCheck     time.Time
 	vectorRestartFingerprint func(context.Context) (string, error)
+	// vectorStaleFlight shares one stale-index diagnosis across concurrent mismatches.
+	vectorStaleFlight singleflight.Group
 	// vectorFreshNextCheck throttles maybeRefreshVectorFreshness, the
 	// ready→stale counterpart of refreshVectorStatusIfStale: a
 	// daemon-proxied one-off scoped build can activate a generation whose

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -198,6 +199,37 @@ type resolvingVectorBackend struct {
 
 func (b *resolvingVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
 	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
+}
+
+func TestMarkVectorIndexStaleCoalescesConcurrentDiagnosis(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		backend := &resolvingVectorBackend{fingerprint: "model-b"}
+		srv := NewServerWithOptions(testServerOptions(t, backend))
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		var checks atomic.Int32
+		release := make(chan struct{})
+		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+			checks.Add(1)
+			<-release
+			return "model-b", nil
+		})
+		const callers = 10
+		results := make(chan string, callers)
+		for range callers {
+			go func() {
+				results <- srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+			}()
+		}
+		synctest.Wait()
+		assert.Empty(results, "callers must wait for the shared diagnosis")
+		close(release)
+		for range callers {
+			assert.Equal(vectorRestartAdvice, <-results)
+		}
+		assert.Equal(int32(1), checks.Load(), "concurrent mismatches must share one diagnosis")
+	})
 }
 
 func TestVectorStaleRestartAfterRebuildInsideThrottle(t *testing.T) {
