@@ -295,7 +295,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if searchJSON {
 		return outputSearchResultsJSON(resp.Results)
 	}
-	if len(resp.Results) == 0 && resp.IndexState != "checking" && resp.IndexState != "unverified" {
+	if len(resp.Results) == 0 {
 		fmt.Println("No messages found.")
 		return nil
 	}

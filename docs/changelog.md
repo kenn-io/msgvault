@@ -11,7 +11,7 @@ All notable changes to msgvault, grouped by release.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
-- Anonymous telemetry now counts submitted empty searches, displayed workflow errors, and sources entering failure during scheduled or manual syncs, using fixed values without error text or source identifiers. Everything omits empty-search counts when recording search is configured.
+- Anonymous telemetry now counts submitted empty searches, displayed workflow errors, and sources entering failure during scheduled sync or Sync now, using fixed values without error text or source identifiers. Everything omits empty-search counts while recording search is unknown or set up.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
 
 - [Cron schedules](configuration.md#cron-schedules) use go-cron instead of

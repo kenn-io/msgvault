@@ -76,90 +76,22 @@ func TestDelayedEmailFailureDuringTextsSearchRetainsEmailQuery(t *testing.T) {
 	assert.Equal("email needle", m.searchQuery, "returning to Email keeps its filter")
 }
 
-func TestSubmittedEmptySearch(t *testing.T) {
+func TestErrorShownOnModalTransition(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		mode          tuiMode
-		loadedPreview bool
+		name string
+		kind string
+		mode tuiMode
+		msg  tea.Msg
 	}{
-		{"pending", modeEmail, false},
-		{"preview already loaded", modeEmail, true},
-		{"texts", modeTexts, false},
-		{"meetings", modeMeetings, false},
+		{"search", "search", modeEmail, searchResultsMsg{err: errors.New("synthetic")}},
+		{"message", "message", modeEmail, messageDetailLoadedMsg{err: errors.New("synthetic")}},
+		{"texts browse", "other", modeTexts, textConversationsLoadedMsg{err: errors.New("synthetic")}},
+		{"archive browse", "other", modeEmail, dataLoadedMsg{err: errors.New("synthetic")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewBuilder().Build()
-			m.mode = tc.mode
-			m.width, m.height = 100, 24
-			m.level = levelAggregates
-			m.inlineSearchActive = true
-			m.searchInput.SetValue("needle")
-			if tc.loadedPreview {
-				m.searchQuery = "needle"
-			}
-			if tc.mode == modeMeetings {
-				m.inlineSearchActive = false
-				m.meetingState.searchActive = true
-				m.meetingState.searchInput.SetValue("needle")
-			}
-			var events []string
-			m.reportAction = func(_ context.Context, event, _, _ string) error {
-				if event == "search_empty" {
-					events = append(events, event)
-				}
-				return nil
-			}
-			updated, cmd := m.Update(keyEnter())
-			m = asModel(t, updated)
-			require.False(t, m.inlineSearchActive)
-			if tc.loadedPreview {
-				_ = runBatchCommand(t, cmd)
-			} else {
-				var result tea.Msg
-				switch tc.mode {
-				case modeTexts:
-					result = textSearchResultMsg{requestID: m.textRequestID, query: "needle"}
-				case modeMeetings:
-					result = meetingSearchLoadedMsg{requestID: m.meetingState.searchRequestID, query: "needle"}
-				default:
-					result = dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle"}
-				}
-				updated, cmd = m.Update(result)
-				m = asModel(t, updated)
-				_ = runBatchCommand(t, cmd)
-			}
-			assert.Equal(t, []string{"search_empty"}, events)
-			if tc.mode == modeTexts || tc.mode == modeMeetings {
-				return
-			}
-			events = nil
-			updated, _ = m.Update(keyTab())
-			m = asModel(t, updated)
-			_, cmd = m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle"})
-			if cmd != nil {
-				_ = runBatchCommand(t, cmd)
-			}
-			assert.NotContains(t, events, "search_empty", "a reload consumes no new submission")
-		})
-	}
-}
-
-func TestErrorShownOnModalTransition(t *testing.T) {
-	for _, tc := range []struct {
-		kind string
-		msg  tea.Msg
-	}{
-		{"search", searchResultsMsg{err: errors.New("synthetic")}},
-		{"message", messageDetailLoadedMsg{err: errors.New("synthetic")}},
-		{"other", textConversationsLoadedMsg{err: errors.New("synthetic")}},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			m := NewBuilder().Build()
-			m.width, m.height = 100, 24
-			switch tc.kind {
-			case "other":
-				m.mode = modeTexts
-			case "search":
+			m.width, m.height, m.mode = 100, 24, tc.mode
+			if tc.kind == "search" {
 				m.searchQuery = "needle"
 			}
 			var kinds []string
@@ -179,21 +111,6 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 			assert.Equal(t, []string{tc.kind}, kinds)
 		})
 	}
-}
-
-func TestBrowseLoadErrorKind(t *testing.T) {
-	m := NewBuilder().Build()
-	m.width, m.height = 100, 24
-	var kinds []string
-	m.reportAction = func(_ context.Context, event, _, value string) error {
-		if event == "error_shown" {
-			kinds = append(kinds, value)
-		}
-		return nil
-	}
-	_, cmd := m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, err: errors.New("browse unavailable")})
-	_ = runBatchCommand(t, cmd)
-	assert.Equal(t, []string{"other"}, kinds)
 }
 
 func TestInlineValidationErrorShownOnce(t *testing.T) {

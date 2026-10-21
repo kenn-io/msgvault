@@ -156,8 +156,8 @@ type SyncFailures struct {
 	failing sync.Map
 }
 
-func (s *SyncFailures) Record(sourceType, identifier string, err error) {
-	if s == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jobctx.ErrYieldedToWaiter) || errors.Is(err, jobctx.ErrRunBudgetExceeded) {
+func (s *SyncFailures) Record(ctx context.Context, sourceType, identifier string, err error) {
+	if s == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil || errors.Is(err, jobctx.ErrYieldedToWaiter) || errors.Is(err, jobctx.ErrRunBudgetExceeded) {
 		return
 	}
 	key := [2]string{sourceType, identifier}

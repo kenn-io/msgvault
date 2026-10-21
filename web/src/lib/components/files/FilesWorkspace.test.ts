@@ -1,8 +1,20 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
+import { createAPIClient as createClient } from '../../api/client';
 import FilesWorkspace from './FilesWorkspace.svelte';
+
+const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+function createAPIClient(fetchFn: typeof fetch) {
+  return createClient(async (input, init) => {
+    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+      telemetryEvents.push(await (input as Request).json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    return fetchFn(input, init);
+  });
+}
 
 function response() {
   return {
@@ -48,14 +60,8 @@ function installResizeObservers() {
 
 describe('FilesWorkspace', () => {
   it('classifies a rejected first image as a search failure', async () => {
-    const events: unknown[] = [];
-    const client = createAPIClient(async input => {
-      if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
-        events.push(await (input as Request).json());
-        return Response.json({ status: 'queued' }, { status: 202 });
-      }
-      return Response.json(response());
-    });
+    const events = telemetryEvents;
+    const client = createAPIClient(async () => Response.json(response()));
     render(FilesWorkspace, { client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
     await screen.findByText('fixture.pdf');
     await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
@@ -66,20 +72,16 @@ describe('FilesWorkspace', () => {
     await waitFor(() => expect(screen.getAllByText('Visual query images must be 20 MiB or smaller.').length).toBeGreaterThan(0));
     await waitFor(() => expect(events).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }));
   });
-  it.each(['submitted', 'preview', 'image', 'visual'])('counts only submitted empty %s searches', async (kind) => {
-    const events: Array<{ event: string; properties: { search_type: string } }> = [];
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-        events.push(await (input as Request).json());
-        return Response.json({ status: 'queued' }, { status: 202 });
-      }
-      return Response.json({ ...response(), files: [], total_count: 0 });
+  it.each(['submitted', 'preview', 'image', 'visual', 'nonempty'])('counts only submitted empty %s searches', async (kind) => {
+    const events = telemetryEvents;
+    const fetchFn = vi.fn<typeof fetch>(async () => {
+      return Response.json(kind === 'nonempty' ? response() : { ...response(), files: [], total_count: 0 });
     });
     const rendered = render(FilesWorkspace, {
       client: createAPIClient(fetchFn),
       predicate: { query: kind === 'image' || kind === 'visual' ? '' : 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' },
-      submitted: kind === 'submitted',
+      submitted: kind === 'submitted' || kind === 'nonempty',
     });
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
     if (kind === 'visual') {
@@ -95,21 +97,19 @@ describe('FilesWorkspace', () => {
       await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [new File(['synthetic'], 'query.png', { type: 'image/png' })] } });
       await waitFor(() => expect(events.some((event) => event.event === 'search_empty')).toBe(true));
     }
-    await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'preview' ? 0 : 1));
+    await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+    await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'preview' || kind === 'nonempty' ? 0 : 1));
     events.length = 0;
-    await rendered.rerender({ sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
+    await rendered.rerender({ submitted: false, sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
     await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
     expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(0);
   });
 
   it.each(['text', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
-    const events: Array<{ properties: { search_type: string } }> = [];
+    const events = telemetryEvents;
     let textSearchRequests = 0, resolveStale!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async (input): Promise<Response> => {
-      if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-        events.push(await (input as Request).json());
-        return Response.json({ status: 'queued' }, { status: 202 });
-      }
       return kind === 'text' && ++textSearchRequests === 2 ? new Promise<Response>((resolve) => { resolveStale = resolve; }) : Response.json(response());
     });
     const rendered = render(FilesWorkspace, {
@@ -181,7 +181,7 @@ describe('FilesWorkspace', () => {
       expected: null,
       rendered: 'Synthetic cache unavailable.'
     }
-  ])('reports an honest row count for the $state state', async ({ fetchFn, expected, rendered }) => {
+  ])('reports an honest row count for the $state state', async ({ state, fetchFn, expected, rendered }) => {
     render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -190,6 +190,7 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByText(rendered);
     expect(grid.getAttribute('aria-rowcount')).toBe(expected);
+    if (state === 'error' || state === 'degraded') await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'other' } }]));
     expect(screen.queryByText('0 files') !== null).toBe(expected !== null);
   });
 
@@ -229,9 +230,8 @@ describe('FilesWorkspace', () => {
   it('preserves an empty search submission through cache preparation', async () => {
     vi.useFakeTimers();
     let calls = 0;
-    const events: Array<{ event: string }> = [];
+    const events = telemetryEvents;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) { events.push(await (input as Request).json()); return Response.json({ status: 'queued' }, { status: 202 }); }
       calls += 1;
       if (calls === 1) return Response.json({
         error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
@@ -266,7 +266,6 @@ describe('FilesWorkspace', () => {
     let initialCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const path = new URL(request.url, document.baseURI).pathname;
       if (path === '/api/v1/files/900') return Response.json({
         id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
@@ -542,7 +541,6 @@ describe('FilesWorkspace', () => {
     let cursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (body.cursor) {
         cursorCalls += 1;
@@ -930,7 +928,6 @@ describe('FilesWorkspace', () => {
     let cursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (!body.cursor) return Response.json(first);
       cursorCalls += 1;
@@ -973,7 +970,6 @@ describe('FilesWorkspace', () => {
       let cursorCalls = 0;
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
         const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
         const body = await request.clone().json() as { cursor?: string };
         if (body.cursor) {
           cursorCalls += 1;
@@ -1067,7 +1063,6 @@ describe('FilesWorkspace', () => {
     let deadCursorCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const path = new URL(request.url, document.baseURI).pathname;
       if (path === '/api/v1/files/900') return Response.json({
         id: 900, message_id: 11, conversation_id: 21, filename: 'deep.pdf', mime_type: 'application/pdf',
@@ -1123,7 +1118,6 @@ describe('FilesWorkspace', () => {
     let initialCalls = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return Response.json({ status: 'queued' }, { status: 202 });
       const body = await request.clone().json() as { cursor?: string };
       if (body.cursor) return Response.json(drifted);
       initialCalls += 1;

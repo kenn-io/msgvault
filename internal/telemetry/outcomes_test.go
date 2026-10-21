@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -10,7 +11,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/chatwoot"
+	"go.kenn.io/msgvault/internal/circleback"
+	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/matrix"
+	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/msmail"
+	"go.kenn.io/msgvault/internal/muesli"
+	"go.kenn.io/msgvault/internal/notionmeetings"
+	"go.kenn.io/msgvault/internal/omi"
+	"go.kenn.io/msgvault/internal/plaud"
+	"go.kenn.io/msgvault/internal/synctechsms"
+	"go.kenn.io/msgvault/internal/twenty"
+	"go.kenn.io/msgvault/internal/twilio"
 )
 
 func TestSyncFailureTransitions(t *testing.T) {
@@ -22,17 +38,25 @@ func TestSyncFailureTransitions(t *testing.T) {
 		events = append(events, props)
 		return nil
 	}}
-	failures.Record("gmail", "synthetic", context.Canceled)
+
+	for _, stop := range []error{context.Canceled, jobctx.ErrYieldedToWaiter, jobctx.ErrRunBudgetExceeded} {
+		failures.Record(t.Context(), "gmail", "synthetic", stop)
+		assert.Empty(events)
+	}
+	budgetCtx, cancel := context.WithTimeoutCause(t.Context(), 0, jobctx.ErrRunBudgetExceeded)
+	defer cancel()
+	failures.Record(budgetCtx, "gmail", "synthetic", context.DeadlineExceeded)
 	assert.Empty(events)
 	failure := errors.New("synthetic private detail")
-	failures.Record("gmail", "synthetic", failure)
-	failures.Record("gmail", "synthetic", context.Canceled)
-	failures.Record("gmail", "synthetic", failure)
+	failures.Record(t.Context(), "gmail", "synthetic", failure)
+	failures.Record(budgetCtx, "gmail", "synthetic", nil)
+	failures.Record(t.Context(), "gmail", "synthetic", context.Canceled)
+	failures.Record(t.Context(), "gmail", "synthetic", failure)
 	require.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}}, events)
-	failures.Record("imap", "synthetic", failure)
+	failures.Record(t.Context(), "imap", "synthetic", failure)
 	assert.Len(events, 2, "different source types sharing an identifier have separate outages")
-	failures.Record("gmail", "synthetic", nil)
-	failures.Record("gmail", "synthetic", failure)
+	failures.Record(t.Context(), "gmail", "synthetic", nil)
+	failures.Record(t.Context(), "gmail", "synthetic", failure)
 	assert.Len(events, 3)
 }
 
@@ -60,6 +84,17 @@ func TestOutcomeWire(t *testing.T) {
 
 func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Reporter) {
 	t.Helper()
+	t.Run("registered source types", func(t *testing.T) {
+		for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
+			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
+			assert.Equal(t, sourceType, properties["sync_source"], sourceType)
+		}
+		// File imports have no scheduled sync and deliberately use the fallback.
+		for _, sourceType := range []string{imazingcsv.SourceType, meetingimport.SourceType, "mbox", "apple-mail", "pst", "eml", "maildir", "whatsapp", "apple_messages", "facebook_messenger", "google-groups", "hey"} {
+			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
+			assert.Equal(t, "other", properties["sync_source"], sourceType)
+		}
+	})
 	for _, body := range []string{
 		`{"event":"error_shown","properties":{"surface":"web"}}`,
 		`{"event":"error_shown","properties":{"kind":"search"}}`,
@@ -80,13 +115,9 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 	}
 }
 
-func TestSyncFailureStopsLeaveOutageUnchanged(t *testing.T) {
-	events := 0
-	failures := &SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
-	for _, stop := range []error{context.Canceled, context.DeadlineExceeded, jobctx.ErrYieldedToWaiter, jobctx.ErrRunBudgetExceeded} {
-		failures.Record("omi", "work", stop)
-		assert.Zero(t, events)
-	}
-	failures.Record("omi", "work", errors.New("synthetic"))
-	assert.Equal(t, 1, events)
+func TestProviderTimeoutStartsOutage(t *testing.T) {
+	var events []map[string]any
+	failures := &SyncFailures{Capture: func(_ string, props map[string]any) error { events = append(events, props); return nil }}
+	failures.Record(t.Context(), "granola", "work", fmt.Errorf("http request: %w", context.DeadlineExceeded))
+	assert.Equal(t, []map[string]any{{"sync_source": "granola", "reason": "network"}}, events)
 }

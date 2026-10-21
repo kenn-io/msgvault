@@ -696,7 +696,7 @@ func TestScheduledOmiCooldownDefersWithoutFailure(t *testing.T) {
 	require.NotEmpty(sched.JobStatus()[0].LastError)
 	require.NoError(sched.TriggerJob("omi:work"))
 	assert.Equal(2, requests)
-	state.syncFailures.Record(omi.SourceType, "work", errors.New("still failing"))
+	state.syncFailures.Record(t.Context(), omi.SourceType, "work", errors.New("still failing"))
 	assert.Equal(1, events, "a paused import must preserve the existing outage")
 	latest, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
 	require.NoError(err)

@@ -81,7 +81,7 @@ func TestScheduledBeeperMissingTokenRecordsOnlyEligibleAccountFailures(t *testin
 		require.ErrorContains(err, "no Beeper Desktop token found")
 	}
 	assert.Equal([]map[string]any{{"sync_source": "beeper", "reason": "other"}, {"sync_source": "beeper", "reason": "other"}}, events)
-	state.syncFailures.Record(sourceTypeBeeper, "signal", nil)
+	state.syncFailures.Record(t.Context(), sourceTypeBeeper, "signal", nil)
 
 	err := runConfiguredBeeperSync(ctx, st)
 	require.Error(err)

@@ -544,7 +544,7 @@
         ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
-  $effect(() => { if (loader.error || loader.pageError) return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', exploreState.current.query.trim() ? 'search' : 'other'))); });
+  $effect(() => { if (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building') return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', exploreState.current.query.trim() ? 'search' : 'other'))); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
     loader.submitted = true;
     loader.retry();

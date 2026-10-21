@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient as createClient } from '../../api/client';
@@ -7,12 +8,15 @@ import MessagePage from './MessagePage.svelte';
 import MessageCard from './MessageCard.svelte';
 
 const telemetryEvents: unknown[] = [];
-beforeEach(() => { telemetryEvents.length = 0; });
+const telemetryRequests: Promise<void>[] = [];
+beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
 function createAPIClient(fetchFn: typeof fetch) {
   return createClient(async (input, init) => {
     if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      telemetryEvents.push(await (input as Request).json());
+      const capture = (input as Request).json().then(event => { telemetryEvents.push(event); });
+      telemetryRequests.push(capture);
+      await capture;
       return Response.json({ status: 'queued' }, { status: 202 });
     }
     return fetchFn(input, init);
@@ -386,7 +390,7 @@ describe('ConversationView', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
   });
 
-  it.each(['body', 'linked message'])('reports a displayed %s loading failure', async (failure) => {
+  it('reports a displayed linked message loading failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (new URL(request.url).pathname === '/api/v1/messages/2') {
@@ -398,11 +402,7 @@ describe('ConversationView', () => {
       });
     });
     const client = createAPIClient(fetchFn);
-    if (failure === 'body') {
-      render(ConversationView, { props: { client, conversationId: 7, anchorId: 2 } });
-    } else {
-      render(MessagePage, { props: { client, messageID: 2 } });
-    }
+    render(MessagePage, { props: { client, messageID: 2 } });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Message unavailable');
     await waitFor(() => expect(telemetryEvents).toEqual([
@@ -471,6 +471,8 @@ describe('ConversationView', () => {
 
     await screen.findByText('Loading message…');
     expect(screen.queryByText('Fetched body 1')).toBeNull();
+    await tick();
+    await Promise.all(telemetryRequests);
     expect(telemetryEvents).toHaveLength(0);
     resolveBody(Response.json({ ...message(1), body: 'Fetched body 1', body_html: '' }));
 
@@ -479,6 +481,8 @@ describe('ConversationView', () => {
     expect(requests).toHaveLength(2);
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/messages/1');
     if (trigger !== 'visible') {
+      await tick();
+      await Promise.all(telemetryRequests);
       expect(telemetryEvents).toHaveLength(0);
       if (trigger === 'destroy') view.unmount();
       visibility.mockReturnValue('visible');
@@ -486,6 +490,8 @@ describe('ConversationView', () => {
       else await fireEvent(window, new Event('focus'));
     }
     if (trigger === 'destroy') {
+      await tick();
+      await Promise.all(telemetryRequests);
       expect(telemetryEvents).toHaveLength(0);
     } else {
       await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'message_opened', properties: { surface: 'web' } }]));

@@ -3359,6 +3359,8 @@ func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) 
 			assert.Equal(1, rebuilds)
 			if tc.importErr == nil {
 				assert.Zero(events)
+			} else {
+				assert.Equal(1, events)
 			}
 		})
 	}

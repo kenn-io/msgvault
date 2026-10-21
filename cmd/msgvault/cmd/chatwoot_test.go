@@ -26,9 +26,11 @@ import (
 
 func TestChatwootInboxesFailIndependently(t *testing.T) {
 	require := require.New(t)
+	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
 	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "synthetic-token")
 	var failing atomic.Int64
+	var enumerations atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -37,13 +39,14 @@ func TestChatwootInboxesFailIndependently(t *testing.T) {
 		case "/api/v1/accounts/9/agents":
 			_, _ = fmt.Fprint(w, `[]`)
 		case "/api/v1/accounts/9/conversations":
+			enumerations.Add(1)
 			if r.URL.Query().Get("inbox_id") == strconv.FormatInt(failing.Load(), 10) {
 				http.Error(w, "inbox unavailable", http.StatusForbidden)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"data":{"payload":[]}}`)
 		default:
-			assert.Fail(t, "unexpected provider request", r.URL.Path)
+			assert.Fail("unexpected provider request", r.URL.Path)
 		}
 	}))
 	t.Cleanup(server.Close)
@@ -55,8 +58,8 @@ func TestChatwootInboxesFailIndependently(t *testing.T) {
 	state := testInvocationWithConfig(cfg)
 	events := 0
 	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-		assert.Equal(t, "sync_failed", event)
-		assert.Equal(t, "chatwoot", props["sync_source"])
+		assert.Equal("sync_failed", event)
+		assert.Equal("chatwoot", props["sync_source"])
 		events++
 		return nil
 	}}
@@ -65,10 +68,13 @@ func TestChatwootInboxesFailIndependently(t *testing.T) {
 		failing.Store(id)
 		sum, err := importChatwootProfile(ctx, st, src, chatwootRunOptions{}, cfg)
 		require.ErrorContains(err, fmt.Sprintf("inbox %d", id))
-		assert.NotContains(t, err.Error(), fmt.Sprintf("inbox %d", 15-id))
+		assert.NotContains(err.Error(), fmt.Sprintf("inbox %d", 15-id))
 		require.NotNil(sum)
-		assert.Equal(t, 2, sum.Sources)
-		assert.Equal(t, []int{1, 1, 2, 2, 3}[i], events)
+		assert.Equal(2, sum.Sources)
+		if i == 0 {
+			assert.Equal(int32(3), enumerations.Load(), "healthy inbox is listed by activity and enumerated after the failure")
+		}
+		assert.Equal([]int{1, 1, 2, 2, 3}[i], events)
 	}
 }
 

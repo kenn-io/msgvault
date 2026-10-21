@@ -24,7 +24,6 @@ import (
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/telemetry"
 )
 
 var (
@@ -61,7 +60,6 @@ const cardDAVProviderGoogle = "google"
 // CardDAVController owns the connection services and their discovery-first
 // account setup transactions.
 type CardDAVController struct {
-	SyncFailures                *telemetry.SyncFailures
 	manager                     *CardDAVController
 	connectionName              string
 	connections                 map[string]*CardDAVController
@@ -1673,7 +1671,6 @@ func (s *Server) handleCardDAVSync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		result, err = service.Sync(r.Context(), carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
-		s.cardDAV.root().SyncFailures.Record("carddav", s.cardDAV.connection(), err)
 	} else {
 		result, err = s.cardDAV.Sync(r.Context(), req)
 	}

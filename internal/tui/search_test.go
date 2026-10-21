@@ -1819,27 +1819,33 @@ func TestSearchClearsStaleMessages(t *testing.T) {
 
 func TestAcceptedSearchActions(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		mode   tuiMode
-		search searchModeKind
-		msg    tea.Msg
-		want   []string
+		name                           string
+		mode                           tuiMode
+		search                         searchModeKind
+		msg                            tea.Msg
+		want                           []string
+		enter, loadedPreview, nonempty bool
 	}{
-		{"fast", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
-		{"deep", modeEmail, searchModeDeep, searchResultsMsg{requestID: 2, query: "needle", searchMode: searchModeDeep}, []string{"search_run:search_type:text"}},
-		{"semantic request keeps its type during fast editing", modeEmail, searchModeSemantic, searchResultsMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:hybrid"}},
-		{"stale matching query", modeEmail, searchModeFast, searchResultsMsg{requestID: 1, query: "needle"}, nil},
-		{"failed", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", err: errors.New("offline")}, nil},
-		{"continuation", modeEmail, searchModeFast, searchResultsMsg{requestID: 2, query: "needle", append: true}, nil},
-		{"texts conversation", modeTexts, searchModeFast, textMessagesLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
-		{"meetings", modeMeetings, searchModeFast, meetingSearchLoadedMsg{requestID: 2, query: "needle"}, []string{"search_run:search_type:text"}},
+		{name: "fast", msg: searchResultsMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:text"}},
+		{name: "deep", search: searchModeDeep, msg: searchResultsMsg{requestID: 2, query: "needle", searchMode: searchModeDeep}, want: []string{"search_run:search_type:text"}},
+		{name: "semantic request keeps its type during fast editing", search: searchModeSemantic, msg: searchResultsMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:hybrid"}},
+		{name: "stale matching query", msg: searchResultsMsg{requestID: 1, query: "needle"}},
+		{name: "failed", msg: searchResultsMsg{requestID: 2, query: "needle", err: errors.New("offline")}},
+		{name: "continuation", msg: searchResultsMsg{requestID: 2, query: "needle", append: true}},
+		{name: "texts conversation", mode: modeTexts, msg: textMessagesLoadedMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:text"}},
+		{name: "meetings", mode: modeMeetings, msg: meetingSearchLoadedMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:text"}},
+		{name: "submitted pending", enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{name: "submitted preview already loaded", enter: true, loadedPreview: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{name: "submitted texts", mode: modeTexts, enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{name: "submitted meetings", mode: modeMeetings, enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{name: "submitted nonempty", enter: true, nonempty: true, want: []string{"search_run:search_type:text"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, m, events := assert.New(t), NewBuilder().Build(), []string(nil)
 			m.width, m.height, m.mode, m.searchMode = 100, 24, tc.mode, tc.search
 			m.searchRequestID, m.textRequestID, m.meetingState.searchRequestID = 2, 2, 2
 			m.reportAction = func(_ context.Context, e, p, v string) error {
-				if e == "search_run" {
+				if e == "search_run" || e == "search_empty" {
 					events = append(events, e+":"+p+":"+v)
 				}
 				return nil
@@ -1851,11 +1857,57 @@ func TestAcceptedSearchActions(t *testing.T) {
 				assert.Equal(searchModeFast, m.searchMode)
 				tc.msg = pending()
 			}
-			_, cmd := m.Update(tc.msg)
-			if cmd != nil {
-				_ = runBatchCommand(t, cmd)
+			if tc.enter {
+				m.level, m.inlineSearchActive = levelAggregates, true
+				m.searchInput.SetValue("needle")
+				if tc.loadedPreview {
+					m.searchQuery = "needle"
+				}
+				if tc.mode == modeMeetings {
+					m.inlineSearchActive = false
+					m.meetingState.searchActive = true
+					m.meetingState.searchInput.SetValue("needle")
+				}
+				updated, cmd := m.Update(keyEnter())
+				m = asModel(t, updated)
+				require.False(t, m.inlineSearchActive)
+				if tc.loadedPreview {
+					_ = runBatchCommand(t, cmd)
+				} else {
+					switch tc.mode {
+					case modeTexts:
+						tc.msg = textSearchResultMsg{requestID: m.textRequestID, query: "needle"}
+					case modeMeetings:
+						tc.msg = meetingSearchLoadedMsg{requestID: m.meetingState.searchRequestID, query: "needle"}
+					default:
+						rows := []query.AggregateRow(nil)
+						if tc.nonempty {
+							rows = []query.AggregateRow{{Key: "synthetic"}}
+						}
+						tc.msg = dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle", rows: rows}
+					}
+				}
+			}
+			if !tc.loadedPreview {
+				updated, cmd := m.Update(tc.msg)
+				m = asModel(t, updated)
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
 			}
 			assert.Equal(tc.want, events)
+			if tc.enter && tc.mode == modeEmail {
+				events = nil
+				updated, _ := m.Update(keyTab())
+				m = asModel(t, updated)
+				_, cmd := m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle"})
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
+				for _, event := range events {
+					assert.NotEqual("search_empty:search_type:text", event, "a reload consumes no new submission")
+				}
+			}
 		})
 	}
 }

@@ -176,7 +176,7 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
-  $effect(() => { if (error || pageError) return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'))); });
+  $effect(() => { if (error || pageError || unavailable && unavailable.readiness !== 'building') return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'))); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();

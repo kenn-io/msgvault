@@ -69,11 +69,12 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 		},
 	} {
 		for _, outcome := range []struct {
-			name                                   string
-			indexState                             string
-			fails, paused, outputFails, json, body bool
+			name                                             string
+			indexState                                       string
+			fails, paused, outputFails, json, body, nonempty bool
 		}{
 			{name: "success"},
+			{name: "nonempty", nonempty: true},
 			{name: "failure", fails: true},
 			{name: "checking", indexState: "checking"},
 			{name: "unverified", indexState: "unverified"},
@@ -83,6 +84,9 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			{name: "body output failure", outputFails: true, body: true},
 		} {
 			fails, outputFails := outcome.fails, outcome.outputFails
+			if outcome.nonempty && action != "search" && action != "media" && action != "documents" && action != "visual" && action != "vector" && action != "hybrid" {
+				continue
+			}
 			if outcome.indexState != "" && action != "search" {
 				continue
 			}
@@ -118,13 +122,17 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						w.WriteHeader(http.StatusInternalServerError)
 						return
 					}
+					results := "[]"
+					if outcome.nonempty {
+						results = `[{"id":1,"subject":"Synthetic result"}]`
+					}
 					switch action {
 					case "search":
-						_, _ = fmt.Fprintf(w, `{"results":[],"index_state":%q}`, outcome.indexState)
+						_, _ = fmt.Fprintf(w, `{"results":%s,"index_state":%q}`, results, outcome.indexState)
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
 					case "documents":
-						_, _ = w.Write([]byte(`{"results":[],"effective_mode":"hybrid"}`))
+						_, _ = fmt.Fprintf(w, `{"results":%s,"effective_mode":"hybrid"}`, results)
 					case "sync-omi":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = fmt.Fprintln(w, `{"type":"stdout","data":"Omi sync output"}`)
@@ -140,7 +148,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
 					default:
-						_, _ = w.Write([]byte(`{"results":[]}`))
+						_, _ = fmt.Fprintf(w, `{"results":%s}`, results)
 					}
 				}))
 				server := httptest.NewServer(mux)
@@ -169,7 +177,12 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					showMessageJSON, showMessageBodyOnly = outcome.json, outcome.body
 					t.Cleanup(func() { showMessageJSON, showMessageBodyOnly = oldJSON, oldBody })
 				}
+				doneOutput := captureStdout(t)
 				err := run(cmd)
+				output := doneOutput()
+				if action == "search" && !fails && !outcome.nonempty {
+					assert.Contains(output, "No messages found.")
+				}
 				invocationFromCommand(cmd).sends.Wait(time.Second)
 				if fails || outputFails {
 					require.Error(err)
@@ -197,7 +210,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					properties["search_type"], event = kind, "search_run"
 				}
 				want := []map[string]any{{"event": event, "properties": properties}}
-				if kind != "" && outcome.indexState == "" {
+				if kind != "" && outcome.indexState == "" && !outcome.nonempty {
 					want = append([]map[string]any{{"event": "search_empty", "properties": properties}}, want...)
 				}
 				assert.ElementsMatch(want, events)
@@ -236,7 +249,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 				mux := http.NewServeMux()
 				registerStatsProbeHandler(mux)
 				mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
-					_, _ = w.Write([]byte(`{"results":[]}`))
+					_, _ = w.Write([]byte(`{"results":[{"id":1,"subject":"Synthetic result"}]}`))
 				})
 				mux.HandleFunc("/api/v1/telemetry/events", func(w http.ResponseWriter, _ *http.Request) {
 					requests.Add(1)
@@ -272,7 +285,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 				elapsed := time.Since(exitStart)
 				synctest.Wait()
 				assert.Equal(tc.want, elapsed)
-				assert.Equal(int32(2), requests.Load())
+				assert.Equal(int32(1), requests.Load())
 				close(release)
 				invocationFromCommand(root).sends.Wait(time.Second)
 			})

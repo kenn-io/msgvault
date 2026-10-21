@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -130,12 +129,6 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	require := require.New(t)
 
 	controller, baseURL := multipleCardDAVController(t)
-	failures := &telemetry.SyncFailures{}
-	events := 0
-	failures.Capture = func(string, map[string]any) error { events++; return nil }
-	// Assigned through the same controller field that serve wires to the scheduler.
-	controller.SyncFailures = failures
-	failures.Record("carddav", "default", errors.New("scheduled failure"))
 	for _, name := range []string{"default", "work", "offline"} {
 		_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: name, BaseURL: baseURL,
 			Username: name, Password: name + "-synthetic-secret", Enabled: new(true)})
@@ -153,8 +146,6 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	result, err := controller.Sync(t.Context(), CardDAVSyncRequest{})
 	require.NoError(err, "aggregate outcomes retain each failure")
 	assertions.Equal("partial", result.Status)
-	failures.Record("carddav", "default", errors.New("next scheduled failure"))
-	assertions.Equal(4, events, "manual success recovers default, while offline and work count their failures")
 	require.Len(result.Connections, 3)
 	assertions.Equal("succeeded", result.Connections[0].Status)
 	assertions.Equal("default", result.Connections[0].Connection)
@@ -175,8 +166,6 @@ func TestCardDAVMultipleConnectionsAggregateSyncReportsActiveAndUnavailable(t *t
 	require.NoError(err)
 	selected, err := controller.Sync(t.Context(), CardDAVSyncRequest{Connection: "default"})
 	require.NoError(err)
-	failures.Record("carddav", "default", errors.New("next scheduled failure"))
-	assertions.Equal(5, events, "a selected manual sync also clears the shared outage")
 	assertions.Empty(selected.Connections)
 	assertions.Equal(1, selected.Books)
 	server := cardDAVReadServer(t, controller.cfg, controller, nil)

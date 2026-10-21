@@ -2,10 +2,10 @@ import { recordingMessage, recordingTranscript, recordingSearchReport } from '..
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient } from '../../api/client';
+import { createAPIClient as createClient } from '../../api/client';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
@@ -13,6 +13,18 @@ import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
 vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () => () => {} }));
+
+const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+function createAPIClient(fetchFn: typeof fetch) {
+  return createClient(async (input, init) => {
+    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+      telemetryEvents.push(await (input as Request).json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    return fetchFn(input, init);
+  });
+}
 
 function renderRecordingShell(client: ReturnType<typeof createAPIClient>, state: ExploreState, probe: (signal: AbortSignal) => Promise<boolean | undefined> = async () => true) {
   const readiness = new IntegrationReadiness(probe);
@@ -82,6 +94,7 @@ describe('EverythingWorkspace', () => {
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
       await screen.findByText('Could not load this recording message.');
+      await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
       messageStatus = 200;
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
       const pane = await screen.findByRole('complementary', { name: 'Reading pane: Team chat' });
@@ -95,6 +108,10 @@ describe('EverythingWorkspace', () => {
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
       await screen.findByText('This recording message is no longer available.');
+      await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([
+        { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+        { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
+      ]));
       expect(screen.queryByRole('link', { name: 'Team chat' })).toBeNull();
       expect(screen.queryByText('Quarterly numbers')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));

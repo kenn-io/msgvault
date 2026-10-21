@@ -1,10 +1,10 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient } from '../../api/client';
+import { createAPIClient as createClient } from '../../api/client';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
@@ -12,6 +12,18 @@ import AppShell from './AppShell.svelte';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
+
+const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+function createAPIClient(fetchFn: typeof fetch) {
+  return createClient(async (input, init) => {
+    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
+      telemetryEvents.push(await (input as Request).json());
+      return Response.json({ status: 'queued' }, { status: 202 });
+    }
+    return fetchFn(input, init);
+  });
+}
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -91,20 +103,18 @@ describe('AppShell', () => {
     };
   }
 
-  it.each(['', 'needle'])('labels an Everything load failure for query %s', async (query) => {
+  it.each([{ query: '', cache: false }, { query: 'needle', cache: false }, { query: '', cache: true }, { query: 'needle', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
-    const events: unknown[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request, path = new URL(request.url).pathname;
-      if (path.endsWith('/telemetry/events')) { const event = await request.json(); if (event.event === 'error_shown') events.push(event); return Response.json({ status: 'queued' }, { status: 202 }); }
-      if (path.endsWith('/explore')) return Response.json({ message: 'Browse unavailable' }, { status: 500 });
+      if (path.endsWith('/explore')) return Response.json(cache ? { error: 'analytical_cache_unavailable', message: 'Browse unavailable', readiness: 'absent', recovery_action: 'msgvault build-cache' } : { message: 'Browse unavailable' }, { status: cache ? 503 : 500 });
       return Response.json({});
     });
     const state = new ExploreState(window);
     render(AppShell, { client, state });
     await screen.findByText('Browse unavailable');
     state.destroy();
-    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
   });
 
   it('focuses search with slash and leaves Escape to the search input', async () => {
@@ -813,13 +823,8 @@ describe('AppShell', () => {
     });
 
     it.each([['everything', false], ['everything', true], ['everything', 'pending'], ['everything', 'failed'], ['files', true]] as const)('counts an explicit empty %s submission with media ready=%s', async (workspace, ready) => {
-      const state = shellState(workspace), events: Array<{ event: string; properties: unknown }> = [];
-      const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-        const request = input as Request;
-        if (new URL(request.url).pathname.endsWith('/telemetry/events')) {
-          events.push(await request.json());
-          return Response.json({ status: 'queued' }, { status: 202 });
-        }
+      const state = shellState(workspace), events = telemetryEvents;
+      const client = createAPIClient(vi.fn<typeof fetch>(async () => {
         return Response.json({ ...exploreResponse(), files: [] });
       }));
       const media = new IntegrationReadiness(async () => {
@@ -848,12 +853,9 @@ describe('AppShell', () => {
 
     it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
-      const state = shellState('everything'), events: string[] = [];
+      const state = shellState('everything');
+      const events = () => telemetryEvents.filter(event => event.event === 'search_run').map(event => event.properties.search_type);
       const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-        if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
-          const event = await (input as Request).json();
-          if (event.event === 'search_run') events.push(event.properties.search_type);
-        }
         const request = input as Request;
         const predicate = request.method === 'POST' ? await request.clone().json() : {};
         return Response.json(exploreResponse({ rows: predicate.query === 'gas' ? [entry(1)] : [] }));
@@ -863,16 +865,16 @@ describe('AppShell', () => {
       expect(state.current.query).toBe('gas');
       await screen.findByText('Synthetic subject 1');
       if (trigger !== 'visible') {
-        expect(events).toHaveLength(0);
+        expect(events()).toHaveLength(0);
         if (trigger === 'destroy') view.unmount();
         visibility.mockReturnValue('visible');
         await fireEvent(window, new Event('focus'));
       }
-      if (trigger === 'destroy') expect(events).toHaveLength(0);
+      if (trigger === 'destroy') expect(events()).toHaveLength(0);
       else {
-        await waitFor(() => expect(events).toEqual(['text']));
+        await waitFor(() => expect(events()).toEqual(['text']));
         await fireEvent(window, new Event('focus'));
-        expect(events).toEqual(['text']);
+        expect(events()).toEqual(['text']);
       }
       visibility.mockRestore();
     });

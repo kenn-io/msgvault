@@ -460,11 +460,11 @@ func TestPlaudImportRecoveryPrecedesCacheRefresh(t *testing.T) {
 	events := 0
 	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
 	failure := errors.New("provider unavailable")
-	state.syncFailures.Record(sourceTypePlaud, "work", failure)
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
 	cacheErr := errors.New("cache unavailable")
 	err := finishScheduledPlaudImport(withInvocation(t.Context(), state), "work", &plaud.ImportSummary{}, nil, func(context.Context, string) error { return cacheErr })
 	require.ErrorIs(t, err, cacheErr)
 	assert.Equal(t, 1, events)
-	state.syncFailures.Record(sourceTypePlaud, "work", failure)
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
 	assert.Equal(t, 2, events, "a successful import recovers the source even when its cache refresh fails")
 }

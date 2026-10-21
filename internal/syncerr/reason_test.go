@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
+	"testing/synctest"
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
@@ -61,45 +61,65 @@ func TestReason(t *testing.T) {
 	}
 }
 
-func TestCalendarUnauthorizedReason(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
-	defer server.Close()
-	client := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(server.URL))
-	_, err := client.ListCalendars(t.Context(), "")
-	assert.Equal(t, "auth", Reason(err))
-}
-
-func TestProviderUnauthorizedReasons(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
-	defer server.Close()
-	t.Run("twilio", func(t *testing.T) {
-		client, err := twilio.NewClient(twilio.Options{AccountSID: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", AuthToken: "synthetic", Endpoints: map[string]string{"voice": server.URL, "intelligence": server.URL}})
-		require.NoError(t, err)
-		_, _, err = client.ListRecordingsPage(t.Context(), time.Time{}, 1000, "")
-		require.Error(t, err)
-		assert.Equal(t, "auth", Reason(err))
-	})
-	t.Run("omi", func(t *testing.T) {
-		_, err := omi.NewPacedClient(server.URL, "synthetic", t.TempDir()).ListConversations(t.Context(), omi.ListParams{})
-		require.Error(t, err)
-		assert.Equal(t, "auth", Reason(err))
-	})
-	t.Run("granola", func(t *testing.T) {
-		_, err := granola.NewClient(server.URL, "synthetic").ListNotes(t.Context(), granola.ListNotesParams{})
-		require.Error(t, err)
-		assert.Equal(t, "auth", Reason(err))
-	})
-	t.Run("beeper", func(t *testing.T) {
-		client := beeper.NewClient(server.URL, func(context.Context) (string, error) { return "synthetic", nil }, 1000)
-		_, err := client.ListAccounts(t.Context())
-		require.Error(t, err)
-		assert.Equal(t, "auth", Reason(err))
-	})
-	t.Run("chatwoot", func(t *testing.T) {
-		client, err := chatwoot.NewClient(server.URL, 9, "synthetic")
-		require.NoError(t, err)
-		_, err = client.ListInboxes(t.Context())
-		require.Error(t, err)
-		assert.Equal(t, "auth", Reason(err))
-	})
+func TestProviderFailureReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   string
+		run    func(context.Context, string) error
+	}{
+		{"calendar unauthorized", 401, "", "auth", func(ctx context.Context, url string) error {
+			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
+			return err
+		}},
+		{"calendar throttled", 429, "", "rate_limited", func(ctx context.Context, url string) error {
+			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
+			return err
+		}},
+		{"calendar quota", 403, `{"error":{"errors":[{"reason":"quotaExceeded"}]}}`, "rate_limited", func(ctx context.Context, url string) error {
+			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
+			return err
+		}},
+		{"slack throttled", 429, "", "rate_limited", func(ctx context.Context, url string) error {
+			_, err := slack.NewClient(url, "synthetic").AuthTest(ctx)
+			return err
+		}},
+		{"omi", 401, "", "auth", func(ctx context.Context, url string) error {
+			_, err := omi.NewPacedClient(url, "synthetic", t.TempDir()).ListConversations(ctx, omi.ListParams{})
+			return err
+		}},
+		{"granola", 401, "", "auth", func(ctx context.Context, url string) error {
+			_, err := granola.NewClient(url, "synthetic").ListNotes(ctx, granola.ListNotesParams{})
+			return err
+		}},
+		{"beeper", 401, "", "auth", func(ctx context.Context, url string) error {
+			_, err := beeper.NewClient(url, func(context.Context) (string, error) { return "synthetic", nil }, 1000).ListAccounts(ctx)
+			return err
+		}},
+		{"chatwoot", 401, "", "auth", func(ctx context.Context, url string) error {
+			client, err := chatwoot.NewClient(url, 9, "synthetic")
+			if err != nil {
+				return err
+			}
+			_, err = client.ListInboxes(ctx)
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "1")
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}))
+				transport := http.DefaultTransport
+				http.DefaultTransport = server.Client().Transport
+				t.Cleanup(func() { http.DefaultTransport = transport })
+				err := tc.run(t.Context(), "https://example.com")
+				require.Error(t, err)
+				assert.Equal(t, tc.want, Reason(err))
+			})
+		})
+	}
 }
