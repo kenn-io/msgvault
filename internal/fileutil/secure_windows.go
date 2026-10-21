@@ -129,10 +129,14 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
 	}
-	// Absolute, normalized paths keep the long-path check below meaningful.
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return err
+	abs := path
+	if !strings.HasPrefix(path, `\\?\`) {
+		// Normalize ordinary paths while preserving explicit extended paths.
+		var err error
+		abs, err = filepath.Abs(path)
+		if err != nil {
+			return err
+		}
 	}
 	var missing []string
 	for p := abs; ; p = filepath.Dir(p) {

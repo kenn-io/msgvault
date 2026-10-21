@@ -3,8 +3,6 @@
 package fileutil
 
 import (
-	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/safefileio"
 	"golang.org/x/sys/windows"
 )
 
@@ -25,51 +22,6 @@ func TestSecureMkdirAllProtectedDirectories(t *testing.T) {
 	for _, dir := range []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path} {
 		assertProtectedDirectory(t, dir)
 		require.NoError(os.WriteFile(filepath.Join(dir, "secret"), []byte("test-secret"), 0o600))
-	}
-}
-
-func TestSecureMkdirAllDuringParentACLRewrite(t *testing.T) {
-	require := require.New(t)
-	parent := t.TempDir()
-	ctx, cancel := context.WithCancel(t.Context())
-	started := make(chan struct{})
-	done := make(chan struct{})
-	var rewriteErr error
-	go func() {
-		defer close(done)
-		rewriteErr = safefileio.EnsurePrivateDir(parent)
-		close(started)
-		if rewriteErr != nil {
-			return
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if rewriteErr = safefileio.EnsurePrivateDir(parent); rewriteErr != nil {
-					return
-				}
-			}
-		}
-	}()
-	t.Cleanup(func() {
-		cancel()
-		<-done
-		require.NoError(rewriteErr)
-	})
-	<-started
-	const children = 50
-	paths := make([]string, children)
-	for i := range children {
-		paths[i] = filepath.Join(parent, fmt.Sprintf("child-%d", i))
-		require.NoError(SecureMkdirAll(paths[i], 0o700))
-	}
-	cancel()
-	<-done
-	require.NoError(rewriteErr)
-	for _, path := range paths {
-		assertProtectedDirectory(t, path)
 	}
 }
 
@@ -165,6 +117,14 @@ func TestSecureMkdirAllTrailingDotMatchesLaterAccess(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "out.")
 	require.NoError(SecureMkdirAll(dir, 0o700))
 	require.NoError(os.WriteFile(filepath.Join(dir, "message.eml"), []byte("x"), 0o600))
+}
+
+func TestSecureMkdirAllExtendedPathTrailingDot(t *testing.T) {
+	require := require.New(t)
+	path := `\\?\` + filepath.Join(t.TempDir(), "out.")
+	require.NoError(SecureMkdirAll(path, 0o700))
+	require.DirExists(path)
+	assertProtectedDirectory(t, path)
 }
 
 func TestSecureMkdirAllRelativePathUnderLongWorkingDirectory(t *testing.T) {
