@@ -248,10 +248,10 @@ func queryCalendarExceptionsInWindow(ctx context.Context, r reboundReader, lower
 		return messageAlias + `.deleted_at IS NULL AND NOT EXISTS (
    SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = ` + messageAlias + `.id)`
 	}
-	keyMatch := `newer.series_provider_id = e.series_provider_id AND (
+	keyMatch := `newer.series_provider_id = e.series_provider_id AND newer.original_start_date = e.original_start_date AND (
 	  ((e.series_provider_id = '' OR (e.original_start_at IS NULL AND e.original_start_date = '')) AND newer.message_id = e.message_id) OR
 	  (e.series_provider_id <> '' AND (e.original_start_at IS NOT NULL OR e.original_start_date <> '') AND
-	   (newer.original_start_at = e.original_start_at OR (newer.original_start_at IS NULL AND e.original_start_at IS NULL)) AND newer.original_start_date = e.original_start_date))`
+	   (newer.original_start_at = e.original_start_at OR (newer.original_start_at IS NULL AND e.original_start_at IS NULL))))`
 	predicate := windowPredicate + ` AND NOT EXISTS (SELECT 1 FROM calendar_events newer JOIN messages nm ON nm.id = newer.message_id
 	   WHERE newer.kind = 'exception' AND ` + visible("nm") + ` AND nm.source_id = m.source_id AND ` + keyMatch + `
      AND (newer.snapshot_updated_at > e.snapshot_updated_at OR
