@@ -47,6 +47,7 @@ type catalogCapabilities struct {
 	mediaSearch     bool
 	people          bool
 	directoryPeople bool
+	whoKnows        bool
 	visualSearch    bool
 	embeddingStatus bool
 	savedViews      bool
@@ -136,6 +137,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		mediaSearch:     opts.MediaSearcher != nil,
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
+		whoKnows:        opts.WhoKnowsBackend != nil,
 		visualSearch:    opts.VisualSearcher != nil,
 		embeddingStatus: opts.EmbeddingStatus != nil,
 		savedViews:      opts.SavedViews != nil,
@@ -243,6 +245,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		listIdentityMatchesDefinition(),
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
+		findWhoKnowsDefinition(nil),
 		listSavedViewsDefinition(nil),
 		querySQLDefinition(),
 		runSavedViewDefinition(nil),

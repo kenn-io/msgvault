@@ -104,7 +104,7 @@ func (s *Store) PeopleRolesForMessagesWithRosterLimit(ctx context.Context, ids [
  ), bounded_edges AS (
  SELECT e.*,ROW_NUMBER() OVER (PARTITION BY message_id ORDER BY CASE role WHEN 'from' THEN 0 WHEN 'to' THEN 1 ELSE 2 END,participant_id,role) AS edge_number FROM unique_edges e
  )
- SELECT m.id,COALESCE(m.source_message_id,''),m.source_id,s.source_type,m.conversation_id,m.conversation_type,m.message_type,
+ SELECT m.id,COALESCE(m.source_message_id,''),m.source_id,s.source_type,m.conversation_id,m.conversation_type,COALESCE(NULLIF(m.message_type,''),'email'),
 	 m.sent_at,m.received_at,m.internal_date,(COALESCE(m.is_from_me,FALSE) OR m.identity_is_from_me),
  COALESCE(m.list_id,''),COALESCE(m.subject,''),COALESCE(m.snippet,''),m.roster_count,
  e.participant_id,pp.person_id,COALESCE(e.role,''),COALESCE(e.envelope_address,p.email_address,''),COALESCE(p.display_name,''),

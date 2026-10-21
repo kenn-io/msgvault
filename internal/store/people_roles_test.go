@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,8 +12,64 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestPeopleRolesForMessagesNormalizesLegacyEmailMessageTypes(t *testing.T) {
+	testutil.SkipIfPostgres(t, "the fixture loosens the SQLite message_type constraint to model a legacy archive")
+	must := require.New(t)
+	f := storetest.New(t)
+	nullID := f.CreateMessage("legacy-null-message-type")
+	emptyID := f.CreateMessage("legacy-empty-message-type")
+
+	makeMessageTypeNullable(t, f.Store.DB())
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), nil, nullID)
+	must.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET message_type = ? WHERE id = ?"), "", emptyID)
+	must.NoError(err)
+
+	for _, tc := range []struct {
+		name string
+		id   int64
+	}{
+		{name: "null", id: nullID},
+		{name: "empty", id: emptyID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.Store.PeopleRolesForMessages(t.Context(), []int64{tc.id})
+			require.NoError(t, err)
+			message, ok := got.Messages[tc.id]
+			require.True(t, ok)
+			assert.Equal(t, store.MessageTypeEmail, message.MessageType)
+		})
+	}
+}
+
+func makeMessageTypeNullable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	must := require.New(t)
+	conn, err := db.Conn(t.Context())
+	must.NoError(err)
+	defer func() {
+		assert.NoError(t, conn.Close())
+	}()
+
+	var schema string
+	must.NoError(conn.QueryRowContext(t.Context(), "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages'").Scan(&schema))
+	nullableSchema := strings.Replace(schema, "message_type TEXT NOT NULL", "message_type TEXT", 1)
+	must.NotEqual(schema, nullableSchema)
+	var schemaVersion int
+	must.NoError(conn.QueryRowContext(t.Context(), "PRAGMA schema_version").Scan(&schemaVersion))
+	_, err = conn.ExecContext(t.Context(), "PRAGMA writable_schema = ON")
+	must.NoError(err)
+	_, err = conn.ExecContext(t.Context(), "UPDATE sqlite_master SET sql = ? WHERE type = 'table' AND name = 'messages'", nullableSchema)
+	must.NoError(err)
+	_, err = conn.ExecContext(t.Context(), fmt.Sprintf("PRAGMA schema_version = %d", schemaVersion+1))
+	must.NoError(err)
+	_, err = conn.ExecContext(t.Context(), "PRAGMA writable_schema = OFF")
+	must.NoError(err)
+}
 
 func TestPeopleRolesForMessages(t *testing.T) {
 	must := require.New(t)
