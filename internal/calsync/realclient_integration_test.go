@@ -211,6 +211,89 @@ func TestRealClientConfirmedUpdateAcrossOriginalStartFormats(t *testing.T) {
 	}
 }
 
+func TestRealClientSyncUpdatesBothOccurrenceKeys(t *testing.T) {
+	for _, tt := range []struct {
+		name, delta, status, subject, start, end string
+	}{
+		{
+			name:   "sparse cancellation",
+			delta:  `{"id":"instance","status":"cancelled","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00","timeZone":"UTC"}}`,
+			status: "cancelled", subject: "Edited", start: "2027-03-09T12:00:00Z", end: "2027-03-09T14:00:00Z",
+		},
+		{
+			name:   "confirmed update",
+			delta:  `{"id":"instance","status":"confirmed","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00","timeZone":"UTC"},"start":{"dateTime":"2027-03-09T15:00:00Z"},"end":{"dateTime":"2027-03-09T16:00:00Z"},"summary":"Updated"}`,
+			status: "confirmed", subject: "Updated", start: "2027-03-09T15:00:00Z", end: "2027-03-09T16:00:00Z",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			cs := &calFakeServer{
+				calendarListJSON: `{"items":[{"id":"primary","accessRole":"owner","timeZone":"UTC"}]}`,
+				fullPages: map[string]string{"": `{"items":[
+					{"id":"master","status":"confirmed","summary":"Daily","start":{"dateTime":"2027-03-09T09:00:00Z"},"end":{"dateTime":"2027-03-09T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}
+				],"nextSyncToken":"T1"}`},
+				incPages: map[string]string{"T1": `{"items":[` + tt.delta + `],"nextSyncToken":"T2"}`},
+			}
+			srv := cs.start(t)
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			syncer := New(realCalClient(t, srv), st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
+			_, err := syncer.Full(t.Context())
+			requirements.NoError(err)
+			src := primarySource(t, st)
+			convID, err := st.EnsureConversationWithType(src.ID, "event:master", gcal.ConversationType, "")
+			requirements.NoError(err)
+
+			// Older syncs could archive both keys. Seed them directly so the
+			// current ingestion path cannot prevent this historical state.
+			keys := []string{"instance", "master|2027-03-09T09:00:00Z"}
+			var ids []int64
+			for _, key := range keys {
+				id, err := st.UpsertMessage(&store.Message{
+					ConversationID: convID, SourceID: src.ID, SourceMessageID: key,
+					MessageType: gcal.MessageTypeCalendarEvent,
+					Subject:     sql.NullString{String: "Edited", Valid: true},
+					SentAt:      sql.NullTime{Time: time.Date(2027, 3, 9, 12, 0, 0, 0, time.UTC), Valid: true},
+				})
+				requirements.NoError(err)
+				err = st.SetMessageMetadata(id, sql.NullString{Valid: true, String: `{"status":"confirmed","all_day":false,"start":"2027-03-09T12:00:00Z","end":"2027-03-09T14:00:00Z","recurring_event_id":"master","original_start_time":"2027-03-09T09:00:00Z"}`})
+				requirements.NoError(err)
+				err = st.UpsertMessageRawWithFormat(id, []byte(`{"id":"instance","status":"confirmed","recurringEventId":"master","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T14:00:00Z"},"summary":"Edited"}`), gcal.RawFormat)
+				requirements.NoError(err)
+				ids = append(ids, id)
+			}
+			requirements.Greater(ids[1], ids[0], "the stale series-keyed row wins listing resolution")
+
+			_, err = syncer.Incremental(t.Context())
+			requirements.NoError(err)
+			assertions.Equal(3, countMessages(t, st, src.ID), "retain the master and both existing occurrence rows")
+			for i, key := range keys {
+				event, ok := loadEvent(t, st, src.ID, key)
+				requirements.True(ok)
+				assertions.Equal(ids[i], event.id)
+				assertions.Equal(tt.status, event.meta["status"], key)
+				assertions.Equal(tt.subject, event.subject, key)
+				assertions.Equal(tt.start, event.meta["start"], key)
+				assertions.Equal(tt.end, event.meta["end"], key)
+				assertions.Equal(tt.start, event.sentAt.Time.UTC().Format(time.RFC3339), key)
+			}
+
+			from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			assertions.Empty(page.Unexpandable)
+			requirements.Len(page.Occurrences, 1)
+			occ := page.Occurrences[0]
+			assertions.Equal(ids[1], occ.MessageID)
+			assertions.Equal(tt.status, occ.Status)
+			assertions.Equal(tt.subject, occ.Subject)
+			assertions.Equal(tt.start, occ.Start.UTC().Format(time.RFC3339))
+			assertions.Equal(tt.end, occ.End.UTC().Format(time.RFC3339))
+		})
+	}
+}
+
 func (cs *calFakeServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

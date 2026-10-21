@@ -59,20 +59,33 @@ type eventMetadata struct {
 // plus the metadata helper, and indexes it for FTS/embeddings. It is idempotent
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
-	smid := deriveSourceMessageID(ev)
 	if ev.RecurringEventID != "" {
 		keys := candidateSourceMessageIDs(ev)
 		existing, err := s.store.MessageExistsBatch(sourceID, keys)
 		if err != nil {
 			return 0, fmt.Errorf("lookup existing event: %w", err)
 		}
+		var firstID int64
 		for _, key := range keys {
 			if _, ok := existing[key]; ok {
-				smid = key
-				break
+				id, err := s.ingestEventWithKey(sourceID, cal, ev, key)
+				if err != nil {
+					return 0, err
+				}
+				if firstID == 0 {
+					firstID = id
+				}
+				delete(existing, key)
 			}
 		}
+		if firstID != 0 {
+			return firstID, nil
+		}
 	}
+	return s.ingestEventWithKey(sourceID, cal, ev, deriveSourceMessageID(ev))
+}
+
+func (s *Syncer) ingestEventWithKey(sourceID int64, cal gcal.Calendar, ev gcal.Event, smid string) (int64, error) {
 	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
 		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
@@ -208,6 +221,7 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 	if err != nil {
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
 	}
+	var firstID int64
 	for _, key := range keys {
 		id, ok := existing[key]
 		if !ok {
@@ -220,7 +234,13 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		if err := s.store.SetMessageMetadata(id, merged); err != nil {
 			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
 		}
-		return id, false, nil
+		if firstID == 0 {
+			firstID = id
+		}
+		delete(existing, key)
+	}
+	if firstID != 0 {
+		return firstID, false, nil
 	}
 	// Never-seen cancellation: record it as a tombstone via the normal path.
 	// ev.Status == "cancelled" flows into metadata.status.
