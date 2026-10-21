@@ -9,6 +9,7 @@ import (
 	"os"
 	"unsafe"
 
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/sys/windows"
 )
 
@@ -26,12 +27,6 @@ func openConfigDirectoryForSync(string) (syncDirectoryHandle, error) {
 
 func (windowsDirectoryDurabilityBoundary) Sync() error  { return nil }
 func (windowsDirectoryDurabilityBoundary) Close() error { return nil }
-
-// configFileAllAccess is FILE_ALL_ACCESS. When an ACE granting GENERIC_ALL is
-// stored on a file object (via SeAssignSecurity at creation or SetSecurityInfo
-// afterwards), Windows maps the generic right to this object-specific mask, so
-// read-back verification observes FILE_ALL_ACCESS rather than GENERIC_ALL.
-const configFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
 
 // verifyConfigOwnerSID accepts the current user as the file owner. It also
 // accepts BUILTIN\Administrators when the process token is a member of that
@@ -199,7 +194,7 @@ func verifyConfigHandleOwnerOnly(handle windows.Handle, user *windows.SID) error
 		return fmt.Errorf("read config owner ACE: %w", err)
 	}
 	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-		(ace.Mask != windows.GENERIC_ALL && ace.Mask != configFileAllAccess) {
+		(ace.Mask != windows.GENERIC_ALL && ace.Mask != fileutil.FileAllAccess) {
 		return errors.New("config DACL does not grant exactly full control")
 	}
 	if ace.Header.AceFlags&windows.INHERITED_ACE != 0 {

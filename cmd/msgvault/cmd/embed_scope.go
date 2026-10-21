@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/collectionops"
 	"go.kenn.io/msgvault/internal/opserr"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -38,7 +39,7 @@ func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
 		}
 		ids = resolved
 	case len(cfg.Vector.Embed.Scope.Accounts) > 0:
-		resolved, err := resolveEmbedAccountList(s, cfg.Vector.Embed.Scope.Accounts, true)
+		resolved, err := resolveEmbedAccountList(context.Background(), s, cfg.Vector.Embed.Scope.Accounts, true)
 		if err != nil {
 			return fmt.Errorf("[vector.embed.scope] accounts: %w", err)
 		}
@@ -57,7 +58,7 @@ func resolveEmbedScopeSourceIDs(s *store.Store, state *invocation) error {
 func resolveEmbedScopeFlags(s *store.Store) ([]int64, error) {
 	var ids []int64
 	if len(embedAccounts) > 0 {
-		accountIDs, err := resolveEmbedAccountList(s, embedAccounts, false)
+		accountIDs, err := resolveEmbedAccountList(context.Background(), s, embedAccounts, false)
 		if err != nil {
 			return nil, fmt.Errorf("--account: %w", err)
 		}
@@ -98,14 +99,14 @@ func resolveEmbedScopeFlags(s *store.Store) ([]int64, error) {
 // account's text to the embedding endpoint. One-run --account flags may
 // stay permissive (the operator is present and the resolution is not
 // re-evaluated over time).
-func resolveEmbedAccountList(s *store.Store, accounts []string, requireIdentifier bool) ([]int64, error) {
+func resolveEmbedAccountList(ctx context.Context, s *store.Store, accounts []string, requireIdentifier bool) ([]int64, error) {
 	var ids []int64
 	for _, input := range accounts {
 		input = strings.TrimSpace(input)
 		if input == "" {
 			return nil, opserr.Invalid(errors.New("account identifier is required"))
 		}
-		scope, err := ResolveAccountFlag(s, input)
+		scope, err := collectionops.ResolveAccountContext(ctx, s, input)
 		if err != nil {
 			return nil, err
 		}
@@ -147,7 +148,7 @@ func configuredEmbedBuildScope(s *store.Store, state *invocation) (vector.BuildS
 	if len(cfg.Vector.Embed.Scope.Accounts) == 0 {
 		return vector.NewBuildScope(messageTypes, nil), nil
 	}
-	ids, err := resolveEmbedAccountList(s, cfg.Vector.Embed.Scope.Accounts, true)
+	ids, err := resolveEmbedAccountList(context.Background(), s, cfg.Vector.Embed.Scope.Accounts, true)
 	if err != nil {
 		if kind := opserr.KindOf(err); kind == opserr.KindInvalid || kind == opserr.KindNotFound {
 			return vector.BuildScope{}, fmt.Errorf("%w: [vector.embed.scope] accounts: %w", vector.ErrScopeUnresolvable, err)
@@ -185,18 +186,18 @@ func ensureEmbedScopeResolved(ctx context.Context, state *invocation) error {
 // configured text and multimodal accounts resolved into Scope.SourceIDs,
 // leaving the supplied config untouched. Setup and the daemon must use the
 // same resolution when comparing generation fingerprints.
-func resolvedVectorConfig(s *store.Store, vecCfg vector.Config) (vector.Config, error) {
+func resolvedVectorConfig(ctx context.Context, s *store.Store, vecCfg vector.Config) (vector.Config, error) {
 	// Each scope resolves only for its enabled lane: a stale account in a
 	// disabled lane's scope must not block the enabled lane from starting.
 	if vecCfg.Enabled && len(vecCfg.Embed.Scope.Accounts) > 0 {
-		ids, err := resolveEmbedAccountList(s, vecCfg.Embed.Scope.Accounts, true)
+		ids, err := resolveEmbedAccountList(ctx, s, vecCfg.Embed.Scope.Accounts, true)
 		if err != nil {
 			return vector.Config{}, fmt.Errorf("[vector.embed.scope] accounts: %w", err)
 		}
 		vecCfg.Embed.Scope.SourceIDs = vector.NewBuildScope(nil, ids).SourceIDs
 	}
 	if vecCfg.Multimodal.Enabled && len(vecCfg.Multimodal.Scope.Accounts) > 0 {
-		ids, err := resolveEmbedAccountList(s, vecCfg.Multimodal.Scope.Accounts, true)
+		ids, err := resolveEmbedAccountList(ctx, s, vecCfg.Multimodal.Scope.Accounts, true)
 		if err != nil {
 			return vector.Config{}, fmt.Errorf("[vector.multimodal.scope] accounts: %w", err)
 		}
@@ -221,5 +222,5 @@ func openResolvedVectorConfig(state *invocation) (vector.Config, error) {
 		return vector.Config{}, fmt.Errorf("open main db for embed scope resolution: %w", err)
 	}
 	defer func() { _ = s.Close() }()
-	return resolvedVectorConfig(s, cfg.Vector)
+	return resolvedVectorConfig(context.Background(), s, cfg.Vector)
 }

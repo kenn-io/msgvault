@@ -10,8 +10,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/sys/windows"
 )
+
+func TestWindowsPrepareDirectoryUsesSecureMkdirAll(t *testing.T) {
+	require := require.New(t)
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "tokens")
+	permissions := nativePermissions{}
+	require.NoError(permissions.prepareDirectory(dir))
+	require.NoError(permissions.verifyDirectory(dir))
+}
 
 func TestWindowsProviderCredentialErrorContext(t *testing.T) {
 	assertions := assert.New(t)
@@ -108,7 +118,7 @@ func TestWindowsProviderCredentialACLValidation(t *testing.T) {
 				require.Equal(uint16(1), dacl.AceCount)
 				var ace *windows.ACCESS_ALLOWED_ACE
 				require.NoError(windows.GetAce(dacl, 0, &ace))
-				require.Equal(uint32(providerCredentialFileAllAccess), uint32(ace.Mask))
+				require.Equal(uint32(fileutil.FileAllAccess), uint32(ace.Mask))
 				require.NotZero(control & windows.SE_DACL_PROTECTED)
 			},
 		},

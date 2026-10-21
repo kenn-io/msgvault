@@ -8,15 +8,14 @@ import (
 	"os"
 	"unsafe"
 
+	"go.kenn.io/msgvault/internal/fileutil"
 	"golang.org/x/sys/windows"
 )
 
 type nativeCredentialPermissions struct{}
 
-const cardDAVFileAllAccess = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1FF
-
 func (nativeCredentialPermissions) secureDirectory(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	if err := fileutil.SecureMkdirAll(path, 0o700); err != nil {
 		return err
 	}
 	handle, err := openCardDAVSecurityHandle(path, true, windows.READ_CONTROL|windows.WRITE_DAC)
@@ -128,7 +127,7 @@ func verifyCardDAVHandleOwnerOnly(handle windows.Handle, user *windows.SID) erro
 		return fmt.Errorf("read CardDAV owner ACE: %w", err)
 	}
 	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-		(ace.Mask != windows.GENERIC_ALL && ace.Mask != cardDAVFileAllAccess) {
+		(ace.Mask != windows.GENERIC_ALL && ace.Mask != fileutil.FileAllAccess) {
 		return errors.New("CardDAV DACL does not grant exactly full control")
 	}
 	if ace.Header.AceFlags&windows.INHERITED_ACE != 0 {

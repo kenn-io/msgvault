@@ -373,7 +373,8 @@ func (s *Server) requestGateEligible(r *http.Request) bool {
 // reverse proxy, SSH tunnel, or TLS terminator forwarding to loopback, remote
 // traffic arrives as 127.0.0.1 and could brute-force the API key unthrottled.
 // The predicate (see Server.loopbackRateLimitExempt) therefore also requires
-// that the request be authenticated or that no API key be configured. The
+// that the request be authenticated or that no API key be configured, except
+// for credential-free discovery GETs to ping and daemon identity. The
 // loopback check inside it uses r.RemoteAddr, never forwarded-for headers, so
 // it cannot be spoofed remotely.
 func RateLimitMiddleware(

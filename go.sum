@@ -280,8 +280,8 @@ github.com/jhillyerd/enmime/v2 v2.4.1 h1:VkBX8GJJ/wbQofWsKP3egRqgXcwmxlY94YUmXTj
 github.com/jhillyerd/enmime/v2 v2.4.1/go.mod h1:TLpvqImPiumRecsJK5TYseRw2bPg3g0EtWc+SfU7cMs=
 github.com/klauspost/asmfmt v1.3.2 h1:4Ri7ox3EwapiOjCki+hw14RyKk201CN4rzyCJRFLpK4=
 github.com/klauspost/asmfmt v1.3.2/go.mod h1:AG8TuvYojzulgDAMCnYn50l/5QV3Bs/tp6j0HLHbNSE=
-github.com/klauspost/compress v1.20.1 h1:T7kKElXUMXrUJ2E9QhQhxFtcK5rPyLdsGZvdbLMPdiQ=
-github.com/klauspost/compress v1.20.1/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
+github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
+github.com/klauspost/compress v1.20.3/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
 github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=
@@ -480,8 +480,8 @@ go.kenn.io/docbank v0.15.3-0.20261014222526-cc94d7667381 h1:pj91kblASkXwBo7kP5v7
 go.kenn.io/docbank v0.15.3-0.20261014222526-cc94d7667381/go.mod h1:ooGcDssDgOZx1a+A0acdXQ4Y5bkjSMYHlitiOjqQ5qY=
 go.kenn.io/kata v0.19.0 h1:zbIQUhOWxMIz9KENB09LoB81TNJ/soFWhr6VMkt3mUk=
 go.kenn.io/kata v0.19.0/go.mod h1:oP17iU1zQA6jHlRNbxZ4hn6qI57yjoNCA3BvogI6JJ4=
-go.kenn.io/kit v0.38.0 h1:W0F4aZFbRgGKuaQx1JuT6INxc8IcEOAfnx/tsjf5ixo=
-go.kenn.io/kit v0.38.0/go.mod h1:gkN2sqq9+jo2+XA+8BYLtSkFMCk9db5/AdNPWEeOIdQ=
+go.kenn.io/kit v0.39.0 h1:5majyV+7CaRRPja98MnerVWerLQmB2jzu7yy8CYuQ+M=
+go.kenn.io/kit v0.39.0/go.mod h1:Ths6Xh82jT3/+riPQg0i7xaptLKjvtdOVboszdZ+XJM=
 go.mau.fi/util v0.10.1 h1:1oSqb4TwzLA0cUDY0aomyBPFKkZ3J5fqCmrXV3VH3GQ=
 go.mau.fi/util v0.10.1/go.mod h1:40TDo7/ekSeOjgr8KAmX31Yf4zrOF94j83WQB+u5ZPc=
 go.mongodb.org/mongo-driver/v2 v2.5.0 h1:yXUhImUjjAInNcpTcAlPHiT7bIXhshCTL3jVBkF3xaE=

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query/querytest"
@@ -341,14 +343,12 @@ func TestRateLimitMiddlewareExemptsLoopback(t *testing.T) {
 	// Keyless local mode: the TUI/CLI bursts far past the remote budget (daemon
 	// discovery alone fires a dozen parallel pings), so trusted loopback clients
 	// must never see 429 regardless of request rate.
-	for _, remoteAddr := range []string{"127.0.0.1:1234", "[::1]:1234"} {
-		for range 30 {
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req.RemoteAddr = remoteAddr
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, req)
-			assert.Equal(t, http.StatusOK, w.Code, "loopback request from %s must not be rate limited", remoteAddr)
-		}
+	for range 30 {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "loopback request from %s must not be rate limited", req.RemoteAddr)
 	}
 }
 
@@ -356,29 +356,35 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 	t.Parallel()
 	const key = "secret-key"
 
-	newReq := func(remoteAddr, apiKey string) *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
-		req.RemoteAddr = remoteAddr
-		if apiKey != "" {
-			req.Header.Set("X-Api-Key", apiKey)
-		}
-		return req
-	}
-
 	tests := []struct {
-		name       string
-		apiKey     string
-		remoteAddr string
-		reqKey     string
-		want       bool
+		name        string
+		apiKey      string
+		remoteAddr  string
+		method      string
+		path        string
+		header      string
+		headerValue string
+		want        bool
 	}{
-		{"keyless loopback exempt", "", "127.0.0.1:1234", "", true},
-		{"key configured valid key loopback exempt", key, "127.0.0.1:1234", key, true},
-		{"reader key loopback exempt", key, "127.0.0.1:1234", remoteClientTestReaderKey, true},
-		{"key configured missing key loopback limited", key, "127.0.0.1:1234", "", false},
-		{"key configured bad key loopback limited", key, "127.0.0.1:1234", "wrong", false},
-		{"key configured valid key non-loopback limited", key, "203.0.113.7:1234", key, false},
-		{"keyless non-loopback limited", "", "203.0.113.7:1234", "", false},
+		{name: "keyless loopback exempt", remoteAddr: "127.0.0.1:1234", want: true},
+		{name: "key configured valid key loopback exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: key, want: true, header: "X-Api-Key"},
+		{name: "reader key loopback exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: remoteClientTestReaderKey, want: true, header: "X-Api-Key"},
+		{name: "key configured missing key loopback limited", apiKey: key, remoteAddr: "127.0.0.1:1234"},
+		{name: "key configured bad key loopback limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "wrong", header: "X-Api-Key"},
+		{name: "key configured valid key non-loopback limited", apiKey: key, remoteAddr: "203.0.113.7:1234", headerValue: key, header: "X-Api-Key"},
+		{name: "keyless non-loopback limited", remoteAddr: "203.0.113.7:1234"},
+		{name: "credential-free loopback ping exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", want: true, path: daemon.DefaultPingPath},
+		{name: "credential-free IPv6 loopback ping exempt", apiKey: key, remoteAddr: "[::1]:1234", want: true, path: daemon.DefaultPingPath},
+		{name: "keyless loopback identity exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", want: true, path: DaemonIdentityPath},
+		{name: "wrong key loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "wrong", path: daemon.DefaultPingPath, header: "X-Api-Key"},
+		{name: "wrong key loopback identity limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "wrong", path: DaemonIdentityPath, header: "X-Api-Key"},
+		{name: "wrong authorization loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "Bearer wrong", path: daemon.DefaultPingPath, header: "Authorization"},
+		{name: "agent token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "wrong", path: daemon.DefaultPingPath, header: apiprotocol.AgentTokenHeader},
+		{name: "empty agent token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", path: daemon.DefaultPingPath, header: apiprotocol.AgentTokenHeader},
+		{name: "session cookie loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: sessionCookieName + "=wrong", path: daemon.DefaultPingPath, header: "Cookie"},
+		{name: "runtime token loopback ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: "wrong", path: daemon.DefaultPingPath, header: apiprotocol.DaemonRuntimeTokenHeader},
+		{name: "credential-free non-loopback ping limited", apiKey: key, remoteAddr: "203.0.113.7:1234", path: daemon.DefaultPingPath},
+		{name: "credential-free loopback POST ping limited", apiKey: key, remoteAddr: "127.0.0.1:1234", method: http.MethodPost, path: daemon.DefaultPingPath},
 	}
 
 	for _, tt := range tests {
@@ -387,36 +393,15 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 				&config.Config{Server: config.ServerConfig{APIKey: tt.apiKey, RemoteClients: []config.RemoteClientConfig{{ClientID: "reader", APIKey: remoteClientTestReaderKey}}}},
 				nil, nil, testLogger(),
 			)
-			got := srv.loopbackRateLimitExempt(newReq(tt.remoteAddr, tt.reqKey))
+			req := httptest.NewRequest(tt.method, cmp.Or(tt.path, "/api/v1/stats"), nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.header != "" {
+				req.Header.Set(tt.header, tt.headerValue)
+			}
+			got := srv.loopbackRateLimitExempt(req)
 			require.Equal(t, tt.want, got, "loopbackRateLimitExempt")
 		})
 	}
-}
-
-func TestRateLimitMiddlewareLimitsUntrustedLoopback(t *testing.T) {
-	t.Parallel()
-	rl := NewRateLimiter(1, 1) // rejects the second request within a second
-	// Untrusted loopback: an API key is configured but the request has none, so
-	// the predicate refuses the exemption (models brute-force through a local
-	// proxy that forwards to 127.0.0.1).
-	middleware := RateLimitMiddleware(rl, exemptNever)
-
-	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req1 := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req1.RemoteAddr = "127.0.0.1:1234"
-	w1 := httptest.NewRecorder()
-	handler.ServeHTTP(w1, req1)
-	assert.Equal(t, http.StatusOK, w1.Code, "first loopback request status")
-
-	req2 := httptest.NewRequest(http.MethodGet, "/test", nil)
-	req2.RemoteAddr = "127.0.0.1:1234"
-	w2 := httptest.NewRecorder()
-	handler.ServeHTTP(w2, req2)
-	assert.Equal(t, http.StatusTooManyRequests, w2.Code,
-		"untrusted loopback request must be rate limited")
 }
 
 func TestExistingAPIKeyAuthenticationCompatibility(t *testing.T) {

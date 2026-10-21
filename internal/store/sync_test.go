@@ -545,6 +545,66 @@ func TestStore_FailSyncAndClearSourceCursorRejectsSupersededRunAtomically(t *tes
 	checks.Equal("expired cursor", run.ErrorMessage.String)
 }
 
+// An unavailable FTS index must not let a superseded importer report success.
+func TestScopedStoreRejectsFTSWriteWhenFTSUnavailable(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	store.SetFTS5AvailableForTest(f.Store, false)
+	st := f.Store
+	messageID := f.CreateMessage("generation-fence-message")
+	otherSource, err := st.GetOrCreateSource("gmail", "other@example.com")
+	requirements.NoError(err)
+	otherConversationID, err := st.EnsureConversation(otherSource.ID, "other-thread", "Other Thread")
+	requirements.NoError(err)
+	otherMessageID, err := st.UpsertMessage(&store.Message{
+		ConversationID:  otherConversationID,
+		SourceID:        otherSource.ID,
+		SourceMessageID: "other-generation-message",
+		MessageType:     "email",
+	})
+	requirements.NoError(err)
+
+	oldID, err := st.StartSync(f.Source.ID, "full")
+	requirements.NoError(err)
+	stale := st.ScopedToSync(f.Source.ID, oldID)
+	requirements.NoError(st.FailSync(oldID, "worker stopped"))
+	newID, err := st.StartSync(f.Source.ID, "full")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.FailSync(newID, "test complete") })
+	live := st.ScopedToSync(f.Source.ID, newID)
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	requirements.ErrorIs(stale.UpsertFTS(messageID, "", "", "", "", ""), store.ErrSyncRunSuperseded)
+	requirements.ErrorContains(live.UpsertFTS(otherMessageID, "", "", "", "", ""), "is scoped to source")
+	requirements.ErrorIs(live.UpsertFTSContext(cancelled, messageID, "", "", "", "", ""), context.Canceled)
+	requirements.NoError(st.UpsertFTS(messageID, "", "", "", "", ""))
+}
+
+// Dropping the real index must not turn a live scoped write into an error.
+func TestScopedStoreSkipsFTSWriteOnArchiveWithoutFTSIndex(t *testing.T) {
+	testutil.SkipIfPostgres(t, "drops the SQLite FTS5 table")
+	requirements := require.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("generation-fence-message")
+	var dbPath string
+	requirements.NoError(f.Store.DB().QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&dbPath))
+	_, err := f.Store.DB().Exec(`DROP TABLE IF EXISTS messages_fts`)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.Close())
+
+	st, err := store.OpenForTest(dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.Close() })
+	requirements.False(st.FTS5Available())
+	runID, err := st.StartSync(f.Source.ID, "full")
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = st.FailSync(runID, "test complete") })
+
+	requirements.NoError(st.ScopedToSync(f.Source.ID, runID).UpsertFTS(messageID, "", "", "", "", ""))
+}
+
 func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) {
 	requirements := require.New(t)
 	checks := assert.New(t)

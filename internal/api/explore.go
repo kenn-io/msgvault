@@ -1541,7 +1541,7 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		}
 		active, err := vector.ResolveActiveForFingerprint(ctx, backend, expectedFingerprint)
 		if err != nil {
-			s.writeExploreVectorError(w, err)
+			s.writeExploreVectorError(ctx, w, err)
 			return query.SearchSpec{}, "", false
 		}
 		if int64(active.ID) != snapshot.Generation {
@@ -1636,7 +1636,7 @@ func (s *Server) resolveExploreVectorSearch(ctx context.Context, w http.Response
 		SubjectTerms: subjectTerms,
 	})
 	if err != nil {
-		s.writeExploreVectorError(w, err)
+		s.writeExploreVectorError(ctx, w, err)
 		return query.SearchSpec{}, "", false
 	}
 	addExploreTiming(w, "embedding", meta.QueryEmbeddingDuration)
@@ -1712,7 +1712,7 @@ func (s *Server) resolveEmptyVectorCandidates(
 	}
 	active, err := vector.ResolveActiveForFingerprint(ctx, backend, expectedFingerprint)
 	if err != nil {
-		s.writeExploreVectorError(w, err)
+		s.writeExploreVectorError(ctx, w, err)
 		return query.SearchSpec{}, "", false
 	}
 	generation := int64(active.ID)
@@ -1883,12 +1883,12 @@ func (s *Server) enrichExploreSemanticRows(rows []query.EntryRow, request Explor
 	})
 }
 
-func (s *Server) writeExploreVectorError(w http.ResponseWriter, err error) {
+func (s *Server) writeExploreVectorError(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, vector.ErrNotEnabled):
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
 	case errors.Is(err, vector.ErrIndexStale):
-		writeError(w, http.StatusServiceUnavailable, "index_stale", "The vector index does not match configured embedding settings")
+		s.writeIndexStale(ctx, w, err)
 	case errors.Is(err, vector.ErrIndexBuilding):
 		writeError(w, http.StatusServiceUnavailable, "index_building", "The vector index is still being built")
 	case errors.Is(err, vector.ErrEmbeddingTimeout):

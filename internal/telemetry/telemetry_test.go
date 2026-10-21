@@ -32,6 +32,10 @@ func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
 	assert := assert.New(t)
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
+		t.Setenv(name, os.Getenv(name))
+		require.NoError(t, os.Unsetenv(name))
+	}
 	notDir := filepath.Join(t.TempDir(), "data")
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
 	var logs bytes.Buffer
@@ -48,7 +52,7 @@ func TestEnabledReporterWireHelper(t *testing.T) {
 	if stub == "" {
 		return
 	}
-	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "test-version", Commit: "test-commit", ConfigEnabled: os.Getenv(wireConfigOffEnv) == ""}
+	opts := Options{DataDir: os.Getenv(wireDirEnv), Version: "v1.2.3", Commit: "test-commit", ConfigEnabled: os.Getenv(wireConfigOffEnv) == ""}
 	require := require.New(t)
 	reporter := newReporterOrDisabled(opts, stub, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	require.True(reporter.EventAllowed(EventAppOpened), "an opted-out reporter keeps the allowlist")
@@ -111,7 +115,8 @@ func runWireHelper(t *testing.T, stubURL, dir string, env ...string) string {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestEnabledReporterWireHelper$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args are fixed test flags.
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, EnabledEnv+"=") && !strings.HasPrefix(kv, posthog.GenericEnabledEnv+"=") {
+		if !strings.HasPrefix(kv, EnabledEnv+"=") && !strings.HasPrefix(kv, posthog.GenericEnabledEnv+"=") &&
+			!strings.HasPrefix(kv, "CI=") && !strings.HasPrefix(kv, "DO_NOT_TRACK=") {
 			cmd.Env = append(cmd.Env, kv)
 		}
 	}
@@ -175,7 +180,7 @@ func TestEnabledReporterSendsOnlyAllowlistedFields(t *testing.T) {
 		}
 		assert.Equal("msgvault", props["application"])
 		assert.Equal("daemon", props["source"])
-		assert.Equal("test-version", props["version"])
+		assert.Equal("v1.2.3", props["version"])
 		assert.Equal("test-commit", props["commit"])
 	}
 	assert.ElementsMatch([]string{EventAppOpened, posthog.EventDaemonActive}, events)

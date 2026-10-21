@@ -1,13 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -190,11 +194,242 @@ func TestHealthReportsStaleVectorStatus(t *testing.T) {
 type resolvingVectorBackend struct {
 	vector.Backend
 
-	fingerprint string
+	fingerprint      string
+	activeGeneration func(context.Context) (vector.Generation, error)
 }
 
-func (b *resolvingVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+func (b *resolvingVectorBackend) ActiveGeneration(ctx context.Context) (vector.Generation, error) {
+	if b.activeGeneration != nil {
+		return b.activeGeneration(ctx)
+	}
 	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
+}
+
+func TestMarkVectorIndexStaleDiagnosisLifetime(t *testing.T) {
+	t.Parallel()
+	t.Run("timeout", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			var calls atomic.Int32
+			backend := &resolvingVectorBackend{
+				activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+					if calls.Add(1) == 1 {
+						close(started)
+					}
+					<-ctx.Done()
+					return vector.Generation{}, ctx.Err()
+				},
+			}
+			srv := NewServerWithOptions(testServerOptions(t, backend))
+			defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+			done := make(chan string, 1)
+			go func() {
+				done <- srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+			}()
+			<-started
+			synctest.Wait()
+			assert.Empty(t, done, "diagnosis must wait for the backend before the timeout")
+			time.Sleep(vectorStaleDiagnosisTimeout)
+			synctest.Wait()
+			select {
+			case advice := <-done:
+				assert.Equal(t, vectorUncheckedAdvice, advice)
+			default:
+				require.FailNow(t, "MarkVectorIndexStale must return after the diagnosis timeout without shutdown")
+			}
+			status, detail := srv.VectorStatus()
+			assert.Equal(t, VectorStatusStale, status)
+			assert.Contains(t, detail, vector.ErrIndexStale.Error())
+			assert.NotContains(t, detail, vectorRebuildAdvice)
+			assert.Equal(t, vectorUncheckedAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))
+			assert.Equal(t, int32(1), calls.Load(), "cached advice must avoid another backend call")
+			time.Sleep(vectorUncheckedRetryDelay)
+			backend.activeGeneration = nil
+			backend.fingerprint = "model-b"
+			assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))
+			_, detail = srv.VectorStatus()
+			assert.True(t, strings.HasSuffix(detail, vectorRestartAdvice), "detail must end with restart advice")
+		})
+	})
+	t.Run("shutdown unblocks diagnosis", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			backend := &resolvingVectorBackend{
+				activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+					close(started)
+					<-ctx.Done()
+					return vector.Generation{}, ctx.Err()
+				},
+			}
+			srv := NewServerWithOptions(testServerOptions(t, backend))
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale)
+				close(done)
+			}()
+			<-started
+			require.NoError(t, srv.Shutdown(context.Background()))
+			synctest.Wait()
+			select {
+			case <-done:
+			default:
+				assert.Fail(t, "MarkVectorIndexStale must return after server shutdown")
+				cancel()
+				<-done
+			}
+			_, detail := srv.VectorStatus()
+			assert.NotContains(t, detail, vectorRebuildAdvice)
+		})
+	})
+	t.Run("cancelled caller gets restart advice", func(t *testing.T) {
+		backend := &resolvingVectorBackend{
+			activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+				if err := ctx.Err(); err != nil {
+					return vector.Generation{}, err
+				}
+				return vector.Generation{ID: 1, Fingerprint: "model-b"}, nil
+			},
+		}
+		srv := NewServerWithOptions(testServerOptions(t, backend))
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale))
+	})
+}
+
+func TestMarkVectorIndexStaleCoalescesConcurrentDiagnosis(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		backend := &resolvingVectorBackend{fingerprint: "model-b"}
+		srv := NewServerWithOptions(testServerOptions(t, backend))
+		defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+		var checks atomic.Int32
+		release := make(chan struct{})
+		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+			checks.Add(1)
+			<-release
+			return "model-b", nil
+		})
+		const callers = 10
+		results := make(chan string, callers)
+		for range callers {
+			go func() {
+				results <- srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+			}()
+		}
+		synctest.Wait()
+		assert.Empty(results, "callers must wait for the shared diagnosis")
+		close(release)
+		for range callers {
+			assert.Equal(vectorRestartAdvice, <-results)
+		}
+		assert.Equal(int32(1), checks.Load(), "concurrent mismatches must share one diagnosis")
+	})
+}
+
+func TestVectorStaleFirstDiagnosisInsideThrottle(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"hybrid search", "explore"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := vector.Config{Enabled: true, Embeddings: vector.EmbeddingsConfig{Model: "model-a", Dimension: 2}}
+			backend := &resolvingVectorBackend{fingerprint: cfg.GenerationFingerprint()}
+			opts := testServerOptions(t, backend)
+			opts.Store = &mockStore{}
+			srv := NewServerWithOptions(opts)
+			engine := hybrid.NewEngine(backend, nil, nil, hybrid.Config{ExpectedFingerprint: cfg.GenerationFingerprint()})
+			srv.SetVectorFeatures(engine, nil, backend, cfg)
+			cfg.Embeddings.Model = "model-b"
+			rebuilt := cfg.GenerationFingerprint()
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return rebuilt, nil })
+
+			rec := httptest.NewRecorder()
+			srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/health", nil))
+			require.Equal(http.StatusOK, rec.Code)
+			backend.fingerprint = rebuilt
+			rec = httptest.NewRecorder()
+			if name == "explore" {
+				srv.writeExploreVectorError(t.Context(), rec, vector.ErrIndexStale)
+			} else {
+				srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/search?q=budget&mode=vector", nil))
+			}
+			require.Equal(http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+			assert.Contains(rec.Body.String(), "index_stale")
+			assert.Contains(rec.Body.String(), "msgvault daemon restart")
+			status, _ := srv.VectorStatus()
+			assert.Equal(VectorStatusStale, status)
+		})
+	}
+}
+
+func TestVectorStaleAdviceRefresh(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		resolve    func(context.Context) (string, error)
+		restart    bool
+		wantLogged bool
+	}{
+		{"unset", nil, false, false},
+		{"edited again", func(context.Context) (string, error) { return "model-c", nil }, false, false},
+		{"read error", func(context.Context) (string, error) { return "", errors.New("read failed") }, false, true},
+		{"rebuilt", func(context.Context) (string, error) { return "model-b", nil }, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				backend := &resolvingVectorBackend{fingerprint: "model-old"}
+				srv := NewServerWithOptions(testServerOptions(t, backend))
+				defer func() { require.NoError(srv.Shutdown(context.Background())) }()
+				var logs bytes.Buffer
+				srv.logger = slog.New(slog.NewTextHandler(&logs, nil))
+				srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale)
+				_, detail := srv.VectorStatus()
+				assert.Contains(detail, "--full-rebuild")
+				backend.fingerprint = "model-b"
+				checks := 0
+				if test.resolve != nil {
+					srv.SetVectorRestartFingerprint(func(ctx context.Context) (string, error) {
+						checks++
+						return test.resolve(ctx)
+					})
+				}
+				time.Sleep(time.Minute)
+				for range 2 {
+					rec := httptest.NewRecorder()
+					srv.Router().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+					require.Equal(http.StatusOK, rec.Code)
+					var health HealthResponse
+					require.NoError(json.Unmarshal(rec.Body.Bytes(), &health))
+					require.NotNil(health.Vector)
+					assert.Equal("stale", health.Vector.Status)
+					if test.restart {
+						assert.Contains(health.Vector.Error, "msgvault daemon restart")
+						assert.NotContains(health.Vector.Error, "--full-rebuild")
+					} else {
+						assert.Contains(health.Vector.Error, "--full-rebuild")
+						assert.NotContains(health.Vector.Error, "msgvault daemon restart")
+					}
+				}
+				if test.resolve != nil {
+					assert.Equal(1, checks, "stale advice resolves accounts at most once per interval")
+				}
+				if test.wantLogged {
+					assert.Equal(1, strings.Count(logs.String(), "read failed"))
+				}
+			})
+		})
+	}
 }
 
 // TestHealthClearsStaleAfterReactivation verifies the latched stale status is
@@ -259,6 +494,11 @@ func TestScopeDriftStaleSurvivesRefresh(t *testing.T) {
 	assert.Equal("stale", body.Vector.Status,
 		"a matching startup fingerprint must not clear scope-drift stale")
 	assert.Contains(body.Vector.Error, "src-9")
+
+	srv.SetVectorStale("index changed; rebuild the index")
+	status, detail := srv.VectorStatus()
+	assert.Equal(VectorStatusStale, status)
+	assert.Equal(body.Vector.Error, detail)
 
 	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	status, errMsg := srv.VectorStatus()

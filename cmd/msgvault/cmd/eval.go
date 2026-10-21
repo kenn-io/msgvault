@@ -1048,7 +1048,7 @@ func (e *evaluator) attachVector(ctx context.Context, mainStore *store.Store) (f
 	// paths do. The fingerprint folds in the scope, so an unresolved config
 	// would compute a different one and every query would fail as "index
 	// stale" on any archive that scopes embedding by account.
-	vecCfg, err := resolvedVectorConfig(mainStore, cfg.Vector)
+	vecCfg, err := resolvedVectorConfig(ctx, mainStore, cfg.Vector)
 	if err != nil {
 		return nil, fmt.Errorf("vector embed scope: %w", err)
 	}

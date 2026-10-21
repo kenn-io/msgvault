@@ -16,12 +16,16 @@ import (
 )
 
 func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
+	if !prepareTUITelemetryTest(t, "TestTUISessionUsesSelectedDaemonAfterCancellation", "MSGVAULT_TUI_SESSION_REPORT_TEST") {
+		return
+	}
 	for _, tc := range []struct {
-		name    string
-		timeout bool
+		name               string
+		timeout, configOff bool
 	}{
 		{name: "delivery"},
 		{name: "timeout", timeout: true},
+		{name: "config opt-out", configOff: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -50,7 +54,8 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 				var exitStart time.Time
 				root := &cobra.Command{Use: "tui", RunE: func(cmd *cobra.Command, _ []string) error {
 					ctx, cancel := context.WithCancel(cmd.Context())
-					cfg := &config.Config{}
+					enabled := !tc.configOff
+					cfg := &config.Config{Telemetry: config.TelemetryConfig{Enabled: &enabled}}
 					cfg.Remote.APIKey = "selected-daemon-key"
 					cfg.Remote.AllowInsecure = true
 					cancel()
@@ -62,6 +67,12 @@ func TestTUISessionUsesSelectedDaemonAfterCancellation(t *testing.T) {
 				root.SetArgs([]string{})
 				require.NoError(executeRootContext(context.Background(), root))
 				synctest.Wait()
+				if tc.configOff {
+					invocationFromCommand(root).sends.Wait(time.Second)
+					assert.Zero(requests)
+					close(release)
+					return
+				}
 				want := 5 * time.Millisecond
 				if tc.timeout {
 					want = 50 * time.Millisecond

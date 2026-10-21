@@ -616,9 +616,12 @@ func translateVectorErr(err error) *toolResult {
 			"vector_not_enabled: vector search is not configured",
 		)
 	case errors.Is(err, vector.ErrIndexStale):
+		if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Message != "" {
+			return toolErrorResult("index_stale: " + apiErr.Message)
+		}
 		return toolErrorResult(
 			"index_stale: the vector index does not match configured embedding settings; " +
-				"align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`",
+				"if the embedding settings on the archive host changed since its daemon started, restart that daemon; otherwise align [vector.embed.scope] accounts for an existing account-scoped index, or run `msgvault embeddings build --full-rebuild`",
 		)
 	case errors.Is(err, vector.ErrIndexBuilding):
 		return toolErrorResult(

@@ -1,14 +1,18 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -368,9 +372,11 @@ func TestStartVectorInitInstallsOnlyConsentedDocumentSearch(t *testing.T) {
 
 func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	c := config.NewDefaultConfig()
+	c.HomeDir = t.TempDir()
 	c.Vector.Enabled = true
 	testCtx := withTestConfig(t, c)
-	_ = testCtx
+	var logs bytes.Buffer
+	invocationFromContext(testCtx).logger = slog.New(slog.NewJSONHandler(&logs, nil))
 
 	// Active generation's fingerprint differs from the configured one, so
 	// the same check the query path runs (ResolveActiveForFingerprint)
@@ -395,6 +401,25 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	assert.Contains(detail, "old-model:384:c6000:e1", "detail names the stored fingerprint")
 	assert.Contains(detail, c.Vector.GenerationFingerprint(), "detail names the configured fingerprint")
 	assert.Contains(detail, "msgvault embeddings build --full-rebuild", "detail names the rebuild command")
+
+	decoder := json.NewDecoder(&logs)
+	foundWarning := false
+	for decoder.More() {
+		var record struct {
+			Level  string `json:"level"`
+			Msg    string `json:"msg"`
+			Error  string `json:"error"`
+			Detail string `json:"detail"`
+		}
+		require.NoError(t, decoder.Decode(&record))
+		if record.Level == "WARN" && record.Msg == "vector index does not match configured embedding settings; vector search unavailable" {
+			foundWarning = true
+			assert.Contains(record.Error, `active="old-model:384:c6000:e1"`)
+			assert.Contains(record.Error, `configured="`+c.Vector.GenerationFingerprint()+`"`)
+			assert.Contains(record.Detail, "msgvault embeddings build --full-rebuild")
+		}
+	}
+	assert.True(foundWarning, "startup logs a stale-index warning")
 }
 
 func TestStartVectorInitReportsError(t *testing.T) {
@@ -1084,4 +1109,76 @@ func visualInvocationKeys(t *testing.T, st *store.Store) []string {
 	}
 	require.NoError(t, rows.Err())
 	return keys
+}
+
+func TestRestartVectorFingerprintMatchesStartup(t *testing.T) {
+	t.Parallel()
+	must := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("gmail", "a@example.com")
+	must.NoError(err)
+	_, err = st.GetOrCreateSource("gmail", "b@example.com")
+	must.NoError(err)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	writeConfig := func(accounts, model string) {
+		t.Helper()
+		content := fmt.Sprintf(`[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = %q
+dimension = 4
+[vector.embed.scope]
+accounts = %s
+message_types = ["email"]
+`, model, accounts)
+		must.NoError(os.WriteFile(path, []byte(content), 0600))
+	}
+	writeConfig(`["a@example.com", "b@example.com"]`, "model-a")
+	cfg, err := config.Load(path, home)
+	must.NoError(err)
+	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
+	initial, err := resolve(t.Context())
+	must.NoError(err)
+	cancelledCtx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for _, test := range []struct {
+		name, accounts, model string
+		ctx                   context.Context
+		same                  bool
+		wantErr               error
+	}{
+		{name: "reordered accounts", accounts: `["b@example.com", "a@example.com"]`, model: "model-a", ctx: t.Context(), same: true},
+		{name: "model", accounts: `["a@example.com", "b@example.com"]`, model: "model-b", ctx: t.Context()},
+		{name: "disabled", ctx: t.Context(), wantErr: vector.ErrNotEnabled},
+		{name: "cancelled context", accounts: `["a@example.com"]`, model: "model-a", ctx: cancelledCtx, wantErr: context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			if errors.Is(test.wantErr, vector.ErrNotEnabled) {
+				require.NoError(os.WriteFile(path, []byte("[vector]\nenabled = false\n"), 0600))
+			} else {
+				writeConfig(test.accounts, test.model)
+			}
+			got, err := resolve(test.ctx)
+			if test.wantErr != nil {
+				require.ErrorIs(err, test.wantErr)
+				assert.Empty(got)
+				return
+			}
+			require.NoError(err)
+			startup, err := config.Load(path, home)
+			require.NoError(err)
+			resolved, err := resolvedVectorConfig(t.Context(), st, startup.Vector)
+			require.NoError(err)
+			assert.Equal(resolved.GenerationFingerprint(), got)
+			if test.same {
+				assert.Equal(initial, got)
+			} else {
+				assert.NotEqual(initial, got)
+			}
+		})
+	}
 }

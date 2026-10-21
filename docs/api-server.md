@@ -2947,6 +2947,8 @@ already completed, failed, or cancelled.
 
 The API enforces rate limiting of 10 requests per second per client IP, with a burst allowance of 20 requests. When the limit is exceeded, the server responds with HTTP 429 and includes a `Retry-After` header indicating how long to wait before retrying.
 
+Loopback requests skip this limit when they're trusted: no API key is configured, or the request carries a valid API key, remote client key, or browser session cookie. Credential-free loopback `GET /api/ping` and `GET /api/daemon/identity` requests also skip it, so local clients can find a busy daemon. Loopback requests with a wrong or missing credential, and session login, stay limited.
+
 ## CORS
 
 Cross-Origin Resource Sharing is disabled by default. To allow browser-based clients, configure allowed origins in your `config.toml`:

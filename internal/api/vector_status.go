@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -116,6 +118,9 @@ func (s *Server) SetVectorStale(detail string) {
 	}
 	s.vectorMu.Lock()
 	defer s.vectorMu.Unlock()
+	if s.vectorStaleLatch {
+		return
+	}
 	s.vectorStatus = VectorStatusStale
 	s.vectorErr = detail
 }
@@ -139,13 +144,95 @@ func (s *Server) SetVectorScopeDrift(detail string) {
 	s.vectorStaleLatch = true
 }
 
+const vectorRestartAdvice = "the embedding settings in config.toml changed after the daemon started; run `msgvault daemon restart` to search with them"
+
+const vectorRebuildAdvice = "if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild"
+
+const vectorUncheckedAdvice = "the daemon could not yet check whether a restart or a rebuild fixes this; retry in a moment for the recovery step"
+
+func cachedStaleAdvice(detail string) string {
+	if strings.HasSuffix(detail, vectorRestartAdvice) {
+		return vectorRestartAdvice
+	}
+	if strings.HasSuffix(detail, vectorUncheckedAdvice) {
+		return vectorUncheckedAdvice
+	}
+	return vectorRebuildAdvice
+}
+
+// SetVectorRestartFingerprint installs the daemon's startup config resolver.
+func (s *Server) SetVectorRestartFingerprint(fn func(context.Context) (string, error)) {
+	s.vectorMu.Lock()
+	defer s.vectorMu.Unlock()
+	s.vectorRestartFingerprint = fn
+}
+
+func (s *Server) staleAdvice(ctx context.Context, backend vector.Backend) (string, bool) {
+	s.vectorMu.RLock()
+	resolve := s.vectorRestartFingerprint
+	s.vectorMu.RUnlock()
+	if resolve != nil && backend != nil {
+		fingerprint, err := resolve(ctx)
+		if err != nil {
+			s.logger.Warn("could not resolve embedding settings after restart; using rebuild advice", "error", err)
+		} else {
+			active, err := backend.ActiveGeneration(ctx)
+			if err == nil && fingerprint == active.Fingerprint {
+				return vectorRestartAdvice, true
+			}
+		}
+	}
+	return vectorRebuildAdvice, false
+}
+
+// MarkVectorIndexStale records the mismatch and returns its recovery advice.
+// Concurrent callers share one diagnosis that runs on the server's lifetime
+// rather than the caller's request.
+func (s *Server) MarkVectorIndexStale(ctx context.Context, mismatch error) string {
+	v, _, _ := s.vectorStaleFlight.Do("stale", func() (any, error) {
+		diagnosisCtx, cancel := context.WithTimeout(s.importContext, vectorStaleDiagnosisTimeout)
+		defer cancel()
+		return s.markVectorIndexStale(store.WithRequestID(diagnosisCtx, store.RequestIDFromContext(ctx)), mismatch), nil
+	})
+	advice, _ := v.(string)
+	return advice
+}
+
+func (s *Server) markVectorIndexStale(ctx context.Context, mismatch error) string {
+	s.vectorMu.Lock()
+	stale := s.vectorStatus == VectorStatusStale
+	detail := s.vectorErr
+	if s.vectorStaleLatch || (stale && time.Now().Before(s.vectorFreshNextCheck)) {
+		s.vectorMu.Unlock()
+		return cachedStaleAdvice(detail)
+	}
+	s.vectorFreshNextCheck = time.Now().Add(vectorFreshnessCheckInterval)
+	backend := s.backend
+	s.vectorMu.Unlock()
+	advice, restart := s.staleAdvice(ctx, backend)
+	if !restart && ctx.Err() != nil {
+		advice = vectorUncheckedAdvice
+		s.vectorMu.Lock()
+		s.vectorFreshNextCheck = time.Now().Add(vectorUncheckedRetryDelay)
+		s.vectorMu.Unlock()
+	}
+	s.SetVectorStale(mismatch.Error() + "; " + advice)
+	return advice
+}
+
+func (s *Server) writeIndexStale(ctx context.Context, w http.ResponseWriter, err error) {
+	advice := s.MarkVectorIndexStale(ctx, err)
+	writeError(w, http.StatusServiceUnavailable, "index_stale",
+		"the vector index does not match configured embedding settings; "+advice)
+}
+
 // refreshVectorStatusIfStale re-runs the generation freshness check when the
 // cached status is stale. The stale status is latched once at init completion,
 // so without this a `--full-rebuild` (or the daemon embed job) that reactivates
 // a matching generation would keep /health, /api/v1/stats, and serve status
 // reporting stale until a daemon restart. Cheap no-op unless the status is
-// currently stale; leaves the status untouched on a still-stale, building, or
-// transient-error result.
+// currently stale; refreshes stale advice at most once per freshness interval.
+// Building and transient-error results leave the status untouched.
 func (s *Server) refreshVectorStatusIfStale(ctx context.Context) {
 	s.vectorMu.RLock()
 	stale := s.vectorStatus == VectorStatusStale
@@ -160,8 +247,9 @@ func (s *Server) refreshVectorStatusIfStale(ctx context.Context) {
 		return
 	}
 	if _, err := vector.ResolveActiveForFingerprint(ctx, backend, cfg.GenerationFingerprint()); err != nil {
-		// Still stale, still building, or a transient backend error: leave the
-		// stale status in place. Only a clean resolve clears it.
+		if errors.Is(err, vector.ErrIndexStale) {
+			s.MarkVectorIndexStale(ctx, err)
+		}
 		return
 	}
 	s.vectorMu.Lock()
@@ -224,6 +312,10 @@ func (s *Server) maybeCheckVectorScopeDrift(ctx context.Context) {
 // search preflight paths, so it fires at most once per interval.
 const vectorFreshnessCheckInterval = time.Minute
 
+const vectorStaleDiagnosisTimeout = 30 * time.Second
+
+const vectorUncheckedRetryDelay = 5 * time.Second
+
 // maybeRefreshVectorFreshness is the ready→stale counterpart of
 // refreshVectorStatusIfStale. A daemon-proxied one-off scoped build (or any
 // CLI rebuild under a different configuration) can activate a generation
@@ -253,7 +345,7 @@ func (s *Server) maybeRefreshVectorFreshness(ctx context.Context) {
 	if !errors.Is(err, vector.ErrIndexStale) {
 		return
 	}
-	s.SetVectorStale(err.Error() + "; if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild")
+	s.MarkVectorIndexStale(ctx, err)
 }
 
 // refreshVectorStatus runs every throttled revalidation that keeps the

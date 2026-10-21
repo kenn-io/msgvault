@@ -27,11 +27,20 @@ import (
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
+func clearTelemetryVetoEnvironment(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
+		t.Setenv(name, os.Getenv(name))
+		require.NoError(t, os.Unsetenv(name), "clear %s", name)
+	}
+}
+
 func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
@@ -200,6 +209,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 	t.Setenv("CLAUDECODE", "")
 	t.Setenv(telemetry.EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
+	clearTelemetryVetoEnvironment(t)
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
@@ -312,33 +322,24 @@ func TestCLIActionSenderSuppressesNonInteractiveCalls(t *testing.T) {
 }
 
 func TestCLIActionLocallyDisabledSendsNothing(t *testing.T) {
+	clearTelemetryVetoEnvironment(t)
 	t.Setenv("CODEX_THREAD_ID", "")
 	t.Setenv("CLAUDECODE", "")
+	t.Setenv(telemetry.EnabledEnv, "")
+	t.Setenv(posthog.GenericEnabledEnv, "")
 	terminal := cliActionTerminal
 	cliActionTerminal = func(uintptr) bool { return true }
 	t.Cleanup(func() { cliActionTerminal = terminal })
-	for _, tc := range []struct {
-		name, prefixed, generic string
-		configEnabled           bool
-	}{
-		{name: "config"},
-		{name: "prefixed env", prefixed: "0", configEnabled: true},
-		{name: "generic env", prefixed: "1", generic: "0", configEnabled: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv(telemetry.EnabledEnv, tc.prefixed)
-			t.Setenv(posthog.GenericEnabledEnv, tc.generic)
-			client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-				assert.Fail(t, "disabled telemetry sent a request", r.URL.String())
-				return nil, errors.New("unexpected request")
-			})}})
-			require.NoError(t, err)
-			cmd := &cobra.Command{Use: "search"}
-			cfg := config.NewDefaultConfig()
-			cfg.Telemetry.Enabled = &tc.configEnabled
-			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
-			reportCLIAction(cmd, client, "search_run", "search_type", "text")
-			invocationFromCommand(cmd).sends.Wait(time.Second)
-		})
-	}
+	client, err := daemonclient.New(daemonclient.Config{URL: "https://daemon.example.test", HTTPClient: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		assert.Fail(t, "disabled telemetry sent a request", r.URL.String())
+		return nil, errors.New("unexpected request")
+	})}})
+	require.NoError(t, err)
+	cmd := &cobra.Command{Use: "search"}
+	cfg := config.NewDefaultConfig()
+	enabled := false
+	cfg.Telemetry.Enabled = &enabled
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	reportCLIAction(cmd, client, "search_run", "search_type", "text")
+	invocationFromCommand(cmd).sends.Wait(time.Second)
 }

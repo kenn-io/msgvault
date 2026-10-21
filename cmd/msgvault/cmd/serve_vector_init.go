@@ -160,6 +160,7 @@ func startVectorInit(
 			// run_after_sync=false). The embed job's own per-run check remains
 			// the detection path for scheduled embeds.
 			apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
+			apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
 			checkVectorIndexFreshness(ctx, apiServer, vf, logger)
 			if err := registerEmbedJob(sched, vf, s, apiServer, cfg, logger); err != nil {
 				// Cron was validated in precheckVectorFeatures, so this is an
@@ -485,10 +486,32 @@ func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *v
 	if !errors.Is(err, vector.ErrIndexStale) {
 		return
 	}
-	detail := err.Error() + "; if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild"
+	detail := apiServer.MarkVectorIndexStale(ctx, err)
 	repairLogger(logger).Warn("vector index does not match configured embedding settings; vector search unavailable",
-		"detail", detail)
-	apiServer.SetVectorStale(detail)
+		"error", err, "detail", detail)
+}
+
+// restartVectorFingerprint computes the text index fingerprint after a restart.
+func restartVectorFingerprint(s *store.Store, state *invocation) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		cfg := state.cfg
+		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
+		if err != nil {
+			return "", err
+		}
+		loaded, err := cfg.ReloadConfigFile(snapshot)
+		if err != nil {
+			return "", err
+		}
+		if !loaded.Vector.Enabled {
+			return "", vector.ErrNotEnabled
+		}
+		resolved, err := resolvedVectorConfig(ctx, s, loaded.Vector)
+		if err != nil {
+			return "", err
+		}
+		return resolved.GenerationFingerprint(), nil
+	}
 }
 
 // embedScopeDriftDetail is the operator-facing explanation for a latched
