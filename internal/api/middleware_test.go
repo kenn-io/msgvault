@@ -360,11 +360,11 @@ func TestLoopbackRateLimitExempt(t *testing.T) {
 		name        string
 		apiKey      string
 		remoteAddr  string
-		headerValue string
-		want        bool
 		method      string
 		path        string
 		header      string
+		headerValue string
+		want        bool
 	}{
 		{name: "keyless loopback exempt", remoteAddr: "127.0.0.1:1234", want: true},
 		{name: "key configured valid key loopback exempt", apiKey: key, remoteAddr: "127.0.0.1:1234", headerValue: key, want: true, header: "X-Api-Key"},

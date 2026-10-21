@@ -333,9 +333,10 @@ api_port = 9090
 ### HTTP 429 Too Many Requests
 
 The general API limit allows 10 requests per second per client IP with a burst
-of 20. Trusted, authenticated loopback requests are exempt, except session
-login. Some expensive endpoints have tighter limits. If you receive 429, space
-out requests and follow the `Retry-After` header.
+of 20. Trusted loopback requests and local daemon discovery are exempt; see
+[Web UI & API Server: Rate Limiting](/docs/api-server/#rate-limiting). Some
+expensive endpoints have tighter limits. If you receive 429, space out requests
+and follow the `Retry-After` header.
 
 ## Using Logs for Troubleshooting
 
