@@ -888,6 +888,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if err := markSubsetDraftsAuthored(tx); err != nil {
 		return nil, err
 	}
+	if err := copySubsetDraftRecords(tx); err != nil {
+		return nil, err
+	}
 
 	if _, err := tx.Exec(`
 		INSERT INTO reactions SELECT * FROM src.reactions
@@ -951,6 +954,10 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		WHERE message_id IN (SELECT id FROM selected_messages)
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
+	}
+	if _, err := copyByName(tx, "imap_message_memberships",
+		`message_id IN (SELECT id FROM selected_messages) AND source_id IN (SELECT id FROM sources)`); err != nil {
+		return nil, fmt.Errorf("copy IMAP memberships: %w", err)
 	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
@@ -2998,10 +3005,8 @@ func subsetPendingDeliveryAddresses(tx *sql.Tx) ([]subsetIdentityKey, error) {
 	return out, rows.Err()
 }
 
-// markSubsetDraftsAuthored records draft authorship on included messages
-// whose draft evidence the subset does not copy: IMAP \Draft flags and draft
-// records. A message the source has not yet derived would otherwise lose it,
-// and deriving it in the subset could count the draft as received mail.
+// markSubsetDraftsAuthored keeps authorship for flag-only drafts after a sync
+// clears the flag.
 func markSubsetDraftsAuthored(tx *sql.Tx) error {
 	if _, err := tx.Exec(`UPDATE messages SET draft_authored = TRUE
 		WHERE draft_authored = FALSE AND id IN (
@@ -3009,6 +3014,29 @@ func markSubsetDraftsAuthored(tx *sql.Tx) error {
 			WHERE m.id IN (SELECT id FROM selected_messages)
 			  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s") + `)`); err != nil {
 		return fmt.Errorf("record subset draft authorship: %w", err)
+	}
+	return nil
+}
+
+// copySubsetDraftRecords retains draft evidence without pending server operations.
+func copySubsetDraftRecords(tx *sql.Tx) error {
+	if _, err := tx.Exec(`INSERT INTO imap_drafts
+		(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity,
+		 current_uid, revision, discarded_at, created_at, updated_at)
+		SELECT draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity,
+		       current_uid, revision, COALESCE(discarded_at, CURRENT_TIMESTAMP), created_at, updated_at
+		FROM src.imap_drafts
+		WHERE current_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+		return fmt.Errorf("copy subset IMAP drafts: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO gmail_drafts
+		(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id,
+		 thread_id, revision, discarded_at, created_at, updated_at)
+		SELECT draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id,
+		       thread_id, revision, COALESCE(discarded_at, CURRENT_TIMESTAMP), created_at, updated_at
+		FROM src.gmail_drafts
+		WHERE current_message_id IN (SELECT id FROM selected_messages)`); err != nil {
+		return fmt.Errorf("copy subset Gmail drafts: %w", err)
 	}
 	return nil
 }
