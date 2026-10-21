@@ -472,18 +472,18 @@ type BackupConfig struct {
 
 const (
 	// DefaultChatMaxMediaBytes is the per-attachment size cap for Beeper,
-	// Slack, and Teams when max_media_mb is unset. The importers fall back to
-	// the same attachmentpolicy constant, so the effective default is one
-	// number wherever the policy is resolved.
+	// Slack, Teams, and iMessage when max_media_mb is unset. The importers fall
+	// back to the same attachmentpolicy constant, so the effective default is
+	// one number wherever the policy is resolved.
 	DefaultChatMaxMediaBytes       int64         = attachmentpolicy.DefaultChatMaxBytes
 	DefaultDiscordMaxMediaBytes    int64         = 50 << 20
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
 
 	// DefaultMediaMaxParticipants is the participant cap applied to Beeper,
-	// Slack, Discord, and Teams media collection when a config file omits
-	// media_max_participants. Media from rooms above this size is skipped
-	// with a typed participant_threshold marker; direct chats and small
-	// groups keep theirs. NewDefaultConfig pre-fills the four provider
+	// Slack, Discord, Teams, and iMessage media collection when a config file
+	// omits media_max_participants. Media from rooms above this size is
+	// skipped with a typed participant_threshold marker; direct chats and
+	// small groups keep theirs. NewDefaultConfig pre-fills the five provider
 	// fields so a file that omits the key inherits the cap, while an explicit
 	// media_max_participants = 0 still means "no cap" because TOML decoding
 	// overwrites the pre-filled value with the operator's zero.
@@ -582,6 +582,7 @@ type Config struct {
 	Activity           ActivityConfig                  `toml:"activity"`
 	People             PeopleConfig                    `toml:"people"`
 	Teams              TeamsConfig                     `toml:"teams"`
+	IMessage           IMessageConfig                  `toml:"imessage"`
 	Deletion           DeletionConfig                  `toml:"deletion"`
 	IMAP               IMAPConfig                      `toml:"imap"`
 	Gmail              GmailConfig                     `toml:"gmail"`
@@ -871,10 +872,11 @@ func NewDefaultConfig() *Config {
 		SynctechSMS: SynctechSMSConfig{Sources: []SynctechSMSSource{}},
 		GCal:        []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
-		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Beeper:   BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Slack:    SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -1676,6 +1678,14 @@ type TeamsConfig struct {
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
+// IMessageConfig configures media limits for import-imessage ([imessage]
+// table). MediaMaxParticipants follows the same omitted-versus-explicit-zero
+// rule as the other providers.
+type IMessageConfig struct {
+	MediaMaxParticipants int `toml:"media_max_participants"`
+	MaxMediaMB           int `toml:"max_media_mb"`
+}
+
 // MediaEnabled reports whether file download is on (default true).
 func (s SlackConfig) MediaEnabled() bool {
 	return s.Media == nil || *s.Media
@@ -1750,6 +1760,12 @@ func (t TeamsConfig) MediaPolicy(email string) attachmentpolicy.Policy {
 		t.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
 }
 
+// MediaPolicy resolves the [imessage] media limits.
+func (i IMessageConfig) MediaPolicy() attachmentpolicy.Policy {
+	return resolveMediaPolicy(nil, "", i.MediaMaxParticipants,
+		i.MaxMediaMB, DefaultChatMaxMediaBytes, MediaAccountConfig{}, false)
+}
+
 func resolveMediaPolicy(
 	providerMedia *bool,
 	scope string,
@@ -1803,22 +1819,30 @@ func (c *Config) validateMediaPolicies() error {
 			accountMaxMedia: discordGuildMaximums(c.Discord.Guilds)},
 		{name: "teams", policy: c.Teams.MediaPolicy(""), providerMaxMB: c.Teams.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Teams.AccountsConfig)},
+		{name: "imessage", policy: c.IMessage.MediaPolicy(), providerMaxMB: c.IMessage.MaxMediaMB},
 	}
 	for _, provider := range providers {
-		if provider.providerMaxMB < 0 {
-			return fmt.Errorf("invalid [%s] max_media_mb %d: must be zero or positive", provider.name, provider.providerMaxMB)
+		if !validMaxMediaMB(provider.providerMaxMB) {
+			return fmt.Errorf("invalid [%s] max_media_mb %d: must be between 0 and %d", provider.name, provider.providerMaxMB, maxMediaMBLimit)
 		}
 		if err := provider.policy.Validate(); err != nil {
 			return fmt.Errorf("invalid [%s] attachment policy: %w", provider.name, err)
 		}
 		for account, maxMediaMB := range provider.accountMaxMedia {
-			if maxMediaMB < 0 {
-				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be zero or positive",
-					provider.name, account, maxMediaMB)
+			if !validMaxMediaMB(maxMediaMB) {
+				return fmt.Errorf("invalid [%s] account %q max_media_mb %d: must be between 0 and %d",
+					provider.name, account, maxMediaMB, maxMediaMBLimit)
 			}
 		}
 	}
 	return nil
+}
+
+// maxMediaMBLimit is the largest max_media_mb whose byte count fits in an int64.
+const maxMediaMBLimit = math.MaxInt64 >> 20
+
+func validMaxMediaMB(mb int) bool {
+	return mb >= 0 && int64(mb) <= maxMediaMBLimit
 }
 
 func mediaAccountMaximums(accounts map[string]MediaAccountConfig) map[string]int {

@@ -2035,6 +2035,10 @@ copied trees, and voice notes.
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
 | `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
 | `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
+| `--max-media-mb` | `0` | Skip files larger than this many MiB; `0` uses `max_media_mb` from `[imessage]` (default 250) |
+
+The participant limit and the default size cap come from `[imessage]` in
+[Configuration](/docs/configuration/#imessage).
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 

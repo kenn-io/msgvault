@@ -406,16 +406,21 @@ func TestPurgeExcludedMediaAppliesIMessageParticipantLimit(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		members int
+		limit   int
 		purged  bool
 	}{
-		{"over the default limit", 21, true},
-		{"at the default limit", 20, false},
+		{"over the limit", 21, config.DefaultMediaMaxParticipants, true},
+		{"at the limit", 20, config.DefaultMediaMaxParticipants, false},
+		{"within a raised configured limit", 21, 30, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
-			cfg := &config.Config{Data: config.DataConfig{DataDir: t.TempDir()}}
+			cfg := &config.Config{
+				Data:     config.DataConfig{DataDir: t.TempDir()},
+				IMessage: config.IMessageConfig{MediaMaxParticipants: tc.limit},
+			}
 			source, err := st.GetOrCreateSource(sourceTypeAppleMessages, "local")
 			require.NoError(err)
 			conversationID, err := st.EnsureConversationWithType(source.ID, "any;+;group", "group_chat", "Group")

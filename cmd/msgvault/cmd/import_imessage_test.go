@@ -1,14 +1,19 @@
 package cmd
 
 import (
+	"bytes"
 	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -22,7 +27,6 @@ func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
 		noAttachments bool
 		wantStored    bool
 	}{
-		{"capture stores the bytes in the archive", false, true},
 		{"--no-attachments stores none", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,7 +44,7 @@ func TestBuildImessageOptsWiresAttachmentCapture(t *testing.T) {
 			src, err := resolveImessageSource(s)
 			requirements.NoError(err)
 
-			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments)
+			opts, err := buildImessageOpts(slog.Default(), archive, messagesRoot, tc.noAttachments, config.IMessageConfig{}.MediaPolicy())
 			requirements.NoError(err)
 			client, err := imessage.NewClient(chatPath, opts...)
 			requirements.NoError(err)
@@ -153,6 +157,106 @@ func TestResolveImessageSource(t *testing.T) {
 			src, err := resolveImessageSource(s)
 			require.NoError(err, "resolveImessageSource")
 			assert.Equal(t, tt.wantIdentifier, src.Identifier, "identifier")
+		})
+	}
+}
+
+// restoreImessageFlags returns the flags a test sets through the root command
+// to their registered defaults and resets the command's output and arguments.
+func restoreImessageFlags(t *testing.T) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, flags := range []*pflag.FlagSet{rootCmd.PersistentFlags(), importImessageCmd.Flags()} {
+			flags.VisitAll(func(flag *pflag.Flag) {
+				_ = flag.Value.Set(flag.DefValue)
+				flag.Changed = false
+			})
+		}
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+	})
+}
+
+// runImessageImport runs the real command in its daemon subprocess role
+// against a temporary home holding config.toml.
+func runImessageImport(t *testing.T, home string, args ...string) {
+	t.Helper()
+	restoreImessageFlags(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	rootCmd.SetArgs(append([]string{"--home", home, "import-imessage"}, args...))
+	done := captureStdout(t)
+	err := executeRootContext(t.Context(), rootCmd)
+	output := done()
+	require.NoError(t, err, output)
+}
+
+// Config limits and --max-media-mb must both reach the importer through the
+// command. Dropping either from the policy handoff leaves the attachment
+// stored and fails the case that sets it.
+func TestImessageMediaLimitsChangeStoredAttachments(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		toml  string
+		flags []string
+		state attachmentpolicy.DownloadState
+	}{
+		{"config size cap", "[imessage]\nmax_media_mb = 1\n", nil, attachmentpolicy.StateSkipped},
+		{"flag raises config cap", "[imessage]\nmax_media_mb = 1\n", []string{"--max-media-mb=5"}, attachmentpolicy.StateStored},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			home := t.TempDir()
+			require.NoError(os.WriteFile(filepath.Join(home, "config.toml"), []byte(tc.toml), 0o600))
+			chatPath, chat := testutil.NewIMessageAttachmentChatDB(t)
+			_, err := chat.Exec(`UPDATE attachment SET total_bytes=?`, 2<<20)
+			require.NoError(err)
+			root := t.TempDir()
+			require.NoError(os.MkdirAll(filepath.Join(root, "Attachments"), 0o700))
+			require.NoError(os.WriteFile(filepath.Join(root, "Attachments", "voice.caf"), make([]byte, 2<<20), 0o600))
+
+			runImessageImport(t, home, append([]string{"--db-path", chatPath, "--messages-root", root}, tc.flags...)...)
+
+			st, err := store.Open(filepath.Join(home, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { _ = st.Close() })
+			src, err := resolveImessageSource(st)
+			require.NoError(err)
+			var messageID int64
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT id FROM messages WHERE source_id=? AND source_message_id=?`), src.ID, "1").Scan(&messageID))
+			refs, err := st.MessageIMessageAttachmentsContext(t.Context(), messageID)
+			require.NoError(err)
+			require.Len(refs, 1)
+			ref := refs["imessage:1"]
+			assert.Equal(tc.state, ref.State)
+			if tc.state == attachmentpolicy.StateStored {
+				assert.FileExists(filepath.Join(home, "attachments", ref.StoragePath))
+			}
+		})
+	}
+}
+
+// A bad --max-media-mb fails in PreRunE, so the archive is never created.
+func TestImessageMaxMediaMBRejectedBeforeStoreOpens(t *testing.T) {
+	for name, flag := range map[string]string{
+		"negative":        "--max-media-mb=-1",
+		"overflows bytes": "--max-media-mb=9223372036854775807",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			restoreImessageFlags(t)
+			home := t.TempDir()
+			var output bytes.Buffer
+			rootCmd.SetOut(&output)
+			rootCmd.SetErr(&output)
+			rootCmd.SetArgs([]string{"--home", home, "import-imessage", "--db-path", filepath.Join(home, "chat.db"), flag})
+
+			err := executeRootContext(t.Context(), rootCmd)
+			require.Error(err)
+			require.ErrorContains(err, "--max-media-mb")
+			assert.Contains(output.String(), "Usage:", "a bad flag prints usage")
+			assert.NoFileExists(filepath.Join(home, "msgvault.db"))
 		})
 	}
 }

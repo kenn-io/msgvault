@@ -151,6 +151,13 @@ are `.caf` files. They stay in the archive but are not transcribed, because
 Docbank only takes the audio formats listed in
 [Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank).
 Pass `--no-attachments` to record attachment metadata without copying files.
+Set the participant and size limits under `[imessage]` in `config.toml`, or
+override the size for one run with `--max-media-mb`; see
+[Configuration](/docs/configuration/#imessage). Skipped attachments keep their
+metadata and the reason they were skipped. Rerunning with a stricter limit keeps
+the bytes already archived for files that have not changed. With
+`--no-attachments` the limits aren't applied, and attachments are recorded as
+metadata only.
 
 Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
 missing dates. msgvault retains those messages and their raw timestamp
@@ -175,6 +182,7 @@ Keep the original `--db-path` and `--me` options if you supplied them.
 | `--contacts` | — | Path to a `.vcf` file used to backfill participant display names |
 | `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
 | `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
+| `--max-media-mb` | `0` | Skip files larger than this many MiB; `0` uses `max_media_mb` from `[imessage]` (default 250) |
 
 ### Examples
 

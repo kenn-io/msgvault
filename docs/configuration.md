@@ -750,9 +750,10 @@ included parent. `exclude` wins when the same ID is in both lists. See
 
 ### Media policy
 
-`[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
-vocabulary. It decides which chat media is downloaded during sync and backfill;
-message text is always archived.
+`[beeper]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share one
+attachment policy vocabulary. It decides which chat media is downloaded during
+sync and backfill; message text is always archived. `[imessage]` takes only
+`media_max_participants` and `max_media_mb`.
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
@@ -1546,6 +1547,24 @@ max_media_mb = 500
 | `max_media_mb` | `250` | Per-attachment download cap in MiB |
 | `accounts_config` | — | Per-account overrides of `media` and `max_media_mb`, keyed by the Teams account email |
 
+### `[imessage]`
+
+Media limits for [`import-imessage`](/docs/usage/text-messages/). The command
+reads these keys on every run; the `--max-media-mb` flag overrides
+`max_media_mb` for one run. [`purge-excluded-media`](cli-reference.md#purge-excluded-media)
+reads the same keys, so it removes stored iMessage attachments that exceed them.
+
+```toml
+[imessage]
+media_max_participants = 20
+max_media_mb = 250
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `media_max_participants` | `20` | Skip media from chats with more participants than this, counting you; `0` = no cap |
+| `max_media_mb` | `250` | Per-attachment size cap in MiB |
+
 ### Omi Sources
 
 Use one `[[omi]]` entry per hosted or self-hosted Omi account. Register each
@@ -2269,7 +2288,7 @@ auto_confirm_identities = false
 # Per-attachment download cap (default: 50 MiB)
 max_media_bytes = 52428800
 # Skip attachments from rooms with more than this many participants
-# (default: 20; 0 = no cap). Shared by [beeper], [slack], and [teams].
+# (default: 20; 0 = no cap). Shared by [beeper], [slack], [teams], and [imessage].
 media_max_participants = 20
 # Trailing edit/delete/reaction repair window (default: seven days)
 edit_rescan_window = "168h"
