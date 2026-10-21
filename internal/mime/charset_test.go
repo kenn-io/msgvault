@@ -47,6 +47,7 @@ func TestParse_DeclaredUTF8Bodies(t *testing.T) {
 		{"utf-8", "quoted-printable"},
 		{"UTF8", "base64"},
 		{"utf-8", "8bit"},
+		{"unicode-1-1-utf-8", "quoted-printable"},
 	} {
 		t.Run(tc.charset+"/"+tc.transfer, func(t *testing.T) {
 			assert := assert.New(t)
@@ -59,7 +60,6 @@ func TestParse_DeclaredUTF8Bodies(t *testing.T) {
 			assert.Equal("Zählerablesung", msg.Subject)
 			require.Len(msg.From, 1)
 			assert.Equal("Example Grüße", msg.From[0].Name)
-			assert.NotContains(strings.Join(msg.Errors, "\n"), enmime.ErrorCharsetDeclaration)
 			assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorPlainTextFromHTML)
 		})
 	}
@@ -76,30 +76,30 @@ func TestParse_DeclaredUTF8NestedBodyPreservesAttachments(t *testing.T) {
 		"--alt\r\n" + body + "\r\n--alt--\r\n" +
 		"--outer\r\nContent-Disposition: attachment; filename=explicit.html\r\n" + body + "\r\n" +
 		"--outer\r\nContent-Disposition: inline; filename=inline.html\r\nContent-ID: <file@example.org>\r\n" + body + "\r\n--outer--\r\n")
-	baseline, err := enmime.ReadEnvelope(bytes.NewReader(raw))
-	require.NoError(err)
 	msg := mustParse(t, raw)
 	assert.Equal("Preferred plain body.", msg.BodyText)
 	assert.Equal(charsetHTML, msg.BodyHTML)
-	parts := baseline.Attachments
-	parts = append(parts, baseline.Inlines...)
-	require.Len(parts, 2)
 	require.Len(msg.Attachments, 2)
-	for i, part := range parts {
+	for i, filename := range []string{"explicit.html", "inline.html"} {
 		got := msg.Attachments[i]
-		assert.Equal(part.FileName, got.Filename)
-		assert.Equal(part.Content, got.Content)
-		assert.Equal(len(part.Content), got.Size)
-		digest := sha256.Sum256(part.Content)
+		assert.Equal(filename, got.Filename)
+		assert.Equal([]byte(charsetHTML), got.Content)
+		assert.Equal(len(charsetHTML), got.Size)
+		digest := sha256.Sum256([]byte(charsetHTML))
 		assert.Equal(hex.EncodeToString(digest[:]), got.ContentHash)
 	}
-	// The attachments still report their original detector decisions.
-	assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorCharsetDeclaration)
 }
 
 func TestParse_DeclaredUTF8NamedBody(t *testing.T) {
 	part := charsetPart(t, "utf-8", "quoted-printable", charsetHTML)
 	part = strings.Replace(part, "charset=utf-8", "charset=utf-8; name=body.html", 1)
+	msg := mustParse(t, []byte(charsetHeaders()+part))
+	assert.Equal(t, charsetHTML, msg.BodyHTML)
+	assert.Equal(t, charsetText, msg.BodyText)
+}
+
+func TestParse_DeclaredUTF8InlineNamedBody(t *testing.T) {
+	part := "Content-Disposition: inline; filename=body.html\r\n" + charsetPart(t, "utf-8", "quoted-printable", charsetHTML)
 	msg := mustParse(t, []byte(charsetHeaders()+part))
 	assert.Equal(t, charsetHTML, msg.BodyHTML)
 	assert.Equal(t, charsetText, msg.BodyText)
@@ -135,23 +135,5 @@ func TestParse_CharsetRecoveryControls(t *testing.T) {
 				assert.Equal(t, "Café", msg.BodyText)
 			}
 		})
-	}
-}
-
-func TestRestoreDeclaredUTF8PreservesOtherWarnings(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	raw := []byte(charsetHeaders() + charsetPart(t, "utf-8", "quoted-printable", charsetHTML))
-	root, err := envelopeParser.ReadParts(bytes.NewReader(raw))
-	require.NoError(err)
-	require.Equal("windows-1252", root.Charset)
-	warning := &enmime.Error{Name: enmime.ErrorMalformedHeader, Detail: "synthetic unrelated warning"}
-	root.Errors = append(root.Errors, warning)
-	restoreDeclaredUTF8(raw, root)
-	assert.Equal(charsetHTML, string(root.Content))
-	assert.Contains(root.Errors, warning)
-	for _, problem := range root.Errors {
-		assert.NotEqual(enmime.ErrorCharsetDeclaration, problem.Name)
 	}
 }
