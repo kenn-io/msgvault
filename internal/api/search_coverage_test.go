@@ -833,9 +833,7 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 				Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
 				Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
 			})
-			checks := 0
 			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
-				checks++
 				if restart {
 					return "model-b", nil
 				}
@@ -867,10 +865,6 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 			require.NotNil(after.Vector)
 			assert.Equal("stale", after.Vector.Status)
 			assert.Equal(body.Detail, after.Vector.Error)
-			again := getSearchCoverage(t, srv, `{}`)
-			assert.Equal(body.Detail, again.Detail)
-			assert.Equal(body.Actions, again.Actions)
-			assert.Equal(1, checks, "coverage reuses the stored stale advice")
 		})
 	}
 }

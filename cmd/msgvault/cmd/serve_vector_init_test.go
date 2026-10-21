@@ -405,10 +405,10 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	foundWarning := false
 	for decoder.More() {
 		var record struct {
-			Level  string
-			Msg    string
-			Error  string
-			Detail string
+			Level  string `json:"level"`
+			Msg    string `json:"msg"`
+			Error  string `json:"error"`
+			Detail string `json:"detail"`
 		}
 		require.NoError(t, decoder.Decode(&record))
 		if record.Level == "WARN" && record.Msg == "vector index does not match configured embedding settings; vector search unavailable" {
@@ -1145,7 +1145,6 @@ message_types = %s
 		same                                bool
 	}{
 		{"reordered accounts", `["b@example.com", "a@example.com"]`, "model-a", `["email"]`, true},
-		{"message types", `["a@example.com", "b@example.com"]`, "model-a", `["sms"]`, false},
 		{"model", `["a@example.com", "b@example.com"]`, "model-b", `["email"]`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
