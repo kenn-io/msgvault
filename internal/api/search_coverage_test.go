@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"sync"
 	"testing"
@@ -825,8 +826,9 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 	for _, restart := range []bool{true, false} {
 		t.Run(strconv.FormatBool(restart), func(t *testing.T) {
 			assert := assert.New(t)
-			backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: "model-b"}}
+			require := require.New(t)
 			cfg := vector.Config{Enabled: true}
+			backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: cfg.GenerationFingerprint()}}
 			srv := NewServerWithOptions(ServerOptions{
 				Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
 				Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
@@ -839,6 +841,14 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 				}
 				return "model-c", nil
 			})
+			health := httptest.NewRecorder()
+			srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+			require.Equal(http.StatusOK, health.Code)
+			var initial HealthResponse
+			require.NoError(json.Unmarshal(health.Body.Bytes(), &initial))
+			require.NotNil(initial.Vector)
+			require.Equal("ready", initial.Vector.Status)
+			backend.active = vector.Generation{ID: 2, Fingerprint: "model-b"}
 			body := getSearchCoverage(t, srv, `{}`)
 			assert.Equal(SearchCoverageStale, body.Status)
 			assert.Equal("model-b", body.VectorFingerprint)
@@ -846,9 +856,17 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 				assert.Contains(body.Detail, "msgvault daemon restart")
 				assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
 			} else {
-				assert.NotContains(body.Detail, "--full-rebuild")
+				assert.Contains(body.Detail, "--full-rebuild")
 				assert.Contains(body.Actions, SearchCoverageActionBuildIndex)
 			}
+			health = httptest.NewRecorder()
+			srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+			require.Equal(http.StatusOK, health.Code)
+			var after HealthResponse
+			require.NoError(json.Unmarshal(health.Body.Bytes(), &after))
+			require.NotNil(after.Vector)
+			assert.Equal("stale", after.Vector.Status)
+			assert.Equal(body.Detail, after.Vector.Error)
 			again := getSearchCoverage(t, srv, `{}`)
 			assert.Equal(body.Detail, again.Detail)
 			assert.Equal(body.Actions, again.Actions)

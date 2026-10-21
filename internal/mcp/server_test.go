@@ -3902,7 +3902,7 @@ func TestFindSimilarMessages_RejectsStaleActiveGeneration(t *testing.T) {
 	})
 	txt := resultText(t, r)
 	assert.Contains(txt, "index_stale", "expected stale-index error, got: %s", txt)
-	assert.Contains(txt, "run `msgvault daemon status` for the recovery step")
+	assert.Contains(txt, "if the embedding settings on the archive host changed since its daemon started, restart that daemon")
 	assert.Equal(0, fb.searchCalls, "backend search calls")
 	assert.Equal(0, fb.loadCalls, "seed vector load calls")
 }

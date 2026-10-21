@@ -282,13 +282,12 @@ func (s *Server) resolveSearchCoverageGeneration(
 	}
 	switch {
 	case errors.Is(err, vector.ErrIndexStale):
+		s.MarkVectorIndexStale(ctx, err)
+		_, detail = s.VectorStatus()
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		fullBuildAvailable := buildingErr == nil && (building == nil ||
 			expectedFingerprint == "" || building.Fingerprint == expectedFingerprint)
 		restart := strings.HasSuffix(detail, vectorRestartAdvice)
-		if !restart {
-			detail = err.Error()
-		}
 		return SearchCoverageStale, detail, &generation, fullBuildAvailable && !restart
 	case errors.Is(err, vector.ErrIndexBuilding):
 		building, buildingErr := backend.BuildingGeneration(ctx)
