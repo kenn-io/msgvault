@@ -78,6 +78,8 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			{name: "failure", fails: true},
 			{name: "checking", indexState: "checking"},
 			{name: "unverified", indexState: "unverified"},
+			{name: "building", indexState: "building"},
+			{name: "awaiting owner", indexState: "awaiting_owner"},
 			{name: "paused", paused: true},
 			{name: "output failure", outputFails: true},
 			{name: "JSON output failure", outputFails: true, json: true},

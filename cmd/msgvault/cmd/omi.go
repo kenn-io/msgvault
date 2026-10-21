@@ -285,7 +285,7 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, 
 		return nil
 	}
 	if src.APIKey == "" {
-		return fmt.Errorf("omi source %q has no api_key", src.Identifier)
+		return recordSyncAttempt(ctx, omi.SourceType, src.Identifier, fmt.Errorf("omi source %q has no api_key", src.Identifier))
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {

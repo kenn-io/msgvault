@@ -248,7 +248,7 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 	}
 	client, err := newTwentyClient(source.BaseURL, source.APIKey)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}
 	summary, importErr := twenty.NewImporter(st, client).Import(ctx, twenty.ImportOptions{Identifier: source.Identifier, AccountEmail: email})
 	run := meetingSyncRun{provider: "twenty", identifier: source.Identifier, err: importErr}

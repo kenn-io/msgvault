@@ -49,11 +49,15 @@ func TestMeetingSetupFailuresAreRecorded(t *testing.T) {
 		sources = append(sources, props["sync_source"])
 		return nil
 	}}
-	for _, sourceType := range []string{"granola", "notion_meetings"} {
+	for _, sourceType := range []string{"granola", "notion_meetings", "omi", "twenty"} {
 		_, err := st.Store.GetOrCreateSource(sourceType, "work")
 		require.NoError(err)
 	}
 	require.ErrorContains(runConfiguredGranolaSync(ctx, st.Store, config.GranolaSource{Identifier: "work"}), "has no api_key")
 	require.ErrorContains(runConfiguredNotionMeetingsSync(ctx, st.Store, config.NotionMeetingsSource{Identifier: "work"}), "has no token")
-	assert.Equal([]any{"granola", "notion_meetings"}, sources)
+	for range 2 {
+		require.ErrorContains(runConfiguredOmiSync(ctx, st.Store, t.TempDir(), config.OmiSource{Identifier: "work"}), "has no api_key")
+		require.ErrorContains(runConfiguredTwentySync(ctx, st.Store, config.TwentySource{Identifier: "work", AccountEmail: "owner@example.com", BaseURL: "https://api.example.com"}), "api_key")
+	}
+	assert.Equal([]any{"granola", "notion_meetings", "omi", "twenty"}, sources)
 }

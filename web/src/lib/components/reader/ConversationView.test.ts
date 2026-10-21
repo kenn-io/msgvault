@@ -427,6 +427,50 @@ describe('ConversationView', () => {
     ]));
   });
 
+  it.each(['collapsed pending', 'collapse', 'navigate', 'unmount', 'retry', 'visible'])(
+    'reports body failures only while displayed: %s', async (action) => {
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(
+        action === 'collapsed pending' ? 'visible' : 'hidden',
+      );
+      let resolveBody!: (response: Response) => void;
+      const client = createAPIClient(async (input) => {
+        if (new URL((input as Request).url).pathname.includes('/messages/')) {
+          return new Promise<Response>((resolve) => { resolveBody = resolve; });
+        }
+        return Response.json({ id: 7, anchor_id: 1, messages: [omittedMessage(1)], has_before: false, has_after: false, total: 1 });
+      });
+      const view = render(ConversationView, { props: { client, conversationId: 7, anchorId: 1 } });
+      await screen.findByText('Loading message…');
+      if (action === 'collapsed pending') await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+      resolveBody(Response.json({ message: 'Body unavailable' }, { status: 500 }));
+      if (action === 'collapsed pending') {
+        await tick();
+        await tick();
+        expect(screen.queryByRole('alert')).toBeNull();
+      } else {
+        await screen.findByRole('alert');
+        if (action === 'collapse' || action === 'retry') {
+          await fireEvent.click(screen.getByRole('button', { name: /Collapse message 1/ }));
+          if (action === 'retry') {
+            await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+            await screen.findByText('Loading message…');
+          }
+        } else if (action === 'navigate') {
+          await view.rerender({ client, conversationId: 8, anchorId: 1 });
+          await screen.findByText('Loading message…');
+        } else if (action === 'unmount') view.unmount();
+      }
+      visibility.mockReturnValue('visible');
+      await fireEvent(document, new Event('visibilitychange'));
+      await fireEvent(window, new Event('focus'));
+      await Promise.all(telemetryRequests);
+      expect(telemetryEvents).toEqual(action === 'visible'
+        ? [{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]
+        : []);
+      visibility.mockRestore();
+    },
+  );
+
   it('keeps omitted-body messages as snippet cards without fetching their bodies', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

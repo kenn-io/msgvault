@@ -1405,7 +1405,9 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			updated.submittedQuery = ""
 			kind := "other"
 			switch msg.(type) {
-			case dataLoadedMsg, searchResultsMsg, textMessagesLoadedMsg, textSearchResultMsg, meetingSearchLoadedMsg:
+			case searchResultsMsg, textSearchResultMsg, meetingSearchLoadedMsg:
+				kind = "search"
+			case dataLoadedMsg, textMessagesLoadedMsg:
 				if m.mode == modeEmail && m.searchQuery != "" || m.mode == modeTexts && m.textState.filter.SearchQuery != "" || m.mode == modeMeetings && m.meetingState.searchQuery != "" {
 					kind = "search"
 				}

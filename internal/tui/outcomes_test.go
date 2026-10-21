@@ -84,6 +84,7 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 		msg  tea.Msg
 	}{
 		{"search", "search", modeEmail, searchResultsMsg{err: errors.New("synthetic")}},
+		{"global texts search", "search", modeTexts, textSearchResultMsg{err: errors.New("synthetic")}},
 		{"message", "message", modeEmail, messageDetailLoadedMsg{err: errors.New("synthetic")}},
 		{"texts browse", "other", modeTexts, textConversationsLoadedMsg{err: errors.New("synthetic")}},
 		{"archive browse", "other", modeEmail, dataLoadedMsg{err: errors.New("synthetic")}},
