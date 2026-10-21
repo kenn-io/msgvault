@@ -1685,6 +1685,10 @@ type ImportCallObservationResponse = CallImportResponse
 
 type ImportCallObservationErrorResponse = ErrorResponse
 
+type ImportSlackHuddleResponse = CallImportResponse
+
+type ImportSlackHuddleErrorResponse = ErrorResponse
+
 type ImportMeetingResponse = MeetingImportResponse
 
 type ImportMeetingResponseJSON = MeetingImportResponse
@@ -5604,6 +5608,14 @@ type ImportCallObservationResp struct {
 	StatusCode   int
 	JSON200      *ImportCallObservationResponse
 	JSONDefault  *ImportCallObservationErrorResponse
+}
+
+type ImportSlackHuddleResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportSlackHuddleResponse
+	JSONDefault  *ImportSlackHuddleErrorResponse
 }
 
 type ImportMeetingResp struct {

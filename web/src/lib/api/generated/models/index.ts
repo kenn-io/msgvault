@@ -976,6 +976,7 @@ export * from "./settingValidation";
 export * from "./settingValidationFormat";
 export * from "./settingValue";
 export * from "./similarSearchResponse";
+export * from "./slackCallImportRequest";
 export * from "./snoozeLoopParams";
 export * from "./snoozeLoopPathParameters";
 export * from "./snoozeLoopRequest";

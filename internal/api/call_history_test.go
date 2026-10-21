@@ -193,3 +193,48 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 		assertions.Equal(200, out.Code, out.Body.String())
 	})
 }
+
+func TestSlackCallArchiveImportHTTP(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	archive := testutil.NewTestStore(t)
+	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
+	gate := NewSerialOperationGate()
+	server := NewServerWithOptions(ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey, AgentAccess: true}}, Store: st, Logger: testLogger(), OperationGate: gate})
+	for _, tc := range []struct {
+		body, key string
+		status    int
+	}{
+		{`{"message_id":1}`, "", 401},
+		{`{`, meetingImportTestAPIKey, 400},
+		{`{"message_id":0}`, meetingImportTestAPIKey, 422},
+		{`{"message_id":-1}`, meetingImportTestAPIKey, 422},
+		{`{"message_id":1,"extra":true}`, meetingImportTestAPIKey, 400},
+		{`{"message_id":999999}`, meetingImportTestAPIKey, 422},
+		{strings.Repeat(" ", callhistory.MaxRequestBytes+1), meetingImportTestAPIKey, 413},
+	} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/calls/slack", strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", tc.key)
+		out := httptest.NewRecorder()
+		server.Router().ServeHTTP(out, req)
+		assert.Equal(tc.status, out.Code, out.Body.String())
+	}
+	release, ok := gate.BeginWork()
+	require.True(ok)
+	defer release()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/import/calls/slack", strings.NewReader(`{"message_id":999999}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+	out := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { server.Router().ServeHTTP(out, req); close(done) }()
+	require.Eventually(gate.HasRequestWaiters, 5*time.Second, 10*time.Millisecond)
+	release()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow("Slack import did not finish after gate release")
+	}
+	assert.Equal(422, out.Code, out.Body.String())
+}

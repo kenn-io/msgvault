@@ -170,6 +170,7 @@ Reimporting the same `record_id` for the same provider and account replaces its 
 | Route | Contract |
 | --- | --- |
 | `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
+| `POST /api/v1/import/calls/slack` | Derive one archived huddle from `{"message_id": 123}`. Uses the source account and existing Slack identifiers; returns `message_id` and `source_id`. Requires schema 5.3.0. |
 | `GET /api/v1/calls` | Typed observations. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
 | `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
 
@@ -187,7 +188,9 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **5.2.0**.
+it is separate from the binary release version. The current schema is **5.3.0**.
+
+Schema 5.3.0 adds supplied and archived Slack huddle imports.
 
 Schema 5.2.0 adds owner-only call evidence import, inspection, and person summaries.
 

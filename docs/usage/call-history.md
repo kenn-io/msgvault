@@ -44,6 +44,7 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Signal `Deleted` rows are rejected. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
+| `slack_huddle` | Requires daemon API 5.2.0 or newer. One huddle message JSON; account is `<workspace_id>:<owner_user_id>`. Bindings may name roster peers other than the owner. Attendance remains unknown. |
 | `normalized` | A version-1 observation with provider/account, record ID, direction, outcome, owner participation, occurrence time, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. Reimporting the same `record_id` replaces its evidence. See the example below. |
 
 This normalized request binds the call to existing archive participant `42`. Timestamps use RFC3339; `ended_at` is optional.
@@ -77,6 +78,49 @@ The first supplied label fills an empty source display name unless it conflicts 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
+
+## Import an archived Slack huddle
+
+With daemon API 5.2.0 or newer, derive one huddle from a message already
+archived by the native Slack or Slack export importer:
+
+```sh
+msgvault calls import-slack 123
+```
+
+Use the archive message ID, not Slack's timestamp or room ID. The daemon reads
+that message's original `slack_json`, derives the workspace and owner from its
+source, and binds peers through existing workspace-scoped Slack identifiers.
+Unknown identities remain unbound. This command makes no requests to Slack.
+Reimporting the same room and account replaces its observation.
+
+To supply a payload instead, `calls import huddle.json` accepts this request:
+
+```json
+{
+  "format": "slack_huddle",
+  "account": "T_EXAMPLE:U_OWNER",
+  "record": {
+    "type": "message",
+    "subtype": "huddle_thread",
+    "team": "T_EXAMPLE",
+    "ts": "1790841600.000001",
+    "room": {
+      "id": "R_EXAMPLE",
+      "date_start": 1790841600,
+      "date_end": 0,
+      "participant_history": ["U_OWNER", "U_PEER"]
+    }
+  },
+  "bindings": {"U_PEER": 42}
+}
+```
+
+Room timestamps use Unix seconds; a missing or zero end stays unknown.
+Roster presence, invitations, creator and sender do not establish an answer
+or joined attendance. Associated people count under `unknown`; elapsed room
+time is not talk duration. The imported observation is an independent snapshot:
+deleting or retiring the original Slack source does not delete it.
 
 ## Read the evidence and counts
 

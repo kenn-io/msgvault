@@ -443,6 +443,7 @@ import type {
   SettingsPatchRequest,
   SettingsResponse,
   SimilarSearchResponse,
+  SlackCallImportRequest,
   SnoozeLoopParams,
   SnoozeLoopPathParameters,
   SnoozeLoopRequest,
@@ -1992,6 +1993,23 @@ export const importCallObservation = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: callImportRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Derive call evidence from one archived Slack huddle
+ */
+export const importSlackHuddle = (
+  slackCallImportRequest: SlackCallImportRequest,
+  options?: SecondParameter<typeof orvalFetch<CallImportResponse>>,
+) => {
+  return orvalFetch<CallImportResponse>(
+    {
+      url: `/api/v1/import/calls/slack`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: slackCallImportRequest,
     },
     options,
   );

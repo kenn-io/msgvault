@@ -15805,6 +15805,14 @@ func (s SimilarSearchResponse) Validate() error {
 	return errors
 }
 
+type SlackCallImportRequest struct {
+	MessageID int64 `json:"message_id" validate:"gte=1"`
+}
+
+func (s SlackCallImportRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type SnoozeLoopRequest struct {
 	Until time.Time `json:"until" validate:"required"`
 }

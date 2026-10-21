@@ -55,3 +55,13 @@ func (c *Client) SummarizeCalls(ctx context.Context, q store.CallQuery) (*genera
 	}
 	return resp.JSON200, nil
 }
+
+func (c *Client) ImportSlackHuddle(ctx context.Context, messageID int64) (*generated.CallImportResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ImportSlackHuddleResp, error) {
+		return client.ImportSlackHuddleWithResponse(ctx, &generated.ImportSlackHuddleRequestOptions{Body: &generated.ImportSlackHuddleBody{MessageID: messageID}})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.JSON200, nil
+}

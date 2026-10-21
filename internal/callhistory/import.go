@@ -14,7 +14,7 @@ var ErrMalformedImport = errors.New("malformed call import JSON")
 
 // ImportRequest accepts one supplied record, never credentials or database
 // paths. Account is the stable source namespace. Bindings explicitly map
-// Signal peer IDs to existing archive participant IDs.
+// Signal peer IDs or Slack roster IDs to existing archive participant IDs.
 type ImportRequest struct {
 	Format   string           `json:"format"`
 	Account  string           `json:"account"`
@@ -54,6 +54,8 @@ func (r ImportRequest) Observation() (Observation, error) {
 		if o.Account != r.Account {
 			return o, invalid("account mismatch")
 		}
+	case "slack_huddle":
+		o, err = r.slackObservation()
 	case "signal_desktop":
 		o, err = r.signalObservation()
 	default:

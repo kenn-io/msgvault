@@ -15742,6 +15742,16 @@ components:
         - generation
         - messages
       type: object
+    SlackCallImportRequest:
+      additionalProperties: false
+      properties:
+        message_id:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - message_id
+      type: object
     SnoozeLoopRequest:
       additionalProperties: false
       properties:
@@ -23730,6 +23740,33 @@ paths:
       security:
         - apiKey: []
       summary: Import one supplied call observation
+      tags:
+        - API
+  /api/v1/import/calls/slack:
+    post:
+      operationId: importSlackHuddle
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlackCallImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallImportResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Derive call evidence from one archived Slack huddle
       tags:
         - API
   /api/v1/import/meeting:
