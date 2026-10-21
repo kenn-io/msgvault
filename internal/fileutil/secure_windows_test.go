@@ -3,6 +3,8 @@
 package fileutil
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,36 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
 )
+
+func TestSecureMkdirAllProtectedAtCreation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a", "b", "tokens")
+	var logs bytes.Buffer
+	logger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(logger) })
+
+	original := createDirectory
+	t.Cleanup(func() { createDirectory = original })
+	var calls []string
+	createDirectory = func(path16 *uint16, attributes *windows.SecurityAttributes) error {
+		err := windows.CreateDirectory(path16, attributes)
+		require.NoError(t, err)
+		dir := windows.UTF16PtrToString(path16)
+		if strings.HasPrefix(dir, `\\?\UNC\`) {
+			dir = `\\` + strings.TrimPrefix(dir, `\\?\UNC\`)
+		} else {
+			dir = strings.TrimPrefix(dir, `\\?\`)
+		}
+		assertProtectedDirectory(t, dir)
+		calls = append(calls, dir)
+		return err
+	}
+
+	require.NoError(t, SecureMkdirAll(path, 0o700))
+	assert.Equal(t, []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path}, calls)
+	assert.Empty(t, logs.String(), "protected creation must succeed without falling back")
+}
 
 func TestSecureMkdirAllProtectedDirectories(t *testing.T) {
 	require := require.New(t)

@@ -186,12 +186,14 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 	return nil
 }
 
+var createDirectory = windows.CreateDirectory
+
 func createProtectedDirectory(dir string, attributes *windows.SecurityAttributes) error {
 	path16, err := windows.UTF16PtrFromString(win32CreatePath(dir))
 	if err != nil {
 		return err
 	}
-	return windows.CreateDirectory(path16, attributes)
+	return createDirectory(path16, attributes)
 }
 
 func isDir(path string) bool {
