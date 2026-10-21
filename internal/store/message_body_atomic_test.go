@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -54,6 +55,7 @@ func TestUpsertMessageBodyInvalidatesChatHTMLFallbackRevision(t *testing.T) {
 	require.NoError(err)
 	conversation, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Chat")
 	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "chat", conversationpolicy.Full))
 	id, err := st.UpsertMessage(&store.Message{
 		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "html-fallback",
 		MessageType: "beeper",
@@ -65,6 +67,10 @@ func TestUpsertMessageBodyInvalidatesChatHTMLFallbackRevision(t *testing.T) {
 	}
 	require.NoError(st.UpsertMessageBody(id, sql.NullString{}, html))
 	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	var beforeGeneration sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&beforeGeneration))
+	assert.Equal(sql.NullInt64{Int64: 42, Valid: true}, beforeGeneration)
 	var beforeRevision int64
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT embedding_revision FROM messages WHERE id = ?`), id).Scan(&beforeRevision))
@@ -79,6 +85,10 @@ func TestUpsertMessageBodyInvalidatesChatHTMLFallbackRevision(t *testing.T) {
 	assert.False(embedGen.Valid)
 
 	require.NoError(st.SetEmbedGen(t.Context(), []int64{id}, 42))
+	var beforeHTMLGeneration sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT embed_gen FROM messages WHERE id = ?`), id).Scan(&beforeHTMLGeneration))
+	assert.Equal(sql.NullInt64{Int64: 42, Valid: true}, beforeHTMLGeneration)
 	require.NoError(st.UpsertMessageBodyContext(t.Context(), id, blank, sql.NullString{
 		String: "<p>Updated fallback body</p>", Valid: true,
 	}))

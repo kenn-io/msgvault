@@ -2681,6 +2681,14 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 
 // ReplaceMessageRecipientsContext honors cancellation during ReplaceMessageRecipients.
 func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
+	return s.ReplaceMessageRecipientSetContext(ctx, messageID, RecipientSet{
+		Type: recipientType, ParticipantIDs: participantIDs, DisplayNames: displayNames,
+	})
+}
+
+// ReplaceMessageRecipientSetContext replaces one recipient type while
+// retaining the envelope addresses supplied by the source.
+func (s *Store) ReplaceMessageRecipientSetContext(ctx context.Context, messageID int64, recipients RecipientSet) error {
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
 			return err
@@ -2697,14 +2705,10 @@ func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID i
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
-		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, RecipientSet{
-			Type:           recipientType,
-			ParticipantIDs: participantIDs,
-			DisplayNames:   displayNames,
-		}); err != nil {
+		if err := replaceMessageRecipientsTx(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, recipients); err != nil {
 			return err
 		}
-		if recipientType == "from" {
+		if recipients.Type == "from" {
 			// 'from' rows are attribution input: the message upsert's CTE could not
 			// see the envelope rows this call just replaced, and importers on this
 			// granular path never reach persistMessageWith's final recompute.

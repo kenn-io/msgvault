@@ -99,7 +99,7 @@ func TestCuratedContactPointMutationRefreshesParticipantProjectionAndContext(t *
 }
 
 func TestObservationEligibilityChangeInvalidatesContextualParticipantMessages(t *testing.T) {
-	for _, scenario := range []string{"first Full room support", "native name evidence"} {
+	for _, scenario := range []string{"first Full room support", "native name evidence", "native observation in conversation"} {
 		t.Run(scenario, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -147,6 +147,11 @@ func TestObservationEligibilityChangeInvalidatesContextualParticipantMessages(t 
 				nativeSource, err := s.GetOrCreateSource("whatsapp", "native-observation-context")
 				requirements.NoError(err)
 				input.SourceID = &nativeSource.ID
+				if scenario == "native observation in conversation" {
+					nativeRoom, err := s.EnsureConversation(nativeSource.ID, "native-context", "Native context")
+					requirements.NoError(err)
+					input.ConversationID = &nativeRoom
+				}
 			}
 			_, err = s.RecordContactObservationContext(ctx, participantID, input)
 			requirements.NoError(err)
@@ -163,6 +168,78 @@ func TestObservationEligibilityChangeInvalidatesContextualParticipantMessages(t 
 			assertions.Greater(afterRevision, beforeRevision, "in-flight contextual publication must fail its revision check")
 		})
 	}
+}
+
+func TestDeletingPersonRefreshesParticipantProjectionAndContext(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := testutil.NewTestStore(t)
+	ctx := t.Context()
+	const email = "deleted-person-contact@example.test"
+
+	source, err := s.GetOrCreateSource("beeper", "delete-person-contact-invalidation")
+	requirements.NoError(err)
+	room, err := s.EnsureConversation(source.ID, "full-room", "Full room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, source.ID, "full-room", conversationpolicy.Full))
+	participantID, err := s.EnsureParticipantContext(ctx, email, "Synthetic Contact", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(s.EnsureConversationParticipantContext(ctx, room, participantID, "member"))
+	person, _, err := s.CreatePersonFromParticipantContext(ctx, participantID)
+	requirements.NoError(err)
+	_, err = s.AddPersonContactPointContext(ctx, person.ID, store.PersonContactPointInput{
+		AddressKind: store.ContactAddressEmail, OriginalValue: email,
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+	})
+	requirements.NoError(err)
+	person, err = s.GetPersonContext(ctx, person.ID)
+	requirements.NoError(err)
+	messageID, err := s.UpsertMessageContext(ctx, &store.Message{
+		SourceID: source.ID, ConversationID: room,
+		SourceMessageID: "deleted-person-contact-context", MessageType: "beeper",
+		SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.SetEmbedGen(ctx, []int64{messageID}, 73))
+
+	eligible := func() bool {
+		var value bool
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+
+			store.FullParticipantValueWhere("p.id", "'email'", "p.email_address")+
+			` FROM participants p WHERE p.id=?`), participantID).Scan(&value)
+		requirements.NoError(err)
+		return value
+	}
+	display := func() string {
+		var value string
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+
+			store.FullParticipantDisplaySQL("p")+
+			` FROM participants p WHERE p.id=?`), participantID).Scan(&value)
+		requirements.NoError(err)
+		return value
+	}
+	assertions.True(eligible(), "the user-owned contact point currently supports the participant email")
+	assertions.Equal(email, display())
+	participantRevisionBefore, err := s.ParticipantDisplayNameRevisionContext(ctx)
+	requirements.NoError(err)
+	var embeddingRevisionBefore int64
+	requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&embeddingRevisionBefore))
+
+	requirements.NoError(s.DeletePersonContext(ctx, person.ID, person.Revision))
+	assertions.False(eligible(), "deleting the person must withdraw its only independent email support")
+	assertions.Empty(display(), "the deleted person's name and email must leave participant projections")
+	participantRevisionAfter, err := s.ParticipantDisplayNameRevisionContext(ctx)
+	requirements.NoError(err)
+	assertions.Greater(participantRevisionAfter, participantRevisionBefore,
+		"person deletion must refresh linked participant projections before cascading contact points")
+	var generation sql.NullInt64
+	var embeddingRevisionAfter int64
+	requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+		`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), messageID).Scan(&generation, &embeddingRevisionAfter))
+	assertions.False(generation.Valid, "person deletion must withdraw contextual vectors using curated contact data")
+	assertions.Greater(embeddingRevisionAfter, embeddingRevisionBefore,
+		"person deletion must invalidate in-flight contextual publication")
 }
 
 func TestPersonProfileContactPointPatchRefreshesParticipantProjectionAndContext(t *testing.T) {

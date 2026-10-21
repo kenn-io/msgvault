@@ -70,6 +70,23 @@ func (s *Store) lockParticipantObservationMergeTx(
 	return s.lockParticipantObservationOwnerTxContext(ctx, tx, rightID)
 }
 
+// sameParticipantObservationBinding keeps exact chat-provider identity
+// provenance separate when observations share a normalized address. Native
+// sources retain the historical address-based merge behavior.
+func sameParticipantObservationBinding(left, right string) string {
+	const tieredSources = `'beeper','slack','slackdump','discord','teams'`
+	return `(NOT EXISTS (
+		SELECT 1 FROM sources binding_source
+		WHERE binding_source.id IN (` + left + `.source_id, ` + right + `.source_id)
+		  AND binding_source.source_type IN (` + tieredSources + `)
+	) OR (
+		(` + left + `.provider_user_id = ` + right + `.provider_user_id OR
+		 (` + left + `.provider_user_id IS NULL AND ` + right + `.provider_user_id IS NULL))
+		AND (` + left + `.source_ref = ` + right + `.source_ref OR
+		 (` + left + `.source_ref IS NULL AND ` + right + `.source_ref IS NULL))
+	))`
+}
+
 // rewriteObservationsForMergeTx preserves archive contact evidence when one
 // participant is absorbed into another. Current rows with the same logical
 // identity collapse to the survivor's row; a provider binding survives only
@@ -90,7 +107,8 @@ func (s *Store) rewriteObservationsForMergeTx(
 			(survivor.scope_kind IS NULL AND absorbed.scope_kind IS NULL))
 		AND (survivor.scope_value = absorbed.scope_value OR
 			(survivor.scope_value IS NULL AND absorbed.scope_value IS NULL))
-		AND survivor.normalized_value = absorbed.normalized_value`
+		AND survivor.normalized_value = absorbed.normalized_value
+		AND ` + sameParticipantObservationBinding("survivor", "absorbed")
 
 	// Decide which provider binding is supported before copying room edges.
 	// Otherwise a Cold-only binding can inherit the other observation's Full
@@ -154,6 +172,7 @@ func (s *Store) rewriteObservationsForMergeTx(
 			  AND (survivor.scope_value = participant_contact_observations.scope_value OR
 				(survivor.scope_value IS NULL AND participant_contact_observations.scope_value IS NULL))
 			  AND survivor.normalized_value = participant_contact_observations.normalized_value
+			  AND `+sameParticipantObservationBinding("survivor", "participant_contact_observations")+`
 		)`, absorbedID, survivorID); err != nil {
 		return fmt.Errorf("close duplicate merged participant observations: %w", err)
 	}
@@ -258,10 +277,87 @@ func (s *Store) RecordContactObservationContext(
 		observation, err := findParticipantObservationTx(
 			ctx, tx, participantID, input.SourceID, input.AddressKind, serviceID,
 			input.ScopeKind, input.ScopeValue, normalized,
+			input.ProviderUserID, input.Envelope.SourceRef,
 		)
 		providerContradicted := false
 		observationEnriched := false
 		skipConversationSupport := false
+		if errors.Is(err, ErrProfileValueNotFound) && input.SourceID != nil {
+			chatSource, sourceErr := tieredChatObservationSourceTx(ctx, tx, *input.SourceID)
+			if sourceErr != nil {
+				return sourceErr
+			}
+			if chatSource {
+				// A chat observation's provider binding is supported only by rooms
+				// where that exact binding was observed. Keep providerless address
+				// support and Beeper account/user provenance on separate rows.
+				candidate, candidateErr := findCurrentParticipantObservationBySourceRefTx(
+					ctx, tx, participantID, input.SourceID, input.AddressKind,
+					serviceID, input.ScopeKind, input.ScopeValue, normalized,
+					input.Envelope.SourceRef,
+				)
+				if candidateErr == nil {
+					switch {
+					case input.ProviderUserID == nil && candidate.ProviderUserID != nil:
+						// Record this address-only value independently. Attaching its
+						// room to the bound row would let that room authorize the ID.
+					case input.ProviderUserID != nil && candidate.ProviderUserID == nil:
+						safeToBind, bindErr := observationSupportsOnlyConversationTx(
+							ctx, tx, candidate.Envelope.ID, input.ConversationID,
+						)
+						if bindErr != nil {
+							return bindErr
+						}
+						originFull, originErr := observationOriginFullTx(
+							ctx, tx, input.SourceID, input.ConversationID,
+						)
+						if originErr != nil {
+							return originErr
+						}
+						if safeToBind && originFull {
+							if _, err := tx.ExecContext(ctx,
+								`UPDATE participant_contact_observations
+								 SET provider_user_id = ?, updated_at = `+s.dialect.Now()+`
+								 WHERE id = ?`,
+								stringValue(input.ProviderUserID), candidate.Envelope.ID,
+							); err != nil {
+								return fmt.Errorf("update observation provider user ID: %w", err)
+							}
+							observation, err = getParticipantObservationTx(
+								ctx, tx, participantID, candidate.Envelope.ID,
+							)
+							if err != nil {
+								return err
+							}
+							result.Observation = observation
+							observationEnriched = true
+						}
+					case input.ProviderUserID != nil && candidate.ProviderUserID != nil &&
+						*candidate.ProviderUserID != *input.ProviderUserID:
+						originFull, originErr := observationOriginFullTx(
+							ctx, tx, input.SourceID, input.ConversationID,
+						)
+						if originErr != nil {
+							return originErr
+						}
+						if !originFull {
+							result.Observation = candidate
+							observationEnriched = true
+							skipConversationSupport = true
+						} else {
+							if err := s.supersedeObservationRowTx(
+								ctx, tx, candidate.Envelope.ID,
+							); err != nil {
+								return err
+							}
+							providerContradicted = true
+						}
+					}
+				} else if !errors.Is(candidateErr, ErrProfileValueNotFound) {
+					return candidateErr
+				}
+			}
+		}
 		if err == nil {
 			sameProvider := observation.ProviderUserID != nil &&
 				input.ProviderUserID != nil &&
@@ -381,7 +477,7 @@ func (s *Store) RecordContactObservationContext(
 		if err != nil || !eligible {
 			return err
 		}
-		if result.Created && input.ConversationID == nil {
+		if result.Created {
 			if err := s.invalidateContextualParticipantMessagesTx(ctx, tx, []int64{participantID}); err != nil {
 				return fmt.Errorf("invalidate contextual messages for new participant observation: %w", err)
 			}
@@ -429,7 +525,8 @@ func (s *Store) recordProviderEmailObservationTx(
 		return err
 	}
 	observation, err := findParticipantObservationTx(
-		ctx, tx, participantID, &sourceID, ContactAddressEmail, nil, nil, nil, normalized,
+		ctx, tx, participantID, &sourceID, ContactAddressEmail, nil, nil, nil,
+		normalized, nil, nil,
 	)
 	if errors.Is(err, ErrProfileValueNotFound) {
 		envelope, envelopeErr := resolveProfileEnvelopeForOwnerTx(
@@ -552,7 +649,7 @@ func (s *Store) recordConversationPolicyParticipantObservationTx(
 	}
 	observation, err := findParticipantObservationTx(
 		ctx, tx, participantID, &sourceID, addressKind, serviceID,
-		scopeKind, scopeValue, normalized,
+		scopeKind, scopeValue, normalized, providerUserID, nil,
 	)
 	if errors.Is(err, ErrProfileValueNotFound) {
 		envelope, envelopeErr := resolveProfileEnvelopeForOwnerTx(
@@ -956,6 +1053,7 @@ func findParticipantObservationTx(
 	serviceID any,
 	scopeKind, scopeValue *string,
 	normalized string,
+	providerUserID, sourceRef *string,
 ) (*ParticipantContactObservation, error) {
 	observation, err := scanParticipantObservation(tx.QueryRowContext(ctx,
 		participantObservationSelect+`
@@ -966,16 +1064,85 @@ func findParticipantObservationTx(
 		  AND (o.scope_kind = ? OR (o.scope_kind IS NULL AND CAST(? AS TEXT) IS NULL))
 		  AND (o.scope_value = ? OR (o.scope_value IS NULL AND CAST(? AS TEXT) IS NULL))
 		  AND o.normalized_value = ?
-		  AND o.active_until IS NULL AND o.superseded_at IS NULL`,
+		  AND o.active_until IS NULL AND o.superseded_at IS NULL
+		  AND (NOT EXISTS (
+			SELECT 1 FROM sources identity_source WHERE identity_source.id = o.source_id
+			  AND identity_source.source_type IN ('beeper','slack','slackdump','discord','teams')
+		  ) OR (
+			(o.provider_user_id = ? OR (o.provider_user_id IS NULL AND CAST(? AS TEXT) IS NULL))
+			AND (o.source_ref = ? OR (o.source_ref IS NULL AND CAST(? AS TEXT) IS NULL))
+		  ))
+		ORDER BY o.id LIMIT 1`,
 		participantID, int64Value(sourceID), int64Value(sourceID), addressKind,
 		serviceID, serviceID,
 		stringValue(scopeKind), stringValue(scopeKind),
 		stringValue(scopeValue), stringValue(scopeValue), normalized,
+		stringValue(providerUserID), stringValue(providerUserID),
+		stringValue(sourceRef), stringValue(sourceRef),
 	))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrProfileValueNotFound
 	}
 	return observation, err
+}
+
+func findCurrentParticipantObservationBySourceRefTx(
+	ctx context.Context,
+	tx *loggedTx,
+	participantID int64,
+	sourceID *int64,
+	addressKind ContactAddressKind,
+	serviceID any,
+	scopeKind, scopeValue *string,
+	normalized string,
+	sourceRef *string,
+) (*ParticipantContactObservation, error) {
+	observation, err := scanParticipantObservation(tx.QueryRowContext(ctx,
+		participantObservationSelect+`
+		WHERE o.participant_id = ?
+		  AND o.source_id = ? AND o.address_kind = ?
+		  AND (o.service_id = ? OR (o.service_id IS NULL AND CAST(? AS BIGINT) IS NULL))
+		  AND (o.scope_kind = ? OR (o.scope_kind IS NULL AND CAST(? AS TEXT) IS NULL))
+		  AND (o.scope_value = ? OR (o.scope_value IS NULL AND CAST(? AS TEXT) IS NULL))
+		  AND o.normalized_value = ?
+		  AND (o.source_ref = ? OR (o.source_ref IS NULL AND CAST(? AS TEXT) IS NULL))
+		  AND o.active_until IS NULL AND o.superseded_at IS NULL
+		ORDER BY o.id LIMIT 1`,
+		participantID, *sourceID, addressKind, serviceID, serviceID,
+		stringValue(scopeKind), stringValue(scopeKind),
+		stringValue(scopeValue), stringValue(scopeValue), normalized,
+		stringValue(sourceRef), stringValue(sourceRef),
+	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrProfileValueNotFound
+	}
+	return observation, err
+}
+
+func tieredChatObservationSourceTx(ctx context.Context, tx *loggedTx, sourceID int64) (bool, error) {
+	var isChat bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM sources WHERE id = ?
+		  AND source_type IN ('beeper','slack','slackdump','discord','teams')
+	)`, sourceID).Scan(&isChat)
+	return isChat, err
+}
+
+func observationSupportsOnlyConversationTx(
+	ctx context.Context, tx *loggedTx, observationID int64, conversationID *int64,
+) (bool, error) {
+	var otherSupportCount int
+	if conversationID == nil {
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*)
+			FROM participant_contact_observation_conversations WHERE observation_id = ?`,
+			observationID).Scan(&otherSupportCount)
+		return otherSupportCount == 0, err
+	}
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM participant_contact_observation_conversations
+		WHERE observation_id = ? AND conversation_id <> ?`,
+		observationID, *conversationID).Scan(&otherSupportCount)
+	return otherSupportCount == 0, err
 }
 
 func findConflictingObservationParticipantIDsTx(

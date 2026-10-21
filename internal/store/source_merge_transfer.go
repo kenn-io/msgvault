@@ -217,6 +217,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
          AND (kept.scope_kind=incoming.scope_kind OR (kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
          AND (kept.scope_value=incoming.scope_value OR (kept.scope_value IS NULL AND incoming.scope_value IS NULL))
          AND kept.normalized_value=incoming.normalized_value
+         AND `+sameParticipantObservationBinding("kept", "incoming")+`
         JOIN participant_contact_observation_conversations support ON support.observation_id=incoming.id
         WHERE incoming.source_id=? AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
          AND kept.active_until IS NULL AND kept.superseded_at IS NULL
@@ -236,7 +237,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
       (b.scope_kind IS NULL AND participant_contact_observations.scope_kind IS NULL))
  AND (b.scope_value = participant_contact_observations.scope_value OR
       (b.scope_value IS NULL AND participant_contact_observations.scope_value IS NULL))
- AND b.normalized_value = participant_contact_observations.normalized_value AND b.active_until IS NULL AND b.superseded_at IS NULL)`, from, into); err != nil {
+ AND b.normalized_value = participant_contact_observations.normalized_value
+ AND `+sameParticipantObservationBinding("b", "participant_contact_observations")+`
+ AND b.active_until IS NULL AND b.superseded_at IS NULL)`, from, into); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations SET source_id = ? WHERE source_id = ?`, into, from); err != nil {
@@ -325,7 +328,8 @@ func (s *Store) preserveFullProviderBindingsForSourceMergeTx(
 			(kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
 		AND (kept.scope_value = incoming.scope_value OR
 			(kept.scope_value IS NULL AND incoming.scope_value IS NULL))
-		AND kept.normalized_value = incoming.normalized_value`
+		AND kept.normalized_value = incoming.normalized_value
+		AND ` + sameParticipantObservationBinding("kept", "incoming")
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE participant_contact_observations AS kept
 		SET provider_user_id = CASE

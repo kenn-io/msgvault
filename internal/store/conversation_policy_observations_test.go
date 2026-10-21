@@ -139,9 +139,83 @@ func TestParticipantMergeDoesNotPromoteColdProviderBinding(t *testing.T) {
 
 			current, err := s.ListParticipantObservationsContext(t.Context(), survivorID, true)
 			requirements.NoError(err)
-			requirements.Len(current, 1)
-			assertions.Nil(current[0].ProviderUserID,
-				"a participant merge must not attach a Cold-only provider binding to Full-supported contact evidence")
+			requirements.Len(current, 2,
+				"a participant merge must preserve observations with different provider bindings")
+			var fullObservation, coldObservation *store.ParticipantContactObservation
+			for i := range current {
+				if current[i].ProviderUserID == nil {
+					fullObservation = &current[i]
+				} else if *current[i].ProviderUserID == "provider:cold-only" {
+					coldObservation = &current[i]
+				}
+			}
+			requirements.NotNil(fullObservation)
+			requirements.NotNil(coldObservation)
+			fullEligible, err := s.ObservationFullEligibleContext(t.Context(), fullObservation.Envelope.ID)
+			requirements.NoError(err)
+			assertions.True(fullEligible)
+			coldEligible, err := s.ObservationFullEligibleContext(t.Context(), coldObservation.Envelope.ID)
+			requirements.NoError(err)
+			assertions.False(coldEligible,
+				"a Cold-only provider binding must not inherit the separate Full observation's room support")
+		})
+	}
+}
+
+func TestParticipantMergePreservesBeeperSourceRefBindings(t *testing.T) {
+	for _, survivorIsCold := range []bool{false, true} {
+		name := "full survivor"
+		if survivorIsCold {
+			name = "cold survivor"
+		}
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, source, full, cold, _ := policyObservationFixture(t)
+			fullParticipant, err := s.EnsureParticipantByIdentifier(
+				"beeper", "synthetic-full-source-ref-user", "Synthetic Full Source Ref User",
+			)
+			requirements.NoError(err)
+			coldParticipant, err := s.EnsureParticipantByIdentifier(
+				"beeper", "synthetic-cold-source-ref-user", "Synthetic Cold Source Ref User",
+			)
+			requirements.NoError(err)
+
+			fullInput := policyObservationInput(source, &full)
+			fullInput.Envelope.SourceRef = new("beeper:synthetic-full-account:user")
+			fullInput.ProviderUserID = new("provider:shared-user")
+			fullObservation, err := s.RecordContactObservationContext(t.Context(), fullParticipant, fullInput)
+			requirements.NoError(err)
+
+			coldInput := policyObservationInput(source, &cold)
+			coldInput.Envelope.SourceRef = new("beeper:synthetic-cold-account:user")
+			coldInput.ProviderUserID = new("provider:shared-user")
+			coldObservation, err := s.RecordContactObservationContext(t.Context(), coldParticipant, coldInput)
+			requirements.NoError(err)
+
+			survivorID, absorbedID := fullParticipant, coldParticipant
+			if survivorIsCold {
+				survivorID, absorbedID = coldParticipant, fullParticipant
+			}
+			requirements.NoError(s.MergeParticipantsContext(t.Context(), absorbedID, survivorID))
+
+			current, err := s.ListParticipantObservationsContext(t.Context(), survivorID, true)
+			requirements.NoError(err)
+			requirements.Len(current, 2,
+				"observations from distinct Beeper source refs must not collapse on participant merge")
+			bySourceRef := make(map[string]store.ParticipantContactObservation, len(current))
+			for _, observation := range current {
+				bySourceRef[*observation.Envelope.SourceRef] = observation
+			}
+			requirements.Contains(bySourceRef, "beeper:synthetic-full-account:user")
+			requirements.Contains(bySourceRef, "beeper:synthetic-cold-account:user")
+			fullEligible, err := s.ObservationFullEligibleContext(t.Context(), fullObservation.Observation.Envelope.ID)
+			requirements.NoError(err)
+			coldEligible, err := s.ObservationFullEligibleContext(t.Context(), coldObservation.Observation.Envelope.ID)
+			requirements.NoError(err)
+			assertions.True(fullEligible)
+			assertions.False(coldEligible,
+				"the Cold account binding must retain only its own Cold-room support")
 		})
 	}
 }
@@ -183,10 +257,98 @@ func TestSourceMergePreservesFullProviderBindingOverColdBinding(t *testing.T) {
 	requirements.NoError(err)
 	current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
 	requirements.NoError(err)
-	requirements.Len(current, 1)
-	requirements.NotNil(current[0].ProviderUserID)
-	assertions.Equal("provider:full", *current[0].ProviderUserID,
-		"source merge must preserve the binding with original Full support before transferring room ownership")
+	requirements.Len(current, 2,
+		"different provider bindings must remain separate after merging source ownership")
+	var fullObservation, coldObservation *store.ParticipantContactObservation
+	for i := range current {
+		if current[i].ProviderUserID != nil && *current[i].ProviderUserID == "provider:full" {
+			fullObservation = &current[i]
+		} else {
+			coldObservation = &current[i]
+		}
+	}
+	requirements.NotNil(fullObservation)
+	requirements.NotNil(coldObservation)
+	assertions.Nil(coldObservation.ProviderUserID,
+		"source merge must clear the binding whose original support was Cold")
+	fullEligible, err := s.ObservationFullEligibleContext(ctx, fullObservation.Envelope.ID)
+	requirements.NoError(err)
+	assertions.True(fullEligible)
+	coldEligible, err := s.ObservationFullEligibleContext(ctx, coldObservation.Envelope.ID)
+	requirements.NoError(err)
+	assertions.False(coldEligible,
+		"the Cold observation must not inherit the distinct Full provider binding's support")
+}
+
+func TestSourceMergePreservesBeeperSourceRefSupportSeparately(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := testutil.NewTestStore(t)
+	s.DB().SetMaxOpenConns(4)
+	ctx := t.Context()
+	coldSource, err := s.GetOrCreateSource("beeper", "synthetic-source-ref-cold-account")
+	requirements.NoError(err)
+	fullSource, err := s.GetOrCreateSource("beeper", "synthetic-source-ref-full-account")
+	requirements.NoError(err)
+	coldRoom, err := s.EnsureConversation(coldSource.ID, "cold-account-room", "Cold account room")
+	requirements.NoError(err)
+	fullRoom, err := s.EnsureConversation(fullSource.ID, "full-account-room", "Full account room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, coldSource.ID, "cold-account-room", conversationpolicy.Cold))
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, fullSource.ID, "full-account-room", conversationpolicy.Full))
+	participantID, err := s.EnsureParticipantByIdentifier(
+		"beeper", "synthetic-source-ref-merge-user", "Synthetic Source Ref Merge User",
+	)
+	requirements.NoError(err)
+
+	coldInput := policyObservationInput(coldSource.ID, &coldRoom)
+	coldInput.Envelope.SourceRef = new("beeper:synthetic-cold-account:user")
+	coldInput.ProviderUserID = new("provider:shared-user")
+	coldObservation, err := s.RecordContactObservationContext(ctx, participantID, coldInput)
+	requirements.NoError(err)
+	fullInput := policyObservationInput(fullSource.ID, &fullRoom)
+	fullInput.Envelope.SourceRef = new("beeper:synthetic-full-account:user")
+	fullInput.ProviderUserID = new("provider:shared-user")
+	fullObservation, err := s.RecordContactObservationContext(ctx, participantID, fullInput)
+	requirements.NoError(err)
+
+	_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: coldSource.ID, IntoSourceID: fullSource.ID,
+	})
+	requirements.NoError(err)
+	current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 2,
+		"source merge must retain separate account-bound observations for one address")
+	bySourceRef := make(map[string]store.ParticipantContactObservation, len(current))
+	for _, observation := range current {
+		bySourceRef[*observation.Envelope.SourceRef] = observation
+	}
+	coldAfter, coldFound := bySourceRef["beeper:synthetic-cold-account:user"]
+	fullAfter, fullFound := bySourceRef["beeper:synthetic-full-account:user"]
+	requirements.True(coldFound)
+	requirements.True(fullFound)
+	assertions.Nil(coldAfter.ProviderUserID,
+		"source merge must clear a binding whose original room is Cold")
+	assertions.NotNil(fullAfter.ProviderUserID)
+	assertions.Equal("provider:shared-user", *fullAfter.ProviderUserID)
+	fullEligible, err := s.ObservationFullEligibleContext(ctx, fullAfter.Envelope.ID)
+	requirements.NoError(err)
+	assertions.True(fullEligible)
+	coldEligible, err := s.ObservationFullEligibleContext(ctx, coldAfter.Envelope.ID)
+	requirements.NoError(err)
+	assertions.False(coldEligible,
+		"the Cold account's source ref must not acquire support from the Full account")
+	for observationID, roomID := range map[int64]int64{
+		coldObservation.Observation.Envelope.ID: coldRoom,
+		fullObservation.Observation.Envelope.ID: fullRoom,
+	} {
+		var supportCount int
+		requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*)
+			FROM participant_contact_observation_conversations WHERE observation_id=? AND conversation_id=?`),
+			observationID, roomID).Scan(&supportCount))
+		assertions.Equal(1, supportCount, "each observation should retain its original room support")
+	}
 }
 
 func TestSourceMergeKeepsBeeperIdentifierTiedToOriginalAccount(t *testing.T) {
