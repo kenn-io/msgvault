@@ -272,6 +272,24 @@ func (g *generator) seedDimensions(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if g.opts.Append {
+		// Reserve the SQLite writer before validating any fixed ID. Keep the
+		// reservation and all subsequent dimension writes in this transaction
+		// so concurrent removal cannot turn validation into resurrection.
+		if _, err := tx.ExecContext(ctx, `UPDATE archive_metadata SET value=value WHERE key='archive_uid'`); err != nil {
+			return fmt.Errorf("fakevault: reserve append writer: %w", err)
+		}
+		for i, source := range fakeSources {
+			var sourceType, identifier string
+			if err := tx.QueryRowContext(ctx, `SELECT source_type,identifier FROM sources WHERE id=?`, i+1).Scan(&sourceType, &identifier); err != nil {
+				return fmt.Errorf("fakevault: append requires original source at ID %d: %w", i+1, err)
+			}
+			if sourceType != source.typ || identifier != source.identifier {
+				return fmt.Errorf("fakevault: append requires original source at ID %d", i+1)
+			}
+		}
+	}
+
 	for i, s := range fakeSources {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO sources (id, source_type, identifier, display_name)

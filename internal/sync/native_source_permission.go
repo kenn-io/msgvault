@@ -129,15 +129,20 @@ func (s *Syncer) persistNativeGmailPermissionReduction(ctx context.Context) erro
 	}); err != nil {
 		return err
 	}
+	s.clearNativeGmailScopeAuthority()
+	return nil
+}
+
+func (s *Syncer) clearNativeGmailScopeAuthority() {
 	s.nativeGmailPermissionReduced = true
 	s.nativeGmailSourceReference = ""
 	s.nativeGmailPermissionReference = ""
 	s.nativeGmailScopePins = nil
-	return nil
 }
 
 // observeNativeGmailPermissionReduction records a known loss of message-read
-// scope immediately after successful Gmail history requests.
+// scope immediately after successful Gmail provider calls that can refresh
+// the native token.
 func (s *Syncer) observeNativeGmailPermissionReduction(ctx context.Context) error {
 	if !s.nativeGmailPermissionNarrowedAfterRefresh() {
 		return nil
@@ -164,7 +169,11 @@ func (s *Syncer) nativeGmailPermissionFailure(ctx context.Context, cause error) 
 		return cause
 	}
 	observation := store.NativeSourcePermission{SourceID: s.nativeGmailSourceID, SourceReference: s.nativeGmailPermissionReference, SourceType: sourceTypeGmail, NativeIdentity: s.nativeGmailNativeIdentity, Known: true}
-	return errors.Join(cause, s.store.ObserveNativeSourcePermission(ctx, observation))
+	if err := s.store.ObserveNativeSourcePermission(ctx, observation); err != nil {
+		return errors.Join(cause, err)
+	}
+	s.clearNativeGmailScopeAuthority()
+	return cause
 }
 
 func (s *Syncer) nativeMailPermissionFailure(ctx context.Context, cause error) error {

@@ -169,6 +169,8 @@ import type {
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
+  GetMessageTagsParams,
+  GetMessageTagsPathParameters,
   GetOperationRunPathParameters,
   GetOrganizationHistoryPathParameters,
   GetOrganizationPathParameters,
@@ -271,6 +273,7 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  MCPCapabilities,
   MCPEventsListRequest,
   Manifest,
   MediaSearchResponse,
@@ -284,6 +287,9 @@ import type {
   MessageDetail,
   MessageListResponse,
   MessageRecordingsResponse,
+  MessageTagChange,
+  MessageTagResponse,
+  MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
   OperationRunDetail,
@@ -462,6 +468,7 @@ import type {
   UnpublishCardDAVPersonPathParameters,
   UnsubscribeRequest,
   UpdateCardDAVBookRolesPathParameters,
+  UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
   VerifyCLIParams,
@@ -2133,6 +2140,17 @@ export const testTaskIntegration = (
   );
 };
 /**
+ * @summary Describe admitted MCP daemon operations
+ */
+export const getMCPCapabilities = (
+  options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
+) => {
+  return orvalFetch<MCPCapabilities>(
+    { url: `/api/v1/mcp/capabilities`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary List subscribable archive calendars
  */
 export const listMCPCalendarSources = (
@@ -2366,6 +2384,42 @@ export const listMessageRecordings = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/recordings`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read native email tags
+ */
+export const getMessageTags = (
+  { id }: GetMessageTagsPathParameters,
+  params?: GetMessageTagsParams,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResponse>>,
+) => {
+  return orvalFetch<MessageTagResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing.
+ * @summary Add or remove native email tags
+ */
+export const updateMessageTags = (
+  { id }: UpdateMessageTagsPathParameters,
+  messageTagChange: MessageTagChange,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+) => {
+  return orvalFetch<MessageTagResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: messageTagChange,
     },
     options,
   );

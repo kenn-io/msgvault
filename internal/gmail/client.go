@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/httpretry"
+	"go.kenn.io/msgvault/internal/store"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
@@ -57,6 +58,17 @@ type ClientOption func(*Client)
 func WithLogger(logger *slog.Logger) ClientOption {
 	return func(c *Client) {
 		c.logger = logger
+	}
+}
+
+// WithTransport sets the underlying HTTP transport while retaining OAuth authorization.
+func WithTransport(transport http.RoundTripper) ClientOption {
+	return func(c *Client) {
+		if oauthTransport, ok := c.httpClient.Transport.(*oauth2.Transport); ok {
+			configured := *oauthTransport
+			configured.Base = transport
+			c.httpClient.Transport = &configured
+		}
 	}
 }
 
@@ -759,7 +771,7 @@ func (c *Client) ListLabels(ctx context.Context) ([]*Label, error) {
 			ID:                    l.ID,
 			Name:                  l.Name,
 			Type:                  l.Type,
-			SystemRole:            SystemRoleForLabelID(l.ID),
+			SystemRole:            store.GmailSystemRoleForLabelID(l.ID),
 			MessagesTotal:         l.MessagesTotal,
 			MessagesUnread:        l.MessagesUnread,
 			MessageListVisibility: l.MessageListVisibility,

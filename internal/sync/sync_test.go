@@ -598,6 +598,7 @@ func TestSyncPageRefreshesOnlyUnambiguousSentAliasesOnce(t *testing.T) { //nolin
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
+	env.Syncer = New(env.Mock, env.Store, &Options{SourceType: sourceTypeIMAP})
 	source, err := env.Store.GetOrCreateSource("imap", testEmail)
 	require.NoError(err, "GetOrCreateSource")
 	for _, address := range []string{
@@ -2605,6 +2606,81 @@ func TestIncrementalSyncWithLabelAdded(t *testing.T) {
 
 	// Verify the label was actually added in the database
 	assertMessageHasLabel(t, env.Store, "msg1", "STARRED")
+}
+
+func TestIncrementalSyncBatchesLabelMetadataForUniqueMessagesPerHistoryPage(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "INBOX", Name: "Inbox", Type: labelTypeSystem},
+		{ID: "STARRED", Name: "Starred", Type: labelTypeSystem},
+	}
+	env.Mock.AddMessage("msg-a", testMIME(), []string{"INBOX"})
+	env.Mock.AddMessage("msg-b", testMIME(), []string{"INBOX"})
+	runFullSync(t, env)
+
+	metadataAPI := &labelMetadataSnapshotAPI{MockAPI: env.Mock}
+	env.Syncer = New(metadataAPI, env.Store, nil)
+	env.Mock.Messages["msg-a"].LabelIDs = []string{"STARRED"}
+	env.Mock.Messages["msg-a"].HistoryID = 12350
+	env.Mock.Messages["msg-b"].LabelIDs = []string{"INBOX", "STARRED"}
+	env.Mock.Messages["msg-b"].HistoryID = 12350
+	env.SetHistory(12350,
+		historyLabelAdded("msg-a", "STARRED"),
+		historyLabelRemoved("msg-a", "INBOX"),
+		historyLabelAdded("msg-b", "STARRED"),
+	)
+
+	runIncrementalSync(t, env)
+
+	assert.Equal(t, [][]string{{"msg-a", "msg-b"}}, metadataAPI.labelCalls,
+		"each existing message with label changes should be refreshed once per history page")
+	assertMessageNotHasLabel(t, env.Store, "msg-a", "INBOX")
+	assertMessageHasLabel(t, env.Store, "msg-a", "STARRED")
+	assertMessageHasLabel(t, env.Store, "msg-b", "STARRED")
+}
+
+func TestIncrementalSyncRetainsCursorWhenBatchedLabelMetadataHasMessageError(t *testing.T) {
+	t.Parallel()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	env.Mock.Profile.MessagesTotal = 2
+	env.Mock.Profile.HistoryID = 12340
+	env.Mock.Labels = []*gmail.Label{
+		{ID: "INBOX", Name: "Inbox", Type: labelTypeSystem},
+		{ID: "STARRED", Name: "Starred", Type: labelTypeSystem},
+	}
+	env.Mock.AddMessage("msg-a", testMIME(), []string{"INBOX"})
+	env.Mock.AddMessage("msg-b", testMIME(), []string{"INBOX"})
+	runFullSync(t, env)
+
+	metadataAPI := &labelMetadataSnapshotAPI{
+		MockAPI: env.Mock,
+		labelErrors: map[string]error{
+			"msg-b": errors.New("metadata unavailable"),
+		},
+	}
+	env.Syncer = New(metadataAPI, env.Store, nil)
+	env.Mock.Messages["msg-a"].HistoryID = 12350
+	env.Mock.Messages["msg-b"].HistoryID = 12350
+	env.SetHistory(12350,
+		historyLabelAdded("msg-a", "STARRED"),
+		historyLabelAdded("msg-b", "STARRED"),
+	)
+	source, err := env.Store.GetOrCreateSource("gmail", testEmail)
+	requirements.NoError(err)
+
+	_, err = env.Syncer.Incremental(env.Context, source)
+
+	requirements.ErrorContains(err, "metadata unavailable")
+	requirements.ErrorContains(err, "history cursor retained")
+	assertions.Equal([][]string{{"msg-a", "msg-b"}}, metadataAPI.labelCalls)
+	refreshed, err := env.Store.GetSourceByID(source.ID)
+	requirements.NoError(err)
+	assertions.Equal("12340", refreshed.SyncCursor.String)
 }
 
 func TestIncrementalSyncWithLabelRemoved(t *testing.T) {
@@ -5547,6 +5623,7 @@ func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, mess
 			continue
 		}
 		results[i].LabelIDs = append([]string(nil), msg.LabelIDs...)
+		results[i].HistoryID = msg.HistoryID
 	}
 	return results, nil
 }

@@ -122,6 +122,8 @@ type ImportMuesliBody = MuesliRemoteRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type ControlInboxBody = InboxRequest
+
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest
@@ -141,6 +143,8 @@ type ListMeetingActionItemsBody = MeetingActionsRequest
 type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
+
+type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
 

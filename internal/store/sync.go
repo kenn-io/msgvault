@@ -1614,8 +1614,13 @@ func (s *Store) GetOrCreateSource(sourceType, identifier string) (*Source, error
 // GetOrCreateSourceContext carries cancellation through source creation and
 // default collection membership. A retry reuses an already committed source.
 func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*Source, error) {
-	now := s.dialect.Now()
-	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
+	var source *Source
+	var err error
+	if !s.IsPostgreSQL() {
+		source, err = s.getOrCreateSQLiteSourceContext(ctx, sourceType, identifier)
+	} else {
+		now := s.dialect.Now()
+		row := s.db.QueryRowContext(ctx, fmt.Sprintf(`
 		INSERT INTO sources (source_type, identifier, created_at, updated_at)
 		VALUES (?, ?, %s, %s)
 		ON CONFLICT (source_type, identifier) DO UPDATE
@@ -1623,9 +1628,9 @@ func (s *Store) GetOrCreateSourceContext(ctx context.Context, sourceType, identi
 		RETURNING id, source_type, identifier, display_name, google_user_id,
 		          last_sync_at, sync_cursor, sync_config, oauth_app,
 		          created_at, updated_at
-	`, now, now), sourceType, identifier)
-
-	source, err := scanSource(row)
+		`, now, now), sourceType, identifier)
+		source, err = scanSource(row)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("upsert source: %w", err)
 	}

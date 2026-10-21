@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
 	"strconv"
 	"testing"
 
@@ -25,8 +26,11 @@ func (grantedGmailProvenanceAPI) NativeMessageReadPermission() (bool, bool) { re
 type refreshingGmailGrantAPI struct {
 	*gmail.MockAPI
 
-	messageRead bool
-	narrowAfter string
+	messageRead     bool
+	narrowAfter     string
+	batchError      error
+	messageError    error
+	labelBatchCalls int
 }
 
 func (a *refreshingGmailGrantAPI) NativeMessageReadPermission() (bool, bool) {
@@ -47,6 +51,57 @@ func (a *refreshingGmailGrantAPI) ListHistory(ctx context.Context, historyID uin
 		a.messageRead = false
 	}
 	return response, err
+}
+
+func (a *refreshingGmailGrantAPI) GetMessageLabelsBatch(_ context.Context, ids []string) ([]gmail.MessageLabelsBatchResult, error) {
+	a.labelBatchCalls++
+	if a.batchError != nil {
+		return nil, a.batchError
+	}
+	results := make([]gmail.MessageLabelsBatchResult, len(ids))
+	for i, id := range ids {
+		results[i].ID = id
+		if a.messageError != nil {
+			results[i].Err = a.messageError
+			continue
+		}
+		message, ok := a.Messages[id]
+		if !ok {
+			results[i].Err = &gmail.NotFoundError{Path: "/messages/" + id}
+			continue
+		}
+		results[i].LabelIDs = append([]string(nil), message.LabelIDs...)
+		results[i].HistoryID = message.HistoryID
+	}
+	if a.narrowAfter == "metadata" {
+		a.messageRead = false
+	}
+	return results, nil
+}
+
+func newGmailMetadataPermissionEnv(t *testing.T) (*TestEnv, *store.Source, *refreshingGmailGrantAPI) {
+	t.Helper()
+	require := Require.New(t)
+
+	env := newTestEnv(t)
+	seedMessages(env, 1, 1000, "existing-message")
+	source := env.CreateSourceWithHistory(t, "1000")
+	api := &refreshingGmailGrantAPI{MockAPI: env.Mock, messageRead: true}
+	env.Syncer = New(api, env.Store, nil)
+	_, err := env.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{
+		Enabled:   true,
+		Principal: "synthetic-owner",
+		Capabilities: []store.MCPEventCapability{{
+			Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"},
+		}},
+	})
+	require.NoError(err)
+	_, err = env.Syncer.Full(env.Context, testEmail)
+	require.NoError(err, "initial full sync with a granted native credential")
+	allowed, err := env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
+	require.NoError(err)
+	require.True(allowed, "initial full sync stores the current message-read grant")
+	return env, source, api
 }
 
 func enableProviderEvents(t *testing.T, env *TestEnv, sourceType string) {
@@ -117,6 +172,77 @@ func TestMCPProviderGmailRefreshNarrowsMessageReadPermission(t *testing.T) {
 			allowed, err = env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
 			require.NoError(err)
 			assert.False(allowed, "a successful request that narrows the saved grant must revoke stored Events authority")
+		})
+	}
+}
+
+func TestMCPProviderGmailMetadataBatchRefreshNarrowsMessageReadPermission(t *testing.T) {
+	for _, syncKind := range []string{"full", "incremental"} {
+		t.Run(syncKind, func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			env, source, api := newGmailMetadataPermissionEnv(t)
+			api.narrowAfter = "metadata"
+
+			var err error
+			if syncKind == "incremental" {
+				env.Mock.Messages["existing-message"].LabelIDs = []string{"INBOX", "STARRED"}
+				env.Mock.Messages["existing-message"].HistoryID = 1001
+				env.SetHistory(1001, historyLabelAdded("existing-message", "STARRED"))
+				current, getErr := env.Store.GetOrCreateSource("gmail", testEmail)
+				require.NoError(getErr)
+				_, err = env.Syncer.Incremental(env.Context, current)
+			} else {
+				_, err = env.Syncer.Full(env.Context, testEmail)
+			}
+			require.NoError(err)
+			assert.Equal(1, api.labelBatchCalls)
+			allowed, err := env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
+			require.NoError(err)
+			assert.False(allowed, "a successful metadata refresh that narrows the saved grant must revoke Events authority")
+		})
+	}
+}
+
+func TestMCPProviderGmailMetadataBatchFailuresRevokeMessageReadPermission(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		syncKind string
+		perItem  bool
+	}{
+		{name: "full batch error", syncKind: "full"},
+		{name: "full message error", syncKind: "full", perItem: true},
+		{name: "incremental batch error", syncKind: "incremental"},
+		{name: "incremental message error", syncKind: "incremental", perItem: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := Require.New(t)
+			assert := Assert.New(t)
+			env, source, api := newGmailMetadataPermissionEnv(t)
+			statusErr := &gmail.StatusError{StatusCode: http.StatusForbidden}
+			if tc.perItem {
+				api.messageError = statusErr
+			} else {
+				api.batchError = statusErr
+			}
+
+			var err error
+			if tc.syncKind == "incremental" {
+				env.Mock.Messages["existing-message"].HistoryID = 1001
+				env.SetHistory(1001, historyLabelAdded("existing-message", "STARRED"))
+				current, getErr := env.Store.GetOrCreateSource("gmail", testEmail)
+				require.NoError(getErr)
+				_, err = env.Syncer.Incremental(env.Context, current)
+			} else {
+				_, err = env.Syncer.Full(env.Context, testEmail)
+			}
+			assert.Equal(1, api.labelBatchCalls)
+			if tc.syncKind == "incremental" {
+				assert.Error(err, "failed history metadata refresh retains the source cursor")
+			}
+			allowed, permissionErr := env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
+			require.NoError(permissionErr)
+			assert.False(allowed, "an observed 403 during metadata refresh must revoke Events authority")
 		})
 	}
 }

@@ -100,7 +100,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.17.0**.
+it is separate from the binary release version. The current schema is **3.19.0**.
 Upgrade clients and daemon together across incompatible schema versions,
 including remote deployments.
 
@@ -128,6 +128,10 @@ This schema also adds consented identity scoring. See
 [identity match review and scoring](#identity-match-review-and-scoring).
 
 Schema 3.14.0 adds `paused` source syncs to operation history and its state filter.
+
+Schema 3.15.0 adds [native email tags](#native-email-tags).
+
+Schema 3.16.0 adds [native Gmail Inbox control](#native-gmail-inbox-control).
 
 Schema 3.13.0 adds the `docbank_rendition` evidence kind, which
 [cites a Docbank transcript](usage/kata-issues.md#cite-a-docbank-transcript).
@@ -289,6 +293,163 @@ Use `GET /api/v1/people/by-uid?uid={uid}` to resolve an exact current person UID
 retired UID that still aliases a person, or the UID of a CardDAV card mapped to
 that person. If the same CardDAV UID is mapped to different people, the API
 returns `409 person_uid_ambiguous`.
+
+### Native Gmail Inbox control
+
+The unreleased `POST /api/v1/inbox/control` route observes or changes one exact
+Gmail item. The daemon owns provider credentials, verifies the Gmail
+account, and rechecks the current owner or delegated grant before execution,
+replay, and reconciliation. A grant needs `inbox.read`, the action permission,
+and the exact source. Revoked or expired grants fail even for saved receipts.
+Inbox grants bind the selected source ID as well as its type and identifier.
+Removing and re-adding the same account requires a new Inbox grant and preview.
+
+`GET /api/v1/mcp/capabilities` returns the registered route contract and the
+Inbox operations admitted for the current caller. It contains no message or
+provider data. CLI and MCP clients require the live `controlInbox` POST contract
+and requested operation before sending control requests; schema 3.16.0 alone
+does not admit a request. Missing or incompatible discovery fails closed.
+
+| Operation | Binding and additional permission |
+|---|---|
+| `get-capabilities`, `list-folders` | `source`; `inbox.read` |
+| `get-state` | `target`; `inbox.read` |
+| `archive`, `unarchive` | `target`; `inbox.archive` |
+| `set-read`, `set-unread` | `target`; `inbox.read-state` |
+| `tags` | `target`, `tags.add` / `tags.remove`; `inbox.tag` |
+| `move` | `target`, exact `origin_folder` and `destination`; `inbox.move` |
+| `create-folder` | `source`, `destination.name`; `inbox.folder-create` |
+| `receipt-get`, `reconcile` | `receipt_id`; original source/action authority and receipt principal, or owner |
+
+`source` contains `source_id`, `source_type: "gmail"`, `source_identifier`, and
+`account_id`. `target` adds `scope: "message"`, the archived `item_id`, and exact
+Gmail `provider_id`. These fields must match live Store metadata; identifiers
+never authorize access by themselves. Owners can obtain a target from
+`GET /api/v1/messages/{id}/tags` and pass it to an authorized agent.
+
+For mutations, send `dry_run: true` first. Preview makes no provider or archive
+write and returns `before`, `projected`, and a signed `preview_token` valid for
+five minutes. Execute the same intent with `dry_run: false`, `expected` equal
+to `before`, that token, and an `idempotency_key` of 1–128 UTF-8 bytes. The token
+binds the principal, exact intent, and semantic provider state. A changed label
+set or stale preview returns 409 before dispatch. Unrelated labels are preserved.
+Keep known-empty `tags` and `flags` arrays as `[]` in `expected`; omitted fields
+mean unknown state. These representations have different signed fingerprints.
+Obtain a fresh preview if an upgrade changes the state representation.
+
+The daemon atomically claims the principal/source/key before dispatch. Repeating
+the same key and intent returns its receipt without another provider write;
+changed intent conflicts. A write requires current Gmail modification scope.
+The daemon never starts consent or replaces credentials during control. The
+source lifecycle fence excludes sync and removal through detached settlement.
+Readback independently checks provider state before `verified` is recorded and
+reconciled into Store. Gmail has no conditional label write: another client can
+change state between preflight and dispatch, or after verified readback.
+
+Gmail `archive` removes `INBOX`; `unarchive` adds it. Read-state operations change
+`UNREAD` independently of local archive viewing state. `tags` changes existing
+user label IDs. `move` removes the exact origin user label and adds the exact
+destination user label; Gmail labels are not exclusive mailboxes.
+`create-folder` creates a user label and retains its returned ID for verification.
+Capabilities describe current support and scope evidence; they grant no authority.
+
+Receipts survive restart. Startup marks interrupted prepared operations failed
+and interrupted dispatched operations unknown. `receipt-get` reads saved
+evidence; `reconcile` independently reads and reconciles an uncertain result
+without redispatch. Gmail outcomes include `verified`, `unknown`,
+`reconcile-only`, and `failed`. Keep a returned receipt or the original key
+when transport or output fails. A removed source permanently retires its
+receipts' control authority, including when archive IDs are reused; trusted
+Store audit evidence remains. Preview-key material is stored privately in
+`inbox-preview.key` under the configuration home.
+
+Requests require `application/json` and one strict JSON object, at most 1 MiB.
+Unknown fields, duplicate keys, noncanonical casing, null values, and extra
+objects are rejected. Invalid requests return 400; authority denials 403;
+changed evidence or rejected writes 409; unavailable capabilities 503. Unknown
+provider outcomes return 502 `inbox_outcome_unknown`; local reconciliation
+failure returns 500 `inbox_reconcile_only`. Errors retain `result` when a receipt
+exists. Only execution and reconciliation hold the daemon mutation gate.
+
+Native control currently implements Gmail only. IMAP mapping, Microsoft Inbox
+actions, chat actions, candidate/context discovery, and batch operations are
+not provided by this route. Existing native tag routes retain their separate
+IMAP and Microsoft behavior. See [`inbox`](cli-reference.md#inbox) and
+[MCP Inbox tools](usage/chat.md#native-gmail-inbox-control).
+
+### Native email tags
+
+Read or update one archived message's live Gmail labels, IMAP keywords, or
+Microsoft Graph categories through the same routes.
+Gmail writes use the signed Inbox control route. Requires API schema 3.15.0 and
+owner authorization. Delegated agent tokens cannot
+use these routes. The daemon owns provider credentials. Reads and previews work
+while the source syncs. A write waits up to 10 seconds for the daemon work gate,
+then returns 503 `operation_in_progress` if the gate remains unavailable.
+For direct IMAP and Microsoft writes, after acquiring the gate it returns 409 `sync_active` if the source still
+syncs. If the sync ends while the write waits, the write can proceed.
+
+| Method and path | Contract |
+|---|---|
+| `GET /api/v1/messages/{id}/tags` | Read current native tags; optional `mailbox` query selects an exact recorded IMAP copy |
+| `POST /api/v1/messages/{id}/tags` | Apply `add` and `remove` arrays, optional `mailbox`, and optional `dry_run` |
+
+`id` is the positive archived message ID. Without `mailbox`, IMAP selects the
+current original copy, then the sole current membership. Multiple surviving
+copies require an explicit mailbox when the original copy is absent.
+
+Each array allows at most 100 nonblank UTF-8 strings.
+The daemon validates names, deduplicates tags, and rejects overlapping add and
+remove sets before waiting for other work or checking provider credentials.
+IMAP accepts ASCII keyword atoms up to 255 bytes and
+compares them without case. Gmail requires existing user label IDs. Microsoft
+Graph accepts category names up to 255 Unicode characters, excludes commas,
+and compares names without case while preserving provider spelling. Writes
+require `Mail.ReadWrite`. A Graph 429 returns `provider_write_failed`; retry
+after the limit clears. Transport failures and 5xx remain `remote_unknown`. See
+[`message-tags`](cli-reference.md#message-tags) for provider requirements.
+
+```json
+{"add":["Label_123"],"remove":["Label_456"],"dry_run":true}
+```
+
+On schema 3.16.0, Gmail POST requests require `dry_run: true`; other Gmail
+writes return 409 `inbox_preview_required` before provider access. Gmail GET
+responses add `target` for signed control. The CLI and existing tag MCP tool
+use this binding to preview and execute Gmail edits through Inbox control.
+
+The result contains `message_id`, `source_id`, `provider`, `tags`, `before`,
+`available_tags` (`id` and `name`), `dry_run`, and `verified`. IMAP also returns
+`mailbox`, `uidvalidity`, `uid`, the observed `flags`, and
+`can_create_keywords` when new persistent keywords are supported. Gmail
+returns all current label IDs, including system labels, while `available_tags`
+contains only editable user labels. IMAP returns custom keywords in `tags`.
+Microsoft Graph returns `provider: "msmail"` and category names in `tags`;
+`available_tags` describes the observed categories, without a master-category
+catalog or a `MailboxSettings.Read` requirement.
+
+Reads return verified observed state. Previews return the projected tags with
+`verified: false` and never update the archive. Successful writes require
+provider readback, then persist the observed Gmail labels, IMAP membership
+flags, or Microsoft categories. Microsoft categories use separate
+`Category: <name>` archive labels and survive later folder syncs. IMAP folder
+labels and local read state are unchanged. Gmail and Microsoft category changes
+mark derived data stale and request a cache refresh.
+
+Errors contain `error`, `message`, and, when available, `result` with the last
+observed state. A matching successful mutation response can supply newer tags
+when verification GET fails. `before` keeps the original snapshot; `verified`
+stays false and the archive stays unchanged until readback succeeds.
+Error snapshots omit `available_tags`. The daemon client accepts tag error
+responses up to 1 MiB to preserve the observed tags, flags, and recovery message.
+`remote_unknown` and `verification_failed` return HTTP 502;
+read tags before retrying because a write may have applied. HTTP 500
+`remote_accepted_local_failed` preserves verified provider evidence and asks
+for a sync. Invalid tags return 400, insufficient provider scope returns 403,
+a missing archived message returns 404, and stale provider identity returns 409.
+A source sync still active after gate acquisition returns 409 `sync_active`.
+Unsupported providers or persistent keyword support return
+501. See the generated OpenAPI contract for response schemas.
 
 ### Identity match review and scoring
 
