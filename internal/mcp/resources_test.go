@@ -560,7 +560,11 @@ func TestMCPInternalErrorIsolationMapsOnlyKnownDaemonVectorCodes(t *testing.T) {
 				must.Empty(response.Error, "response: %s", raw)
 				checks.Equal(true, response.Result["isError"])
 				checks.Contains(raw, vectorCode.code)
-				checks.NotContains(raw, privateMessage)
+				if vectorCode.code == "index_stale" {
+					checks.Contains(raw, privateMessage)
+				} else {
+					checks.NotContains(raw, privateMessage)
+				}
 			})
 		}
 	}

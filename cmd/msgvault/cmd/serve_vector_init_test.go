@@ -372,6 +372,7 @@ func TestStartVectorInitInstallsOnlyConsentedDocumentSearch(t *testing.T) {
 
 func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	c := config.NewDefaultConfig()
+	c.HomeDir = t.TempDir()
 	c.Vector.Enabled = true
 	testCtx := withTestConfig(t, c)
 	var logs bytes.Buffer

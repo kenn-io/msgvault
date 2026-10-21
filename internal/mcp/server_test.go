@@ -23,6 +23,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/personscope"
@@ -1476,6 +1477,26 @@ func TestSearchMessageBodies_HybridUsesDaemonSearcher(t *testing.T) {
 		RetrievalMS:      7,
 		HydrationMS:      3,
 	}, resp.Timings, "phase timings")
+}
+
+func TestSemanticSearchMessages_DaemonIndexStaleKeepsRebuildAdvice(t *testing.T) {
+	const advice = "the vector index does not match configured embedding settings; run `msgvault embeddings build --full-rebuild`"
+	h := &handlers{
+		engine: &querytest.MockEngine{},
+		hybridSearcher: hybridSearcherFunc(func(context.Context, HybridSearchRequest) (*HybridSearchResult, error) {
+			return nil, fmt.Errorf("search daemon: %w", &daemonclient.APIError{
+				Status: http.StatusServiceUnavailable, Code: "index_stale", Message: advice,
+			})
+		}),
+	}
+
+	r := runToolExpectError(t, "semantic_search_messages", h.semanticSearchMessages, map[string]any{
+		"query": "semantic terms",
+		"mode":  searchModeHybrid,
+	})
+	text := resultText(t, r)
+	assert.Equal(t, "index_stale: "+advice, text)
+	assert.NotContains(t, text, "restart that daemon")
 }
 
 func TestSearchMessageBodies_HybridDaemonFilterOnlyGuidance(t *testing.T) {
