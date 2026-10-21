@@ -544,6 +544,7 @@
         ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
+  $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building') return reportError(() => client, () => exploreState.current.query.trim() ? 'search' : 'other'); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
     loader.submitted = true;

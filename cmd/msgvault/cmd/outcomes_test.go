@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -59,5 +60,10 @@ func TestMeetingSetupFailuresAreRecorded(t *testing.T) {
 		require.ErrorContains(runConfiguredOmiSync(ctx, st.Store, t.TempDir(), config.OmiSource{Identifier: "work"}), "has no api_key")
 		require.ErrorContains(runConfiguredTwentySync(ctx, st.Store, config.TwentySource{Identifier: "work", AccountEmail: "owner@example.com", BaseURL: "https://api.example.com"}), "api_key")
 	}
-	assert.Equal([]any{"granola", "notion_meetings", "omi", "twenty"}, sources)
+	_, err := registerPlaudAccount(st.Store, "work", "owner@example.com", "owner@example.com")
+	require.NoError(err)
+	for range 2 {
+		require.ErrorContains(runConfiguredPlaudSync(ctx, st.Store, config.PlaudSource{Identifier: "work", AccountEmail: "changed@example.com"}), "owner differs")
+	}
+	assert.Equal([]any{"granola", "notion_meetings", "omi", "twenty", plaud.SourceType}, sources)
 }

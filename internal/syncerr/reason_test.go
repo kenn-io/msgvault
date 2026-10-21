@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
+	"maunium.net/go/mautrix"
 )
 
 func TestReason(t *testing.T) {
@@ -38,6 +39,8 @@ func TestReason(t *testing.T) {
 		{&oauth2.RetrieveError{ErrorCode: "invalid_grant"}, "auth"},
 		{msgraph.ErrUnauthorized, "auth"},
 		{&gmail.StatusError{StatusCode: 401}, "auth"},
+		{mautrix.HTTPError{Response: &http.Response{StatusCode: http.StatusTooManyRequests}}, "rate_limited"},
+		{mautrix.HTTPError{Response: &http.Response{StatusCode: http.StatusInternalServerError}}, "other"},
 		{&carddav.StatusError{StatusCode: 401}, "auth"},
 		{&carddav.StatusError{StatusCode: 429}, "rate_limited"},
 		{&gmail.StatusError{StatusCode: 429}, "rate_limited"},
@@ -80,6 +83,14 @@ func TestProviderFailureReasons(t *testing.T) {
 		{"calendar quota", 403, `{"error":{"errors":[{"reason":"quotaExceeded"}]}}`, "rate_limited", func(ctx context.Context, url string) error {
 			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
 			return err
+		}},
+		{"matrix", 401, `{"errcode":"M_UNKNOWN_TOKEN","error":"Expired token"}`, "auth", func(ctx context.Context, url string) error {
+			client, err := mautrix.NewClient(url, "@archive:example.com", "synthetic")
+			if err != nil {
+				return fmt.Errorf("matrix request: %w", err)
+			}
+			_, err = client.Whoami(ctx)
+			return fmt.Errorf("matrix request: %w", err)
 		}},
 		{"omi", 401, "", "auth", func(ctx context.Context, url string) error {
 			_, err := omi.NewPacedClient(url, "synthetic", t.TempDir()).ListConversations(ctx, omi.ListParams{})

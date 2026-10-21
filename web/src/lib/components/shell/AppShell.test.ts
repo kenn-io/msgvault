@@ -109,6 +109,26 @@ describe('AppShell', () => {
     await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
   });
 
+  it('reports each displayed archived meeting request error once', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', selectedRow: 'archive-meeting:42' }))}`);
+    const state = new ExploreState(window);
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/messages/42')) return Response.json({ message: 'Meeting request failed' }, { status: 500 });
+      if (path.endsWith('/explore')) return Response.json(exploreResponse());
+      return Response.json({});
+    });
+    const view = render(AppShell, { client, state });
+    await screen.findByText('Meeting request failed');
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
+    await view.rerender({ client, state });
+    expect(telemetryEvents.filter(event => event.event === 'error_shown')).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry archived meeting' }));
+    await screen.findByText('Meeting request failed');
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toHaveLength(2));
+    state.destroy();
+  });
+
   it('focuses search with slash and leaves Escape to the search input', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window);

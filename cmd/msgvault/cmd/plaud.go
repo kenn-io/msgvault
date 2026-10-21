@@ -441,7 +441,7 @@ func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.Pla
 		if errors.Is(err, store.ErrSourceRetired) {
 			return nil
 		}
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {

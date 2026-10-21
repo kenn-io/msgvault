@@ -32,28 +32,99 @@ afterEach(() => {
 });
 
 describe('SourcesWorkspace', () => {
-  it.each(['run', 'scheduler'])('reports each accepted failed sync once: %s', async (failure) => {
+  it.each(['immediate', 'running'])('reports only the clicked run failing: %s', async (phase) => {
     const events: unknown[] = [];
     let reads = 0;
+    let clicked = false;
     const fetchFn: typeof fetch = async input => {
-      if ((input as Request).method === 'POST') return Response.json({ status: 'accepted' }, { status: 202 });
+      if ((input as Request).method === 'POST') {
+        clicked = true;
+        return Response.json({ status: 'accepted' }, { status: 202 });
+      }
       reads++;
-      return Response.json({ sources: [source(reads === 1 ? {} : {
-        latest_sync: run('failed', 0, { id: reads < 4 ? 10 : 11, error_message: failure === 'run' ? 'Sync refused' : null }),
-        scheduler_last_error: failure === 'scheduler' ? 'Sync refused' : null,
+      return Response.json({ sources: [source({
+        active_sync: clicked && phase === 'running' && reads === 2 ? run('running', 0, { id: 10 }) : null,
+        latest_sync: run(clicked && reads > (phase === 'running' ? 2 : 1) ? 'failed' : 'completed', 0, { id: clicked && reads > (phase === 'running' ? 2 : 1) ? 10 : 9 }),
+        scheduler_last_error: 'Old credential failure',
       })] });
     };
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    await screen.findByText('Completed');
+    expect(events).toEqual([]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
     await screen.findByText('Failed');
     await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]));
-    // Visibility refreshes reload the same failed run, then a new one.
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(reads).toBeGreaterThan(phase === 'running' ? 3 : 2));
+    expect(events).toHaveLength(1);
+    view.unmount();
+    render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
+    await screen.findByText('Failed');
+    expect(events).toHaveLength(1);
+  });
+
+  it('reports each rejected click despite an unchanged stored run', async () => {
+    const events: unknown[] = [];
+    const client = createCaptureClient(async input => (input as Request).method === 'POST'
+      ? Response.json({ message: 'Credentials unavailable' }, { status: 500 })
+      : Response.json({ sources: [source({ latest_sync: run('failed', 0) })] }), events);
+    render(SourcesWorkspace, { client });
+    await screen.findByText('Failed');
+    expect(events).toEqual([]);
     for (const count of [1, 2]) {
-      document.dispatchEvent(new Event('visibilitychange'));
-      await waitFor(() => expect(reads).toBe(count + 2));
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
+      await screen.findByText('Credentials unavailable');
       await waitFor(() => expect(events).toHaveLength(count));
     }
-    view.unmount();
+    expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
+  });
+
+  it('tracks accepted clicks on different sources independently', async () => {
+    const events: unknown[] = [];
+    let failed = false;
+    const client = createCaptureClient(async input => (input as Request).method === 'POST'
+      ? Response.json({ status: 'accepted' }, { status: 202 })
+      : Response.json({ sources: [1, 2].map(id => source({ id, identifier: `archive${id}@example.com`, display_name: `Archive ${id}`, latest_sync: failed ? run('failed', 0, { id: id * 10, source_id: id }) : null })) }), events);
+    render(SourcesWorkspace, { client });
+    for (const id of [1, 2]) {
+      const button = await screen.findByRole<HTMLButtonElement>('button', { name: `Sync now Archive ${id}` });
+      await waitFor(() => expect(button.disabled).toBe(false));
+      await fireEvent.click(button);
+    }
+    await waitFor(() => expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Sync now Archive 2' }).disabled).toBe(true));
+    failed = true;
+    document.dispatchEvent(new Event('visibilitychange'));
+    await waitFor(() => expect(screen.getAllByText('Failed')).toHaveLength(2));
+    await waitFor(() => expect(events).toHaveLength(2));
+  });
+
+  it.each(['success', 'unmount'])('ignores later background failures after %s', async (ending) => {
+    const events: unknown[] = [];
+    let clicked = false;
+    let background = false;
+    let resolve!: (response: Response) => void;
+    const client = createCaptureClient(async input => {
+      if ((input as Request).method === 'POST') {
+        clicked = true;
+        return Response.json({ status: 'accepted' }, { status: 202 });
+      }
+      if (clicked && ending === 'unmount') return new Promise<Response>(done => { resolve = done; });
+      return Response.json({ sources: [source({ display_name: clicked ? 'After clicked run' : 'Archive', latest_sync: run(background ? 'failed' : 'completed', 0, { id: background ? 11 : clicked ? 10 : 9 }) })] });
+    }, events);
+    const view = render(SourcesWorkspace, { client });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    if (ending === 'unmount') {
+      await waitFor(() => expect(resolve).toBeDefined());
+      view.unmount();
+      resolve(Response.json({ sources: [source({ latest_sync: run('failed', 0, { id: 10 }) })] }));
+    } else {
+      await screen.findByText('After clicked run');
+      background = true;
+      document.dispatchEvent(new Event('visibilitychange'));
+      await screen.findByText('Failed');
+    }
+    await fireEvent(window, new Event('focus'));
+    expect(events).toEqual([]);
   });
 
   it('ignores a trigger rejection after leaving Sources', async () => {
@@ -506,7 +577,7 @@ describe('SourcesWorkspace', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
-    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'other' } }]));
+    expect(events).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(1);

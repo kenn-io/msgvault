@@ -44,6 +44,7 @@ const (
 	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
 
+// Core actions require every listed property, using the same values as the allowlist.
 var actionProperties = map[string]map[string][]string{
 	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},

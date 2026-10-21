@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
+	"maunium.net/go/mautrix"
 )
 
 // IsTransientNetwork reports whether err (or anything it wraps) indicates a
@@ -75,6 +76,8 @@ func Reason(err error) string {
 		status = e.StatusCode
 	} else if e, ok := errors.AsType[*carddav.StatusError](err); ok {
 		status = e.StatusCode
+	} else if e, ok := errors.AsType[mautrix.HTTPError](err); ok && e.Response != nil {
+		status = e.Response.StatusCode
 	}
 	imapErr, _ := errors.AsType[*imap.Error](err)
 	_, gmailThrottled := errors.AsType[*gmail.ThrottledError](err)
@@ -87,7 +90,6 @@ func Reason(err error) string {
 		return "rate_limited"
 	case status == 0 && retrieveError == nil && IsTransientNetwork(err):
 		return "network"
-	default:
-		return "other"
 	}
+	return "other"
 }

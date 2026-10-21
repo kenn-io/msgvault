@@ -46,16 +46,8 @@
   let statusError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
-  const reportedRuns = new Set<string>();
-  $effect(() => { if (statusError) return reportError(() => client, () => 'other'); });
+  const clickedSync = new Map<number, number | undefined>();
   $effect(() => { if (triggerError) return reportError(() => client, () => 'sync'); });
-  $effect(() => {
-    const pending = sources.filter(source => !source.active_sync && (source.latest_sync?.status === 'failed' || source.scheduler_last_error)).map(source => {
-      const key = `${source.id}:${source.latest_sync?.id ?? source.scheduler_started_at}`;
-      if (!reportedRuns.has(key)) return reportError(() => client, () => 'sync', undefined, () => reportedRuns.add(key));
-    });
-    return () => pending.forEach(cancel => cancel?.());
-  });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -152,6 +144,10 @@
       let advanced = false;
       const nextProgress = new Map<number, number>();
       for (const source of next) {
+        if (clickedSync.has(source.id) && source.latest_sync && source.latest_sync.id !== clickedSync.get(source.id) && source.latest_sync.status !== 'running') {
+          clickedSync.delete(source.id);
+          if (source.latest_sync.status === 'failed') reportError(() => client, () => 'sync', requestController.signal);
+        }
         if (!source.active_sync) continue;
         const processed = source.active_sync.messages_processed;
         nextProgress.set(source.id, processed);
@@ -255,12 +251,12 @@
         ...client,
         signal,
       });
-      if (disposed) return;
       if (response.status !== 202 || !data) {
         throw new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`));
       }
       stopPolling();
       pollDelay = MIN_POLL_MS;
+      clickedSync.set(source.id, source.latest_sync?.id);
       awaitingSourceID = source.id;
       awaitingBaselineRunID = source.latest_sync?.id;
       awaitingAttempts = 0;
