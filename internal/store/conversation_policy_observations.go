@@ -395,12 +395,6 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	anchor := `('beeper:' || CAST(` + byteLength(originSource+`.identifier`) + ` AS TEXT) || ':' || ` + originSource + `.identifier || ':' || CAST(` + byteLength(user) + ` AS TEXT) || ':' || ` + user + `)`
 	beeper := alias + `.identifier_type='beeper' AND EXISTS(SELECT 1 FROM sources ` + originSource + `
 	 WHERE ` + originSource + `.source_type='beeper'
-	 AND (` + originSource + `.id=` + observation + `.source_id OR EXISTS(
-	  SELECT 1 FROM participant_contact_observation_conversations identifier_edge
-	  JOIN source_merge_conversations identifier_merge
-	    ON identifier_merge.destination_conversation_id=identifier_edge.conversation_id
-	  WHERE identifier_edge.observation_id=` + observation + `.id
-	    AND identifier_merge.original_source_id=` + originSource + `.id))
 	 AND SUBSTR(` + observation + `.source_ref,1,LENGTH(` + prefix + `))=` + prefix + `
 	 AND LENGTH(` + user + `)>0 AND ` + alias + `.identifier_value=` + anchor + `)`
 	provider := alias + `.identifier_type<>'beeper' AND ` + observation + `.provider_user_id=` + alias + `.identifier_value
