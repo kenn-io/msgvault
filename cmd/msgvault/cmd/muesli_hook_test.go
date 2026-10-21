@@ -79,13 +79,7 @@ func TestMuesliHookBuiltArtifactDispatch(t *testing.T) {
 	if _, err := os.Stat(binary); errors.Is(err, os.ErrNotExist) {
 		// CI checkouts may not have a worktree artifact. Build the real CLI
 		// so the executable dispatch regression always runs there too.
-		repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-		require.NoError(err)
-		binary = filepath.Join(t.TempDir(), "msgvault"+suffix)
-		build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5 sqlite_vec", "-o", binary, "./cmd/msgvault")
-		build.Dir = repoRoot
-		output, err := build.CombinedOutput()
-		require.NoError(err, "build real msgvault CLI: %s", output)
+		binary = buildNativeCLI(t)
 	} else {
 		require.NoError(err)
 	}

@@ -3759,6 +3759,7 @@ func (a *storeAPIAdapter) GetParticipantIdentityContext(
 // resource-bounded child. The child owns the cache lock and its DuckDB
 // allocator exits with the process; the long-lived daemon does neither.
 func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, error) {
+	ctx = a.invocationContext(ctx)
 	if err := runDerivedCacheSubprocess(ctx, a.analyticsDir); err != nil {
 		return 0, err
 	}

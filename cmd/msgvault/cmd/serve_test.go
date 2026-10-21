@@ -13,9 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -2135,17 +2133,7 @@ func TestDaemonCLIRunCannotUseServerRemoteDeleteConfigOrEnvironment(t *testing.T
 	require := require.New(t)
 	assert := assert.New(t)
 
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	require.NoError(err)
-	binaryName := "msgvault"
-	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
-	}
-	binaryPath := filepath.Join(t.TempDir(), binaryName)
-	build := exec.Command("go", "build", "-tags", "fts5 sqlite_vec", "-o", binaryPath, "./cmd/msgvault")
-	build.Dir = repoRoot
-	buildOutput, err := build.CombinedOutput()
-	require.NoError(err, "build real msgvault binary: %s", buildOutput)
+	binaryPath := buildNativeCLI(t)
 
 	savedResolver := daemonCLIExecutableResolver
 	daemonCLIExecutableResolver = func() (string, error) { return binaryPath, nil }
