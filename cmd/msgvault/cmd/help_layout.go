@@ -64,6 +64,7 @@ var topLevelCommandGroups = map[string]string{
 	"backup":                  helpGroupMaintenance,
 	"build-cache":             helpGroupIndex,
 	"cache-stats":             helpGroupIndex,
+	"calls":                    helpGroupPeople,
 	"calendar":                helpGroupWrite,
 	"cancel-deletion":         helpGroupDelete,
 	"carddav":                 helpGroupPeople,

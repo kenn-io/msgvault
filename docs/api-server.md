@@ -161,6 +161,26 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Call history
+
+Call history is owner-only. Delegated agent grants do not authorize these routes.
+Imports use the daemon mutation gate and return stable message/source IDs.
+
+| Route | Contract |
+| --- | --- |
+| `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
+| `GET /api/v1/calls` | Typed observations, including withdrawn evidence. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
+| `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
+
+Read results use an `items` array. Limits default to 50 and are capped at 100.
+Times are RFC3339, with inclusive `after` and exclusive `before`.
+Invalid queries return 400; malformed imports 400, invalid observations 422,
+oversized imports 413, unsupported media 415, withdrawn-source/observation
+conflicts 409, and unavailable or busy service 503.
+The [call-history guide](usage/call-history.md) owns format details, attendance
+rules, deduplication and source limitations. The generated OpenAPI document
+describes every response field.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
@@ -191,6 +211,8 @@ Schema 3.47.0 adds optional `hints` to CLI and fast-search responses. Each hint 
 Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limit_reached` and `candidate_limit_reached` to semantic search. `has_more` is true when another ranked hit exists and the next page fits within the configured ranking cap. `candidate_limit_reached` carries `k_per_signal` when hybrid retrieval measures an eligible message outside the combined retained candidates. `ranking_limit_reached` carries the effective page cap when an extra ranked hit exists, or omitted candidates would need a page beyond the cap. Raise each reported server setting above its value, restart the server, then request a larger page. Pool saturation alone sets neither cap field.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
+
+Schema 3.44.0 adds owner-only call evidence import, inspection, and person summaries.
 
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
