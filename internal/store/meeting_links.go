@@ -130,12 +130,16 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		return linkOccurrence{}, sql.ErrNoRows
 	}
 	row := rows[0]
-	if row.Event.Kind == meetingExceptionKind && row.Event.Original != nil && ref.Key == "" {
+	if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
 		masters, err := meetingEventRows(ctx, r, `e.kind IN ('series', 'single') AND m.source_id = ? AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
 		if err != nil {
 			return linkOccurrence{}, err
 		}
-		if len(masters) == 1 {
+		if row.Event.Original == nil {
+			if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
+				row.Event.Status = meetingCancelledStatus
+			}
+		} else if len(masters) == 1 {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
 			if row.Event.Start == nil || row.Event.End == nil {

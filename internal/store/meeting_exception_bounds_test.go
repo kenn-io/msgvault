@@ -19,7 +19,7 @@ func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	ref := OccurrenceRef{MessageID: exception}
 	start := time.Date(2027, 3, 14, 12, 0, 0, 0, time.UTC)
 	end := start.Add(time.Hour)
-	targets := []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", OccurrenceRef: OccurrenceRef{MessageID: note}}}
+	targets := []MeetingLinkRef{{Kind: "evt", OccurrenceRef: ref}, {Kind: "msg", MessageID: note}}
 	for _, target := range targets {
 		suggestions, err := st.SuggestMeetingLinksContext(t.Context(), target, 10)
 		requirements.NoError(err)
