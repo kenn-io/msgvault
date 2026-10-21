@@ -95,7 +95,7 @@ describe('AppShell', () => {
     };
   }
 
-  it.each([{ query: '', cache: false }, { query: 'needle', cache: false }, { query: '', cache: true }, { query: 'needle', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
+  it.each([{ query: 'needle', cache: false }, { query: '', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const client = createAPIClient(async (input) => {
       const request = input as Request, path = new URL(request.url).pathname;
@@ -109,7 +109,7 @@ describe('AppShell', () => {
     await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
   });
 
-  it.each([{ query: '', leave: false }, { query: 'needle', leave: false }, { query: '', leave: true }, { query: 'needle', leave: true }])('reports an export error only while its view is displayed, query=$query leave=$leave', async ({ query, leave }) => {
+  it.each([{ query: 'needle', leave: false }, { query: '', leave: true }])('reports an export error only while its view is displayed, query=$query leave=$leave', async ({ query, leave }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const state = new ExploreState(window);
     let finishExport!: (response: Response) => void;

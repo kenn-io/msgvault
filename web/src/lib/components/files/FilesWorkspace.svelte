@@ -176,7 +176,8 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
-  $effect(() => { if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
+  let rejectedImages = $state(0);
+  $effect(() => { rejectedImages; if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
@@ -761,6 +762,7 @@
     if (!file) return;
     if (file.size > 20 * 1024 * 1024) {
       error = 'Visual query images must be 20 MiB or smaller.';
+      rejectedImages += 1;
       input.value = '';
       return;
     }
@@ -771,12 +773,11 @@
       reader.readAsDataURL(file);
     });
     submitted = true;
-    visualQuery = '';
+    visualQuery = visualQueryDraft = '';
     visualImageName = file.name;
     visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
     visualImageRevision += 1;
     clearTimeout(visualQueryDebounce);
-    visualQueryDraft = '';
   }
   function removeVisualImage(): void {
     if (!visualImageBase64 && !visualImageName) return;

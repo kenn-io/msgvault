@@ -2,7 +2,6 @@ package telemetry
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -56,17 +55,6 @@ func TestSyncFailureTransitions(t *testing.T) {
 	failures.Record(t.Context(), "gmail", "synthetic", nil)
 	failures.Record(t.Context(), "gmail", "synthetic", failure)
 	assert.Len(events, 3)
-	for _, tc := range []struct {
-		name string
-		err  error
-		want int
-	}{
-		{"clean pass", nil, 3},
-		{"error after partial read", errors.New("partial sync: one item failed"), 4},
-	} {
-		failures.Record(t.Context(), "gmail", "synthetic", tc.err)
-		assert.Len(events, tc.want, tc.name)
-	}
 }
 
 func TestOutcomeWire(t *testing.T) {

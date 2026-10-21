@@ -51,7 +51,7 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
-  it('classifies a rejected first image as a search failure', async () => {
+  it('reports each rejected image selection once as a search failure', async () => {
     const events = telemetryEvents;
     const client = createAPIClient(async () => Response.json(response()));
     render(FilesWorkspace, { client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
@@ -62,7 +62,10 @@ describe('FilesWorkspace', () => {
     Object.defineProperty(file, 'size', { value: 21 * 1024 * 1024 });
     await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [file] } });
     await waitFor(() => expect(screen.getAllByText('Visual query images must be 20 MiB or smaller.').length).toBeGreaterThan(0));
-    await waitFor(() => expect(events).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }));
+    const failure = { event: 'error_shown', properties: { surface: 'web', kind: 'search' } };
+    await waitFor(() => expect(events.filter(event => event.event === 'error_shown')).toEqual([failure]));
+    await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [file] } });
+    await waitFor(() => expect(events.filter(event => event.event === 'error_shown')).toEqual([failure, failure]));
   });
   it.each(['submitted', 'image', 'visual', 'nonempty'])('counts only submitted empty %s searches', async (kind) => {
     const events = telemetryEvents;

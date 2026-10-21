@@ -126,17 +126,3 @@ func TestScheduledGmailTokenFirstFailureOutcome(t *testing.T) {
 	require.Error(runScheduledSync(ctx, "gmail@example.com", st.Store, oauthFailure, state))
 	assert.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}}, events)
 }
-
-func captureSyncOutages(t *testing.T, cfg *config.Config, sourceType string) (context.Context, *invocation, *int) {
-	t.Helper()
-	cfg.Analytics.AutoBuildCache = false
-	state := testInvocationWithConfig(cfg)
-	events := new(int)
-	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
-		assert.Equal(t, "sync_failed", event)
-		assert.Equal(t, sourceType, props["sync_source"])
-		*events++
-		return nil
-	}}
-	return withInvocation(t.Context(), state), state, events
-}

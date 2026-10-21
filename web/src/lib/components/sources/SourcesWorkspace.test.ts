@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
@@ -431,7 +432,6 @@ describe('SourcesWorkspace', () => {
   it('releases Sync now buttons after a timeout and refreshes status without retriggering', async () => {
     let statusReads = 0;
     let triggers = 0;
-    const events: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'POST') {
@@ -449,7 +449,7 @@ describe('SourcesWorkspace', () => {
       ] }));
     });
     const rendered = render(SourcesWorkspace, {
-      client: createCaptureClient(fetchFn, events), requestTimeoutMs: 20
+      client: createAPIClient(fetchFn), requestTimeoutMs: 20
     });
 
     const archiveButton = await screen.findByRole<HTMLButtonElement>('button', { name: 'Sync now Archive' });
@@ -480,6 +480,7 @@ describe('SourcesWorkspace', () => {
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
+    await tick();
     await Promise.all(requests);
     expect(events).toEqual([]);
 

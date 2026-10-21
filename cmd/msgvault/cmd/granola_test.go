@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -349,34 +350,31 @@ func TestManualGranolaPrevalidatesAllSourcesBeforeImport(t *testing.T) {
 }
 
 func TestGranolaPartialSyncRecordsOutage(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		recover bool
-		want    int
-	}{
-		{"partial", false, 1},
-		{"clean pass clears outage", true, 2},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			server := newGranolaSyncTestServer(t, true, true)
-			installGranolaClientFactory(t, server.URL)
-			st := testutil.NewTestStore(t)
-			_, err := st.GetOrCreateSource(granola.SourceType, "work")
-			require.NoError(err)
-			ctx, _, events := captureSyncOutages(t, lifecycleTestConfig(t.TempDir()), "granola")
-			src := config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"}
-			require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
-			assert.Equal(1, *events)
-			if tc.recover {
-				clean := newGranolaSyncTestServer(t, true, false)
-				installGranolaClientFactory(t, clean.URL)
-				require.NoError(runConfiguredGranolaSync(ctx, st, src))
-				assert.Equal(1, *events)
-				installGranolaClientFactory(t, server.URL)
-			}
-			require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
-			assert.Equal(tc.want, *events)
-		})
-	}
+	assert, require := assert.New(t), require.New(t)
+	server := newGranolaSyncTestServer(t, true, true)
+	installGranolaClientFactory(t, server.URL)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(granola.SourceType, "work")
+	require.NoError(err)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Analytics.AutoBuildCache = false
+	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal("granola", props["sync_source"])
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	src := config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"}
+	require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
+	assert.Equal(1, events)
+	clean := newGranolaSyncTestServer(t, true, false)
+	installGranolaClientFactory(t, clean.URL)
+	require.NoError(runConfiguredGranolaSync(ctx, st, src))
+	assert.Equal(1, events)
+	installGranolaClientFactory(t, server.URL)
+	require.ErrorContains(runConfiguredGranolaSync(ctx, st, src), "partial Granola sync")
+	assert.Equal(2, events)
 }
