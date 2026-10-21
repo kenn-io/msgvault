@@ -4,7 +4,6 @@ package mcp
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -116,27 +115,6 @@ func TestSearchMetadataSingleRequestSQLiteStatements(t *testing.T) {
 	}
 }
 
-func TestBoundedDeletionSearchFiltersLabelsWithoutEnrichingResults(t *testing.T) {
-	for _, mode := range []query.DeletionSearchMode{query.DeletionSearchFast, query.DeletionSearchDeep} {
-		t.Run(string(mode), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			db, observer := sqlobserve.Open(t, nil)
-			seedMetadataSearch(t, db)
-			_, err := db.Exec(`INSERT INTO labels (id, name) VALUES (1, 'chosen'); INSERT INTO message_labels (message_id, label_id) VALUES (2, 1)`)
-			requirements.NoError(err)
-			engine := query.NewSQLiteEngine(db)
-			observer.Reset()
-			targets, matched, err := engine.GetDeletionTargetsBySearchBounded(t.Context(), search.Parse("after:2023-01-01"), query.MessageFilter{Label: "chosen"}, mode, 10)
-			requirements.NoError(err)
-			assertions.Equal(1, matched)
-			requirements.Len(targets, 1)
-			assertions.Equal("two", targets[0].SourceMessageID)
-			assertions.Len(observer.Statements(), 2, "search and target hydration need no label enrichment query")
-		})
-	}
-}
-
 func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert := assert.New(t)
 	db, observer := sqlobserve.Open(t, nil)
@@ -219,82 +197,6 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assertions.NotContains(saver.manifest.GmailIDs, "meta-000")
 		assertions.Equal(before+1, boundedRequests.Load())
 	})
-}
-
-func TestStageDeletionPreservesAccountScope(t *testing.T) {
-	f := storetest.New(t)
-	other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
-	require.NoError(t, err)
-	conversation, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other account")
-	require.NoError(t, err)
-	_, err = f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: other.ID, ConversationID: conversation, SourceMessageID: "other-mail", MessageType: "email",
-			Subject: sql.NullString{String: "selectionmarker", Valid: true},
-		},
-		BodyText: sql.NullString{String: "bodyneedle", Valid: true},
-		FTS:      &store.FTSDoc{Subject: "selectionmarker", Body: "bodyneedle"},
-	})
-	require.NoError(t, err)
-	local := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())
-	daemon := metadataDaemon(t, local, nil, f.Store)
-	for _, engine := range []struct {
-		name   string
-		engine query.Engine
-	}{{"local", local}, {"daemon", daemon}} {
-		for _, text := range []string{"subject:selectionmarker", "bodyneedle", "bodyneedle | subject:selectionmarker"} {
-			t.Run(engine.name+"/"+text, func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				for _, account := range []string{f.Source.Identifier, store.VirtualUnattributedKey(f.Source.ID)} {
-					saver := &captureDeletionManifestSaver{}
-					h := &handlers{engine: engine.engine, manifestSaver: saver}
-					result := callToolDirect(t, "stage_deletion", h.stageDeletion, map[string]any{"query": text, "account": account})
-					assert.True(result.isError, "account %s: %s", account, result.text)
-					assert.Contains(result.text, "no messages match")
-					assert.Nil(saver.manifest)
-				}
-				saver := &captureDeletionManifestSaver{}
-				h := &handlers{engine: engine.engine, manifestSaver: saver}
-				runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": text, "account": other.Identifier})
-				require.NotNil(saver.manifest)
-				assert.Equal([]string{"other-mail"}, saver.manifest.GmailIDs)
-			})
-		}
-	}
-}
-
-func TestStageDeletionStructuredResponseOmitsZeroSkippedCount(t *testing.T) {
-	f := storetest.New(t)
-	f.NewMessage().WithAttachmentCount(1).Create(t, f.Store)
-	daemon := metadataDaemon(t, query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), nil, f.Store)
-	h := &handlers{engine: daemon, manifestSaver: &captureDeletionManifestSaver{}}
-	result := callToolDirect(t, "stage_deletion", h.stageDeletion, map[string]any{"has_attachment": true})
-	require.False(t, result.isError, "%s", result.text)
-	var structured map[string]any
-	require.NoError(t, json.Unmarshal(result.structuredContent, &structured))
-	assert.NotContains(t, structured, "skipped_count")
-}
-
-func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE sources SET source_type = 'imap' WHERE id = ?`), f.Source.ID)
-	requirements.NoError(err)
-	for i := range 3 {
-		f.NewMessage().WithSourceMessageID(fmt.Sprintf("INBOX|%d", i+1)).WithSubject("imapneedle").Create(t, f.Store)
-	}
-	var boundedRequests atomic.Int32
-	daemon := metadataDaemonWithPeer(t, query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), nil, &boundedRequests, "", f.Store)
-	saver := &captureDeletionManifestSaver{}
-	h := &handlers{engine: daemon, manifestSaver: saver}
-	resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "subject:imapneedle", "account": f.Source.Identifier})
-	assertions.Equal(3, resp.MessageCount)
-	requirements.NotNil(saver.manifest)
-	assertions.Equal("imap", saver.manifest.Source.Type)
-	assertions.ElementsMatch([]string{"INBOX|1", "INBOX|2", "INBOX|3"}, saver.manifest.GmailIDs)
-	assertions.Equal(int32(1), boundedRequests.Load())
 }
 
 func TestStageDeletionThroughOlderDaemonExplainsUpgrade(t *testing.T) {

@@ -1026,6 +1026,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 			targetRequests++
 			assertions.Equal("bodyneedle", r.URL.Query().Get("q"))
 			assertions.Equal("fast", r.URL.Query().Get("search_mode"))
+			assertions.Equal("7", r.URL.Query().Get("source_id"))
 			assertions.Equal("100001", r.URL.Query().Get("max_results"))
 			assertions.Equal(`[{"source_id":7,"unattributed":true}]`, r.URL.Query().Get("account_scopes"))
 			writeJSONResponse(t, w, map[string]any{
@@ -1046,7 +1047,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 			TextTerms:     []string{"bodyneedle"},
 			AccountIDs:    []int64{accountID},
 			AccountScopes: []search.AccountScope{{SourceID: &accountID, Unattributed: true}},
-		}, query.MessageFilter{},
+		}, query.MessageFilter{SourceID: &accountID},
 		query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
 	)
 	requirements.NoError(err)

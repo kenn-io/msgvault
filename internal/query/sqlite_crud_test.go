@@ -965,51 +965,89 @@ func TestGetDeletionTargetsBySearchCombinesSearchFilterAndActiveScope(t *testing
 }
 
 func TestGetDeletionTargetsBySearchBoundedUsesSearchResultsAndExplicitLimit(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	env := newTestEnv(t)
-	filter := MessageFilter{
-		Sender:     "alice@example.com",
-		Pagination: Pagination{Offset: 100, Limit: 1},
+	for _, tc := range []struct {
+		name    string
+		text    string
+		filter  MessageFilter
+		limit   int
+		prepare func(*testEnv) []string
+	}{
+		{
+			name: "explicit limit",
+			text: "Hello",
+			filter: MessageFilter{
+				Sender:     "alice@example.com",
+				Pagination: Pagination{Offset: 100, Limit: 1},
+			},
+			limit: 1,
+		},
+		{
+			name:  "source-deleted row skipped before limit",
+			text:  "boundedneedle",
+			limit: 1,
+			prepare: func(env *testEnv) []string {
+				deletedID := env.AddMessage(dbtest.MessageOpts{
+					Subject: "boundedneedle", SentAt: "2024-06-02 12:00:00",
+				})
+				activeID := env.AddMessage(dbtest.MessageOpts{
+					Subject: "boundedneedle", SentAt: "2024-06-01 12:00:00",
+				})
+				env.MarkDeletedByID(deletedID)
+				return []string{fmt.Sprintf("msg%d", activeID)}
+			},
+		},
+		{
+			name:  "IMAP targets",
+			text:  "subject:imapneedle",
+			limit: 3,
+			prepare: func(env *testEnv) []string {
+				_, err := env.DB.Exec(`UPDATE sources SET source_type = 'imap' WHERE id = 1`)
+				require.NoError(env.T, err)
+				for i := range 3 {
+					id := env.AddMessage(dbtest.MessageOpts{Subject: "imapneedle"})
+					_, err := env.DB.Exec(`UPDATE messages SET source_message_id = ? WHERE id = ?`, fmt.Sprintf("INBOX|%d", i+1), id)
+					require.NoError(env.T, err)
+				}
+				return []string{"INBOX|1", "INBOX|2", "INBOX|3"}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			env := newTestEnv(t)
+			var wantIDs []string
+			if tc.prepare != nil {
+				wantIDs = tc.prepare(env)
+			} else {
+				visible, err := env.Engine.SearchFast(env.Ctx, search.Parse(tc.text), tc.filter, 1, 0)
+				requirements.NoError(err)
+				requirements.Len(visible, 1)
+				wantIDs = []string{visible[0].SourceMessageID}
+			}
+
+			targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
+				env.Ctx, search.Parse(tc.text), tc.filter, DeletionSearchFast, tc.limit,
+			)
+			requirements.NoError(err)
+			assertions.Equal(len(wantIDs), matched)
+			ids, err := deletionTargetSourceMessageIDs(targets, nil)
+			requirements.NoError(err)
+			assertions.ElementsMatch(wantIDs, ids)
+			if tc.name == "IMAP targets" {
+				for _, target := range targets {
+					assertions.Equal("imap", target.SourceType)
+				}
+			}
+
+			if tc.name == "explicit limit" {
+				_, _, err = env.Engine.GetDeletionTargetsBySearchBounded(
+					env.Ctx, search.Parse(tc.text), tc.filter, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
+				)
+				requirements.ErrorContains(err, "bounded deletion search limit cannot exceed")
+			}
+		})
 	}
-	visible, err := env.Engine.SearchFast(env.Ctx, search.Parse("Hello"), filter, 1, 0)
-	requirements.NoError(err)
-	requirements.Len(visible, 1)
-
-	targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
-		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, 1,
-	)
-	requirements.NoError(err)
-	assertions.Equal(1, matched)
-	ids, err := deletionTargetSourceMessageIDs(targets, nil)
-	requirements.NoError(err)
-	assertions.Equal([]string{visible[0].SourceMessageID}, ids)
-
-	_, _, err = env.Engine.GetDeletionTargetsBySearchBounded(
-		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
-	)
-	requirements.ErrorContains(err, "bounded deletion search limit cannot exceed")
-}
-
-func TestGetDeletionTargetsBySearchBoundedSkipsSourceDeletedBeforeLimit(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	env := newTestEnv(t)
-	deletedID := env.AddMessage(dbtest.MessageOpts{
-		Subject: "boundedneedle", SentAt: "2024-06-02 12:00:00",
-	})
-	activeID := env.AddMessage(dbtest.MessageOpts{
-		Subject: "boundedneedle", SentAt: "2024-06-01 12:00:00",
-	})
-	env.MarkDeletedByID(deletedID)
-
-	targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
-		env.Ctx, search.Parse("boundedneedle"), MessageFilter{}, DeletionSearchFast, 1,
-	)
-	requirements.NoError(err)
-	requirements.Len(targets, 1)
-	assertions.Equal(1, matched)
-	assertions.Equal(activeID, targets[0].MessageID)
 }
 
 func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) {

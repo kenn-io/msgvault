@@ -3217,16 +3217,21 @@ func TestStageDeletion(t *testing.T) {
 	}
 
 	t.Run("query-based staging", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		dataDir := t.TempDir()
 		h := &handlers{engine: eng, dataDir: dataDir}
 
-		resp := runTool[stageDeletionResponse](
-			t, "stage_deletion", h.stageDeletion,
-			map[string]any{"query": "from:news"},
-		)
-		assert.Equal(t, 2, resp.MessageCount, "MessageCount")
-		assert.Equal(t, "pending", resp.Status, "Status")
-		assert.NotEmpty(t, resp.BatchID, "BatchID")
+		result := callToolDirect(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
+		require.False(result.isError, "%s", result.text)
+		var resp stageDeletionResponse
+		require.NoError(json.Unmarshal([]byte(resultText(t, result)), &resp))
+		var structured map[string]any
+		require.NoError(json.Unmarshal(result.structuredContent, &structured))
+		assert.NotContains(structured, "skipped_count")
+		assert.Equal(2, resp.MessageCount, "MessageCount")
+		assert.Equal("pending", resp.Status, "Status")
+		assert.NotEmpty(resp.BatchID, "BatchID")
 	})
 
 	t.Run("structured filter staging", func(t *testing.T) {
