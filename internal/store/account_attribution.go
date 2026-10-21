@@ -847,7 +847,7 @@ func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, m
 		SELECT EXISTS (SELECT 1 FROM activity_events WHERE message_id = ?)`, messageID).Scan(&hasEvent); err != nil {
 		return fmt.Errorf("read draft activity event for message %d: %w", messageID, err)
 	}
-	if candidate.Queue.Revision > candidate.Queue.ProcessedRevision || candidate.Eligible != hasEvent {
+	if candidate.Queue.Revision > candidate.Queue.ProcessedRevision || (candidate.Eligible && !hasEvent) || (candidate.Unsent && hasEvent) {
 		_, err = tx.ExecContext(ctx, requeueActivityProjectionSQL(`
 			SELECT ?, 1, CURRENT_TIMESTAMP`), messageID)
 		if err != nil {
