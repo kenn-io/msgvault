@@ -194,12 +194,14 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 			return nil, fmt.Errorf("refresh token: %w", err)
 		}
 		prior := s.expected.Token
-		if token.AccessToken == prior.AccessToken && token.RefreshToken == prior.RefreshToken && token.TokenType == prior.TokenType && token.Expiry.Equal(prior.Expiry) {
-			return token, nil
-		}
+		// Omitted refresh scopes preserve saved metadata, including unknown grants.
 		scopes := s.expected.Scopes
-		if len(scopes) == 0 {
-			scopes = s.manager.config.Scopes
+		if token.Extra("scope") != nil {
+			// An explicit refresh grant replaces saved permissions, even when empty.
+			scopes = grantedScopesFromToken(token, nil)
+		}
+		if token.AccessToken == prior.AccessToken && token.RefreshToken == prior.RefreshToken && token.TokenType == prior.TokenType && token.Expiry.Equal(prior.Expiry) && slices.Equal(scopes, s.expected.Scopes) {
+			return token, nil
 		}
 		err = s.manager.saveTokenComparedContext(s.ctx, s.email, token, scopes, s.expected)
 		if err == nil {

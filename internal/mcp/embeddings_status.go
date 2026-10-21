@@ -17,7 +17,7 @@ func (h *handlers) getEmbeddingStatus(ctx context.Context, req toolRequest) (*to
 	if h.embeddingStatus == nil {
 		return toolErrorResult("embeddings_status_unavailable: embedding status is unavailable"), nil
 	}
-	sourceID, err := positiveInt64Arg(req.GetArguments(), "source_id")
+	sourceID, err := positiveInt64Arg(req.GetArguments(), mcpFieldSourceID)
 	if err != nil {
 		return toolErrorResult("invalid_source_id: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
@@ -31,7 +31,7 @@ func (h *handlers) getEmbeddingStatus(ctx context.Context, req toolRequest) (*to
 	return jsonResult(status)
 }
 func embeddingStatusDefinition() toolDefinition {
-	d := readDefinition(ToolGetEmbeddingStatus, "Get message embedding coverage, live scheduler state, throughput, ETA, and recent provider/DB batch timings. Source filters affect coverage only; diagnostics and throughput describe the whole run.", closedObject(map[string]*jsonschema.Schema{"source_id": safeIDSchema("Filter eligible/current/pending by source ID; ETA is null")}), outputSchemaFor[vector.EmbeddingStatus](), (*handlers).getEmbeddingStatus)
+	d := readDefinition(ToolGetEmbeddingStatus, "Get message embedding coverage, live scheduler state, throughput, ETA, and recent provider/DB batch timings. Source filters affect coverage only; diagnostics and throughput describe the whole run.", closedObject(map[string]*jsonschema.Schema{mcpFieldSourceID: safeIDSchema("Filter eligible/current/pending by source ID; ETA is null")}), outputSchemaFor[vector.EmbeddingStatus](), (*handlers).getEmbeddingStatus)
 	d.availability = func(c catalogCapabilities) bool { return c.embeddingStatus }
 	return d
 }

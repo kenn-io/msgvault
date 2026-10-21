@@ -236,6 +236,61 @@ func TestCommandManagerPersistsLaterHTTPRefresh(t *testing.T) {
 	assert.ElementsMatch(ScopesGmailReadonly, saved.Scopes)
 }
 
+func TestManagerRefreshPersistsReturnedScopes(t *testing.T) {
+	for _, command := range []bool{false, true} {
+		for _, tc := range []struct {
+			name   string
+			fields string
+			want   []string
+		}{
+			{name: "omitted", want: []string{ScopeGmailReadonly}},
+			{name: "narrowed", fields: `,"scope":"https://www.googleapis.com/auth/gmail.metadata"`, want: []string{ScopeGmailMetadata}},
+			{name: "empty", fields: `,"scope":""`},
+		} {
+			t.Run(fmt.Sprintf("command=%v/%s", command, tc.name), func(t *testing.T) {
+				assert, require := assert.New(t), require.New(t)
+				mgr := setupTestManager(t, ScopesGmailReadonly)
+				if command {
+					mgr, _ = commandManager(t)
+				}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprintf(w, `{"access_token":"refreshed","token_type":"Bearer","expires_in":3600%s}`, tc.fields)
+				}))
+				t.Cleanup(server.Close)
+				mgr.config.Endpoint = oauth2.Endpoint{TokenURL: server.URL, AuthStyle: oauth2.AuthStyleInParams}
+				require.NoError(mgr.saveToken("reader@example.com", &oauth2.Token{AccessToken: "expired", RefreshToken: "refresh", Expiry: time.Now().Add(-time.Hour)}, ScopesGmailReadonly))
+
+				source, err := mgr.TokenSource(t.Context(), "reader@example.com")
+				require.NoError(err)
+				token, err := source.Token()
+				require.NoError(err)
+				assert.Equal("refreshed", token.AccessToken)
+				info, err := mgr.InspectToken(t.Context(), "reader@example.com")
+				require.NoError(err)
+				assert.ElementsMatch(tc.want, info.Scopes)
+			})
+		}
+	}
+}
+
+func TestCommandManagerPersistsScopeOnlyRefresh(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	mgr, _ := commandManager(t)
+	initial := &oauth2.Token{AccessToken: "same", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}
+	require.NoError(mgr.saveToken("reader@example.com", initial, ScopesGmailReadonly))
+	snapshot, err := mgr.loadTokenFile(t.Context(), "reader@example.com")
+	require.NoError(err)
+	refreshed := initial.WithExtra(map[string]any{"scope": ScopeGmailMetadata})
+	source := &persistingTokenSource{manager: mgr, source: oauth2.StaticTokenSource(refreshed), email: "reader@example.com", expected: snapshot, ctx: t.Context()}
+
+	_, err = source.Token()
+	require.NoError(err)
+	info, err := mgr.InspectToken(t.Context(), "reader@example.com")
+	require.NoError(err)
+	assert.Equal([]string{ScopeGmailMetadata}, info.Scopes)
+}
+
 func TestCommandTokenSelectionNormalizesScopes(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

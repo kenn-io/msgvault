@@ -1136,8 +1136,8 @@ func personSweepAuthorship(
 // the single list behind personSweepSourceAuthenticatesSender and the SQL
 // authorship predicate, so the two can never disagree.
 func personSweepAuthenticatedSenderSourceTypes() []string {
-	return []string{"apple_messages", "beeper", "discord", "facebook_messenger",
-		"google_messages", "imazing_csv", "imessage", "matrix", "slack", "slackdump",
+	return []string{"apple_messages", sourceTypeBeeper, sourceTypeDiscord, "facebook_messenger",
+		"google_messages", "imazing_csv", "imessage", sourceTypeMatrix, sourceTypeSlack, "slackdump",
 		"synctech-sms", "synctech_sms", "teams", "whatsapp"}
 }
 

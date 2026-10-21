@@ -14,6 +14,7 @@ func TestSyncStateRoundTrip(t *testing.T) {
 	s := NewSyncState()
 	s.EnsureChat("!a:x").Newest = "100"
 	s.EnsureChat("!a:x").Oldest = "5"
+	s.EnsureChat("!a:x").BackfillFirst = true
 	s.EnsureChat("!b:x").Done = true
 	s.Anchors = []AnchorProbe{{ChatID: "!a:x", MessageID: "42", Timestamp: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)}}
 	s.ListWatermark = "2026-01-02T03:04:05Z"
@@ -72,6 +73,29 @@ func TestSyncStateMerge(t *testing.T) {
 	assert.Equal("3", base.Chats["!new:x"].Oldest, "new chats copied")
 	assert.Equal("2026-02-01T00:00:00Z", base.ListWatermark, "later watermark wins")
 	assert.Equal("1", base.Anchors[0].MessageID, "existing anchors are never replaced")
+}
+
+func TestSyncStateMergeBackfillPriority(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		base       bool
+		checkpoint bool
+		want       bool
+	}{
+		{name: "checkpoint sets priority", checkpoint: true, want: true},
+		{name: "checkpoint clears priority", base: true, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := NewSyncState()
+			base.EnsureChat("!a:x").BackfillFirst = tc.base
+			checkpoint := NewSyncState()
+			checkpoint.EnsureChat("!a:x").BackfillFirst = tc.checkpoint
+
+			base.Merge(checkpoint)
+
+			assert.Equal(t, tc.want, base.Chats["!a:x"].BackfillFirst)
+		})
+	}
 }
 
 func TestSyncStateMergePreservesExplicitDoneReset(t *testing.T) {

@@ -21,7 +21,7 @@ func messageTagDefinition(write bool) toolDefinition {
 	properties := map[string]*jsonschema.Schema{"message_id": safeIDSchema("Archived message ID"), "mailbox": stringSchema("Exact recorded IMAP mailbox; defaults to the current original copy or sole current membership")}
 	result, errorSchema := outputSchemaFor[emailtags.MessageTagResult](), outputSchemaFor[emailtags.MessageTagError]()
 	result.Schema, errorSchema.Schema = "", ""
-	output := &jsonschema.Schema{Type: "object", AnyOf: []*jsonschema.Schema{result, errorSchema}}
+	output := &jsonschema.Schema{Type: mcpSchemaTypeObject, AnyOf: []*jsonschema.Schema{result, errorSchema}}
 	definition := readDefinition(ToolGetMessageTags, "Read a message's native tags: Gmail label IDs, IMAP keywords, or Microsoft Graph category names. Includes the Gmail user label catalog or IMAP persistent keyword support when available.", closedObject(properties, "message_id"), output, (*handlers).getMessageTags)
 	if write {
 		maximum := 100

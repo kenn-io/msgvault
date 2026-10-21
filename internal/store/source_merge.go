@@ -175,7 +175,7 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		}
 		if result.MessagesMoved > 0 {
 			// Moved IDs can precede a partial repair cursor or a completed pass.
-			if into.SourceType == "beeper" && into.SyncConfig.Valid {
+			if into.SourceType == sourceTypeBeeper && into.SyncConfig.Valid {
 				var config map[string]jsontext.Value
 				if err := json.Unmarshal([]byte(into.SyncConfig.String), &config); err != nil {
 					return fmt.Errorf("read destination repair checkpoint: %w", err)

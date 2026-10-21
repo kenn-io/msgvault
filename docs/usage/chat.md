@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-13"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -28,6 +28,258 @@ instructions or authorization to make a change. See [write controls](#write-cont
 
 Saved View management changes only reusable definitions; deleting a Saved
 View never deletes archive messages.
+
+## Events
+
+On unreleased `main`, native MCP Events can notify an HTTPS receiver when
+msgvault archives a live message, changes an archived calendar event, or changes
+a draft. This requires daemon API schema 3.24.0, protocol `2026-07-28`, Streamable
+HTTP, and [`[mcp.events].enabled`](../configuration.md#mcpevents). The
+listener's inbound key must be the selected daemon's owner API key. For a local
+daemon, the effective `[server]` key qualifies. For a remote daemon, Events is
+available only when `[server]` and `[remote].api_key` hold the same key. It is
+unavailable over stdio, with delegated tokens, in keyless mode, or when either
+independent `--http-token-file` or `--http-token-env` is selected.
+
+The client discovers the `io.modelcontextprotocol/events` entry under
+`capabilities.extensions` through `server/discover` (the top-level `events`
+key stays as a compatibility alias), then calls `events/list`. Calls to
+`events/subscribe` and `events/unsubscribe` must send an `Mcp-Name` header equal
+to the request's `name`; otherwise the adapter returns HTTP 400 with JSON-RPC
+error `-32020`. The runtime catalog includes only source types with implemented
+capture and reads. Gmail and IMAP support message and draft occurrences; Google
+Calendar supports event changes. Explicitly enabled `beeper`, `slack`, `teams`,
+`discord`, `msmail`, and `matrix` sources add native message arrivals in exact
+conversations. See the [supported source types](../configuration.md#mcpevents)
+for provider coverage and media limits. Reaction events remain unadvertised.
+
+Managed Beeper drafts and local chat drafts have capture and `draft_get` reads
+when their source types are explicitly enabled in `[mcp.events].sources`:
+`beeper`, `slack`, `slackdump`, `teams`, and `discord`.
+
+Historical imports, full scans, and historical recovery scans do not emit live
+occurrences. A newly subscribed receiver starts at the current journal head.
+Keep the daemon running with `msgvault serve`, or disable background daemon idle
+shutdown when callbacks must remain available.
+
+Choose a resource before subscribing. In an owner-authenticated HTTP session,
+call `list_mcp_event_resources` with `{"kind":"source"}`,
+`{"kind":"conversation"}`, or `{"kind":"inbox"}`. Add `source_id` to restrict
+results to one account. The response contains each resource's decimal `id`,
+opaque `reference`, native `provider_id`, and current `capabilities`. Display
+names are presentation only; keep the returned ID and reference together.
+
+Discovery works while Events is disabled. It reports `events_disabled` and no
+subscribable families until capture is enabled. Discovery performs no provider
+request and creates no signing key. It has the same owner HTTP transport
+restrictions as Events; an independent listener credential cannot use it even
+when its bytes match the daemon key. Older daemons that lack the resource route
+omit the tool.
+
+The page size defaults to 25 and cannot exceed 100. Pass `next_cursor` as
+`cursor` with the same `kind`, `source_id`, and `limit` to continue. A cursor is
+bound to its owner, filters and resource lifetime. If its anchor is replaced,
+restart discovery rather than reusing the stale cursor.
+
+Choose an exact scope before subscribing:
+
+| Family | Scope argument | Find the scope |
+|---|---|---|
+| `msgvault.message_archived` | `conversation_id` | Message or conversation reads |
+| `msgvault.source_message_archived` | `source_id` and required `source_ref` | `list_mcp_event_resources` with `kind: "source"` |
+| `msgvault.inbox_message_archived` | `inbox_id` and required `inbox_ref` | `list_mcp_event_resources` with `kind: "inbox"` |
+| `msgvault.calendar_event_changed` | `calendar_source_id` | `list_calendar_sources` |
+| `msgvault.draft_changed` | `conversation_id` | Draft or conversation reads |
+
+The message and draft families also accept an optional `conversation_ref`;
+calendar accepts `source_ref`. A supplied reference pins the resource lifetime:
+stale, wrong-scope, or malformed references fail before receiver verification.
+Keep the same reference when renewing or unsubscribing. Omitting it preserves
+existing subscription argument bytes and IDs; retained subscriptions still
+cannot move to a replacement resource that reuses an archive ID.
+
+Source subscriptions include eligible arrivals in conversations created after
+subscription. Inbox subscriptions match the exact native container and account
+lifetime. Discovery returns the supported kinds for each source:
+
+| Source | Native inbox identity |
+|---|---|
+| Gmail | Label ID |
+| Microsoft mail | Graph folder ID |
+| IMAP | Mailbox identity and verified `UIDVALIDITY` epoch |
+| Slack | Channel ID, or channel ID and exact thread-root timestamp |
+| Teams | Chat ID; channel and chat-thread scopes remain unavailable |
+| Discord | Channel ID, or thread ID with its verified parent channel ID |
+| Matrix | Room ID, or room ID and exact standard `m.thread` root event ID |
+| Beeper | Exact source account and native member-chat route |
+
+Names are display values. A rename keeps the reference; observed removal and
+restoration create a new lifetime. A failed or incomplete inventory does not
+prove removal. Incremental thread catalogs also preserve quiet threads.
+
+Native adapters pin scope lifetimes before content requests. Message capture
+checks those lifetimes again in the snapshot transaction. A response in flight
+during revocation cannot restore a retired scope or borrow a replacement,
+including an exact thread whose parent remains readable.
+
+Discord verifies the selected bot, guild membership, roles and channel
+permission overwrites. An empty successful message list alone does not prove
+read-history permission. Quiet forum and media parents use their verified native
+permissions because they have no message-list endpoint. A thread's current
+read must also match its parent.
+
+Matrix distinguishes standard `m.thread` membership from an ordinary reply.
+The root can be absent from the archive. Incremental sync omission preserves
+quiet joined rooms; a positive leave or membership denial retires the affected
+room and its threads. Native sync and membership responses must match the room
+and exact thread lifetimes pinned before the request. Encrypted placeholders
+remain silent.
+
+Beeper pins the selected account and exact native chat. Two logins on one
+network remain separate. Activity-window omissions preserve quiet routes;
+positive chat denial or route replacement retires their old references. A
+merged view without an explicit native member route is unavailable. Membership
+and route lifetimes are committed with the message snapshot.
+
+The source and inbox message families default `include_from_me` to `false` and
+`include_reactions` to `true`. A reaction is still unavailable unless the
+runtime catalog advertises its native producer. One arrival can produce
+separate source, conversation and inbox occurrences; choose the scopes your
+receiver needs. Membership is captured with the message transaction. Moving an
+archived message later does not emit a new arrival or rewrite an old receipt.
+
+Archive IDs are canonical decimal strings. Subscribe with `events/subscribe`:
+
+```json
+{
+  "name": "msgvault.message_archived",
+  "arguments": {"conversation_id": "42"},
+  "delivery": {
+    "mode": "webhook",
+    "url": "https://receiver.example.net/events",
+    "secret": "whsec_<base64-encoded 32-byte secret>"
+  }
+}
+```
+
+The receiver must echo the signed verification request's `challenge` as JSON.
+Delivery requests contain a signed occurrence envelope. Verify the Standard
+Webhooks signature over the exact body and deduplicate by `eventId`. HTTPS
+receivers normally need public addresses and port 443 or 8443; the
+[configuration reference](../configuration.md#mcpevents) owns private receiver
+exceptions and address checks.
+
+Save the returned `id`, `cursor`, and `refreshBefore`. The MCP `refreshBefore`
+field is an ISO8601 UTC timestamp, such as `2026-10-02T12:00:00.123Z`. Renew
+before that time with the same scope, callback, and secret. `events/unsubscribe`
+ends that subscription; unsubscribing a subscription that does not exist returns
+a `NotFound` error. When you refresh a live subscription, send your last saved
+cursor. If it is at or behind msgvault's in-flight position, the refresh only
+extends the lifetime: delivery continues without interruption or replay, and
+`truncated` is `false`. A cursor from before the retention floor or from an old
+epoch resets the subscription to the current head and returns
+`truncated: true`. After a subscription expires, a refresh with a saved cursor
+resumes from that cursor. Refreshing a subscription that was ended by scope
+removal or an owner-key change returns `Forbidden`. Delivery is at least once, ordered within each subscription,
+with one pending occurrence and at most five attempts, spaced 30 seconds, 1,
+3, and 8 minutes apart. A `2xx` response acknowledges delivery; `410` and `413`
+drop that occurrence without ending the subscription.
+If a subscription falls behind the retained journal or the capture epoch
+changes, msgvault resets it to the current head, keeps it running, and POSTs a
+signed `{"type":"gap","cursor":"..."}` body. If its conversation or calendar
+source is removed, msgvault POSTs a signed `terminated` body with a `Forbidden`
+error and `reason: scope_removed`, and stops the subscription. Both control
+bodies use a `webhook-id` that starts with `msg_gap_` or `msg_terminated_`,
+are sent at most once and are not retried, even when the receiver answers
+`503`, `425`, or `5xx`. A receiver that missed a `gap` recovers by refreshing
+with its last saved cursor (`truncated: true`); one that missed `terminated`
+sees `Forbidden` on refresh. Changing the owner key ends subscriptions without sending
+`terminated`.
+Scheduled syncs pause for deliveries. A manual `msgvault sync` or `sync-full`
+does not: callbacks for anything archived during it wait until it finishes.
+
+Use `get_mcp_event` to recover a retained occurrence. For a message occurrence,
+pass its `eventId` as `event_id` to every `get_message` page. This grants a read
+only for the message identified by that receipt; it cannot authorize another
+message or a replacement using a deleted message's ID. An occurrence receipt
+can survive physical message deletion even when its message read becomes
+unavailable. Ending a subscription removes its read authority immediately;
+expired subscriptions have a 24-hour read grace while the receipt is retained.
+The configured retention defaults to seven days and may be shorter. An
+occurrence becomes unavailable to reads and delivery once its recorded time
+falls outside the retention window, even if the next cleanup sweep has not yet
+removed its row. Startup and replay activation prune expired rows before
+workers or a replay cursor can use them. Pruning advances a global sequence
+floor. A subscription reports a gap only when pruning removes an occurrence in
+its own scope that it has not yet processed; it is reset to the current head and
+sent a `gap` body. A refresh using a cursor from before the reset returns
+`truncated: true`. A quiet active subscription's cursor moves up to the floor
+and keeps running. An expired subscription keeps its cursor, so renewing it
+after a sweep returns `truncated: true`. A recent receipt that remains
+physically stored below the floor can still authorize its own read until it
+expires.
+
+Subscriptions and receipts remain bound to the source and conversation admitted
+at subscription or capture time. Replacing either identity invalidates that
+binding, even if its archive ID is reused or its old provider identifier is
+restored. Message reads also require the original message to remain in the
+recorded source and conversation. Subscription admission checks that identity
+before webhook verification and again when activating the subscription. A change
+during verification rejects the request, including a change away and back.
+
+Live Events require the selected native adapter to verify its identity and read
+permission. Gmail and Microsoft mail require body/raw message-read permission;
+IMAP verifies the selected mailbox and epoch. Chat adapters check their native
+account, container and read authority. Unknown permission metadata pauses
+capture, delivery and receipt reads without asserting removal. Explicit denial
+or OAuth grant revocation retires the affected authority; restoring access cannot
+revive its old subscriptions or receipts. Ordinary archive reads remain separate.
+
+The daemon observes native permission and folder changes during sync. A fresh
+daemon pauses persisted permission until the selected native adapter verifies
+its current account and grant again. Delivery and receipt reads can therefore
+wait for the next successful native sync after startup. Discovery remains
+available during this pause.
+
+On upgrade, msgvault preserves valid existing subscriptions, receipt IDs and
+pending payload bytes. It records unavailable legacy bindings once; restoring
+archive rows later does not make those old receipts readable again. An archive
+that has never captured Events seals its upgrade markers during writable setup.
+Starting it with Events disabled then needs no archive write lock and leaves
+capture at epoch zero.
+
+Use `draft_get` to read a managed draft by its `draft_id`. Deleted drafts can
+return not-found while `get_mcp_event` still returns their retained occurrence.
+
+`msgvault mcp events status --json` shows safe delivery state, cursors, pending
+attempts, and dead-letter and loop-guard counts. It omits callback URLs and
+secrets. `last_delivery_outcome` is one of:
+
+| Value | Meaning |
+|---|---|
+| (empty) | No delivery outcome is recorded yet. Activation also clears `gap_pending` back to empty. |
+| `acknowledged` | The receiver answered `2xx` and the cursor advanced. |
+| `retry_http_5xx`, `retry_http_4xx`, `retry_http_3xx`, `retry_transport_error` | The last attempt failed and a retry is scheduled. |
+| `dead_letter` | An occurrence was dropped: `410`, `413`, an oversized payload, or five failed attempts. The subscription continues. |
+| `loop_guard` | Own-message occurrences were skipped by the loop guard. |
+| `gap_pending` | Pruning removed an occurrence the subscription had not processed; the worker will reset it and send a `gap` body. |
+| `gap` | The subscription was reset to the head and a `gap` body was sent. |
+| `terminate_pending` | The scope was removed; the `terminated` body has not been sent yet. |
+| `terminated` | The `terminated` body was sent. |
+
+A subscription below the retention floor or in an old epoch stays `active`, and
+counts toward the limit of 64 active subscriptions, until its worker resets it. Subscriptions expire within 24 hours (a requested `ttlMs` is clamped to between 1 minute and 24 hours, and an optional `maxAgeMs` limits how far back a replay cursor may resume) and the journal retains at most
+seven days. The cleanup sweep runs at half the configured retention, capped at
+one hour and floored at one second. Own-message delivery defaults off; the
+runtime schema describes `include_from_me` and its bounded loop guard. Events
+do not poll provider status or send mail. Attachment processing, action completion, filed Kata issues, and
+Beeper media readiness remain unadvertised until their producer and read gates
+are implemented.
+
+Hosted ChatGPT integration remains experimental: a gateway must forward native
+`events/*` and provide the daemon owner key. An HTTPS webhook receiver receives
+callbacks directly from the daemon. A tunnel does not establish this auth
+bridge or forward callbacks automatically.
 
 ## Calendar control
 

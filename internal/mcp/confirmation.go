@@ -107,7 +107,7 @@ func (r toolRequest) confirmUserAction(ctx context.Context, message string) erro
 	params := &sdkmcp.ElicitParams{
 		Message: message,
 		RequestedSchema: &jsonschema.Schema{
-			Type: "object",
+			Type: mcpSchemaTypeObject,
 			Properties: map[string]*jsonschema.Schema{
 				"confirm": {Type: "boolean", Description: "Confirm this specific action"},
 			},

@@ -33,10 +33,10 @@ func findContactCandidatesDefinition() toolDefinition {
 
 func getPersonMessagingRoutesDefinition() toolDefinition {
 	properties := map[string]*jsonschema.Schema{
-		"person_uid": stringSchema("Selected canonical or retired UID; unknown and tombstoned UIDs are explicit errors"),
-		"network":    stringSchema("Optional lowercase service name such as whatsapp or discord. Unknown networks stay visible as unresolved."),
-		"source_id":  boundedIntegerSchema("Optional source ID", 0, maxJSONSafeInteger),
-		"limit":      boundedIntegerWithDefault("Maximum rows per independent section, default 20", 1, 100, 20),
+		"person_uid":     stringSchema("Selected canonical or retired UID; unknown and tombstoned UIDs are explicit errors"),
+		"network":        stringSchema("Optional lowercase service name such as whatsapp or discord. Unknown networks stay visible as unresolved."),
+		mcpFieldSourceID: boundedIntegerSchema("Optional source ID", 0, maxJSONSafeInteger),
+		"limit":          boundedIntegerWithDefault("Maximum rows per independent section, default 20", 1, 100, 20),
 	}
 	for _, name := range []string{"after_conversation_id", "after_contact_point_id", "after_observation_id", "after_suggestion_id"} {
 		properties[name] = boundedIntegerSchema("Previous section's next_after_id; paging is live between requests", 0, maxJSONSafeInteger)
@@ -97,7 +97,7 @@ func (h *handlers) getPersonMessagingRoutes(ctx context.Context, req toolRequest
 		name        string
 		destination *int64
 	}{
-		{"source_id", &query.SourceID}, {"after_conversation_id", &query.AfterConversationID}, {"after_contact_point_id", &query.AfterContactPointID}, {"after_observation_id", &query.AfterObservationID}, {"after_suggestion_id", &query.AfterSuggestionID},
+		{mcpFieldSourceID, &query.SourceID}, {"after_conversation_id", &query.AfterConversationID}, {"after_contact_point_id", &query.AfterContactPointID}, {"after_observation_id", &query.AfterObservationID}, {"after_suggestion_id", &query.AfterSuggestionID},
 	} {
 		value, err := nonnegativeInt64Arg(args, field.name)
 		if err != nil {

@@ -42,6 +42,9 @@ func TestBuildCache_RefreshesReplyUpdatedBeforeSlackYield(t *testing.T) {
 			"reply_count": 1, "latest_reply": "1750000060.000001",
 		}
 		switch r.URL.Path {
+		case "/auth.test":
+			response["team_id"] = "T01"
+			response["user_id"] = "UME"
 		case "/users.list":
 			response["members"] = []any{map[string]any{"id": "UME", "name": "Example"}}
 		case "/conversations.list":

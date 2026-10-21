@@ -503,6 +503,88 @@ func TestImportResumeAfterLimit(t *testing.T) {
 	assert.Equal(parentID, linked.Int64)
 }
 
+func TestImportLimitedRunsAlternateBackfillAndLiveMessages(t *testing.T) {
+	require := require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-60 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!limited:beeper.local", AccountID: "signal", Network: "Signal", Title: "Limited", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+	}
+	for i := range 100 {
+		m := fakeMsg{
+			ID: "history-" + strconv.Itoa(i), SortKey: i,
+			Timestamp: base.Add(time.Duration(i) * time.Minute), Text: "history",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}
+		ch.Msgs = append(ch.Msgs, m)
+	}
+	ch.LastActivity = ch.Msgs[len(ch.Msgs)-1].Timestamp
+	f.addChat(ch)
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	// Seed a primed head cursor and an unfinished older-history cursor.
+	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 1})
+	require.NoError(err)
+
+	source, err := st.GetOrCreateSource("beeper", "signal")
+	require.NoError(err)
+	loadState := func() *SyncState {
+		run, runErr := st.GetLastSuccessfulSync(source.ID)
+		require.NoError(runErr)
+		require.True(run.CursorAfter.Valid)
+		state, stateErr := LoadSyncState(run.CursorAfter.String)
+		require.NoError(stateErr)
+		return state
+	}
+	initialState := loadState()
+	initialChatState := initialState.Chats[ch.ID]
+	require.NotNil(initialChatState)
+	require.NotEmpty(initialChatState.Newest)
+	require.False(initialChatState.Done)
+	firstOldest := initialChatState.Oldest
+	require.NotEmpty(firstOldest)
+
+	// Keep adding live messages while each limited run services only one pass.
+	// Alternating priority must advance history and let later incremental passes
+	// catch up to arrivals from backfill-priority runs.
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := range 4 {
+		f.appendMsg(ch.ID, fakeMsg{
+			ID: "live-" + strconv.Itoa(i), SortKey: 100 + i,
+			Timestamp: now.Add(time.Duration(i+1) * time.Minute), Text: "live",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		})
+		_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal", Limit: 1})
+		require.NoError(err)
+	}
+
+	state := loadState()
+	chatState := state.Chats[ch.ID]
+	require.NotNil(chatState)
+	require.NotEqual(firstOldest, chatState.Oldest,
+		"repeated live arrivals must not starve the unfinished history backfill")
+	require.False(chatState.Done)
+	var liveArchived int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id LIKE 'live-%'`).Scan(&liveArchived))
+	require.Equal(3, liveArchived,
+		"incremental passes must catch up with arrivals from backfill-priority runs")
+
+	// A normal run finishes both paths and preserves every arriving message.
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var total, liveCount int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='beeper'`).Scan(&total))
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE source_message_id LIKE 'live-%'`).Scan(&liveCount))
+	require.Equal(104, total)
+	require.Equal(4, liveCount)
+}
+
 func TestImportReactionEventRefreshesTarget(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

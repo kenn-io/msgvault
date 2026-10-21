@@ -37,18 +37,18 @@ type DraftCommandError struct {
 
 func (e *DraftCommandError) Error() string { return e.Message }
 
-var stableDraftOutputSchema = &jsonschema.Schema{Schema: schema202012, Type: "object"}
+var stableDraftOutputSchema = &jsonschema.Schema{Schema: schema202012, Type: mcpSchemaTypeObject}
 
 var stableDraftDefinitions = func() map[string]toolDefinition {
 	definitions := map[string]toolDefinition{
 		"draft-reply": writeDefinition(ToolDraftReply, "Run msgvault draft-reply through the daemon to create a reply draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-			"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"),
+			"message_id": safeIDSchema("Archived parent message ID"), "body": stringSchema("Reply body"), "from": stringSchema("Confirmed source identity"), "all": booleanSchema("Reply to all visible recipients"), "account": stringSchema("Destination account"), mcpFieldSourceID: safeIDSchema("Destination source ID"),
 		}, "message_id", "body"), stableDraftOutputSchema, draftToolHandler("draft-reply", "message_id")),
 		"draft-compose": writeDefinition(ToolDraftCompose, "Run msgvault draft-compose through the daemon to create a draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-			"account": stringSchema("Source account"), "source_id": safeIDSchema("Source ID"), "from": stringSchema("Confirmed source identity"), "to": arraySchema(stringSchema("Recipient address or Beeper chat ID")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "subject": stringSchema("Draft subject"), "body": stringSchema("Draft body"), "conversation": safeIDSchema("Local chat conversation ID"), "reply_to": safeIDSchema("Archived chat message ID"),
+			"account": stringSchema("Source account"), mcpFieldSourceID: safeIDSchema("Source ID"), "from": stringSchema("Confirmed source identity"), "to": arraySchema(stringSchema("Recipient address or Beeper chat ID")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "subject": stringSchema("Draft subject"), "body": stringSchema("Draft body"), "conversation": safeIDSchema("Local chat conversation ID"), "reply_to": safeIDSchema("Archived chat message ID"),
 		}), stableDraftOutputSchema, draftToolHandler("draft-compose", "")),
 		"draft-forward": writeDefinition(ToolDraftForward, "Run msgvault draft-forward through the daemon to create a forwarding draft. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
-			"message_id": safeIDSchema("Archived message ID"), "from": stringSchema("Confirmed destination source identity"), "to": arraySchema(stringSchema("Recipient address")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "account": stringSchema("Destination account"), "source_id": safeIDSchema("Destination source ID"), "body": stringSchema("Forwarding note"),
+			"message_id": safeIDSchema("Archived message ID"), "from": stringSchema("Confirmed destination source identity"), "to": arraySchema(stringSchema("Recipient address")), "cc": arraySchema(stringSchema("Cc recipient")), "bcc": arraySchema(stringSchema("Bcc recipient")), "account": stringSchema("Destination account"), mcpFieldSourceID: safeIDSchema("Destination source ID"), "body": stringSchema("Forwarding note"),
 		}, "message_id"), stableDraftOutputSchema, draftToolHandler("draft-forward", "message_id")),
 		"draft-get": readDefinition(ToolDraftGet, "Run msgvault draft-get through the daemon to read a draft or list local conversation drafts. Msgvault never sends.", closedObject(map[string]*jsonschema.Schema{
 			"draft_id": stringSchema("Managed draft ID"), "conversation": safeIDSchema("Local chat conversation ID"),
@@ -80,7 +80,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		for key, value := range args {
 			var values []string
 			switch key {
-			case "message_id", "source_id", "conversation", "reply_to", "revision":
+			case "message_id", mcpFieldSourceID, "conversation", "reply_to", "revision":
 				id, err := getIDArg(args, key)
 				if err != nil {
 					return toolErrorResult(err.Error()), nil

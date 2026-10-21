@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json/v2"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestNormalizeMessageID_InvalidUTF8(t *testing.T) {
@@ -337,4 +339,60 @@ func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testi
 	assert.Equal(fallback, internalDate.Time.UTC())
 	assert.Contains(logs.String(), "ignored implausible email Date header")
 	assert.Contains(logs.String(), "replacement_source=none")
+}
+
+// A native MIME snapshot must commit its receipt-readable relations before the
+// arrival event. An attachment failure must roll back the message and event.
+func TestNativeMIMESnapshotPublishesReadyRelationsAtomically(t *testing.T) {
+	for _, failAttachment := range []bool{false, true} {
+		name := "ready"
+		if failAttachment {
+			name = "attachment_failure"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			resource, err := f.Store.GetMCPResource(t.Context(), "source", f.Source.ID)
+			require.NoError(err)
+			require.NoError(f.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: f.Source.ID, SourceReference: resource.Reference, SourceType: resource.SourceType, NativeIdentity: resource.ProviderID, Known: true, MessageRead: true}))
+			_, err = f.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: "owner:synthetic-native-mime", Capabilities: []store.MCPEventCapability{{Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}}})
+			require.NoError(err)
+			if failAttachment {
+				if f.Store.IsPostgreSQL() {
+					_, err = f.Store.DB().ExecContext(t.Context(), `CREATE FUNCTION reject_native_ready_attachment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic required attachment failure'; END $$`)
+					require.NoError(err)
+					_, err = f.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_native_ready_attachment BEFORE INSERT ON attachments FOR EACH ROW EXECUTE FUNCTION reject_native_ready_attachment()`)
+				} else {
+					_, err = f.Store.DB().ExecContext(t.Context(), `CREATE TRIGGER reject_native_ready_attachment BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'synthetic required attachment failure'); END`)
+				}
+				require.NoError(err)
+			}
+			raw := email.NewMessage().From("sender@example.net").To("archive@example.net").Subject("Synthetic ready email").Header("Message-ID", "<native-ready@example.net>").Header("In-Reply-To", "<native-parent@example.net>").Body("Synthetic ready body").WithAttachment("ready.txt", "text/plain", []byte("synthetic attachment")).Bytes()
+			live := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+			err = IngestRawMessageSnapshot(t.Context(), live, f.Source.ID, f.Source.Identifier, t.TempDir(), nil, "synthetic-native-ready", "synthetic-native-hash", raw, time.Time{}, slog.Default())
+			if failAttachment {
+				require.Error(err)
+				var messages, events int
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages`).Scan(&messages))
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log`).Scan(&events))
+				assert.Zero(messages)
+				assert.Zero(events)
+				return
+			}
+			require.NoError(err)
+			var messageID int64
+			var metadata sql.NullString
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id,metadata FROM messages WHERE source_id=? AND source_message_id=?`), f.Source.ID, "synthetic-native-ready").Scan(&messageID, &metadata))
+			var attachments, events int
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id=?`), messageID).Scan(&attachments))
+			assert.Equal(1, attachments)
+			require.True(metadata.Valid)
+			var fields map[string]any
+			require.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+			assert.Equal("native-parent@example.net", fields["email_in_reply_to"])
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM mcp_event_log WHERE message_id=? AND family='msgvault.message_archived'`), messageID).Scan(&events))
+			assert.Equal(1, events)
+		})
+	}
 }

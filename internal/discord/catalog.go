@@ -79,9 +79,11 @@ type CatalogContainer struct {
 // failure, a caller-owned copy of the next safe per-parent archive state, and
 // structured issues for later sync-run accounting.
 type CatalogResult struct {
-	Containers    []CatalogContainer
-	ThreadCatalog map[string]ThreadCatalogState
-	Issues        []CatalogIssue
+	NativeChannels         []Channel
+	NativeChannelsComplete bool
+	Containers             []CatalogContainer
+	ThreadCatalog          map[string]ThreadCatalogState
+	Issues                 []CatalogIssue
 }
 
 // DiscoverCatalog refreshes top-level message containers, active threads, and
@@ -126,6 +128,8 @@ func discoverCatalog(
 		return result, fmt.Errorf("discover Discord guild channels: %w", err)
 	}
 
+	result.NativeChannels = channels
+	result.NativeChannelsComplete = true
 	parents := make(map[string]Channel)
 	containerIndexes := make(map[string]int)
 	threadParents := make(map[string]string)

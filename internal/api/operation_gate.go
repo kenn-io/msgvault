@@ -44,6 +44,21 @@ type LabeledOperationGate interface {
 	Draining() bool
 }
 
+// Events commands use Store transaction fences to interleave with manual sync
+// commits. Other work, including backup freezes, still needs exclusive access.
+type mcpEventsOperationGate interface {
+	BeginSyncWorkContext(ctx context.Context, label string) (func(), bool)
+	BeginMCPEventsWorkContext(ctx context.Context, label string, requestWork bool) (func(), bool)
+}
+
+type gateWorkKind uint8
+
+const (
+	gateExclusiveWork gateWorkKind = iota
+	gateSyncWork
+	gateEventsWork
+)
+
 type SerialOperationGate struct {
 	initOnce sync.Once
 	sem      chan struct{}
@@ -51,6 +66,10 @@ type SerialOperationGate struct {
 	drainCh  chan struct{}
 	draining bool
 	active   int
+	// The semaphore stays occupied until the sync and all admitted Events
+	// commands finish. workChanged wakes Events already queued when sync starts.
+	manualSync  bool
+	workChanged chan struct{}
 
 	holderLabel    string
 	holderSince    time.Time
@@ -74,6 +93,25 @@ func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), boo
 // While queued, the request counts toward HasRequestWaiters so background
 // holders (scheduled syncs, embed passes) know to yield.
 func (g *SerialOperationGate) BeginRequestWorkContext(ctx context.Context, label string) (func(), bool) {
+	return g.beginRequestWorkContext(ctx, label, gateExclusiveWork)
+}
+
+// BeginSyncWorkContext admits a manual sync while permitting short, fenced
+// Events commands between its commits. It counts as request work.
+func (g *SerialOperationGate) BeginSyncWorkContext(ctx context.Context, label string) (func(), bool) {
+	return g.beginRequestWorkContext(ctx, label, gateSyncWork)
+}
+
+// BeginMCPEventsWorkContext shares admission only with a manual sync. Scheduled
+// work keeps the ordinary request priority and cooperative yielding behavior.
+func (g *SerialOperationGate) BeginMCPEventsWorkContext(ctx context.Context, label string, requestWork bool) (func(), bool) {
+	if requestWork {
+		return g.beginRequestWorkContext(ctx, label, gateEventsWork)
+	}
+	return g.beginLabeledWorkContext(ctx, label, false, gateEventsWork)
+}
+
+func (g *SerialOperationGate) beginRequestWorkContext(ctx context.Context, label string, kind gateWorkKind) (func(), bool) {
 	if g != nil {
 		g.mu.Lock()
 		if g.requestWaiters == 0 {
@@ -90,7 +128,7 @@ func (g *SerialOperationGate) BeginRequestWorkContext(ctx context.Context, label
 			g.mu.Unlock()
 		}()
 	}
-	return g.beginLabeledWorkContext(ctx, label, true)
+	return g.beginLabeledWorkContext(ctx, label, true, kind)
 }
 
 // HasRequestWaiters reports whether an API request is queued on the gate.
@@ -104,15 +142,13 @@ func (g *SerialOperationGate) HasRequestWaiters() bool {
 }
 
 func (g *SerialOperationGate) BeginLabeledWorkContext(ctx context.Context, label string) (func(), bool) {
-	return g.beginLabeledWorkContext(ctx, label, false)
+	return g.beginLabeledWorkContext(ctx, label, false, gateExclusiveWork)
 }
 
-// beginLabeledWorkContext keeps background work queued while API requests are
-// waiting. The background operation runs after the request queue drains; it is
-// never reported as cancelled only because a request arrived first. Requests
-// always take priority, so background work can remain queued until the request
-// queue drains, its context is cancelled, or the gate starts draining.
-func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label string, requestWork bool) (func(), bool) {
+// Outside manual-sync sharing, beginLabeledWorkContext keeps background work
+// queued while API requests are waiting. A queued background operation waits
+// for requests to finish, its context to be cancelled, or shutdown to begin.
+func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label string, requestWork bool, kind gateWorkKind) (func(), bool) {
 	if g == nil {
 		return func() {}, true
 	}
@@ -124,6 +160,17 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 	}
 	sem, drainCh := g.state()
 	for {
+		var workChanged <-chan struct{}
+		if kind == gateEventsWork {
+			g.mu.Lock()
+			workChanged = g.workChanged
+			if g.manualSync && !g.draining && ctx.Err() == nil {
+				g.active++
+				g.mu.Unlock()
+				return g.releaseWork(sem, false), true
+			}
+			g.mu.Unlock()
+		}
 		if !requestWork {
 			g.mu.Lock()
 			requestsDone := g.requestsDone
@@ -141,6 +188,8 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 					return func() {}, false
 				case <-drainCh:
 					return func() {}, false
+				case <-workChanged:
+					continue
 				}
 			}
 		}
@@ -155,6 +204,8 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 			return func() {}, false
 		case <-drainCh:
 			return func() {}, false
+		case <-workChanged:
+			continue
 		}
 
 		g.mu.Lock()
@@ -171,9 +222,18 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 		g.active++
 		g.holderLabel = label
 		g.holderSince = time.Now()
+		g.manualSync = kind == gateSyncWork
+		if g.manualSync {
+			close(g.workChanged)
+			g.workChanged = make(chan struct{})
+		}
 		g.mu.Unlock()
 		break
 	}
+	return g.releaseWork(sem, kind == gateSyncWork), true
+}
+
+func (g *SerialOperationGate) releaseWork(sem chan struct{}, manualSync bool) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -181,12 +241,21 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 			if g.active > 0 {
 				g.active--
 			}
-			g.holderLabel = ""
-			g.holderSince = time.Time{}
+			if manualSync {
+				g.manualSync = false
+				if g.active > 0 {
+					g.holderLabel = "MCP Events"
+					g.holderSince = time.Now()
+				}
+			}
+			if g.active == 0 {
+				g.holderLabel = ""
+				g.holderSince = time.Time{}
+				<-sem
+			}
 			g.mu.Unlock()
-			<-sem
 		})
-	}, true
+	}
 }
 
 // Holder reports what currently holds the gate, if anything.
@@ -266,6 +335,7 @@ func (g *SerialOperationGate) state() (chan struct{}, chan struct{}) {
 	g.initOnce.Do(func() {
 		g.sem = make(chan struct{}, 1)
 		g.drainCh = make(chan struct{})
+		g.workChanged = make(chan struct{})
 	})
 	return g.sem, g.drainCh
 }
@@ -320,6 +390,9 @@ func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) 
 func beginGateWorkBounded(ctx context.Context, gate OperationGate, label string) (func(), bool) {
 	waitCtx, cancel := context.WithTimeout(ctx, operationGateWaitLimit)
 	defer cancel()
+	if mg, ok := gate.(mcpEventsOperationGate); ok && (label == "msgvault sync" || strings.HasPrefix(label, "msgvault sync-") || label == "msgvault historical import") {
+		return mg.BeginSyncWorkContext(waitCtx, label)
+	}
 	if lg, ok := gate.(LabeledOperationGate); ok {
 		return lg.BeginRequestWorkContext(waitCtx, label)
 	}
@@ -377,6 +450,11 @@ func writeOperationGateBusy(w http.ResponseWriter, r *http.Request, gate Operati
 // DELETE /api/v1/agent-tokens/{id} uses a dynamic path; its exemption is
 // handled by the strings.HasPrefix check in operationGateRequest below.
 var operationGateExemptPaths = map[string]bool{
+	// Events take the gate for short Store steps, outside callback I/O.
+	mcpEventsPath + "/resources":   true,
+	mcpEventsPath + "/list":        true,
+	mcpEventsPath + "/subscribe":   true,
+	mcpEventsPath + "/unsubscribe": true,
 	// Calendar control acquires the gate after parsing, authorization, and preview.
 	"/api/v1/calendar/control": true,
 	// Scoring coordinates the gate around local mutations, never provider I/O.

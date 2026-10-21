@@ -160,6 +160,7 @@ func (c *Client) collectQresyncMailbox(
 	if err != nil {
 		return MailboxDelta{}, fmt.Errorf("CONDSTORE SELECT %q: %w", mailbox, err)
 	}
+	c.recordNativeMailboxEpochLocked(mailbox, selected.UIDValidity)
 	if selected.UIDValidity == 0 {
 		return MailboxDelta{}, fmt.Errorf(
 			"CONDSTORE SELECT %q returned no UIDVALIDITY", mailbox)

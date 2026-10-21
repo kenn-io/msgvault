@@ -88,7 +88,7 @@ func operationalOutputSchema(output *jsonschema.Schema) *jsonschema.Schema {
 	success.Definitions = nil
 	return &jsonschema.Schema{
 		Schema:      schema202012,
-		Type:        "object",
+		Type:        mcpSchemaTypeObject,
 		Defs:        output.Defs,
 		Definitions: output.Definitions,
 		AnyOf:       []*jsonschema.Schema{&success, failure},

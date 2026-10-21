@@ -23,6 +23,8 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 			require.NoError(err)
 			runID, err := st.StartSync(retained.ID, "full")
 			require.NoError(err)
+			_, err = st.ConfigureMCPEvents(t.Context(), MCPEventsConfig{})
+			require.NoError(err)
 			scoped := st.ScopedToSync(retained.ID, runID)
 
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -57,7 +59,9 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 				}
 				maintenanceDone <- err
 			}()
-			waitForPGBlockedQuery(ctx, t, st, writerPID, "LOCK TABLE %")
+			// Maintenance must exclude disabled writers before taking table locks;
+			// otherwise a later capture fence can wait on a writer those tables block.
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "%archive_metadata%")
 			require.NoError(blocker.Commit())
 			assert.NoError(<-writeDone, "scoped conversation creation")
 			assert.NoError(<-maintenanceDone, "maintenance")
