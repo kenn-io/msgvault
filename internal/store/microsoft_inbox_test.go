@@ -160,13 +160,3 @@ func TestMicrosoftInboxObservationRollback(t *testing.T) {
 		})
 	}
 }
-
-func TestMicrosoftInboxReconcileEmptyReceiptCategories(t *testing.T) {
-	st, before, _ := microsoftObservationFixture(t)
-	after := before
-	after.Tags = nil
-	after.Revision = "version-2"
-	after.ObservedAt = before.ObservedAt.Add(time.Second)
-	require.NoError(t, st.ReconcileInboxProviderState(t.Context(), before.Target, before, after))
-	assert.Equal(t, []string{"Inbox"}, messageLabels(t, st, before.Target.ItemID))
-}

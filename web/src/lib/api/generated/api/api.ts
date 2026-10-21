@@ -2174,7 +2174,7 @@ export const testTaskIntegration = (
   );
 };
 /**
- * @summary Describe supported MCP daemon operations
+ * @summary Describe admitted MCP daemon operations
  */
 export const getMCPCapabilities = (
   options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,

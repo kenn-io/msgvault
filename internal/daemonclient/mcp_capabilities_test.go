@@ -14,24 +14,34 @@ import (
 
 func TestMCPCapabilitiesFailClosed(t *testing.T) {
 	tests := []struct {
-		name, body string
-		status     int
+		name, body, schemaVersion string
+		status                    int
+		wantDiscovery             bool
 	}{
-		{"old daemon", `{"error":"not_found"}`, http.StatusNotFound},
-		{"unauthorized", `{"error":"unauthorized"}`, http.StatusUnauthorized},
-		{"missing version", `{"routes":[]}`, http.StatusOK},
-		{"unknown version", `{"version":2,"routes":[]}`, http.StatusOK},
-		{"malformed", `{"version":1`, http.StatusOK},
-		{"multiple values", `{"version":1} {"version":1}`, http.StatusOK},
-		{"oversized", strings.Repeat(" ", 1<<20) + `{"version":1}`, http.StatusOK},
+		{"old daemon", `{"error":"not_found"}`, "2.27.0", http.StatusNotFound, false},
+		{"unauthorized", `{"error":"unauthorized"}`, "3.15.0", http.StatusUnauthorized, true},
+		{"missing version", `{"routes":[]}`, "3.15.0", http.StatusOK, true},
+		{"unknown version", `{"version":2,"routes":[]}`, "3.15.0", http.StatusOK, true},
+		{"malformed", `{"version":1`, "3.15.0", http.StatusOK, true},
+		{"multiple values", `{"version":1} {"version":1}`, "3.15.0", http.StatusOK, true},
+		{"oversized", strings.Repeat(" ", 1<<20) + `{"version":1}`, "3.15.0", http.StatusOK, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tt.status)
-				_, _ = io.WriteString(w, tt.body)
+			discoveryRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = io.WriteString(w, `{"api_schema_version":"`+tt.schemaVersion+`"}`)
+				case "/api/v1/mcp/capabilities":
+					discoveryRequests++
+					w.WriteHeader(tt.status)
+					_, _ = io.WriteString(w, tt.body)
+				default:
+					http.NotFound(w, r)
+				}
 			}))
 			t.Cleanup(server.Close)
 			client, err := New(Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})
@@ -39,6 +49,11 @@ func TestMCPCapabilitiesFailClosed(t *testing.T) {
 			capabilities, err := client.MCPCapabilities(context.Background())
 			requirements.Error(err)
 			assertions.Nil(capabilities)
+			wantDiscoveryRequests := 0
+			if tt.wantDiscovery {
+				wantDiscoveryRequests = 1
+			}
+			assertions.Equal(wantDiscoveryRequests, discoveryRequests, "descriptor validation must reach the capability route")
 		})
 	}
 }
@@ -48,12 +63,15 @@ func TestMCPCapabilitiesRetainsRouteParameters(t *testing.T) {
 	assertions := assert.New(t)
 	seen := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
+		switch r.URL.Path {
+		case "/api/v1/health":
 			_, _ = io.WriteString(w, `{"api_schema_version":"3.16.0"}`)
-			return
+		case "/api/v1/mcp/capabilities":
+			seen <- r.Header.Get("X-Api-Key")
+			_, _ = io.WriteString(w, `{"version":1,"routes":[{"operation_id":"listSourceStatus","method":"GET","path":"/api/v1/sources/status","query_parameters":["source_type"]}]}`)
+		default:
+			http.NotFound(w, r)
 		}
-		seen <- r.Header.Get("X-Api-Key")
-		_, _ = io.WriteString(w, `{"version":1,"routes":[{"operation_id":"listSourceStatus","method":"GET","path":"/api/v1/sources/status","query_parameters":["source_type"]}]}`)
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, APIKey: "synthetic-key", AllowInsecure: true})
@@ -76,13 +94,25 @@ func TestMCPCapabilitiesOwnerRouteIdentities(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, body) }))
+			discoveryRequests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/health":
+					_, _ = io.WriteString(w, `{"api_schema_version":"3.15.0"}`)
+				case "/api/v1/mcp/capabilities":
+					discoveryRequests++
+					_, _ = io.WriteString(w, body)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
 			t.Cleanup(server.Close)
 			client, err := New(Config{URL: server.URL, AllowInsecure: true})
 			requirements.NoError(err)
 			capabilities, err := client.MCPCapabilities(context.Background())
 			requirements.Error(err)
 			assertions.Nil(capabilities)
+			assertions.Equal(1, discoveryRequests, "invalid route identity must be rejected after capability discovery")
 		})
 	}
 }

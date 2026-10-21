@@ -115,6 +115,10 @@ func (c *Client) controlMessageTags(ctx context.Context, id int64, change emailt
 	result.Before = preview.Before.Tags
 	result.Tags, result.Flags = preview.Before.Tags, preview.Before.Flags
 	result.IdempotencyKey = request.IdempotencyKey
+	replayRequest, err := json.Marshal(request)
+	if err != nil {
+		return result, emailtags.Failure("local_failed", "cannot preserve the signed tag request for recovery", result, err)
+	}
 	controlled, err := c.ControlInbox(ctx, request)
 	if controlled != nil {
 		if controlled.After != nil {
@@ -126,9 +130,13 @@ func (c *Client) controlMessageTags(ctx context.Context, id int64, change emailt
 		}
 	}
 	if err != nil {
+		if result.ReceiptID == "" && (errors.Is(err, inboxcontrol.ErrOutcomeUnknown) || errors.Is(err, inboxcontrol.ErrInternal) || errors.Is(err, inboxcontrol.ErrReconcileOnly)) {
+			result.ReplayRequest = replayRequest
+		}
 		return result, tagControlFailure(err, result)
 	}
 	if !result.Verified {
+		result.ReplayRequest = replayRequest
 		return result, emailtags.Failure("remote_unknown", "tag outcome is not verified; inspect the receipt before retrying", result, nil)
 	}
 	return result, nil

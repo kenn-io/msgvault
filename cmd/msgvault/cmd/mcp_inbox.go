@@ -13,11 +13,14 @@ import (
 
 func admitInboxMCP(ctx context.Context, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
 	descriptor, err := client.MCPCapabilities(ctx)
-	admitInboxMCPCapabilities(descriptor, err, client, opts, owner)
+	if err != nil {
+		return
+	}
+	admitInboxMCPWithCapabilities(client, descriptor, opts, owner)
 }
 
-func admitInboxMCPCapabilities(descriptor *apiprotocol.MCPCapabilities, err error, client *daemonclient.Client, opts *mcpserver.ServeOptions, owner bool) {
-	if err != nil || descriptor == nil || !descriptor.HasInboxContract() {
+func admitInboxMCPWithCapabilities(client *daemonclient.Client, descriptor *apiprotocol.MCPCapabilities, opts *mcpserver.ServeOptions, owner bool) {
+	if descriptor == nil || !descriptor.HasInboxContract() {
 		return
 	}
 	for _, op := range inboxMCPOperations(opts.GrantPermissions, owner) {

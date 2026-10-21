@@ -14,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 )
 
-func TestMCPCapabilitiesRequiresAuthentication(t *testing.T) {
+func TestMCPCapabilitiesAllowsGrantScopedDelegatedDiscovery(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	srv, registry := newAgentTokenTestServer(t)
@@ -56,7 +56,7 @@ func TestMCPCapabilitiesRequiresAuthentication(t *testing.T) {
 	var delegatedBody MCPCapabilitiesResponse
 	requirements.NoError(json.Unmarshal(delegated.Body.Bytes(), &delegatedBody))
 	assertions.True(delegatedBody.Delegated)
-	assertions.Empty(delegatedBody.InboxOperations)
+	assertions.Empty(delegatedBody.InboxOperations, "a token without Inbox permissions discovers no Inbox operations")
 	assertions.NotContains(delegated.Body.String(), "sender@example.com")
 	assertions.NotContains(delegated.Body.String(), agentTokenTestAPIKey)
 }

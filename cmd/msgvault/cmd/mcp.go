@@ -214,7 +214,10 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 		opts.Calendar = st
 	}
 	if daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.InboxMinAPISchemaVersion) {
-		admitInboxMCP(ctx, st, &opts, false)
+		capabilities, discoveryErr := st.MCPCapabilitiesForSchemaVersion(ctx, schemaVersion)
+		if discoveryErr == nil {
+			admitInboxMCPWithCapabilities(st, capabilities, &opts, false)
+		}
 	}
 	return opts, nil
 }
@@ -273,18 +276,18 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.AttachmentsDir = cfg.AttachmentsDir()
 		opts.DataDir = cfg.Data.DataDir
 	}
-	capabilities, discoveryErr := st.MCPCapabilities(ctx)
+	health, capabilityErr := st.Health(ctx)
+	var schemaVersion string
+	if health != nil && health.APISchemaVersion != nil {
+		schemaVersion = *health.APISchemaVersion
+	}
+	capabilities, discoveryErr := st.MCPCapabilitiesForSchemaVersion(ctx, schemaVersion)
 	if discoveryErr != nil {
 		log.Warn("operational MCP tools disabled because daemon discovery failed", "error", discoveryErr)
 	} else {
 		backend := newDaemonMCPOperations(st, capabilities)
 		opts.Operations = backend
 		opts.OperationCapabilities = backend.capabilities()
-	}
-	health, capabilityErr := st.Health(ctx)
-	var schemaVersion string
-	if health != nil && health.APISchemaVersion != nil {
-		schemaVersion = *health.APISchemaVersion
 	}
 	if capabilityErr == nil && health != nil && health.Vector != nil &&
 		daemonclient.APISchemaVersionAtLeast(schemaVersion, vectorLaneHealthMinAPISchemaVersion) {
@@ -354,7 +357,7 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.MessageTags = st
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, daemonclient.InboxMinAPISchemaVersion) {
-		admitInboxMCPCapabilities(capabilities, discoveryErr, st, &opts, true)
+		admitInboxMCPWithCapabilities(st, capabilities, &opts, true)
 	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st

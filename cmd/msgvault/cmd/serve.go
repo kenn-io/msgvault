@@ -837,6 +837,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	inboxKey, err := prepareInboxRuntime(ctx, cfg, s)
+	if err != nil {
+		return fmt.Errorf("prepare Inbox control runtime: %w", err)
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
@@ -858,10 +863,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}).WithLogger(logger)
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
-	inboxKey, err := prepareInboxRuntime(ctx, cfg, s)
-	if err != nil {
-		return fmt.Errorf("prepare Inbox control runtime: %w", err)
-	}
 	storeAdapter := &storeAPIAdapter{
 		store:                  s,
 		inboxKey:               inboxKey,
@@ -1761,6 +1762,7 @@ type storeAPIAdapter struct {
 	gmailDraftClientFactory   func(context.Context, *store.Source) (gmail.DraftAPI, error)
 	calendarClientFactory     func(context.Context, config.GCalSource, bool) (gcal.ControlAPI, error)
 	inboxKey                  []byte
+	beeperInboxClientFactory  func(context.Context, *store.Source) (*beeper.Client, error)
 	emailTagClientFactory     func(context.Context, *store.Source) (gmail.API, error)
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	inboxCacheRequest         func(string) bool

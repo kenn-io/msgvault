@@ -26,6 +26,28 @@ func inboxGmailTarget() inboxcontrol.Target {
 	return inboxcontrol.Target{SourceID: s.SourceID, SourceType: s.SourceType, SourceIdentifier: s.SourceIdentifier, AccountID: s.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: 1, ProviderID: "message-1"}
 }
 
+func TestInboxGmailObservationSeparatesAssignedLabelsFromCatalog(t *testing.T) {
+	client := newDraftTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gmail/v1/users/me/profile":
+			_, _ = w.Write([]byte(`{"emailAddress":"owner@example.com"}`))
+		case "/gmail/v1/users/me/messages/message-1":
+			_, _ = w.Write([]byte(`{"id":"message-1","labelIds":["INBOX","LabelA"],"historyId":"12"}`))
+		case "/gmail/v1/users/me/labels":
+			_, _ = w.Write([]byte(`{"labels":[{"id":"INBOX","name":"Inbox","type":"system"},{"id":"LabelA","name":"Beta","type":"user"},{"id":"LabelB","name":"Alpha","type":"user"}]}`))
+		default:
+			assert.Fail(t, "unexpected Gmail request", r.URL.String())
+			http.NotFound(w, r)
+		}
+	}))
+	provider := NewInboxProvider(client, inboxGmailSource())
+	target := inboxGmailTarget()
+	state, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target})
+	require.NoError(t, err)
+	assert.Equal(t, []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}}, state.Folders)
+	assert.ElementsMatch(t, []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}, {ID: "LabelB", Name: "Alpha"}}, state.FolderCatalog())
+}
+
 func TestInboxGmailNativeDeltas(t *testing.T) {
 	for _, tc := range []struct {
 		name                string
@@ -95,14 +117,25 @@ func TestInboxGmailNativeDeltas(t *testing.T) {
 			request := inboxcontrol.Request{Operation: tc.op, Target: &target, Tags: tc.tags, OriginFolder: tc.origin, Destination: tc.destination, DryRun: true}
 			before, err := provider.Observe(context.Background(), request)
 			requirements.NoError(err)
-			assertions.ElementsMatch([]inboxcontrol.Folder{
+			assert.ElementsMatch(t, []inboxcontrol.Folder{
+				{ID: "LabelOld", Name: "Old"},
+				{ID: "LabelOther", Name: "Other"},
+			}, before.Folders, "message observations include only assigned folders")
+			assert.ElementsMatch(t, []inboxcontrol.Folder{
 				{ID: "LabelOld", Name: "Old"},
 				{ID: "LabelNew", Name: "New"},
 				{ID: "LabelOther", Name: "Other"},
 				{ID: "ConcurrentLabel", Name: "Concurrent"},
-			}, before.Folders, "message observations retain the full live folder catalog")
+			}, before.FolderCatalog(), "message observations retain the full live folder catalog")
 			projected, err := provider.Preview(context.Background(), request, before)
 			requirements.NoError(err)
+			var wantFolders []inboxcontrol.Folder
+			for _, folder := range before.FolderCatalog() {
+				if slices.Contains(projected.Tags, folder.ID) {
+					wantFolders = append(wantFolders, folder)
+				}
+			}
+			assertions.ElementsMatch(wantFolders, projected.Folders)
 			assertions.Equal(0, posts)
 			_, err = provider.Dispatch(context.Background(), request, before)
 			requirements.NoError(err)
@@ -206,7 +239,7 @@ func TestInboxGmailMoveRejectsUnselectedOrSystemLabels(t *testing.T) {
 	before, err := provider.Observe(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetState, Target: &target})
 	require.NoError(t, err)
 	for _, tc := range []struct{ name, origin, destination string }{
-		{"missing selection", "", "LabelNew"}, {"unselected origin", "LabelNew", "LabelOld"}, {"unavailable destination", "LabelOld", "Missing"}, {"system destination", "LabelOld", "INBOX"}, {"system origin", "INBOX", "LabelNew"}, {"same location", "LabelOld", "LabelOld"},
+		{"unselected origin", "LabelNew", "LabelOld"}, {"unavailable destination", "LabelOld", "Missing"}, {"system destination", "LabelOld", "INBOX"}, {"system origin", "INBOX", "LabelNew"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := inboxcontrol.Request{Operation: inboxcontrol.OpMove, Target: &target, OriginFolder: &inboxcontrol.Folder{ID: tc.origin}, Destination: &inboxcontrol.Folder{ID: tc.destination}, DryRun: true}

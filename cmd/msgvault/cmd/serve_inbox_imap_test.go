@@ -183,6 +183,31 @@ func TestDaemonInboxIMAPRejectsAccountAndConfigMismatchBeforeFactory(t *testing.
 	}
 }
 
+func TestDaemonInboxIMAPValidatesTheRequestedCurrentUID(t *testing.T) {
+	requirements := require.New(t)
+	a, target := inboxIMAPDaemonFixture(t)
+
+	requestedUID := target.UID + 1
+	_, err := a.store.DB().Exec(a.store.Rebind(`INSERT INTO imap_message_memberships (source_id,mailbox,uidvalidity,uid,message_id,flags) VALUES (?,?,?,?,?,?)`),
+		target.SourceID, target.Mailbox, target.UIDValidity, requestedUID, target.ItemID, `[]`)
+	requirements.NoError(err)
+
+	requested := target
+	requested.UID = requestedUID
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &requested})
+	requirements.NoError(err, "a valid membership must be checked by its requested UID, not replaced with the canonical copy")
+
+	stale := requested
+	stale.UID++
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &stale})
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
+
+	_, err = a.store.DB().Exec(a.store.Rebind(`UPDATE messages SET deleted_from_source_at=CURRENT_TIMESTAMP WHERE id=?`), target.ItemID)
+	requirements.NoError(err)
+	_, _, err = a.inboxBinding(t.Context(), inboxcontrol.Request{Target: &requested})
+	requirements.ErrorIs(err, inboxcontrol.ErrDenied, "an explicit membership does not make a source-deleted item live")
+}
+
 func TestDaemonInboxIMAPSDKPreservesEmptyExpectedState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -443,14 +468,23 @@ func TestDaemonInboxIMAPConfirmedTransportsRetainReceipts(t *testing.T) {
 	child.Stdout = w
 	var childError bytes.Buffer
 	child.Stderr = &childError
+	beforeCLIStores := counts.stores.Load()
 	requirements.NoError(child.Run(), childError.String())
+	assertions.Equal(beforeCLIStores+1, counts.stores.Load(), "the CLI must commit one native write before receipt recovery")
+	storedReceipt, err := a.store.LookupInboxReceipt(t.Context(), "owner", target.SourceID, request.IdempotencyKey)
+	requirements.NoError(err)
+	requirements.NotNil(storedReceipt)
+	assertions.Equal(inboxcontrol.StatusVerified, storedReceipt.Status)
+	assertions.Equal(request.IdempotencyKey, storedReceipt.IdempotencyKey)
+	requirements.NotNil(storedReceipt.After)
 	replay, err = client.ControlInbox(t.Context(), request)
 	requirements.NoError(err)
+	assertions.Equal(storedReceipt.ID, replay.Receipt.ID, "replay must return the receipt committed by the CLI child")
 	assertions.Equal(inboxcontrol.StatusVerified, replay.Receipt.Status)
 	assertions.Equal(request.IdempotencyKey, replay.Receipt.IdempotencyKey)
 	assertions.Equal([]string{}, replay.After.Flags)
 	assertions.Equal([]string{}, replay.Receipt.Projected.Flags)
-	assertions.Equal(int64(2), counts.stores.Load(), "recovery by the original key does not repeat the CLI write")
+	assertions.Equal(beforeCLIStores+1, counts.stores.Load(), "recovery by the original key does not repeat the CLI write")
 	assertions.Zero(counts.moves.Load())
 	assertions.Zero(counts.copies.Load())
 	assertions.Zero(counts.expunges.Load())

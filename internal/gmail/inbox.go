@@ -78,16 +78,20 @@ func (p *InboxProvider) Observe(ctx context.Context, request inboxcontrol.Reques
 		return inboxcontrol.State{}, err
 	}
 
-	var folders []inboxcontrol.Folder
+	var assigned, folderCatalog []inboxcontrol.Folder
 	if request.Operation.IsMutation() {
-		folders, err = p.folderCatalog(ctx)
+		catalog, err := p.folderCatalog(ctx)
 		if err != nil {
 			return inboxcontrol.State{}, err
 		}
+		folderCatalog = slices.Clone(catalog)
+		assigned = foldersForTags(labels, catalog)
 	}
 	inbox := slices.Contains(labels, "INBOX")
 	read := !slices.Contains(labels, "UNREAD")
-	return inboxcontrol.State{Target: target, Tags: labels, Folders: folders, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}, nil
+	state := inboxcontrol.State{Target: target, Tags: labels, Folders: assigned, Inbox: &inbox, Read: &read, Revision: strconv.FormatUint(history, 10), ObservedAt: time.Now().UTC()}
+	state.SetFolderCatalog(folderCatalog)
+	return state, nil
 }
 
 func (p *InboxProvider) change(ctx context.Context, request inboxcontrol.Request, before inboxcontrol.State) (emailtags.MessageTagChange, error) {
@@ -149,11 +153,22 @@ func (p *InboxProvider) Preview(ctx context.Context, request inboxcontrol.Reques
 	}
 	projected := before
 	projected.Tags = emailtags.Project(before.Tags, change, false)
+	projected.Folders = foldersForTags(projected.Tags, before.FolderCatalog())
 	inbox := slices.Contains(projected.Tags, "INBOX")
 	read := !slices.Contains(projected.Tags, "UNREAD")
 	projected.Inbox = &inbox
 	projected.Read = &read
 	return projected, nil
+}
+
+func foldersForTags(tags []string, catalog []inboxcontrol.Folder) []inboxcontrol.Folder {
+	var folders []inboxcontrol.Folder
+	for _, folder := range catalog {
+		if slices.Contains(tags, folder.ID) {
+			folders = append(folders, folder)
+		}
+	}
+	return folders
 }
 
 func (p *InboxProvider) Dispatch(ctx context.Context, request inboxcontrol.Request, before inboxcontrol.State) (inboxcontrol.DispatchResult, error) {

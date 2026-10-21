@@ -353,7 +353,7 @@ func TestDaemonInboxMicrosoftNativeUnknownRestartReconcile(t *testing.T) {
 			case "invalid-readback":
 				graph.readbackBody = "{"
 			case "oversized-readback":
-				graph.readbackBody = strings.Repeat("x", 2<<20)
+				graph.readbackBody = `{"id":"native-message","categories":["Keep","Next"],"isRead":false,"parentFolderId":"inbox-id","@odata.etag":"W/\"v2\"","receivedDateTime":"2024-01-01T10:00:00Z"}` + strings.Repeat(" ", 2<<20)
 			default:
 				graph.readbackUnavailable = true
 			}
@@ -374,6 +374,18 @@ func TestDaemonInboxMicrosoftNativeUnknownRestartReconcile(t *testing.T) {
 			adapter.store = st
 			adapter.inboxKey, err = prepareInboxRuntime(t.Context(), adapter.config, st)
 			requirements.NoError(err)
+			cacheRefreshes := 0
+			cacheRefreshAfterRelease := false
+			adapter.draftCacheRefresh = func(ctx context.Context, identifier string) error {
+				cacheRefreshes++
+				assertions.Equal(target.SourceIdentifier, identifier)
+				execution, err := st.AcquireSyncExecutionContext(ctx, target.SourceID)
+				if err != nil {
+					return err
+				}
+				cacheRefreshAfterRelease = true
+				return execution.Release()
+			}
 			loaded, err := client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: unknown.Receipt.ID})
 			requirements.NoError(err)
 			requirements.NotNil(loaded.Receipt)
@@ -391,6 +403,8 @@ func TestDaemonInboxMicrosoftNativeUnknownRestartReconcile(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NotNil(reconciled.Receipt)
 			assertions.Equal(inboxcontrol.StatusVerified, reconciled.Receipt.Status)
+			assertions.Equal(1, cacheRefreshes)
+			assertions.True(cacheRefreshAfterRelease, "receipt reconciliation releases source ownership before refreshing the cache")
 			if kind == "empty-readback-lost" {
 				assertions.NotNil(reconciled.After.Tags)
 				assertions.Empty(reconciled.After.Tags)
@@ -724,12 +738,28 @@ func TestDaemonInboxMicrosoftNativeMCPConfirmationAndCLIRecovery(t *testing.T) {
 	child.Stdout = writer
 	var stderr bytes.Buffer
 	child.Stderr = &stderr
+	graph.mu.Lock()
+	beforeCLIWrites := graph.writes
+	graph.mu.Unlock()
 	requirements.NoError(child.Run(), stderr.String())
+	graph.mu.Lock()
+	assertions.Equal(beforeCLIWrites+1, graph.writes, "the CLI must commit one Graph write before receipt recovery")
+	graph.mu.Unlock()
+	storedReceipt, err := adapter.store.LookupInboxReceipt(t.Context(), cliGrant.ID, target.SourceID, request.IdempotencyKey)
+	requirements.NoError(err)
+	requirements.NotNil(storedReceipt)
+	assertions.Equal(inboxcontrol.StatusVerified, storedReceipt.Status)
+	assertions.Equal(request.IdempotencyKey, storedReceipt.IdempotencyKey)
+	requirements.NotNil(storedReceipt.After)
 	recovered, err := cliClient.ControlInbox(t.Context(), request)
 	requirements.NoError(err)
 	requirements.NotNil(recovered.Receipt)
+	assertions.Equal(storedReceipt.ID, recovered.Receipt.ID, "replay must return the receipt committed by the CLI child")
 	assertions.Equal(inboxcontrol.StatusVerified, recovered.Receipt.Status)
 	assertions.Equal(request.IdempotencyKey, recovered.Receipt.IdempotencyKey)
+	graph.mu.Lock()
+	assertions.Equal(beforeCLIWrites+1, graph.writes, "recovery by the original key does not repeat the CLI write")
+	graph.mu.Unlock()
 	requirements.NoError(cliOwner.RevokeAgentToken(t.Context(), cliGrant.ID))
 	beforeFactory := graph.factory.Load()
 	_, err = cliClient.ControlInbox(t.Context(), request)

@@ -181,7 +181,7 @@ func TestInboxLedgerRecoveryAfterSourceRemoval(t *testing.T) {
 	}
 }
 
-func TestInboxLedgerRecoveryPreservesActiveDispatcher(t *testing.T) {
+func TestInboxLedgerRecoveryWaitsForActiveDispatcherOwnership(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -192,12 +192,23 @@ func TestInboxLedgerRecoveryPreservesActiveDispatcher(t *testing.T) {
 	execution, err := f.Store.AcquireSyncExecutionContext(t.Context(), receipt.SourceID)
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = execution.Release() })
-	requirements.NoError(f.Store.RecoverInboxReceipts(t.Context()))
+	recovered := make(chan error, 1)
+	go func() { recovered <- f.Store.RecoverInboxReceipts(t.Context()) }()
+	select {
+	case err := <-recovered:
+		requirements.FailNow("receipt recovery returned before source ownership was available", err)
+	case <-time.After(100 * time.Millisecond): //nolint:kennlint // absence check: the held source lock keeps receipt recovery waiting
+	}
 	got, err := f.Store.GetInboxReceipt(t.Context(), receipt.ID)
 	requirements.NoError(err)
 	assertions.Equal(inboxcontrol.StatusDispatching, got.Status, "recovery must not interrupt a worker that still owns the source")
 	requirements.NoError(execution.Release())
-	requirements.NoError(f.Store.RecoverInboxReceipts(t.Context()))
+	select {
+	case err := <-recovered:
+		requirements.NoError(err)
+	case <-time.After(5 * time.Second):
+		requirements.FailNow("receipt recovery did not resume after source ownership was released")
+	}
 	got, err = f.Store.GetInboxReceipt(t.Context(), receipt.ID)
 	requirements.NoError(err)
 	assertions.Equal(inboxcontrol.StatusUnknown, got.Status)

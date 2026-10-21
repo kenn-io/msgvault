@@ -61,7 +61,7 @@ func TestInboxLiveDescriptorUsesRegisteredRouteAndCurrentGrant(t *testing.T) {
 				break
 			}
 		}
-		requirements.NotNil(inboxRoute, "the signed control route is registered for the current caller")
+		requirements.NotNil(inboxRoute, "the live Inbox route is included with the caller's authorized operations")
 		assertions.Equal(http.MethodPost, inboxRoute.Method)
 		assertions.Equal("/api/v1/inbox/control", inboxRoute.Path)
 		for _, field := range []string{"operation", "target", "source", "expected", "preview_token", "idempotency_key", "receipt_id", "dry_run", "tags", "destination", "origin_folder"} {

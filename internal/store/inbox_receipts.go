@@ -37,6 +37,12 @@ func (s *Store) PrepareInboxReceipt(ctx context.Context, receipt inboxcontrol.Re
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect inbox receipt claim: %w", err)
 	}
+	if rows == 1 {
+		// The INSERT committed this exact prepared receipt. Returning it directly
+		// avoids losing the claim if the caller context is canceled before a
+		// follow-up lookup can read it.
+		return &receipt, true, nil
+	}
 	got, err := s.LookupInboxReceipt(ctx, receipt.PrincipalID, receipt.SourceID, receipt.IdempotencyKey)
 	if err != nil {
 		return nil, false, err
@@ -44,7 +50,7 @@ func (s *Store) PrepareInboxReceipt(ctx context.Context, receipt inboxcontrol.Re
 	if got == nil || got.IntentHash != receipt.IntentHash {
 		return nil, false, inboxcontrol.ErrConflict
 	}
-	return got, rows == 1, nil
+	return got, false, nil
 }
 
 // LookupInboxReceipt is storage-only. The controller supplies a principal
@@ -211,9 +217,10 @@ func (s *Store) FinishInboxReceipt(ctx context.Context, id string, status inboxc
 	return inboxReceiptTransition(result, err)
 }
 
-// RecoverInboxReceipts runs at startup and recovers only sources whose
-// execution lease can be acquired. Active workers keep their receipts intact.
-// No uncertain provider operation is retried or erased by recovery.
+// RecoverInboxReceipts runs at startup and waits for source execution ownership
+// before recovering each source. Active workers keep their receipts intact, and
+// a successful return guarantees no busy source was skipped. No uncertain
+// provider operation is retried or erased by recovery.
 func (s *Store) RecoverInboxReceipts(ctx context.Context) error {
 	rows, err := s.db.QueryContext(ctx, `SELECT source_id FROM inbox_operation_receipts WHERE status IN ('prepared', 'dispatching') GROUP BY source_id`)
 	if err != nil {
@@ -233,10 +240,7 @@ func (s *Store) RecoverInboxReceipts(ctx context.Context) error {
 		return fmt.Errorf("read interrupted inbox sources: %w", err)
 	}
 	for _, sourceID := range sourceIDs {
-		lock, err := s.acquireSyncExecutionLock(ctx, sourceID)
-		if errors.Is(err, ErrSyncAlreadyActive) {
-			continue
-		}
+		lock, err := s.acquireInboxRecoveryLock(ctx, sourceID)
 		if err != nil {
 			return fmt.Errorf("acquire inbox recovery ownership: %w", err)
 		}
@@ -252,6 +256,24 @@ func (s *Store) RecoverInboxReceipts(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+const inboxRecoveryLockRetryInterval = 100 * time.Millisecond
+
+func (s *Store) acquireInboxRecoveryLock(ctx context.Context, sourceID int64) (syncExecutionLock, error) {
+	ticker := time.NewTicker(inboxRecoveryLockRetryInterval)
+	defer ticker.Stop()
+	for {
+		lock, err := s.acquireSyncExecutionLock(ctx, sourceID)
+		if !errors.Is(err, ErrSyncAlreadyActive) {
+			return lock, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Store) recoverInboxSourceReceipts(ctx context.Context, sourceID int64) error {

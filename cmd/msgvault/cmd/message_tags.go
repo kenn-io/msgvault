@@ -64,6 +64,9 @@ Use --dry-run with an edit to preview it without writing.`,
 					} else if result != nil && result.IdempotencyKey != "" {
 						message += "; Inbox operation key: " + textutil.SanitizeTerminal(result.IdempotencyKey)
 					}
+					if result != nil && len(result.ReplayRequest) > 0 {
+						message += "; Inbox replay request: " + textutil.SanitizeTerminal(string(result.ReplayRequest))
+					}
 					return emailtags.Failure("remote_unknown", message, result, cause)
 				}
 				return cause
@@ -101,6 +104,12 @@ Use --dry-run with an edit to preview it without writing.`,
 				} else if result.IdempotencyKey != "" {
 					if writeErr := writeInboxCLIOutputLine(cmd, []byte("Inbox operation key: "+textutil.SanitizeTerminal(result.IdempotencyKey))); writeErr != nil {
 						return outputFailure(fmt.Errorf("write tag operation key: %w", writeErr))
+					}
+				}
+				if err != nil && len(result.ReplayRequest) > 0 {
+					line := append([]byte("Inbox replay request: "), result.ReplayRequest...)
+					if writeErr := writeInboxCLIOutputLine(cmd, line); writeErr != nil {
+						return outputFailure(fmt.Errorf("write tag replay request: %w", writeErr))
 					}
 				}
 				if input == nil {

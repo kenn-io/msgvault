@@ -94,6 +94,7 @@ func (a *storeAPIAdapter) requestInboxCacheRefresh(sourceIdentifier string) {
 }
 
 func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, inboxcontrol.Principal, inboxcontrol.Request) error) *inboxcontrol.Service {
+	reconciled := false
 	return &inboxcontrol.Service{
 		Ledger: a.store, Key: a.inboxKey, Authorize: authorize,
 		Resolve: a.resolveInboxProvider,
@@ -106,10 +107,29 @@ func (a *storeAPIAdapter) inboxControlService(authorize func(context.Context, in
 				if err := execution.Release(); err != nil && a.logger != nil {
 					a.logger.Error("release inbox source ownership", "error", err)
 				}
+				if !reconciled || a.draftCacheRefresh == nil {
+					return
+				}
+				refreshCtx, cancel := localDraftEvidenceContext(ctx)
+				defer cancel()
+				source, err := a.store.GetSourceByIDContext(refreshCtx, sourceID)
+				if err != nil {
+					if a.logger != nil {
+						a.logger.Error("resolve source after Inbox reconciliation", "source_id", sourceID, "error", err)
+					}
+					return
+				}
+				if source != nil {
+					a.refreshDraftCache(refreshCtx, source)
+				}
 			}, nil
 		},
 		ReconcileState: func(ctx context.Context, before, after inboxcontrol.State) error {
-			return a.store.ReconcileInboxProviderState(ctx, before.Target, before, after)
+			if err := a.store.ReconcileInboxProviderState(ctx, before.Target, before, after); err != nil {
+				return err
+			}
+			reconciled = true
+			return nil
 		},
 	}
 }
@@ -146,6 +166,15 @@ func (a *storeAPIAdapter) inboxBinding(ctx context.Context, request inboxcontrol
 	}
 	if binding.SourceType != kind || binding.SourceIdentifier != source.Identifier || binding.AccountID != accountID {
 		return nil, binding, inboxcontrol.ErrDenied
+	}
+	if request.Target != nil && binding.SourceType == "beeper" {
+		if request.Target.Scope != inboxcontrol.ScopeChat {
+			return nil, binding, inboxcontrol.ErrUnavailable
+		}
+		if err := a.store.ValidateInboxTargetContext(ctx, *request.Target); err != nil {
+			return nil, binding, inboxcontrol.ErrDenied
+		}
+		return source, binding, nil
 	}
 	if request.Target != nil {
 		if request.Target.Scope != inboxcontrol.ScopeMessage {
@@ -198,6 +227,9 @@ func (a *storeAPIAdapter) resolveInboxProvider(ctx context.Context, request inbo
 	}
 	if binding.SourceType == sourceTypeMSMail {
 		return a.resolveMicrosoftInboxProvider(ctx, source, binding, request)
+	}
+	if binding.SourceType == "beeper" {
+		return a.resolveBeeperInboxProvider(ctx, request, source, binding)
 	}
 	if binding.SourceType != "gmail" {
 		return nil, inboxcontrol.ErrUnavailable

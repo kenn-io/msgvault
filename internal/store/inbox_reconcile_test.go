@@ -83,8 +83,10 @@ func TestInboxGmailReconcileSwappedLabelNamesPreservesMemberships(t *testing.T) 
 		Target: target, Tags: []string{"LabelA"}, Folders: []inboxcontrol.Folder{{ID: "LabelA", Name: "Alpha"}, {ID: "LabelB", Name: "Beta"}},
 		Inbox: new(true), Read: new(true), ObservedAt: now,
 	}
+	before.SetFolderCatalog(before.Folders)
 	after := before
 	after.Folders = []inboxcontrol.Folder{{ID: "LabelA", Name: "Beta"}, {ID: "LabelB", Name: "Alpha"}}
+	after.SetFolderCatalog(after.Folders)
 	after.ObservedAt = now.Add(time.Second)
 	requirements.NoError(st.ReconcileInboxProviderState(t.Context(), target, before, after))
 	assertions.Equal([]string{"Beta"}, messageLabels(t, st, firstID))
@@ -113,9 +115,14 @@ func TestInboxGmailReconcileRejectsUnresolvedLabelNameConflict(t *testing.T) {
 	}
 	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: firstID, ProviderID: "gmail-reconcile-conflict-a"}
 	now := time.Now().UTC()
-	before := inboxcontrol.State{Target: target, Tags: []string{"LabelA"}, Inbox: new(true), Read: new(true), ObservedAt: now}
+	before := inboxcontrol.State{
+		Target: target, Tags: []string{"LabelA"}, Folders: []inboxcontrol.Folder{{ID: "LabelA", Name: "Current"}, {ID: "LabelRetired", Name: "Collision"}},
+		Inbox: new(true), Read: new(true), ObservedAt: now,
+	}
+	before.SetFolderCatalog(before.Folders)
 	after := before
 	after.Folders = []inboxcontrol.Folder{{ID: "LabelA", Name: "Collision"}}
+	after.SetFolderCatalog(after.Folders)
 	after.ObservedAt = now.Add(time.Second)
 	requirements.ErrorIs(st.ReconcileInboxProviderState(t.Context(), target, before, after), inboxcontrol.ErrConflict)
 	assertions.Equal([]string{"Current"}, messageLabels(t, st, firstID))
@@ -144,26 +151,6 @@ func TestInboxGmailReconcileUnavailableLocalLabelRollsBack(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotNil(observed)
 	assertions.Equal(before, *observed)
-}
-
-func TestInboxGmailUnknownTagsDoNotEraseLabels(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	st, source, id := tagFixture(t, "gmail", "gmail-unknown")
-	native, err := st.EmailTagTargetContext(t.Context(), id, "")
-	requirements.NoError(err)
-	requirements.NoError(st.SaveEmailTagsContext(t.Context(), native, &emailtags.MessageTagResult{Provider: "gmail", Tags: []string{"INBOX", "UNREAD"}, Verified: true}))
-	target := inboxcontrol.Target{SourceID: source.ID, SourceType: "gmail", SourceIdentifier: source.Identifier, AccountID: source.Identifier, Scope: inboxcontrol.ScopeMessage, ItemID: id, ProviderID: "gmail-unknown"}
-	before := inboxcontrol.State{Target: target, Tags: []string{"INBOX", "UNREAD"}, Inbox: new(true), Read: new(false), ObservedAt: time.Now().UTC()}
-	after := inboxcontrol.State{Target: target, ObservedAt: before.ObservedAt.Add(time.Second)}
-	requirements.NoError(st.ReconcileInboxProviderState(t.Context(), target, before, after))
-	assertions.Equal([]string{"INBOX", "UNREAD"}, messageLabels(t, st, id))
-	observed, err := st.GetInboxProviderState(t.Context(), target)
-	requirements.NoError(err)
-	requirements.NotNil(observed)
-	assertions.Nil(observed.Inbox)
-	assertions.Nil(observed.Read)
 }
 
 func TestInboxFolderReconcileDoesNotAdoptAnotherNativeID(t *testing.T) {

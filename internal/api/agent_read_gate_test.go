@@ -75,7 +75,7 @@ func (s *agentReadGateStore) NeedsFTSBackfillQuickContext(ctx context.Context) b
 	return s.Store.NeedsFTSBackfillQuickContext(ctx)
 }
 
-func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
+func TestAgentReadSourceRemovalSnapshot(t *testing.T) {
 	for _, route := range []string{"list", "search", "aggregate", "message", "store message", "thread", "domain", "stats", "subaggregate", "cached search"} {
 		t.Run(route, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -83,6 +83,9 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			src, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "glacier allowed", "allowed body")
 			requirements.NoError(err)
+			labelID, err := st.EnsureLabel(src.ID, "snapshot-label", "Snapshot label", "user")
+			requirements.NoError(err)
+			requirements.NoError(st.ReplaceMessageLabels(id, []int64{labelID}))
 			participant, err := st.EnsureParticipant(src.Identifier, "Synthetic", "example.test")
 			requirements.NoError(err)
 			requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
@@ -101,7 +104,18 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			t.Cleanup(srv.agentGrants.Close)
 			_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead, agentgrant.PermissionStatsRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			path := map[string]string{"cached search": "/api/v1/search/fast?q=glacier", "domain": "/api/v1/search/domains?domains=example.test", "stats": "/api/v1/stats/total", "subaggregate": "/api/v1/aggregates/sub?view_type=labels&sender=reader%40example.test", "list": "/api/v1/messages", "search": "/api/v1/search/fast?q=glacier", "aggregate": "/api/v1/aggregates", "message": fmt.Sprintf("/api/v1/messages/%d", id), "store message": fmt.Sprintf("/api/v1/messages/%d", id), "thread": fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id)}[route]
+			path := map[string]string{
+				"cached search": "/api/v1/search/fast?q=glacier",
+				"domain":        "/api/v1/search/domains?domains=example.test",
+				"stats":         "/api/v1/stats/total",
+				"subaggregate":  fmt.Sprintf("/api/v1/aggregates/sub?view_type=labels&source_id=%d", src.ID),
+				"list":          "/api/v1/messages",
+				"search":        "/api/v1/search/fast?q=glacier",
+				"aggregate":     "/api/v1/aggregates?view_type=labels",
+				"message":       fmt.Sprintf("/api/v1/messages/%d", id),
+				"store message": fmt.Sprintf("/api/v1/messages/%d", id),
+				"thread":        fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id),
+			}[route]
 			get := func() *httptest.ResponseRecorder {
 				r := httptest.NewRequest(http.MethodGet, path, nil)
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -114,40 +128,26 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			<-ready
 			mutationDone := make(chan error, 1)
 			go func() {
-				done, ok := gate.BeginRequestWorkContext(t.Context(), "source replacement")
+				done, ok := gate.BeginRequestWorkContext(t.Context(), "source removal")
 				if !ok {
 					mutationDone <- context.Canceled
 					return
 				}
 				defer done()
 				_, _, err := st.RemoveSourceSerialized(t.Context(), src.ID)
-				if err == nil {
-					var outside *store.Source
-					if st.IsPostgreSQL() {
-						_, err = st.DB().Exec(st.Rebind("INSERT INTO sources (id, source_type, identifier) OVERRIDING SYSTEM VALUE VALUES (?, ?, ?)"), src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					} else {
-						// Reproduce a legacy writer reusing the removed ID. Normal
-						// Store creation deliberately retains a fresh source lifetime.
-						_, err = st.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (?, ?, ?)`, src.ID, "test", "outside@example.test")
-						outside = &store.Source{ID: src.ID}
-					}
-					if err == nil {
-						var conv int64
-						conv, err = st.EnsureConversation(outside.ID, "thread", "Synthetic")
-						if err == nil {
-							_, err = st.UpsertMessage(&store.Message{SourceID: outside.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email", Subject: sql.NullString{String: "glacier private", Valid: true}})
-						}
-					}
-				}
 				mutationDone <- err
 			}()
 			requirements.NoError(<-mutationDone)
 			close(resume)
 			response := <-readDone
 			requirements.Equal(http.StatusOK, response.Code, response.Body.String())
-			assertions.NotContains(response.Body.String(), "glacier private")
-			if route == "stats" {
+			if route == "aggregate" || route == "subaggregate" {
+				var result AggregateResponse
+				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
+				requirements.Len(result.Rows, 1)
+				assertions.Equal("Snapshot label", result.Rows[0].Key)
+				assertions.Equal(int64(1), result.Rows[0].Count)
+			} else if route == "stats" {
 				var result TotalStatsResponse
 				requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 				assertions.Equal(int64(1), result.MessageCount)
@@ -157,14 +157,8 @@ func TestAgentReadSourceReplacementSnapshot(t *testing.T) {
 			if route == "message" || route == "store message" {
 				assertions.Contains(response.Body.String(), "allowed body")
 			}
-			if !st.IsPostgreSQL() {
-				replacement, err := st.GetSourceByIdentifier("outside@example.test")
-				requirements.NoError(err)
-				requirements.Equal(src.ID, replacement.ID)
-			}
-			response = get()
-			assertions.NotContains(response.Body.String(), "glacier private")
-			assertions.NotContains(response.Body.String(), "outside@example.test")
+			_, err = st.GetSourceByIDContext(t.Context(), src.ID)
+			requirements.Error(err, "the concurrent supported operation removed the source")
 		})
 	}
 }

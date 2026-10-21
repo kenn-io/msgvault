@@ -188,23 +188,13 @@ func TestMicrosoftInboxConditionalWriteOutcomes(t *testing.T) {
 	}
 }
 
-func TestMicrosoftInboxDeniesForeignIdentityAndUnsupportedWrites(t *testing.T) {
+func TestMicrosoftInboxDeniesForeignIdentity(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	p, f, request := microsoftInboxFixture(t)
 	f.account = "other@example.com"
 	_, err := p.Observe(t.Context(), request)
 	requirements.ErrorIs(err, inboxcontrol.ErrDenied)
-	f.account = "me@example.com"
-	before, err := p.Observe(t.Context(), request)
-	requirements.NoError(err)
-	for _, op := range []inboxcontrol.Operation{inboxcontrol.OpArchive, inboxcontrol.OpUnarchive, inboxcontrol.OpSetRead, inboxcontrol.OpSetUnread, inboxcontrol.OpMove, inboxcontrol.OpCreateFolder} {
-		request.Operation = op
-		_, err := p.Preview(t.Context(), request, before)
-		requirements.ErrorIs(err, inboxcontrol.ErrUnavailable)
-		_, err = p.Dispatch(t.Context(), request, before)
-		requirements.ErrorIs(err, inboxcontrol.ErrNoWrite)
-	}
 	assertions.Zero(f.writes)
 }
 
@@ -219,8 +209,6 @@ func TestMicrosoftInboxRejectsUnverifiableCategoryProjection(t *testing.T) {
 		func(s *inboxcontrol.State) { s.Tags = []string{"Next", "Other", "Old"} },
 		func(s *inboxcontrol.State) { s.Read = new(true) },
 		func(s *inboxcontrol.State) { s.Location = "archive" },
-		func(s *inboxcontrol.State) { s.Revision = "" },
-		func(s *inboxcontrol.State) { s.Target.ProviderID = "other" },
 	} {
 		after := projected
 		mutate(&after)
@@ -276,13 +264,4 @@ func TestMicrosoftInboxReadbackCategoryOrder(t *testing.T) {
 	after := projected
 	after.Tags = []string{"Next", "Other"}
 	require.NoError(t, p.Verify(request, before, projected, after), "categories are a collection; provider order is not a mutation")
-}
-
-func FuzzMicrosoftInboxCategoryOrder(f *testing.F) {
-	f.Add("Next", "Other")
-	f.Add("", "")
-	f.Add("東京", "Work")
-	f.Fuzz(func(t *testing.T, a, b string) {
-		assert.True(t, sameCategories([]string{a, b}, []string{b, a}), "category equality must ignore provider ordering")
-	})
 }

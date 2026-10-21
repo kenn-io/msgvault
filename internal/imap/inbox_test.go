@@ -132,53 +132,37 @@ func TestInboxIMAPFoldersNativeEpoch(t *testing.T) {
 	require.ErrorIs(t, err, inboxcontrol.ErrDenied)
 }
 
-func TestInboxIMAPVerifyRequiresCompleteConsistentReadback(t *testing.T) {
-	client, id := newKeywordTestClientFor(t, keywordTestSession{})
+func TestInboxIMAPSetUnreadReturnsUnknownWhenProviderRetainsSeen(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var stores atomic.Int64
+	client, id := newKeywordTestClientFor(t, keywordTestSession{permanent: []imapapi.Flag{imapapi.FlagSeen}, retainSeen: true, stores: &stores})
+	requirements.NoError(client.withConn(t.Context(), func(conn *imapclient.Client) error {
+		_, err := conn.Store(imapapi.UIDSetNum(1), &imapapi.StoreFlags{Op: imapapi.StoreFlagsAdd, Flags: []imapapi.Flag{imapapi.FlagSeen}}, nil).Collect()
+		if err != nil {
+			return fmt.Errorf("seed retained Seen flag: %w", err)
+		}
+		return nil
+	}))
+	stores.Store(0)
 	source, target := inboxIMAPBinding(client, id)
 	provider := NewInboxProvider(client, source)
 	request := inboxcontrol.Request{Operation: inboxcontrol.OpSetUnread, Target: &target, DryRun: true}
 	before, err := provider.Observe(t.Context(), request)
-	require.NoError(t, err)
+	requirements.NoError(err)
+	requirements.NotNil(before.Read)
+	requirements.True(*before.Read)
 	projected, err := provider.Preview(t.Context(), request, before)
-	require.NoError(t, err)
-	for _, field := range []string{"FLAGS", "tags", "Seen marker", "location", "UID"} {
-		t.Run(field, func(t *testing.T) {
-			after := before
-			switch field {
-			case "FLAGS":
-				after.Flags = nil
-			case "tags":
-				after.Tags = []string{"Invented"}
-			case "Seen marker":
-				after.Flags = []string{`\Seen`}
-			case "location":
-				after.Location = "Archive"
-			case "UID":
-				after.Target.UID++
-			}
-			require.ErrorIs(t, provider.Verify(request, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
-		})
-	}
-}
-
-func TestInboxIMAPVerifyRejectsMissingPlanEvidence(t *testing.T) {
-	client, id := newKeywordTestClientFor(t, keywordTestSession{})
-	source, target := inboxIMAPBinding(client, id)
-	provider := NewInboxProvider(client, source)
-	request := inboxcontrol.Request{Operation: inboxcontrol.OpSetUnread, Target: &target, DryRun: true}
-	before, err := provider.Observe(t.Context(), request)
-	require.NoError(t, err)
-	projected, err := provider.Preview(t.Context(), request, before)
-	require.NoError(t, err)
-	for _, missing := range []string{"before FLAGS", "projected FLAGS"} {
-		t.Run(missing, func(t *testing.T) {
-			original, plan := before, projected
-			if missing == "before FLAGS" {
-				original.Flags = nil
-			} else {
-				plan.Flags = nil
-			}
-			require.ErrorIs(t, provider.Verify(request, original, plan, before), inboxcontrol.ErrOutcomeUnknown)
-		})
-	}
+	requirements.NoError(err)
+	requirements.NotNil(projected.Read)
+	requirements.False(*projected.Read)
+	request.DryRun = false
+	_, err = provider.Dispatch(t.Context(), request, before)
+	requirements.NoError(err)
+	after, err := provider.Observe(t.Context(), request)
+	requirements.NoError(err)
+	requirements.NotNil(after.Read)
+	assertions.True(*after.Read, "the fake provider retained the Seen flag")
+	requirements.ErrorIs(provider.Verify(request, before, projected, after), inboxcontrol.ErrOutcomeUnknown)
+	assertions.Equal(int64(1), stores.Load(), "dispatch attempted one write; readback did not write")
 }

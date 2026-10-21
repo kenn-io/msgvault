@@ -214,7 +214,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	response := call(http.MethodPost, "/api/v1/inbox/control", request, oldSecret)
 	requirements.Equal(http.StatusForbidden, response.Code, response.Body.String(), "the original issued HTTP grant must not bind a new source lifetime")
 	assertions.Equal(beforeDeniedFactory, factoryCalls.Load(), "old grant denial precedes native provider construction")
-	_, secret = issue(nil)
+	grantID, secret := issue(nil)
 	requirements.NoError(daemon.Close())
 	daemon, err = daemonclient.New(daemonclient.Config{URL: networkDaemon.URL, AgentToken: secret, AllowInsecure: true})
 	requirements.NoError(err)
@@ -272,11 +272,22 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	var childError bytes.Buffer
 	child.Stderr = &childError
 	requirements.NoError(child.Run(), childError.String())
+	mu.Lock()
+	assertions.Equal(1, posts, "the CLI must commit its native write before receipt recovery")
+	assertions.Equal(1, readbacks, "the CLI write must be verified before receipt recovery")
+	mu.Unlock()
+	storedReceipt, err := st.LookupInboxReceipt(t.Context(), grantID, target.SourceID, request.IdempotencyKey)
+	requirements.NoError(err)
+	requirements.NotNil(storedReceipt)
+	assertions.Equal(inboxcontrol.StatusVerified, storedReceipt.Status)
+	assertions.Equal(request.IdempotencyKey, storedReceipt.IdempotencyKey)
+	requirements.NotNil(storedReceipt.After)
 	response = call(http.MethodPost, "/api/v1/inbox/control", request, secret)
 	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
 	var result inboxcontrol.Result
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	requirements.NotNil(result.Receipt)
+	assertions.Equal(storedReceipt.ID, result.Receipt.ID, "recovery must return the receipt committed by the CLI child")
 	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
 	requirements.NotNil(result.After)
 	assertions.False(*result.After.Inbox)
@@ -365,13 +376,9 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 	requirements.NoError(st.RemoveSource(source.ID))
 	response = call(http.MethodPost, "/api/v1/inbox/control", receiptRequest, "")
 	assertions.Equal(http.StatusForbidden, response.Code, response.Body.String())
-	// Deliberately bypass the ordinary allocator in this synthetic adversary:
-	// retired receipts must remain denied even if both old IDs are forced back.
-	_, err = st.DB().Exec(`INSERT INTO sources(id,source_type,identifier) VALUES(?,'gmail',?)`, source.ID, account)
+	recreated, err := st.GetOrCreateSource("gmail", account)
 	requirements.NoError(err)
-	recreated, err := st.GetSourceByID(source.ID)
-	requirements.NoError(err)
-	assertions.Equal(source.ID, recreated.ID, "the adversary explicitly restores the retired source ID")
+	assertions.NotEqual(source.ID, recreated.ID, "reimport allocates a new source lifetime")
 	client, err = factory(t.Context(), nil)
 	requirements.NoError(err)
 	_, err = archivesync.New(client, st, nil).Full(t.Context(), account)
@@ -379,7 +386,7 @@ func TestDaemonInboxNativeReceiveAuthorizedReceiptRestart(t *testing.T) {
 
 	reimported, err := st.MessageExistsBatch(recreated.ID, []string{"native-message"})
 	requirements.NoError(err)
-	requirements.Equal(target.ItemID, reimported["native-message"], "the same source and message IDs were both reused")
+	requirements.Contains(reimported, "native-message", "the provider message is imported under the new source lifetime")
 	mu.Lock()
 	priorFactories := factoryCalls.Load()
 	priorReadbacks := readbacks

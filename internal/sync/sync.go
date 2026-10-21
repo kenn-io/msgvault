@@ -774,6 +774,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				err := errors.New("label metadata missing from batch response")
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
+				if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+					err = fmt.Errorf("fetch Gmail label metadata for message %q: %w", sourceMessageID, err)
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
+					checkpoint.ErrorsCount++
+					return nil, err
+				}
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
 				checkpoint.ErrorsCount++
 				continue
@@ -791,6 +797,12 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			if labelResult.Err != nil {
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
+				if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+					err := fmt.Errorf("fetch Gmail label metadata for message %q: %w", sourceMessageID, labelResult.Err)
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
+					checkpoint.ErrorsCount++
+					return nil, err
+				}
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, labelResult.Err)
 				checkpoint.ErrorsCount++
 				continue
@@ -882,6 +894,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			var changed bool
 			if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
 				changed, err = s.store.RefreshGmailInboxLabelsContext(ctx, sourceID, existing.ID, sourceMessageID, labelIDs, store.GmailInboxObservation{Tags: labelResult.LabelIDs, HistoryID: labelResult.HistoryID, ObservedAt: metadataObservedAt})
+				if err != nil {
+					return nil, fmt.Errorf("refresh Gmail metadata for existing message %q: %w", sourceMessageID, err)
+				}
 			} else {
 				changed, err = s.reconcileValidatedMessageLabels(existing.ID, sourceMessageID, labelResult.RFC822MessageID, labelIDs, snapshotComplete)
 			}

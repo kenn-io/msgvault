@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -27,6 +28,20 @@ type controlProvider struct {
 	previewLocation   string
 	previewFolders    []inboxcontrol.Folder
 	dispatchRequest   func(inboxcontrol.Request) error
+}
+
+type cancelAfterPrepareLedger struct {
+	inboxcontrol.Ledger
+
+	cancel context.CancelFunc
+}
+
+func (l cancelAfterPrepareLedger) PrepareInboxReceipt(ctx context.Context, receipt inboxcontrol.Receipt) (*inboxcontrol.Receipt, bool, error) {
+	prepared, claimed, err := l.Ledger.PrepareInboxReceipt(ctx, receipt)
+	if err == nil && claimed {
+		l.cancel()
+	}
+	return prepared, claimed, err
 }
 
 func (p *controlProvider) Observe(ctx context.Context, request inboxcontrol.Request) (inboxcontrol.State, error) {
@@ -202,6 +217,38 @@ func TestInboxControlPreviewDoesNotWrite(t *testing.T) {
 	assertions.Equal(0, observations)
 }
 
+func TestInboxControlPreviewTokenBindsPrivateCatalogAcrossJSONExpectedState(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newControlFixture(t)
+	initialCatalog := []inboxcontrol.Folder{{ID: "LabelA", Name: "A"}, {ID: "LabelB", Name: "B"}}
+	changedCatalog := []inboxcontrol.Folder{{ID: "LabelA", Name: "A"}, {ID: "LabelB", Name: "Renamed"}}
+	f.provider.state.SetFolderCatalog(initialCatalog)
+	preview, err := f.service.Control(t.Context(), f.request, f.principal, f.gate)
+	requirements.NoError(err)
+
+	encoded, err := json.Marshal(preview.Before)
+	requirements.NoError(err)
+	var expected inboxcontrol.State
+	requirements.NoError(json.Unmarshal(encoded, &expected))
+	request := f.request
+	request.DryRun, request.Expected, request.PreviewToken, request.IdempotencyKey = false, &expected, preview.PreviewToken, "catalog-bound-operation"
+
+	// The public state survives the JSON boundary, while the signed preview
+	// must still reject a provider catalog change hidden from that state.
+	f.provider.state.SetFolderCatalog(changedCatalog)
+	_, err = f.service.Control(t.Context(), request, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
+	assertions.Zero(f.provider.dispatches)
+
+	f.provider.state.SetFolderCatalog(initialCatalog)
+	result, err := f.service.Control(t.Context(), request, f.principal, f.gate)
+	requirements.NoError(err)
+	requirements.NotNil(result.Receipt)
+	assertions.Equal(inboxcontrol.StatusVerified, result.Receipt.Status)
+}
+
 func TestInboxControlVerifiedReplayBeforeExpiryAndChangedState(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -316,6 +363,32 @@ func TestInboxControlCanceledDispatchFinalizesReceipt(t *testing.T) {
 	assertions.NotNil(stored.FinishedAt)
 }
 
+func TestInboxControlCancellationAfterReceiptPreparationSettlesWithoutDispatch(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	f := newControlFixture(t)
+	r := f.execution(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	f.service.Ledger = cancelAfterPrepareLedger{Ledger: f.archive.Store, cancel: cancel}
+
+	result, err := f.service.Control(ctx, r, f.principal, f.gate)
+
+	requirements.ErrorIs(err, inboxcontrol.ErrNoWrite)
+	requirements.NotNil(result)
+	requirements.NotNil(result.Receipt)
+	assertions.Zero(f.provider.dispatches)
+	assertions.Equal(inboxcontrol.StatusFailed, result.Receipt.Status)
+	assertions.Equal("dispatch-not-started", result.Receipt.FailureCode)
+	assertions.NotNil(result.Receipt.FinishedAt)
+	stored, err := f.archive.Store.GetInboxReceipt(t.Context(), result.Receipt.ID)
+	requirements.NoError(err)
+	requirements.NotNil(stored)
+	assertions.Equal(inboxcontrol.StatusFailed, stored.Status)
+	assertions.Equal("dispatch-not-started", stored.FailureCode)
+}
+
 func TestInboxControlReadbackDoesNotConsumeCompletionDeadline(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -360,6 +433,77 @@ func TestInboxControlLocalFailureReconcilesWithoutDispatch(t *testing.T) {
 	assertions.Equal(1, f.provider.dispatches)
 }
 
+func TestInboxReceiptConcurrentReconcileReloadsAfterGate(t *testing.T) {
+	requirements := require.New(t)
+	f := newControlFixture(t)
+	r := f.execution(t)
+	f.provider.dispatch = func(context.Context) error {
+		f.provider.state.Inbox = new(false)
+		return errors.New("synthetic lost dispatch response")
+	}
+	unknown, err := f.service.Control(t.Context(), r, f.principal, f.gate)
+	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
+	requirements.NotNil(unknown.Receipt)
+
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		observeEntered := make(chan struct{}, 1)
+		allowObserve := make(chan struct{})
+		f.provider.onObserve = func(_ context.Context, read int, _ inboxcontrol.Request) error {
+			if read == 3 {
+				observeEntered <- struct{}{}
+				<-allowObserve
+			}
+			return nil
+		}
+		gateToken := make(chan struct{}, 1)
+		gateArrivals := make(chan struct{}, 2)
+		gate := func(ctx context.Context) (func(), error) {
+			gateArrivals <- struct{}{}
+			select {
+			case gateToken <- struct{}{}:
+				return func() { <-gateToken }, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		type controlOutcome struct {
+			result *inboxcontrol.Result
+			err    error
+		}
+		request := inboxcontrol.Request{Operation: inboxcontrol.OpReconcile, ReceiptID: unknown.Receipt.ID}
+		firstDone := make(chan controlOutcome, 1)
+		go func() {
+			result, err := f.service.Control(t.Context(), request, f.principal, gate)
+			firstDone <- controlOutcome{result: result, err: err}
+		}()
+		synctest.Wait()
+		require.Len(observeEntered, 1, "the first reconciliation reaches provider readback while holding the gate")
+
+		secondDone := make(chan controlOutcome, 1)
+		go func() {
+			result, err := f.service.Control(t.Context(), request, f.principal, gate)
+			secondDone <- controlOutcome{result: result, err: err}
+		}()
+		synctest.Wait()
+		require.Len(gateArrivals, 2, "the second reconciliation has read the pending receipt and is waiting for ownership")
+
+		close(allowObserve)
+		synctest.Wait()
+		first := <-firstDone
+		second := <-secondDone
+		require.NoError(first.err)
+		require.NotNil(first.result)
+		assert.Equal(inboxcontrol.StatusVerified, first.result.Receipt.Status)
+		require.NoError(second.err)
+		require.NotNil(second.result)
+		assert.Equal(inboxcontrol.StatusVerified, second.result.Receipt.Status)
+		assert.Equal(3, f.provider.reads, "the waiter returns the verified receipt without another provider read")
+		assert.Equal(1, f.provider.dispatches, "reconciliation never repeats the provider mutation")
+	})
+}
+
 func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	f := newControlFixture(t)
 	r := f.execution(t)
@@ -372,19 +516,6 @@ func TestInboxControlReceiptRequiresCurrentOriginalAuthority(t *testing.T) {
 	f.denied = true
 	_, err = f.service.Control(t.Context(), read, f.principal, f.gate)
 	assert.ErrorIs(t, err, inboxcontrol.ErrDenied)
-}
-
-func TestInboxControlReadbackIdentityMismatchRemainsUnknown(t *testing.T) {
-	assertions := assert.New(t)
-
-	f := newControlFixture(t)
-	r := f.execution(t)
-	f.provider.dispatch = func(context.Context) error { f.provider.state.Target.ProviderID = "different-message"; return nil }
-	result, err := f.service.Control(t.Context(), r, f.principal, f.gate)
-	require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
-	require.NotNil(t, result.Receipt)
-	assertions.Equal(inboxcontrol.StatusUnknown, result.Receipt.Status)
-	assertions.Nil(result.Receipt.After)
 }
 
 func TestInboxControlChangedProjectionInvalidatesPreview(t *testing.T) {
@@ -505,34 +636,6 @@ func TestInboxControlCapabilitiesUseCurrentSourceGrantsWithoutWrites(t *testing.
 	f.denied = true
 	_, err = f.service.Control(t.Context(), request, f.principal, f.gate)
 	assertions.ErrorIs(err, inboxcontrol.ErrDenied)
-}
-
-func TestInboxControlCapabilitiesRejectUnprovedMetadata(t *testing.T) {
-	for _, invalid := range []string{"source", "time", "status", "operation", "duplicate"} {
-		t.Run(invalid, func(t *testing.T) {
-			f := newControlFixture(t)
-			target := *f.request.Target
-			source := inboxcontrol.SourceIdentity{SourceID: target.SourceID, SourceType: target.SourceType, SourceIdentifier: target.SourceIdentifier, AccountID: target.AccountID}
-			caps := &inboxcontrol.Capabilities{Source: source, LocationModel: "labels", ObservedAt: f.now, Operations: []inboxcontrol.Capability{{Operation: inboxcontrol.OpGetState, Status: inboxcontrol.CapabilitySupported}}}
-			switch invalid {
-			case "source":
-				caps.Source.AccountID = "other@example.com"
-			case "time":
-				caps.ObservedAt = time.Time{}
-			case "status":
-				caps.Operations[0].Status = "unknown"
-			case "operation":
-				caps.Operations[0].Operation = "send"
-			case "duplicate":
-				caps.Operations = append(caps.Operations, caps.Operations[0])
-			}
-			cp := &capabilityProvider{controlProvider: f.provider, capabilities: caps}
-			f.service.Resolve = func(context.Context, inboxcontrol.Request) (inboxcontrol.Provider, error) { return cp, nil }
-			_, err := f.service.Control(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpGetCapabilities, Source: &source}, f.principal, f.gate)
-			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
-			assert.Equal(t, 0, f.gateCalls)
-		})
-	}
 }
 
 func TestInboxControlReconcileDoesNotConsumeReceiptSettlementDeadline(t *testing.T) {

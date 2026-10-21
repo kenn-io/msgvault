@@ -8480,6 +8480,8 @@ components:
           type: string
         receipt_status:
           type: string
+        replay_request:
+          $ref: "#/components/schemas/InboxRequest"
         source_id:
           format: int64
           type: integer
@@ -8543,6 +8545,8 @@ components:
           type: string
         receipt_status:
           type: string
+        replay_request:
+          $ref: "#/components/schemas/InboxRequest"
         source_id:
           format: int64
           type: integer
@@ -16865,7 +16869,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24084,7 +24088,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Describe supported MCP daemon operations
+      summary: Describe admitted MCP daemon operations
       tags:
         - API
   /api/v1/media/search:

@@ -13352,7 +13352,7 @@ func (c *Client) TestTaskIntegrationWithResponse(ctx context.Context, reqEditors
 	}
 }
 
-// GetMCPCapabilities Describe supported MCP daemon operations
+// GetMCPCapabilities Describe admitted MCP daemon operations
 func (c *Client) GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

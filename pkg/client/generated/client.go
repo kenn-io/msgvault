@@ -623,7 +623,7 @@ type ClientInterface interface {
 	TestTaskIntegration(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResponse, error)
 	TestTaskIntegrationWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*TestTaskIntegrationResp, error)
 
-	// GetMCPCapabilities Describe supported MCP daemon operations
+	// GetMCPCapabilities Describe admitted MCP daemon operations
 	GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error)
 	GetMCPCapabilitiesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResp, error)
 
@@ -10314,7 +10314,7 @@ func (c *Client) TestTaskIntegration(ctx context.Context, reqEditors ...runtime.
 	return responseParser(ctx, resp)
 }
 
-// GetMCPCapabilities Describe supported MCP daemon operations
+// GetMCPCapabilities Describe admitted MCP daemon operations
 func (c *Client) GetMCPCapabilities(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetMCPCapabilitiesResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

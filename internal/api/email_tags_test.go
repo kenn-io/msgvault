@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -21,6 +22,24 @@ type tagsHTTPStore struct {
 	calls  int
 	change *emailtags.MessageTagChange
 	fail   error
+}
+
+func TestMessageTagsReplayRequestUsesInboxRequestSchema(t *testing.T) {
+	for name, document := range map[string]*huma.OpenAPI{
+		"public": OpenAPIDocument(),
+		"client": openAPIClientDocument(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			schemas := document.Components.Schemas.Map()
+			for _, schemaName := range []string{"MessageTagResponse", "MessageTagResult"} {
+				schema := schemas[schemaName]
+				require.NotNil(t, schema)
+				property := schema.Properties["replay_request"]
+				require.NotNil(t, property)
+				assert.Equal(t, "#/components/schemas/InboxRequest", property.Ref)
+			}
+		})
+	}
 }
 
 func (s *tagsHTTPStore) MessageTags(ctx context.Context, id int64, change *emailtags.MessageTagChange, mailbox string, acquireWrite func(context.Context) (func(), error)) (*emailtags.MessageTagResult, error) {
