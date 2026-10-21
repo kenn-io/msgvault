@@ -90,6 +90,34 @@ JSON output reports `upserted`, `skipped` and `failed`; upserts include replays.
 No new Go dependencies or OAuth scopes are needed for supplied files.
 Encrypted desktop databases and Keychain extraction are excluded.
 
+### Fetch one past Zoom instance
+
+Omit `--roster` and supply `--token-command` to retrieve the entire participant
+roster from Zoom. Use your own OAuth app with the new read scope
+`meeting:read:list_past_participants`. A paid Pro or higher plan is required;
+participant retention is at most 15 months. Instance UUIDs are used exactly,
+including Zoom's required double encoding for slash-prefixed or double-slash
+UUIDs. No new Go dependencies are added.
+
+```sh
+msgvault calls import-zoom-meeting --uuid INSTANCE_UUID \
+  --account EXAMPLE_ACCOUNT_ID --owner-id OWNER_ZOOM_ID --bindings bindings.json \
+  --token-command '["zoom-access-token"]'
+```
+
+`zoom-access-token` is your own executable that manages your OAuth app and
+refresh grant, then prints one bearer access token on stdout. The command is
+literal argv, never a shell expression. Do not put tokens or client secrets
+in flags or command arguments. Output is limited to 64 KiB and 30 seconds;
+stderr and failing stdout are suppressed. Tokens are used only for the run.
+App enrollment and refresh follow [Zoom's OAuth guide](https://developers.zoom.us/docs/integrations/oauth/).
+No existing Gmail or Microsoft scopes change, and no app is enrolled implicitly.
+
+Requests use the fixed Zoom API origin, refuse redirects and bound response
+size, pages and retries. Permission/license errors stop the run with a diagnostic.
+Incomplete rosters never replace evidence. Supplied and fetched modes use the
+same attendance rules and daemon import path.
+
 ## Read the evidence and counts
 
 All commands return JSON. `calls list` includes source/message/record IDs,

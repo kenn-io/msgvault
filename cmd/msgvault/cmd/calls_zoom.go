@@ -99,6 +99,7 @@ func addZoomCommands(root *cobra.Command, open callOpener, write callWriter) {
 		}
 		return postZoomObservations(cmd, client, observations, skipped, write)
 	}
+	addZoomFetchMode(cmd, &o, open, write)
 	root.AddCommand(cmd)
 }
 

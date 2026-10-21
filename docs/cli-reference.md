@@ -31,7 +31,7 @@ appear in full under Inherited Flags.
 
 ## calls
 
-Import and inspect supplied call evidence through the selected daemon. Requires
+Import and inspect call evidence through the selected daemon. Requires
 owner authentication and API schema 3.24.0 or newer. Output is JSON.
 
 ```bash

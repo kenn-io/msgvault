@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -39,12 +40,51 @@ func (o callOptions) GetHeader() (map[string]string, error) {
 }
 
 func callRequest[T any](ctx context.Context, c *Client, method, path string, options callOptions) (T, error) {
-	var result T
+	var zero T
 	resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
-		return result, err
+		return zero, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	return decodeCallResponse[T](resp)
+}
+
+// callRequestWithRetry resends the same request while the daemon's operation
+// gate is busy or its rate limiter asks the client to wait.
+func callRequestWithRetry[T any](ctx context.Context, c *Client, method, path string, options callOptions) (T, error) {
+	var zero T
+	waiter := &operationBusyWaiter{c: c}
+	result, err := backoff.Retry(ctx, func() (T, error) {
+		resp, err := c.DoGeneratedRequestWithContext(ctx, method, path, options)
+		if err != nil {
+			return zero, backoff.Permanent(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return zero, backoff.RetryAfter(retryAfterDelay(resp.Header.Get("Retry-After")), HandleErrorResponse(resp))
+		}
+		result, err := decodeCallResponse[T](resp)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return zero, backoff.Permanent(ctxErr)
+		}
+		if _, busy := errors.AsType[*OperationInProgressError](err); err != nil && !busy {
+			return result, backoff.Permanent(err)
+		}
+		return result, err
+	}, backoff.WithBackOff(backoff.NewConstantBackOff(operationBusyRetryDelay)),
+		backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0), backoff.WithNotify(waiter.notify))
+	if err == nil {
+		return result, nil
+	}
+	retryErr := backoff.AsRetryError(err)
+	if !errors.Is(retryErr.Cause, backoff.ErrPermanent) {
+		return zero, ctx.Err()
+	}
+	return zero, retryErr.LastErr
+}
+
+func decodeCallResponse[T any](resp *http.Response) (T, error) {
+	var result T
 	if resp.StatusCode != http.StatusOK {
 		return result, HandleErrorResponse(resp)
 	}
@@ -65,7 +105,7 @@ func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (CallIm
 	if _, err := callhistory.DecodeImport(bytes.NewReader(data)); err != nil {
 		return CallImportResult{}, err
 	}
-	return callRequest[CallImportResult](ctx, c, http.MethodPost, "/api/v1/import/calls", callOptions{body: jsontext.Value(data)})
+	return callRequestWithRetry[CallImportResult](ctx, c, http.MethodPost, "/api/v1/import/calls", callOptions{body: jsontext.Value(data)})
 }
 
 func callQueryValues(q store.CallQuery, summary bool) map[string]any {
@@ -90,7 +130,7 @@ func (c *Client) ListCallObservations(ctx context.Context, q store.CallQuery) (C
 	if q.Offset != 0 {
 		return CallEvidencePage{}, fmt.Errorf("%w: evidence pages require after_id", callhistory.ErrInvalid)
 	}
-	return callRequest[CallEvidencePage](ctx, c, http.MethodGet, "/api/v1/calls", callOptions{query: callQueryValues(q, false)})
+	return callRequestWithRetry[CallEvidencePage](ctx, c, http.MethodGet, "/api/v1/calls", callOptions{query: callQueryValues(q, false)})
 }
 
 func (c *Client) SummarizeCalls(ctx context.Context, q store.CallQuery) (CallSummaryPage, error) {

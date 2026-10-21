@@ -81,6 +81,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				},
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
+				FTS: &FTSDoc{Subject: "Call evidence"},
 			}
 		}, nil, nil)
 }

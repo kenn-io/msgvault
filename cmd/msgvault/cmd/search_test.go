@@ -719,13 +719,14 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	require.NoError(err, "create email conversation")
 	calendarConv, err := s.EnsureConversationWithType(src.ID, "calendar-thread", "calendar_event", "")
 	require.NoError(err, "create calendar conversation")
-	_, err = s.UpsertMessage(&store.Message{
+	emailID, err := s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: emailConv,
 		SourceMessageID: "email-1", MessageType: "email",
-		Subject: sql.NullString{String: "Email hello", Valid: true},
+		Subject: sql.NullString{String: "Call email hello", Valid: true},
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 1, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert email")
+	require.NoError(s.UpsertFTS(emailID, "Call email hello", "", "", "", ""), "index email")
 	_, err = s.UpsertMessage(&store.Message{
 		SourceID: src.ID, ConversationID: calendarConv,
 		SourceMessageID: "calendar-1", MessageType: "calendar_event",
@@ -774,7 +775,7 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	out := done()
 	require.NoError(err, "message-type search failed")
 	assert.Contains(out, "Calendar planning", "expected calendar event in output")
-	assert.NotContains(out, "Email hello", "email message must be filtered out")
+	assert.NotContains(out, "Call email hello", "email message must be filtered out")
 
 	resetSearchFlags()
 	done = captureStdout(t)
@@ -787,7 +788,31 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	require.NoError(err, "call-record message-type search failed")
 	assert.Contains(out, "Call evidence", "expected imported call record in output")
 	assert.NotContains(out, "Calendar planning", "calendar event must be filtered out")
-	assert.NotContains(out, "Email hello", "email message must be filtered out")
+	assert.NotContains(out, "Call email hello", "email message must be filtered out")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "Call", "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "unfiltered text search failed")
+	assert.Contains(out, "Call evidence", "unfiltered text search should find the imported call record")
+	assert.Contains(out, "Call email hello", "unfiltered text search should find the competing email")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "Call", "--message-type", callhistory.MessageType, "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "text search for call record failed")
+	assert.Contains(out, "Call evidence", "text search should find the imported call record")
+	assert.NotContains(out, "Call email hello", "text search should retain the call-record filter")
 }
 
 func TestSearchCmd_InvalidQueryFailsFastWithoutDB(t *testing.T) {
