@@ -219,10 +219,14 @@ func TestSourceMergeKeepsBeeperIdentifierTiedToOriginalAccount(t *testing.T) {
 		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef},
 	})
 	requirements.NoError(err)
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	if s.IsPostgreSQL() {
+		identifierWhere = store.FullParticipantIdentifierWherePostgres("pi")
+	}
 
 	eligible := func() bool {
 		var value bool
-		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+store.FullParticipantIdentifierWhereSQLite("pi")+
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+identifierWhere+
 			` FROM participant_identifiers pi WHERE pi.participant_id=? AND pi.identifier_type='beeper' AND pi.identifier_value=?`),
 			participantID, originIdentifier).Scan(&value)
 		requirements.NoError(err)
