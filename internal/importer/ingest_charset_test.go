@@ -5,23 +5,19 @@ import (
 	"context"
 	"log/slog"
 	"mime/quotedprintable"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestIngestRawMessage_DeclaredUTF8HTML(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "archive.db"))
-	require.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStore(t)
 	require.True(st.FTS5Available(), "body search must exercise the full-text index")
 	source, err := st.GetOrCreateSource("mbox", "archive@example.org")
 	require.NoError(err)

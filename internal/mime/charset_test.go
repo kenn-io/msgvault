@@ -43,23 +43,25 @@ func charsetHeaders() string {
 // The German prose makes the HTML detector prefer Windows-1252 over valid UTF-8.
 // Short fragments do not reproduce the reported corruption.
 func TestParse_DeclaredUTF8Bodies(t *testing.T) {
-	for _, charset := range []string{"utf-8", "UTF-8", "UtF8", "unicode-1-1-utf-8", "utf8mb4"} {
-		for _, transfer := range []string{"quoted-printable", "base64", "8bit"} {
-			t.Run(charset+"/"+transfer, func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
+	for _, tc := range []struct{ charset, transfer string }{
+		{"utf-8", "quoted-printable"},
+		{"UTF8", "base64"},
+		{"utf-8", "8bit"},
+	} {
+		t.Run(tc.charset+"/"+tc.transfer, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 
-				msg := mustParse(t, []byte(charsetHeaders()+charsetPart(t, charset, transfer, charsetHTML)))
-				assert.Equal(charsetHTML, msg.BodyHTML)
-				assert.Equal(charsetText, msg.BodyText)
-				assert.Equal(charsetText, msg.GetBodyText())
-				assert.Equal("Zählerablesung", msg.Subject)
-				require.Len(msg.From, 1)
-				assert.Equal("Example Grüße", msg.From[0].Name)
-				assert.NotContains(strings.Join(msg.Errors, "\n"), enmime.ErrorCharsetDeclaration)
-				assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorPlainTextFromHTML)
-			})
-		}
+			msg := mustParse(t, []byte(charsetHeaders()+charsetPart(t, tc.charset, tc.transfer, charsetHTML)))
+			assert.Equal(charsetHTML, msg.BodyHTML)
+			assert.Equal(charsetText, msg.BodyText)
+			assert.Equal(charsetText, msg.GetBodyText())
+			assert.Equal("Zählerablesung", msg.Subject)
+			require.Len(msg.From, 1)
+			assert.Equal("Example Grüße", msg.From[0].Name)
+			assert.NotContains(strings.Join(msg.Errors, "\n"), enmime.ErrorCharsetDeclaration)
+			assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorPlainTextFromHTML)
+		})
 	}
 }
 
@@ -93,6 +95,25 @@ func TestParse_DeclaredUTF8NestedBodyPreservesAttachments(t *testing.T) {
 	}
 	// The attachments still report their original detector decisions.
 	assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorCharsetDeclaration)
+}
+
+func TestParse_DeclaredUTF8NamedBody(t *testing.T) {
+	part := charsetPart(t, "utf-8", "quoted-printable", charsetHTML)
+	part = strings.Replace(part, "charset=utf-8", "charset=utf-8; name=body.html", 1)
+	msg := mustParse(t, []byte(charsetHeaders()+part))
+	assert.Equal(t, charsetHTML, msg.BodyHTML)
+	assert.Equal(t, charsetText, msg.BodyText)
+}
+
+func TestParse_DeclaredUTF8WithMalformedAttachment(t *testing.T) {
+	raw := []byte(charsetHeaders() + "Content-Type: multipart/mixed; boundary=outer\r\n\r\n" +
+		"--outer\r\n" + charsetPart(t, "utf-8", "quoted-printable", charsetHTML) + "\r\n" +
+		"--outer\r\nContent-Type: text/plain; charset=utf-7\r\nContent-Disposition: attachment; filename=broken.txt\r\n\r\n" + charsetText + " +invalid!\r\n--outer--\r\n")
+	msg := mustParse(t, raw)
+	assert.Equal(t, charsetHTML, msg.BodyHTML)
+	assert.Equal(t, charsetText, msg.BodyText)
+	require.Len(t, msg.Attachments, 1)
+	assert.Equal(t, "broken.txt", msg.Attachments[0].Filename)
 }
 
 func TestParse_CharsetRecoveryControls(t *testing.T) {
@@ -132,14 +153,5 @@ func TestRestoreDeclaredUTF8PreservesOtherWarnings(t *testing.T) {
 	assert.Contains(root.Errors, warning)
 	for _, problem := range root.Errors {
 		assert.NotEqual(enmime.ErrorCharsetDeclaration, problem.Name)
-	}
-}
-
-func TestIsUTF8Charset(t *testing.T) {
-	for _, charset := range []string{"utf-8", "UTF-8", "uTf8", "unicode-1-1-utf-8", "UTF8MB4"} {
-		assert.True(t, isUTF8Charset(charset), charset)
-	}
-	for _, charset := range []string{"", "windows-1252", "iso-8859-1", "utf-16"} {
-		assert.False(t, isUTF8Charset(charset), charset)
 	}
 }

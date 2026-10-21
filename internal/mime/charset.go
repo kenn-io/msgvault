@@ -11,13 +11,16 @@ import (
 var declaredCharsetParser = enmime.NewParser(
 	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
 	enmime.DisableCharacterDetection(true),
+	enmime.SetReadPartErrorPolicy(func(*enmime.Part, error) bool { return true }),
 )
 
 // restoreDeclaredUTF8 keeps a valid UTF-8 body when charset detection prefers
 // a legacy encoding. Detection still recovers bodies with incorrect declarations.
 func restoreDeclaredUTF8(raw []byte, root *enmime.Part) {
 	candidates := root.BreadthMatchAll(func(part *enmime.Part) bool {
-		return isBodyPart(part) && isUTF8Charset(part.OrigCharset) && !isUTF8Charset(part.Charset)
+		return (part.ContentType == "text/plain" || part.ContentType == "text/html") &&
+			(isBodyPart(part) || part.Disposition == "") &&
+			isUTF8Charset(part.OrigCharset) && !isUTF8Charset(part.Charset)
 	})
 	if len(candidates) == 0 {
 		return
@@ -35,7 +38,7 @@ func restoreDeclaredUTF8(raw []byte, root *enmime.Part) {
 	}
 	for _, part := range candidates {
 		source := byID[part.PartID]
-		if source == nil || !isBodyPart(source) || !isUTF8Charset(source.Charset) || !utf8.Valid(source.Content) {
+		if source == nil || !utf8.Valid(source.Content) {
 			continue
 		}
 		part.Content = source.Content
@@ -51,10 +54,9 @@ func restoreDeclaredUTF8(raw []byte, root *enmime.Part) {
 	}
 }
 
-// These aliases map to UTF-8 in enmime's charset reader.
 func isUTF8Charset(charset string) bool {
 	switch strings.ToLower(charset) {
-	case "utf-8", "utf8", "unicode-1-1-utf-8", "utf8mb4":
+	case "utf-8", "utf8":
 		return true
 	default:
 		return false
