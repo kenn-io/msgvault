@@ -207,7 +207,7 @@ func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Reque
 	}
 	results, err := engine.Search(r.Context(), request.Query, request.Limit)
 	if err != nil {
-		s.writePersonSearchError(w, err)
+		s.writePersonSearchError(r.Context(), w, err)
 		return
 	}
 	response := PersonSearchResponse{Results: make([]PersonSearchResult, len(results))}
@@ -217,7 +217,7 @@ func (s *Server) handleSemanticPersonSearch(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) writePersonSearchError(w http.ResponseWriter, err error) {
+func (s *Server) writePersonSearchError(ctx context.Context, w http.ResponseWriter, err error) {
 	if s.writeIfContextError(w, err) {
 		return
 	}
@@ -234,8 +234,10 @@ func (s *Server) writePersonSearchError(w http.ResponseWriter, err error) {
 			"Semantic person search cannot verify the current semantic person embedding policy or exact consent; check the live configuration and consent store")
 	case errors.Is(err, vector.ErrNotEnabled):
 		writeError(w, http.StatusServiceUnavailable, "vector_not_enabled", "Vector search is not configured")
-	case errors.Is(err, vector.ErrIndexStale):
+	case errors.Is(err, vector.ErrSemanticPersonEmbeddingRuntimeStale):
 		writeError(w, http.StatusServiceUnavailable, "index_stale", "The vector index does not match configured embedding settings")
+	case errors.Is(err, vector.ErrIndexStale):
+		s.writeIndexStale(ctx, w, err)
 	case errors.Is(err, personsearch.ErrPersonCoverageIncomplete):
 		var coverageErr *personsearch.CoverageIncompleteError
 		if errors.As(err, &coverageErr) && coverageErr.Rejected > 0 {

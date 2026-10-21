@@ -790,6 +790,51 @@ func TestSemanticPersonSearchMapsGenerationAndEmbeddingErrors(t *testing.T) {
 	}
 }
 
+func TestSemanticPersonSearchDistinguishesIndexStaleFromProviderRuntimeStale(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name       string
+		err        error
+		wantStatus VectorStatus
+	}{
+		{name: "index stale", err: vector.ErrIndexStale, wantStatus: VectorStatusStale},
+		{name: "provider runtime stale", err: vector.ErrSemanticPersonEmbeddingRuntimeStale, wantStatus: VectorStatusReady},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := vector.Config{Enabled: true}
+			backend := &resolvingVectorBackend{fingerprint: cfg.GenerationFingerprint()}
+			engine := &fakePersonSearchEngine{err: test.err}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: &config.Config{}, Logger: testLogger(),
+				Backend: backend, VectorCfg: cfg, VectorStatus: VectorStatusReady,
+				PersonSearchEngine: engine,
+			})
+			srv.refreshVectorStatus(t.Context())
+			backend.fingerprint = "rebuilt"
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "rebuilt", nil })
+
+			response := semanticPersonSearchRequest(t, srv, []byte(`{"query":"synthetic"}`), "")
+			require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+			var body ErrorResponse
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			assert.Equal("index_stale", body.Error)
+			assert.Equal([]string{"synthetic"}, engine.queries)
+			status, detail := srv.VectorStatus()
+			assert.Equal(test.wantStatus, status)
+			if test.wantStatus == VectorStatusStale {
+				assert.Contains(body.Message, "msgvault daemon restart")
+				assert.NotContains(body.Message, "--full-rebuild")
+				assert.Contains(detail, "msgvault daemon restart")
+			} else {
+				assert.Equal("The vector index does not match configured embedding settings", body.Message)
+				assert.Empty(detail)
+			}
+		})
+	}
+}
+
 func newSemanticPersonSearchServer(
 	t *testing.T, engine PersonSearchEngine, status VectorStatus, apiKey string,
 ) *Server {
