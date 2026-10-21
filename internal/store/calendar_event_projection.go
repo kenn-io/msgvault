@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -24,47 +23,10 @@ const calendarEventProjectionVersion = 1
 const calendarEventDecodeFailureStatus = "decode_error"
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false, false, false)
-}
-
-func (s *Store) refreshCalendarEventProjectionMigrationSeedWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	cancelled, complete, err := s.calendarCancellationEvidenceWith(ctx, tx, messageID)
-	if err != nil {
-		return err
-	}
-	if err := s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false, false, true); err != nil {
-		return err
-	}
-	if !cancelled || !complete {
-		return nil
-	}
-	// Keep complete cancelled aliases eligible for the reconstruction pass.
-	// Their raw projections are evidence for other aliases, but are not yet the
-	// completed inherited snapshots for this migration.
-	if _, err := tx.ExecContext(ctx, `UPDATE calendar_events SET projection_version = ? WHERE message_id = ?`, calendarEventProjectionVersion-1, messageID); err != nil {
-		return fmt.Errorf("mark complete cancellation for reconstruction: %w", err)
-	}
-	return nil
-}
-
-// refreshCalendarEventProjectionFromProviderWith records that an importer has
-// observed provider evidence for this message. Evidence freshness can change
-// even when the normalized event projection is unchanged.
-func (s *Store) refreshCalendarEventProjectionFromProviderWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, false, false)
-}
-
-func (s *Store) refreshCalendarEventProjectionFromCancellationMetadataWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, true, false)
-}
-
-func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *loggedTx, messageID int64, providerEvidence, cancellationMetadata, skipCancellationInheritance bool) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var messageType, metadata sql.NullString
-	var subject sql.NullString
 	var sourceID int64
-	var lastModified time.Time
-	err := q.QueryRow(`SELECT message_type, metadata, source_id, last_modified, subject FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &sourceID, &lastModified, &subject)
+	err := q.QueryRow(`SELECT message_type, metadata, source_id FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &sourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -111,49 +73,6 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	if !ok {
 		return clearProjection()
 	}
-	// A cancellation alias can supply some fields and omit others. During a
-	// rebuild, prefer a complete non-cancelled alias when one exists; a complete
-	// cancelled alias is evidence when no non-cancelled alias is available. Then
-	// overlay only fields present in newly observed provider JSON. Metadata
-	// changes and projection rebuilds have no new provider fields to overlay.
-	if !skipCancellationInheritance && event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil {
-		if eventUIDMissing(metadata) {
-			uid, err := s.freshestCalendarExceptionUIDWith(ctx, tx, sourceID, event)
-			if err != nil {
-				return err
-			}
-			if uid != "" {
-				updatedMetadata, changed, err := mergeCalendarEventUID(metadata, uid)
-				if err != nil {
-					return fmt.Errorf("preserve cancellation event iCalUID: %w", err)
-				}
-				if changed {
-					if err := setMessageMetadataWith(q, s.dialect, messageID, sql.NullString{String: string(updatedMetadata), Valid: true}); err != nil {
-						return fmt.Errorf("preserve cancellation event iCalUID: %w", err)
-					}
-				}
-			}
-		}
-		latest, found, err := s.freshestCalendarExceptionDetailsWith(ctx, tx, sourceID, event, !exists || oldVersion < calendarEventProjectionVersion)
-		if err != nil {
-			return err
-		}
-		if found {
-			status, providerID, seriesID, original := event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original
-			rawFields := calendarRawFields(stored, compression)
-			event, err = mergeCancelledCalendarException(latest.Event, event, rawFields, providerEvidence && !cancellationMetadata)
-			if err != nil {
-				return err
-			}
-			event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original = status, providerID, seriesID, original
-			if cancellationMetadata || rawFields["summary"] == nil && latest.Subject != "" && (!subject.Valid || subject.String == "") {
-				if _, err := q.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, latest.Subject, messageID); err != nil {
-					return fmt.Errorf("preserve cancellation event subject: %w", err)
-				}
-				subject = sql.NullString{String: latest.Subject, Valid: true}
-			}
-		}
-	}
 	canonical, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("hash calendar projection: %w", err)
@@ -161,11 +80,6 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	sum := sha256.Sum256(canonical)
 	hash := hex.EncodeToString(sum[:])
 	if exists && oldVersion == calendarEventProjectionVersion && oldHash == hash {
-		if providerEvidence {
-			if _, err := q.Exec(`UPDATE calendar_events SET snapshot_updated_at = `+s.dialect.ContentChangedNow()+` WHERE message_id = ?`, messageID); err != nil {
-				return fmt.Errorf("advance calendar snapshot freshness: %w", err)
-			}
-		}
 		return nil
 	}
 	recurrenceEnd := calendarRecurrenceEnd(ctx, event)
@@ -191,21 +105,7 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	for _, column := range columns[1:] {
 		updates = append(updates, column+" = excluded."+column)
 	}
-	columns = append(columns, "snapshot_updated_at")
-	var insertValues string
-	if providerEvidence {
-		insertValues = placeholders(len(values)) + "," + s.dialect.ContentChangedNow()
-		updates = append(updates, "snapshot_updated_at = "+s.dialect.ContentChangedNow())
-	} else {
-		// Projection rebuilds and source-configuration refreshes change derived
-		// fields without observing newer provider evidence. Keep an existing
-		// watermark, or seed a newly created projection from the message's
-		// archived write time until the freshness migration can do so.
-		values = append(values, s.dialect.TimestampParam(lastModified))
-		insertValues = placeholders(len(values))
-		updates = append(updates, "snapshot_updated_at = calendar_events.snapshot_updated_at")
-	}
-	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + insertValues + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
+	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + placeholders(len(columns)) + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
 	if _, err := q.Exec(query, values...); err != nil {
 		return fmt.Errorf("write calendar projection: %w", err)
 	}
@@ -218,172 +118,6 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 		}
 	}
 	return nil
-}
-
-// freshestCalendarExceptionDetailsWith finds the most recently archived
-// complete alias before a cancellation update is recorded. During a projection
-// rebuild, it prefers non-cancelled aliases because a raw cancellation may not
-// retain its previous complete snapshot. The current row remains eligible for
-// normal refreshes: a metadata-only cancellation leaves its previous
-// projection in place until this refresh writes the cancelled version.
-func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, event calevent.Event, preferNonCancelled bool) (CalendarEventRow, bool, error) {
-	originalColumn, originalValue := "e.original_start_at", any(event.Original.Instant)
-	if event.Original.AllDay {
-		originalColumn, originalValue = "e.original_start_date", event.Original.Date
-	}
-	predicate := `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + originalColumn + ` = ? AND
-		((e.start_at IS NOT NULL AND e.end_at IS NOT NULL) OR (e.start_date <> '' AND e.end_date <> ''))`
-	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
-	order := `e.snapshot_updated_at DESC, e.message_id DESC`
-	if preferNonCancelled {
-		order = `CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END, ` + order
-	}
-	query := `SELECT e.message_id ` + calendarEventFrom + `(` + predicate + `) ORDER BY ` + order + ` LIMIT 1`
-	var selectedID int64
-	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&selectedID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return CalendarEventRow{}, false, nil
-	}
-	if err != nil {
-		return CalendarEventRow{}, false, fmt.Errorf("find freshest calendar exception details: %w", err)
-	}
-	rows, err := queryCalendarEventRows(ctx, r, `e.message_id = ?`, []any{selectedID}, 1)
-	if err != nil {
-		return CalendarEventRow{}, false, err
-	}
-	if len(rows) != 1 {
-		return CalendarEventRow{}, false, nil
-	}
-	return rows[0], true, nil
-}
-
-func (s *Store) freshestCalendarExceptionUIDWith(ctx context.Context, tx *loggedTx, sourceID int64, event calevent.Event) (string, error) {
-	if event.Original == nil {
-		return "", nil
-	}
-	originalColumn, originalValue := "e.original_start_at", any(event.Original.Instant)
-	if event.Original.AllDay {
-		originalColumn, originalValue = "e.original_start_date", event.Original.Date
-	}
-	uid := calendarUIDExpression(s.dialect, "m.metadata")
-	predicate := `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + originalColumn + ` = ? AND ` + uid + ` IS NOT NULL AND ` + uid + ` <> ''`
-	query := `SELECT ` + uid + ` ` + calendarEventFrom + `(` + predicate + `) ORDER BY e.snapshot_updated_at DESC, e.message_id DESC LIMIT 1`
-	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
-	var value sql.NullString
-	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
-	if err != nil {
-		return "", fmt.Errorf("find freshest calendar exception iCalUID: %w", err)
-	}
-	return value.String, nil
-}
-
-func eventUIDMissing(metadata sql.NullString) bool {
-	if !metadata.Valid || metadata.String == "" {
-		return true
-	}
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-		return false
-	}
-	var value string
-	if err := json.Unmarshal(fields["ical_uid"], &value); err != nil {
-		return true
-	}
-	return value == ""
-}
-
-func mergeCalendarEventUID(metadata sql.NullString, uid string) ([]byte, bool, error) {
-	if uid == "" || metadata.Valid && !eventUIDMissing(metadata) {
-		return nil, false, nil
-	}
-	fields := make(map[string]jsontext.Value)
-	if metadata.Valid && metadata.String != "" {
-		if err := json.Unmarshal([]byte(metadata.String), &fields); err != nil {
-			return nil, false, fmt.Errorf("decode calendar metadata for iCalUID: %w", err)
-		}
-	}
-	if fields == nil {
-		fields = make(map[string]jsontext.Value)
-	}
-	value, err := json.Marshal(uid)
-	if err != nil {
-		return nil, false, err
-	}
-	fields["ical_uid"] = jsontext.Value(value)
-	encoded, err := json.Marshal(fields, json.Deterministic(true))
-	if err != nil {
-		return nil, false, err
-	}
-	return encoded, true, nil
-}
-
-func calendarRawFields(stored []byte, compression sql.NullString) map[string]jsontext.Value {
-	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-	if err != nil {
-		return nil
-	}
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return nil
-	}
-	return fields
-}
-
-func mergeCancelledCalendarException(latest, current calevent.Event, rawFields map[string]jsontext.Value, overlayProviderFields bool) (calevent.Event, error) {
-	merged := latest
-	merged.CalendarTimeZone = current.CalendarTimeZone
-	if overlayProviderFields {
-		if rawFields["start"] != nil {
-			merged.AllDay = current.AllDay
-			merged.Start, merged.StartDate, merged.EventTimeZone = current.Start, current.StartDate, current.EventTimeZone
-		}
-		if rawFields["end"] != nil {
-			merged.End, merged.EndDate = current.End, current.EndDate
-		}
-		if rawFields["recurrence"] != nil {
-			merged.Recurrence = current.Recurrence
-		}
-		if rawFields["attendees"] != nil || rawFields["organizer"] != nil {
-			_, attendeesSupplied := rawFields["attendees"]
-			_, organizerSupplied := rawFields["organizer"]
-			merged.Attendees = mergeCalendarAttendeeEvidence(current.Attendees, latest.Attendees, attendeesSupplied, organizerSupplied)
-		}
-	}
-	if merged.AllDay && merged.StartDate != "" && merged.EndDate != "" {
-		zone := merged.EventTimeZone
-		if zone == "" {
-			zone = merged.CalendarTimeZone
-		}
-		start, end, err := calendarAllDayBounds(merged.StartDate, merged.EndDate, zone)
-		if err != nil {
-			return calevent.Event{}, err
-		}
-		merged.Start, merged.End = start, end
-	}
-	return merged, nil
-}
-
-func calendarAllDayBounds(startDate, endDate, zone string) (*time.Time, *time.Time, error) {
-	location := time.UTC
-	if zone != "" {
-		loaded, err := time.LoadLocation(zone)
-		if err != nil {
-			return nil, nil, fmt.Errorf("calendar time zone: %w", err)
-		}
-		location = loaded
-	}
-	start, _, err := calrecur.CivilDateBoundary(startDate, location)
-	if err != nil {
-		return nil, nil, fmt.Errorf("calendar all-day start: %w", err)
-	}
-	end, _, err := calrecur.CivilDateBoundary(endDate, location)
-	if err != nil {
-		return nil, nil, fmt.Errorf("calendar all-day end: %w", err)
-	}
-	return &start, &end, nil
 }
 
 func decodeCalendarProjection(stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {

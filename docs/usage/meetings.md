@@ -66,6 +66,8 @@ reason; check it before treating an empty or partial result as complete.
 
 Copy event references from suggestions or `calendar events --json`. Recurring occurrences use the series message ID and original date or UTC start, such as `evt:100@20270314T100000Z`; a moved occurrence keeps that original key. Independently readable exceptions can use their own `evt:<id>` reference.
 
+Each calendar occurrence is one archived row. A cancellation keeps the fields of its own row, and the series fills in what a cancellation that was never seen omits.
+
 A saved choice follows the event's iCalendar UID and original occurrence time, so if a provider later changes either, for example by turning a one-off event into a series, the link can stop resolving and the event shows up as a suggestion.
 
 These commands require owner access. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).

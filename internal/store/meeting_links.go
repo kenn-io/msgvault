@@ -81,11 +81,13 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 }
 
 func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEventRow, from, to time.Time, budget *int) ([]linkOccurrence, error) {
-	related, err := queryCalendarExceptionsInWindow(ctx, r, from, to, `m.source_id = ? AND e.series_provider_id = ?`, []any{master.SourceID, master.Event.ProviderEventID}, min(200, *budget))
+	predicate, args := calendarExceptionWindow(r.dialect, from, to)
+	predicate += ` AND m.source_id = ? AND e.series_provider_id = ?`
+	args = append(args, master.SourceID, master.Event.ProviderEventID)
+	related, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return nil, err
 	}
-	*budget -= len(related)
 	expanded, count, reason, err := expandCalendarSeries(ctx, master, related, from, to, *budget)
 	*budget -= count
 	if err != nil {
@@ -128,32 +130,14 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		return linkOccurrence{}, sql.ErrNoRows
 	}
 	row := rows[0]
-	masterCancelled := false
-	if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
+	if row.Event.Kind == meetingExceptionKind && row.Event.Original != nil && ref.Key == "" {
 		masters, err := meetingEventRows(ctx, r, `e.kind IN ('series', 'single') AND m.source_id = ? AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
 		if err != nil {
 			return linkOccurrence{}, err
 		}
 		if len(masters) == 1 {
-			if row.Event.Original != nil {
-				row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
-			} else {
-				masterCancelled = masters[0].Event.Status == meetingCancelledStatus
-			}
-		} else if row.Event.Original != nil {
-			originalColumn, originalValue := "e.original_start_at", any(row.Event.Original.Instant)
-			if row.Event.Original.AllDay {
-				originalColumn, originalValue = "e.original_start_date", row.Event.Original.Date
-			}
-			aliases, err := meetingEventRows(ctx, r, `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND `+originalColumn+` = ?`, []any{row.SourceID, row.Event.SeriesProviderID, originalValue}, budget)
-			if err != nil {
-				return linkOccurrence{}, err
-			}
-			canonical := canonicalCalendarExceptionRows(aliases)
-			if len(canonical) == 0 {
-				return linkOccurrence{}, sql.ErrNoRows
-			}
-			row = canonical[0]
+			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
+		} else {
 			if row.Event.Start == nil || row.Event.End == nil {
 				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 			}
@@ -169,11 +153,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		if row.Event.Start == nil || row.Event.End == nil {
 			return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 		}
-		o := occurrenceFromRow(row, "")
-		if masterCancelled {
-			o.Row.Event.Status = meetingCancelledStatus
-		}
-		return o, nil
+		return occurrenceFromRow(row, ""), nil
 	}
 	if row.Event.Kind != meetingSeriesKind && row.Event.Kind != "single" {
 		return linkOccurrence{}, sql.ErrNoRows
@@ -202,8 +182,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	key := calendarExceptionAliasKey{sourceID: row.SourceID, seriesProviderID: row.Event.ProviderEventID, originalStart: ref.Key}
-	if x, ok := calendarExceptionOverrides(moved)[key]; ok {
+	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
@@ -301,8 +280,6 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		return nil, nil
 	}
 	predicate, args := s.calendarUIDPredicate(), []any{key.Value}
-	var rows []CalendarEventRow
-	var err error
 	base, instance, _ := calrecur.ParseInstanceID(key.Value)
 	if key.Kind == "google_event_id" {
 		// Parse the same source configuration used by calendar persistence.
@@ -332,36 +309,17 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		predicate = `m.source_id IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind IN ('series', 'single') AND e.provider_event_id = ?))`
 		args = sourceIDs
 		args = append(args, key.Value, base)
-		loaded, err := meetingEventRows(ctx, r, predicate, args, budget)
-		if err != nil {
-			return nil, err
-		}
-		rows = loaded
 	} else if key.ScheduledAt != nil {
-		// Select canonical exception snapshots for candidates whose original or
-		// effective bounds may overlap the note, then filter those winners by UID.
-		// This prevents an older alias from reappearing when a newer move leaves
-		// the query window.
-		nonExceptions, err := meetingEventRows(ctx, r, predicate+` AND e.kind <> 'exception'`, args, budget)
-		if err != nil {
-			return nil, err
-		}
-		exceptions, err := queryCalendarExceptionsInWindow(ctx, r, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin), predicate, args, min(200, *budget))
-		if err != nil {
-			return nil, err
-		}
-		*budget -= len(exceptions)
-		rows = nonExceptions
-		rows = append(rows, exceptions...)
+		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
+		predicate += ` AND (e.kind != 'exception' OR (` + window + `))`
+		args = append(args, windowArgs...)
 	} else {
 		predicate += ` AND e.kind != 'exception'`
-		loaded, err := meetingEventRows(ctx, r, predicate, args, budget)
-		if err != nil {
-			return nil, err
-		}
-		rows = loaded
 	}
-	rows = canonicalCalendarExceptionRows(rows)
+	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
+	if err != nil {
+		return nil, err
+	}
 	var out []linkOccurrence
 candidatesLoop:
 	for _, row := range rows {

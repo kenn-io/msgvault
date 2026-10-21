@@ -1637,13 +1637,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	// Old calendar tables gain snapshot_updated_at in the column migrations above.
-	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_alias ON calendar_events(series_provider_id, original_start_date, original_start_at, snapshot_updated_at, message_id) WHERE kind = 'exception'`)
-		return err
-	}); err != nil {
-		return fmt.Errorf("create calendar exception alias index: %w", err)
-	}
 	// The SQLite meeting index needs deleted_at, which old archives gain above.
 	// PostgreSQL builds it concurrently below.
 	if !s.IsPostgreSQL() {
@@ -2296,9 +2289,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
-	}
-	if err := s.runOnceMigration(ctx, migrationCalendarEventSnapshotFreshness, 1, false, s.backfillCalendarEventSnapshotFreshness); err != nil {
-		return fmt.Errorf("initialize calendar snapshot freshness: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for

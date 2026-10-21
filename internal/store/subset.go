@@ -235,12 +235,6 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventSnapshotFreshness); err != nil {
-		_ = tx.Rollback()
-		closeAndCleanup()
-		return nil, fmt.Errorf("reset copied calendar snapshot freshness migration: %w", err)
-	}
-
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()
@@ -790,9 +784,6 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 
 	if err := copyMessages(tx); err != nil {
 		return nil, err
-	}
-	if err := copyCalendarEventProjections(tx); err != nil {
-		return nil, fmt.Errorf("copy calendar projection freshness: %w", err)
 	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
@@ -2539,37 +2530,6 @@ func copyMessages(tx *sql.Tx) error {
 	if _, err := copyByName(tx, "messages",
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
-	}
-	return nil
-}
-
-// copyCalendarEventProjections carries provider-evidence freshness and
-// inherited attendee details into the subset. Mark copied projections stale
-// so InitSchema rebuilds derived fields from raw snapshots while retaining
-// their freshness times.
-func copyCalendarEventProjections(tx *sql.Tx) error {
-	hasEvents, err := sourceTableExists(tx, "calendar_events")
-	if err != nil || !hasEvents {
-		return err
-	}
-	hasVersion, err := sourceColumnExists(tx, "calendar_events", "projection_version")
-	if err != nil || !hasVersion {
-		return err
-	}
-	if _, err := copyByName(tx, "calendar_events", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
-		return err
-	}
-	hasAttendees, err := sourceTableExists(tx, "calendar_event_attendees")
-	if err != nil {
-		return err
-	}
-	if hasAttendees {
-		if _, err := copyByName(tx, "calendar_event_attendees", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
-			return fmt.Errorf("copy calendar event attendees: %w", err)
-		}
-	}
-	if _, err := tx.Exec(`UPDATE calendar_events SET projection_version = 0 WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
-		return err
 	}
 	return nil
 }
