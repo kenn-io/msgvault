@@ -100,6 +100,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read MIME envelope: Failed to ReadParts: %w", err)
 	}
+	restoreDeclaredUTF8(raw, root)
 	normalizeMalformedContentTypes(root)
 
 	env, err := envelopeParser.EnvelopeFromPart(root)
