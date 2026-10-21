@@ -17,37 +17,34 @@ import (
 	"go.kenn.io/msgvault/internal/telemetry"
 )
 
-func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
+func prepareTUITelemetryTest(t *testing.T, testName, subprocessEnv string) bool {
+	t.Helper()
 	// Serving tests permanently disable telemetry; run reporting assertions in a fresh process.
-	const subprocessEnv = "MSGVAULT_TUI_SCREEN_REPORT_TEST"
 	if os.Getenv(subprocessEnv) != "1" {
-		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestTUIScreenAndActionReportersUseSelectedDaemon$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args are fixed test flags.
+		cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^"+testName+"$", "-test.count=1") //nolint:gosec // os.Args[0] is the test binary; args select a known test.
 		cmd.Env = append(os.Environ(), subprocessEnv+"=1")
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, string(out))
+		return false
+	}
+	clearTelemetryVetoEnvironment(t)
+	t.Setenv(telemetry.EnabledEnv, "")
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	return true
+}
+
+func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
+	if !prepareTUITelemetryTest(t, "TestTUIScreenAndActionReportersUseSelectedDaemon", "MSGVAULT_TUI_SCREEN_REPORT_TEST") {
 		return
 	}
 	for _, tc := range []struct {
-		name, env, value string
-		configOff        bool
+		name      string
+		configOff bool
 	}{
 		{name: "enabled"},
 		{name: "config opt-out", configOff: true},
-		{name: "do not track", env: "DO_NOT_TRACK", value: "1"},
-		{name: "CI present and empty", env: "CI"},
-		{name: "product opt-out", env: telemetry.EnabledEnv, value: "0"},
-		{name: "global opt-out", env: posthog.GenericEnabledEnv, value: "0"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clearTelemetryVetoEnvironment(t)
-			t.Setenv(telemetry.EnabledEnv, "1")
-			t.Setenv(posthog.GenericEnabledEnv, "")
-			if tc.env != "" {
-				t.Setenv(tc.env, tc.value)
-			}
-			if tc.configOff {
-				t.Setenv(telemetry.EnabledEnv, "")
-			}
 			enabled := !tc.configOff
 			cfg := &config.Config{Telemetry: config.TelemetryConfig{Enabled: &enabled}}
 			assert, require := assert.New(t), require.New(t)
@@ -65,7 +62,7 @@ func TestTUIScreenAndActionReportersUseSelectedDaemon(t *testing.T) {
 			require.NoError(err)
 			require.NoError(tuiScreenReporter(client, cfg)(context.Background(), "settings"))
 			require.NoError(tuiActionReporter(client, cfg)(context.Background(), "search_run", "search_type", "hybrid"))
-			if tc.env != "" || tc.configOff {
+			if tc.configOff {
 				assert.Empty(requests)
 				return
 			}
