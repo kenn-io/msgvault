@@ -253,10 +253,7 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 		writes = sum.NotesAdded + sum.NotesUpdated
 	}
 	run := meetingSyncRun{provider: "granola", identifier: src.Identifier, writes: writes, err: err}
-	if sum != nil && sum.NotesProcessed > sum.Errors {
-		err = nil
-	}
-	_ = recordSyncAttempt(ctx, granola.SourceType, src.Identifier, err)
+	_ = recordSyncAttempt(ctx, granola.SourceType, src.Identifier, err, sum != nil && sum.NotesProcessed > sum.Errors)
 	return run.finishScheduled(ctx, "granola:"+src.Identifier,
 		rebuildGranolaCacheAfterScheduledSync)
 }

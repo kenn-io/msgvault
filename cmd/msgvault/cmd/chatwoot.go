@@ -189,7 +189,7 @@ func importChatwootProfile(ctx context.Context, st *store.Store, src config.Chat
 		opts := chatwootImportOptions(src, id, cfg)
 		opts.Limit, opts.Full, opts.NoMedia = run.Limit, run.Full, run.NoMedia
 		got, err := imp.Import(ctx, opts)
-		_ = recordSyncAttempt(ctx, chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, src.AccountID, id), err)
+		_ = recordSyncAttempt(ctx, chatwoot.SourceType, chatwoot.SourceIdentifier(src.URL, src.AccountID, id), err, got != nil && got.MessagesProcessed > 0)
 		if got != nil {
 			sum.Sources += got.Sources
 			sum.MessagesAdded += got.MessagesAdded

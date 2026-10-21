@@ -57,12 +57,13 @@ func runMSMailSync(ctx context.Context, s *store.Store, email string, progress f
 
 // runScheduledMSMailSync is the daemon path. Like runScheduledTeamsSync, it
 // seeds the "me" identity and runs pending migrations before the sync.
-func runScheduledMSMailSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) error {
+func runScheduledMSMailSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation, goodRead *bool) error {
 	confirmDefaultIdentity(io.Discard, s, src.ID, src.Identifier, src.Identifier, "account-identifier", state.logger)
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
-	_, err := runMSMailSync(ctx, s, src.Identifier, nil, state)
+	sum, err := runMSMailSync(ctx, s, src.Identifier, nil, state)
+	*goodRead = sum != nil && sum.Added+sum.Updated+sum.Moved+sum.Deleted > 0
 	return err
 }
 

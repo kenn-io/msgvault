@@ -280,7 +280,7 @@ func TestAddMicrosoftDefaultIdentityOptOut(t *testing.T) {
 				if tc.name == "graph" {
 					// Identity setup precedes token loading. With no Graph token,
 					// the real scheduled path stops before making network requests.
-					err := runScheduledMSMailSync(ctx, sources[0], st, invocationFromContext(ctx))
+					err := runScheduledMSMailSync(ctx, sources[0], st, invocationFromContext(ctx), new(bool))
 					require.ErrorContains(err, "no valid token")
 				} else {
 					confirmDefaultIdentity(io.Discard, st, sources[0].ID, email, email, "account-identifier", testDiscardLogger())

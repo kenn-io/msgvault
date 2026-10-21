@@ -399,7 +399,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 		provider: "circleback", identifier: src.Identifier, writes: writes,
 		err: err, canceled: circlebackCanceled(ctx, err),
 	}
-	_ = recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, errors.Join(run.err, run.canceled))
+	_ = recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, errors.Join(run.err, run.canceled), sum != nil && (writes > 0 || sum.MeetingsProcessed > sum.Errors))
 	return run.finishScheduled(ctx, "circleback:"+src.Identifier, rebuildCacheAfterScheduledSync)
 }
 

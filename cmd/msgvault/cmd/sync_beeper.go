@@ -361,13 +361,13 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 		return time.Now().After(deadline) || jobctx.PreemptionRequested(ctx)
 	}
 	return runScheduledBeeperAttempts(ctx, accountIDs, scheduledBeeperRotation, shouldStop,
-		func(accountID string) (bool, error) {
+		func(accountID string) (bool, bool, error) {
 			opts := beeperImportOptions(accountID, cfg)
 			opts.Scheduled = true
 			opts.ShouldStop = shouldStop
 			opts.StopAt = deadline
 			sum, err := imp.Import(ctx, opts)
-			return sum != nil && sum.Stopped, err
+			return sum != nil && sum.Stopped, sum != nil && sum.MessagesProcessed > 0, err
 		},
 		func() error { return rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), "beeper") },
 	)
@@ -418,7 +418,7 @@ func runScheduledBeeperAttempts(
 	accountIDs []string,
 	rotation *beeperAccountRotation,
 	shouldStop func() bool,
-	attempt func(string) (bool, error),
+	attempt func(string) (bool, bool, error),
 	rebuild func() error,
 ) error {
 	var errs []error
@@ -436,9 +436,9 @@ func runScheduledBeeperAttempts(
 			break
 		}
 		attempted++
-		stopped, err := attempt(accountID)
+		stopped, goodRead, err := attempt(accountID)
 		if err != nil || !stopped {
-			_ = recordSyncAttempt(ctx, sourceTypeBeeper, accountID, err)
+			_ = recordSyncAttempt(ctx, sourceTypeBeeper, accountID, err, goodRead)
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("beeper %s: %w", accountID, err))

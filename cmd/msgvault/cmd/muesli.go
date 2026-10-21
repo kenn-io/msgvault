@@ -283,7 +283,7 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	// Check the cache even when this scan wrote nothing: a hook or manual
 	// import may have been throttled by min_rebuild_interval, and the
 	// background refresher schedules the retry that import did not.
-	_ = recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, importErr)
+	_ = recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, importErr, summary != nil && (writes > 0 || summary.MeetingsProcessed > summary.Errors))
 	return run.finishScheduled(ctx, "muesli:"+source.Identifier,
 		rebuildMuesliCacheAfterScheduledSync)
 }

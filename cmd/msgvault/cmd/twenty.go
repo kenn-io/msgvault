@@ -255,7 +255,7 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 	if summary != nil {
 		run.writes = summary.MeetingsAdded + summary.MeetingsUpdated
 	}
-	_ = recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, importErr)
+	_ = recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, importErr, summary != nil && summary.MeetingsProcessed > 0)
 	return run.finishScheduled(ctx, "twenty:"+source.Identifier, rebuildTwentyCacheAfterScheduledSync)
 }
 

@@ -55,6 +55,13 @@ func TestSyncFailureTransitions(t *testing.T) {
 	failures.Record(t.Context(), "gmail", "synthetic", nil)
 	failures.Record(t.Context(), "gmail", "synthetic", failure)
 	assert.Len(events, 3)
+	failures.Record(t.Context(), "gmail", "synthetic", failure, false)
+	assert.Len(events, 3, "a pass without a good read keeps the outage")
+	failures.Record(t.Context(), "gmail", "synthetic", failure, true)
+	failures.Record(t.Context(), "gmail", "synthetic", failure, true)
+	assert.Len(events, 3, "partial success recovers without starting another outage")
+	failures.Record(t.Context(), "gmail", "synthetic", failure)
+	assert.Len(events, 4, "a complete failure after recovery starts a new outage")
 }
 
 func TestOutcomeWire(t *testing.T) {

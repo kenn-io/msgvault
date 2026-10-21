@@ -163,6 +163,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 		return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name))
 	}
 	var err error
+	var summary synctechsms.ImportSummary
 	switch src.Backend {
 	case "", localValue:
 		if src.Path == "" {
@@ -171,17 +172,17 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 		if _, err := ensureConfiguredSynctechSMSSource(st, src, opts, invocationFromContext(ctx)); err != nil {
 			return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
 		}
-		_, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
+		summary, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
 	case "drive":
 		if driveClient != nil {
-			_, err = runSynctechSMSDriveSourceWithClient(ctx, st, src, opts, driveClient)
+			summary, err = runSynctechSMSDriveSourceWithClient(ctx, st, src, opts, driveClient)
 		} else {
-			_, err = runSynctechSMSDriveSource(ctx, st, src, opts)
+			summary, err = runSynctechSMSDriveSource(ctx, st, src, opts)
 		}
 	default:
 		return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, fmt.Errorf("unsupported synctech-sms backend %q", src.Backend))
 	}
-	_ = recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
+	_ = recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err, summary.SMSImported+summary.MMSImported+summary.CallsImported > 0)
 	var refreshErr error
 	if !isDaemonCLISubprocess() {
 		refreshErr = rebuildCacheAfterScheduledSync(

@@ -4143,25 +4143,25 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			sourceType = sourceTypeGmail
 		}
 
-		var (
-			summary *gmail.SyncSummary
-			err     error
-		)
+		var summary *gmail.SyncSummary
+		var err error
+		var goodRead bool
 		switch sourceType {
 		case sourceTypeGmail:
 			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, state)
 		case sourceTypeIMAP:
 			summary, err = runScheduledIMAPSync(ctx, src, s, state)
 		case sourceTypeTeams:
-			err = runScheduledTeamsSync(ctx, src, s, state)
+			err = runScheduledTeamsSync(ctx, src, s, state, &goodRead)
 		case sourceTypeMSMail:
-			err = runScheduledMSMailSync(ctx, src, s, state)
+			err = runScheduledMSMailSync(ctx, src, s, state, &goodRead)
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
 				ctx, s, src, defaultDiscordCommandDeps().bind(ctx), false, time.Time{}, nil,
 			)
 			logScheduledDiscordIssues(identifier, discordSummary, logger)
+			goodRead = discordSummary != nil && discordSummary.MessagesProcessed > 0
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -4171,7 +4171,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			}
 			return scheduledSyncYieldResult(ctx, errs...)
 		}
-		state.syncFailures.Record(ctx, sourceType, src.Identifier, err)
+		state.syncFailures.Record(ctx, sourceType, src.Identifier, err, goodRead)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue
@@ -4516,7 +4516,7 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 }
 
 // runScheduledTeamsSync runs a Teams sync for the daemon.
-func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) error {
+func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation, goodRead *bool) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
@@ -4544,7 +4544,8 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 		return err
 	}
 	opts := scheduledTeamsImportOptions(email, cfg)
-	_, err = teams.NewImporter(s, client).Import(ctx, opts)
+	sum, err := teams.NewImporter(s, client).Import(ctx, opts)
+	*goodRead = sum != nil && sum.MessagesProcessed > 0
 	return err
 }
 

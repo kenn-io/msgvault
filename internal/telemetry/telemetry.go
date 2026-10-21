@@ -173,9 +173,12 @@ type SyncFailures struct {
 	failing sync.Map
 }
 
-func (s *SyncFailures) Record(ctx context.Context, sourceType, identifier string, err error) {
+func (s *SyncFailures) Record(ctx context.Context, sourceType, identifier string, err error, goodRead ...bool) {
 	if s == nil || errors.Is(err, context.Canceled) || ctx.Err() != nil || errors.Is(err, jobctx.ErrYieldedToWaiter) || errors.Is(err, jobctx.ErrRunBudgetExceeded) {
 		return
+	}
+	if len(goodRead) > 0 && goodRead[0] {
+		err = nil
 	}
 	key := [2]string{sourceType, identifier}
 	if err == nil {
