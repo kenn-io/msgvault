@@ -65,7 +65,7 @@ fails with `<id> isn't an open loop.`
 
 ## calls
 
-Import and inspect supplied call evidence through the selected daemon. Requires
+Import and inspect call evidence through the selected daemon. Requires
 owner authentication and API schema 5.2.0 or newer. Output is JSON.
 
 ```bash
