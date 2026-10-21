@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -372,7 +374,8 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	c := config.NewDefaultConfig()
 	c.Vector.Enabled = true
 	testCtx := withTestConfig(t, c)
-	_ = testCtx
+	var logs bytes.Buffer
+	invocationFromContext(testCtx).logger = slog.New(slog.NewJSONHandler(&logs, nil))
 
 	// Active generation's fingerprint differs from the configured one, so
 	// the same check the query path runs (ResolveActiveForFingerprint)
@@ -397,6 +400,25 @@ func TestStartVectorInitFlagsStaleIndex(t *testing.T) {
 	assert.Contains(detail, "old-model:384:c6000:e1", "detail names the stored fingerprint")
 	assert.Contains(detail, c.Vector.GenerationFingerprint(), "detail names the configured fingerprint")
 	assert.Contains(detail, "msgvault embeddings build --full-rebuild", "detail names the rebuild command")
+
+	decoder := json.NewDecoder(&logs)
+	foundWarning := false
+	for decoder.More() {
+		var record struct {
+			Level  string
+			Msg    string
+			Error  string
+			Detail string
+		}
+		require.NoError(t, decoder.Decode(&record))
+		if record.Level == "WARN" && record.Msg == "vector index does not match configured embedding settings; vector search unavailable" {
+			foundWarning = true
+			assert.Contains(record.Error, `active="old-model:384:c6000:e1"`)
+			assert.Contains(record.Error, `configured="`+c.Vector.GenerationFingerprint()+`"`)
+			assert.Contains(record.Detail, "msgvault embeddings build --full-rebuild")
+		}
+	}
+	assert.True(foundWarning, "startup logs a stale-index warning")
 }
 
 func TestStartVectorInitReportsError(t *testing.T) {

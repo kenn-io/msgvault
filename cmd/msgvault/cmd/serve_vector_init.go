@@ -488,7 +488,7 @@ func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *v
 	}
 	detail := apiServer.MarkVectorIndexStale(ctx, err)
 	repairLogger(logger).Warn("vector index does not match configured embedding settings; vector search unavailable",
-		"detail", detail)
+		"error", err, "detail", detail)
 }
 
 // restartVectorFingerprint computes the text index fingerprint after a restart.
