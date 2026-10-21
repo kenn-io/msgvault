@@ -136,6 +136,57 @@ func TestMeetingCountKeysIncompleteCopies(t *testing.T) {
 	assertions.NotContains(keys, incomplete)
 }
 
+func TestMeetingCountKeysClearedRecurrenceKeepsExceptions(t *testing.T) {
+	for _, uid := range []string{"weekly@example.test", ""} {
+		t.Run(fmt.Sprintf("master UID=%q", uid), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", uid)
+			data, master := calendarFixture(t, st, "series", raw)
+			want := make(map[int64]string)
+			var notes []int64
+			for _, occurrence := range []struct{ key, start string }{
+				{"20270314T100000Z", "2027-03-14T10:00:00Z"},
+				{"20270321T100000Z", "2027-03-21T10:00:00Z"},
+			} {
+				// Unseen Google cancellations carry the series ID and original
+				// start, but can omit their UID and bounds.
+				exceptionRaw := fmt.Sprintf(`{"id":"series_%s","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":%q}}`, occurrence.key, occurrence.start)
+				_, exception := calendarFixture(t, st, "series|"+occurrence.start, exceptionRaw)
+				_, note := projectionFixture(t, st, "note-"+occurrence.key, "plaud_json", `{}`)
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: occurrence.key}))
+				notes = append(notes, note)
+				key := "uid:weekly@example.test/" + occurrence.key
+				if uid == "" {
+					key = fmt.Sprintf("evt:%d/%s", master, occurrence.key)
+				}
+				want[note], want[exception] = key, key
+			}
+			keys, err := st.MeetingCountKeysContext(t.Context())
+			requirements.NoError(err)
+			requirements.Equal(want, keys)
+			before := make([][]MeetingLink, len(notes))
+			for i, note := range notes {
+				before[i], err = st.MeetingLinksContext(t.Context(), note)
+				requirements.NoError(err)
+				requirements.Len(before[i], 1)
+			}
+			data.RawMIME = []byte(strings.Replace(raw, `,"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]`, "", 1))
+			id, err := st.PersistMessage(data)
+			requirements.NoError(err)
+			requirements.Equal(master, id)
+			for i, note := range notes {
+				links, err := st.MeetingLinksContext(t.Context(), note)
+				requirements.NoError(err)
+				assertions.Equal(before[i], links, "clearing recurrence preserves the saved occurrence")
+			}
+			keys, err = st.MeetingCountKeysContext(t.Context())
+			requirements.NoError(err)
+			assertions.Equal(want, keys, "retained exceptions keep their notes' keys, and the former master stays unkeyed")
+		})
+	}
+}
+
 func TestMeetingCountKeysUIDlessSeriesExceptionCopy(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

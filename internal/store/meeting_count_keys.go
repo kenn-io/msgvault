@@ -89,6 +89,7 @@ func unresolvedMeetingCount(err error) bool {
 }
 
 func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identity meetingIdentity) ([]int64, error) {
+	const singleKind = "single"
 	budget := calrecur.RequestReadBudget
 	rows, err := s.meetingIdentityRows(ctx, r, identity, &budget)
 	if err != nil {
@@ -97,7 +98,7 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 	var copies []int64
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID}
-		if row.Event.Kind == meetingSeriesKind {
+		if row.Event.Kind == meetingSeriesKind || row.Event.Kind == singleKind && identity.OccurrenceKey != "" {
 			ref.Key = identity.OccurrenceKey
 		}
 		occurrence, err := resolveMeetingOccurrence(ctx, r, ref, &budget)
@@ -109,7 +110,7 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 		}
 		if occurrence.Identity == identity {
 			copyID := row.MessageID
-			if row.Event.Kind == meetingSeriesKind {
+			if row.Event.Kind == meetingSeriesKind || row.Event.Kind == singleKind && identity.OccurrenceKey != "" {
 				if occurrence.Row.Event.Kind == meetingSeriesKind {
 					continue
 				}
