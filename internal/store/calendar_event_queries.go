@@ -29,16 +29,16 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
+var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
  m.deleted_from_source_at IS NOT NULL,
  %s, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json
  ` + calendarEventFrom
 
-const calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
  WHERE m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+ AND ` + calendarEventVisibility("e", "m") + `
  AND `
 
 func calendarUIDExpression(d Dialect, column string) string {
@@ -46,6 +46,19 @@ func calendarUIDExpression(d Dialect, column string) string {
 		return column + " ->> 'ical_uid'"
 	}
 	return "CASE WHEN json_valid(" + column + ") THEN json_extract(" + column + ", '$.ical_uid') END"
+}
+
+// Keep unique archived events. A live copy wins over archived copies; among
+// archived copies, the lowest message ID wins within the merged source.
+func calendarEventVisibility(event, message string) string {
+	return fmt.Sprintf(`NOT EXISTS (
+ SELECT 1 FROM source_merge_archive_only_messages am
+ WHERE am.message_id = %[2]s.id AND EXISTS (
+  SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
+  WHERE other.provider_event_id = %[1]s.provider_event_id
+  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
+  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id)
+   OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
 func queryCalendarEventRowsWithinBudget(ctx context.Context, r reboundReader, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
@@ -265,7 +278,7 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
    EXISTS (SELECT 1 FROM calendar_events p
     WHERE p.kind IN ('series', 'single') AND p.provider_event_id = e.series_provider_id
     AND (SELECT pm.source_id FROM messages pm WHERE pm.id = p.message_id AND pm.deleted_at IS NULL
-     AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = pm.id)) = m.source_id
+     AND ` + calendarEventVisibility("p", "pm") + `) = m.source_id
     AND ((e.original_start_at < ? AND ` + timedEnd + `) OR
     (e.original_start_date < ? AND ` + dateEnd + `))) OR
    (e.original_start_at IS NULL AND e.original_start_date = ''))`
