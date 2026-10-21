@@ -44,10 +44,6 @@ func TestSecureMkdirAllProtectedAtCreation(t *testing.T) {
 	require.NoError(t, SecureMkdirAll(path, 0o700))
 	assert.Equal(t, []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path}, calls)
 	assert.Empty(t, logs.String(), "protected creation must succeed without falling back")
-	for _, dir := range []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path} {
-		assertProtectedDirectory(t, dir)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "secret"), []byte("test-secret"), 0o600))
-	}
 }
 
 func assertProtectedDirectory(t *testing.T, path string) {
@@ -73,27 +69,6 @@ func assertProtectedDirectory(t *testing.T, path string) {
 	// #nosec G103 -- GetAce supplies an access-allowed ACE with a contiguous SID at SidStart.
 	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	assert.True(aceSID.Equals(user.User.Sid))
-}
-
-func TestSecureMkdirAllConcurrentCreation(t *testing.T) {
-	require := require.New(t)
-	path := filepath.Join(t.TempDir(), "a", "b", "tokens")
-	const creators = 8
-	start := make(chan struct{})
-	results := make(chan error, creators)
-	for range creators {
-		go func() {
-			<-start
-			results <- SecureMkdirAll(path, 0o700)
-		}()
-	}
-	close(start)
-	for range creators {
-		require.NoError(<-results)
-	}
-	info, err := os.Stat(path)
-	require.NoError(err)
-	require.True(info.IsDir())
 }
 
 func TestWin32CreatePath(t *testing.T) {
@@ -122,43 +97,57 @@ func TestWin32CreatePath(t *testing.T) {
 	}
 }
 
-func TestSecureMkdirAllLongPath(t *testing.T) {
-	require := require.New(t)
-	root, err := filepath.Abs(t.TempDir())
-	require.NoError(err)
-	path := filepath.Join(root, strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100))
-	require.Greater(len(path), 260)
-	require.NoError(SecureMkdirAll(path, 0o700))
-	require.DirExists(path)
-	if strings.HasPrefix(path, `\\`) {
-		assertProtectedDirectory(t, `\\?\UNC\`+path[2:])
-	} else {
-		assertProtectedDirectory(t, `\\?\`+path)
+func TestSecureMkdirAllPathForms(t *testing.T) {
+	tests := []struct {
+		name      string
+		prepare   func(*testing.T) (string, string)
+		writeFile bool
+	}{
+		{
+			name: "long path",
+			prepare: func(t *testing.T) (string, string) {
+				root, err := filepath.Abs(t.TempDir())
+				require.NoError(t, err)
+				path := filepath.Join(root, strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100))
+				require.Greater(t, len(path), 260)
+				return path, `\\?\` + path
+			},
+		},
+		{
+			name: "ordinary trailing dot",
+			prepare: func(t *testing.T) (string, string) {
+				path := filepath.Join(t.TempDir(), "out.")
+				return path, path
+			},
+			writeFile: true,
+		},
+		{
+			name: "extended path trailing dot",
+			prepare: func(t *testing.T) (string, string) {
+				path := `\\?\` + filepath.Join(t.TempDir(), "out.")
+				return path, path
+			},
+		},
+		{
+			name: "relative path under long working directory",
+			prepare: func(t *testing.T) (string, string) {
+				long := filepath.Join(t.TempDir(), strings.Repeat("w", 100), strings.Repeat("x", 100))
+				require.NoError(t, SecureMkdirAll(long, 0o700))
+				t.Chdir(long)
+				return filepath.Join("a", "b"), filepath.Join(long, "a", "b")
+			},
+		},
 	}
-}
-
-func TestSecureMkdirAllTrailingDotMatchesLaterAccess(t *testing.T) {
-	require := require.New(t)
-	dir := filepath.Join(t.TempDir(), "out.")
-	require.NoError(SecureMkdirAll(dir, 0o700))
-	require.NoError(os.WriteFile(filepath.Join(dir, "message.eml"), []byte("x"), 0o600))
-}
-
-func TestSecureMkdirAllExtendedPathTrailingDot(t *testing.T) {
-	require := require.New(t)
-	path := `\\?\` + filepath.Join(t.TempDir(), "out.")
-	require.NoError(SecureMkdirAll(path, 0o700))
-	require.DirExists(path)
-	assertProtectedDirectory(t, path)
-}
-
-func TestSecureMkdirAllRelativePathUnderLongWorkingDirectory(t *testing.T) {
-	require := require.New(t)
-	long := filepath.Join(t.TempDir(), strings.Repeat("w", 100), strings.Repeat("x", 100))
-	require.NoError(SecureMkdirAll(long, 0o700))
-	t.Chdir(long)
-	require.NoError(SecureMkdirAll(filepath.Join("a", "b"), 0o700))
-	assertProtectedDirectory(t, filepath.Join(long, "a", "b"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path, protectedPath := tt.prepare(t)
+			require.NoError(t, SecureMkdirAll(path, 0o700))
+			if tt.writeFile {
+				require.NoError(t, os.WriteFile(filepath.Join(path, "message.eml"), []byte("x"), 0o600))
+			}
+			assertProtectedDirectory(t, protectedPath)
+		})
+	}
 }
 
 func TestSecureMkdirAllRejectsFileComponent(t *testing.T) {

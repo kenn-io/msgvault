@@ -14,7 +14,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestWindowsCredentialDirectoryIsProtectedFromCreation(t *testing.T) {
+func TestWindowsPrepareDirectoryUsesSecureMkdirAll(t *testing.T) {
 	require := require.New(t)
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "tokens")
