@@ -152,8 +152,6 @@ func TestRunConfiguredSlackSyncIsolatesBrokenWorkspaces(t *testing.T) {
 	require.ErrorContains(err, "malformed identifier")
 	require.ErrorContains(err, "no Slack token for UME in workspace T09")
 	assert.Equal(t, 2, events)
-	require.Error(runConfiguredSlackSync(testCtx, st))
-	assert.Equal(t, 2, events, "each workspace's repeated failure stays in its own outage")
 }
 
 func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {

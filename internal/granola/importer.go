@@ -77,7 +77,6 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return nil, err
 	}
 	sum := &ImportSummary{SourceID: src.ID}
-	var firstFetchErr error
 	if err := imp.store.AddAccountIdentityContext(
 		ctx,
 		src.ID,
@@ -139,7 +138,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		maxBoundaryIDs[id] = struct{}{}
 	}
 
-	err = imp.forEachNote(ctx, src.ID, params, opts, sum, &firstFetchErr, func(n NoteSummary) bool {
+	err = imp.forEachNote(ctx, src.ID, params, opts, sum, func(n NoteSummary) bool {
 		if opts.Full || cursorUpdatedAt.IsZero() || !n.UpdatedAt.Equal(cursorUpdatedAt) {
 			return false
 		}
@@ -173,7 +172,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 		return sum, err
 	}
 	if sum.Errors > 0 {
-		err = errors.Join(fmt.Errorf("partial Granola sync: %d note(s) failed", sum.Errors), firstFetchErr)
+		err = fmt.Errorf("partial Granola sync: %d note(s) failed", sum.Errors)
 		return sum, err
 	}
 
@@ -219,7 +218,6 @@ func (imp *Importer) forEachNote(
 	params ListNotesParams,
 	opts ImportOptions,
 	sum *ImportSummary,
-	firstFetchErr *error,
 	alreadyCovered func(NoteSummary) bool,
 	onIngested func(*Note),
 ) error {
@@ -247,9 +245,6 @@ func (imp *Importer) forEachNote(
 			sum.NotesProcessed++
 			note, err := imp.client.GetNote(ctx, ns.ID)
 			if err != nil {
-				if *firstFetchErr == nil {
-					*firstFetchErr = err
-				}
 				sum.Errors++
 				progress(fmt.Sprintf("note %s: fetch failed: %v", ns.ID, err))
 				continue

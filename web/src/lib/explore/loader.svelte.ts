@@ -121,9 +121,16 @@ export class ExploreLoader {
     $effect(() => this.runLoad(requestFingerprint));
   }
 
+  resubmit(query: string, mode: ExploreSearchMode): boolean {
+    const current = this.state.current;
+    if ((current.workspace !== 'everything' && !(current.workspace === 'files' && current.groupingChain.length > 0)) || query !== current.query || mode !== current.searchMode || this.loading) return false;
+    this.submitted = false;
+    this.callbacks.onSearchAccepted?.(query, mode, new AbortController().signal, this.error || this.unavailable ? undefined : this.rows.length + this.groupRows.length);
+    return true;
+  }
+
   private runLoad(requestFingerprint: string): void {
     const submitted = untrack(() => this.submitted);
-    this.submitted = false;
     this.clearCacheBuildRetry();
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
@@ -138,7 +145,6 @@ export class ExploreLoader {
     const fileFilenameQuery = this.state.current.fileFilenameQuery;
     const fileMIMEFamilies = this.state.current.fileMIMEFamilies;
     if (!this.callbacks.isEnabled() || (workspace !== 'everything' && !filesGrouping)) {
-      if (workspace === 'files' && !filesGrouping) this.submitted = submitted;
       this.requestGeneration += 1;
       this.requestController?.abort();
       this.loading = false;
@@ -197,9 +203,9 @@ export class ExploreLoader {
     void request
       .then((loaded) => {
         if (generation !== this.requestGeneration) return;
-        if (loaded.status !== 'unavailable') {
-          this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal, submitted ? loaded.result.rows.length : undefined);
-        }
+        const accepted = submitted || untrack(() => this.submitted);
+        this.submitted = false;
+        if (loaded.status !== 'unavailable') this.callbacks.onSearchAccepted?.(predicate.query ?? '', predicate.search_mode ?? 'full_text', controller.signal, accepted ? loaded.result.rows.length : undefined);
         if (loaded.status === 'unavailable') {
           this.rows = [];
           this.groupRows = [];
@@ -244,6 +250,7 @@ export class ExploreLoader {
       })
       .catch((cause: unknown) => {
         if (generation !== this.requestGeneration) return;
+        this.submitted = false;
         if (cause instanceof DOMException && cause.name === 'AbortError') return;
         this.rows = [];
         this.groupRows = [];

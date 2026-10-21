@@ -49,17 +49,18 @@ describe('SourcesWorkspace', () => {
   });
 
   it('ignores a trigger rejection after leaving Sources', async () => {
-    const events: unknown[] = [];
+    const events: unknown[] = [], requests: Promise<void>[] = [];
     let reject!: (error: Error) => void;
     const client = createCaptureClient(async input => (input as Request).method === 'POST'
       ? new Promise<Response>((_, fail) => { reject = fail; })
-      : Response.json({ sources: [source()] }), events);
+      : Response.json({ sources: [source()] }), events, requests);
     const view = render(SourcesWorkspace, { client });
     await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
     view.unmount();
     reject(new Error('Trigger unavailable'));
     await new Promise(resolve => setTimeout(resolve, 0));
     await fireEvent(window, new Event('focus'));
+    await Promise.all(requests);
     expect(events).toEqual([]);
   });
 
@@ -486,16 +487,17 @@ describe('SourcesWorkspace', () => {
   it('holds a first-load error until manual Retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const events: unknown[] = [];
+    const events: unknown[] = [], requests: Promise<void>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 1) throw new Error('status endpoint unreachable');
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
+    const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
+    await Promise.all(requests);
     expect(events).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(8_000);

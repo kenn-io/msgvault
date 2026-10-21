@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import KataFileIssueAction from './KataFileIssueAction.svelte';
 
@@ -41,13 +42,12 @@ describe('KataFileIssueAction', () => {
 
   it.each(['visible', 'close', 'unmount', 'replace'])('reports a failed passage search only while displayed: %s', async (action) => {
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(action === 'visible' ? 'visible' : 'hidden');
-    const events: unknown[] = [];
-    const client = createAPIClient(async (input) => {
+    const events: unknown[] = [], requests: Promise<void>[] = [];
+    const client = createCaptureClient(async (input) => {
       const request = input as Request, path = new URL(request.url).pathname;
-      if (path.endsWith('/telemetry/events')) { events.push(await request.json()); return Response.json({ status: 'queued' }, { status: 202 }); }
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example', message: 'Ready' });
       return Response.json({ message: 'Search unavailable' }, { status: 500 });
-    });
+    }, events, requests);
     const view = render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
     await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'needle' } });
@@ -60,6 +60,7 @@ describe('KataFileIssueAction', () => {
       if (action === 'replace') await screen.findByRole('alert');
       visibility.mockReturnValue('visible');
       await fireEvent(window, new Event('focus'));
+      await Promise.all(requests);
       expect(events).toEqual(action === 'replace' ? [{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }] : []);
       return;
     }
@@ -67,6 +68,7 @@ describe('KataFileIssueAction', () => {
     await fireEvent.keyDown(window, { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
+    await Promise.all(requests);
     expect(events).toHaveLength(1);
   });
 

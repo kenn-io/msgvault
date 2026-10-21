@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -1795,7 +1796,7 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 	}
 	// Aggregate rows already match the committed debounced search.
 	m.submittedQuery = ""
-	if !m.aggregateLoadFailed && len(m.rows) == 0 {
+	if !m.aggregateLoadFailed && len(m.rows) == 0 && strings.TrimSpace(queryStr) != "" {
 		return m, m.reportActionCmd("search_empty", "search_type", "text")
 	}
 	return m, nil

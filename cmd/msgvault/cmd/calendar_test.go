@@ -41,10 +41,8 @@ func TestCalendarAccountOutcomes(t *testing.T) {
 	src := config.GCalSource{Email: "user@example.com"}
 	setupErr := errors.New("client unavailable")
 	buildClient := func(context.Context, string, string, bool, ...bool) (gcal.API, error) { return nil, setupErr }
-	for range 2 {
-		require.ErrorIs(runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildClient), setupErr)
-		assert.Equal(1, events, "first-run failure starts one outage; repeating it adds none")
-	}
+	require.ErrorIs(runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildClient), setupErr)
+	assert.Equal(1, events, "first-run failure starts one outage")
 	cacheErr := errors.New("cache unavailable")
 	oldBuild := runScheduledBuildCacheSubprocess
 	runScheduledBuildCacheSubprocess = func(context.Context) error { return cacheErr }

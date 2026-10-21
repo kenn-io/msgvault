@@ -87,7 +87,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 			assert.Equal(t, sourceType, properties["sync_source"], sourceType)
 		}
 		// File imports have no scheduled sync and deliberately use the fallback.
-		for _, sourceType := range []string{imazingcsv.SourceType, "unlisted"} {
+		for _, sourceType := range []string{imazingcsv.SourceType} {
 			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 			assert.Equal(t, "other", properties["sync_source"], sourceType)
 		}
@@ -97,7 +97,7 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 		`{"event":"error_shown","properties":{"kind":"search"}}`,
 		`{"event":"search_empty","properties":{"surface":"web","search_type":"text","private":"synthetic"}}`,
 		`{"event":"error_shown","properties":{"surface":"tui","kind":"unlisted"}}`,
-		`{"event":"sync_failed","properties":{"sync_source":"unlisted","reason":"unlisted"}}`,
+		`{"event":"sync_failed","properties":{"sync_source":"` + imazingcsv.SourceType + `","reason":"other"}}`,
 	} {
 		for range 2 {
 			want := http.StatusAccepted
@@ -108,6 +108,6 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 		}
 	}
 	for range 2 {
-		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": "unlisted", "reason": "unlisted", "private": "synthetic"}))
+		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": imazingcsv.SourceType, "reason": "other", "private": "synthetic"}))
 	}
 }

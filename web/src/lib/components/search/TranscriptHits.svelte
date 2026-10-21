@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { reportError } from '../../telemetry/actions';
   import { untrack } from 'svelte';
   import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
@@ -22,7 +21,6 @@
   let retryable = $state(false);
   let retry = $state(0);
   let previousRetry = 0;
-  $effect(() => { if (notice) return reportError(() => client, () => 'search'); });
 
   $effect(() => {
     const missingID = missingMessageID;

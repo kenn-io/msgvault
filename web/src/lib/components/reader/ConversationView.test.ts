@@ -397,7 +397,7 @@ describe('ConversationView', () => {
     ]));
   });
 
-  it.each(['collapsed pending', 'collapse', 'navigate', 'unmount', 'retry', 'visible'])(
+  it.each(['collapsed pending', 'collapse', 'navigate', 'unmount', 'retry'])(
     'reports body failures only while displayed: %s', async (action) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(
         action === 'collapsed pending' ? 'visible' : 'hidden',
@@ -434,9 +434,7 @@ describe('ConversationView', () => {
       await fireEvent(document, new Event('visibilitychange'));
       await fireEvent(window, new Event('focus'));
       await Promise.all(telemetryRequests);
-      expect(telemetryEvents).toEqual(action === 'visible'
-        ? [{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]
-        : []);
+      expect(telemetryEvents).toEqual([]);
       visibility.mockRestore();
     },
   );

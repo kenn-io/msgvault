@@ -74,6 +74,26 @@ function setup(
 }
 
 describe('ExploreLoader', () => {
+  it('accepts Enter during a same-query preview once and excludes a later sort', async ({ onTestFinished }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files', groupingChain: ['source'], query: 'missing' }))}`);
+    const state = new ExploreState(window), onSearchAccepted = vi.fn();
+    let resolvePreview!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse())).mockImplementationOnce(() => new Promise<Response>(resolve => { resolvePreview = resolve; }));
+    const { loader, cleanup } = setup(fetchFn, state, { onSearchAccepted });
+    onTestFinished(() => { cleanup(); state.destroy(); });
+    await vi.waitFor(() => expect(resolvePreview).toBeDefined());
+    loader.submitted = true;
+    resolvePreview(Response.json(exploreResponse()));
+    await vi.waitFor(() => expect(loader.loading).toBe(false));
+    expect(onSearchAccepted.mock.calls).toEqual([['missing', 'full_text', expect.any(AbortSignal), 0]]);
+    onSearchAccepted.mockClear();
+    state.commitNavigation({ fileSort: { field: 'filename', direction: 'asc' } }); flushSync();
+    expect(onSearchAccepted).not.toHaveBeenCalled();
+    loader.retry(); flushSync();
+    await vi.waitFor(() => expect(onSearchAccepted).toHaveBeenCalledOnce());
+    expect(onSearchAccepted).toHaveBeenLastCalledWith('missing', 'full_text', expect.any(AbortSignal), undefined);
+  });
+
   it('consumes an empty search submission once and excludes grouping changes and retries', async ({ onTestFinished }) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     const state = new ExploreState(window), onSearchAccepted = vi.fn();

@@ -547,8 +547,7 @@
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
   $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => exploreState.current.query.trim() ? 'search' : 'other'); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
-    loader.submitted = true;
-    loader.retry();
+    loader.submitted = !loader.resubmit(query, mode);
     const workspace = exploreState.current.workspace;
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);

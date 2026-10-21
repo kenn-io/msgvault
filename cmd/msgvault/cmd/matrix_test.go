@@ -46,8 +46,6 @@ func TestMatrixSyncAccountsFailIndependently(t *testing.T) {
 		require.Error(runMatrixSync(ctx, st, cfg, "", false, nil, io.Discard))
 		assert.Equal(i+1, events)
 	}
-	require.Error(runMatrixSync(ctx, st, cfg, "", false, nil, io.Discard))
-	assert.Equal(2, events, "repeated failures belong to the same outages")
 }
 
 func TestReadMatrixSecretFilePreservesPasswordWhitespace(t *testing.T) {

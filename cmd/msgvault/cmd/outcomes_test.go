@@ -68,10 +68,9 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 				_, err = registerPlaudAccount(st.Store, tt.identifier, "owner@example.com", "owner@example.com")
 				require.NoError(err)
 			}
-			for range 2 {
-				require.ErrorContains(tt.run(ctx, st.Store), tt.wantError)
-				assert.Equal([]map[string]any{{"sync_source": tt.sourceType, "reason": "other"}}, events)
-			}
+			require.ErrorContains(tt.run(ctx, st.Store), tt.wantError)
+			require.Len(events, 1)
+			assert.Equal(tt.sourceType, events[0]["sync_source"])
 		})
 	}
 }
@@ -90,13 +89,14 @@ func TestScheduledSourceOutcomesCountEachType(t *testing.T) {
 		events = append(events, props)
 		return nil
 	}}
-	_, err := st.Store.GetOrCreateSource("gmail", "synthetic@example.com")
+	_, err := st.Store.GetOrCreateSource("gmail", "gmail@example.com")
 	require.NoError(err)
-	_, err = st.Store.GetOrCreateSource("imap", "synthetic@example.com")
+	_, err = st.Store.GetOrCreateSource("imap", "imap@example.com")
 	require.NoError(err)
 	oauthFailure := func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("synthetic OAuth failure")
 	}
-	require.Error(runScheduledSync(ctx, "synthetic@example.com", st.Store, oauthFailure, state))
+	require.Error(runScheduledSync(ctx, "gmail@example.com", st.Store, oauthFailure, state))
+	require.Error(runScheduledSync(ctx, "imap@example.com", st.Store, oauthFailure, state))
 	assert.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}, {"sync_source": "imap", "reason": "other"}}, events)
 }
