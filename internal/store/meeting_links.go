@@ -153,6 +153,10 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		} else if len(masters) == 1 {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
+			row, err = freshestOrphanCalendarException(ctx, r, row, budget)
+			if err != nil {
+				return linkOccurrence{}, err
+			}
 			if row.Event.Start == nil || row.Event.End == nil {
 				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 			}
@@ -290,6 +294,51 @@ func (s *Store) calendarUIDPredicate() string {
 	return calendarUIDExpression(s.dialect, "m.metadata") + ` = ? AND m.message_type = 'calendar_event'`
 }
 
+func freshestOrphanCalendarException(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (CalendarEventRow, error) {
+	identity := row.Event.Original
+	if identity == nil {
+		return row, nil
+	}
+	column, value := "e.original_start_at", any(identity.Instant)
+	if identity.AllDay {
+		column, value = "e.original_start_date", identity.Date
+	}
+	aliases, err := meetingEventRows(ctx, r,
+		`e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND `+column+` = ?`,
+		[]any{row.SourceID, row.Event.SeriesProviderID, value}, budget)
+	if err != nil {
+		return CalendarEventRow{}, err
+	}
+	for _, alias := range aliases {
+		if alias.Event.Original != nil && alias.Event.Original.Key() == identity.Key() &&
+			(alias.ProviderObservationOrder > row.ProviderObservationOrder ||
+				alias.ProviderObservationOrder == row.ProviderObservationOrder && alias.MessageID > row.MessageID) {
+			row = alias
+		}
+	}
+	return row, nil
+}
+
+func latestVisibleCalendarExceptionPredicate() string {
+	return `NOT EXISTS (
+		SELECT 1 FROM calendar_events newer_event
+		JOIN messages newer_message ON newer_message.id = newer_event.message_id
+		WHERE newer_event.kind = 'exception'
+		  AND newer_message.source_id = m.source_id
+		  AND newer_event.series_provider_id = e.series_provider_id
+		  AND ((e.original_start_at IS NOT NULL AND newer_event.original_start_at = e.original_start_at)
+		    OR (e.original_start_date != '' AND newer_event.original_start_date = e.original_start_date))
+		  AND newer_message.message_type = 'calendar_event'
+		  AND newer_message.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_archive_only_messages newer_archive
+			WHERE newer_archive.message_id = newer_message.id
+		  )
+		  AND (newer_event.provider_observation_order > e.provider_observation_order
+		    OR (newer_event.provider_observation_order = e.provider_observation_order AND newer_event.message_id > e.message_id))
+	)`
+}
+
 func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
 	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
 		return nil, nil
@@ -326,7 +375,7 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
 		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
-		predicate += ` AND (e.kind != 'exception' OR (` + window + `))`
+		predicate += ` AND (e.kind != 'exception' OR ((` + window + `) AND ` + latestVisibleCalendarExceptionPredicate() + `))`
 		args = append(args, windowArgs...)
 	} else {
 		predicate += ` AND e.kind != 'exception'`

@@ -437,6 +437,31 @@ func TestMeetingLinksChooseFreshestOrphanAlias(t *testing.T) {
 	assertions.Equal(from.Add(15*time.Hour), links[0].End)
 }
 
+func TestMeetingLinksOrphanFreshnessPrecedesScheduledFilteringAndDirectResolution(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
+	_, stale := calendarFixture(t, st, "stale-alias", `{"id":"stale","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-03-20T12:00:00Z"},"end":{"dateTime":"2027-03-20T13:00:00Z"}}`)
+	_, current := calendarFixture(t, st, "current-alias", `{"id":"current","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-04-20T14:00:00Z"},"end":{"dateTime":"2027-04-20T15:00:00Z"}}`)
+	_, staleTimeNote := projectionFixture(t, st, "stale-time-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"orphan@example.org","startsAt":"2027-03-20T12:00:00Z"}}`)
+	assertions.Empty(linkedMeetingRefs(t, st, staleTimeNote)[staleTimeNote], "the older in-window alias must not be selected after a newer snapshot moved the occurrence")
+
+	requirements.NoError(st.LinkMeetingContext(t.Context(), staleTimeNote, OccurrenceRef{MessageID: stale}))
+	links, err := st.MeetingLinksContext(t.Context(), staleTimeNote)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", current), links[0].Ref)
+	assertions.Equal(time.Date(2027, time.April, 20, 14, 0, 0, 0, time.UTC), links[0].Start)
+
+	_, currentTimeNote := projectionFixture(t, st, "current-time-note", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-04-20T14:00:00Z","endedAt":"2027-04-20T15:00:00Z"},"calendar_event":{"iCalUid":"orphan@example.org","startsAt":"2027-04-20T14:00:00Z"}}`)
+	staleRef := OccurrenceRef{MessageID: stale}
+	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: staleRef}, 10)
+	requirements.NoError(err)
+	requirements.Len(suggestions.Suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", current), suggestions.Suggestions[0].Ref)
+	assertions.Equal(currentTimeNote, suggestions.Suggestions[0].MemberMessageID)
+}
+
 func TestMeetingLinksUnidentifiedExceptionsHaveMessageScopedIdentity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

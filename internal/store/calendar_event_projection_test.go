@@ -291,6 +291,47 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
 }
 
+func TestCopySubsetPreservesCalendarProviderObservationOrder(t *testing.T) {
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("SQLite subset copy")
+	}
+	requirements, assertions := require.New(t), assert.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(path)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	rawA := `{"id":"alias-a","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T10:00:00Z"},"end":{"dateTime":"2027-03-09T11:00:00Z"}}`
+	dataA, aliasA := calendarFixture(t, st, "alias-a", rawA)
+	dataB, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T13:00:00Z"}}`)
+	dataA.RawMIME = []byte(`{"id":"alias-a","iCalUID":"subset@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T14:00:00Z"},"end":{"dateTime":"2027-03-09T15:00:00Z"}}`)
+	_, err = st.PersistMessage(dataA)
+	requirements.NoError(err)
+	var sourceOrderA, sourceOrderB int64
+	requirements.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasA).Scan(&sourceOrderA))
+	requirements.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&sourceOrderB))
+	assertions.Greater(sourceOrderA, sourceOrderB, "the final A observation must outrank the intervening B snapshot")
+	requirements.NoError(st.Close())
+
+	destination := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(path, destination, 100, false)
+	requirements.NoError(err)
+	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
+	requirements.NoError(err)
+	defer func() { requirements.NoError(copied.Close()) }()
+	var copiedOrderA, copiedOrderB, copiedClock int64
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasA).Scan(&copiedOrderA))
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&copiedOrderB))
+	requirements.NoError(copied.db.QueryRow(`SELECT observation_order FROM calendar_event_observation_clock WHERE singleton = 1`).Scan(&copiedClock))
+	assertions.Equal(sourceOrderA, copiedOrderA)
+	assertions.Equal(sourceOrderB, copiedOrderB)
+	assertions.Equal(max(sourceOrderA, sourceOrderB), copiedClock)
+
+	requirements.NoError(copied.UpsertMessageRawWithFormat(aliasB, dataB.RawMIME, dataB.RawFormat))
+	var nextOrderB int64
+	requirements.NoError(copied.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, aliasB).Scan(&nextOrderB))
+	assertions.Greater(nextOrderB, max(sourceOrderA, sourceOrderB), "new observations in the subset must outrank every copied snapshot")
+}
+
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	dbURL := skipUnlessPostgresInternal(t)
