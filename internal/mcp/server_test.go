@@ -4432,3 +4432,7 @@ func TestStageDeletionPipeORUsesSearch(t *testing.T) {
 	assert.True(searchCalled)
 	assert.False(fastCalled)
 }
+
+func (*fakeBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
+	return vector.EmbeddingCheckpoints{}
+}

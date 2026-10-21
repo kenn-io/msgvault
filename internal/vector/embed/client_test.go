@@ -3,6 +3,7 @@ package embed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/embedclient"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -786,4 +789,26 @@ func TestClient_Embed_RejectsExtraOrDuplicateResponseItems(t *testing.T) {
 			assert.ErrorIs(t, err, vector.ErrInvalidProviderShape)
 		})
 	}
+}
+
+func TestClientProviderFailureJoinedWithYieldIsReturned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, requestYield := jobctx.WithPreemption(t.Context())
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		requestYield()
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	client := NewClient(Config{Endpoint: server.URL, Model: "test", Dimension: 4, MaxRetries: 1})
+
+	_, err := client.Embed(ctx, []string{"synthetic input"})
+	apiErr, ok := errors.AsType[*embedclient.APIError](err)
+	require.True(ok, "the terminal HTTP failure must survive the cooperative yield: %v", err)
+	assert.Equal(http.StatusBadRequest, apiErr.StatusCode)
+	require.ErrorIs(err, jobctx.ErrYieldedToWaiter)
+	require.NoError(ctx.Err())
+	assert.Equal(int32(1), requests.Load())
 }

@@ -22,6 +22,8 @@ All notable changes to msgvault, grouped by release.
   an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
   them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
 
+- Automatic message, person, and document indexing no longer holds the daemon's work slot while syncs wait. Each pass stops after five minutes. When scheduled work is waiting and an indexing pass has held the slot for one minute, the scheduler asks it to yield; indexing finishes its current provider request, saves it, and resumes behind waiting work without repeating saved requests. See [automatic indexing](configuration.md#vectorembedschedule) for restart behavior.
+- Sources and CardDAV show when a waiting sync entered the queue. CardDAV tracks scheduled syncs while its page is visible and refreshes address books and history after completion, including runs that finished while the page was hidden. The API exposes the same queue times.
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.

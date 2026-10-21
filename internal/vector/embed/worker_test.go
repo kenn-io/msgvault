@@ -133,7 +133,7 @@ func TestWorkerOperationPassOwnsOneInvocationAcrossProviderBatches(t *testing.T)
 
 	result, err := w.RunOnce(t.Context(), f.BuildingGen, scope)
 	require.NoError(t, err)
-	assert.Equal(t, RunResult{Claimed: 5, Succeeded: 5}, result)
+	assert.Equal(t, RunResult{Claimed: 5, Succeeded: 5, ScanComplete: true}, result)
 	assert.Equal(t, 3, f.FakeClient.calls, "precondition: pass spans three provider batches")
 
 	runs := messageEmbeddingOperationRuns(t, recorder)
@@ -182,7 +182,7 @@ func TestWorkerOperationPassCheckpointFailurePreservesPrimaryResult(t *testing.T
 
 	result, err := w.RunOnce(t.Context(), f.BuildingGen, scope)
 	require.NoError(t, err)
-	assert.Equal(t, RunResult{Claimed: 1, Succeeded: 1}, result)
+	assert.Equal(t, RunResult{Claimed: 1, Succeeded: 1, ScanComplete: true}, result)
 	invocation, ok := f.Recorder.invocation(scope.Key)
 	require.True(t, ok)
 	require.NotNil(t, invocation.run)
@@ -203,7 +203,7 @@ func TestWorkerOperationPassFinishFailurePreservesPrimaryResult(t *testing.T) {
 
 	result, err := w.RunOnce(t.Context(), f.BuildingGen, scope)
 	require.NoError(t, err)
-	assert.Equal(t, RunResult{Claimed: 1, Succeeded: 1}, result)
+	assert.Equal(t, RunResult{Claimed: 1, Succeeded: 1, ScanComplete: true}, result)
 	invocation, ok := f.Recorder.invocation(scope.Key)
 	require.True(t, ok)
 	assert.Nil(t, invocation.run, "failed finish must leave the lifecycle active for recovery")

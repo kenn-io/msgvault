@@ -1977,6 +1977,10 @@ when explicitly set, including `false` and `""`. Already enabled text lanes keep
 their schedules. See
 [Recommended Configuration](usage/recommended-configuration.md).
 
+Automatic message, person, and document indexing runs in five-minute passes. When a scheduled sync waits and indexing has held the work slot for one minute, the scheduler asks indexing to yield. Indexing finishes its current provider request, saves the response, and stops before it sends another. The pass then resumes behind the waiting work. At the five-minute limit, the scheduler cancels any request still in flight. Post-sync indexing starts after the sync releases the work slot.
+
+Indexing saves each completed provider request before it sends the next one, so a resumed pass does not repeat it. Message and contextual responses use durable checkpoints until publication. Checkpoint saves and returned person or document responses get a separate five-second persistence limit, so they can finish after the pass expires. Resumed passes and restarted daemons reuse completed requests; unfinished requests run again. Document responses are saved in the vector store and survive a restart. Interrupted document claims become eligible for the next pass immediately, and documents that were never sent keep their attempt budget. See [scheduler status](api-server.md#get-apiv1schedulerstatus) for queue times.
+
 #### `[vector.people]`
 
 Semantic people search: one curated document per durable person, built from

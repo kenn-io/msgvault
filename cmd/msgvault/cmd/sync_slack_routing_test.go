@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/clirun"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -176,6 +178,38 @@ func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(append(append([]string{}, sources[1].Identifier, sources[2].Identifier), sources[0].Identifier), resumed,
 		"the next scheduler run resumes after the interrupted workspace")
+}
+
+func TestScheduledSlackAttemptsRequestsContinuationAfterCooperativePreemption(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	for _, identifier := range []string{"T01:U01", "T02:U02", "T03:U03"} {
+		_, err := st.GetOrCreateSource(sourceTypeSlack, identifier)
+		require.NoError(err)
+	}
+	sources, err := resolveSlackSyncSources(st, "")
+	require.NoError(err)
+	rotation := &slackWorkspaceRotation{}
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
+	var attempted []string
+	err = runScheduledSlackAttempts(ctx, sources, rotation, func(src *store.Source) (bool, error) {
+		attempted = append(attempted, src.Identifier)
+		requestPreemption()
+		return true, nil
+	}, func() error { return nil })
+	require.ErrorIs(err, scheduler.ErrReschedule)
+	assert.Equal([]string{sources[0].Identifier}, attempted)
+
+	var resumed []string
+	err = runScheduledSlackAttempts(t.Context(), sources, rotation,
+		func(src *store.Source) (bool, error) {
+			resumed = append(resumed, src.Identifier)
+			return true, nil
+		}, func() error { return nil })
+	require.NoError(err)
+	assert.Equal([]string{sources[1].Identifier, sources[2].Identifier, sources[0].Identifier}, resumed,
+		"the clean preemption resumes at the first unattempted workspace")
 }
 
 func TestSlackImportOptionsDeriveFromConfig(t *testing.T) {

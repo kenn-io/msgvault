@@ -251,6 +251,35 @@ func TestConfiguredOmiSyncAndCacheRefresh(t *testing.T) {
 	assert.Empty(sources)
 }
 
+func TestConfiguredOmiSyncRequestsContinuationAfterCooperativePreemption(t *testing.T) {
+	unpacedOmiClients(t)
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(omi.SourceType, "work")
+	require.NoError(err)
+
+	ctx, requestPreemption := jobctx.WithPreemption(t.Context())
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		requestPreemption()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `[{"id":"meeting-0","created_at":"2026-01-01T12:00:00Z","structured":{"title":"Synthetic meeting","overview":"Synthetic summary","action_items":[]},"transcript_segments":[]}]`)
+	}))
+	defer server.Close()
+	original := rebuildOmiCacheAfterScheduledSync
+	rebuildOmiCacheAfterScheduledSync = func(context.Context, string) error { return nil }
+	defer func() { rebuildOmiCacheAfterScheduledSync = original }()
+
+	err = runConfiguredOmiSync(ctx, st, t.TempDir(), config.OmiSource{
+		Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL,
+	})
+
+	require.ErrorIs(err, scheduler.ErrReschedule)
+	assert.Equal(1, requests, "the importer stops after persisting the interrupted page")
+}
+
 func TestManualOmiUsesInvocationConfiguration(t *testing.T) {
 	unpacedOmiClients(t)
 	require := require.New(t)

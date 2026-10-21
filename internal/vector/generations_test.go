@@ -117,3 +117,5 @@ func TestResolveActiveForFingerprint_BuildingBackendError(t *testing.T) {
 	require.Error(t, err, "expected error wrapping building failed")
 	assert.ErrorIs(t, err, wantErr)
 }
+
+func (*fakeBackend) EmbeddingCheckpoints() EmbeddingCheckpoints { return EmbeddingCheckpoints{} }

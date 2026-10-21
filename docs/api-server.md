@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,8 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.24.0 adds [queue times](#get-apiv1schedulerstatus): `queued_at` in scheduler account status and CardDAV status, `scheduler_queued_at` in Sources status, and CardDAV `scheduler_running`.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -2468,8 +2470,10 @@ Scheduler state and per-account schedule details.
   "running": true,
   "accounts": [
     {
-      "email": "you@gmail.com",
+      "email": "account-a@example.com",
       "running": false,
+      "queued": true,
+      "queued_at": "2024-10-15T08:05:00Z",
       "last_run": "2024-10-15T08:00:00Z",
       "next_run": "2024-10-15T09:00:00Z",
       "schedule": "0 * * * *"
@@ -2479,7 +2483,8 @@ Scheduler state and per-account schedule details.
 ```
 
 The daemon runs scheduled work one job at a time. While a sync waits for
-another job to finish, its entry reports `"queued": true` and `"running": false`.
+another job to finish, its entry reports `"queued": true` and `"running": false`,
+and `queued_at` gives when the wait began.
 `"running": true` means it acquired the operation gate; `started_at` gives when
 it began. The top-level `running` field reports whether the scheduler is active.
 A schedule tick that fires during a run
@@ -2494,12 +2499,17 @@ stops after its current batch, limits each pass to ten batches, and stops at
 two minutes regardless. It saves its reconciliation progress. Attachment
 packing and daily attachment maintenance stop after one minute and resume
 behind waiting work. IMAP full passes do not support scheduled preemption.
+Automatic indexing uses [bounded passes](configuration.md#vectorembedschedule)
+and starts post-sync work after the sync releases its slot.
 Other jobs keep their own runtime budgets. Waiting API requests can still
 interrupt scheduled work. `GET /api/v1/sources/status` reports the same
-state for every scheduled source as `scheduler_queued`, `scheduler_pending`,
-and `scheduler_started_at`. Compare queued state and the last successful sync
-to detect a source that is waiting too long. Health's `operation.label` names
-the job holding the gate, such as `activity-projection` or `attachment-pack`.
+state for every scheduled source as `scheduler_queued`, `scheduler_queued_at`,
+`scheduler_pending`, and `scheduler_started_at`. CardDAV status reports the
+earliest `queued_at` among its selected connections, and `scheduler_running`
+while a connection holds the gate before its sync record exists. Compare
+queued state and the last successful sync to detect a source that is waiting
+too long. Health's `operation.label` names the job holding the gate, such as
+`activity-projection` or `attachment-pack`.
 
 ---
 

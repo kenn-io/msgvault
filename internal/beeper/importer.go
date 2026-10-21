@@ -1,6 +1,7 @@
 package beeper
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -13,6 +14,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -250,6 +252,10 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 		for chatID := range previous.Chats {
 			state.EnsureChat(chatID)
 		}
+	}
+	cursorsBefore, err := json.Marshal(state.Chats, json.Deterministic(true))
+	if err != nil {
+		return sum, fmt.Errorf("encode initial Beeper chat cursors: %w", err)
 	}
 	if opts.stopRequested() {
 		sum.Stopped = true
@@ -539,6 +545,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	// Mid-run checkpoints are throttled, so persist the final counters before completing.
 	if err = imp.checkpointNowContext(finalizeCtx, syncID, state, sum); err != nil {
 		return sum, err
+	}
+	cursorsAfter, err := json.Marshal(state.Chats, json.Deterministic(true))
+	if err != nil {
+		return sum, fmt.Errorf("encode saved Beeper chat cursors: %w", err)
+	}
+	// A new scan identity alone cannot resume an interrupted enumeration.
+	// Only committed chat cursors and visitation markers permit continuation.
+	if !bytes.Equal(cursorsBefore, cursorsAfter) {
+		jobctx.RecordProgress(ctx)
 	}
 	blob, _ := state.Marshal()
 	// Partial and stopped runs keep their resume state without advancing source

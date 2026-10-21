@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -356,44 +358,105 @@ func TestDocumentVectorResumeRunsBoundedCleanupForRetiredGeneration(t *testing.T
 	require.ErrorContains(err, "not found")
 }
 
-func TestDocumentVectorWorkerCheckpointsPartialErrorResult(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	wantErr := errors.New("provider partial failure")
-	fixture := storetest.New(t)
-	runResult := vectordocument.RunResult{
-		Attempted: 3, Succeeded: 2, Failed: 1,
-		ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44,
-		AfterGenerationID: 7, AfterChunkID: 81,
+func TestDocumentVectorWorkerCheckpointsResults(t *testing.T) {
+	failure := errors.New("provider partial failure")
+	partial := func(gen vectordocument.GenerationID, cursor int64) vectordocument.RunResult {
+		return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: cursor,
+			Attempted: 3, Succeeded: 2, Failed: 1,
+			ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44}
 	}
-	worker := checkpointingDocumentVectorWorker{
-		worker:       fakeDocumentVectorWorkerRunner{result: runResult, err: wantErr},
-		checkpointer: &fakeDocumentVectorCheckpointer{},
-		recorder:     fixture.Store,
-		scope:        testOperationPassScope("document-vector:resume"),
-		fingerprint:  strings.Repeat("a", 64),
-		now:          func() time.Time { return time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC) },
-	}
-	result, err := worker.Run(t.Context(), 7, 10)
-	require.ErrorIs(err, wantErr)
-	assert.Equal(runResult, result)
-	checkpoint, ok := worker.checkpointer.(*fakeDocumentVectorCheckpointer)
-	require.True(ok)
-	require.Len(checkpoint.calls, 1)
-	assert.Equal(strings.Repeat("a", 64), checkpoint.calls[0].fingerprint)
-	assert.Equal(int64(81), checkpoint.calls[0].afterChunkID)
-	assert.False(checkpoint.calls[0].exhausted)
-	assert.Equal(store.DocumentVectorUsageDelta{
-		ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44,
-	}, checkpoint.calls[0].delta)
-	runs := operationRunsForKind(t, fixture.Store, operations.KindDocumentEmbedding)
-	require.Len(runs, 1)
-	assert.Equal(operations.StatePartial, runs[0].State)
-	assert.Equal([]operations.PublicCounter{
+	usage := store.DocumentVectorUsageDelta{ProviderCalls: 1, ProviderDocuments: 2, ProviderChunks: 3, ProviderInputChars: 44}
+	counters := []operations.PublicCounter{
 		{Name: operations.CounterAttempted, Unit: operations.CounterUnitChunks, Value: 3},
 		{Name: operations.CounterSucceeded, Unit: operations.CounterUnitChunks, Value: 2},
 		{Name: operations.CounterFailed, Unit: operations.CounterUnitChunks, Value: 1},
-	}, runs[0].Counters)
+	}
+	for _, tc := range []struct {
+		name                  string
+		result                func(vectordocument.GenerationID) vectordocument.RunResult
+		workerErr             error
+		cancel                bool
+		generationFingerprint string
+		checkpointErr         string
+		usage                 store.DocumentVectorUsageDelta
+		cursor                int64
+		progress              bool
+		state                 operations.State
+		counters              []operations.PublicCounter
+	}{
+		{name: "partial", result: func(gen vectordocument.GenerationID) vectordocument.RunResult { return partial(gen, 81) },
+			workerErr: failure, usage: usage, cursor: 81, state: operations.StatePartial, counters: counters},
+		{name: "rewind", result: func(vectordocument.GenerationID) vectordocument.RunResult { return partial(0, 0) },
+			workerErr: failure, usage: usage, state: operations.StatePartial, counters: counters},
+		{name: "cancel", result: func(vectordocument.GenerationID) vectordocument.RunResult { return partial(0, 0) },
+			workerErr: failure, cancel: true, usage: usage, state: operations.StateCancelled, counters: counters},
+		{name: "unsent", result: func(vectordocument.GenerationID) vectordocument.RunResult {
+			return vectordocument.RunResult{Claimed: 3}
+		},
+			workerErr: failure, state: operations.StateFailed, counters: []operations.PublicCounter{}},
+		{name: "published page", result: func(gen vectordocument.GenerationID) vectordocument.RunResult {
+			return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: 1081}
+		}, cursor: 1081, progress: true},
+		{name: "unchanged", result: func(gen vectordocument.GenerationID) vectordocument.RunResult {
+			return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: 81}
+		}, cursor: 81},
+		{name: "exhausted", result: func(vectordocument.GenerationID) vectordocument.RunResult {
+			return vectordocument.RunResult{Exhausted: true}
+		}},
+		{name: "mismatched generation", result: func(gen vectordocument.GenerationID) vectordocument.RunResult {
+			return vectordocument.RunResult{AfterGenerationID: gen, AfterChunkID: 1081}
+		}, generationFingerprint: strings.Repeat("0", 64), cursor: 81,
+			checkpointErr: "document vector build checkpoint fingerprint does not match generation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			fixture, spec, testCtx := documentVectorCommandFixture(t)
+			generationSpec := spec
+			if tc.generationFingerprint != "" {
+				generationSpec.Fingerprint = tc.generationFingerprint
+			}
+			generation, _, err := fixture.Store.EnsureDocumentVectorGeneration(testCtx, generationSpec)
+			require.NoError(err)
+			now := time.Now().UTC()
+			require.NoError(fixture.Store.CheckpointDocumentVectorBuildForFingerprint(testCtx, generation.ID, generation.Fingerprint, 81, false, store.DocumentVectorUsageDelta{}, now))
+			ctx, cancel := context.WithCancel(jobctx.WithProgress(testCtx))
+			defer cancel()
+			want := tc.result(vectordocument.GenerationID(generation.ID))
+			worker := checkpointingDocumentVectorWorker{
+				worker: fakeDocumentVectorWorkerRunner{result: want, err: tc.workerErr, before: func() {
+					if tc.cancel {
+						cancel()
+					}
+				}},
+				checkpointer: fixture.Store, recorder: fixture.Store,
+				scope: testOperationPassScope("document-vector:resume"), fingerprint: spec.Fingerprint,
+				afterChunkID: 81, now: func() time.Time { return now },
+			}
+			result, err := worker.Run(ctx, vectordocument.GenerationID(generation.ID), 10)
+			switch {
+			case tc.checkpointErr != "":
+				require.ErrorContains(err, tc.checkpointErr)
+			case tc.workerErr != nil:
+				require.ErrorIs(err, tc.workerErr)
+			default:
+				require.NoError(err)
+			}
+			assert.Equal(t, want, result)
+			assert.Equal(t, tc.progress, jobctx.HasProgress(ctx))
+			savedUsage, err := fixture.Store.GetDocumentVectorProviderUsage(testCtx, generation.Fingerprint)
+			require.NoError(err)
+			assert.Equal(t, tc.usage, savedUsage.DocumentVectorUsageDelta)
+			cursor, err := fixture.Store.GetDocumentVectorBuildCursor(testCtx, generation.ID)
+			require.NoError(err)
+			assert.Equal(t, tc.cursor, cursor)
+			if tc.state != "" {
+				runs := operationRunsForKind(t, fixture.Store, operations.KindDocumentEmbedding)
+				require.Len(runs, 1)
+				assert.Equal(t, tc.state, runs[0].State)
+				assert.Equal(t, tc.counters, runs[0].Counters)
+			}
+		})
+	}
 }
 
 func TestDocumentVectorTerminalReplayReturnsFixedFailure(t *testing.T) {
@@ -428,30 +491,16 @@ func TestDocumentVectorWorkerOwnersAreUniqueWithinOneProcess(t *testing.T) {
 }
 
 type fakeDocumentVectorWorkerRunner struct {
+	before func()
 	result vectordocument.RunResult
 	err    error
 }
 
 func (r fakeDocumentVectorWorkerRunner) Run(context.Context, vectordocument.GenerationID, int) (vectordocument.RunResult, error) {
+	if r.before != nil {
+		r.before()
+	}
 	return r.result, r.err
-}
-
-type fakeDocumentVectorCheckpoint struct {
-	afterChunkID int64
-	exhausted    bool
-	fingerprint  string
-	delta        store.DocumentVectorUsageDelta
-}
-
-type fakeDocumentVectorCheckpointer struct {
-	calls []fakeDocumentVectorCheckpoint
-}
-
-func (c *fakeDocumentVectorCheckpointer) CheckpointDocumentVectorBuildForFingerprint(_ context.Context, _ int64, fingerprint string, afterChunkID int64, exhausted bool, delta store.DocumentVectorUsageDelta, _ time.Time) error {
-	c.calls = append(c.calls, fakeDocumentVectorCheckpoint{
-		fingerprint: fingerprint, afterChunkID: afterChunkID, exhausted: exhausted, delta: delta,
-	})
-	return nil
 }
 
 func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuild(t *testing.T) {
@@ -489,7 +538,9 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 		DocumentBackend: backend, SemanticClient: client, Cfg: cfg.Vector,
 	}
 
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
+	// Each committed page asks for a follow-up pass until the desired
+	// generation converges.
+	require.ErrorIs(runScheduledDocumentVectorGeneration(jobctx.WithProgress(testCtx), fixture.Store, vf, 2), scheduler.ErrReschedule)
 	stillActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
 	require.NotNil(stillActive)
@@ -500,7 +551,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 	require.Len(backend.deletes, 1)
 	assert.Len(backend.deletes[0], 2)
 
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
+	require.ErrorIs(runScheduledDocumentVectorGeneration(jobctx.WithProgress(testCtx), fixture.Store, vf, 2), scheduler.ErrReschedule)
 	_, err = fixture.Store.GetDocumentVectorGeneration(testCtx, obsolete.ID)
 	require.ErrorContains(err, "not found")
 	require.Len(backend.deletes, 2)
@@ -509,7 +560,7 @@ func TestScheduledDocumentVectorRotationRetiresObsoleteBuildingBeforeDesiredBuil
 	require.NoError(err)
 	assert.Equal(active.ID, stillActive.ID)
 
-	require.NoError(runScheduledDocumentVectorGeneration(testCtx, fixture.Store, vf, 2))
+	require.NoError(runScheduledDocumentVectorGeneration(jobctx.WithProgress(testCtx), fixture.Store, vf, 2))
 	newActive, err := fixture.Store.GetActiveDocumentVectorGeneration(testCtx)
 	require.NoError(err)
 	require.NotNil(newActive)
@@ -657,6 +708,10 @@ func (c *commandDocumentSemanticClient) EmbedDocuments(context.Context, []vector
 
 type commandDocumentVectorBackend struct{ deletes [][]string }
 
+func (*commandDocumentVectorBackend) UnpublishedTokens(context.Context, vectordocument.GenerationID, int, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
 func (*commandDocumentVectorBackend) PutUnpublished(context.Context, vectordocument.GenerationID, int, []vectordocument.Embedding) error {
 	return nil
 }
@@ -740,4 +795,43 @@ func TestDocumentVectorConfirmationPrecedesStore(t *testing.T) {
 	require.NoError(retire.ExecuteContext(testCtx))
 	assert.Equal(fmt.Sprintf("retired=true generation_id=%d; backend cleanup will resume when vector operations next run\n", generation.ID), output.String())
 	assert.Equal(1, openCalls)
+}
+
+func TestDocumentVectorContinuationWithoutProgress(t *testing.T) {
+	failure := errors.New("provider unavailable")
+	for _, tc := range []struct {
+		name    string
+		context func(*testing.T) context.Context
+		err     error
+		want    error
+		not     error
+	}{
+		{name: "cooperative yield", context: func(t *testing.T) context.Context {
+			t.Helper()
+			ctx, request := jobctx.WithPreemption(jobctx.WithProgress(t.Context()))
+			request()
+			return ctx
+		}, want: scheduler.ErrReschedule},
+		{name: "runtime expiry", context: func(t *testing.T) context.Context {
+			t.Helper()
+			base, cancel := context.WithDeadlineCause(jobctx.WithProgress(t.Context()), time.Time{}, jobctx.ErrRunBudgetExceeded)
+			t.Cleanup(cancel)
+			ctx, request := jobctx.WithPreemption(base)
+			request()
+			return ctx
+		}, err: context.DeadlineExceeded, want: context.DeadlineExceeded, not: scheduler.ErrReschedule},
+		{name: "ordinary failure", context: func(t *testing.T) context.Context {
+			t.Helper()
+			return jobctx.WithProgress(t.Context())
+		},
+			err: failure, want: failure, not: scheduler.ErrReschedule},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := documentVectorContinuation(tc.context(t), false, tc.err)
+			require.ErrorIs(t, err, tc.want)
+			if tc.not != nil {
+				assert.NotErrorIs(t, err, tc.not)
+			}
+		})
+	}
 }

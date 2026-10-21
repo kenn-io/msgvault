@@ -272,6 +272,10 @@ func (startupDocumentSemanticClient) EmbedDocuments(context.Context, []vector.Do
 
 type startupDocumentBackend struct{}
 
+func (startupDocumentBackend) UnpublishedTokens(context.Context, vectordocument.GenerationID, int, []string) (map[string]bool, error) {
+	return map[string]bool{}, nil
+}
+
 func (startupDocumentBackend) PutUnpublished(context.Context, vectordocument.GenerationID, int, []vectordocument.Embedding) error {
 	return nil
 }
@@ -611,7 +615,7 @@ func runRegisteredContextJob(
 	}
 	require.NoError(t, registerEmbedJob(capture, vf, nil, nil, testCfg, testDiscardLogger()))
 	require.NotNil(t, capture.job)
-	capture.job.Run(testCtx)
+	require.NoError(t, capture.job.Run(testCtx))
 	return backend, runner
 }
 
