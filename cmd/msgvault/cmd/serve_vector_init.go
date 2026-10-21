@@ -493,7 +493,7 @@ func checkVectorIndexFreshness(ctx context.Context, apiServer *api.Server, vf *v
 
 // restartVectorFingerprint computes the text index fingerprint after a restart.
 func restartVectorFingerprint(s *store.Store, state *invocation) func(context.Context) (string, error) {
-	return func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
 		cfg := state.cfg
 		snapshot, err := config.ReadConfigFile(cfg.ConfigFilePath())
 		if err != nil {
@@ -506,7 +506,7 @@ func restartVectorFingerprint(s *store.Store, state *invocation) func(context.Co
 		if !loaded.Vector.Enabled {
 			return "", vector.ErrNotEnabled
 		}
-		resolved, err := resolvedVectorConfig(s, loaded.Vector)
+		resolved, err := resolvedVectorConfig(ctx, s, loaded.Vector)
 		if err != nil {
 			return "", err
 		}

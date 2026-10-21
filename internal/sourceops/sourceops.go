@@ -79,7 +79,13 @@ func ResolveExactOneContext(ctx context.Context, st Store, selector Selector) (*
 // ResolveAccountFamily resolves one primary account source and its related
 // Google Calendar sources. An explicit source ID always remains exact.
 func ResolveAccountFamily(st Store, selector Selector) (Selection, error) {
-	input, source, err := resolveSelectorContext(context.Background(), st, selector)
+	return ResolveAccountFamilyContext(context.Background(), st, selector)
+}
+
+// ResolveAccountFamilyContext resolves an account family using context-aware
+// catalog reads when the supplied store provides them.
+func ResolveAccountFamilyContext(ctx context.Context, st Store, selector Selector) (Selection, error) {
+	input, source, err := resolveSelectorContext(ctx, st, selector)
 	if err != nil {
 		return Selection{}, err
 	}
@@ -87,7 +93,7 @@ func ResolveAccountFamily(st Store, selector Selector) (Selection, error) {
 		return Selection{Input: strconv.FormatInt(source.ID, 10), Primary: source, Sources: []*store.Source{source}}, nil
 	}
 
-	direct, err := lookupTokenContext(context.Background(), st, input, selector.SourceType)
+	direct, err := lookupTokenContext(ctx, st, input, selector.SourceType)
 	if err != nil {
 		return Selection{}, err
 	}
@@ -103,7 +109,12 @@ func ResolveAccountFamily(st Store, selector Selector) (Selection, error) {
 			calendarAccount = primary.Identifier
 		}
 	}
-	calendars, err := st.GetSourcesByTypeAndAccount(gcal.SourceType, calendarAccount)
+	var calendars []*store.Source
+	if contextStore, ok := st.(ContextStore); ok {
+		calendars, err = contextStore.GetSourcesByTypeAndAccountContext(ctx, gcal.SourceType, calendarAccount)
+	} else {
+		calendars, err = st.GetSourcesByTypeAndAccount(gcal.SourceType, calendarAccount)
+	}
 	if err != nil {
 		return Selection{}, opserr.Internal(fmt.Errorf("resolve calendar sources: %w", err))
 	}

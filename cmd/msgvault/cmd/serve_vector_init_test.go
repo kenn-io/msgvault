@@ -1111,6 +1111,33 @@ func visualInvocationKeys(t *testing.T, st *store.Store) []string {
 	return keys
 }
 
+func TestRestartVectorFingerprintCancelledScopeAccount(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource("gmail", "a@example.com")
+	require.NoError(err)
+	home := t.TempDir()
+	path := filepath.Join(home, "config.toml")
+	require.NoError(os.WriteFile(path, []byte(`[vector]
+enabled = true
+[vector.embeddings]
+endpoint = "http://127.0.0.1:11434/v1"
+model = "model-a"
+dimension = 4
+[vector.embed.scope]
+accounts = ["a@example.com"]
+`), 0600))
+	cfg, err := config.Load(path, home)
+	require.NoError(err)
+	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err = resolve(ctx)
+	require.ErrorIs(err, context.Canceled)
+}
+
 func TestRestartVectorFingerprintMatchesStartup(t *testing.T) {
 	t.Parallel()
 	must := require.New(t)
@@ -1167,7 +1194,7 @@ message_types = ["email"]
 			require.NoError(err)
 			startup, err := config.Load(path, home)
 			require.NoError(err)
-			resolved, err := resolvedVectorConfig(st, startup.Vector)
+			resolved, err := resolvedVectorConfig(t.Context(), st, startup.Vector)
 			require.NoError(err)
 			assert.Equal(resolved.GenerationFingerprint(), got)
 			if test.same {

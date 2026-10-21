@@ -1,6 +1,7 @@
 package collectionops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -190,12 +191,18 @@ func (s Scope) SourceIDs() []int64 {
 
 // ResolveAccount resolves an account token to its primary and related sources.
 func ResolveAccount(st AccountResolverStore, input string) (Scope, error) {
+	return ResolveAccountContext(context.Background(), st, input)
+}
+
+// ResolveAccountContext resolves an account using context-aware catalog reads
+// when the supplied store provides them.
+func ResolveAccountContext(ctx context.Context, st AccountResolverStore, input string) (Scope, error) {
 	scope := Scope{Input: input}
 	if input == "" {
 		return scope, nil
 	}
 
-	selection, err := sourceops.ResolveAccountFamily(st, sourceops.Selector{Account: input})
+	selection, err := sourceops.ResolveAccountFamilyContext(ctx, st, sourceops.Selector{Account: input})
 	if err == nil {
 		scope.Source = selection.Primary
 		for _, source := range selection.Sources {
@@ -209,7 +216,14 @@ func ResolveAccount(st AccountResolverStore, input string) (Scope, error) {
 		return scope, err
 	}
 
-	_, collErr := st.GetCollectionByName(input)
+	var collErr error
+	if contextStore, ok := st.(interface {
+		GetCollectionByNameContext(ctx context.Context, name string) (*store.CollectionWithSources, error)
+	}); ok {
+		_, collErr = contextStore.GetCollectionByNameContext(ctx, input)
+	} else {
+		_, collErr = st.GetCollectionByName(input)
+	}
 	switch {
 	case collErr == nil:
 		return scope, opserr.Invalid(fmt.Errorf(
