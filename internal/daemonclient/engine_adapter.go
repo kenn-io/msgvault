@@ -1304,6 +1304,7 @@ func (e *Engine) GetDeletionTargetsBySearchBounded(
 	if err := validateParsedSearchQuery(searchQuery); err != nil {
 		return nil, err
 	}
+	searchQuery, filter = hoistQueryScopes(searchQuery, filter)
 	queryString := search.Format(searchQuery)
 	if queryString == "" {
 		return nil, errors.New("bounded deletion search requires a nonempty query")

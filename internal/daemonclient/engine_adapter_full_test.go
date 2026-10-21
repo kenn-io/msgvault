@@ -1017,6 +1017,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	var targetRequests int
+	accountID := int64(7)
 	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/health":
@@ -1026,6 +1027,7 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 			assertions.Equal("bodyneedle", r.URL.Query().Get("q"))
 			assertions.Equal("fast_then_deep", r.URL.Query().Get("search_mode"))
 			assertions.Equal("100001", r.URL.Query().Get("max_results"))
+			assertions.Equal(`[{"source_id":7,"unattributed":true}]`, r.URL.Query().Get("account_scopes"))
 			writeJSONResponse(t, w, map[string]any{
 				"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
 				"search_mode": "fast_then_deep", "max_results": 100001,
@@ -1040,7 +1042,11 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 	})
 
 	targets, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
-		t.Context(), search.Parse("bodyneedle"), query.MessageFilter{},
+		t.Context(), &search.Query{
+			TextTerms:     []string{"bodyneedle"},
+			AccountIDs:    []int64{accountID},
+			AccountScopes: []search.AccountScope{{SourceID: &accountID, Unattributed: true}},
+		}, query.MessageFilter{},
 		query.DeletionSearchFastThenDeep, query.MaxDeletionTargetSearchResults,
 	)
 	requirements.NoError(err)
