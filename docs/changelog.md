@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-18"
+last_edited: "2026-10-20"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
