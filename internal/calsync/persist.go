@@ -242,6 +242,8 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 // and a single cancelled occurrence flags only its own row. An original start
 // that was only resolved from an offset-free dateTime plus timeZone keeps
 // event.id, the key archives held before such values decoded to an instant.
+// Google keeps one original-start representation per occurrence, so this key
+// stays stable across syncs.
 func deriveSourceMessageID(ev gcal.Event) string {
 	if ev.RecurringEventID != "" {
 		if orig := ev.OriginalStartTime; orig.Date == "" && !orig.DateTime.IsZero() && orig.ResolvedFromTimeZone {

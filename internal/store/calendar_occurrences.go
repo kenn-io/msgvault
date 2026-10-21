@@ -167,32 +167,19 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			page.Occurrences = append(page.Occurrences, o)
 		}
 	}
+	boundedOnly := map[calendarSeriesKey]bool{}
 	for _, row := range rows {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-		e := row.Event
-		if e.Kind == "exception" && e.Original == nil {
-			report(row.MessageID, "exception has no original start")
-		}
-		key := calendarSeriesKey{row.SourceID, e.SeriesProviderID}
-		if e.Kind != "series" {
-			occurrence, _, err := masters[key].exception(ctx, s, row)
-			if errors.Is(err, ErrCalendarOccurrenceInvalid) {
-				report(row.MessageID, calendarMissingBoundsReason(e))
-			} else if err != nil {
-				return nil, nil, err
-			} else {
-				add(occurrence)
-			}
+		if row.Event.Kind != "series" {
 			continue
 		}
+		e := row.Event
 		series := masters[calendarSeriesKey{row.SourceID, e.ProviderEventID}]
-		occurrences, count, reason, err := series.expand(ctx, floor, to, remaining)
+		occurrences, count, reason, bounded, err := series.expand(ctx, floor, to, remaining)
 		remaining -= count
 		if err != nil {
 			return nil, nil, err
 		}
+		boundedOnly[calendarSeriesKey{row.SourceID, e.ProviderEventID}] = bounded
 		if reason != "" {
 			report(row.MessageID, reason)
 		}
@@ -202,6 +189,35 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			}
 		}
 	}
+	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		e := row.Event
+		if e.Kind == "series" {
+			continue
+		}
+		if e.Kind == "exception" && e.Original == nil {
+			report(row.MessageID, "exception has no original start")
+		}
+		key := calendarSeriesKey{row.SourceID, e.SeriesProviderID}
+		if master := masters[key]; e.Kind == "exception" && master != nil && e.Original != nil && e.Original.AllDay != master.row.Event.AllDay && (e.Start == nil || e.End == nil) {
+			report(row.MessageID, "exception original type differs from series and event bounds are missing")
+			continue
+		}
+		if boundedOnly[key] && (e.Start == nil || e.End == nil) {
+			continue
+		}
+		occurrence, _, err := masters[key].exception(ctx, s, row)
+		if errors.Is(err, ErrCalendarOccurrenceInvalid) {
+			report(row.MessageID, calendarMissingBoundsReason(e))
+		} else if err != nil {
+			return nil, nil, err
+		} else {
+			add(occurrence)
+		}
+	}
+
 	return page.Occurrences, page.Unexpandable, nil
 }
 
@@ -273,26 +289,26 @@ func (series *calendarSeries) exception(ctx context.Context, s *Store, row Calen
 	return calendarOccurrence(row, seriesID, calendarOccurrenceRef(row.MessageID, ""), o), evidence, nil
 }
 
-func (series *calendarSeries) expand(ctx context.Context, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+func (series *calendarSeries) expand(ctx context.Context, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, bool, error) {
 	if series.err != nil {
-		return nil, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable rows.
+		return nil, 0, "unsupported recurrence", true, nil //nolint:nilerr // Report an unsupported series alongside readable rows.
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
 	if remaining <= 0 {
-		return nil, 0, requestLimit, nil
+		return nil, 0, requestLimit, false, nil
 	}
 	occurrences, count, err := calrecur.Expand(ctx, series.set, series.duration, series.days, from.Add(-calendarCandidateMargin), to.Add(calendarCandidateMargin), min(remaining, calrecur.SeriesReadBudget))
 	switch {
 	case ctx.Err() != nil:
-		return nil, count, "", ctx.Err()
+		return nil, count, "", false, ctx.Err()
 	case errors.Is(err, calrecur.ErrBudgetExceeded) && count > remaining:
-		return nil, count, requestLimit, nil
+		return nil, count, requestLimit, false, nil
 	case errors.Is(err, calrecur.ErrBudgetExceeded):
-		return nil, count, err.Error(), nil
+		return nil, count, err.Error(), true, nil
 	case err != nil:
-		return nil, count, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable rows.
+		return nil, count, "unsupported recurrence", true, nil //nolint:nilerr // Report an unsupported series alongside readable rows.
 	}
-	return occurrences, count, "", nil
+	return occurrences, count, "", false, nil
 }
 
 func calendarRecurrenceBudgetError() error {
@@ -306,9 +322,9 @@ func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception
 		if e.Original == nil {
 			return nil, errors.New("missing exception original start")
 		}
-		// An omitted event zone inherits the master's zone during expansion.
+		// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
 		var zone *time.Location
-		if e.EventTimeZone != "" {
+		if e.EventTimeZone != "" || e.StartDate != "" || e.EndDate != "" {
 			var err error
 			zone, err = calendarEventZone(e)
 			if err != nil {

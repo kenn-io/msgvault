@@ -145,14 +145,14 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 		{count: 2, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 1, name: "single with undecodable event", state: "single damaged"},
 		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
-		{count: 1, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent},
+		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
 		{count: 1, name: "series budget", state: "series budget", fields: `"status":"cancelled","start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "request budget", state: "request budget", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 2, name: "unresolvable exception", state: "unresolvable", fields: `"status":"cancelled"`},
 		{count: 3, name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 1, name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{count: 1, name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{count: 2, name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 1, name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
 		{count: 2, name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
 		{count: 2, name: "retyped original", state: "retyped original", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
@@ -267,6 +267,16 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				master = 0
 			}
 			requirements.Len(page.Occurrences, tc.count)
+			if tc.name == "sparse cancellation under unsupported master" {
+				detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
+				requirements.NoError(err)
+				assertions.Equal(master, detail.SeriesMessageID)
+				assertions.Equal("cancelled", detail.Status)
+				assertions.Equal("2027-03-09T17:00:00Z", detail.Start.Format(time.RFC3339))
+				assertions.Equal("2027-03-09T18:00:00Z", detail.End.Format(time.RFC3339))
+				assertions.Equal("Example event", detail.Subject)
+				assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", Role: "required", RSVP: "accepted"}}, detail.Attendees)
+			}
 			if tc.state == "single overridden" {
 				_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", master))
 				requirements.NoError(err)
@@ -325,14 +335,6 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				}
 				if listed.MessageID == exception {
 					assertions.Equal(fmt.Sprintf("evt:%d", exception), listed.Ref)
-					if tc.name == "sparse cancellation under unsupported master" {
-						assertions.Equal(master, listed.SeriesMessageID)
-						assertions.Equal("cancelled", listed.Status)
-						assertions.Equal("2027-03-09T17:00:00Z", listed.Start.Format(time.RFC3339))
-						assertions.Equal("2027-03-09T18:00:00Z", listed.End.Format(time.RFC3339))
-						assertions.Equal("Example event", listed.Subject)
-						assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", Role: "required", RSVP: "accepted"}}, listed.Attendees)
-					}
 					if tc.name == "cancelled with bounds under bad master" {
 						assertions.Equal(master, listed.SeriesMessageID)
 						assertions.Equal("cancelled", listed.Status)
@@ -348,12 +350,12 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 						assertions.Equal("cancelled", listed.Status)
 					}
 					if tc.state == "series budget" || tc.state == "request budget" {
-						assertions.Equal("2027-03-12T05:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-						assertions.Equal("2027-03-13T05:00:00Z", listed.End.UTC().Format(time.RFC3339))
+						assertions.Equal("2027-03-12T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+						assertions.Equal("2027-03-13T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 					}
 					if tc.state == "retyped" {
-						assertions.Equal("2027-03-03T05:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-						assertions.Equal("2027-03-04T05:00:00Z", listed.End.UTC().Format(time.RFC3339))
+						assertions.Equal("2027-03-03T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+						assertions.Equal("2027-03-04T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 					}
 					if tc.state == "late master" {
 						requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
