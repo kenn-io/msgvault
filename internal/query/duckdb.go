@@ -2606,9 +2606,7 @@ func (e *DuckDBEngine) GetDeletionTargetsBySearchBounded(
 	}
 	return resolveBoundedDeletionTargets(
 		ctx, searchQuery, filter, mode, maxResults,
-		func(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
-			return e.searchFast(ctx, q, filter, limit, offset, false)
-		}, e.sqliteEngine.searchDeepWithoutLabels, e.sqliteEngine,
+		e.SearchFast, e.SearchDeep, e.sqliteEngine,
 	)
 }
 
@@ -2696,10 +2694,6 @@ var RequiredParquetDirs = []string{
 // This is much faster than FTS search for large archives.
 // Searches subject, snippet, and sender/recipient metadata (case-insensitive).
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
-	return e.searchFast(ctx, q, filter, limit, offset, true)
-}
-
-func (e *DuckDBEngine) searchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int, includeLabels bool) ([]MessageSummary, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err
@@ -2712,22 +2706,15 @@ func (e *DuckDBEngine) searchFast(ctx context.Context, q *search.Query, filter M
 		limit = 100
 	}
 
-	labelCTE, labelJoin, labelSelect := "", "", "'[]'"
-	if includeLabels {
-		labelCTE = `msg_labels AS (
+	// Query with JOINs to reconstruct denormalized view
+	query := fmt.Sprintf(`
+		WITH %s,
+		msg_labels AS (
 			SELECT ml.message_id, LIST(lbl.name ORDER BY lbl.name) as labels
 			FROM ml
 			JOIN lbl ON lbl.id = ml.label_id
 			GROUP BY ml.message_id
-		),`
-		labelJoin = "LEFT JOIN msg_labels mlbl ON mlbl.message_id = msg.id"
-		labelSelect = "CAST(COALESCE(to_json(mlbl.labels), '[]') AS VARCHAR)"
-	}
-
-	// Query with JOINs to reconstruct denormalized view.
-	query := fmt.Sprintf(`
-		WITH %s,
-		%s
+		),
 		msg_sender AS (
 			SELECT mr.message_id,
 				   FIRST(p.email_address) as from_email,
@@ -2763,7 +2750,7 @@ func (e *DuckDBEngine) searchFast(ctx context.Context, q *search.Query, filter M
 			COALESCE(msg.size_estimate, 0) as size_estimate,
 			COALESCE(msg.has_attachments, false) as has_attachments,
 			COALESCE(att.attachment_count, 0) as attachment_count,
-			%s as labels,
+			CAST(COALESCE(to_json(mlbl.labels), '[]') AS VARCHAR) as labels,
 			msg.deleted_from_source_at,
 			COALESCE(msg.message_type, '') as message_type,
 			COALESCE(c.title, '') as conv_title
@@ -2771,12 +2758,12 @@ func (e *DuckDBEngine) searchFast(ctx context.Context, q *search.Query, filter M
 		LEFT JOIN msg_sender ms ON ms.message_id = msg.id
 		LEFT JOIN direct_sender ds ON ds.message_id = msg.id
 		LEFT JOIN att ON att.message_id = msg.id
-		%s
+		LEFT JOIN msg_labels mlbl ON mlbl.message_id = msg.id
 		LEFT JOIN conv c ON c.id = msg.conversation_id
 		WHERE %s
 		ORDER BY msg.sent_at DESC, msg.id DESC
 		LIMIT ? OFFSET ?
-	`, e.parquetCTEs(), labelCTE, labelSelect, labelJoin, strings.Join(conditions, " AND "))
+	`, e.parquetCTEs(), strings.Join(conditions, " AND "))
 
 	args = append(args, limit, offset)
 

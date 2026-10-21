@@ -86,7 +86,7 @@ func (e *SQLiteEngine) executableDeletionScope(
 	filter = filter.Clone()
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
-	filter.SourceIDs = selectedSourceIDs(sourceIDs, filter, q.AccountIDs)
+	filter.SourceIDs = selectedSourceIDs(sourceIDs, filter)
 
 	scoped := *q
 	scoped.HideDeleted = true
@@ -111,17 +111,17 @@ func (e *SQLiteEngine) executableDeletionSourceIDs(ctx context.Context) ([]int64
 	return ids, rows.Err()
 }
 
-// selectedSourceIDs keeps the allowed sources that both the filter and the
-// query's in: operator select. The result is never nil, so an empty
+// selectedSourceIDs keeps the allowed sources selected by the filter.
+// The result is never nil, so an empty
 // intersection matches nothing instead of every source.
-func selectedSourceIDs(allowed []int64, filter MessageFilter, accountIDs []int64) []int64 {
+func selectedSourceIDs(allowed []int64, filter MessageFilter) []int64 {
 	requested := filter.SourceIDs
 	if requested == nil && filter.SourceID != nil {
 		requested = []int64{*filter.SourceID}
 	}
 	selected := []int64{}
 	for _, id := range allowed {
-		if (requested == nil || slices.Contains(requested, id)) && (accountIDs == nil || slices.Contains(accountIDs, id)) {
+		if requested == nil || slices.Contains(requested, id) {
 			selected = append(selected, id)
 		}
 	}

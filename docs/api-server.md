@@ -180,7 +180,7 @@ requests remain valid.
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
-Schema 3.24.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. The count covers Gmail, Microsoft Graph, and IMAP search matches, including those skipped during deletion-target lookup.
+Schema 3.24.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1095,15 +1095,15 @@ use for message-type filtering when you do not need full-text ranking.
 }
 ```
 
-The companion `GET /api/v1/messages/gmail-ids` endpoint returns source message IDs in `gmail_ids` and source metadata in `targets` for deletion staging. Without `max_results`, it selects Gmail and Microsoft Graph mail (`msmail`). With `max_results`, it also accepts IMAP mail. The route and field names are shared by all supported providers.
+The companion `GET /api/v1/messages/gmail-ids` endpoint returns source message IDs in `gmail_ids` and source metadata in `targets` for deletion staging. Without `max_results`, it selects Gmail and Microsoft Graph mail (`msmail`). The route and field names are shared by all supported providers.
 
 | Parameter | Behavior |
 | --- | --- |
 | `q` | Search expression. Combine it with structured filters to narrow the selection. |
 | `search_mode` | Required with `q`: `fast` searches metadata, `deep` includes bodies, and `aggregate` selects an aggregate row using `view_type` and `aggregate_key`. |
-| `max_results` | Integer from 1 through 100001. Requires `q` and `search_mode=fast` or `deep`. Searches only Gmail, Microsoft Graph, and IMAP mail and caps those matches before resolving deletion targets. Empty or invalid values return `invalid_max_results`. |
+| `max_results` | Integer from 1 through 100001. Requires `q` and `search_mode=fast` or `deep`. Caps search matches before resolving deletion targets. Empty or invalid values return `invalid_max_results`. |
 
-Bounded responses include `matched_count`, the number of Gmail, Microsoft Graph, and IMAP search matches within the cap. Matches those sources cannot delete, including archive-only messages, are omitted from `targets` and `gmail_ids` but included in `matched_count`. To detect overflow, request one more match than the number you intend to stage.
+Bounded responses include `matched_count` before target lookup, so request one extra match to detect overflow; see [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources and skipped matches.
 
 The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `message_type`, `conversation_id`, `attachments_only`, `source_id`, `source_ids`, and `after` / `before`, and applies them as `/messages/filter` does. Structured selections honor `limit`. Search selections use `max_results` for their bound. Results always exclude deleted messages and are ordered newest-first, so `hide_deleted`, `offset`, `sort`, and `direction` have no effect.
 
