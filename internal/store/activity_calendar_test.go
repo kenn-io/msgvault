@@ -63,7 +63,7 @@ func TestActivityAllDayICSDamagedMetadataKeepsDateOnly(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(candidates, 1)
 			requirements.NotNil(candidates[0].SentAt)
-			assertions.Equal("2027-03-02T00:00:00Z", candidates[0].SentAt.Format(time.RFC3339))
+			assertions.Equal("2027-03-02T00:00:00Z", candidates[0].SentAt.UTC().Format(time.RFC3339))
 			assertions.True(candidates[0].Eligible)
 			assertions.True(candidates[0].DateOnly, "an accepted all-day event must keep its calendar date across time zones")
 		})
