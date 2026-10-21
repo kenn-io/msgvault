@@ -260,9 +260,9 @@ func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception
 		if e.Original == nil {
 			continue
 		}
-		// An omitted event zone inherits the master's zone during expansion.
+		// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
 		var zone *time.Location
-		if e.EventTimeZone != "" {
+		if e.EventTimeZone != "" || e.StartDate != "" || e.EndDate != "" {
 			var err error
 			zone, err = calendarEventZone(e)
 			if err != nil {
