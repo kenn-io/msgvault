@@ -490,6 +490,12 @@ func getMessageRawShared(ctx context.Context, db store.SQLReader, rebind rebindF
 	return raw, nil
 }
 
+// GetMessageInSnapshot loads current archive details inside the transaction
+// that authorized an Events receipt. Every body and related-row read uses tx.
+func GetMessageInSnapshot(ctx context.Context, tx *sql.Tx, rebind func(string) string, messageID int64) (*MessageDetail, error) {
+	return getMessageByQueryShared(ctx, tx, rebind, "", "m.id = ? AND "+store.LiveMessagesWhere("m", false), messageID)
+}
+
 // getMessageByQueryShared retrieves a full message detail by an arbitrary WHERE clause.
 // tablePrefix is "" for direct SQLite or "sqlite_db." for DuckDB's sqlite_scan.
 // rebind rewrites the ? placeholders for the driver in use; it is applied
@@ -515,7 +521,7 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 			m.has_attachments,
 			COALESCE(m.is_from_me, FALSE),
 			m.deleted_from_source_at,
-			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
+			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript', 'calendar_event') THEN m.metadata ELSE NULL END
 		FROM %smessages m
 		LEFT JOIN %sconversations conv ON conv.id = m.conversation_id
 		WHERE %s
@@ -556,6 +562,10 @@ func getMessageByQueryShared(ctx context.Context, db store.SQLReader, rebind reb
 		return nil, err
 	}
 	msg.RelatedMessageID = related[0].RelatedMessageID
+	if msg.MessageType == messageTypeCalendar {
+		msg.Calendar = store.ParseCalendarProjection(metadata.String)
+	}
+
 	if sentAt.Valid {
 		msg.SentAt = sentAt.Time
 	}

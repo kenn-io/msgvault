@@ -49,8 +49,8 @@ func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) 
 	var held bool
 	require.NoError(t, st.DB().QueryRowContext(context.Background(), `
 		SELECT EXISTS (
-			SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
+			SELECT 1 FROM pg_locks l
+			WHERE l.pid = $1 AND l.relation = to_regclass($2) AND l.granted)`, pid, relation).Scan(&held))
 	return held
 }
 
@@ -104,6 +104,10 @@ func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {
 	a := newAttrFixtureOn(t, st, "gmail", "a@example.net")
 	b := newAttrFixtureOn(t, st, "gmail", "b@example.net")
 
+	// Production installs a disabled Events runtime even on a never-enabled archive.
+	_, err := st.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{})
+	require.NoError(err)
+
 	reached := map[int64]chan struct{}{a.source.ID: make(chan struct{}), b.source.ID: make(chan struct{})}
 	release := map[int64]chan struct{}{a.source.ID: make(chan struct{}), b.source.ID: make(chan struct{})}
 	var once sync.Map
@@ -138,9 +142,11 @@ func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {
 		}()
 		return done
 	}
-	aDone := persist(a, scopedSync(t, st, a.source.ID), "a-1")
+	aScoped := scopedSync(t, st, a.source.ID)
+	bScoped := scopedSync(t, st, b.source.ID)
+	aDone := persist(a, aScoped, "a-1")
 	<-reached[a.source.ID]
-	bDone := persist(b, scopedSync(t, st, b.source.ID), "b-1")
+	bDone := persist(b, bScoped, "b-1")
 	select {
 	case <-reached[b.source.ID]:
 	case <-time.After(pgWaitBudget):
@@ -152,10 +158,18 @@ func TestAccountAttributionConcurrentSourceSyncsPG(t *testing.T) {
 	waitForLockWait(t, st, "UPDATE archive_metadata SET value = value",
 		"the identity add must wait for both attribution readers")
 
+	enableDone := make(chan error, 1)
+	go func() {
+		_, err := st.ConfigureMCPEvents(context.Background(), store.MCPEventsConfig{Enabled: true, Principal: "owner:synthetic"})
+		enableDone <- err
+	}()
+	waitForLockWait(t, st, "FOR UPDATE", "enabling capture must wait for the uncaptured writes to commit")
+
 	releaseAll()
 	assertNoDeadlock(t, waitResult(t, aDone, "source A persist"))
 	assertNoDeadlock(t, waitResult(t, bDone, "source B persist"))
 	assertNoDeadlock(t, waitResult(t, addDone, "identity add"))
+	assertNoDeadlock(t, waitResult(t, enableDone, "enable capture"))
 	ids := searchIDs(t, st, "received:alias@example.org")
 	require.Len(ids, 1)
 	address, _ := attribution(t, st, ids[0])
@@ -233,8 +247,8 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 	var repairPID int
 	require.Eventually(func() bool {
 		return st.DB().QueryRowContext(context.Background(), `
-			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
+			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l
+			WHERE l.relation = 'sources'::regclass AND l.mode = 'RowExclusiveLock' AND l.granted
 			  AND l.pid <> pg_backend_pid()`).Scan(&repairPID) == nil && repairPID > 0
 	}, pgWaitBudget, 10*time.Millisecond)
 

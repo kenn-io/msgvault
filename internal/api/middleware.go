@@ -64,6 +64,7 @@ const (
 	etagHeaderName      = "ETag"
 	ifMatchHeaderName   = "If-Match"
 	headerParamLocation = "header"
+	queryParamLocation  = "query"
 	pathKey             = "path"
 	nameKey             = "name"
 

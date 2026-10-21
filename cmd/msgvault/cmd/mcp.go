@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -108,6 +109,13 @@ Add to Claude Desktop config:
 		} else {
 			opts = daemonMCPServeOptions(ctx, st, state)
 		}
+		// Events act with the daemon owner credential, so the MCP bearer must
+		// be that same credential. Explicit token flags never qualify.
+		independentCredential := cmd.Flags().Changed("http-token-file") || cmd.Flags().Changed("http-token-env") ||
+			subtle.ConstantTimeCompare([]byte(inboundKey), []byte(httpStoreAPIKey(info, cfg))) != 1
+		if httpAddr == "" || independentCredential {
+			opts.Events = nil
+		}
 		opts.AllowProfileWrites = mcpAllowProfileWrites
 		opts.AllowIdentityDecisions = mcpAllowIdentityDecisions
 		opts.AllowIdentityScoring = mcpAllowIdentityScoring
@@ -124,11 +132,12 @@ Add to Claude Desktop config:
 
 		if httpAddr != "" {
 			return serveMCPHTTPWithOptions(ctx, opts, mcpserver.HTTPOptions{
-				Addr:               httpAddr,
-				DiscoveryDirectory: filepath.Join(cfg.HomeDir, "mcp"),
-				BackendURL:         info.URL,
-				APIKey:             inboundKey,
-				AllowWrites:        mcpHTTPAllowWrites,
+				Addr:                  httpAddr,
+				DiscoveryDirectory:    filepath.Join(cfg.HomeDir, "mcp"),
+				BackendURL:            info.URL,
+				APIKey:                inboundKey,
+				AllowWrites:           mcpHTTPAllowWrites,
+				IndependentCredential: independentCredential,
 			})
 		}
 		return serveMCPStdioWithOptions(ctx, opts)
@@ -236,6 +245,9 @@ const kataIssuesMinAPISchemaVersion = "3.4.0"
 // kataLookupMinAPISchemaVersion adds issue lookup and context reads.
 const kataLookupMinAPISchemaVersion = "3.12.0"
 const kataDocbankMinAPISchemaVersion = "3.13.0"
+
+// mcpEventsMinAPISchemaVersion adds owner-only native MCP Events.
+const mcpEventsMinAPISchemaVersion = "3.19.0"
 
 // Schema 2.28.0 adds independent configured-lane facts to authenticated
 // health. Older health responses cannot distinguish text from visual search.
@@ -357,6 +369,12 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 		opts.DraftCommands = mcpDraftCommands(false)
 	}
 
+	if capabilityErr == nil && health != nil && health.McpEvents != nil && *health.McpEvents &&
+		daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpEventsMinAPISchemaVersion) && st.MCPEventsOwnerCredential() {
+		if catalog, err := st.MCPEventsList(ctx); err == nil && len(catalog.Events) > 0 {
+			opts.Events = st
+		}
+	}
 	return opts
 }
 
@@ -520,7 +538,7 @@ func (s daemonMCPSimilarSearcher) FindSimilar(
 }
 
 func init() {
-	mcpCmd.AddCommand(newMCPStatusCommand())
+	mcpCmd.AddCommand(newMCPStatusCommand(), newMCPEventsCommand())
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.Flags().BoolVar(&mcpForceSQL, "force-sql", false, "Deprecated in 0.17.0: set [analytics].engine = \"sql\" in config.toml")
 	mcpCmd.Flags().BoolVar(&mcpNoSQLiteScanner, "no-sqlite-scanner", false, "Deprecated in 0.17.0: cache engine selection is daemon-managed")
