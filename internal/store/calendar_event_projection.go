@@ -24,21 +24,41 @@ const calendarEventProjectionVersion = 1
 const calendarEventDecodeFailureStatus = "decode_error"
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false, false)
+	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false, false, false)
+}
+
+func (s *Store) refreshCalendarEventProjectionMigrationSeedWith(ctx context.Context, tx *loggedTx, messageID int64) error {
+	cancelled, complete, err := s.calendarCancellationEvidenceWith(ctx, tx, messageID)
+	if err != nil {
+		return err
+	}
+	if err := s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, false, false, true); err != nil {
+		return err
+	}
+	if !cancelled || !complete {
+		return nil
+	}
+	// Keep complete cancelled aliases eligible for the reconstruction pass.
+	// Their raw projections are evidence for other aliases, but are not yet the
+	// completed inherited snapshots for this migration.
+	if _, err := tx.ExecContext(ctx, `UPDATE calendar_events SET projection_version = ? WHERE message_id = ?`, calendarEventProjectionVersion-1, messageID); err != nil {
+		return fmt.Errorf("mark complete cancellation for reconstruction: %w", err)
+	}
+	return nil
 }
 
 // refreshCalendarEventProjectionFromProviderWith records that an importer has
 // observed provider evidence for this message. Evidence freshness can change
 // even when the normalized event projection is unchanged.
 func (s *Store) refreshCalendarEventProjectionFromProviderWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, false)
+	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, false, false)
 }
 
 func (s *Store) refreshCalendarEventProjectionFromCancellationMetadataWith(ctx context.Context, tx *loggedTx, messageID int64) error {
-	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, true)
+	return s.refreshCalendarEventProjectionModeWith(ctx, tx, messageID, true, true, false)
 }
 
-func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *loggedTx, messageID int64, providerEvidence, cancellationMetadata bool) error {
+func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *loggedTx, messageID int64, providerEvidence, cancellationMetadata, skipCancellationInheritance bool) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var messageType, metadata sql.NullString
 	var subject sql.NullString
@@ -91,11 +111,12 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	if !ok {
 		return clearProjection()
 	}
-	// A cancellation alias can supply some fields and omit others. Always select
-	// the freshest complete alias, then overlay only fields present in newly
-	// observed provider JSON. Metadata changes and projection rebuilds have no
-	// new provider fields to overlay.
-	if event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil {
+	// A cancellation alias can supply some fields and omit others. During a
+	// rebuild, prefer a complete non-cancelled alias when one exists; a complete
+	// cancelled alias is evidence when no non-cancelled alias is available. Then
+	// overlay only fields present in newly observed provider JSON. Metadata
+	// changes and projection rebuilds have no new provider fields to overlay.
+	if !skipCancellationInheritance && event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil {
 		if eventUIDMissing(metadata) {
 			uid, err := s.freshestCalendarExceptionUIDWith(ctx, tx, sourceID, event)
 			if err != nil {
@@ -113,7 +134,7 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 				}
 			}
 		}
-		latest, found, err := s.freshestCalendarExceptionDetailsWith(ctx, tx, sourceID, event)
+		latest, found, err := s.freshestCalendarExceptionDetailsWith(ctx, tx, sourceID, event, !exists || oldVersion < calendarEventProjectionVersion)
 		if err != nil {
 			return err
 		}
@@ -200,10 +221,12 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 }
 
 // freshestCalendarExceptionDetailsWith finds the most recently archived
-// readable alias before a cancellation update is recorded. The current row is
-// eligible: a metadata-only cancellation leaves its previous projection in
-// place until this refresh writes the cancelled version.
-func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, event calevent.Event) (CalendarEventRow, bool, error) {
+// complete alias before a cancellation update is recorded. During a projection
+// rebuild, it prefers non-cancelled aliases because a raw cancellation may not
+// retain its previous complete snapshot. The current row remains eligible for
+// normal refreshes: a metadata-only cancellation leaves its previous
+// projection in place until this refresh writes the cancelled version.
+func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *loggedTx, sourceID int64, event calevent.Event, preferNonCancelled bool) (CalendarEventRow, bool, error) {
 	originalColumn, originalValue := "e.original_start_at", any(event.Original.Instant)
 	if event.Original.AllDay {
 		originalColumn, originalValue = "e.original_start_date", event.Original.Date
@@ -211,7 +234,11 @@ func (s *Store) freshestCalendarExceptionDetailsWith(ctx context.Context, tx *lo
 	predicate := `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + originalColumn + ` = ? AND
 		((e.start_at IS NOT NULL AND e.end_at IS NOT NULL) OR (e.start_date <> '' AND e.end_date <> ''))`
 	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
-	query := `SELECT e.message_id ` + calendarEventFrom + `(` + predicate + `) ORDER BY e.snapshot_updated_at DESC, e.message_id DESC LIMIT 1`
+	order := `e.snapshot_updated_at DESC, e.message_id DESC`
+	if preferNonCancelled {
+		order = `CASE WHEN e.status = 'cancelled' THEN 1 ELSE 0 END, ` + order
+	}
+	query := `SELECT e.message_id ` + calendarEventFrom + `(` + predicate + `) ORDER BY ` + order + ` LIMIT 1`
 	var selectedID int64
 	err := r.QueryRowContext(ctx, query, sourceID, event.SeriesProviderID, originalValue).Scan(&selectedID)
 	if errors.Is(err, sql.ErrNoRows) {

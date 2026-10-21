@@ -666,6 +666,39 @@ func TestCalendarEventUpgradeProjectsCompleteAliasesBeforeCancellations(t *testi
 	assertions.Equal(from.Add(14*time.Hour), page.Occurrences[0].Start)
 }
 
+func TestCalendarEventUpgradeSeedsCancelledAliasesBeforeReconstruction(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
+	staleRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series",` + original + `,"status":"cancelled","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"},"attendees":[{"email":"stale@example.org"}]}`
+	freshRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series",` + original + `,"status":"cancelled","start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"attendees":[{"email":"fresh@example.org"}]}`
+	_, stale := calendarFixture(t, st, "stale-cancelled-alias", staleRaw)
+	_, fresh := calendarFixture(t, st, "fresh-cancelled-alias", freshRaw)
+	newer := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+	_, err := st.db.Exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, newer.Add(-time.Hour), stale)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, newer, fresh)
+	requirements.NoError(err)
+	for _, query := range []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`} {
+		_, err := st.db.Exec(query)
+		requirements.NoError(err)
+	}
+	requirements.NoError(st.Close())
+	reopened, err := OpenForTest(st.dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
+	requirements.NoError(reopened.InitSchemaContext(t.Context()))
+	rows := calendarRows(t, reopened, stale)
+	requirements.Len(rows, 1)
+	assertions.Equal("cancelled", rows[0].Event.Status)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2027, 3, 14, 15, 0, 0, 0, time.UTC), *rows[0].Event.End)
+	requirements.Len(rows[0].Event.Attendees, 1)
+	assertions.Equal("fresh@example.org", rows[0].Event.Attendees[0].Email)
+}
+
 func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite subset copy")
