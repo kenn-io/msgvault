@@ -100,9 +100,13 @@ export type GetGmailIDsByFilterParams = {
    */
   q?: string;
   /**
-   * Search mode: fast, deep, or aggregate; required with q
+   * Search mode: fast, deep, or aggregate; fast_then_deep is bounded staging only and requires max_results
    */
   search_mode?: string;
+  /**
+   * Maximum results for bounded search-aware deletion resolution (max 100001)
+   */
+  max_results?: number;
   /**
    * Aggregate view type; required for aggregate search
    */
