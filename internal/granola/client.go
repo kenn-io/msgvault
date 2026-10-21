@@ -19,6 +19,9 @@ import (
 
 var ErrUnauthorized = errors.New("granola API rejected the key (401): check [[granola]] api_key in config.toml (a grn_… key from the desktop app's settings; requires a Business plan)")
 
+// ErrRateLimited marks a request that was still throttled (429) after all retries.
+var ErrRateLimited = errors.New("granola rate limited")
+
 const (
 	maxRetries    = 8
 	maxRetryAfter = httpretry.ProviderMaxRetryAfter
@@ -52,7 +55,7 @@ func NewClient(baseURL, apiKey string) *Client {
 // get fetches path (with query already encoded), respecting the rate limiter
 // and retrying on 429/5xx with Retry-After or exponential back-off.
 func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
-	reqURL := c.baseURL + path
+	reqURL, lastStatus := c.baseURL+path, 0
 	for attempt := range maxRetries {
 		if err := c.limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("wait for granola rate limit: %w", err)
@@ -90,12 +93,21 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 				return nil, ctx.Err()
 			case <-timer.C:
 			}
-			continue
+			lastStatus = resp.StatusCode
 		default:
 			return nil, fmt.Errorf("granola GET %s: status %d: %s", reqURL, resp.StatusCode, string(body))
 		}
 	}
-	return nil, fmt.Errorf("granola GET %s: exhausted %d retries", reqURL, maxRetries)
+	return nil, exhaustedRetriesError(reqURL, lastStatus)
+}
+
+// exhaustedRetriesError reports a request that never succeeded, wrapping
+// ErrRateLimited when the final attempt was throttled.
+func exhaustedRetriesError(reqURL string, status int) error {
+	if status == http.StatusTooManyRequests {
+		return fmt.Errorf("granola GET %s: exhausted %d retries: %w", reqURL, maxRetries, ErrRateLimited)
+	}
+	return fmt.Errorf("granola GET %s: exhausted %d retries", reqURL, maxRetries)
 }
 
 // ListNotesParams filters GET /v1/notes. Zero-value fields are omitted.

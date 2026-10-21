@@ -86,7 +86,7 @@ func Reason(err error) string {
 	switch {
 	case errors.Is(err, granola.ErrUnauthorized) || errors.Is(err, omi.ErrUnauthorized) || (retrieveError != nil && retrieveError.ErrorCode == "invalid_grant") || errors.Is(err, msgraph.ErrUnauthorized) || errors.Is(err, gcal.ErrUnauthorized) || errors.Is(err, slack.ErrAuth) || errors.Is(err, notionmeetings.ErrUnauthorized) || errors.Is(err, oauth.ErrTokenUnrefreshable) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, beeper.ErrUnauthorized) || errors.Is(err, chatwoot.ErrUnauthorized) || imapErr != nil && imapErr.Code == imap.ResponseCodeAuthenticationFailed || status == 401:
 		return "auth"
-	case gmailThrottled || graphThrottled || errors.Is(err, gcal.ErrRateLimited) || errors.Is(err, notionmeetings.ErrRateLimited) || status == 429:
+	case gmailThrottled || graphThrottled || errors.Is(err, gcal.ErrRateLimited) || errors.Is(err, notionmeetings.ErrRateLimited) || errors.Is(err, granola.ErrRateLimited) || status == 429:
 		return "rate_limited"
 	case status == 0 && retrieveError == nil && IsTransientNetwork(err):
 		return "network"

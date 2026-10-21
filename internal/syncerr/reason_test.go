@@ -100,6 +100,14 @@ func TestProviderFailureReasons(t *testing.T) {
 			_, err := granola.NewClient(url, "synthetic").ListNotes(ctx, granola.ListNotesParams{})
 			return err
 		}},
+		{"granola exhausted throttling", 429, "", "rate_limited", func(ctx context.Context, url string) error {
+			_, err := granola.NewClient(url, "synthetic").ListNotes(ctx, granola.ListNotesParams{})
+			return err
+		}},
+		{"granola exhausted server failures", 503, "", "other", func(ctx context.Context, url string) error {
+			_, err := granola.NewClient(url, "synthetic").ListNotes(ctx, granola.ListNotesParams{})
+			return err
+		}},
 		{"beeper", 401, "", "auth", func(ctx context.Context, url string) error {
 			_, err := beeper.NewClient(url, func(context.Context) (string, error) { return "synthetic", nil }, 1000).ListAccounts(ctx)
 			return err
