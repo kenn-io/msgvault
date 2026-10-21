@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-19"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -137,6 +137,21 @@ By default, the command reads from `~/Library/Messages/chat.db`. No positional a
 
 This is a read-only operation. msgvault does not modify your iMessage database.
 
+Eligible attachments referenced by `chat.db` are copied into the archive from
+the `Attachments` and `StickerCache` folders under `~/Library/Messages`. Every
+run reads the files again, so changed files are archived again, and bytes
+already archived are kept when a file can no longer be read. For a copied
+`chat.db`, `--messages-root` names the copied Messages folder, and paths into a
+Mac home folder are rebased onto it. Attachment metadata is retained when a
+file is unavailable or exceeds the default 250 MiB file limit or 20-participant
+conversation limit. The import summary counts unavailable and skipped
+attachments (including paths outside those folders), so an import without Full
+Disk Access on the Attachments folder does not look clean. iMessage voice notes
+are `.caf` files. They stay in the archive but are not transcribed, because
+Docbank only takes the audio formats listed in
+[Send audio to Docbank](/docs/usage/beeper/#send-audio-to-docbank).
+Pass `--no-attachments` to record attachment metadata without copying files.
+
 Apple timestamp sentinels and dates outside years 1 through 9999 are stored as
 missing dates. msgvault retains those messages and their raw timestamp
 evidence, including empty sync placeholders. Undated messages are excluded from
@@ -158,6 +173,8 @@ Keep the original `--db-path` and `--me` options if you supplied them.
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to a `.vcf` file used to backfill participant display names |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
 
 ### Examples
 
