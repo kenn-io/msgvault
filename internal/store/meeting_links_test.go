@@ -413,6 +413,52 @@ func TestMeetingLinksOrphanDecisionAfterMasterArrives(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
 }
 
+func TestMeetingLinksChooseFreshestOrphanAlias(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
+	_, stale := calendarFixture(t, st, "stale-alias", `{"id":"stale","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	_, current := calendarFixture(t, st, "current-alias", `{"id":"current","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"}}`)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(current, page.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(14*time.Hour), page.Occurrences[0].Start)
+	assertions.NotEqual(stale, page.Occurrences[0].MessageID)
+
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: current}))
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", current), links[0].Ref)
+	assertions.Equal(from.Add(14*time.Hour), links[0].Start)
+	assertions.Equal(from.Add(15*time.Hour), links[0].End)
+}
+
+func TestMeetingLinksUnidentifiedExceptionsHaveMessageScopedIdentity(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, first := calendarFixture(t, st, "unidentified-first", `{"id":"first","iCalUID":"unidentified@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, second := calendarFixture(t, st, "unidentified-second", `{"id":"second","iCalUID":"unidentified@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first}))
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second}))
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 2)
+	assertions.ElementsMatch([]string{fmt.Sprintf("evt:%d", first), fmt.Sprintf("evt:%d", second)}, []string{links[0].Ref, links[1].Ref})
+
+	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second}))
+	links, err = st.MeetingLinksContext(t.Context(), note)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", first), links[0].Ref)
+	assertions.Equal(time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), links[0].Start)
+}
+
 func TestMeetingLinksActualRecurrenceBudget(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

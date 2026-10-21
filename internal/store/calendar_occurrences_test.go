@@ -62,10 +62,21 @@ func TestListCalendarOccurrencesUsesFreshestExceptionAlias(t *testing.T) {
 	dataA.RawMIME = []byte(`{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"status":"cancelled"}`)
 	_, err := st.PersistMessage(dataA)
 	require.NoError(err)
-	var observedA, observedB time.Time
-	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasA).Scan(&observedA))
-	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasB).Scan(&observedB))
-	assert.True(observedA.After(observedB), "reimporting alias A must make its provider observation newer than alias B")
+	var orderA, orderB int64
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasA).Scan(&orderA))
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasB).Scan(&orderB))
+	assert.Greater(orderA, orderB, "reimporting alias A must advance its provider observation order")
+
+	// Embedding maintenance moves B's row-level watermark after A was observed.
+	_, err = st.db.Exec(st.Rebind(`UPDATE messages SET embed_gen = COALESCE(embed_gen, 0) + 1 WHERE id = ?`), aliasB)
+	require.NoError(err)
+	var modifiedA, modifiedB time.Time
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasA).Scan(&modifiedA))
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasB).Scan(&modifiedB))
+	assert.False(modifiedB.Before(modifiedA), "embedding maintenance should make the stale alias's row watermark at least as new")
+	var orderBAfter int64
+	require.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasB).Scan(&orderBAfter))
+	assert.Equal(orderB, orderBAfter, "message maintenance must not change provider observation order")
 
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC))
@@ -89,11 +100,8 @@ func TestListCalendarOccurrencesResolvesAliasesBeforeWindowFiltering(t *testing.
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=12"]}`)
-	_, stale := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
+	calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
 	_, current := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-05-10T09:00:00Z"},"end":{"dateTime":"2027-05-10T10:00:00Z"}}`)
-	setCalendarEventLastModified(t, st, stale, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
-	setCalendarEventLastModified(t, st, current, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
-
 	march := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), march, march.AddDate(0, 0, 1))
 	require.NoError(err)
@@ -112,10 +120,10 @@ func TestListCalendarOccurrencesDeduplicatesAliasesInBoundedFallback(t *testing.
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
-	_, aliasA := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T10:00:00Z"},"end":{"dateTime":"2027-03-09T11:00:00Z"}}`)
-	_, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T13:00:00Z"}}`)
-	setCalendarEventLastModified(t, st, aliasA, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
-	setCalendarEventLastModified(t, st, aliasB, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	rawA := `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T10:00:00Z"},"end":{"dateTime":"2027-03-09T11:00:00Z"}}`
+	_, aliasA := calendarFixture(t, st, "alias-a", rawA)
+	calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T13:00:00Z"}}`)
+	require.NoError(st.UpsertMessageRawWithFormat(aliasA, []byte(rawA), "gcal_json"))
 
 	from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))

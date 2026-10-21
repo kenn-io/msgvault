@@ -19,19 +19,19 @@ import (
 var ErrQueryTooBroad = errors.New("calendar query is too broad")
 
 type CalendarEventRow struct {
-	MessageID, SourceID int64
-	LastModified        time.Time
-	Subject             string
-	ICalUID             string
-	DeletedFromSource   bool
-	Event               calevent.Event
+	MessageID, SourceID      int64
+	ProviderObservationOrder int64
+	Subject                  string
+	ICalUID                  string
+	DeletedFromSource        bool
+	Event                    calevent.Event
 }
 
 const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), m.last_modified,
+const calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''), e.provider_observation_order,
  m.deleted_from_source_at IS NOT NULL,
  %s, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
@@ -87,19 +87,18 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	for result.Next() {
 		var row CalendarEventRow
 		e := &row.Event
-		var original, start, end, lastModified sql.NullTime
+		var original, start, end sql.NullTime
+		var providerObservationOrder int64
 		var originalDate, recurrence string
 		var uid sql.NullString
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &lastModified, &row.DeletedFromSource,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &providerObservationOrder, &row.DeletedFromSource,
 			&uid, &e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
 		}
-		if lastModified.Valid {
-			row.LastModified = lastModified.Time
-		}
+		row.ProviderObservationOrder = providerObservationOrder
 		row.ICalUID = uid.String
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}

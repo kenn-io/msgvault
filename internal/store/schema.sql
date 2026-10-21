@@ -4693,8 +4693,15 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
-    recurrence_end_at DATETIME
+    recurrence_end_at DATETIME,
+    provider_observation_order BIGINT NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS calendar_event_observation_clock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    observation_order BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO calendar_event_observation_clock (singleton, observation_order)
+VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);

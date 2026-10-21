@@ -159,7 +159,7 @@ func (s *Store) withAttributionTxContext(
 // attributionLockForMessage is the shared lock a write of one message needs:
 // its source when the row is email or calendar, nothing otherwise.
 func attributionLockForMessage(sourceID int64, messageType string) attributionLock {
-	if (IsEmailMessageType(messageType) || messageType == "calendar_event") && sourceID > 0 {
+	if (IsEmailMessageType(messageType) || messageType == MessageTypeCalendarEvent) && sourceID > 0 {
 		return attributionLock{Sources: []int64{sourceID}}
 	}
 	return attributionLock{}
@@ -193,7 +193,7 @@ func (s *Store) refreshAccountAttributionAfterWriteTx(
 	if err != nil {
 		return fmt.Errorf("read message %d for account attribution: %w", id, err)
 	}
-	if (IsEmailMessageType(messageType) || messageType == "calendar_event") && !tx.attribution.holds(sourceID) {
+	if (IsEmailMessageType(messageType) || messageType == MessageTypeCalendarEvent) && !tx.attribution.holds(sourceID) {
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE messages SET account_address = NULL, account_path = NULL
 			WHERE id = ? AND (account_address IS NOT NULL OR account_path IS NOT NULL)`, id); err != nil {
@@ -444,7 +444,7 @@ func (s *Store) refreshAccountAttributionTx(
 	if err != nil {
 		return false, fmt.Errorf("read account attribution inputs for message %d: %w", id, err)
 	}
-	if !IsEmailMessageType(messageType) && messageType != "calendar_event" {
+	if !IsEmailMessageType(messageType) && messageType != MessageTypeCalendarEvent {
 		if !oldAddress.Valid && !oldPath.Valid {
 			return false, nil
 		}
@@ -463,7 +463,7 @@ func (s *Store) refreshAccountAttributionTx(
 		return s.writeAccountAttributionTx(ctx, tx, id, messageType, address, path)
 	}
 
-	if messageType == "calendar_event" {
+	if messageType == MessageTypeCalendarEvent {
 		address, err := s.calendarAccountAddressTx(ctx, tx, sourceID, syncConfig)
 		if err != nil {
 			return false, err

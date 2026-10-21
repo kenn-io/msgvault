@@ -115,6 +115,59 @@ func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	requirements.NoError(err)
 }
 
+func TestCalendarProviderObservationOrderAdvancesForRepeatedSnapshotsAndCancellations(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, id := calendarFixture(t, st, "observed", calendarRaw)
+	var before int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&before))
+
+	// A provider can return an unchanged payload while another archived alias
+	// has newer conflicting details, so identical snapshots still advance order.
+	require.NoError(st.UpsertMessageRawWithFormat(id, data.RawMIME, data.RawFormat))
+	var afterRaw int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&afterRaw))
+	assert.Greater(afterRaw, before)
+
+	require.NoError(st.SetCalendarEventProviderMetadata(id, sql.NullString{
+		String: `{"calendar_id":"calendar@example.com","ical_uid":"event-uid@example.com","status":"cancelled"}`,
+		Valid:  true,
+	}))
+	var afterCancellation int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, id).Scan(&afterCancellation))
+	assert.Greater(afterCancellation, afterRaw)
+}
+
+func TestCalendarProviderObservationOrderMigration(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, older := calendarFixture(t, st, "older", calendarRaw)
+	_, newer := calendarFixture(t, st, "newer", strings.ReplaceAll(calendarRaw, "event-example", "newer-event"))
+
+	// Recreate an archive created before the observation-order column and table.
+	_, err := st.db.Exec(`ALTER TABLE calendar_events DROP COLUMN provider_observation_order`)
+	require.NoError(err)
+	_, err = st.db.Exec(`DROP TABLE calendar_event_observation_clock`)
+	require.NoError(err)
+	_, err = st.db.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarProviderObservationV1)
+	require.NoError(err)
+	_, err = st.db.Exec(`UPDATE archive_metadata SET value = '12' WHERE key = 'schema_version'`)
+	require.NoError(err)
+	setCalendarEventLastModified(t, st, older, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, newer, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	require.NoError(st.InitSchemaContext(t.Context()))
+	var olderOrder, newerOrder, clock int64
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, older).Scan(&olderOrder))
+	require.NoError(st.db.QueryRow(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`, newer).Scan(&newerOrder))
+	require.NoError(st.db.QueryRow(`SELECT observation_order FROM calendar_event_observation_clock WHERE singleton = 1`).Scan(&clock))
+	assert.Greater(newerOrder, olderOrder)
+	assert.Equal(newerOrder, clock)
+	version, err := st.SchemaVersionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(SchemaVersion, version)
+}
+
 func TestCalendarEventProjectionStorageFailureRollsBack(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

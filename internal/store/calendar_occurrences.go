@@ -248,8 +248,8 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	return resolved, bounded, nil
 }
 
-// Freshness is tied to the source message's database-maintained observation
-// timestamp. Message IDs only break ties between snapshots observed together.
+// Freshness follows provider-observation order. Message IDs break ties when
+// multiple snapshots share the same migrated order.
 func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
 	overrides := make(map[string]CalendarEventRow, len(rows))
 	for _, row := range rows {
@@ -258,8 +258,8 @@ func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEven
 		}
 		key := row.Event.Original.Key()
 		current, exists := overrides[key]
-		if !exists || row.LastModified.After(current.LastModified) ||
-			row.LastModified.Equal(current.LastModified) && row.MessageID > current.MessageID {
+		if !exists || row.ProviderObservationOrder > current.ProviderObservationOrder ||
+			row.ProviderObservationOrder == current.ProviderObservationOrder && row.MessageID > current.MessageID {
 			overrides[key] = row
 		}
 	}
@@ -283,8 +283,8 @@ func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
 		}
 		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: row.Event.Original.Key()}
 		current, exists := identified[key]
-		if !exists || row.LastModified.After(current.LastModified) ||
-			row.LastModified.Equal(current.LastModified) && row.MessageID > current.MessageID {
+		if !exists || row.ProviderObservationOrder > current.ProviderObservationOrder ||
+			row.ProviderObservationOrder == current.ProviderObservationOrder && row.MessageID > current.MessageID {
 			identified[key] = row
 		}
 	}

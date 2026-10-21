@@ -62,9 +62,14 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	id := meetingIdentity{ICalUID: row.ICalUID, OccurrenceKey: key}
+	// An unidentified exception has no occurrence identity to share with other
+	// rows, even when the provider gave the series an iCalUID.
+	if row.Event.Kind == meetingExceptionKind && row.Event.Original == nil {
+		id = meetingIdentity{EventMessageID: row.MessageID}
+	}
 	// Occurrence keys represent whole seconds. Keep fractional exceptions
 	// addressable by their message instead of querying a truncated original start.
-	if original := row.Event.Original; key != "" && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
+	if original := row.Event.Original; row.Event.Kind == meetingExceptionKind && key != "" && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
 		id.ICalUID = ""
 	}
 	if id.ICalUID == "" {
@@ -474,8 +479,37 @@ func (s *Store) meetingReader(ctx context.Context) reboundReader {
 	return reboundReader{reader: ReadDBContext(ctx, s.db.DB), rebind: s.dialect.Rebind, dialect: s.dialect}
 }
 
-// Choose the lowest canonical reference for each identity, in reference order.
+// Pick the freshest snapshot within each source series, then choose the lowest
+// canonical reference across calendar copies of the same occurrence.
 func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
+	type exceptionAliasIdentity struct {
+		sourceID int64
+		seriesID string
+		key      string
+	}
+	aliases := make(map[exceptionAliasIdentity]linkOccurrence)
+	filtered := make([]linkOccurrence, 0, len(out))
+	for _, occurrence := range out {
+		event := occurrence.Row.Event
+		if event.Kind != meetingExceptionKind || event.Original == nil {
+			filtered = append(filtered, occurrence)
+			continue
+		}
+		key := exceptionAliasIdentity{
+			sourceID: occurrence.Row.SourceID,
+			seriesID: event.SeriesProviderID,
+			key:      event.Original.Key(),
+		}
+		current, exists := aliases[key]
+		if !exists || occurrence.Row.ProviderObservationOrder > current.Row.ProviderObservationOrder ||
+			occurrence.Row.ProviderObservationOrder == current.Row.ProviderObservationOrder && occurrence.Row.MessageID > current.Row.MessageID {
+			aliases[key] = occurrence
+		}
+	}
+	for _, occurrence := range aliases {
+		filtered = append(filtered, occurrence)
+	}
+	out = filtered
 	slices.SortFunc(out, func(a, b linkOccurrence) int {
 		if c := cmp.Compare(a.Ref.MessageID, b.Ref.MessageID); c != 0 {
 			return c
