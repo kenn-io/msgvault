@@ -5518,6 +5518,7 @@ func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
 
 type boundedDeletionSearchTestEngine struct {
 	query.Engine
+
 	resolve func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, error)
 }
 

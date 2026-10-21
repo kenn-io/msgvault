@@ -203,26 +203,24 @@ func fetchLabelsForMessageList(ctx context.Context, db store.SQLReader, rebind r
 			WHERE ml.message_id IN (%s)
 		`, tablePrefix, tablePrefix, strings.Join(placeholders, ","))
 
-		rows, err := db.QueryContext(ctx, rebind(query), ids...)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var msgID int64
-			var labelName string
-			if err := rows.Scan(&msgID, &labelName); err != nil {
-				_ = rows.Close()
+		if err := func() error {
+			rows, err := db.QueryContext(ctx, rebind(query), ids...)
+			if err != nil {
 				return err
 			}
-			if idx, ok := idToIndex[msgID]; ok {
-				messages[idx].Labels = append(messages[idx].Labels, labelName)
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var msgID int64
+				var labelName string
+				if err := rows.Scan(&msgID, &labelName); err != nil {
+					return err
+				}
+				if idx, ok := idToIndex[msgID]; ok {
+					messages[idx].Labels = append(messages[idx].Labels, labelName)
+				}
 			}
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return err
-		}
-		if err := rows.Close(); err != nil {
+			return rows.Err()
+		}(); err != nil {
 			return err
 		}
 	}

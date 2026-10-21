@@ -24,6 +24,7 @@ type rebindRecordingDialect struct {
 
 type recordingSQLReader struct {
 	store.SQLReader
+
 	argumentCounts []int
 }
 
@@ -977,27 +978,29 @@ func TestGetDeletionTargetsBySearchCombinesSearchFilterAndActiveScope(t *testing
 }
 
 func TestGetDeletionTargetsBySearchBoundedUsesSearchResultsAndExplicitLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	env := newTestEnv(t)
 	filter := MessageFilter{
 		Sender:     "alice@example.com",
 		Pagination: Pagination{Offset: 100, Limit: 1},
 	}
 	visible, err := env.Engine.SearchFast(env.Ctx, search.Parse("Hello"), filter, 1, 0)
-	require.NoError(t, err)
-	require.Len(t, visible, 1)
+	requirements.NoError(err)
+	requirements.Len(visible, 1)
 
 	targets, err := env.Engine.GetDeletionTargetsBySearchBounded(
 		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, 1,
 	)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
-	require.NoError(t, err)
-	assert.Equal(t, []string{visible[0].SourceMessageID}, ids)
+	requirements.NoError(err)
+	assertions.Equal([]string{visible[0].SourceMessageID}, ids)
 
 	_, err = env.Engine.GetDeletionTargetsBySearchBounded(
 		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
 	)
-	require.ErrorContains(t, err, "bounded deletion search limit cannot exceed")
+	requirements.ErrorContains(err, "bounded deletion search limit cannot exceed")
 }
 
 func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {

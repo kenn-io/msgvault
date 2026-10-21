@@ -41,6 +41,7 @@ func seedMetadataSearch(t *testing.T, db *sql.DB) {
 
 // metadataDaemon serves engine over HTTP. A store lets the daemon list accounts.
 func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32, st ...*store.Store) *daemonclient.Engine {
+	t.Helper()
 	return metadataDaemonWithPeer(t, engine, requests, nil, "", st...)
 }
 
