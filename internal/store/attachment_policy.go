@@ -18,12 +18,11 @@ type AttachmentPolicyCandidate struct {
 	SourceIdentifier string
 	ConversationType string
 	ParticipantCount int
-	// RosterUnresolved reports that no authoritative roster backs
-	// ParticipantCount: the provider could not read one, or none was ever
-	// archived, so the count is only the accumulated participant rows. Purge
-	// must not exclude on the participant threshold while it is set: excluding
-	// deletes blobs, and the current membership may be under the limit even
-	// when the accumulated count is not.
+	// RosterUnresolved reports that no complete authoritative roster backs
+	// ParticipantCount: the provider could not read one, none was ever archived,
+	// or a repair has not finished applying it. Purge must not exclude on the
+	// participant threshold while it is set: the current membership may be
+	// under the limit even when the accumulated count is not.
 	RosterUnresolved   bool
 	Size               int64
 	ContentHash        string
@@ -90,7 +89,7 @@ func (s *Store) ListAttachmentPolicyCandidates(ctx context.Context) ([]Attachmen
 			candidate.SourceType, candidate.ParticipantCount, conversationMetadata,
 		)
 		record := decodeMembershipRecord(conversationMetadata)
-		candidate.RosterUnresolved = !record.counted || record.unknown
+		candidate.RosterUnresolved = !record.counted || record.unknown || record.repairPending
 		if state == "" && candidate.ContentHash == "" {
 			contentHash, ok := casPathHash(candidate.StoragePath)
 			if !ok {

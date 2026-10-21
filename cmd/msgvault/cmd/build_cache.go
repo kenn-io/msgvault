@@ -98,7 +98,7 @@ var buildCacheMu = newContextMutex()
 // query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
 // cache writers hold it exclusively only while they actually mutate live
 // cache paths — the brief rename+marker publication step, and destructive
-// maintenance (lockCacheAndInvalidateSyncState) for its whole operation.
+// maintenance (lockCacheAndInvalidateSyncState) while invalidating the marker.
 // Staging and index construction run under cacheBuilderFileLock instead, so
 // a multi-minute rebuild no longer blocks queries against the committed
 // generation. The lock file lives NEXT TO the analytics directory, not
@@ -147,45 +147,36 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState returns a release function with the cache
-// exclusively locked against builders AND readers and the commit marker
-// already invalidated. Callers must keep the locks through their database
-// mutation and the lock-held cache rebuild (buildCacheLocked with
-// publishLockHeld — the publication step must not re-acquire the
-// reader-coordination lock this function already holds, or it would
-// self-deadlock on a second file descriptor). A destructive mutation must
-// not proceed when any protection step fails.
-func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
+// lockCacheAndInvalidateSyncState serializes builders until release. It briefly
+// takes policy R then cache W to invalidate the marker before mutation. Readers
+// subsequently fail closed on that marker; no policy/cache lock spans a Store
+// mutation, which may itself require the exclusive policy fence.
+func lockCacheAndInvalidateSyncState(s *store.Store, analyticsDir string) (func() error, error) {
 	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("serialize against cache builders: %w", err)
 	}
+	releasePolicy, err := s.AcquireSQLiteConversationPolicyFence(context.Background(), store.ConversationPolicyShared)
+	if err != nil {
+		_ = builderLock.Unlock()
+		return nil, err
+	}
+	defer releasePolicy()
 	readerLock, err := cacheBuildFileLock(analyticsDir)
 	if err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("create analytics cache lock: %w", err),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+		_ = builderLock.Unlock()
+		return nil, err
 	}
-	if err := readerLock.Lock(); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("lock analytics cache: %w", err),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+	if err = readerLock.Lock(); err != nil {
+		_ = builderLock.Unlock()
+		return nil, fmt.Errorf("acquire cache publication lock: %w", err)
 	}
-	release := func() error {
-		return errors.Join(
-			wrapError(readerLock.Unlock(), "unlock analytics cache"),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+	err = invalidateSyncStateFile(query.CacheStatePath(analyticsDir))
+	err = errors.Join(err, readerLock.Unlock())
+	if err != nil {
+		return nil, errors.Join(err, builderLock.Unlock())
 	}
-	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
-			wrapError(release(), "unlock analytics cache after invalidation failure"),
-		)
-	}
-	return release, nil
+	return builderLock.Unlock, nil
 }
 
 func wrapError(err error, message string) error {
@@ -211,6 +202,11 @@ var buildCacheBeforeMessagesExportHook func() error
 // cacheSnapshotGOOS selects the platform branch in openCacheSourceSnapshot.
 // Tests override it to exercise platform-specific snapshot behavior.
 var cacheSnapshotGOOS = runtime.GOOS
+
+const (
+	cacheExportParticipants           = "cache_export_participants"
+	cacheExportParticipantIdentifiers = "cache_export_participant_identifiers"
+)
 
 // buildCacheWriteStateFile atomically publishes the cache sync state marker;
 // a test seam for simulating state persistence failures.
@@ -570,7 +566,6 @@ func buildCacheDerivedOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		acquirePublishLock,
 		false,
 		builderOverrides...,
 	)
@@ -638,8 +633,14 @@ func ownerParticipantsSelectSQL(primaryEmailPresence string) string {
 		accountIdentities, participants, accountIdentities, identifiers, participants)
 }
 
+// cacheFullMessageWhere reuses Store eligibility against the pinned source tables.
+func cacheFullMessageWhere(alias string) string {
+	return strings.NewReplacer("FROM conversations ", "FROM sqlite_db.conversations ", "FROM conversation_policy ", "FROM sqlite_db.conversation_policy ", "FROM sources ", "FROM sqlite_db.sources ").Replace(store.FullMessageWhere(alias))
+}
+
 // messageExportColumns is the messages Parquet column list through is_from_me.
 func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribution string) string {
+	full := cacheFullMessageWhere("m")
 	return fmt.Sprintf(`
 			m.id,
 			m.source_id,
@@ -647,6 +648,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 			COALESCE(%s, '') AS source_message_id,
 			%s AS rfc822_message_id,
 			m.conversation_id,
+ CASE WHEN `+full+` THEN 'full' ELSE (SELECT effective_tier FROM sqlite_db.conversation_policy exported_policy WHERE exported_policy.conversation_id=m.conversation_id) END AS conversation_tier,
 			CASE WHEN m.subject IS NULL THEN NULL ELSE COALESCE(%s, '') END as subject,
 			CASE WHEN m.snippet IS NULL THEN NULL ELSE COALESCE(%s, '') END as snippet,
 			m.sent_at,
@@ -836,16 +838,15 @@ func buildCacheScheduled(
 	}
 	return withFullBuildFallback(func() (*buildResult, error) {
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, acquirePublishLock,
-				builderOverrides...)
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				acquirePublishLock, true, builderOverrides...)
+				true, builderOverrides...)
 		}
 		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
-			acquirePublishLock, builderOverrides...)
-	}, dbPath, analyticsDir, acquirePublishLock, builderOverrides...)
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 func buildCacheImpl(
@@ -866,7 +867,6 @@ func buildCacheImpl(
 		analyticsDir,
 		fullRebuild,
 		recheckStaleness,
-		acquirePublishLock,
 		builderOverrides...,
 	)
 }
@@ -923,7 +923,7 @@ func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
 			COALESCE(%s, '') AS identifier_value,
 			COALESCE(%s, '') AS display_value,
 			COALESCE(TRY_CAST(is_primary AS BOOLEAN), false) AS is_primary
-		FROM sqlite_db.participant_identifiers`, s.identityExportSQL("identifier_type"), s.identityExportSQL("identifier_value"), s.textSQL("display_value"))
+		FROM %s pi`, s.participantIdentityExportSQL("pi.identifier_type"), s.participantIdentityExportSQL("pi.identifier_value"), s.participantTextSQL("pi.display_value"), s.snapshotTable(cacheExportParticipantIdentifiers))
 }
 
 // participantsExportSelectSQL renders the participants dataset export. The
@@ -933,12 +933,12 @@ func (s *cacheSourceSnapshot) participantIdentifiersExportSelectSQL() string {
 // (unknown), not as a repaired value that could collide with another address.
 func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 	return fmt.Sprintf(`SELECT
-			id,
+			p.id,
 			COALESCE(%s, '') AS email_address,
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
 			COALESCE(%s, '') AS phone_number
-		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
+		FROM %s p`, s.participantIdentityExportSQL("p.email_address"), s.participantTextSQL("p.domain"), s.participantTextSQL("p.display_name"), s.participantTextSQL("p.phone_number"), s.snapshotTable(cacheExportParticipants))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
@@ -962,7 +962,7 @@ func (s *cacheSourceSnapshot) personDisplayNamesExportSelectSQL() string {
 // not re-derive. Account-identity drift must always take the full-rebuild
 // path.
 func derivedDriftOnly(staleness cacheStaleness) bool {
-	return (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
+	return !staleness.FullRebuild && (staleness.HasIdentityDrift || staleness.HasConversationParticipantDrift ||
 		staleness.HasConversationTypeDrift || staleness.HasParticipantIdentifierDrift ||
 		staleness.HasParticipantDisplayNameDrift || staleness.HasPersonDisplayNameDrift) &&
 		!staleness.HasNew && !staleness.HasDeleted &&
@@ -985,32 +985,29 @@ func relatedDriftOnly(staleness cacheStaleness) bool {
 // exclusive cross-process cache builder lock.
 func refreshIdentityDatasetsOnly(
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return refreshDerivedDatasetsOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		locking,
 		false,
 		builderOverrides...,
 	)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
-// exclusive cross-process cache builder lock. locking describes how the
-// publication step coordinates with readers — see cachePublishLocking.
+// exclusive cross-process cache builder lock. Publication takes policy R then
+// cache W after staging finishes.
 func buildCacheLocked(
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return withFullBuildFallback(func() (*buildResult, error) {
 		return buildCacheLockedAttempt(dbPath, analyticsDir, fullRebuild, recheckStaleness,
-			locking, builderOverrides...)
-	}, dbPath, analyticsDir, locking, builderOverrides...)
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 // withFullBuildFallback runs build and finishes with a full build when a
@@ -1020,7 +1017,6 @@ func buildCacheLocked(
 func withFullBuildFallback(
 	build func() (*buildResult, error),
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	result, err := build()
@@ -1028,13 +1024,12 @@ func withFullBuildFallback(
 		return result, err
 	}
 	fmt.Printf("%v. Forcing full rebuild...\n", err)
-	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
+	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, builderOverrides...)
 }
 
 func buildCacheLockedAttempt(
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
@@ -1054,11 +1049,11 @@ func buildCacheLockedAttempt(
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				locking, true, builderOverrides...)
+				true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1166,6 +1161,7 @@ func buildCacheLockedAttempt(
 		return nil, err
 	}
 	defer func() { _ = staging.cleanup() }()
+	staging.policyDBPath = dbPath
 
 	db, err := duckdbutil.Open(
 		context.Background(),
@@ -1194,6 +1190,14 @@ func buildCacheLockedAttempt(
 	exportStarted := time.Now()
 	cacheWatermark := exportStarted.UTC().Truncate(time.Second)
 
+	var conversationPolicyRevision int64
+	if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key='conversation_policy_revision'),0)`).Scan(&conversationPolicyRevision); err != nil {
+		return nil, fmt.Errorf("read snapshot conversation policy revision: %w", err)
+	}
+	if hasPreviousState && conversationPolicyRevision != previousState.ConversationPolicyRevision {
+		fullRebuild = true
+		lastMessageID = 0
+	}
 	var maxMessageID sql.NullInt64
 	var lastCompletedSyncRunID int64
 	var relatedChangeSeq int64
@@ -1254,7 +1258,7 @@ func buildCacheLockedAttempt(
 				return nil, fmt.Errorf("check cached message population: %w", err)
 			}
 			coveredCounted = true
-			populationChanged = coveredCount != previousState.Stats.TotalMessages
+			populationChanged = coveredCount != previousState.ArchivedMessageCount
 		}
 		failedSyncChanged := syncCounters.failedRunCount != previousState.LastFailedSyncRunCount ||
 			syncCounters.failedRunIDSum != previousState.LastFailedSyncRunIDSum
@@ -1298,7 +1302,7 @@ func buildCacheLockedAttempt(
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
 		}
 		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			locking, true, builderOverrides...)
+			true, builderOverrides...)
 	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {
@@ -1642,6 +1646,8 @@ func buildCacheLockedAttempt(
 	// Save sync state using the pre-export watermark so any deletion
 	// that occurs during or after the build is detected as stale.
 	state := syncState{
+		ConversationPolicyRevision:          conversationPolicyRevision,
+		ArchivedMessageCount:                expectedTotalCount,
 		LastMessageID:                       maxID,
 		LastSyncAt:                          cacheWatermark,
 		SchemaVersion:                       cacheSchemaVersion,
@@ -1666,7 +1672,7 @@ func buildCacheLockedAttempt(
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
+	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -1987,6 +1993,13 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 	return s.duckDB
 }
 
+func (s *cacheSourceSnapshot) snapshotTable(name string) string {
+	if s.csvSnapshot {
+		return "sqlite_db." + name
+	}
+	return name
+}
+
 // identityPresenceSQL preserves raw address presence independently of UTF-8
 // validity. CSV snapshots carry a boolean computed by SQLite before invalid
 // identity bytes become NULL; scanner snapshots still have the raw bytes.
@@ -1998,16 +2011,23 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 }
 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
-// read transaction. sqlite_scanner needs no preparation because DuckDB's
-// transaction reads the attached database directly.
+// read transaction. The sqlite_scanner path also prepares the participant
+// export projections through sqlite_query in that same snapshot.
 func (s *cacheSourceSnapshot) Prepare() error {
-	return s.prepareTables(s.tables())
+	if s.csvSnapshot {
+		return s.prepareTables(s.tables())
+	}
+	return s.prepareParticipantExportTables()
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
-// fallback path. sqlite_scanner needs no materialization. Derived refreshes
-// use this to avoid exporting unrelated multi-million-row junction tables.
+// fallback path. sqlite_scanner reads them directly and materializes only the
+// participant export projections. Derived refreshes use this to avoid
+// exporting unrelated multi-million-row junction tables.
 func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
+	if !s.csvSnapshot {
+		return s.prepareParticipantExportTables()
+	}
 	wanted := make(map[string]bool, len(names))
 	for _, name := range names {
 		wanted[name] = true
@@ -2028,6 +2048,32 @@ func (s *cacheSourceSnapshot) PrepareDatasets(names ...string) error {
 			strings.Join(missing, ", "))
 	}
 	return s.prepareTables(selected)
+}
+
+// prepareParticipantExportTables evaluates value-level policy in SQLite,
+// where the store's eligibility predicates have native query planning. The
+// DuckDB projection then reads only the resulting safe participant values.
+func (s *cacheSourceSnapshot) prepareParticipantExportTables() error {
+	if s.duckTx == nil {
+		return errors.New("prepare participant exports: missing DuckDB snapshot transaction")
+	}
+	for _, table := range s.tables() {
+		if table.name != cacheExportParticipants && table.name != cacheExportParticipantIdentifiers {
+			continue
+		}
+		var querySQL string
+		if table.name == cacheExportParticipants {
+			querySQL = participantExportQuery(true)
+		} else {
+			querySQL = participantIdentifierExportQuery(true)
+		}
+		query := strings.ReplaceAll(querySQL, "'", "''")
+		statement := fmt.Sprintf(`CREATE TEMP TABLE "%s" AS SELECT * FROM sqlite_query('sqlite_db', '%s')`, table.name, query)
+		if _, err := s.duckTx.Exec(statement); err != nil {
+			return fmt.Errorf("prepare %s snapshot: %w", table.name, err)
+		}
+	}
+	return nil
 }
 
 func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
@@ -2067,6 +2113,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
+	participantExportQuery := participantExportQuery(false)
+	participantIdentifierExportQuery := participantIdentifierExportQuery(false)
 
 	// Every column carries an explicit type so the schema DuckDB sees never
 	// depends on the data: read_csv_auto sniffs empty or all-NULL columns as
@@ -2077,7 +2125,8 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 		// `deleted_at IS NULL` filter on this path the same way it does
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
-		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{tableMessages, "SELECT " + messageColumns + " FROM messages", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
+		{"conversation_policy", "SELECT conversation_id,effective_tier FROM conversation_policy", "types={'conversation_id':'BIGINT','effective_tier':'VARCHAR'}", nil},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
@@ -2088,24 +2137,70 @@ func (s *cacheSourceSnapshot) tables() []cacheSnapshotTable {
 			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}", nil},
 		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}", nil},
 		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
+		{"person_contact_points", "SELECT person_id,address_kind,normalized_value,source,active_until,superseded_at FROM person_contact_points", "types={'person_id':'BIGINT','address_kind':'VARCHAR','normalized_value':'VARCHAR','source':'VARCHAR','active_until':'TIMESTAMP','superseded_at':'TIMESTAMP'}", identityColumns("normalized_value")},
+		{"participant_contact_observations", "SELECT id,participant_id,source_id,address_kind,normalized_value,source,active_until,superseded_at FROM participant_contact_observations", "types={'id':'BIGINT','participant_id':'BIGINT','source_id':'BIGINT','address_kind':'VARCHAR','normalized_value':'VARCHAR','source':'VARCHAR','active_until':'TIMESTAMP','superseded_at':'TIMESTAMP'}", identityColumns("normalized_value")},
+		{"participant_contact_observation_conversations", "SELECT observation_id,conversation_id FROM participant_contact_observation_conversations", "types={'observation_id':'BIGINT','conversation_id':'BIGINT'}", nil},
+		{"communication_services", "SELECT id,slug FROM communication_services", "types={'id':'BIGINT','slug':'VARCHAR'}", identityColumns("slug")},
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
 			identityColumns("email_address")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
 			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
 			identityColumns("address")},
-		{tableParticipantIdentifiers, "SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM participant_identifiers",
-			"types={'participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN'}",
+		{tableParticipantIdentifiers, "SELECT id, participant_id, identifier_type, identifier_value, display_value, is_primary, service_id, scope_kind, scope_value FROM participant_identifiers",
+			"types={'id':'BIGINT','participant_id': 'BIGINT', 'identifier_type': 'VARCHAR', 'identifier_value': 'VARCHAR', 'display_value': 'VARCHAR', 'is_primary': 'BOOLEAN','service_id':'BIGINT','scope_kind':'VARCHAR','scope_value':'VARCHAR'}",
+			identityColumns("identifier_type", "identifier_value")},
+		{cacheExportParticipants, participantExportQuery,
+			"types={'id':'BIGINT','email_address':'VARCHAR','domain':'VARCHAR','display_name':'VARCHAR','phone_number':'VARCHAR'}",
+			identityColumns("email_address")},
+		{cacheExportParticipantIdentifiers, participantIdentifierExportQuery,
+			"types={'participant_id':'BIGINT','identifier_type':'VARCHAR','identifier_value':'VARCHAR','display_value':'VARCHAR','is_primary':'BOOLEAN'}",
 			identityColumns("identifier_type", "identifier_value")},
 		{tableLabels, "SELECT id, name FROM labels",
 			"types={'id': 'BIGINT', 'name': 'VARCHAR'}", nil},
 		{"sources", "SELECT id, identifier, source_type FROM sources",
 			"types={'id': 'BIGINT', 'identifier': 'VARCHAR', 'source_type': 'VARCHAR'}", identityColumns("identifier")},
-		{tableConversations, "SELECT id, source_conversation_id, title, COALESCE(conversation_type, 'email_thread') AS conversation_type FROM conversations",
-			"types={'id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
+		{tableConversations, "SELECT id, source_id, source_conversation_id, title, COALESCE(CAST(conversation_type AS TEXT), 'email_thread') AS conversation_type FROM conversations",
+			"types={'id': 'BIGINT', 'source_id': 'BIGINT', 'source_conversation_id': 'VARCHAR', 'title': 'VARCHAR', 'conversation_type': 'VARCHAR'}", identityColumns("source_conversation_id")},
 		{tableConversationParticipants, "SELECT conversation_id, participant_id FROM conversation_participants",
 			"types={'conversation_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
 	}
+}
+
+// participantExportQuery applies the value-level chat policy in SQLite. The
+// scanner path hex-encodes text so DuckDB never materializes malformed UTF-8
+// while creating the temporary table; the final cache projection decodes and
+// repairs display text or rejects invalid identity keys.
+func participantExportQuery(hexEncodeText bool) string {
+	value := func(eligible, column string) string {
+		expression := "CASE WHEN " + eligible + " THEN " + column + " END"
+		if hexEncodeText {
+			return "HEX(CAST(" + expression + " AS BLOB))"
+		}
+		return expression
+	}
+	return fmt.Sprintf(`SELECT p.id,
+		%s AS email_address,
+		%s AS domain,
+		%s AS display_name,
+		%s AS phone_number
+		FROM participants p`,
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.email_address"),
+		value(store.FullParticipantValueWhere("p.id", "'email'", "p.email_address"), "p.domain"),
+		value(store.FullParticipantNameWhere("p.id", "p.display_name"), "p.display_name"),
+		value(store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number"), "p.phone_number"),
+	)
+}
+
+func participantIdentifierExportQuery(hexEncodeText bool) string {
+	identifierType, identifierValue, displayValue := "pi.identifier_type", "pi.identifier_value", "pi.display_value"
+	if hexEncodeText {
+		identifierType = "HEX(CAST(" + identifierType + " AS BLOB))"
+		identifierValue = "HEX(CAST(" + identifierValue + " AS BLOB))"
+		displayValue = "HEX(CAST(" + displayValue + " AS BLOB))"
+	}
+	return `SELECT pi.participant_id, ` + identifierType + ` AS identifier_type, ` + identifierValue + ` AS identifier_value, ` + displayValue + ` AS display_value, pi.is_primary
+		FROM participant_identifiers pi WHERE ` + store.FullParticipantIdentifierWhereSQLite("pi")
 }
 
 func (s *cacheSourceSnapshot) prepareTables(tables []cacheSnapshotTable) error {

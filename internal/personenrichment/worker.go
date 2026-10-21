@@ -234,6 +234,11 @@ func (w *Worker) processWithLeaseRenewal(ctx context.Context, lease WorkLease) e
 func (w *Worker) processLease(
 	ctx context.Context, lease WorkLease, tokens *leaseTokenState,
 ) error {
+	workCtx, err := w.work.CaptureConversationPolicyWork(ctx)
+	if err != nil {
+		return fmt.Errorf("capture person enrichment policy work: %w", err)
+	}
+	ctx = workCtx
 	profile, err := w.work.LoadProviderProfile(ctx, lease.ProfileFingerprint)
 	if err != nil {
 		return w.releaseRetry(ctx, lease, nil, safeFailure(FailureTransient, 0, "", "profile unavailable"))

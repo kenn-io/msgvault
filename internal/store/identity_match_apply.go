@@ -235,6 +235,11 @@ func (s *Store) applyAcceptedIdentityMatchCandidateContext(
 				if loadErr != nil {
 					return loadErr
 				}
+				if loaded.DecidedBy == nil || *loaded.DecidedBy != string(ProvenanceUser) {
+					if err := s.checkAutomaticObservationCandidateTx(ctx, tx, loaded); err != nil {
+						return err
+					}
+				}
 				if loaded.State != IdentityMatchStateAccepted {
 					return fmt.Errorf("candidate %d state is %s: %w",
 						current.ID, loaded.State, ErrIdentityMatchNotAccepted)

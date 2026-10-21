@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -261,4 +262,56 @@ func TestRunEval_EndToEnd_RanksByRelevanceAndSkipsAMalformedTopic(t *testing.T) 
 	require.Len(t, report.Diagnostics.SkippedCells, 1, "the malformed topic must be reported, not dropped")
 	assert.Contains(t, report.Diagnostics.SkippedCells[0], "topic q2")
 	assert.Contains(t, report.Diagnostics.SkippedCells[0], "before:invalid renewal")
+}
+
+func TestRunEvalInitializesConversationPolicyBeforeScoring(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "msgvault.db"))
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("slack", "synthetic-workspace")
+	require.NoError(t, err)
+	conversation, err := st.EnsureConversation(source.ID, "synthetic-room", "Synthetic room")
+	require.NoError(t, err)
+	require.NoError(t, st.SetConversationMemberCountContext(t.Context(), conversation, 3))
+	message, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: conversation, SourceMessageID: "synthetic-chat-message",
+		MessageType: "slack", Subject: sql.NullString{String: "Synthetic needle", Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, st.UpsertFTS(message, "Synthetic needle", "", "", "", ""))
+	require.NoError(t, st.Close())
+
+	testCfg := config.NewDefaultConfig()
+	testCfg.Data.DataDir = dir
+	testCtx := testInvocationContext(t.Context(), testCfg, invocationOptions{})
+	savedFlags := [...]any{evalQrels, evalTopics, evalModes, evalDocKey, evalLimit, evalJSON}
+	t.Cleanup(func() {
+		evalQrels, _ = savedFlags[0].(string)
+		evalTopics, _ = savedFlags[1].(string)
+		evalModes, _ = savedFlags[2].(string)
+		evalDocKey, _ = savedFlags[3].(string)
+		evalLimit, _ = savedFlags[4].(int)
+		evalJSON, _ = savedFlags[5].(bool)
+	})
+	evalQrels = writeEvalFile(t, dir, "qrels.txt", "q1 0 synthetic-chat-message 1\n")
+	evalTopics = writeEvalFile(t, dir, "topics.tsv", "q1\tsynthetic needle\n")
+	evalModes = "fts"
+	evalDocKey = "message"
+	evalLimit = 10
+	evalJSON = true
+	cmd := &cobra.Command{}
+	cmd.SetContext(testCtx)
+
+	done := captureStdout(t)
+	err = runEval(cmd, nil)
+	out := done()
+	require.NoError(t, err, "eval run")
+	var report struct {
+		Results map[string]struct {
+			MRR float64 `json:"MRR@10"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report), "parse report: %s", out)
+	assert.InDelta(t, 1.0, report.Results["fts"].MRR, 1e-9, "known-small chat must be classified Full before eval scores it")
 }

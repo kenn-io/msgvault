@@ -150,6 +150,29 @@ func TestBuildEmptyArchivePublishesSchemaCorrectActivityShard(t *testing.T) {
 	}
 }
 
+func TestBuildCoercesLegacyConversationTypeToText(t *testing.T) {
+	requirements := require.New(t)
+	root, db := writeRelationshipBaseFixture(t, false)
+	replaceRelationshipParquet(t, db, root, "conversations", `
+		SELECT * FROM (VALUES
+			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 1::BIGINT)
+		) AS t(id, source_conversation_id, title, conversation_type)`)
+
+	_, err := Build(context.Background(), db, BuildOptions{
+		Mode:           ModeFull,
+		StagedBaseRoot: root,
+		OutputRoot:     root,
+	})
+	requirements.NoError(err)
+
+	var conversationType string
+	requirements.NoError(db.QueryRow(`
+		SELECT conversation_type FROM read_parquet(?, hive_partitioning=true)
+		WHERE message_id = 100 AND canonical_id = 1
+	`, parquetDatasetGlob(root, DatasetActivity)).Scan(&conversationType))
+	requirements.Equal("1", conversationType)
+}
+
 func TestLogicalChatReductionKeepsParticipantlessNewestMessage(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

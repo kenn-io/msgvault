@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector/embed"
@@ -32,6 +33,7 @@ func newEmbedGenGroupFixture(t *testing.T, members int) *embedGenGroupFixture {
 	conversationID, err := st.EnsureConversationWithType(
 		source.ID, "synthetic-chat", "group_chat", "Synthetic chat")
 	require.NoError(t, err)
+	require.NoError(t, st.SetConversationPolicyOverride(t.Context(), source.ID, "synthetic-chat", conversationpolicy.Full))
 	aliceID, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
 	require.NoError(t, err)
 	bobID, err := st.EnsureParticipant("bob@example.test", "Bob", "example.test")
@@ -68,7 +70,9 @@ func (f *embedGenGroupFixture) snapshot() ([]store.EmbedGenStamp, store.EmbedGen
 		row, found, err := snapshot.Message(f.t.Context(), id)
 		require.NoError(f.t, err)
 		require.True(f.t, found)
-		versions = append(versions, store.EmbedGenStamp{ID: id, LastModified: row.LastModified})
+		versions = append(versions, store.EmbedGenStamp{
+			ID: id, LastModified: row.LastModified, EmbeddingRevision: row.EmbeddingRevision,
+		})
 	}
 	conversation, found, err := snapshot.Conversation(f.t.Context(), f.conversationID)
 	require.NoError(f.t, err)
@@ -240,6 +244,25 @@ func TestSetEmbedGenGroupIfUnchanged_OneMissStampsNone(t *testing.T) {
 	assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens())
 }
 
+func TestSetEmbedGenGroupIfUnchanged_EmbeddingRevisionChangesStampNone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newEmbedGenGroupFixture(t, 2)
+	versions, metadata := f.snapshot()
+	require.Len(versions, 2)
+
+	// Keep last_modified unchanged so this proves the source-input revision is
+	// independently part of the contextual publication compare-and-set.
+	f.exec(`UPDATE messages SET embedding_revision = embedding_revision + 1 WHERE id = ?`, f.messageIDs[1])
+	f.exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, versions[1].LastModified, f.messageIDs[1])
+
+	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 4)
+	require.NoError(err)
+	assert.False(stamped)
+	assert.Equal([]sql.NullInt64{{}, {}}, f.embedGens(),
+		"one changed source revision must prevent every member from being covered")
+}
+
 func TestSetEmbedGenGroupIfUnchanged_MissingDeletedAndDuplicateMembers(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -386,7 +409,7 @@ func TestEmbedGenMetadataVersion_MatchesAssemblerCanonicalDigest(t *testing.T) {
 		"2030-01-02 03:04:05", f.aliceID, f.bobID)
 	versions, metadata := f.snapshot()
 
-	assert.Equal(t, "008696efed0969c656a9fef5057430881961388f760d2286213b606605837a3d", metadata.Digest)
+	assert.Equal(t, "cc468ecaeb9ceb0ae12c56dd56dc07d9c5952626b5dd3170178bdf52d68a161b", metadata.Digest)
 	stamped, _, err := f.store.SetEmbedGenGroupIfUnchanged(t.Context(), versions, metadata, 11)
 	require.NoError(t, err)
 	assert.True(t, stamped, "store recomputation must accept Task 5's exact canonical digest")

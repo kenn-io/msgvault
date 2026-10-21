@@ -40,9 +40,10 @@ type ReconcileConfig struct {
 }
 
 type WorkItem struct {
-	Candidate store.VisualCandidate
-	Document  DocumentInput
-	Claim     store.VisualWorkClaim
+	policyContext context.Context
+	Candidate     store.VisualCandidate
+	Document      DocumentInput
+	Claim         store.VisualWorkClaim
 }
 
 type ReconcileResult struct {
@@ -65,7 +66,8 @@ type Reconciler struct {
 	// passes so each pass advances the frontier instead of rescanning (and
 	// re-reading the blobs of) everything already processed. In-memory:
 	// a restart costs one linear catch-up scan, never quadratic work.
-	scanCursor int64
+	scanCursor    int64
+	policyContext context.Context
 }
 
 // Activate makes the reconciler's generation searchable only after callers
@@ -75,6 +77,13 @@ type Reconciler struct {
 // their journal consumers — a retired generation left registered would pin
 // journal pruning forever and its vectors would accumulate unreachably.
 func (r *Reconciler) Activate(ctx context.Context) ([]store.VisualGeneration, error) {
+	ctx = store.WithConversationPolicyWorkFrom(ctx, r.policyContext)
+	var captureErr error
+	ctx, captureErr = r.archive.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return nil, captureErr
+	}
+
 	highWater, err := r.archive.AttachmentChangeHighWater(ctx)
 	if err != nil {
 		return nil, err
@@ -102,6 +111,12 @@ func (r *Reconciler) NeedsFullReconcile(ctx context.Context) (bool, error) {
 // full-reconciliation cursor. It is the operator path for retryable provider
 // failures and explicit re-attempts of terminal provider decisions.
 func (r *Reconciler) RetryOwner(ctx context.Context, messageID int64, blobHash string) (ReconcileResult, error) {
+	var captureErr error
+	ctx, captureErr = r.archive.CaptureConversationPolicyWork(ctx)
+	if captureErr != nil {
+		return ReconcileResult{}, captureErr
+	}
+
 	blobHash = strings.ToLower(strings.TrimSpace(blobHash))
 	if messageID <= 0 || len(blobHash) != 64 {
 		return ReconcileResult{}, errors.New("visual retry requires a positive message ID and SHA-256 hash")
@@ -192,6 +207,12 @@ func (r *Reconciler) otherWorkersActive(ctx context.Context, result *ReconcileRe
 // by a live qualifying occurrence. Changes racing the scan remain after the
 // baseline and are repaired by Replay.
 func (r *Reconciler) FullReconcile(ctx context.Context) (ReconcileResult, error) {
+	var captureErr error
+	ctx, captureErr = r.captureReconciliationPolicy(ctx)
+	if captureErr != nil {
+		return ReconcileResult{}, captureErr
+	}
+
 	consumer, _, err := r.archive.RegisterAttachmentChangeConsumer(ctx, r.config.ConsumerKey)
 	if err != nil {
 		return ReconcileResult{}, err
@@ -270,6 +291,12 @@ func (r *Reconciler) FullReconcile(ctx context.Context) (ReconcileResult, error)
 // is durable. An error leaves the cursor untouched, so the complete page is
 // retried at least once.
 func (r *Reconciler) Replay(ctx context.Context) (ReconcileResult, error) {
+	var captureErr error
+	ctx, captureErr = r.captureReconciliationPolicy(ctx)
+	if captureErr != nil {
+		return ReconcileResult{}, captureErr
+	}
+
 	result := ReconcileResult{Work: make([]WorkItem, 0)}
 	maxPages := r.maxScanPages()
 	for pages := 0; ; pages++ {
@@ -493,7 +520,7 @@ func (r *Reconciler) reconcileCandidates(
 			continue
 		}
 		result.Claimed++
-		result.Work = append(result.Work, WorkItem{Candidate: candidate, Document: document, Claim: claim})
+		result.Work = append(result.Work, WorkItem{Candidate: candidate, Document: document, Claim: claim, policyContext: ctx})
 	}
 	return nil
 }
@@ -676,4 +703,26 @@ func rejectionRevision(candidate store.VisualCandidate, reason EligibilityReason
 		writeRevisionField(hash, value)
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// A policy transition invalidates the bounded discovery frontier as well as
+// publications. The next ordinary pass must revisit newly eligible low IDs.
+func (r *Reconciler) captureReconciliationPolicy(ctx context.Context) (context.Context, error) {
+	ctx, err := r.archive.CaptureConversationPolicyWork(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.CheckConversationPolicyAdmission(ctx); err != nil {
+		return nil, err
+	}
+	if r.policyContext != nil {
+		if err := store.CheckConversationPolicyAdmission(store.WithConversationPolicyWorkFrom(ctx, r.policyContext)); err != nil {
+			if !errors.Is(err, store.ErrConversationPolicyStale) {
+				return nil, err
+			}
+			r.scanCursor = 0
+		}
+	}
+	r.policyContext = ctx
+	return ctx, nil
 }

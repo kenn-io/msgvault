@@ -748,6 +748,87 @@ can override an excluded parent; an explicit child exclude can override an
 included parent. `exclude` wins when the same ID is in both lists. See
 [Discord](/docs/usage/discord/#configure-media-repairs-and-channel-filters).
 
+### Conversation archive tiers
+
+Conversation policy uses the provider's archived roster, including the same
+participant-count rules as media policy. Newer `main` builds enforce full and
+cold tiers:
+
+| Tier | Behavior |
+| --- | --- |
+| `full` | Archive text and use it in search, embeddings and people features. |
+| `cold` | Archive text; explicit lexical search only, without embeddings or people contributions. |
+| `stub` (future) | Keep your own messages, direct replies and explicit mentions of you, plus room metadata. |
+| `skip` (future) | Stop importing room history. |
+
+In these builds, `cold` excludes rooms from default lexical search, semantic inputs,
+Explore/Files, graph, identity suggestions, enrichment and relationship analytics.
+All archived text stays available through explicit detail access and lexical
+`--include-cold` or `include:cold` searches. Include-cold never enables semantic
+processing. `stub` and `skip` remain future behavior: settings are rejected until
+retention and purge support ships.
+
+Beeper, Slack (including Slackdump imports), Discord and Teams each accept
+`max_participants`, default `20`. An explicit `0` disables automatic cold
+classification. This setting is separate from `media_max_participants` and
+`max_media_mb`, which continue to govern attachments.
+
+```toml
+[beeper]
+max_participants = 20
+
+[conversation_policy]
+activity_window_days = 180
+
+[[conversation_policy.overrides]]
+source_type = "beeper"
+source_identifier = "example-account"
+conversation_id = "example-room"
+tier = "cold"
+```
+
+Automatic policy selects `full` for a known roster at or below the limit, or recent
+activity: your own post, an explicit mention of a confirmed self identity, or a
+direct reply to your message. The activity cutoff is inclusive; future timestamps do not establish
+activity. Larger rooms and rooms with unknown size select `cold` without that
+activity. The activity window defaults to 180 days (also when set to `0`);
+negative values and windows beyond 106751 days are rejected. Other providers
+keep their current behavior.
+
+Inspect archived rooms and save overrides through the daemon:
+
+```sh
+msgvault policy list
+msgvault policy set 1 example-room cold
+msgvault policy reset 1 example-room
+```
+
+`list` prints JSON with source IDs, provider room IDs, roster status, effective
+tiers and selected overrides. Use its source ID and provider ID with `set` or
+`reset`. A saved CLI override wins over config. Reset removes that saved value
+and restores config or automatic selection. Config overrides match the exact
+source type, source identifier and provider room ID; duplicate keys are rejected.
+Beeper source identifiers are account IDs; Slack uses `TeamID:UserID`, Discord
+uses guild IDs, and Teams uses account email addresses. `list` also reports last
+activity and whether the roster count is authoritative. Set/reset immediately
+update enforced eligibility and invalidate derived state; they do not purge
+messages or contact a provider.
+
+The daemon configures the whole archive before consumers start, including quiet
+and disabled sources. It refreshes settings and activity once per minute, so
+quiet-room expiry can lag the cutoff by one refresh interval. A malformed reload
+keeps validated stored settings while expiry and cleanup continue. Initial
+configuration failures block startup. Legacy observations without confirmed
+conversation support stay excluded until normal sync supplies that evidence.
+
+Independent contacts, full-room support and manual identity decisions survive
+cold transitions. Cleanup reconciles message, context, person, document and
+visual vectors even when generation is disabled or credentials are absent. A
+failed cleanup stays pending and is retried each minute; policy reads and
+publications remain enforced in the meantime. Cache-only analytics are unavailable
+while their invalidated cache rebuilds. Successful setting edits do not promise
+that rebuilding has finished.
+
 ### Media policy
 
 `[beeper]`, `[slack]`, `[discord]`, and `[teams]` share one attachment policy
@@ -792,6 +873,17 @@ media = false
 Policy changes apply to future downloads. Media already stored under an
 earlier policy stays until you run `msgvault purge-excluded-media`, which
 removes attachment bytes the current policy would no longer collect.
+
+Participant limits use provider membership, not the number of senders observed
+in archived messages. A normal Beeper sync refreshes missing or unreadable
+membership for quiet archived conversations, even when their activity has not
+changed. Repairs follow message sync in bounded batches. Failed repairs retry
+after a day and do not hold up new messages; a full sync retries sooner. Discord
+records its guild member estimate when a participant limit is configured,
+including syncs with media downloading disabled. If the provider
+still cannot report membership, `purge-excluded-media` retains that room's media
+and reports the unresolved count. Sync again after access is restored, then
+preview the purge again.
 
 ### `[log]`
 

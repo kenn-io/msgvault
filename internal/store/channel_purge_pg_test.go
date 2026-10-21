@@ -57,7 +57,9 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 				}
 				maintenanceDone <- err
 			}()
-			waitForPGBlockedQuery(ctx, t, st, writerPID, "LOCK TABLE %")
+			// Maintenance must wait on the scoped writer before it takes the
+			// exclusive table locks. The statement used by that fence can vary.
+			waitForPGBlockedQuery(ctx, t, st, writerPID, "%")
 			require.NoError(blocker.Commit())
 			assert.NoError(<-writeDone, "scoped conversation creation")
 			assert.NoError(<-maintenanceDone, "maintenance")

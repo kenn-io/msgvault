@@ -34,6 +34,7 @@ type Ledger interface {
 	ListDocumentVectorChunkCandidates(ctx context.Context, generationID, afterChunkID int64, limit int) ([]store.DocumentVectorChunkCandidate, error)
 	ClaimDocumentVectorChunk(ctx context.Context, generationID, afterChunkID int64, scanLimit int, owner string, now time.Time, leaseDuration time.Duration) (*store.DocumentVectorChunkClaim, error)
 	RenewDocumentVectorChunkClaim(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time, leaseDuration time.Duration) (time.Time, error)
+	ReleaseDocumentVectorChunkClaim(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time) error
 	CommitDocumentVectorPublication(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time) error
 	FailDocumentVectorChunk(ctx context.Context, generationID int64, token, owner string, fence int64, now time.Time, nextRetryAt *time.Time, terminal bool, errorCode string) error
 }
@@ -236,6 +237,15 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	if err := w.validate(generationID); err != nil {
 		return result, err
 	}
+	if policy, ok := w.deps.Ledger.(interface {
+		CaptureConversationPolicyWork(ctx context.Context) (context.Context, error)
+	}); ok {
+		var err error
+		ctx, err = policy.CaptureConversationPolicyWork(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	generation, err := w.deps.Ledger.GetDocumentVectorGeneration(ctx, int64(generationID))
 	if err != nil {
 		return result, fmt.Errorf("read document vector generation: %w", err)
@@ -283,6 +293,14 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 		return result, errors.Join(runErr, heartbeat.err())
 	}
 	groups, inputs := groupWorkerClaims(preparedClaims, preparedTexts, w.deps.ContextualDocuments)
+	tokens := make([]string, len(preparedClaims))
+	for i, claim := range preparedClaims {
+		tokens[i] = claim.Token
+	}
+	providerCtx := store.WithConversationPolicyDocumentTokens(heartbeat.context(), int64(generationID), tokens)
+	if err := store.CheckConversationPolicyAdmission(providerCtx); err != nil {
+		return result, errors.Join(err, w.releaseClaimsAfterAdmissionError(ctx, generationID, preparedClaims, heartbeat))
+	}
 	result.ProviderCalls = 1
 	result.ProviderDocuments = len(inputs)
 	for _, input := range inputs {
@@ -292,12 +310,15 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 		}
 	}
 
-	vectors, providerErr := w.deps.Provider.EmbedDocuments(heartbeat.context(), inputs)
+	vectors, providerErr := w.deps.Provider.EmbedDocuments(providerCtx, inputs)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return result, ctxErr
 	}
 	if heartbeatErr := heartbeat.err(); heartbeatErr != nil {
 		return result, heartbeatErr
+	}
+	if err := store.CheckConversationPolicyAdmission(providerCtx); err != nil {
+		return result, errors.Join(err, w.releaseClaimsAfterAdmissionError(ctx, generationID, preparedClaims, heartbeat))
 	}
 	outcomes, responseErr := validateWorkerProviderDocuments(inputs, vectors, providerErr, w.deps.Dimension)
 	var embeddings []Embedding
@@ -358,6 +379,23 @@ func (w *Worker) Run(ctx context.Context, generationID GenerationID, limit int) 
 	runErr = errors.Join(runErr, responseErr)
 	runErr = errors.Join(runErr, heartbeat.err())
 	return result, runErr
+}
+
+func (w *Worker) releaseClaimsAfterAdmissionError(
+	ctx context.Context,
+	generationID GenerationID,
+	claims []*store.DocumentVectorChunkClaim,
+	heartbeat *workerClaimHeartbeat,
+) error {
+	heartbeat.stop()
+	releaseCtx := context.WithoutCancel(ctx)
+	var releaseErr error
+	for _, claim := range claims {
+		releaseErr = errors.Join(releaseErr, w.deps.Ledger.ReleaseDocumentVectorChunkClaim(
+			releaseCtx, int64(generationID), claim.Token, claim.LeaseOwner, claim.LeaseFence, w.deps.Now(),
+		))
+	}
+	return releaseErr
 }
 
 // finalizeOutcomes derives public pass accounting only from durable chunk

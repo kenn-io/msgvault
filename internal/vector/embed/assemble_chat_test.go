@@ -91,6 +91,48 @@ func TestChatWindowAssembler_LateBackfillChangesOnlyAffectedKey(t *testing.T) {
 		"a backfill in an earlier window must not renumber or revise a later window")
 }
 
+func TestSourceSnapshotHidesColdOnlyParticipantValuesFromFullChatContext(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "chat-identity-policy")
+	requirements.NoError(err)
+	fullRoom, err := st.EnsureConversationWithType(source.ID, "full-room", "group_chat", "Full room")
+	requirements.NoError(err)
+	coldRoom, err := st.EnsureConversationWithType(source.ID, "cold-room", "group_chat", "Cold room")
+	requirements.NoError(err)
+	participant, err := st.EnsureParticipant("shared@example.test", "Initial name", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.EnsureConversationParticipant(fullRoom, participant, "member"))
+	requirements.NoError(st.EnsureConversationParticipant(coldRoom, participant, "member"))
+	_, err = st.DB().Exec(st.Rebind(`UPDATE participants SET email_address=?,domain=?,display_name=?,phone_number=? WHERE id=?`),
+		"cold-only@example.test", "example.test", "Cold-only name", "+15550109991", participant)
+	requirements.NoError(err)
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "full-room", "full"))
+	requirements.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, "cold-room", "cold"))
+	message, err := st.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: fullRoom, SourceMessageID: "full-message",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: participant, Valid: true},
+		SentAt: sql.NullTime{Time: time.Date(2026, 8, 8, 9, 0, 0, 0, time.UTC), Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageBody(message, sql.NullString{String: "Synthetic full-room message", Valid: true}, sql.NullString{}))
+
+	snapshot, err := BeginSourceSnapshot(t.Context(), st)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(snapshot.Close()) }()
+	conversation, found, err := snapshot.Conversation(t.Context(), fullRoom)
+	requirements.NoError(err)
+	requirements.True(found)
+	requirements.Len(conversation.Participants, 1)
+	assertions.Empty(conversation.Participants[0].DisplayName)
+	rows, err := snapshot.ChatMessages(t.Context(), AffectedScope{ConversationID: fullRoom, MessageIDStart: message, MessageIDEnd: message + 1})
+	requirements.NoError(err)
+	requirements.Len(rows, 1)
+	assertions.Empty(rows[0].SenderDisplay)
+	assertions.NotContains(rows[0].SenderDisplay, "cold-only@example.test")
+}
+
 func TestChatWindowAssembler_NullAndEqualTimesUseMessageIDTieBreak(t *testing.T) {
 	f := newChatAssemblyFixture(t, AssemblyPolicy{ChatGap: 30 * time.Minute, MaxChunkRunes: 100})
 	nullFirst := f.seed("null-first", "", "Alice", "one")

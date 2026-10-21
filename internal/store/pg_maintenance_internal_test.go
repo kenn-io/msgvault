@@ -343,34 +343,32 @@ func TestMergeSourcesDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
 		removeDone <- err
 	}()
 
-	// BeginExclusive takes the identity-revision row lock before it requests an
-	// EXCLUSIVE lock on sources. In the broken order, the merge already owns a
-	// source row lock and then waits for that revision row; observing the
-	// waiting table lock lets this test release the merge at exactly that edge.
+	// Policy W now precedes both identity and table locks. Observe removal
+	// waiting at that real advisory fence while merge owns it, then let merge
+	// finish; neither operation may retain lower-order locks across that wait.
 	deadline := time.NewTimer(10 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	removeFinished := false
 	var removeErr error
-	waitingForSources := false
-	for !removeFinished && !waitingForSources {
+	waitingForPolicy := false
+	for !removeFinished && !waitingForPolicy {
 		select {
 		case removeErr = <-removeDone:
 			removeFinished = true
 		case <-ticker.C:
 			var waiting bool
 			err := st.DB().QueryRowContext(ctx, `SELECT EXISTS (
-				SELECT 1 FROM pg_locks l
-				JOIN pg_class c ON c.oid = l.relation
-				JOIN pg_namespace n ON n.oid = c.relnamespace
-				WHERE n.nspname = current_schema() AND c.relname = 'sources'
-				  AND l.mode = 'ExclusiveLock' AND NOT l.granted
+				SELECT 1 FROM pg_stat_activity
+                WHERE datname=current_database() AND pid<>pg_backend_pid()
+                AND wait_event_type='Lock' AND query LIKE '%msgvault.conversation_policy%'
+                AND query LIKE '%pg_advisory_xact_lock%'
 			)`).Scan(&waiting)
-			require.NoError(err, "observe serialized removal's source-table lock")
-			waitingForSources = waiting
+			require.NoError(err, "observe serialized removal's policy lock")
+			waitingForPolicy = waiting
 		case <-deadline.C:
-			require.FailNow("serialized removal neither completed nor exposed its waiting sources lock")
+			require.FailNow("serialized removal neither completed nor exposed its waiting policy lock")
 		}
 	}
 	release()

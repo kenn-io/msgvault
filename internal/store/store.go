@@ -74,7 +74,9 @@ type Store struct {
 
 	// The daemon owns one Store. Consent changes wait for in-flight provider
 	// requests, without holding an archive transaction during network I/O.
-	personMatchConsentMu sync.RWMutex
+	personMatchConsentMu       sync.RWMutex
+	conversationPolicyMu       sync.RWMutex
+	conversationPolicyLockPath string
 
 	sqliteOptimizeMu sync.Mutex
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
@@ -260,6 +262,11 @@ func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, erro
 		syncExecutionLocks:   newSyncExecutionLockState(),
 	}
 
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	// Probe like the read-only opens do: a Store must know whether full-text
 	// search is available in the database it just opened. InitSchema re-probes
 	// after creating the FTS objects, so a caller that initializes a fresh
@@ -428,6 +435,10 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		dialect:              dialect,
 		readOnly:             true,
 		syncExecutionLocks:   newSyncExecutionLockState(),
+	}
+	if err := s.initializeConversationPolicyFence(ctx); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	available, err := dialect.FTSAvailable(ctx, db)
@@ -1520,6 +1531,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactConversationPolicyStatus, 1, false, s.migratePersonFactConversationPolicyStatus); err != nil {
+		return fmt.Errorf("migrate fact policy statuses: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}
@@ -1633,6 +1647,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		} else if m.Desc == "last_modified" && !s.IsPostgreSQL() {
 			lastModifiedColumnAdded = true
 		}
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationParticipantObservationIdentity, 1, false,
+		s.ensureParticipantObservationIdentityIndex,
+	); err != nil {
+		return fmt.Errorf("upgrade participant observation identity index: %w", err)
 	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
@@ -2174,6 +2194,20 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return err
 	}
 
+	// Pre-revision workers cleared embed_gen when source or contextual inputs
+	// changed. Their vectors and the new embedding_revision column both start
+	// at zero, so baseline unstamped messages once before a later rebuild can
+	// publish a new-generation vector and accidentally make an old-generation
+	// vector look current again.
+	if err := s.runOnceMigration(
+		ctx, migrationMessageEmbeddingRevisionBaseline, 1, false,
+		func(ctx context.Context) error {
+			return s.backfillMessageEmbeddingRevisionBaseline(ctx)
+		},
+	); err != nil {
+		return fmt.Errorf("backfill message embedding revisions: %w", err)
+	}
+
 	// Backfill content_changed_at for rows that predate the column, in
 	// committed batches (backfillContentChangedAt). Gated on the ledger
 	// because the scan never finds work after the first completed run; no
@@ -2303,6 +2337,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		s.backfillCardDAVInferenceExportState,
 	); err != nil {
 		return fmt.Errorf("backfill CardDAV inference export state: %w", err)
+	}
+
+	if err := s.runOnceMigration(ctx, migrationAppleWhatsAppNameProvenance, 1, false, s.backfillAppleParticipantNamesContext); err != nil {
+		return fmt.Errorf("backfill Apple WhatsApp name provenance: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationNativeEmailObservationProvenance, 1, false,
+		s.backfillNativeEmailObservationProvenanceContext,
+	); err != nil {
+		return fmt.Errorf("backfill native email observation provenance: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert

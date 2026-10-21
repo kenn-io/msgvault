@@ -373,10 +373,14 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 				f.seed("email", f.chatID, time.Now().UTC(), "Second synthetic body"),
 			}
 			tokens := make(map[int64]any)
+			embeddingRevisions := make(map[int64]int64)
 			for _, id := range ids {
 				var token string
 				require.NoError(f.store.DB().QueryRow(`SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?`, id).Scan(&token))
 				tokens[id] = token
+				var revision int64
+				require.NoError(f.store.DB().QueryRow(`SELECT embedding_revision FROM messages WHERE id = ?`, id).Scan(&revision))
+				embeddingRevisions[id] = revision
 			}
 			_, err := f.store.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_second_stamp BEFORE UPDATE OF embed_gen ON messages WHEN NEW.id = %d BEGIN SELECT RAISE(ABORT, 'synthetic stamp failure'); END`, ids[1]))
 			require.NoError(err)
@@ -387,24 +391,31 @@ func TestWorkerDiagnosticsCountCommittedCoverage(t *testing.T) {
 			w := NewWorker(WorkerDeps{Store: f.store, MainDB: f.store.DB(), Backend: f.backend})
 			switch mode {
 			case "missing skip":
-				_, err = w.stampSkipped(ctx, f.gen, []int64{ids[0], ids[1] + 1000}, tokens)
+				_, err = w.stampSkipped(ctx, f.gen, []int64{ids[0], ids[1] + 1000}, tokens, embeddingRevisions)
 				require.NoError(err)
 			case "skipped then covered":
-				_, err = w.stampSkipped(ctx, f.gen, ids[:1], tokens)
+				_, err = w.stampSkipped(ctx, f.gen, ids[:1], tokens, embeddingRevisions)
 				require.NoError(err)
 				ids = ids[1:]
 			}
 			if mode != "missing skip" {
-				_, err = w.stampCovered(ctx, f.gen, ids, tokens)
+				_, err = w.stampCovered(ctx, f.gen, ids, tokens, embeddingRevisions)
 				require.ErrorContains(err, "synthetic stamp failure")
 			}
 			d.finish(err)
 			_, stamped, _, _, err := f.store.CoverageCounts(t.Context(), int64(f.gen))
 			require.NoError(err)
-			assert.Equal(int64(1), stamped)
+			wantStamped := int64(1)
+			wantCompleted := 1
+			if mode == "covered" {
+				// The publication fence commits the covered batch atomically;
+				// the failing second stamp rolls back the first.
+				wantStamped, wantCompleted = 0, 0
+			}
+			assert.Equal(wantStamped, stamped)
 			got := capture.read(t)
 			require.Len(got.RecentBatches, 1)
-			assert.Equal(1, got.RecentBatches[0].Completed)
+			assert.Equal(wantCompleted, got.RecentBatches[0].Completed)
 		})
 	}
 }
@@ -485,7 +496,11 @@ func TestContextDiagnosticsSizeRejection(t *testing.T) {
 				inputs = []DocumentInput{{Chunks: []string{strings.Repeat("é", 2048)}}}
 			}
 			d.beginBatch(len(inputs), time.Now())
-			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), inputs)
+			policyInputs := make([]contextualDocumentInput, len(inputs))
+			for i, input := range inputs {
+				policyInputs[i] = contextualDocumentInput{input: input}
+			}
+			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), policyInputs)
 			require.NoError(err, "an oversized document is recovered or left uncovered without failing the pass")
 			require.Len(results, len(inputs))
 			d.finish(nil)

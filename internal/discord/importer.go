@@ -285,9 +285,17 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	// Resolve the floor before staging: the archived catalog has to record the
 	// membership this run's media policy is about to be evaluated against, so
 	// purge and retry selection later reach the same verdict sync did.
+	settings, err := imp.store.ConversationPolicySettingsContext(ctx)
+	if err != nil {
+		return summary, fmt.Errorf("read Discord conversation policy: %w", err)
+	}
 	floor := guildFloor{}
-	if media != nil {
-		floor = imp.guildParticipantFloor(ctx, opts, summary)
+	if media != nil || opts.MediaPolicy.MaxParticipants > 0 || settings.MaxParticipants[sourceTypeDiscord] > 0 {
+		floorOpts := opts
+		if floorOpts.MediaPolicy.MaxParticipants == 0 {
+			floorOpts.MediaPolicy.MaxParticipants = settings.MaxParticipants[sourceTypeDiscord]
+		}
+		floor = imp.guildParticipantFloor(ctx, floorOpts, summary)
 		// The floor is guild-wide, so its outcome lands on every conversation of
 		// the guild before staging rewrites this run's containers: purge and
 		// backfill then see the same resolved (or unresolved) membership.
@@ -296,6 +304,13 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 		}
 	}
 	if err := imp.stageCatalogContainers(ctx, source.ID, containers, state, floor); err != nil {
+		return summary, err
+	}
+	conversationIDs, err := imp.store.ListConversationIDsContext(ctx, source.ID)
+	if err != nil {
+		return summary, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, conversationIDs, time.Now()); err != nil {
 		return summary, err
 	}
 	state.ThreadCatalog = catalog.ThreadCatalog
@@ -325,6 +340,9 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (summary *I
 	}
 
 	if err := imp.resolveDeferredReplies(ctx, source.ID); err != nil {
+		return summary, err
+	}
+	if _, err := imp.store.RefreshConversationPolicy(ctx, conversationIDs, time.Now()); err != nil {
 		return summary, err
 	}
 	if err := imp.store.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
@@ -1500,7 +1518,7 @@ func (imp *Importer) persistPage(
 		if err != nil {
 			return err
 		}
-		recipients, participantIDs, senderID, fromLabel, mentionLabels, err := imp.resolveRecipients(ctx, mapped.Recipients)
+		recipients, participantIDs, senderID, fromLabel, mentionLabels, err := imp.resolveRecipients(ctx, conversationID, mapped.Recipients)
 		if err != nil {
 			return err
 		}
@@ -1608,10 +1626,11 @@ func (imp *Importer) persistPage(
 			}
 		}
 	}
-	return nil
+	_, err = imp.store.RefreshConversationPolicy(ctx, []int64{conversationID}, time.Now())
+	return err
 }
 
-func (imp *Importer) resolveRecipients(ctx context.Context,
+func (imp *Importer) resolveRecipients(ctx context.Context, conversationID int64,
 	observations []recipientObservation,
 ) ([]store.RecipientSet, []int64, int64, string, []string, error) {
 	sets := map[string]*store.RecipientSet{
@@ -1625,11 +1644,18 @@ func (imp *Importer) resolveRecipients(ctx context.Context,
 	var mentionLabels []string
 	for _, recipient := range observations {
 		observation := recipient.Participant
-		participantID, err := imp.store.EnsureParticipantByIdentifierContext(ctx,
-			observation.IdentifierType,
-			observation.IdentifierValue,
-			observation.ParticipantLabel,
-		)
+		resolved, err := imp.store.ResolveConversationParticipantContext(ctx, conversationID, store.ConversationParticipantIdentity{
+			IdentifierType:  observation.IdentifierType,
+			IdentifierValue: observation.IdentifierValue,
+			DisplayName:     observation.ParticipantLabel,
+		})
+		participantID := resolved.ParticipantID
+		if errors.Is(err, store.ErrConversationPolicyStale) || errors.Is(err, store.ErrPersonBindingConflict) {
+			// Archive stable identity and per-message presentation even when the
+			// originating room no longer admits shared profile writes.
+			participantID, err = imp.store.EnsureParticipantByIdentifierContext(ctx,
+				observation.IdentifierType, observation.IdentifierValue, "")
+		}
 		if err != nil {
 			return nil, nil, 0, "", nil, fmt.Errorf("resolve Discord participant: %w", err)
 		}

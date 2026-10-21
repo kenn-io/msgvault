@@ -31,7 +31,6 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
@@ -65,10 +64,20 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = staging.cleanup() }()
+	staging.policyDBPath = dbPath
 
 	st, err := store.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open store for derived cache refresh: %w", err)
+	}
+	policyRevision, err := st.ConversationPolicyRevision(ctx)
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
+	if policyRevision != state.ConversationPolicyRevision {
+		_ = st.Close()
+		return nil, fmt.Errorf("%w: conversation policy changed", ErrDerivedRefreshRequiresFullBuild)
 	}
 	identityRevision, err := st.IdentityRevision()
 	if err != nil {
@@ -149,14 +158,28 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
+	var snapshotPolicyRevision int64
+	if err := sourceSnapshot.QueryRow(`SELECT COALESCE((SELECT CAST(value AS BIGINT) FROM archive_metadata WHERE key='conversation_policy_revision'),0)`).Scan(&snapshotPolicyRevision); err != nil {
+		return nil, err
+	}
+	if snapshotPolicyRevision != state.ConversationPolicyRevision {
+		return nil, fmt.Errorf("%w: conversation policy changed during refresh", ErrDerivedRefreshRequiresFullBuild)
+	}
+	state.ConversationPolicyRevision = snapshotPolicyRevision
+
 	datasets := []string{
+		"conversation_policy", "sources",
 		tableMessages,
+		"message_recipients",
 		tableConversations,
 		tableConversationParticipants,
 		"account_identities",
 		tableParticipants,
 		tableParticipantIdentifiers,
 		"persons", "person_participants",
+		"person_contact_points", "participant_contact_observations",
+		"participant_contact_observation_conversations", "communication_services",
+		cacheExportParticipants, cacheExportParticipantIdentifiers,
 	}
 	var relatedChangeSeq int64
 	var relatedKinds relatedChangeKinds
@@ -269,7 +292,7 @@ func refreshDerivedDatasetsOnly(
 			Append:  map[string]bool{},
 			Replace: relatedReplacements,
 		}
-		if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+		if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 			return nil, err
 		}
 		reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -297,23 +320,28 @@ func refreshDerivedDatasetsOnly(
 			return nil, fmt.Errorf("export derived conversation participants: %w", err)
 		}
 	}
-	identifiersChanged :=
-		participantIdentifierRevision != state.ParticipantIdentifierRevision
-	if identifiersChanged {
+	identifierProjectionChanged :=
+		participantIdentifierRevision != state.ParticipantIdentifierRevision ||
+			(repairRelated && relatedKinds.recipients)
+	if identifierProjectionChanged {
 		// The directory rebuild reads identifier values from the
 		// participant_identifiers base dataset (relationship_people search
-		// values and label fallbacks), so a changed mapping must be re-staged
-		// and republished alongside the derived index.
+		// values and label fallbacks). Recipient history also controls native
+		// identifier eligibility, so a recipient-only repair must re-stage this
+		// projection even when the identifier mapping revision did not change.
 		if err := derivedCopy(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL()); err != nil {
 			return nil, fmt.Errorf("export derived participant identifiers: %w", err)
 		}
 	}
 	displayNamesChanged :=
 		participantDisplayNameRevision != state.ParticipantDisplayNameRevision
-	if identifiersChanged || displayNamesChanged {
+	participantProjectionChanged := identifierProjectionChanged || displayNamesChanged ||
+		(repairRelated && relatedKinds.recipients)
+	if participantProjectionChanged {
 		// Participant identifiers can create participant rows, and display-name
-		// mutations change the row already present in participants.parquet. Both
-		// changes must replace that base dataset before rebuilding the directory.
+		// mutations change the row already present in participants.parquet. Recipient
+		// evidence can also change value eligibility without advancing either
+		// revision, so those repairs must refresh the same base dataset.
 		if err := derivedCopy(tableParticipants, sourceSnapshot.participantsExportSelectSQL()); err != nil {
 			return nil, fmt.Errorf("export derived participants: %w", err)
 		}
@@ -380,8 +408,8 @@ func refreshDerivedDatasetsOnly(
 	plan := derivedCachePublishPlan(
 		conversationChanged,
 		typesChanged,
-		identifiersChanged,
-		identifiersChanged || displayNamesChanged,
+		identifierProjectionChanged,
+		participantProjectionChanged,
 		personDisplayNamesChanged || identityChanged,
 	)
 	if repairRelated {
@@ -389,7 +417,7 @@ func refreshDerivedDatasetsOnly(
 			plan.Replace[dataset] = true
 		}
 	}
-	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -554,7 +582,6 @@ func publishDerivedCache(
 	analyticsDir string,
 	plan cachePublishPlan,
 	state query.CacheSyncState,
-	locking cachePublishLocking,
 ) error {
 	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
@@ -566,7 +593,6 @@ func publishDerivedCache(
 		plan,
 		data,
 		derivedPublishBeforeMarkerHook,
-		locking,
 	)
 }
 
@@ -583,7 +609,7 @@ func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) 
 		Scan(&coveredCount); err != nil {
 		return fmt.Errorf("check related-refresh message population: %w", err)
 	}
-	if coveredCount != state.Stats.TotalMessages {
+	if coveredCount != state.ArchivedMessageCount {
 		return fmt.Errorf("%w: cached message population changed",
 			ErrDerivedRefreshRequiresFullBuild)
 	}

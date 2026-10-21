@@ -849,6 +849,10 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
+	if parsedQuery.IncludeCold && (mode == "vector" || mode == exploreSearchModeHybrid) {
+		writeError(w, http.StatusBadRequest, "include_cold_lexical_only", "include:cold is available only for lexical search; use mode=fts and remove semantic or rerank options")
+		return
+	}
 	parsedQuery.HideDeleted = true
 	if s.requestAuthentication(r).Grant != nil {
 		parsedQuery.AccountIDs = agentReadSourceIDs(r)
@@ -3367,6 +3371,10 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		parsed := search.ParseOR(searchQuery)
 		if parseErr := parsed.Err(); parseErr != nil {
 			writeError(w, http.StatusBadRequest, "invalid_search", parseErr.Error())
+			return
+		}
+		if parsed.IncludeCold {
+			writeError(w, http.StatusBadRequest, "include_cold_lexical_only", "include:cold is for lexical search only; remove it before selecting provider deletion targets")
 			return
 		}
 		switch searchMode {

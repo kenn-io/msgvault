@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -259,8 +260,7 @@ func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
 
 	names, err := st.ParticipantDisplayNamesContext(ctx, []int64{alice, bob})
 	require.NoError(err, "ParticipantDisplayNamesContext")
-	assert.Equal("Alice Example", names[alice])
-	assert.Equal("Alice Example", names[bob])
+	assert.Empty(names, "raw supported-chat names need exact Full envelopes")
 
 	shared, err := st.SharedConversationCountContext(ctx, alice, bob)
 	require.NoError(err, "SharedConversationCountContext")
@@ -268,8 +268,14 @@ func TestParticipantDisplayNamesAndSharedConversations(t *testing.T) {
 
 	convID, err := st.EnsureConversationWithType(source.ID, "!room:beeper.local", "group_chat", "Group")
 	require.NoError(err, "EnsureConversationWithType")
+	require.NoError(st.SetConversationPolicyOverride(ctx, source.ID, "!room:beeper.local", conversationpolicy.Full))
 	require.NoError(st.EnsureConversationParticipant(convID, alice, "member"), "add alice")
 	require.NoError(st.EnsureConversationParticipant(convID, bob, "member"), "add bob")
+	policyNameEnvelope(t, st, source.ID, convID, "lookup-full-name", []int64{alice, bob}, []string{"Alice Example", "Alice Example"})
+	names, err = st.ParticipantDisplayNamesContext(ctx, []int64{alice, bob})
+	require.NoError(err)
+	assert.Equal("Alice Example", names[alice])
+	assert.Equal("Alice Example", names[bob])
 
 	shared, err = st.SharedConversationCountContext(ctx, alice, bob)
 	require.NoError(err, "second SharedConversationCountContext")

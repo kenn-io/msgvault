@@ -104,6 +104,27 @@ func Build(
 			return BuildResult{}, fmt.Errorf("build incremental relationship index: %w", err)
 		}
 	}
+	// Standalone legacy fixtures may omit the optional policy projection. A
+	// current cache export always supplies it; inspect once before building facts.
+	columns, err := func() ([]string, error) {
+		rows, err := db.QueryContext(ctx, "SELECT * FROM "+b.messageRelation()+" LIMIT 0")
+		if err != nil {
+			return nil, fmt.Errorf("inspect message policy projection: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		columns, columnsErr := rows.Columns()
+		rowsErr := rows.Err()
+		closeErr := rows.Close()
+		return columns, errors.Join(columnsErr, rowsErr, closeErr)
+	}()
+	if err != nil {
+		return BuildResult{}, err
+	}
+	for _, column := range columns {
+		if column == "conversation_tier" {
+			b.hasConversationTier = true
+		}
+	}
 	for _, dataset := range RequiredDatasets {
 		if err := resetOutputDataset(opts.OutputRoot, dataset); err != nil {
 			return BuildResult{}, err
@@ -217,8 +238,9 @@ var baseIdentityDatasets = []string{
 }
 
 type builder struct {
-	db   sqlExecutor
-	opts BuildOptions
+	hasConversationTier bool
+	db                  sqlExecutor
+	opts                BuildOptions
 }
 
 func (b builder) base(dataset string) string {
@@ -264,7 +286,14 @@ func (b builder) messageRelation() string {
 	if b.opts.Mode == ModeAppendRepair {
 		paths = append([]string{b.committed("messages")}, paths...)
 	}
-	return readParquetRelation(paths, true)
+	return b.fullMessageRelation(readParquetRelation(paths, true))
+}
+
+func (b builder) fullMessageRelation(relation string) string {
+	if b.hasConversationTier {
+		return "(SELECT * FROM " + relation + " WHERE conversation_tier = 'full')"
+	}
+	return relation
 }
 
 func (b builder) statsRelations() cacheStatsRelations {
@@ -277,7 +306,7 @@ func (b builder) statsRelations() cacheStatsRelations {
 		return readParquetRelation(paths, hivePartitioning)
 	}
 	return cacheStatsRelations{
-		messages:     relation("messages", true),
+		messages:     b.fullMessageRelation(relation("messages", true)),
 		recipients:   relation("message_recipients", false),
 		participants: readParquetRelation([]string{b.base("participants")}, false),
 		attachments:  relation("attachments", false),
@@ -525,10 +554,11 @@ WITH messages AS (
 	       coalesce(try_cast(size_estimate AS BIGINT), 0) AS size_estimate
 	FROM %s
 ), senders AS (
-	SELECT DISTINCT p.email_address, p.domain
+	SELECT p.email_address, p.domain
 	FROM %s mr
 	JOIN %s p ON p.id = try_cast(mr.participant_id AS BIGINT)
-	WHERE mr.recipient_type = 'from'
+	WHERE mr.recipient_type = 'from' AND EXISTS (SELECT 1 FROM messages m WHERE m.id=mr.message_id)
+ GROUP BY p.email_address,p.domain
 )
 SELECT
 	(SELECT count(*) FROM messages),
@@ -538,7 +568,7 @@ SELECT
 	(SELECT min(year(sent_at)) FROM messages),
 	(SELECT max(year(sent_at)) FROM messages),
 	(SELECT coalesce(sum(size_estimate), 0) FROM messages),
-	(SELECT coalesce(sum(try_cast(size AS BIGINT)), 0) FROM %s)`,
+	(SELECT coalesce(sum(try_cast(a.size AS BIGINT)), 0) FROM %s a WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id=a.message_id))`,
 		inputs.messages,
 		inputs.recipients,
 		inputs.participants,

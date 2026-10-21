@@ -28,6 +28,7 @@ func TestPersonMatchBlockingSeedsMissingEmailPairOnlyOnce(t *testing.T) {
 			item.participantID, item.sourceID, store.ProvenanceArchiveObservation)
 		require.NoError(err)
 	}
+	seedFullObservationTestSupport(t, st)
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 2)
 	require.NoError(err)
 	assert.Equal(1, created)
@@ -46,6 +47,7 @@ func TestPersonMatchBlockingSeedsMissingEmailPairOnlyOnce(t *testing.T) {
 	for _, support := range candidates[0].SourceSupport {
 		assert.False(support.IsConservative)
 	}
+	seedFullObservationTestSupport(t, st)
 	created, err = st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 2)
 	require.NoError(err)
 	assert.Zero(created)
@@ -77,6 +79,8 @@ func TestPersonMatchBlockingDeduplicatesPairsAndAddsCorroboration(t *testing.T) 
 		require.NoError(err)
 	}
 
+	seedFullObservationTestSupport(t, st)
+
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
 	assert.Equal(1, created)
@@ -98,6 +102,7 @@ func TestPersonMatchBlockingDeduplicatesPairsAndAddsCorroboration(t *testing.T) 
 			item.participantID, item.sourceID, store.ProvenanceArchiveObservation)
 		require.NoError(err)
 	}
+	seedFullObservationTestSupport(t, st)
 	created, err = st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
 	assert.Zero(created, "complete pair evidence must not be counted as newly created")
@@ -106,6 +111,7 @@ func TestPersonMatchBlockingDeduplicatesPairsAndAddsCorroboration(t *testing.T) 
 	require.Len(candidates, 1)
 	assert.Len(candidates[0].Evidence[0].SourceSupport, 4, "new source support must attach to an existing candidate")
 	assert.Len(candidates[0].SourceSupport, 4)
+	seedFullObservationTestSupport(t, st)
 	created, err = st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
 	assert.Equal(1, created, "the next distinct email pair must not be starved by already-supported observations")
@@ -138,6 +144,8 @@ func TestPersonMatchBlockingSkipsParticipantsAlreadyConnected(t *testing.T) {
 			participantID, fixture.Source.ID, store.ProvenanceArchiveObservation)
 		require.NoError(err)
 	}
+
+	seedFullObservationTestSupport(t, st)
 
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
@@ -177,6 +185,8 @@ func TestPersonMatchBlockingSkipsHighFanoutEmails(t *testing.T) {
 		require.NoError(err)
 	}
 
+	seedFullObservationTestSupport(t, st)
+
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
 	assert.Equal(1, created)
@@ -203,6 +213,8 @@ func TestPersonMatchBlockingSkipsArchiveObservationsWithoutSourceIDs(t *testing.
 			participantID, store.ProvenanceArchiveObservation)
 		require.NoError(err)
 	}
+
+	seedFullObservationTestSupport(t, st)
 
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 	require.NoError(err)
@@ -243,6 +255,8 @@ func TestPersonMatchBlockingDoesNotRelabelDeclaredObservationsAsArchiveEvidence(
 		require.NoError(err)
 	}
 
+	seedFullObservationTestSupport(t, st)
+
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 10)
 	require.NoError(err)
 	assert.Zero(created)
@@ -273,7 +287,7 @@ func TestPersonMatchBlockingPreservesScopedCandidateDecisions(t *testing.T) {
 				} {
 					_, err := st.RecordContactObservationContext(t.Context(), item.participantID,
 						store.ParticipantContactObservationInput{
-							SourceID: &item.sourceID, AddressKind: store.ContactAddressEmail,
+							SourceID: &item.sourceID, ConversationID: new(fullObservationTestRoom(t, st, item.sourceID)), AddressKind: store.ContactAddressEmail,
 							ServiceSlug: new("slack"), ScopeKind: new("workspace"), ScopeValue: &scope,
 							OriginalValue: "scoped@example.test", ProviderUserID: new("shared-provider-id"),
 							Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
@@ -296,6 +310,8 @@ func TestPersonMatchBlockingPreservesScopedCandidateDecisions(t *testing.T) {
 				}
 				before = append(before, candidate)
 			}
+
+			seedFullObservationTestSupport(t, st)
 
 			created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 1)
 			require.NoError(err)
@@ -349,6 +365,8 @@ func TestPersonMatchBlockingSkipsPairWhoseEmailEndsBeforeLock(t *testing.T) {
 		assert.NoError(err)
 	})
 	defer release()
+
+	seedFullObservationTestSupport(t, st)
 
 	created, err := st.EnsurePersonMatchScoringCandidatesContext(t.Context(), 2)
 	require.NoError(err)

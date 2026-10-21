@@ -152,6 +152,7 @@ func TestEmbedJob_Backstop_RecoversSubWatermarkStraggler(t *testing.T) {
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY, subject TEXT,
     deleted_at DATETIME, deleted_from_source_at DATETIME, embed_gen INTEGER,
+    embedding_revision INTEGER NOT NULL DEFAULT 0,
     last_modified DATETIME DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE message_bodies (
     message_id INTEGER PRIMARY KEY, body_text TEXT, body_html TEXT);

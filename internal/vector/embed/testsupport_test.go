@@ -30,6 +30,7 @@ CREATE TABLE messages (
     deleted_at DATETIME,
     deleted_from_source_at DATETIME,
     embed_gen INTEGER,
+    embedding_revision INTEGER NOT NULL DEFAULT 0,
     last_modified DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE message_bodies (
@@ -57,7 +58,7 @@ END;`
 // testWorkStore is a minimal WorkStore backed by the test main DB. It
 // mirrors store.ScanForEmbedding / store.SetEmbedGen against the test's
 // `messages` table (which carries id, subject, deleted_at,
-// deleted_from_source_at, embed_gen, last_modified).
+// deleted_from_source_at, embed_gen, embedding_revision, last_modified).
 type testWorkStore struct {
 	db *sql.DB
 }
@@ -149,8 +150,8 @@ func (s *testWorkStore) SetEmbedGen(ctx context.Context, ids []int64, target int
 func (s *testWorkStore) SetEmbedGenIfUnchanged(ctx context.Context, items []store.EmbedGenStamp, target int64) (missed []int64, covered int, err error) {
 	for _, it := range items {
 		res, err := s.db.ExecContext(ctx,
-			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ?`,
-			target, it.ID, it.LastModified)
+			`UPDATE messages SET embed_gen = ? WHERE id = ? AND last_modified = ? AND embedding_revision = ?`,
+			target, it.ID, it.LastModified, it.EmbeddingRevision)
 		if err != nil {
 			return missed, covered, err
 		}

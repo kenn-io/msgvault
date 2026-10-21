@@ -141,7 +141,7 @@ func (s *Store) ResolveVisualSearchOccurrence(ctx context.Context, generationID 
 		JOIN messages m ON m.id = vp.message_id
 		JOIN attachments a ON a.id = vp.representative_attachment_id
 		WHERE vp.generation_id = ? AND vp.current_vector_token = ?
-		  AND vp.state = 'current' AND `+LiveMessagesWhere("m", true)+`
+		  AND vp.state = 'current' AND `+(LiveMessagesWhere("m", true)+" AND "+FullMessageWhere("m"))+`
 		  AND a.message_id = vp.message_id AND a.attachment_role = 'standalone'
 	`), generationID, token).Scan(&occurrence.VectorToken, &occurrence.GenerationID,
 		&occurrence.AttachmentID, &occurrence.MessageID, &occurrence.ConversationID,
@@ -413,7 +413,19 @@ func (s *Store) ClaimVisualWork(
 		expiresAt, request.SourceFence}
 	args = append(args, stampArgs...)
 	args = append(args, request.Owner.MessageID, request.Now)
-	err := s.db.QueryRowContext(ctx, `
+	claimed := false
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := verifyVisualGenerationLive(q, request.GenerationID); err != nil {
+			return err
+		}
+		if err := verifyVisualOwner(q, request.Owner); err != nil {
+			return err
+		}
+		if err := s.CheckConversationPolicyMessagesTx(ctx, tx.Tx, []int64{request.Owner.MessageID}); err != nil {
+			return err
+		}
+		err := q.QueryRow(`
 		INSERT INTO visual_work_claims
 			(generation_id, message_id, blob_hash, media_input_key,
 			 proposed_revision, lease_owner, lease_expires_at, fencing_token,
@@ -431,19 +443,22 @@ func (s *Store) ClaimVisualWork(
 		WHERE visual_work_claims.lease_expires_at <= ?
 		RETURNING lease_owner, lease_expires_at, fencing_token, source_fence, claimed_content_stamp
 	`, args...).Scan(
-		&claim.LeaseOwner, &claim.LeaseExpiresAt, &claim.FencingToken, &claim.SourceFence,
-		&claim.ContentStamp,
-	)
-	if err == nil {
-		return claim, true, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return VisualWorkClaim{}, false, fmt.Errorf("claim visual work: %w", err)
-	}
-	if err := s.scanVisualClaim(ctx, request.GenerationID, request.Owner, request.ProposedRevision, &claim); err != nil {
-		return VisualWorkClaim{}, false, err
-	}
-	return claim, false, nil
+			&claim.LeaseOwner, &claim.LeaseExpiresAt, &claim.FencingToken, &claim.SourceFence,
+			&claim.ContentStamp,
+		)
+		if err == nil {
+			claimed = true
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("claim visual work: %w", err)
+		}
+		if err := scanVisualClaim(q, request.GenerationID, request.Owner, request.ProposedRevision, &claim); err != nil {
+			return err
+		}
+		return nil
+	})
+	return claim, claimed, err
 }
 
 func (s *Store) RenewVisualWork(
@@ -494,7 +509,7 @@ func (s *Store) PrepareVisualPublication(
 		return "", err
 	}
 	sourceChanged := false
-	err = s.withTxContext(ctx, func(tx *loggedTx) error {
+	err = s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualGenerationLive(q, prepared.Claim.GenerationID); err != nil {
 			return err
@@ -578,7 +593,7 @@ func (s *Store) CommitVisualPublication(
 		return errors.New("visual vector token is required")
 	}
 	sourceChanged := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualGenerationLive(q, claim.GenerationID); err != nil {
 			return err
@@ -691,7 +706,7 @@ func (s *Store) RestoreVisualPublication(
 		!authoritativeVisualRoleSource(prepared.RoleSource) {
 		return errors.New("restored visual publication requires an existing vector and authoritative standalone role")
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error {
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualClaim(q, prepared.Claim, time.Now().UTC()); err != nil {
 			return err
@@ -750,7 +765,7 @@ func (s *Store) RejectVisualPublication(
 		return errors.New("visual outcome kind and reason are required")
 	}
 	sourceChanged := false
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		if err := verifyVisualClaim(q, claim, time.Now().UTC()); err != nil {
 			return err
@@ -833,7 +848,8 @@ func (s *Store) TombstoneVisualOwner(
 	if err := validateVisualOwner(owner); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `
 		INSERT INTO visual_publications
 			(generation_id, message_id, blob_hash, media_input_key,
 			 source_fence, attachment_role, role_source, state)
@@ -845,7 +861,8 @@ func (s *Store) TombstoneVisualOwner(
 			state = 'tombstoned',
 			updated_at = `+s.dialect.Now()+`
 	`, generationID, owner.MessageID, owner.BlobHash, owner.MediaInputKey, sourceFence)
-	return err
+		return err
+	})
 }
 
 func (s *Store) GetVisualPublication(
@@ -886,8 +903,8 @@ func (s *Store) GetVisualPublication(
 	return publication, nil
 }
 
-func (s *Store) scanVisualClaim(
-	ctx context.Context,
+func scanVisualClaim(
+	q querier,
 	generationID int64,
 	owner VisualOwner,
 	revision string,
@@ -896,7 +913,7 @@ func (s *Store) scanVisualClaim(
 	claim.GenerationID = generationID
 	claim.Owner = owner
 	claim.ProposedRevision = revision
-	err := s.db.QueryRowContext(ctx, `
+	err := q.QueryRow(`
 		SELECT lease_owner, lease_expires_at, fencing_token, source_fence, claimed_content_stamp
 		FROM visual_work_claims
 		WHERE generation_id = ? AND message_id = ? AND blob_hash = ?
@@ -974,7 +991,7 @@ func verifyVisualOwner(q querier, owner VisualOwner) error {
 		FROM attachments a
 		JOIN messages m ON m.id = a.message_id
 		WHERE a.message_id = ?
-		  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND `+FullMessageWhere("m")+`
 		  AND a.attachment_role = 'standalone'
 		  AND a.role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'raw_mime_repair')
 		  AND (LOWER(COALESCE(a.content_hash, '')) = ?

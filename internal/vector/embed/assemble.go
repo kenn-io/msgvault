@@ -37,7 +37,8 @@ type AssemblyPolicy struct {
 
 // AssemblyMessage is the source row used by the deterministic assemblers.
 // LastModified remains dialect-native so the later coverage CAS can bind the
-// exact value read in this transaction.
+// exact value read in this transaction. EmbeddingRevision tracks other
+// output-affecting policy changes that may not alter the message timestamp.
 type AssemblyMessage struct {
 	ID             int64
 	ConversationID int64
@@ -53,6 +54,7 @@ type AssemblyMessage struct {
 	SenderID          int64
 	SenderDisplay     string
 	LastModified      any
+	EmbeddingRevision int64
 	SourceSequence    int64
 	ConversationTitle string
 }
@@ -185,7 +187,7 @@ func (s SourceSnapshot) MessageMeta(ctx context.Context, id int64) (AssemblyMess
 		SELECT m.id, m.conversation_id, m.source_id, COALESCE(m.message_type, ''),
 		       m.sent_at, m.received_at, m.internal_date
 		FROM messages m
-		WHERE m.id = ? AND m.deleted_at IS NULL
+		WHERE m.id = ? AND m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + `
 		  AND m.deleted_from_source_at IS NULL`)
 	var row AssemblyMessage
 	var sentAt, receivedAt, internalDate sql.NullTime
@@ -298,7 +300,7 @@ func (s SourceSnapshot) latestChatMessageID(ctx context.Context, conversationID 
 		  JOIN message_bodies mb ON mb.message_id = m.id
 		 WHERE m.conversation_id = ?
 		   AND m.message_type = 'beeper'
-		   AND m.deleted_at IS NULL
+		   AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		   AND m.deleted_from_source_at IS NULL`), conversationID).Scan(&id)
 	if err != nil {
 		return 0, false, fmt.Errorf("read latest embedding chat message %d: %w", conversationID, err)
@@ -317,7 +319,7 @@ func (s SourceSnapshot) MessageVersions(ctx context.Context, scope AffectedScope
 	if s.state.closed {
 		return nil, ErrSourceSnapshotClosed
 	}
-	where := []string{`m.deleted_at IS NULL`, `m.deleted_from_source_at IS NULL`}
+	where := []string{`m.deleted_at IS NULL AND ` + store.FullMessageWhere("m") + ``, `m.deleted_from_source_at IS NULL`}
 	args := make([]any, 0, 4)
 	if scope.MessageID != 0 {
 		where = append(where, `m.id = ?`)
@@ -334,7 +336,7 @@ func (s SourceSnapshot) MessageVersions(ctx context.Context, scope AffectedScope
 		args = append(args, scope.ConversationID)
 		where, args, _ = s.state.scopeRange(scope, where, args)
 	}
-	query := s.state.rebind(fmt.Sprintf(`SELECT m.id, %s FROM messages m WHERE %s ORDER BY m.id`,
+	query := s.state.rebind(fmt.Sprintf(`SELECT m.id, %s, COALESCE(m.embedding_revision, 0) FROM messages m WHERE %s ORDER BY m.id`,
 		s.state.lastModified, strings.Join(where, " AND ")))
 	rows, err := s.state.tx.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -344,7 +346,7 @@ func (s SourceSnapshot) MessageVersions(ctx context.Context, scope AffectedScope
 	versions := make([]SourceVersion, 0)
 	for rows.Next() {
 		var version SourceVersion
-		if err := rows.Scan(&version.MessageID, &version.LastModified); err != nil {
+		if err := rows.Scan(&version.MessageID, &version.LastModified, &version.EmbeddingRevision); err != nil {
 			return nil, fmt.Errorf("scan embedding source version: %w", err)
 		}
 		versions = append(versions, version)
@@ -446,13 +448,12 @@ func (s SourceSnapshot) Conversation(ctx context.Context, id int64) (AssemblyCon
 	}
 	query := s.state.rebind(fmt.Sprintf(`
 		SELECT cp.participant_id, COALESCE(cp.role, ''),
-		       COALESCE(NULLIF(TRIM(p.display_name), ''),
-		                NULLIF(p.email_address, ''), NULLIF(p.phone_number, ''), ''),
+		       %s,
 		       %s
 		FROM conversation_participants cp
 		JOIN participants p ON p.id = cp.participant_id
 		WHERE cp.conversation_id = ?
-		ORDER BY cp.participant_id`, participantRevision))
+		ORDER BY cp.participant_id`, store.FullParticipantDisplaySQL("p"), participantRevision))
 	rows, err := s.state.tx.QueryContext(ctx, query, id)
 	if err != nil {
 		return AssemblyConversation{}, false, fmt.Errorf("read embedding conversation participants %d: %w", id, err)
@@ -487,12 +488,12 @@ func (s *sourceSnapshotState) messageSelectSQL(predicate string) string {
 		       m.sent_at, m.received_at, m.internal_date,
 		       COALESCE(NULLIF(TRIM(sender.display_name), ''),
 		                NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ''),
-		       %s, COALESCE(c.title, '')
+			       %s, COALESCE(m.embedding_revision, 0), COALESCE(c.title, '')
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN participants sender ON sender.id = m.sender_id
-		WHERE %s AND m.deleted_at IS NULL
+		WHERE %s AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
 		  AND m.deleted_from_source_at IS NULL`, s.lastModified, predicate)
 }
 
@@ -527,15 +528,14 @@ func (s *sourceSnapshotState) chatMessageSelectSQL(predicate string) string {
 		       COALESCE(m.subject, ''), %s, %s,
 		       m.sent_at, m.received_at, m.internal_date,
 		       m.sender_id,
-		       COALESCE(NULLIF(TRIM(sender.display_name), ''),
-		                NULLIF(sender.email_address, ''), NULLIF(sender.phone_number, ''), ''),
-		       %s, COALESCE(c.title, ''), %s
+		       %s,
+		       %s, COALESCE(m.embedding_revision, 0), COALESCE(c.title, ''), %s
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN participants sender ON sender.id = m.sender_id
-		WHERE %s AND m.deleted_at IS NULL
-		  AND m.deleted_from_source_at IS NULL`, bodyText, bodyHTML, s.lastModified, bodyTruncated, predicate)
+		WHERE %s AND m.deleted_at IS NULL AND `+store.FullMessageWhere("m")+`
+		  AND m.deleted_from_source_at IS NULL`, bodyText, bodyHTML, store.FullParticipantDisplaySQL("sender"), s.lastModified, bodyTruncated, predicate)
 }
 
 func scanAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessage, error) {
@@ -545,7 +545,7 @@ func scanAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessage, e
 	err := scanner.Scan(
 		&row.ID, &row.ConversationID, &row.MessageType, &row.Subject,
 		&bodyText, &bodyHTML, &sentAt, &receivedAt, &internalDate,
-		&row.SenderDisplay, &row.LastModified, &row.ConversationTitle,
+		&row.SenderDisplay, &row.LastModified, &row.EmbeddingRevision, &row.ConversationTitle,
 	)
 	if err != nil {
 		return AssemblyMessage{}, err
@@ -573,7 +573,8 @@ func scanChatAssemblyMessage(scanner rowScanner, sequence int64) (AssemblyMessag
 	err := scanner.Scan(
 		&row.ID, &row.ConversationID, &row.MessageType, &row.Subject,
 		&bodyText, &bodyHTML, &sentAt, &receivedAt, &internalDate,
-		&senderID, &row.SenderDisplay, &row.LastModified, &row.ConversationTitle, &row.BodyTruncated,
+		&senderID, &row.SenderDisplay, &row.LastModified, &row.EmbeddingRevision,
+		&row.ConversationTitle, &row.BodyTruncated,
 	)
 	if err != nil {
 		return AssemblyMessage{}, err
@@ -768,8 +769,9 @@ func assembleOrdinaryDocument(row AssemblyMessage, policy AssemblyPolicy) (Docum
 		Key: key, Kind: "ordinary-message", ScopeKey: key,
 		Revision:       documentRevision("ordinary", row, policy, chunks),
 		SourceSequence: row.SourceSequence,
-		Versions:       []SourceVersion{{MessageID: row.ID, LastModified: row.LastModified}},
-		Chunks:         chunks,
+		Versions: []SourceVersion{{MessageID: row.ID, LastModified: row.LastModified,
+			EmbeddingRevision: row.EmbeddingRevision}},
+		Chunks: chunks,
 	}, true
 }
 
@@ -866,6 +868,9 @@ func documentRevision(kind string, row AssemblyMessage, policy AssemblyPolicy, c
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%s\x00%d\x00%d\x00", kind, row.ID,
 		row.ConversationID, row.MessageType, policy.MaxChunkRunes, policy.MaxDocumentUTF8Bytes)
+	if row.EmbeddingRevision != 0 {
+		_, _ = fmt.Fprintf(h, "embedding-revision:%d\x00", row.EmbeddingRevision)
+	}
 	if policy.DocumentPrefixUTF8Bytes > 0 {
 		_, _ = fmt.Fprintf(h, "document-prefix-bytes:%d\x00", policy.DocumentPrefixUTF8Bytes)
 	}

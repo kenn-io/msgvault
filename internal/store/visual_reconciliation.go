@@ -89,7 +89,7 @@ func (s *Store) ActivateVisualGeneration(ctx context.Context, generationID, sour
 		return nil, errors.New("invalid visual generation activation")
 	}
 	var retired []VisualGeneration
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+	err := s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
 		var currentHighWater int64
 		if err := q.QueryRow(`
@@ -327,21 +327,23 @@ func (s *Store) AdvanceVisualGenerationSourceFence(
 	if generationID <= 0 || sourceFence < 0 {
 		return errors.New("invalid visual generation source fence")
 	}
-	result, err := s.db.ExecContext(ctx, `
+	return s.withConversationPolicyPublicationLogged(ctx, func(tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, `
 		UPDATE visual_generations
 		SET source_fence = CASE WHEN source_fence < ? THEN ? ELSE source_fence END
 		WHERE id = ?`, sourceFence, sourceFence, generationID)
-	if err != nil {
-		return fmt.Errorf("advance visual generation source fence: %w", err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read visual generation fence result: %w", err)
-	}
-	if rows != 1 {
-		return sql.ErrNoRows
-	}
-	return nil
+		if err != nil {
+			return fmt.Errorf("advance visual generation source fence: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read visual generation fence result: %w", err)
+		}
+		if rows != 1 {
+			return sql.ErrNoRows
+		}
+		return nil
+	})
 }
 
 // VisualPublicationTally is one (state, outcome) bucket of a generation's
