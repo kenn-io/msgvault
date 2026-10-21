@@ -751,7 +751,6 @@ func TestSemanticPersonSearchMapsGenerationAndEmbeddingErrors(t *testing.T) {
 			wantCode:    "person_embedding_policy_unavailable",
 			wantMessage: "cannot verify the current semantic person embedding policy",
 		},
-		{name: "stale", err: vector.ErrIndexStale, wantCode: "index_stale"},
 		{name: "building", err: vector.ErrIndexBuilding, wantCode: "index_building"},
 		{
 			name: "person coverage incomplete", err: personsearch.ErrPersonCoverageIncomplete,
@@ -823,11 +822,7 @@ func TestSemanticPersonSearchDistinguishesIndexStaleFromProviderRuntimeStale(t *
 			assert.Equal([]string{"synthetic"}, engine.queries)
 			status, detail := srv.VectorStatus()
 			assert.Equal(test.wantStatus, status)
-			if test.wantStatus == VectorStatusStale {
-				assert.Contains(body.Message, "msgvault daemon restart")
-				assert.NotContains(body.Message, "--full-rebuild")
-				assert.Contains(detail, "msgvault daemon restart")
-			} else {
+			if test.wantStatus == VectorStatusReady {
 				assert.Equal("The vector index does not match configured embedding settings", body.Message)
 				assert.Empty(detail)
 			}

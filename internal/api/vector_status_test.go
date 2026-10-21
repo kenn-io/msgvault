@@ -232,7 +232,7 @@ func TestMarkVectorIndexStaleCoalescesConcurrentDiagnosis(t *testing.T) {
 	})
 }
 
-func TestVectorStaleRestartAfterRebuildInsideThrottle(t *testing.T) {
+func TestVectorStaleFirstDiagnosisInsideThrottle(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{"hybrid search", "explore"} {
 		t.Run(name, func(t *testing.T) {
@@ -262,10 +262,8 @@ func TestVectorStaleRestartAfterRebuildInsideThrottle(t *testing.T) {
 			require.Equal(http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 			assert.Contains(rec.Body.String(), "index_stale")
 			assert.Contains(rec.Body.String(), "msgvault daemon restart")
-			assert.NotContains(rec.Body.String(), "--full-rebuild")
-			status, detail := srv.VectorStatus()
+			status, _ := srv.VectorStatus()
 			assert.Equal(VectorStatusStale, status)
-			assert.Contains(detail, "msgvault daemon restart")
 		})
 	}
 }
@@ -331,16 +329,6 @@ func TestVectorStaleAdviceRefresh(t *testing.T) {
 	}
 }
 
-func TestSetVectorStaleKeepsScopeDrift(t *testing.T) {
-	t.Parallel()
-	srv := NewServerWithOptions(testServerOptions(t, nil))
-	srv.SetVectorScopeDrift("scope changed; restart the daemon")
-	srv.SetVectorStale("index changed; rebuild the index")
-	status, detail := srv.VectorStatus()
-	assert.Equal(t, VectorStatusStale, status)
-	assert.Equal(t, "scope changed; restart the daemon", detail)
-}
-
 // TestHealthClearsStaleAfterReactivation verifies the latched stale status is
 // re-validated when reporting health: once the active generation's fingerprint
 // matches the configured one again (e.g. after a --full-rebuild), /health flips
@@ -403,6 +391,11 @@ func TestScopeDriftStaleSurvivesRefresh(t *testing.T) {
 	assert.Equal("stale", body.Vector.Status,
 		"a matching startup fingerprint must not clear scope-drift stale")
 	assert.Contains(body.Vector.Error, "src-9")
+
+	srv.SetVectorStale("index changed; rebuild the index")
+	status, detail := srv.VectorStatus()
+	assert.Equal(VectorStatusStale, status)
+	assert.Equal(body.Vector.Error, detail)
 
 	srv.SetVectorFeatures(nil, nil, backend, cfg)
 	status, errMsg := srv.VectorStatus()

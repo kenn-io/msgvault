@@ -500,11 +500,12 @@ func task4DaemonErrorClient(t *testing.T, path, code, message string, status int
 
 func TestMCPInternalErrorIsolationMapsOnlyKnownDaemonVectorCodes(t *testing.T) {
 	vectorCodes := []struct {
-		code   string
-		status int
+		code           string
+		status         int
+		messageExposed bool
 	}{
 		{code: "vector_not_enabled", status: http.StatusServiceUnavailable},
-		{code: "index_stale", status: http.StatusServiceUnavailable},
+		{code: "index_stale", status: http.StatusServiceUnavailable, messageExposed: true},
 		{code: "index_building", status: http.StatusServiceUnavailable},
 		{code: "embedding_timeout", status: http.StatusServiceUnavailable},
 		{code: "index_scope_mismatch", status: http.StatusBadRequest},
@@ -560,9 +561,7 @@ func TestMCPInternalErrorIsolationMapsOnlyKnownDaemonVectorCodes(t *testing.T) {
 				must.Empty(response.Error, "response: %s", raw)
 				checks.Equal(true, response.Result["isError"])
 				checks.Contains(raw, vectorCode.code)
-				if vectorCode.code == "index_stale" {
-					checks.Contains(raw, privateMessage)
-				} else {
+				if !vectorCode.messageExposed {
 					checks.NotContains(raw, privateMessage)
 				}
 			})

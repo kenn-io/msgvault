@@ -1121,7 +1121,7 @@ func TestRestartVectorFingerprintMatchesStartup(t *testing.T) {
 	must.NoError(err)
 	home := t.TempDir()
 	path := filepath.Join(home, "config.toml")
-	writeConfig := func(accounts, model, messageTypes string) {
+	writeConfig := func(accounts, model string) {
 		t.Helper()
 		content := fmt.Sprintf(`[vector]
 enabled = true
@@ -1131,28 +1131,39 @@ model = %q
 dimension = 4
 [vector.embed.scope]
 accounts = %s
-message_types = %s
-`, model, accounts, messageTypes)
+message_types = ["email"]
+`, model, accounts)
 		must.NoError(os.WriteFile(path, []byte(content), 0600))
 	}
-	writeConfig(`["a@example.com", "b@example.com"]`, "model-a", `["email"]`)
+	writeConfig(`["a@example.com", "b@example.com"]`, "model-a")
 	cfg, err := config.Load(path, home)
 	must.NoError(err)
 	resolve := restartVectorFingerprint(st, &invocation{cfg: cfg})
 	initial, err := resolve(t.Context())
 	must.NoError(err)
 	for _, test := range []struct {
-		name, accounts, model, messageTypes string
-		same                                bool
+		name, accounts, model string
+		same                  bool
+		wantErr               error
 	}{
-		{"reordered accounts", `["b@example.com", "a@example.com"]`, "model-a", `["email"]`, true},
-		{"model", `["a@example.com", "b@example.com"]`, "model-b", `["email"]`, false},
+		{name: "reordered accounts", accounts: `["b@example.com", "a@example.com"]`, model: "model-a", same: true},
+		{name: "model", accounts: `["a@example.com", "b@example.com"]`, model: "model-b"},
+		{name: "disabled", wantErr: vector.ErrNotEnabled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			writeConfig(test.accounts, test.model, test.messageTypes)
+			if test.wantErr != nil {
+				require.NoError(os.WriteFile(path, []byte("[vector]\nenabled = false\n"), 0600))
+			} else {
+				writeConfig(test.accounts, test.model)
+			}
 			got, err := resolve(t.Context())
+			if test.wantErr != nil {
+				require.ErrorIs(err, test.wantErr)
+				assert.Empty(got)
+				return
+			}
 			require.NoError(err)
 			startup, err := config.Load(path, home)
 			require.NoError(err)
@@ -1166,26 +1177,4 @@ message_types = %s
 			}
 		})
 	}
-}
-
-func TestRestartVectorFingerprintDisabled(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	home := t.TempDir()
-	path := filepath.Join(home, "config.toml")
-	require.NoError(os.WriteFile(path, []byte(`[vector]
-enabled = true
-[vector.embeddings]
-endpoint = "http://127.0.0.1:11434/v1"
-model = "model-a"
-dimension = 4
-`), 0600))
-	cfg, err := config.Load(path, home)
-	require.NoError(err)
-	resolve := restartVectorFingerprint(testutil.NewTestStore(t), &invocation{cfg: cfg})
-	require.NoError(os.WriteFile(path, []byte("[vector]\nenabled = false\n"), 0600))
-	fingerprint, err := resolve(t.Context())
-	require.ErrorIs(err, vector.ErrNotEnabled)
-	assert.Empty(fingerprint)
 }

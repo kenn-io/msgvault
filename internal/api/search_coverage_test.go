@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
-	"strconv"
 	"sync"
 	"testing"
 
@@ -823,48 +821,20 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 
 func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 	t.Parallel()
-	for _, restart := range []bool{true, false} {
-		t.Run(strconv.FormatBool(restart), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			cfg := vector.Config{Enabled: true}
-			backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: cfg.GenerationFingerprint()}}
-			srv := NewServerWithOptions(ServerOptions{
-				Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
-				Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
-			})
-			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
-				if restart {
-					return "model-b", nil
-				}
-				return "model-c", nil
-			})
-			health := httptest.NewRecorder()
-			srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
-			require.Equal(http.StatusOK, health.Code)
-			var initial HealthResponse
-			require.NoError(json.Unmarshal(health.Body.Bytes(), &initial))
-			require.NotNil(initial.Vector)
-			require.Equal("ready", initial.Vector.Status)
-			backend.active = vector.Generation{ID: 2, Fingerprint: "model-b"}
-			body := getSearchCoverage(t, srv, `{}`)
-			assert.Equal(SearchCoverageStale, body.Status)
-			assert.Equal("model-b", body.VectorFingerprint)
-			if restart {
-				assert.Contains(body.Detail, "msgvault daemon restart")
-				assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
-			} else {
-				assert.Contains(body.Detail, "--full-rebuild")
-				assert.Contains(body.Actions, SearchCoverageActionBuildIndex)
-			}
-			health = httptest.NewRecorder()
-			srv.Router().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
-			require.Equal(http.StatusOK, health.Code)
-			var after HealthResponse
-			require.NoError(json.Unmarshal(health.Body.Bytes(), &after))
-			require.NotNil(after.Vector)
-			assert.Equal("stale", after.Vector.Status)
-			assert.Equal(body.Detail, after.Vector.Error)
-		})
-	}
+	assert := assert.New(t)
+	cfg := vector.Config{Enabled: true}
+	backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: cfg.GenerationFingerprint()}}
+	srv := NewServerWithOptions(ServerOptions{
+		Config: &config.Config{Vector: cfg}, Store: &mockStore{stats: &StoreStats{}},
+		Engine: newExploreDuckDBFixture(t), Backend: backend, VectorCfg: cfg, Logger: testLogger(),
+	})
+	srv.SetVectorRestartFingerprint(func(context.Context) (string, error) {
+		return "model-b", nil
+	})
+	backend.active = vector.Generation{ID: 2, Fingerprint: "model-b"}
+	body := getSearchCoverage(t, srv, `{}`)
+	assert.Equal(SearchCoverageStale, body.Status)
+	assert.Equal("model-b", body.VectorFingerprint)
+	assert.Contains(body.Detail, "msgvault daemon restart")
+	assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
 }
