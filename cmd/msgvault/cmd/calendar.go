@@ -25,7 +25,6 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/syncerr"
 )
 
 const calScopeEscalationConfirmedFlag = "scope-escalation-confirmed"
@@ -931,7 +930,7 @@ func calendarTokenExpiredOrRevoked(ctx context.Context, mgr calendarTokenRefresh
 		return false
 	}
 	if err := mgr.ForceRefresh(ctx, email); err != nil {
-		return syncerr.IsAuthInvalidError(err)
+		return isAuthInvalidError(err)
 	}
 	return false
 }
@@ -1098,7 +1097,7 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 	refreshing := false
 	defer func() {
 		if !refreshing {
-			recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
+			_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 		}
 	}()
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
@@ -1131,7 +1130,7 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return err
 	}
 	refreshing = true
-	recordSyncAttempt(ctx, sourceTypeCalendar, email, nil)
+	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, nil)
 	return rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
 }
 

@@ -2,15 +2,20 @@
 package telemetry
 
 import (
+	"cmp"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/syncerr"
 )
 
 const (
@@ -39,7 +44,6 @@ const (
 	postHogAPIKey = "phc_AzHd9YvuHR7M5poKzC6eW654d3SgKyBdoQPuwkWhimUf" // #nosec G101
 )
 
-// Actions use fixed property values. Core actions also require every listed property.
 var actionProperties = map[string]map[string][]string{
 	EventSearchEmpty:   {propertySurface: {"web", "tui", "cli"}, "search_type": {"text", "semantic", "hybrid"}},
 	EventErrorShown:    {propertySurface: {"web", "tui"}, "kind": {"search", "message", "sync", "other"}},
@@ -103,10 +107,10 @@ func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog
 		properties := make([]posthog.AllowedProperty, 0, len(required))
 		for key, values := range required {
 			filter := posthog.AllowStringValues(values...)
-			if key == "kind" || key == "reason" || key == "sync_source" {
-				filter = outcomeValue(values)
-			}
-			properties = append(properties, posthog.AllowProperty(key, filter))
+			properties = append(properties, posthog.AllowProperty(key, func(value any) (any, bool) {
+				filtered, ok := filter(value)
+				return cmp.Or(filtered, any("other")), ok || key == "kind" || key == "reason" || key == "sync_source"
+			}))
 		}
 		allowed = append(allowed, posthog.WithAllowedEvent(event, properties...))
 	}
@@ -147,12 +151,19 @@ func DurationBucket(duration time.Duration) string {
 	}
 }
 
-// outcomeValue keeps outcome properties within their fixed vocabulary.
-func outcomeValue(values []string) func(any) (any, bool) {
-	return func(value any) (any, bool) {
-		if s, ok := value.(string); ok && slices.Contains(values, s) {
-			return s, true
-		}
-		return "other", true
+type SyncFailures struct {
+	Capture func(string, map[string]any) error
+	failing sync.Map
+}
+
+func (s *SyncFailures) Record(sourceType, identifier string, err error) {
+	if s == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, jobctx.ErrYieldedToWaiter) || errors.Is(err, jobctx.ErrRunBudgetExceeded) {
+		return
+	}
+	key := [2]string{sourceType, identifier}
+	if err == nil {
+		s.failing.Delete(key)
+	} else if _, loaded := s.failing.LoadOrStore(key, true); !loaded && s.Capture != nil {
+		_ = s.Capture(EventSyncFailed, map[string]any{"sync_source": sourceType, "reason": syncerr.Reason(err)})
 	}
 }

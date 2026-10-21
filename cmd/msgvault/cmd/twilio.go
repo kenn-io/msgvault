@@ -259,8 +259,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 	}
 	client, accountEmail, err := newTwilioSourceClient(source)
 	if err != nil {
-		recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
-		return err
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}
 	summary, importErr := twilio.NewImporter(st, client).Import(ctx, twilio.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,
@@ -271,7 +270,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 			state.logger.Warn("twilio sync diagnostic", "source", source.Identifier, "diagnostic", diagnostic)
 		}
 	}
-	recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr)
+	_ = recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr)
 	refreshCtx := context.WithoutCancel(ctx)
 	refresh := func() error { return rebuildTwilioCacheAfterScheduledSync(refreshCtx, "twilio:"+source.Identifier) }
 	if importErr != nil {

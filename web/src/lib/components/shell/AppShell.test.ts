@@ -812,7 +812,7 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it.each([['everything', false], ['everything', true], ['files', true]] as const)('counts an explicit empty %s submission with media ready=%s', async (workspace, ready) => {
+    it.each([['everything', false], ['everything', true], ['everything', 'pending'], ['everything', 'failed'], ['files', true]] as const)('counts an explicit empty %s submission with media ready=%s', async (workspace, ready) => {
       const state = shellState(workspace), events: Array<{ event: string; properties: unknown }> = [];
       const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
         const request = input as Request;
@@ -822,9 +822,14 @@ describe('AppShell', () => {
         }
         return Response.json({ ...exploreResponse(), files: [] });
       }));
-      const media = new IntegrationReadiness(async () => ready);
+      const media = new IntegrationReadiness(async () => {
+        if (ready === 'pending') return new Promise(() => {});
+        if (ready === 'failed') throw new Error('Synthetic probe failure');
+        return ready;
+      });
       render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
-      if (ready && workspace === 'everything') await waitFor(() => expect(media.ready).toBe(true));
+      if (ready === true && workspace === 'everything') await waitFor(() => expect(media.ready).toBe(true));
+      if (ready === false) await waitFor(() => expect(media.absent).toBe(true));
       const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'missing' } });
       await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));

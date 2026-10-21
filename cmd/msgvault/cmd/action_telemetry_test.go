@@ -70,16 +70,22 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 	} {
 		for _, outcome := range []struct {
 			name                                   string
+			indexState                             string
 			fails, paused, outputFails, json, body bool
 		}{
 			{name: "success"},
 			{name: "failure", fails: true},
+			{name: "checking", indexState: "checking"},
+			{name: "unverified", indexState: "unverified"},
 			{name: "paused", paused: true},
 			{name: "output failure", outputFails: true},
 			{name: "JSON output failure", outputFails: true, json: true},
 			{name: "body output failure", outputFails: true, body: true},
 		} {
 			fails, outputFails := outcome.fails, outcome.outputFails
+			if outcome.indexState != "" && action != "search" {
+				continue
+			}
 			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
 				continue
 			}
@@ -113,6 +119,8 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						return
 					}
 					switch action {
+					case "search":
+						_, _ = fmt.Fprintf(w, `{"results":[],"index_state":%q}`, outcome.indexState)
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
 					case "documents":
@@ -189,7 +197,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					properties["search_type"], event = kind, "search_run"
 				}
 				want := []map[string]any{{"event": event, "properties": properties}}
-				if kind != "" {
+				if kind != "" && outcome.indexState == "" {
 					want = append([]map[string]any{{"event": "search_empty", "properties": properties}}, want...)
 				}
 				assert.ElementsMatch(want, events)
@@ -197,7 +205,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					searchOffset = 1
 					require.NoError(run(cmd))
 					invocationFromCommand(cmd).sends.Wait(time.Second)
-					assert.Len(events, 2, "continuation pages do not count")
+					assert.Len(events, len(want), "continuation pages do not count")
 				}
 			})
 		}

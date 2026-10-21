@@ -47,6 +47,25 @@ function installResizeObservers() {
 }
 
 describe('FilesWorkspace', () => {
+  it('classifies a rejected first image as a search failure', async () => {
+    const events: unknown[] = [];
+    const client = createAPIClient(async input => {
+      if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
+        events.push(await (input as Request).json());
+        return Response.json({ status: 'queued' }, { status: 202 });
+      }
+      return Response.json(response());
+    });
+    render(FilesWorkspace, { client, predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
+    await screen.findByText('fixture.pdf');
+    await fireEvent.click(screen.getByRole('switch', { name: 'Visual search' }));
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    const file = new File(['synthetic'], 'query.png', { type: 'image/png' });
+    Object.defineProperty(file, 'size', { value: 21 * 1024 * 1024 });
+    await fireEvent.change(screen.getByLabelText('Query image'), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getAllByText('Visual query images must be 20 MiB or smaller.').length).toBeGreaterThan(0));
+    await waitFor(() => expect(events).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }));
+  });
   it.each(['submitted', 'preview', 'image', 'visual'])('counts only submitted empty %s searches', async (kind) => {
     const events: Array<{ event: string; properties: { search_type: string } }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

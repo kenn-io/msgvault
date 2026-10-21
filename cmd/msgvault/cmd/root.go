@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/msgvault/internal/logging"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/singleflight"
 )
@@ -530,6 +529,17 @@ func wrapOAuthError(err error, cfg *config.Config) error {
 	return err
 }
 
+// isAuthInvalidError returns true if the error indicates the OAuth token is
+// permanently invalid (expired or revoked), as opposed to a transient failure
+// like a network error or context cancellation.
+func isAuthInvalidError(err error) bool {
+	if retrieveErr, ok := errors.AsType[*oauth2.RetrieveError](err); ok {
+		// Google returns "invalid_grant" when refresh tokens are expired or revoked
+		return retrieveErr.ErrorCode == "invalid_grant"
+	}
+	return false
+}
+
 // tokenReauthorizer abstracts the oauth.Manager methods used by
 // getTokenSourceWithReauth, making the function testable without real OAuth.
 type tokenReauthorizer interface {
@@ -635,7 +645,7 @@ func getTokenSourceWithReauth(
 	}
 
 	// Token exists but failed — only auto-reauth for auth-invalid errors
-	if !syncerr.IsAuthInvalidError(err) {
+	if !isAuthInvalidError(err) {
 		return nil, fmt.Errorf("get token source for %s: %w", email, err)
 	}
 

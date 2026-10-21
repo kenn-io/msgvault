@@ -300,6 +300,9 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, 
 	if sum != nil {
 		writes = sum.MeetingsAdded + sum.MeetingsUpdated
 	}
+	if sum == nil || sum.PauseReason == nil {
+		_ = recordSyncAttempt(ctx, omi.SourceType, src.Identifier, err)
+	}
 	err = (meetingSyncRun{provider: "omi", identifier: src.Identifier, writes: writes, err: err}).finishScheduled(ctx, "omi:"+src.Identifier, rebuildOmiCacheAfterScheduledSync)
 	if err == nil && sum != nil && sum.PauseReason != nil {
 		var cooldown *omi.CooldownError

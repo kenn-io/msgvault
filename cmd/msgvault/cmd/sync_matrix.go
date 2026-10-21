@@ -108,7 +108,7 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 		if skippedRetired {
 			continue
 		}
-		recordSyncAttempt(ctx, sourceTypeMatrix, source.Identifier, syncErr)
+		_ = recordSyncAttempt(ctx, sourceTypeMatrix, source.Identifier, syncErr)
 		if syncErr != nil {
 			failures = append(failures, fmt.Sprintf("%s: %v", source.Identifier, syncErr))
 			continue

@@ -492,7 +492,7 @@ type Model struct {
 	restorePosition bool // When true, don't reset cursor/scroll on data load (used by goBack)
 
 	// Inline search state (vim-like search bar on info line)
-	submitted            bool
+	submittedQuery       string
 	inlineSearchActive   bool   // True when inline search bar is active
 	inlineSearchDebounce uint64 // Increment to cancel pending debounce timers
 	inlineSearchLoading  bool   // True when a debounced search query is in-flight
@@ -1398,8 +1398,11 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			updated.messageReportedDay = day
 			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
 		}
+		if updated.inlineSearchError != "" && updated.inlineSearchError != m.inlineSearchError {
+			command = tea.Batch(command, updated.reportActionCmd("error_shown", "kind", "search"))
+		}
 		if updated.modal == modalError && m.modal != modalError {
-			updated.submitted = false
+			updated.submittedQuery = ""
 			kind := "other"
 			switch msg.(type) {
 			case dataLoadedMsg, searchResultsMsg, textMessagesLoadedMsg, textSearchResultMsg, meetingSearchLoadedMsg:
@@ -1410,11 +1413,6 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 				kind = "message"
 			}
 			command = tea.Batch(command, updated.reportActionCmd("error_shown", "kind", kind))
-		}
-		if updated.aggregateRequestID != m.aggregateRequestID || updated.searchRequestID != m.searchRequestID || updated.textRequestID != m.textRequestID || updated.loadRequestID != m.loadRequestID || updated.presentationGeneration != m.presentationGeneration || updated.meetingState.searchRequestID != m.meetingState.searchRequestID {
-			if key, ok := msg.(tea.KeyPressMsg); !ok || key.String() != "enter" || !m.inlineSearchActive && !m.meetingState.searchActive {
-				updated.submitted = false
-			}
 		}
 		updated.visibleDetailID = detailID
 		result = updated
@@ -2615,8 +2613,8 @@ func reportTelemetryCmd(report func(context.Context) error) tea.Cmd {
 }
 
 func (m *Model) acceptedSearchAction(query string, mode searchModeKind, count int) tea.Cmd {
-	submitted := m.submitted
-	m.submitted = false
+	submitted := m.submittedQuery == query
+	m.submittedQuery = ""
 	if strings.TrimSpace(query) == "" {
 		return nil
 	}

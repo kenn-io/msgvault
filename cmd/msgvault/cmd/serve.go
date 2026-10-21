@@ -50,6 +50,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourceops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/sync"
 	"go.kenn.io/msgvault/internal/syncerr"
@@ -444,6 +445,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure CardDAV: %w", err)
 	}
+	cardDAVController.SyncFailures = state.syncFailures
 	cardDAVController.SetConnectionScheduleReconciler(func(name string, cardDAVConfig config.CardDAVConfig, service api.CardDAVOperations) error {
 		return reconcileCardDAVSchedulerJob(sched, cardDAVConfig, service, logger, name, state)
 	})
@@ -866,6 +868,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
+		syncFailures:           state.syncFailures,
 		store:                  s,
 		config:                 cfg,
 		options:                state.options,
@@ -1166,8 +1169,7 @@ func reconcileCardDAVSchedulerJob(sched *scheduler.Scheduler, cardDAVConfig conf
 		Name: jobName, Schedule: cardDAVConfig.Schedule,
 		Run: invocationBoundJobRun(state, func(ctx context.Context) error {
 			_, err := service.Sync(ctx, carddav.SyncOptions{Trigger: store.CardDAVSyncTriggerScheduled})
-			recordSyncAttempt(ctx, "carddav", name, err)
-			return err
+			return recordSyncAttempt(ctx, "carddav", name, err)
 		}),
 	}); err != nil {
 		return fmt.Errorf("schedule CardDAV connection %s: %w", name, err)
@@ -1752,6 +1754,7 @@ func newDaemonIdleTracker(c *config.Config, stop context.CancelFunc, logger *slo
 // Since api.APIMessage, api.StoreStats, etc. are type aliases for store types,
 // the adapter methods are simple pass-throughs with no conversion needed.
 type storeAPIAdapter struct {
+	syncFailures              *telemetry.SyncFailures
 	store                     *store.Store
 	config                    *config.Config
 	options                   invocationOptions
@@ -2312,7 +2315,14 @@ func (a *storeAPIAdapter) runCLISyncWithRunner(
 		return emit(api.CLISyncEvent{Type: "stderr", Data: message})
 	}
 	return runAfterSuccessfulAttachmentIngest(ctx, a.attachmentMaintenance, func(ctx context.Context) error {
-		return run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
+		sources, _, _ := resolveSyncSources(a.store, sourceops.Selector{Account: req.Email, SourceID: req.SourceID, SourceIDSet: req.SourceIDSet})
+		err := run(ctx, cliSyncSubprocessArgs(req), emitSubprocess)
+		for _, source := range sources {
+			if isIncrementalSyncableSource(source) && (!req.Full || isFullSyncableSource(source)) && source.MergedIntoSourceID == 0 {
+				a.syncFailures.Record(source.SourceType, source.Identifier, err)
+			}
+		}
+		return err
 	}, emitWarning)
 }
 
@@ -2507,7 +2517,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			runErr = errors.Join(runErr, a.queueCacheRefreshAfterManualSync(force, skip))
 		}()
 	}
+	paused := false
 	emitSubprocess := func(stream, data string) error {
+		paused = paused || stream == "outcome" && data == "paused"
 		if emit == nil {
 			return nil
 		}
@@ -2533,7 +2545,37 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 		if req.GrantDecided {
 			args = append(append([]string(nil), args...), "--"+addAccountGrantDecidedFlag+"=true")
 		}
-		return run(ctx, args, req.Env, req.Cwd, emitSubprocess)
+		err := run(ctx, args, req.Env, req.Cwd, emitSubprocess)
+		if manualSyncCLICommand(args) && !paused {
+			sourceType := strings.ReplaceAll(strings.TrimPrefix(args[0], "sync-"), "-", "_")
+			identifier := ""
+			if len(args) > 1 && !strings.HasPrefix(args[len(args)-1], "-") {
+				identifier = args[len(args)-1]
+			}
+			if sourceType == "calendar" {
+				for _, source := range a.config.GCal {
+					if identifier == "" || strings.EqualFold(source.Name, identifier) || strings.EqualFold(source.Email, identifier) {
+						a.syncFailures.Record(sourceTypeCalendar, source.Email, err)
+					}
+				}
+				return err
+			}
+			if sourceType == "synctech_sms" {
+				for _, source := range a.config.SynctechSMS.Sources {
+					if identifier == "" || strings.EqualFold(source.Name, identifier) {
+						a.syncFailures.Record(sourceType, source.OwnerPhone, err)
+					}
+				}
+				return err
+			}
+			sources, _ := a.store.ListSources(sourceType)
+			for _, source := range sources {
+				if source.MergedIntoSourceID == 0 && (identifier == "" || strings.EqualFold(source.Identifier, identifier) || strings.EqualFold(source.Alias, identifier)) {
+					a.syncFailures.Record(source.SourceType, source.Identifier, err)
+				}
+			}
+		}
+		return err
 	}
 	if len(req.Args) > 0 && req.Args[0] == "repack-attachments" {
 		if !repackAttachmentsParentArgsAllowed(req.Args[1:]) {
@@ -4377,7 +4419,7 @@ func newDaemonGmailClient(
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailTokenMissing,
 					fmt.Errorf("get token source: %w (run 'msgvault add-account %s' first)", tsErr, email))
 			}
-			if syncerr.IsAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
+			if isAuthInvalidError(tsErr) || errors.Is(tsErr, oauth.ErrTokenUnrefreshable) || errors.Is(tsErr, oauth.ErrInvalidTokenJSON) {
 				return nil, false, provideridentity.NewGmailCredentialError(provideridentity.GmailAuthorizationRevoked, fmt.Errorf("get token source: %w (token may be expired; %s)", tsErr, gmailReauthHint(email, accountIsNarrowed(ctx, oauthMgr, email))))
 			}
 			return nil, false, fmt.Errorf("get token source: %w", tsErr)

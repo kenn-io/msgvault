@@ -2130,8 +2130,8 @@ features once published. No startup hook or entrypoint wrapper is required.
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
   CLI recording transcript searches (`media search`) use `text`.
-- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Everything omits `search_empty` when recording search is configured because its archive row count excludes transcript matches.
-- `error_shown` when the web or TUI shows an error for search, message opening, or Sync now. Its `kind` is `search`, `message`, `sync`, or `other`.
+- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Everything sends `search_empty` only after recording search is confirmed absent because its archive row count excludes transcript matches.
+- `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or Sync now. Its `kind` is `search`, `message`, `sync`, or `other`.
 - `sync_failed` when a scheduled or manual sync finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI
   `show-message` or a nonempty `show-thread` page, including meeting transcripts. Each surface counts once per install

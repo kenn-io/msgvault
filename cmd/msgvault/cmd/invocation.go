@@ -84,10 +84,11 @@ func invocationFromContext(ctx context.Context) *invocation {
 	return inv
 }
 
-func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) {
+func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) error {
 	if state := invocationFromContext(ctx); state != nil {
 		state.syncFailures.Record(sourceType, identifier, err)
 	}
+	return err
 }
 
 func invocationFromCommand(cmd *cobra.Command) *invocation {

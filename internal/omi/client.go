@@ -37,6 +37,7 @@ const TranscriptListsPerHour = 25
 // RequestInterval spaces requests evenly with no burst, so one client never
 // exceeds the hourly budget.
 var RequestInterval = time.Hour / TranscriptListsPerHour
+var ErrUnauthorized = errors.New("omi rejected api_key (401): use a Developer API key (omi_dev_...), not an MCP key")
 
 // NormalizeBaseURL accepts a backend root, including a reverse-proxy prefix.
 func NormalizeBaseURL(value string) (string, error) {
@@ -316,7 +317,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 			}
 			return result, nil
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, errors.New("omi rejected api_key (401): use a Developer API key (omi_dev_...), not an MCP key")
+			return nil, ErrUnauthorized
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, errors.New("omi denied conversation access (403): check conversations:read scope and account access")
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:

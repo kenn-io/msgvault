@@ -181,7 +181,7 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 	default:
 		return fmt.Errorf("unsupported synctech-sms backend %q", src.Backend)
 	}
-	recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
+	_ = recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
 	var refreshErr error
 	if !isDaemonCLISubprocess() {
 		refreshErr = rebuildCacheAfterScheduledSync(

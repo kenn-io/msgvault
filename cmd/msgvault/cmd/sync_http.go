@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/syncerr"
 	"golang.org/x/oauth2"
 )
 
@@ -262,7 +261,7 @@ func preflightReauthAccount(ctx context.Context, p preflightConfig, target prefl
 	}
 	// Only an expired/revoked token warrants reauth; transient errors
 	// (network, cancellation) must not trigger a browser flow.
-	if !syncerr.IsAuthInvalidError(err) {
+	if !isAuthInvalidError(err) {
 		return nil
 	}
 

@@ -240,7 +240,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		)
 		return query.HintRepairEncoding(fmt.Errorf("search: %w", err))
 	}
-	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 {
+	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 && resp.IndexState != "checking" && resp.IndexState != "unverified" {
 		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", "text", &result)
 	}
 
@@ -295,7 +295,7 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 	if searchJSON {
 		return outputSearchResultsJSON(resp.Results)
 	}
-	if len(resp.Results) == 0 {
+	if len(resp.Results) == 0 && resp.IndexState != "checking" && resp.IndexState != "unverified" {
 		fmt.Println("No messages found.")
 		return nil
 	}

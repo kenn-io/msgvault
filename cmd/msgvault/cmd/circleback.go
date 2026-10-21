@@ -383,8 +383,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 	mgr := circleback.NewManager(src.Endpoint, state.cfg.TokensDir(), state.logger)
 	session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 	if err != nil {
-		recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
-		return err
+		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
 	}
 	defer func() { _ = session.Close() }()
 	imp := circleback.NewImporter(st, session)
@@ -400,6 +399,7 @@ func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src confi
 		provider: "circleback", identifier: src.Identifier, writes: writes,
 		err: err, canceled: circlebackCanceled(ctx, err),
 	}
+	_ = recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, errors.Join(run.err, run.canceled))
 	return run.finishScheduled(ctx, "circleback:"+src.Identifier, rebuildCacheAfterScheduledSync)
 }
 

@@ -18,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/gmail"
 )
 
-// ErrUnauthorized identifies a rejected Calendar credential.
 var ErrUnauthorized = errors.New("unauthorized (401): token may be invalid")
 
 const (

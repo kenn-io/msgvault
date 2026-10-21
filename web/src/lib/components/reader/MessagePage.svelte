@@ -1,15 +1,16 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { messageTitle } from '../../archive/message-title';
   import { Button } from '@kenn-io/kit-ui';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import type { APIClient } from '../../api/client';
   import ConversationView from './ConversationView.svelte';
-  import { reportError } from '../../telemetry/actions';
+  import { reportAction, reportWhenVisible } from '../../telemetry/actions';
 
   let { client, messageID }: { client: APIClient; messageID: number } = $props();
   const loader = new ArchiveMessageLoader();
   let retry = $state(0);
-  $effect(() => { if (loader.error) return reportError(client, 'message'); });
+  $effect(() => { if (loader.error) return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', 'message'))); });
 
   $effect(() => {
     void retry;

@@ -1776,7 +1776,7 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		return m.reloadCurrentView()
 	}
 
-	m.submitted = true
+	m.submittedQuery = queryStr
 	m.searchQuery = queryStr
 	// In message list view, execute search to show results
 	if m.level == levelMessageList {

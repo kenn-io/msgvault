@@ -195,3 +195,27 @@ func TestBrowseLoadErrorKind(t *testing.T) {
 	_ = runBatchCommand(t, cmd)
 	assert.Equal(t, []string{"other"}, kinds)
 }
+
+func TestInlineValidationErrorShownOnce(t *testing.T) {
+	m := NewBuilder().Build()
+	m.width, m.height = 100, 24
+	m.inlineSearchActive = true
+	m.searchMode = searchModeSemantic
+	m.searchInput.SetValue("from:alice@example.com")
+	var kinds []string
+	m.reportAction = func(_ context.Context, event, property, value string) error {
+		if event == "error_shown" {
+			kinds = append(kinds, value)
+		}
+		return nil
+	}
+	for range 2 {
+		updated, cmd := m.Update(keyEnter())
+		m = asModel(t, updated)
+		if cmd != nil {
+			_ = runBatchCommand(t, cmd)
+		}
+		require.Contains(t, m.inlineSearchError, "semantic search requires free text")
+		assert.Equal(t, []string{"search"}, kinds)
+	}
+}

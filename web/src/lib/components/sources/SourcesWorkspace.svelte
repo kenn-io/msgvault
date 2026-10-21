@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportError } from '../../telemetry/actions';
+  import { reportAction, reportWhenVisible } from '../../telemetry/actions';
   import {
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
@@ -45,7 +45,6 @@
   let lockStatusStale = $state(false);
   let statusError = $state('');
   let triggerError = $state('');
-  $effect(() => { if (triggerError) return reportError(client, 'sync'); });
   let triggering = $state<string>();
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -260,6 +259,7 @@
       triggerError = signal.aborted
         ? 'Starting sync timed out. Check source status before trying again.'
         : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
+      reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', 'sync'));
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;

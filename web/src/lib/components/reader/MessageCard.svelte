@@ -7,7 +7,6 @@
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
   import KataIssueAction from '../kata/KataIssueAction.svelte';
-  import { reportError } from '../../telemetry/actions';
   import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
   interface Props {
@@ -39,8 +38,6 @@
     onViewModeChange,
     client = undefined
   }: Props = $props();
-
-  $effect(() => { if (client && expanded && bodyError) return reportError(client, 'message'); });
 
   let menuOpen = $state(false);
 

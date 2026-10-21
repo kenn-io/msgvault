@@ -296,7 +296,9 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 		if service == nil {
 			return carddav.SyncResult{}, carddav.ErrConnectionUnavailable
 		}
-		return service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
+		result, err := service.Sync(ctx, carddav.SyncOptions{Full: req.Full, Trigger: store.CardDAVSyncTriggerManual})
+		c.root().SyncFailures.Record("carddav", selected.connection(), err)
+		return result, err
 	}
 	var total carddav.SyncResult
 	total.Status = "succeeded"
@@ -325,6 +327,7 @@ func (c *CardDAVController) Sync(ctx context.Context, req CardDAVSyncRequest) (c
 					OnRunStarted: func(id int64) { outcome.RunID = &id }})
 			}
 		}
+		c.root().SyncFailures.Record("carddav", name, err)
 		outcome.Books, outcome.Created, outcome.Updated, outcome.Removed = result.Books, result.Created, result.Updated, result.Removed
 		total.Books += result.Books
 		total.Created += result.Created

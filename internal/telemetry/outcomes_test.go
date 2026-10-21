@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/telemetry/posthog"
+	"go.kenn.io/msgvault/internal/jobctx"
 )
 
 func TestSyncFailureTransitions(t *testing.T) {
@@ -60,6 +61,8 @@ func TestOutcomeWire(t *testing.T) {
 func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Reporter) {
 	t.Helper()
 	for _, body := range []string{
+		`{"event":"error_shown","properties":{"surface":"web"}}`,
+		`{"event":"error_shown","properties":{"kind":"search"}}`,
 		`{"event":"search_empty","properties":{"surface":"web","search_type":"text","private":"synthetic"}}`,
 		`{"event":"error_shown","properties":{"surface":"tui","kind":"unlisted"}}`,
 		`{"event":"sync_failed","properties":{"sync_source":"unlisted","reason":"unlisted"}}`,
@@ -75,4 +78,15 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 	for range 2 {
 		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": "unlisted", "reason": "unlisted", "private": "synthetic"}))
 	}
+}
+
+func TestSyncFailureStopsLeaveOutageUnchanged(t *testing.T) {
+	events := 0
+	failures := &SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+	for _, stop := range []error{context.Canceled, context.DeadlineExceeded, jobctx.ErrYieldedToWaiter, jobctx.ErrRunBudgetExceeded} {
+		failures.Record("omi", "work", stop)
+		assert.Zero(t, events)
+	}
+	failures.Record("omi", "work", errors.New("synthetic"))
+	assert.Equal(t, 1, events)
 }

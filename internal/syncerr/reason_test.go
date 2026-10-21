@@ -14,13 +14,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/discord"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/msgraph"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/omi"
 	"go.kenn.io/msgvault/internal/slack"
 	"go.kenn.io/msgvault/internal/twilio"
 	"golang.org/x/oauth2"
@@ -35,6 +38,8 @@ func TestReason(t *testing.T) {
 		{&oauth2.RetrieveError{ErrorCode: "invalid_grant"}, "auth"},
 		{msgraph.ErrUnauthorized, "auth"},
 		{&gmail.StatusError{StatusCode: 401}, "auth"},
+		{&carddav.StatusError{StatusCode: 401}, "auth"},
+		{&carddav.StatusError{StatusCode: 429}, "rate_limited"},
 		{&gmail.StatusError{StatusCode: 429}, "rate_limited"},
 		{slack.ErrAuth, "auth"},
 		{&twilio.APIError{StatusCode: 401}, "auth"},
@@ -71,6 +76,16 @@ func TestProviderUnauthorizedReasons(t *testing.T) {
 		client, err := twilio.NewClient(twilio.Options{AccountSID: "ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", AuthToken: "synthetic", Endpoints: map[string]string{"voice": server.URL, "intelligence": server.URL}})
 		require.NoError(t, err)
 		_, _, err = client.ListRecordingsPage(t.Context(), time.Time{}, 1000, "")
+		require.Error(t, err)
+		assert.Equal(t, "auth", Reason(err))
+	})
+	t.Run("omi", func(t *testing.T) {
+		_, err := omi.NewPacedClient(server.URL, "synthetic", t.TempDir()).ListConversations(t.Context(), omi.ListParams{})
+		require.Error(t, err)
+		assert.Equal(t, "auth", Reason(err))
+	})
+	t.Run("granola", func(t *testing.T) {
+		_, err := granola.NewClient(server.URL, "synthetic").ListNotes(t.Context(), granola.ListNotesParams{})
 		require.Error(t, err)
 		assert.Equal(t, "auth", Reason(err))
 	})

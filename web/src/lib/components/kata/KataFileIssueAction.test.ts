@@ -51,6 +51,10 @@ describe('KataFileIssueAction', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
     await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }]));
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
+    expect(events).toHaveLength(1);
   });
 
   it('opens the citation window at a search excerpt late in a transcript', async () => {

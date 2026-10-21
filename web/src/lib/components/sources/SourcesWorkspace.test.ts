@@ -448,6 +448,8 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
     expect(triggers).toBe(1);
     expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]);
+    await rendered.rerender({ client: createAPIClient(fetchFn) });
+    expect(events).toHaveLength(1);
     rendered.unmount();
   });
 

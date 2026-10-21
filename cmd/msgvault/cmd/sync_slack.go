@@ -338,7 +338,7 @@ func runScheduledSlackAttempts(
 			break
 		}
 		started, err := attempt(src)
-		recordSyncAttempt(ctx, sourceTypeSlack, src.Identifier, err)
+		_ = recordSyncAttempt(ctx, sourceTypeSlack, src.Identifier, err)
 		attempted = attempted || started
 		if err != nil {
 			errs = append(errs, err)

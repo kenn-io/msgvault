@@ -14,7 +14,7 @@
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
-  import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
     MeetingRef,
@@ -528,7 +528,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
-      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && media?.ready ? undefined : count), signal); },
+      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && !media?.absent ? undefined : count), signal); },
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the
@@ -544,7 +544,7 @@
         ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
-  $effect(() => { if (loader.error || loader.pageError) return reportError(client, exploreState.current.query.trim() ? 'search' : 'other'); });
+  $effect(() => { if (loader.error || loader.pageError) return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', exploreState.current.query.trim() ? 'search' : 'other'))); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
     loader.submitted = true;
     loader.retry();

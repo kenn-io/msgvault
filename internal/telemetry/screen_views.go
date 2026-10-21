@@ -68,12 +68,8 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		h.capture.ServeHTTP(w, r)
 		return
 	}
-	if req.Event == EventErrorShown || req.Event == EventSyncFailed {
-		h.capture.ServeHTTP(w, r)
-		return
-	}
 	required, action := actionProperties[req.Event]
-	if !action && req.Event != EventScreenViewed {
+	if !action && req.Event != EventScreenViewed || req.Event == EventSyncFailed {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
@@ -85,11 +81,11 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	surface, _ := req.Properties[propertySurface].(string)
+	if req.Event == EventErrorShown || req.Event == EventSyncFinished && surface == "cli" {
+		h.capture.ServeHTTP(w, r)
+		return
+	}
 	if req.Event == EventSyncFinished {
-		if surface == "cli" {
-			h.capture.ServeHTTP(w, r)
-			return
-		}
 		acceptedScreen(w)
 		return
 	}
