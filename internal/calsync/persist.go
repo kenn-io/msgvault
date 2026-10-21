@@ -59,33 +59,7 @@ type eventMetadata struct {
 // plus the metadata helper, and indexes it for FTS/embeddings. It is idempotent
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
-	if ev.RecurringEventID != "" {
-		keys := candidateSourceMessageIDs(ev)
-		existing, err := s.store.MessageExistsBatch(sourceID, keys)
-		if err != nil {
-			return 0, fmt.Errorf("lookup existing event: %w", err)
-		}
-		var firstID int64
-		for _, key := range keys {
-			if _, ok := existing[key]; ok {
-				id, err := s.ingestEventWithKey(sourceID, cal, ev, key)
-				if err != nil {
-					return 0, err
-				}
-				if firstID == 0 {
-					firstID = id
-				}
-				delete(existing, key)
-			}
-		}
-		if firstID != 0 {
-			return firstID, nil
-		}
-	}
-	return s.ingestEventWithKey(sourceID, cal, ev, deriveSourceMessageID(ev))
-}
-
-func (s *Syncer) ingestEventWithKey(sourceID int64, cal gcal.Calendar, ev gcal.Event, smid string) (int64, error) {
+	smid := deriveSourceMessageID(ev)
 	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
 		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
@@ -216,17 +190,12 @@ func (s *Syncer) ingestEventWithKey(sourceID int64, cal gcal.Calendar, ev gcal.E
 // never seen, it inserts a minimal tombstone whose metadata records the
 // cancellation. Returns (messageID, insertedNew).
 func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, bool, error) {
-	keys := candidateSourceMessageIDs(ev)
-	existing, err := s.store.MessageExistsBatch(sourceID, keys)
+	smid := deriveSourceMessageID(ev)
+	existing, err := s.store.MessageExistsBatch(sourceID, []string{smid})
 	if err != nil {
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
 	}
-	var firstID int64
-	for _, key := range keys {
-		id, ok := existing[key]
-		if !ok {
-			continue
-		}
+	if id, ok := existing[smid]; ok {
 		merged, err := mergeStatusCancelled(s.store, id)
 		if err != nil {
 			return 0, false, err
@@ -234,13 +203,7 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		if err := s.store.SetMessageMetadata(id, merged); err != nil {
 			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
 		}
-		if firstID == 0 {
-			firstID = id
-		}
-		delete(existing, key)
-	}
-	if firstID != 0 {
-		return firstID, false, nil
+		return id, false, nil
 	}
 	// Never-seen cancellation: record it as a tombstone via the normal path.
 	// ev.Status == "cancelled" flows into metadata.status.
@@ -279,6 +242,8 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 // and a single cancelled occurrence flags only its own row. An original start
 // that was only resolved from an offset-free dateTime plus timeZone keeps
 // event.id, the key archives held before such values decoded to an instant.
+// Google keeps one original-start representation per occurrence, so this key
+// stays stable across syncs.
 func deriveSourceMessageID(ev gcal.Event) string {
 	if ev.RecurringEventID != "" {
 		if orig := ev.OriginalStartTime; orig.Date == "" && !orig.DateTime.IsZero() && orig.ResolvedFromTimeZone {
@@ -289,16 +254,6 @@ func deriveSourceMessageID(ev gcal.Event) string {
 		}
 	}
 	return ev.ID
-}
-
-// candidateSourceMessageIDs includes both keys a timed occurrence can use when
-// its original start switches between offset-free and offset-bearing values.
-func candidateSourceMessageIDs(ev gcal.Event) []string {
-	keys := []string{deriveSourceMessageID(ev), ev.ID}
-	if orig := ev.OriginalStartTime; ev.RecurringEventID != "" && orig.Date == "" && !orig.DateTime.IsZero() {
-		keys = append(keys, ev.RecurringEventID+"|"+originalStartKey(orig))
-	}
-	return keys
 }
 
 func originalStartKey(dt gcal.EventDateTime) string {
