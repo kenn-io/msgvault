@@ -62,6 +62,11 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	id := meetingIdentity{ICalUID: row.ICalUID, OccurrenceKey: key}
+	// Occurrence keys represent whole seconds. Keep fractional exceptions
+	// addressable by their message instead of querying a truncated original start.
+	if original := row.Event.Original; key != "" && original != nil && !original.AllDay && original.Instant.Nanosecond() != 0 {
+		id.ICalUID = ""
+	}
 	if id.ICalUID == "" {
 		id.EventMessageID = row.MessageID
 	}
