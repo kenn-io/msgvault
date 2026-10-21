@@ -452,10 +452,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(*)::BIGINT AS activity_count,
-		COUNT(*) FILTER (WHERE pe.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+		COUNT(DISTINCT ` + identityindex.MeetingKeySQL("mk", "pe.message_type", "pe.anchor_message_id") + `)::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	FROM person_entries pe JOIN participants p ON p.id = pe.person_id
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = pe.anchor_message_id
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,
@@ -566,7 +567,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
 ), person_entries AS (`, clustersGlob) +
 			sqlActivityEntryEdges(
-				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
+				"a.canonical_id AS person_id, le.anchor_message_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
 	if len(memberIDs) == 0 {
@@ -591,7 +592,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 		}
 		return `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries
 	WHERE entry_key IN (
 		SELECT edge.entry_key FROM (` +
@@ -623,7 +624,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, conditions, clustersGlo
 	LEFT JOIN conversations c ON c.id = m.conversation_id
 	WHERE ` + sqlIsChatPredicate("m.message_type", "COALESCE(c.conversation_type, '')") + `
 ), person_entries AS (
-	SELECT ?::BIGINT AS person_id, occurred_at, message_type, attachment_count, source_type
+	SELECT ?::BIGINT AS person_id, anchor_message_id, occurred_at, message_type, attachment_count, source_type
 	FROM logical_entries le
 	WHERE (le.entry_kind <> 'conversation'
 	       AND le.anchor_message_id IN (SELECT message_id FROM person_message_ids))

@@ -87,7 +87,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 				base("participants"), base("participant_clusters"), base("owner_participants"))
 			if tc.mixed {
 				var meetingFacts, earlierRosterAttendeeFacts int64
-				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+				facts := RelationshipTemperatureFactsSQL(bounded, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), relationshipParquetGlob(root, "meeting_keys"))
 				requirements.NoError(db.QueryRow(`SELECT count(*) FILTER (WHERE meeting),
 					count(*) FILTER (WHERE meeting AND canonical_id = 4 AND message_id < 19)
 					FROM (`+facts+`)`).Scan(&meetingFacts, &earlierRosterAttendeeFacts))
@@ -100,7 +100,7 @@ func TestBuildActivityPreservesFullExpansionContributions(t *testing.T) {
 			}{
 				{"logical", buildLogicalActivityMaterializationSQL},
 				{"temperature", func(activity string) string {
-					return RelationshipTemperatureFactsSQL(activity, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC))
+					return RelationshipTemperatureFactsSQL(activity, time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), relationshipParquetGlob(root, "meeting_keys"))
 				}},
 			} {
 				t.Run(reduction.name, func(t *testing.T) {

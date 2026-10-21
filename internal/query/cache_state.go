@@ -43,7 +43,8 @@ import (
 // only messages that can still be deleted from their source.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 32
+// Version 33 adds exact meeting keys for linked copies.
+const CacheSchemaVersion = 33
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only

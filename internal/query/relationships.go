@@ -344,7 +344,7 @@ relationship_interactions AS (
 	       END AS modality_mask,
 	       exp(-? * greatest(
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
-	FROM logical_people p
+	FROM (` + identityindex.DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", e.parquetPath("meeting_keys"), "entry_num") + `) p
 	WHERE NOT p.is_owner
 	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 ), aggregated AS (

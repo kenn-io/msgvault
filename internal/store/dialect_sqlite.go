@@ -619,12 +619,12 @@ func (d *SQLiteDialect) ValidateMessageWatermarks(q querier) error {
 // messages.last_modified directly rather than reacting to a messages UPDATE, so
 // no trigger of ours can re-enter them.
 //
-// content_changed_at's triggers are built here because their column list comes
-// from MessagesContentColumns, shared with the PostgreSQL dialect so the two
-// backends cannot drift, and because DROP + CREATE can replace a definition on
-// an existing archive where CREATE TRIGGER IF NOT EXISTS silently would not.
-// The same DROP + CREATE is what lets the re-scoped last_modified trigger reach
-// an archive that already carries schema.sql's older, blanket definition.
+// content_changed_at's message-row triggers are built here because their column
+// list comes from MessagesContentColumns, shared with the PostgreSQL dialect so
+// the two backends cannot drift. The body and raw-snapshot triggers are also
+// built here so all content evidence advances the same watermark. DROP + CREATE
+// replaces definitions on existing archives where IF NOT EXISTS would not; the
+// same is true of the re-scoped last_modified trigger.
 func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 	cols := contentChangedTriggerColumnList()
 	guard := contentChangedValueGuard("IS NOT")
@@ -704,6 +704,27 @@ func (d *SQLiteDialect) EnsureTriggers(q querier) error {
 		// content-stamp CAS and publishes an embedding of the deleted text.
 		fmt.Sprintf(`CREATE TRIGGER trg_message_bodies_content_changed_del
 		    AFTER DELETE ON message_bodies FOR EACH ROW
+		    BEGIN
+		        UPDATE messages SET content_changed_at = %s WHERE id = OLD.message_id;
+		    END`, now),
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_ins`,
+		fmt.Sprintf(`CREATE TRIGGER trg_message_raw_content_changed_ins
+		    AFTER INSERT ON message_raw FOR EACH ROW
+		    BEGIN
+		        UPDATE messages SET content_changed_at = %s WHERE id = NEW.message_id;
+		    END`, now),
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_upd`,
+		fmt.Sprintf(`CREATE TRIGGER trg_message_raw_content_changed_upd
+		    AFTER UPDATE ON message_raw FOR EACH ROW
+		    WHEN OLD.raw_data IS NOT NEW.raw_data
+		      OR OLD.raw_format IS NOT NEW.raw_format
+		      OR OLD.compression IS NOT NEW.compression
+		    BEGIN
+		        UPDATE messages SET content_changed_at = %s WHERE id = NEW.message_id;
+		    END`, now),
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_del`,
+		fmt.Sprintf(`CREATE TRIGGER trg_message_raw_content_changed_del
+		    AFTER DELETE ON message_raw FOR EACH ROW
 		    BEGIN
 		        UPDATE messages SET content_changed_at = %s WHERE id = OLD.message_id;
 		    END`, now),

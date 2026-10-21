@@ -962,7 +962,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1198,6 +1201,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := copyMeetingLinkDecisionsTx(context.Background(), tx, legacyID, newID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,
@@ -1438,6 +1444,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2430,6 +2439,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -6146,6 +6158,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {

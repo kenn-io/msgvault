@@ -8,7 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -59,15 +61,21 @@ type eventMetadata struct {
 // via UpsertMessage's ON CONFLICT(source_id, source_message_id).
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
-	ev.Organizer.Email = normalizeParticipantEmail(ev.Organizer.Email)
+	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
 	for i := range ev.Attendees {
-		ev.Attendees[i].Email = normalizeParticipantEmail(ev.Attendees[i].Email)
+		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
 	}
 
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
+	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
+	for _, a := range ev.Attendees {
+		if a.Email == ev.Organizer.Email && calevent.IsRoomAttendee(a.Email, a.Resource) {
+			organizerRoom = true
+		}
+	}
 	var senderID int64
-	if ev.Organizer.Email != "" {
+	if ev.Organizer.Email != "" && !organizerRoom {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
@@ -83,13 +91,16 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		if a.Email == "" {
 			continue
 		}
+		attendeeEmails = append(attendeeEmails, a.Email)
+		if calevent.IsRoomAttendee(a.Email, a.Resource) {
+			continue
+		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
 		if err != nil {
 			return 0, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.DisplayName)
-		attendeeEmails = append(attendeeEmails, a.Email)
 	}
 
 	// Only the series master (or a standalone event) sets the conversation
@@ -235,16 +246,17 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 	return sql.NullString{String: string(b), Valid: true}, nil
 }
 
-func normalizeParticipantEmail(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
 // deriveSourceMessageID is the idempotency key: a standalone event or series
 // master uses event.id; a recurring instance/exception/cancellation uses
 // recurringEventId|originalStartTime so each occurrence upserts independently
-// and a single cancelled occurrence flags only its own row.
+// and a single cancelled occurrence flags only its own row. An original start
+// that was only resolved from an offset-free dateTime plus timeZone keeps
+// event.id, the key archives held before such values decoded to an instant.
 func deriveSourceMessageID(ev gcal.Event) string {
 	if ev.RecurringEventID != "" {
+		if orig := ev.OriginalStartTime; orig.Date == "" && !orig.DateTime.IsZero() && orig.ResolvedFromTimeZone {
+			return ev.ID
+		}
 		if key := originalStartKey(ev.OriginalStartTime); key != "" {
 			return ev.RecurringEventID + "|" + key
 		}

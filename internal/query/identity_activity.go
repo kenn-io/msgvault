@@ -105,16 +105,18 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type
+	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeySQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_key
 	FROM logical_entries le
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = le.anchor_message_id
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	UNION ALL
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type
+	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeySQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_key
 	FROM logical_entries le
+	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = le.anchor_message_id
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
 ), owner_presence AS (
@@ -534,7 +536,7 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       count(*) FILTER (WHERE p.message_type = 'meeting_transcript')::BIGINT AS meeting_count,
+	       list(DISTINCT p.meeting_key) FILTER (WHERE p.meeting_key IS NOT NULL) AS meeting_keys,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at
@@ -543,7 +545,7 @@ person_stats AS (
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(source_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at
@@ -580,9 +582,17 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 	sourceCount int,
 ) string {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", sourceCount), ",")
+	meetingCount := "sum(meeting_count)::BIGINT"
+	if sourceCount > 1 {
+		meetingCount = `(SELECT count(DISTINCT ` + identityindex.MeetingKeySQL("mk", "l.message_type", "l.anchor_message_id") + `)
+		FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(identityindex.DatasetLogicalContributions)) + `') l
+		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = l.anchor_message_id
+		WHERE l.relation_kind = 1 AND l.canonical_id = selected_source_rollups.canonical_id
+		AND l.source_id IN (SELECT source_id FROM selected_source_rollups))::BIGINT`
+	}
 	return `WITH identity_candidates AS (` + candidates + `
 ), selected_source_rollups AS (
-	SELECT c.canonical_id,
+	SELECT c.canonical_id, item.source_id,
 	       item.source_type,
 	       item.activity_count,
 	       item.meeting_count,
@@ -595,7 +605,7 @@ func (e *DuckDBEngine) sourceFilteredPeopleSQL(
 ), person_totals AS (
 	SELECT canonical_id,
 	       sum(activity_count)::BIGINT AS activity_count,
-	       sum(meeting_count)::BIGINT AS meeting_count,
+	       ` + meetingCount + ` AS meeting_count,
 	       sum(file_count)::BIGINT AS file_count,
 	       min(first_at)::TIMESTAMP AS first_at,
 	       max(last_at)::TIMESTAMP AS last_at

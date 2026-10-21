@@ -4226,3 +4226,63 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Typed calendar evidence rebuilt from raw provider snapshots.
+CREATE TABLE IF NOT EXISTS calendar_events (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider_event_id TEXT NOT NULL DEFAULT '',
+    series_provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    original_start_at TIMESTAMPTZ,
+    original_start_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    start_at TIMESTAMPTZ,
+    end_at TIMESTAMPTZ,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    event_time_zone TEXT NOT NULL DEFAULT '',
+    calendar_time_zone TEXT NOT NULL DEFAULT '',
+    recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_end_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_original_at ON calendar_events(series_provider_id, original_start_at) WHERE kind = 'exception';
+CREATE INDEX IF NOT EXISTS idx_calendar_events_exception_original_date ON calendar_events(series_provider_id, original_start_date) WHERE kind = 'exception';
+CREATE TABLE IF NOT EXISTS calendar_event_attendees (
+    message_id BIGINT NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    rsvp TEXT NOT NULL,
+    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (message_id, ordinal)
+);
+
+CREATE TABLE IF NOT EXISTS meeting_link_key (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    value TEXT NOT NULL,
+    calendar_id TEXT NOT NULL DEFAULT '',
+    scheduled_at TIMESTAMPTZ,
+    PRIMARY KEY (message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_key_scheduled ON meeting_link_key(scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_meeting_details_duration ON meeting_details(duration_seconds);
+CREATE TABLE IF NOT EXISTS meeting_link_decisions (
+    member_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    target_ical_uid TEXT NOT NULL DEFAULT '',
+    target_message_id BIGINT REFERENCES messages(id) ON DELETE CASCADE,
+    occurrence_key TEXT NOT NULL DEFAULT '',
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK ((target_ical_uid <> '' AND target_message_id IS NULL) OR (target_ical_uid = '' AND target_message_id IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_ical_uid, COALESCE(target_message_id, 0), occurrence_key);
+CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);

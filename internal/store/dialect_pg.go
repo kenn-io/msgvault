@@ -834,9 +834,10 @@ func (d *PostgreSQLDialect) ValidateMessageWatermarks(querier) error { return ni
 // VALUE-scoped, so an external consumer maintaining an incremental copy of the
 // archive is woken only when the message's own content, routing, or lifecycle
 // actually changed — never by bookkeeping such as embed_gen or
-// indexing_version. Four triggers feed it here, built from
-// MessagesContentColumns so the SQLite and PostgreSQL definitions cannot drift
-// (a fresh SQLite database runs three of them — see the first entry):
+// indexing_version. Message-row triggers are built from MessagesContentColumns
+// so the SQLite and PostgreSQL definitions cannot drift (a fresh SQLite
+// database runs no insert trigger for messages; see the first entry). Body and
+// raw-snapshot triggers also advance the watermark:
 //
 //   - trg_messages_content_changed_ins (BEFORE INSERT on messages): stamps new
 //     rows. PostgreSQL's column carries no DEFAULT — neither in schema_pg.sql
@@ -866,6 +867,10 @@ func (d *PostgreSQLDialect) ValidateMessageWatermarks(querier) error { return ni
 //     clause on an INSERT trigger cannot reference OLD), and the guard is
 //     required: upsertMessageBody always executes its ON CONFLICT DO UPDATE,
 //     even when messageBodyChanges reports nothing changed.
+//   - trg_message_raw_content_changed_ins / _upd / _del: raw snapshots are
+//     archived provider evidence. Their changes advance freshness even when a
+//     calendar projection hash is unchanged, such as when only provider update
+//     metadata changes.
 //
 // CREATE TRIGGER is not idempotent before PG14, so each trigger is dropped
 // (IF EXISTS) and recreated; the functions use CREATE OR REPLACE. Re-running
@@ -948,6 +953,21 @@ func (d *PostgreSQLDialect) EnsureTriggers(q querier) error {
 		`DROP TRIGGER IF EXISTS trg_message_bodies_content_changed_del ON message_bodies`,
 		`CREATE TRIGGER trg_message_bodies_content_changed_del
 		     AFTER DELETE ON message_bodies FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_content_changed_at_del()`,
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_ins ON message_raw`,
+		`CREATE TRIGGER trg_message_raw_content_changed_ins
+		     AFTER INSERT ON message_raw FOR EACH ROW
+		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_upd ON message_raw`,
+		`CREATE TRIGGER trg_message_raw_content_changed_upd
+		     AFTER UPDATE OF raw_data, raw_format, compression ON message_raw FOR EACH ROW
+		     WHEN (OLD.raw_data IS DISTINCT FROM NEW.raw_data
+		           OR OLD.raw_format IS DISTINCT FROM NEW.raw_format
+		           OR OLD.compression IS DISTINCT FROM NEW.compression)
+		     EXECUTE FUNCTION bump_message_content_changed_at()`,
+		`DROP TRIGGER IF EXISTS trg_message_raw_content_changed_del ON message_raw`,
+		`CREATE TRIGGER trg_message_raw_content_changed_del
+		     AFTER DELETE ON message_raw FOR EACH ROW
 		     EXECUTE FUNCTION bump_message_content_changed_at_del()`,
 		// Source mutations share this transaction-level advisory lock. Contextual
 		// activation takes its exclusive form before reading the journal clock, so
@@ -2375,6 +2395,8 @@ var exclusiveLockTables = []string{
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
+	"calendar_events", "calendar_event_attendees",
+	"meeting_link_key", "meeting_link_decisions",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,

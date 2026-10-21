@@ -527,6 +527,11 @@ func TestDeleteStagedRejectsUnsupportedSourceBeforeClaim(t *testing.T) {
 func TestDeleteStagedOAuthSetupFailureLeavesManifestPending(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
+	// tryFindClientSecrets scans the user's Downloads directory; keep this test
+	// isolated from the developer's real home directory.
+	testHome := t.TempDir()
+	t.Setenv("HOME", testHome)
+	t.Setenv("USERPROFILE", testHome)
 	dataDir := t.TempDir()
 	cfg := lifecycleTestConfig(dataDir)
 	testCtx := withStoreResolverConfig(t, cfg)

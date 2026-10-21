@@ -351,6 +351,28 @@ func TestContentChangedAt_ResyncOfChangedMessageBumps(t *testing.T) {
 		"a resync carrying a changed body must bump content_changed_at")
 }
 
+func TestContentChangedAt_RawSnapshotChangesBump(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	id := seedMessage(t, st, 1)
+
+	old := stampContentChangedAt(t, st, id)
+	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), old, id)
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(id, []byte("first snapshot"), "example_json"))
+	inserted := readContentChangedAt(t, st, id)
+	assert.Greater(inserted, old, "a raw snapshot insert must advance the message watermark")
+
+	require.NoError(st.UpsertMessageRawWithFormat(id, []byte("first snapshot"), "example_json"))
+	assert.Equal(inserted, readContentChangedAt(t, st, id), "an identical raw snapshot must not advance the watermark")
+
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET content_changed_at = ? WHERE id = ?`), old, id)
+	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(id, []byte("updated snapshot"), "example_json"))
+	assert.Greater(readContentChangedAt(t, st, id), old, "changed raw provider evidence must advance the watermark")
+}
+
 // TestContentChangedAt_BodyWriteBumpsParent: a body edit must reach the parent's
 // watermark. The body lives in a separate table, so without this a
 // repair-encoding pass would be invisible to a consumer.
