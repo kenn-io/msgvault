@@ -856,6 +856,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// client, but let daemon shutdown stop it before the store closes.
 		return daemonCacheRefreshError(ctx, rebuildCacheAfterScheduledSync(ctx, label))
 	}
+	refreshCallHistoryCacheAfterWrite := func(_ context.Context, label string) error {
+		if !cfg.Analytics.AutoBuildCache || store.IsPostgresURL(cfg.DatabaseDSN()) {
+			return nil
+		}
+		if refresher := daemonCacheRefresher; refresher != nil {
+			refresher.RequestAfterQuiet(callHistoryCacheRefreshQuietPeriod, label)
+			return nil
+		}
+		return daemonCacheRefreshError(ctx, rebuildCacheAfterScheduledSync(ctx, label))
+	}
 	meetingImporter := meetingimport.NewImporter(s, meetingimport.Hooks{
 		AfterSourceSetup: func() error {
 			return runPostSourceCreateMigrationsForInvocation(s, state)
@@ -865,20 +875,21 @@ func runServe(cmd *cobra.Command, args []string) error {
 	cacheJobs := newCacheBuildJobs(ctx, idleTracker, nil)
 	cacheJobs.logger = logger
 	storeAdapter := &storeAPIAdapter{
-		store:                  s,
-		config:                 cfg,
-		options:                state.options,
-		logger:                 logger,
-		draftPolicy:            snapshotIMAPDraftPolicy(cfg),
-		gmailDraftPolicy:       snapshotGmailDraftPolicy(cfg),
-		beeperDraftPolicy:      snapshotBeeperDraftPolicy(cfg),
-		draftCacheRefresh:      refreshCacheAfterWrite,
-		attachmentMaintenance:  attachmentMaint,
-		meetingImporter:        meetingImporter,
-		analyticsDir:           cfg.AnalyticsDir(),
-		cacheJobs:              cacheJobs,
-		personEnrichmentConfig: cfg.People.Enrichment,
-		lookupEnv:              personEnrichmentEnvironmentLookup(cfg),
+		store:                   s,
+		config:                  cfg,
+		options:                 state.options,
+		logger:                  logger,
+		draftPolicy:             snapshotIMAPDraftPolicy(cfg),
+		gmailDraftPolicy:        snapshotGmailDraftPolicy(cfg),
+		beeperDraftPolicy:       snapshotBeeperDraftPolicy(cfg),
+		draftCacheRefresh:       refreshCacheAfterWrite,
+		callHistoryCacheRefresh: refreshCallHistoryCacheAfterWrite,
+		attachmentMaintenance:   attachmentMaint,
+		meetingImporter:         meetingImporter,
+		analyticsDir:            cfg.AnalyticsDir(),
+		cacheJobs:               cacheJobs,
+		personEnrichmentConfig:  cfg.People.Enrichment,
+		lookupEnv:               personEnrichmentEnvironmentLookup(cfg),
 	}
 	schedAdapter := &schedulerAdapter{scheduler: sched, media: mediaSched}
 
@@ -1764,9 +1775,10 @@ type storeAPIAdapter struct {
 	microsoftTagClientFactory func(context.Context, *store.Source, bool) (*msmail.Client, error)
 	// draftCacheRefresh rebuilds the analytics cache after a draft is durable,
 	// the same best-effort hook the meeting importer uses.
-	draftCacheRefresh     func(context.Context, string) error
-	attachmentMaintenance *attachmentMaintenance
-	meetingImporter       *meetingimport.Importer
+	draftCacheRefresh       func(context.Context, string) error
+	callHistoryCacheRefresh func(context.Context, string) error
+	attachmentMaintenance   *attachmentMaintenance
+	meetingImporter         *meetingimport.Importer
 	// analyticsDir is the daemon's Parquet analytics cache directory, used
 	// to read the revision committed by the derived-refresh child.
 	analyticsDir           string

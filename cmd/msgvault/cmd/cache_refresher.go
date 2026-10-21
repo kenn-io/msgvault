@@ -33,9 +33,10 @@ type backgroundCacheRefresher struct {
 	pendingID string
 	closed    bool
 	// delayed is the single outstanding RequestAfter timer, due at delayedAt.
-	delayed   *time.Timer
-	delayedAt time.Time
-	wg        sync.WaitGroup
+	delayed    *time.Timer
+	delayedAt  time.Time
+	quietTimer *time.Timer // reset by each RequestAfterQuiet call
+	wg         sync.WaitGroup
 }
 
 func newBackgroundCacheRefresher(
@@ -104,6 +105,39 @@ func (r *backgroundCacheRefresher) RequestAfter(delay time.Duration, identifier 
 	r.delayed = timer
 }
 
+// RequestAfterQuiet postpones a rebuild request until delay has elapsed since
+// the most recent call. It is used for record-at-a-time imports so a batch
+// produces one cache refresh after writes stop.
+func (r *backgroundCacheRefresher) RequestAfterQuiet(delay time.Duration, identifier string) {
+	if delay <= 0 {
+		r.Request(identifier)
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	if r.quietTimer != nil {
+		r.quietTimer.Stop()
+	}
+	var timer *time.Timer
+	timer = r.afterFunc(delay, func() {
+		r.mu.Lock()
+		if r.quietTimer != timer {
+			r.mu.Unlock()
+			return
+		}
+		r.quietTimer = nil
+		closed := r.closed
+		r.mu.Unlock()
+		if !closed {
+			r.Request(identifier)
+		}
+	})
+	r.quietTimer = timer
+}
+
 // Shutdown refuses new requests, cancels the running rebuild, and waits for
 // it to stop or for ctx to end.
 func (r *backgroundCacheRefresher) Shutdown(ctx context.Context) error {
@@ -113,6 +147,10 @@ func (r *backgroundCacheRefresher) Shutdown(ctx context.Context) error {
 	if r.delayed != nil {
 		r.delayed.Stop()
 		r.delayed = nil
+	}
+	if r.quietTimer != nil {
+		r.quietTimer.Stop()
+		r.quietTimer = nil
 	}
 	r.mu.Unlock()
 	r.cancel()

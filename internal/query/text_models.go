@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
@@ -173,6 +174,7 @@ var KnownMessageTypes = []string{
 	"google_voice_text",
 	"google_voice_call",
 	"google_voice_voicemail",
+	callhistory.MessageType,
 	"beeper",
 	"chatwoot",
 	"slack",

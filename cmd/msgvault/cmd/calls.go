@@ -92,7 +92,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			return write(cmd, result)
 		},
 	}
-	root.AddCommand(importCommand)
+	root.AddCommand(importCommand, newMacOSCallsCommand(open, write))
 	for _, summary := range []bool{false, true} {
 		name, description := "list", "Inspect source observations and participant attendance"
 		if summary {

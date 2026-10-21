@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
@@ -28,7 +29,14 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	person, _, err := st.CreatePersonFromParticipant(peer)
 	requirements.NoError(err)
 	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-call-key"}}
-	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}
+	refreshes := 0
+	adapter := &storeAPIAdapter{
+		store: st, config: cfg, logger: slog.New(slog.DiscardHandler),
+		callHistoryCacheRefresh: func(context.Context, string) error {
+			refreshes++
+			return errors.New("synthetic cache refresh failure")
+		},
+	}
 	server := httptest.NewServer(api.NewServer(cfg, adapter, nil, slog.New(slog.DiscardHandler)).Router())
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{
@@ -54,6 +62,7 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 		requirements.NoError(err, output)
 		assertions.Contains(output, `"message_id"`)
 	}
+	assertions.Equal(2, refreshes, "successful imports should request a cache refresh even if refresh fails")
 	output, err := run("", "summary", "--person-id", strconv.FormatInt(person.ID, 10))
 	requirements.NoError(err, output)
 	var result api.CallSummaryResponse

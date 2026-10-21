@@ -308,14 +308,17 @@ msgvault search "release planning" --message-type discord
 
 # Only SMS/MMS text messages
 msgvault search "dinner" --message-type sms --message-type mms
+
+# Only imported call observations
+msgvault search --message-type call_record --json
 ```
 
 Valid values are `email`, `google_chat`, `calendar_event`, `meeting_transcript`,
 `beeper`, `chatwoot`, `sms`, `mms`, `rcs`, `whatsapp`, `imessage`, `teams`, `discord`, `slack`, `fbmessenger`,
-`synctech_sms_call`, `google_voice_text`, `google_voice_call`, and
-`google_voice_voicemail`. `message_type:email` also includes legacy rows whose
-type is empty because older msgvault versions created them before the column
-existed.
+`synctech_sms_call`, `google_voice_text`, `google_voice_call`,
+`google_voice_voicemail`, and `call_record`. `message_type:email` also includes
+legacy rows whose type is empty because older msgvault versions created them
+before the column existed.
 
 The same message-type scoping is available in HTTP search via the
 `message_type` query parameter. In MCP, include a `message_type:` operator in

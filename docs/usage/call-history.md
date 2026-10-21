@@ -49,8 +49,42 @@ Supported formats:
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. An observation allows 100 participants and 32 phone/link entry
-points. No importer opens protected databases, retrieves encryption keys,
-changes connected account bindings, or requests additional platform permissions.
+points. The supplied-record importer does not open databases or retrieve encryption
+keys. The macOS reader below needs existing permission to read its source.
+Neither importer changes privacy settings or requests new OAuth scopes.
+
+## Import macOS Phone and FaceTime history
+
+Run the reader on the Mac with access to the call database. It sends observations
+through the selected daemon, which can run on another machine.
+
+```sh
+msgvault calls import-macos --account example-call-history
+# A supplied copy can be read on other platforms:
+msgvault calls import-macos --account example-call-history --db /path/to/CallHistory.storedata
+```
+
+Keep `--account` stable when importing the same history again or from another
+copy. The default macOS path is
+`~/Library/Application Support/CallHistoryDB/CallHistory.storedata`. If macOS
+denies access, grant Full Disk Access to the terminal or application in System
+Settings, or use an accessible copy. msgvault never changes privacy settings.
+
+The reader creates a private SQLite snapshot, including committed WAL data.
+A supplied copy needs its matching `-wal` file, if present. Errors report
+how many imports completed; rerunning safely updates the same records.
+
+Only explicit originated/answered flags establish direction and attendance.
+An unanswered row does not distinguish missed, declined or cancelled calls.
+Duration never establishes attendance. Original names, addresses, call types,
+service bundle IDs and group/device metadata stay in raw evidence. `calls list`
+shows IDs and normalized claims; retrieve original JSON with the owner-authenticated
+`GET /api/v1/cli/message/raw?id=<message_id>` endpoint.
+
+The reader does not guess archive participants from addresses or group IDs.
+For manual person attribution, import a normalized observation with a separate
+`record_id` and the same `macos` provider, account and `native_call_id`. Reusing
+the reader's record ID would have its participant bindings replaced on reimport.
 
 ## Read the evidence and counts
 
@@ -63,6 +97,12 @@ storage, outside the list response.
 `calls summary` ranks current durable people by answered count, then person ID.
 Unbound participants remain visible in evidence but have no guessed person.
 Multiple identities currently bound to one person count once per call.
+
+To search only call observations, filter by their message type:
+
+```sh
+msgvault search --message-type call_record --json
+```
 
 | Field | Meaning |
 | --- | --- |
@@ -110,10 +150,8 @@ can recreate it. Scheduled cancellation is an update, not a sticky withdrawal.
   describe participants and end time. The existing guild bot source does not
   establish access to private historical calls. No alternate account or client
   is used.
-- **macOS:** Apple documents [Phone/FaceTime history synchronization](https://support.apple.com/en-nz/guide/icloud/mmc2662aa6e0/icloud).
-  [CallKit](https://developer.apple.com/documentation/CallKit) describes call
-  integration, not a general historical export API. Protected call databases
-  and additional privacy permissions are outside this importer.
+- **macOS:** Use the [client-side Phone and FaceTime reader](#import-macos-phone-and-facetime-history)
+  with existing database access.
 
 Call observations do not create ordinary message-contact activity. The
 per-person Store summary is available for relationship-tier integration;
