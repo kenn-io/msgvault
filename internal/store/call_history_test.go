@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -91,6 +92,32 @@ func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 		Counterparts:   []store.ActivityCounterpart{{ParticipantID: 1, PersonID: &personID, RecipientType: "call_joined"}},
 	}, 10)
 	assertions.Empty(got.Persons)
+}
+
+func TestCallObservationProjectsWithOtherChannel(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := storetest.New(t).Store
+	observation := callhistory.Observation{
+		RecordID: "activity-projection-call",
+		Version:  1, Provider: "signal", Account: "example", NativeCallID: "activity-projection-call",
+		Kind: "call", Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
+		Raw: []byte(`{"callId":"activity-projection-call"}`),
+	}
+	source, err := st.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
+	requirements.NoError(err)
+	messageID, err := st.PutCallObservationContext(t.Context(), source.ID, observation)
+	requirements.NoError(err)
+	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 10})
+	requirements.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	requirements.NoError(err)
+
+	var channel string
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT channel FROM activity_events WHERE message_id = ?`), messageID).Scan(&channel))
+	assertions.Equal(string(store.ChannelOther), channel)
 }
 
 func TestCallObservationRejectsCrossAccountSource(t *testing.T) {

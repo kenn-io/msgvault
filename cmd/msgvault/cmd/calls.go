@@ -144,6 +144,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		}
 		root.AddCommand(command)
 	}
+	addZoomCommands(root, open, write)
 	return root
 }
 

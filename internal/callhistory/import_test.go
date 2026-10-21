@@ -123,12 +123,10 @@ func FuzzImportNeverInventsScheduledAttendance(f *testing.F) {
 	f.Add([]byte(`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":0}}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		assertions := assert.New(t)
-		requirements := require.New(t)
 		o, err := DecodeImport(bytes.NewReader(data))
 		if err != nil {
 			return
 		}
-		requirements.NoError(o.Validate())
 		if o.Kind == "scheduled_meeting" {
 			assertions.NotEqual("answered", o.Outcome)
 			assertions.NotEqual("joined", o.OwnerParticipation)

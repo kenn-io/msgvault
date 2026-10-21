@@ -49,8 +49,46 @@ Supported formats:
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. An observation allows 100 participants and 32 phone/link entry
-points. No importer opens protected databases, retrieves encryption keys,
-changes connected account bindings, or requests additional platform permissions.
+points. No supplied-record importer opens protected databases, retrieves encryption
+keys, changes connected account bindings, or requests additional permissions.
+
+## Import Zoom meeting attendance
+
+Unreleased: import a complete supplied Zoom past-meeting participant roster.
+This runs client-side and posts normalized evidence through the selected daemon.
+The account and owner IDs form an opaque stable namespace, keeping different
+organizations and archive owners separate.
+
+```sh
+msgvault calls import-zoom-meeting --roster roster.json --uuid INSTANCE_UUID \
+  --account example-account/owner --owner-id OWNER_ZOOM_ID --bindings bindings.json
+```
+
+`roster.json` is one complete participant API response, or an array of all
+response pages in order. Every intermediate page needs a unique nonempty
+`next_page_token`; the final page must have no continuation token. A supplied
+export is trusted source evidence; the importer cannot verify that pages were
+not edited. It rejects incomplete totals, malformed times and oversized input.
+
+`bindings.json` maps exact stable Zoom participant IDs to existing archive
+participant IDs, for example `{"peer-zoom-id":42}`. For anonymous attendees,
+use `INSTANCE_UUID/user/MEETING_LOCAL_USER_ID`. Names and redacted emails never
+create bindings. The owner must be identifiable by stable Zoom ID.
+
+Only overlapping in-meeting intervals for the owner and another attendee
+confirm a call. Reconnect rows and repeated rows do not increase counts.
+Waiting-room time and invitations do not count. Meeting direction and talk
+duration remain unknown. Input is limited to 496 KiB and 100 archive
+participant bindings; participant evidence is preserved without truncation. Continuation tokens are
+discarded after pagination validation.
+
+Reimport replaces the same instance. A complete roster that removes earlier
+attendance clears the old joined claim reversibly. Incomplete or failed reads
+leave prior evidence intact. Reconciliation scans at most 10,000 existing
+observation metadata rows and fails before writes if it cannot finish.
+JSON output reports `upserted`, `skipped` and `failed`; upserts include replays.
+No new Go dependencies or OAuth scopes are needed for supplied files.
+Encrypted desktop databases and Keychain extraction are excluded.
 
 ## Read the evidence and counts
 
