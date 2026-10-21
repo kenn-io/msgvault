@@ -738,6 +738,7 @@ func runDocumentVectorChunkLifecycleContract(t *testing.T) {
 	t.Helper()
 	t.Run("claim resume bounds and stable token", testDocumentVectorClaimResumeBounds)
 	t.Run("renew and stale fence", testDocumentVectorRenewAndStaleFence)
+	t.Run("release unsent claim and immediate takeover", testDocumentVectorReleaseAndTakeover)
 	t.Run("retry and terminal failure", testDocumentVectorFailureLifecycle)
 	t.Run("failure status and terminal reset", testDocumentVectorFailureStatusAndReset)
 	t.Run("source changed failure stays parked", testDocumentVectorSourceChangedFailureStaysParked)
@@ -941,6 +942,60 @@ func testDocumentVectorRenewAndStaleFence(t *testing.T) {
 	_, err = f.Store.RenewDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, renewedUntil, time.Minute)
 	require.ErrorIs(t, err, store.ErrDocumentVectorClaimLost)
 	assert.NotEqual(t, claim.LeaseFence, takeover.LeaseFence)
+}
+
+func testDocumentVectorReleaseAndTakeover(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, generation := seedDocumentVectorGenerationWithChunks(t, 1)
+	now := time.Date(2026, time.August, 20, 11, 12, 13, 0, time.UTC)
+	claim, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-a", now, time.Minute)
+	require.NoError(err)
+	require.NotNil(claim)
+	require.Equal(1, claim.AttemptCount)
+	releaseAt := now.Add(time.Second)
+	for _, stale := range []struct {
+		owner string
+		fence int64
+	}{{"worker-b", claim.LeaseFence}, {claim.LeaseOwner, claim.LeaseFence + 1}} {
+		err := f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, stale.owner, stale.fence, false, releaseAt)
+		require.ErrorIs(err, store.ErrDocumentVectorClaimLost)
+		blocked, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", releaseAt, time.Minute)
+		require.NoError(err)
+		assert.Nil(blocked, "a rejected release must leave the live claim owned")
+	}
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, claim.Token, claim.LeaseOwner, claim.LeaseFence, false, releaseAt))
+	takeover, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-b", releaseAt, time.Minute)
+	require.NoError(err)
+	require.NotNil(takeover, "the released claim is available before its original lease expires")
+	assert.Equal(claim.Token, takeover.Token)
+	assert.Equal("worker-b", takeover.LeaseOwner)
+	assert.Equal(int64(2), takeover.LeaseFence)
+	assert.Equal(1, takeover.AttemptCount, "an unsent request must not consume a provider attempt")
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, takeover.Token, takeover.LeaseOwner, takeover.LeaseFence, true, releaseAt))
+	resumed, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-c", releaseAt, time.Minute)
+	require.NoError(err)
+	require.NotNil(resumed)
+	assert.Equal(2, resumed.AttemptCount, "a submitted request keeps its attempt when a new owner resumes")
+	expiredAt := releaseAt.Add(time.Minute)
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, resumed.Token, resumed.LeaseOwner, resumed.LeaseFence, false, expiredAt),
+		"an expired owner can release while its fence still owns the pending row")
+	reclaimed, err := f.Store.ClaimDocumentVectorChunk(t.Context(), generation.ID, 0, 1, "worker-d", expiredAt, time.Minute)
+	require.NoError(err)
+	require.NotNil(reclaimed)
+	assert.Equal(2, reclaimed.AttemptCount)
+	require.ErrorIs(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, resumed.Token, resumed.LeaseOwner, resumed.LeaseFence, false, expiredAt), store.ErrDocumentVectorClaimLost,
+		"a former owner cannot release its successor's claim")
+	retired, err := f.Store.RetireDocumentVectorGeneration(t.Context(), generation.ID, expiredAt)
+	require.NoError(err)
+	require.True(retired)
+	require.NoError(f.Store.ReleaseDocumentVectorChunkClaim(t.Context(), generation.ID, reclaimed.Token, reclaimed.LeaseOwner, reclaimed.LeaseFence, true, expiredAt),
+		"a retired generation still releases its outstanding submitted claim")
+	var owner sql.NullString
+	var attempts int
+	require.NoError(f.Store.DB().QueryRow(`SELECT lease_owner, attempt_count FROM document_vector_publications`).Scan(&owner, &attempts))
+	assert.False(owner.Valid)
+	assert.Equal(2, attempts, "retirement preserves the submitted attempt")
 }
 
 func testDocumentVectorFailureLifecycle(t *testing.T) {

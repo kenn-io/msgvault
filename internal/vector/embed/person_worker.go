@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
@@ -130,6 +132,10 @@ func (w *PersonWorker) runOnce(
 	}
 	var runErr error
 	for start := 0; start < len(changed); start += w.deps.BatchSize {
+		if jobctx.StopRequested(ctx) {
+			result.PersonsPending = true
+			return result, errors.Join(runErr, ctx.Err())
+		}
 		end := min(start+w.deps.BatchSize, len(changed))
 		batch := changed[start:end]
 		result.Claimed += len(batch)
@@ -176,7 +182,7 @@ func (w *PersonWorker) runOnce(
 	if len(changed) > 0 {
 		current, err = w.deps.Store.ListPersonSemanticDocumentsContext(ctx)
 		if err != nil {
-			return result, fmt.Errorf("refresh person semantic documents before reconciliation: %w", err)
+			return result, errors.Join(runErr, fmt.Errorf("refresh person semantic documents before reconciliation: %w", err))
 		}
 	}
 	currentIDs := make([]int64, 0, len(current))
@@ -186,9 +192,9 @@ func (w *PersonWorker) runOnce(
 		}
 	}
 	if err := w.deps.Backend.DeletePersonsNotIn(ctx, gen, currentIDs); errors.Is(err, vector.ErrGenerationRetired) {
-		return result, err
+		return result, errors.Join(runErr, err)
 	} else if err != nil {
-		return result, fmt.Errorf("reconcile deleted person vectors for generation %d: %w", gen, err)
+		return result, errors.Join(runErr, fmt.Errorf("reconcile deleted person vectors for generation %d: %w", gen, err))
 	}
 	pass.checkpoint(ctx, checkpointRunCounters(result))
 	return result, runErr
@@ -210,6 +216,8 @@ func (w *PersonWorker) probePersonEndpoint(ctx context.Context) error {
 	return nil
 }
 
+// embedPersonBatch publishes the people of each provider request before the
+// next request is sent, so a pass that stops keeps the earlier revisions.
 func (w *PersonWorker) embedPersonBatch(
 	ctx context.Context,
 	gen vector.GenerationID,
@@ -226,12 +234,37 @@ func (w *PersonWorker) embedPersonBatch(
 			capPersonProviderInput(document.Text, w.deps.MaxInputChars),
 		}}
 	}
-	vectors, embedErr := w.deps.Client.EmbedDocuments(ctx, inputs)
+	published := 0
+	var publishErr error
+	embedErr := vector.EmbedDocumentRequests(ctx, w.deps.Client, inputs, nil, func(first int, vectors [][][]float32) error {
+		if first != published || first+len(vectors) > len(batch) {
+			publishErr = fmt.Errorf("embed person documents: returned %d results for %d inputs", first+len(vectors), len(batch))
+			return publishErr
+		}
+		if len(vectors) > 0 {
+			state.endpointHealthy = true
+		}
+		publishErr = w.publishPersons(ctx, gen, batch[first:first+len(vectors)], vectors, result)
+		published += len(vectors)
+		return publishErr
+	})
+	remaining := batch[published:]
+	if publishErr != nil {
+		result.Failed += len(remaining)
+		return publishErr
+	}
+	if ctx.Err() != nil {
+		return errors.Join(embedErr, ctx.Err())
+	}
+	if embedErr == jobctx.ErrYieldedToWaiter { //nolint:errorlint // Only a bare yield is a clean stop; joined errors remain visible.
+		result.PersonsPending = len(remaining) > 0
+		return nil
+	}
 	permanent := errors.Is(embedErr, ErrPermanent4xx) || errors.Is(embedErr, ErrDocumentTooLarge)
-	if permanent && len(batch) > 1 {
+	if permanent && len(remaining) > 1 {
 		var batchErr error
-		for i := range batch {
-			if err := w.embedPersonBatch(ctx, gen, batch[i:i+1], result, state); err != nil {
+		for i := range remaining {
+			if err := w.embedPersonBatch(ctx, gen, remaining[i:i+1], result, state); err != nil {
 				if errors.Is(err, vector.ErrGenerationRetired) {
 					return vector.ErrGenerationRetired
 				}
@@ -240,56 +273,66 @@ func (w *PersonWorker) embedPersonBatch(
 		}
 		return batchErr
 	}
-	if permanent && len(batch) == 1 && len(vectors) == 0 {
+	if permanent && len(remaining) == 1 {
 		result.Failed++
 		if errors.Is(embedErr, ErrDocumentTooLarge) {
-			return w.recordRejectedPersons(ctx, gen, batch)
+			return w.recordRejectedPersons(ctx, gen, remaining)
 		}
-		state.rejected = append(state.rejected, batch[0])
+		state.rejected = append(state.rejected, remaining[0])
 		state.rejectionErr = errors.Join(state.rejectionErr, embedErr)
 		return nil
 	}
-	if len(vectors) > len(batch) || (embedErr == nil && len(vectors) != len(batch)) {
-		result.Failed += len(batch)
-		return fmt.Errorf("embed person documents: returned %d results for %d inputs", len(vectors), len(batch))
+	result.Failed += len(remaining)
+	if embedErr != nil {
+		return fmt.Errorf("embed person documents: %w", embedErr)
 	}
-	if len(vectors) > 0 {
-		state.endpointHealthy = true
+	if len(remaining) > 0 {
+		return fmt.Errorf("embed person documents: returned %d results for %d inputs", published, len(batch))
 	}
+	return nil
+}
 
+// publishPersons stores the vectors of one provider request for the people
+// whose semantic document has not changed since it was read.
+func (w *PersonWorker) publishPersons(
+	ctx context.Context, gen vector.GenerationID, people []store.PersonSemanticDocument,
+	vectors [][][]float32, result *RunResult,
+) error {
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	ctx = saveCtx
 	publications := make([]vector.PersonEmbedding, 0, len(vectors))
 	for i, documentVectors := range vectors {
 		if len(documentVectors) != 1 {
-			result.Failed += len(batch)
-			return fmt.Errorf("embed person %d: expected one vector, got %d", batch[i].PersonID, len(documentVectors))
+			result.Failed += len(people)
+			return fmt.Errorf("embed person %d: expected one vector, got %d", people[i].PersonID, len(documentVectors))
 		}
-		current, err := w.deps.Store.LoadPersonSemanticDocumentContext(ctx, batch[i].PersonID)
+		current, err := w.deps.Store.LoadPersonSemanticDocumentContext(ctx, people[i].PersonID)
 		if errors.Is(err, store.ErrPersonNotFound) {
 			continue
 		}
 		if err != nil {
-			result.Failed += len(batch)
-			return fmt.Errorf("reload person %d after embedding: %w", batch[i].PersonID, err)
+			result.Failed += len(people)
+			return fmt.Errorf("reload person %d after embedding: %w", people[i].PersonID, err)
 		}
-		if current.Revision != batch[i].Revision || current.RendererPolicy != batch[i].RendererPolicy {
+		if current.Revision != people[i].Revision || current.RendererPolicy != people[i].RendererPolicy {
 			continue
 		}
 		publications = append(publications, vector.PersonEmbedding{
-			PersonID: batch[i].PersonID, Revision: batch[i].Revision, Vector: documentVectors[0],
+			PersonID: people[i].PersonID, Revision: people[i].Revision, Vector: documentVectors[0],
 		})
 	}
 	if err := w.deps.Backend.UpsertPersons(ctx, gen, publications); errors.Is(err, vector.ErrGenerationRetired) {
 		return vector.ErrGenerationRetired
 	} else if err != nil {
-		result.Failed += len(batch)
+		result.Failed += len(people)
 		return fmt.Errorf("upsert person vectors for generation %d: %w", gen, err)
 	}
-	result.Succeeded += len(publications)
-	result.Failed += len(vectors) - len(publications)
-	if embedErr != nil {
-		result.Failed += len(batch) - len(vectors)
-		return fmt.Errorf("embed person documents: %w", embedErr)
+	if len(publications) > 0 {
+		jobctx.RecordProgress(ctx)
 	}
+	result.Succeeded += len(publications)
+	result.Failed += len(people) - len(publications)
 	return nil
 }
 
@@ -401,6 +444,10 @@ func (w *GenerationWorker) RunOnce(
 		return RunResult{}, fmt.Errorf("message embedding pass scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunOnce(ctx, gen, messageScope)
+	if jobctx.StopRequested(ctx) {
+		messageResult.PersonsPending = true
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	var personResult RunResult
 	var personErr error
 	if w.personScanned == nil {
@@ -461,6 +508,10 @@ func (w *GenerationWorker) RunBackstop(
 		return RunResult{}, fmt.Errorf("person embedding backstop scope: %w", err)
 	}
 	messageResult, messageErr := w.messages.RunBackstop(ctx, gen, messageScope)
+	if jobctx.StopRequested(ctx) {
+		messageResult.PersonsPending = true
+		return messageResult, newGenerationRunError(messageErr, nil)
+	}
 	personResult, personErr := w.persons.RunOnce(ctx, gen, personScope)
 	return mergeGenerationResults(messageResult, personResult), newGenerationRunError(messageErr, personErr)
 }
@@ -473,6 +524,7 @@ func newGenerationRunError(messageErr, personErr error) error {
 }
 
 func mergeGenerationResults(message, person RunResult) RunResult {
+	message.PersonsPending = person.PersonsPending
 	message.Claimed += person.Claimed
 	message.Succeeded += person.Succeeded
 	message.Failed += person.Failed
