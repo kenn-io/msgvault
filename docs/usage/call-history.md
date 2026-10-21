@@ -118,6 +118,31 @@ size, pages and retries. Permission/license errors stop the run with a diagnosti
 Incomplete rosters never replace evidence. Supplied and fetched modes use the
 same attendance rules and daemon import path.
 
+### Discover hosted past meetings
+
+Use a separate admin-managed OAuth app with both new scopes
+`report:read:user:admin` and `meeting:read:list_past_participants:admin` to
+discover the configured owner's hosted meetings and fetch their attendance.
+These are administrative scopes even when one owner is selected. Zoom apps
+cannot combine user-level and admin-level scopes; use a separate token helper
+for this app. See [Zoom app management](https://developers.zoom.us/docs/build-flow/basic-info/app-mgmt/).
+No new Go dependencies are added.
+
+```sh
+msgvault calls import-zoom-meetings --from 2026-10-01 --to 2026-10-15 \
+  --account EXAMPLE_ACCOUNT_ID --owner-id OWNER_ZOOM_ID --bindings bindings.json \
+  --token-command '["zoom-admin-access-token"]'
+```
+
+The date range is inclusive/exclusive, at most 31 days within six months.
+Requests split at calendar-month boundaries. Discovery uses hosted `type=past`
+reports and skips webinars/PAC; it does not promise meetings hosted by others.
+PMI meetings use their instance UUID, just like other supported meetings.
+JSON output separates `unsupported` meeting types from attendance `skipped`.
+Reports can omit one-person meetings. An exact UUID can reach older accessible
+instances within the separate participant-retention limit. At most 100 instances
+and 32 MiB of evidence are staged; fetch or validation errors occur before imports.
+
 ## Read the evidence and counts
 
 All commands return JSON. `calls list` includes source/message/record IDs,

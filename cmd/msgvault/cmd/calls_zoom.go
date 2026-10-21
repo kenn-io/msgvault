@@ -16,9 +16,10 @@ import (
 
 type zoomOptions struct{ account, owner, uuid, roster, bindings string }
 type zoomCounts struct {
-	Upserted int `json:"upserted"`
-	Skipped  int `json:"skipped"`
-	Failed   int `json:"failed"`
+	Upserted    int `json:"upserted"`
+	Skipped     int `json:"skipped"`
+	Failed      int `json:"failed"`
+	Unsupported int `json:"unsupported,omitempty"`
 }
 type callOpener func(context.Context) (callCommandClient, func(), error)
 type callWriter func(*cobra.Command, any) error
@@ -97,10 +98,11 @@ func addZoomCommands(root *cobra.Command, open callOpener, write callWriter) {
 		if err != nil {
 			return err
 		}
-		return postZoomObservations(cmd, client, observations, skipped, write)
+		return postZoomObservations(cmd, client, observations, zoomCounts{Skipped: skipped}, write)
 	}
 	addZoomFetchMode(cmd, &o, open, write)
 	root.AddCommand(cmd)
+	addZoomDiscoveryCommand(root, open, write)
 }
 
 // Stage complete rosters and reconciliation before the first import. A failed
@@ -186,8 +188,7 @@ func priorZoomObservations(ctx context.Context, client callCommandClient, accoun
 	return nil, errors.New("zoom reconciliation exceeds 10000 observations; no evidence changed")
 }
 
-func postZoomObservations(cmd *cobra.Command, client callCommandClient, observations []callhistory.Observation, skipped int, write callWriter) error {
-	counts := zoomCounts{Skipped: skipped}
+func postZoomObservations(cmd *cobra.Command, client callCommandClient, observations []callhistory.Observation, counts zoomCounts, write callWriter) error {
 	for _, observation := range observations {
 		record, err := json.Marshal(observation)
 		if err != nil {

@@ -53,6 +53,6 @@ func addZoomFetchMode(cmd *cobra.Command, o *zoomOptions, open callOpener, write
 		if err != nil {
 			return err
 		}
-		return postZoomObservations(cmd, client, observations, skipped, write)
+		return postZoomObservations(cmd, client, observations, zoomCounts{Skipped: skipped}, write)
 	}
 }
