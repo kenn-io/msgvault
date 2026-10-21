@@ -48,6 +48,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)
+- [Call History](https://msgvault.io/docs/usage/call-history.md)
 
 ## People and Accounts
 
