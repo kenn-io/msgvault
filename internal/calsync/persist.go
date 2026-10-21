@@ -35,24 +35,25 @@ func buildSourceConfigJSON(c sourceConfig) string {
 // the event facts that don't fit the messages columns (the interval end, all-day
 // flag, status, recurrence rules, series linkage, and source links).
 type eventMetadata struct {
-	Status            string   `json:"status,omitempty"`
-	AllDay            bool     `json:"all_day"`
-	Start             string   `json:"start,omitempty"`
-	End               string   `json:"end,omitempty"`
-	TimeZone          string   `json:"time_zone,omitempty"`
-	Recurrence        []string `json:"recurrence,omitempty"`
-	RecurringEventID  string   `json:"recurring_event_id,omitempty"`
-	OriginalStartTime string   `json:"original_start_time,omitempty"`
-	ICalUID           string   `json:"ical_uid,omitempty"`
-	Sequence          int      `json:"sequence,omitzero"`
-	HTMLLink          string   `json:"html_link,omitempty"`
-	HangoutLink       string   `json:"hangout_link,omitempty"`
-	Transparency      string   `json:"transparency,omitempty"`
-	Visibility        string   `json:"visibility,omitempty"`
-	EventType         string   `json:"event_type,omitempty"`
-	OrganizerEmail    string   `json:"organizer_email,omitempty"`
-	CalendarID        string   `json:"calendar_id,omitempty"`
-	AccountEmail      string   `json:"account_email,omitempty"`
+	Status                    string   `json:"status,omitempty"`
+	AllDay                    bool     `json:"all_day"`
+	Start                     string   `json:"start,omitempty"`
+	End                       string   `json:"end,omitempty"`
+	TimeZone                  string   `json:"time_zone,omitempty"`
+	Recurrence                []string `json:"recurrence,omitempty"`
+	RecurringEventID          string   `json:"recurring_event_id,omitempty"`
+	OriginalStartTime         string   `json:"original_start_time,omitempty"`
+	ICalUID                   string   `json:"ical_uid,omitempty"`
+	ProviderUpdatedAtUnixNano int64    `json:"provider_updated_at_unix_nano,omitzero"`
+	Sequence                  int      `json:"sequence,omitzero"`
+	HTMLLink                  string   `json:"html_link,omitempty"`
+	HangoutLink               string   `json:"hangout_link,omitempty"`
+	Transparency              string   `json:"transparency,omitempty"`
+	Visibility                string   `json:"visibility,omitempty"`
+	EventType                 string   `json:"event_type,omitempty"`
+	OrganizerEmail            string   `json:"organizer_email,omitempty"`
+	CalendarID                string   `json:"calendar_id,omitempty"`
+	AccountEmail              string   `json:"account_email,omitempty"`
 }
 
 // ingestEvent persists a non-cancelled event through the canonical write path
@@ -196,11 +197,11 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		return 0, false, fmt.Errorf("lookup existing event: %w", err)
 	}
 	if id, ok := existing[smid]; ok {
-		merged, err := mergeStatusCancelled(s.store, id)
+		merged, err := mergeStatusCancelled(s.store, id, ev)
 		if err != nil {
 			return 0, false, err
 		}
-		if err := s.store.SetMessageMetadata(id, merged); err != nil {
+		if err := s.store.SetCalendarEventProviderMetadata(id, merged); err != nil {
 			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
 		}
 		return id, false, nil
@@ -214,9 +215,9 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 	return id, true, nil
 }
 
-// mergeStatusCancelled reads a message's existing metadata, sets status to
-// "cancelled", and returns the merged JSON, preserving all other keys.
-func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, error) {
+// mergeStatusCancelled reads a message's existing metadata, sets status and
+// provider version fields from the cancellation, and preserves other keys.
+func mergeStatusCancelled(st *store.Store, messageID int64, ev gcal.Event) (sql.NullString, error) {
 	existing, err := st.GetMessageMetadata(messageID)
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("read metadata: %w", err)
@@ -229,6 +230,16 @@ func mergeStatusCancelled(st *store.Store, messageID int64) (sql.NullString, err
 		}
 	}
 	m["status"] = gcal.StatusCancelled
+	if ev.Updated.IsZero() {
+		delete(m, "provider_updated_at_unix_nano")
+	} else {
+		m["provider_updated_at_unix_nano"] = ev.Updated.UTC().UnixNano()
+	}
+	if ev.Sequence == 0 {
+		delete(m, "sequence")
+	} else {
+		m["sequence"] = ev.Sequence
+	}
 	b, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
 		return sql.NullString{}, fmt.Errorf("marshal merged metadata: %w", err)
@@ -289,25 +300,30 @@ func eventSentAt(ev gcal.Event) sql.NullTime {
 
 // buildMetadata projects an event into the metadata payload.
 func buildMetadata(ev gcal.Event, cal gcal.Calendar, accountEmail string) eventMetadata {
+	var providerUpdatedAt int64
+	if !ev.Updated.IsZero() {
+		providerUpdatedAt = ev.Updated.UTC().UnixNano()
+	}
 	return eventMetadata{
-		Status:            ev.Status,
-		AllDay:            ev.Start.IsAllDay(),
-		Start:             dateTimeString(ev.Start),
-		End:               dateTimeString(ev.End),
-		TimeZone:          ev.Start.TimeZone,
-		Recurrence:        ev.Recurrence,
-		RecurringEventID:  ev.RecurringEventID,
-		OriginalStartTime: originalStartKey(ev.OriginalStartTime),
-		ICalUID:           ev.ICalUID,
-		Sequence:          ev.Sequence,
-		HTMLLink:          ev.HTMLLink,
-		HangoutLink:       ev.HangoutLink,
-		Transparency:      ev.Transparency,
-		Visibility:        ev.Visibility,
-		EventType:         ev.EventType,
-		OrganizerEmail:    ev.Organizer.Email,
-		CalendarID:        cal.ID,
-		AccountEmail:      accountEmail,
+		Status:                    ev.Status,
+		AllDay:                    ev.Start.IsAllDay(),
+		Start:                     dateTimeString(ev.Start),
+		End:                       dateTimeString(ev.End),
+		TimeZone:                  ev.Start.TimeZone,
+		Recurrence:                ev.Recurrence,
+		RecurringEventID:          ev.RecurringEventID,
+		OriginalStartTime:         originalStartKey(ev.OriginalStartTime),
+		ICalUID:                   ev.ICalUID,
+		ProviderUpdatedAtUnixNano: providerUpdatedAt,
+		Sequence:                  ev.Sequence,
+		HTMLLink:                  ev.HTMLLink,
+		HangoutLink:               ev.HangoutLink,
+		Transparency:              ev.Transparency,
+		Visibility:                ev.Visibility,
+		EventType:                 ev.EventType,
+		OrganizerEmail:            ev.Organizer.Email,
+		CalendarID:                cal.ID,
+		AccountEmail:              accountEmail,
 	}
 }
 
