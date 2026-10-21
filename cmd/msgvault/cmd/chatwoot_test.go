@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -124,6 +125,40 @@ func TestChatwootPreLoopFailureRecordsOnlySelectedInboxes(t *testing.T) {
 				assert.Equal(want, events, "only selected inboxes enter failure, once per outage")
 			}
 		})
+	}
+}
+
+func TestChatwootMissingTokenRecordsEligibleInboxFailures(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	t.Setenv("EXAMPLE_CHATWOOT_TOKEN", "")
+	require.NoError(os.Unsetenv("EXAMPLE_CHATWOOT_TOKEN"))
+	src := config.ChatwootSource{Identifier: "support", URL: "https://chatwoot.example.com", AccountID: 9,
+		APIKeyEnv: "EXAMPLE_CHATWOOT_TOKEN", Inboxes: []int64{7, 8, 9}, ExcludeInboxes: []int64{9}}
+	for _, identifier := range []string{
+		chatwoot.SourceIdentifier(src.URL, 9, 7),
+		chatwoot.SourceIdentifier(src.URL, 9, 8),
+		chatwoot.SourceIdentifier(src.URL, 9, 9),
+		chatwoot.SourceIdentifier(src.URL, 9, 10),
+		chatwoot.SourceIdentifier(src.URL, 10, 7),
+	} {
+		_, err := st.GetOrCreateSource(chatwoot.SourceType, identifier)
+		require.NoError(err)
+	}
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+		assert.Equal("sync_failed", event)
+		assert.Equal(map[string]any{"sync_source": "chatwoot", "reason": "other"}, props)
+		events++
+		return nil
+	}}
+	ctx := withInvocation(t.Context(), state)
+	for range 2 {
+		err := runConfiguredChatwootSync(ctx, st, src)
+		require.ErrorContains(err, "needs EXAMPLE_CHATWOOT_TOKEN in the daemon environment")
+		assert.Equal(2, events, "each eligible inbox records one failure per outage")
 	}
 }
 
