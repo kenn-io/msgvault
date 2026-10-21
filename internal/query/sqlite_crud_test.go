@@ -1003,6 +1003,26 @@ func TestGetDeletionTargetsBySearchBoundedUsesSearchResultsAndExplicitLimit(t *t
 	requirements.ErrorContains(err, "bounded deletion search limit cannot exceed")
 }
 
+func TestGetDeletionTargetsBySearchBoundedSkipsSourceDeletedBeforeLimit(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	env := newTestEnv(t)
+	deletedID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "boundedneedle", SentAt: "2024-06-02 12:00:00",
+	})
+	activeID := env.AddMessage(dbtest.MessageOpts{
+		Subject: "boundedneedle", SentAt: "2024-06-01 12:00:00",
+	})
+	env.MarkDeletedByID(deletedID)
+
+	targets, err := env.Engine.GetDeletionTargetsBySearchBounded(
+		env.Ctx, search.Parse("boundedneedle"), MessageFilter{}, DeletionSearchFast, 1,
+	)
+	requirements.NoError(err)
+	requirements.Len(targets, 1)
+	assertions.Equal(activeID, targets[0].MessageID)
+}
+
 func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
 	env := newTestEnv(t)
 	reader := &recordingSQLReader{SQLReader: env.DB}

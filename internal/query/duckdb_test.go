@@ -2607,6 +2607,8 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	builder := buildStandardTestData(t)
+	sourceDeletedAt := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	builder.messages[1].DeletedFromSourceAt = &sourceDeletedAt
 	analyticsDir, cleanup := builder.Build()
 	t.Cleanup(cleanup)
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
@@ -2627,6 +2629,7 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 			WHEN 4 THEN 0
 			ELSE has_attachments END,
 		deleted_from_source_at = CASE id
+			WHEN 2 THEN '2026-09-03 12:00:00'
 			WHEN 5 THEN '2026-09-03 12:00:00'
 			ELSE deleted_from_source_at END`)
 	requirements.NoError(err)
@@ -2667,20 +2670,20 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 	assertions.Equal([]string{"msg4"}, ids)
 
 	bounded, err := engine.GetDeletionTargetsBySearchBounded(
-		t.Context(), q, filter, DeletionSearchFast, 10,
+		t.Context(), q, filter, DeletionSearchFast, 1,
 	)
 	requirements.NoError(err)
 	ids, err = deletionTargetSourceMessageIDs(bounded, nil)
 	requirements.NoError(err)
-	assertions.ElementsMatch([]string{"msg1", "msg2"}, ids,
-		"bounded metadata staging must resolve DuckDB's visible matches by authoritative IDs")
+	assertions.Equal([]string{"msg1"}, ids,
+		"bounded metadata staging must skip the newer source-deleted cache row before applying its result limit")
 
 	_, err = tdb.DB.Exec(`UPDATE messages SET deleted_from_source_at = '2026-09-04 12:00:00' WHERE id = 1`)
 	requirements.NoError(err)
 	_, err = engine.GetDeletionTargetsBySearchBounded(
 		t.Context(), q, filter, DeletionSearchFast, 10,
 	)
-	requirements.ErrorContains(err, "search returned 2 messages but only 1 eligible targets remain",
+	requirements.ErrorContains(err, "search returned 1 messages but only 0 eligible targets remain",
 		"staging must fail closed when SQLite can no longer resolve every Parquet result")
 }
 

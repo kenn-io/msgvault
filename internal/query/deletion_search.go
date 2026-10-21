@@ -43,6 +43,12 @@ func resolveBoundedDeletionTargets(
 
 	filter = filter.Clone()
 	filter.Pagination = Pagination{}
+	filter.HideDeletedFromSource = true
+
+	searchScope := *searchQuery
+	searchScope.HideDeleted = true
+	searchScope.DeletionScope = search.DeletionScopeActive
+	searchQuery = &searchScope
 
 	var messages []MessageSummary
 	var err error
