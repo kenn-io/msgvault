@@ -111,6 +111,9 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if e.Kind == meetingExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
+		if e.Kind == meetingExceptionKind && e.Original != nil && !e.Original.AllDay && e.Original.Instant.Nanosecond() != 0 {
+			report(row.MessageID, "exception original start must have whole-second precision")
+		}
 		switch e.Kind {
 		case meetingExceptionKind, "single":
 			if e.Kind == meetingExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
@@ -218,7 +221,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 				return nil, bounded, err
 			}
 			bounded = append(bounded, o)
-			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay {
+			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay || !e.Original.AllDay && e.Original.Instant.Nanosecond() != 0 {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
 		}
@@ -233,9 +236,9 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 		if exception.Event.Original == nil {
 			continue
 		}
-		// A retained edit's old value type cannot identify a current instance.
+		// A retained edit's old value type or fractional precision cannot identify a current instance.
 		// Its recorded bounds were already kept above.
-		if exception.Event.Original.AllDay != set.AllDay {
+		if exception.Event.Original.AllDay != set.AllDay || !exception.Event.Original.AllDay && exception.Event.Original.Instant.Nanosecond() != 0 {
 			continue
 		}
 		o, err := exceptionBoundsFor(set, duration, days, exception)
