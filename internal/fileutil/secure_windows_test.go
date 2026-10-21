@@ -46,6 +46,29 @@ func TestSecureMkdirAllProtectedAtCreation(t *testing.T) {
 	assert.Empty(t, logs.String(), "protected creation must succeed without falling back")
 }
 
+func TestSecureMkdirAllFallback(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a", "b", "tokens")
+	var logs bytes.Buffer
+	logger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(logger) })
+
+	original := createDirectory
+	t.Cleanup(func() { createDirectory = original })
+	createDirectory = func(_ *uint16, _ *windows.SecurityAttributes) error {
+		return windows.ERROR_ACCESS_DENIED
+	}
+
+	require.NoError(t, SecureMkdirAll(path, 0o700))
+	for _, dir := range []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path} {
+		assert.DirExists(t, dir)
+		assertProtectedDirectory(t, dir)
+	}
+	assert.Contains(t, logs.String(), "level=WARN")
+	assert.Contains(t, logs.String(), "protected directory creation failed")
+}
+
 func assertProtectedDirectory(t *testing.T, path string) {
 	t.Helper()
 	require := require.New(t)
