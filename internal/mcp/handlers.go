@@ -2423,7 +2423,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			return dependencyError("search messages for deletion", err)
 		}
 		if matched > maxStageDeletionResults {
-			return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
+			return toolErrorResult(fmt.Sprintf("more than %d Gmail, Microsoft Graph, or IMAP messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
 		}
 		if matched > 0 && len(targets) == 0 {
 			return toolErrorResult(fmt.Sprintf("%d messages match, but none can be deleted from their source", matched)), nil

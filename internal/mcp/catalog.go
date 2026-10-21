@@ -869,7 +869,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 func stageDeletionDefinition(_ *handlers) toolDefinition {
 	return writeDefinition(
 		ToolStageDeletion,
-		fmt.Sprintf("Stage messages for deletion. Query staging includes Gmail, Microsoft Graph, and IMAP mail, stages every match its source can delete or none, and reports skipped_count. Structured filters stage eligible Gmail and Microsoft Graph mail without reporting skipped_count. At most %d messages per call; narrow larger selections with before:/after: or account. ", maxStageDeletionResults)+
+		fmt.Sprintf("Stage messages for deletion. Query staging searches only Gmail, Microsoft Graph, and IMAP mail, stages every match its source can delete or none, and reports skipped_count. Structured filters stage eligible Gmail and Microsoft Graph mail without reporting skipped_count. At most %d messages per call; narrow larger selections with before:/after: or account. ", maxStageDeletionResults)+
 			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:   accountProperty(),

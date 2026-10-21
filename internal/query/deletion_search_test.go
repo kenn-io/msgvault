@@ -10,8 +10,6 @@ import (
 )
 
 func TestBoundedDeletionSearchCountsOnlyExecutableSources(t *testing.T) {
-	t.Skip("P2: bounded deletion search counts non-executable sources toward the limit; fixing it would lengthen production functions")
-
 	env := newTestEnv(t)
 	chatSourceID := env.AddSource(dbtest.SourceOpts{Type: "discord", Identifier: "chat@example.com"})
 	chatConversationID := env.AddConversation(dbtest.ConversationOpts{SourceID: chatSourceID})
@@ -26,13 +24,14 @@ func TestBoundedDeletionSearchCountsOnlyExecutableSources(t *testing.T) {
 
 	for _, mode := range []DeletionSearchMode{DeletionSearchFast, DeletionSearchDeep} {
 		t.Run(string(mode), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
 				env.Ctx, search.Parse("subject:boundedsource"), MessageFilter{}, mode, 2,
 			)
-			require.NoError(t, err)
-			assert.Equal(t, 1, matched, "chat matches must not consume the deletion search limit")
-			require.Len(t, targets, 1, "the older Gmail match must remain eligible below the limit")
-			assert.Equal(t, mailID, targets[0].MessageID)
+			require.NoError(err)
+			assert.Equal(1, matched, "chat matches must not consume the deletion search limit")
+			require.Len(targets, 1, "the older Gmail match must remain eligible below the limit")
+			assert.Equal(mailID, targets[0].MessageID)
 		})
 	}
 }

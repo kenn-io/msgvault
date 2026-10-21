@@ -2608,7 +2608,7 @@ func (e *DuckDBEngine) GetDeletionTargetsBySearchBounded(
 		ctx, searchQuery, filter, mode, maxResults,
 		func(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 			return e.searchFast(ctx, q, filter, limit, offset, false)
-		}, e.sqliteEngine.searchDeepWithoutLabels, e.sqliteEngine.executableDeletionTargetsByMessageIDs,
+		}, e.sqliteEngine.searchDeepWithoutLabels, e.sqliteEngine,
 	)
 }
 

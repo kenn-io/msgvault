@@ -1776,7 +1776,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearchBounded(
 ) ([]DeletionTarget, int, error) {
 	return resolveBoundedDeletionTargets(
 		ctx, searchQuery, filter, mode, maxResults,
-		e.searchFastWithoutLabels, e.searchDeepWithoutLabels, e.executableDeletionTargetsByMessageIDs,
+		e.searchFastWithoutLabels, e.searchDeepWithoutLabels, e,
 	)
 }
 

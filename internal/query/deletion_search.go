@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -12,10 +13,8 @@ type boundedDeletionSearchPage func(
 	context.Context, *search.Query, MessageFilter, int, int,
 ) ([]MessageSummary, error)
 
-type deletionTargetsByIDs func(context.Context, []int64) ([]DeletionTarget, error)
-
-// resolveBoundedDeletionTargets searches once for at most maxResults IDs, then
-// resolves those exact IDs through the authoritative deletion-target lookup.
+// resolveBoundedDeletionTargets searches sources staging can delete once for at
+// most maxResults IDs, then resolves those exact IDs through authoritative state.
 // Matches that cannot be deleted are omitted from targets and included in matched.
 func resolveBoundedDeletionTargets(
 	ctx context.Context,
@@ -25,7 +24,7 @@ func resolveBoundedDeletionTargets(
 	maxResults int,
 	fastSearch boundedDeletionSearchPage,
 	deepSearch boundedDeletionSearchPage,
-	resolveIDs deletionTargetsByIDs,
+	authority *SQLiteEngine,
 ) ([]DeletionTarget, int, error) {
 	if searchQuery == nil {
 		return nil, 0, errors.New("deletion search query is required")
@@ -40,17 +39,12 @@ func resolveBoundedDeletionTargets(
 		return nil, 0, fmt.Errorf("bounded deletion search limit cannot exceed %d", MaxDeletionTargetSearchResults)
 	}
 
-	filter = filter.Clone()
-	filter.Pagination = Pagination{}
-	filter.HideDeletedFromSource = true
-
-	searchScope := *searchQuery
-	searchScope.HideDeleted = true
-	searchScope.DeletionScope = search.DeletionScopeActive
-	searchQuery = &searchScope
+	searchQuery, filter, err := authority.executableDeletionScope(ctx, searchQuery, filter)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	var messages []MessageSummary
-	var err error
 	switch mode {
 	case DeletionSearchFast:
 		messages, err = fastSearch(ctx, searchQuery, filter, maxResults, 0)
@@ -73,9 +67,63 @@ func resolveBoundedDeletionTargets(
 		}
 		ids[i] = message.ID
 	}
-	targets, err := resolveIDs(ctx, ids)
+	targets, err := authority.executableDeletionTargetsByMessageIDs(ctx, ids)
 	if err != nil {
 		return nil, 0, fmt.Errorf("resolve bounded deletion search targets: %w", err)
 	}
 	return targets, len(messages), nil
+}
+
+// executableDeletionScope limits a bounded deletion search to active messages
+// from sources staging can delete, so other matches cannot use up the limit.
+func (e *SQLiteEngine) executableDeletionScope(
+	ctx context.Context, q *search.Query, filter MessageFilter,
+) (*search.Query, MessageFilter, error) {
+	sourceIDs, err := e.executableDeletionSourceIDs(ctx)
+	if err != nil {
+		return nil, MessageFilter{}, err
+	}
+	filter = filter.Clone()
+	filter.Pagination = Pagination{}
+	filter.HideDeletedFromSource = true
+	filter.SourceIDs = selectedSourceIDs(sourceIDs, filter, q.AccountIDs)
+
+	scoped := *q
+	scoped.HideDeleted = true
+	scoped.DeletionScope = search.DeletionScopeActive
+	return &scoped, filter, nil
+}
+
+func (e *SQLiteEngine) executableDeletionSourceIDs(ctx context.Context) ([]int64, error) {
+	rows, err := e.queryContext(ctx, `SELECT id FROM sources WHERE source_type IN `+executableDeletionSourceTypesSQL)
+	if err != nil {
+		return nil, fmt.Errorf("list executable deletion sources: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan executable deletion source: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// selectedSourceIDs keeps the allowed sources that both the filter and the
+// query's in: operator select. The result is never nil, so an empty
+// intersection matches nothing instead of every source.
+func selectedSourceIDs(allowed []int64, filter MessageFilter, accountIDs []int64) []int64 {
+	requested := filter.SourceIDs
+	if requested == nil && filter.SourceID != nil {
+		requested = []int64{*filter.SourceID}
+	}
+	selected := []int64{}
+	for _, id := range allowed {
+		if (requested == nil || slices.Contains(requested, id)) && (accountIDs == nil || slices.Contains(accountIDs, id)) {
+			selected = append(selected, id)
+		}
+	}
+	return selected
 }
