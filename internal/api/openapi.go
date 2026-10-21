@@ -415,7 +415,8 @@ import (
 // 4.2.0 adds attachment retrieval modes, coverage, and degradations to media search.
 // 5.0.0 makes file list and suggestion content availability nullable when storage has not been checked.
 // 5.1.0 adds keyed group overviews, time-group item totals, saved view schema 3, and saved view run timezones.
-const APISchemaVersion = "5.1.0"
+// 5.2.0 adds owner-only call evidence import, inspection and person summaries.
+const APISchemaVersion = "5.2.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1172,6 +1173,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson":       emailProperty,
 		"Source":              "account_email",
