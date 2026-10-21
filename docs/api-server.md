@@ -1105,7 +1105,7 @@ The companion `GET /api/v1/messages/gmail-ids` endpoint returns source message I
 
 Bounded responses include `matched_count`, the number of Gmail, Microsoft Graph, and IMAP search matches within the cap. Matches those sources cannot delete, including archive-only messages, are omitted from `targets` and `gmail_ids` but included in `matched_count`. To detect overflow, request one more match than the number you intend to stage.
 
-The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `source_id`, `source_ids`, and `after` / `before`. Structured selections honor `limit`. Search selections use `max_results` for their bound. Results exclude deleted messages and are ordered newest-first. The remaining `/messages/filter` parameters, `message_type`, `conversation_id`, `attachments_only`, `hide_deleted`, `offset`, `sort`, and `direction`, are ignored.
+The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `message_type`, `conversation_id`, `attachments_only`, `source_id`, `source_ids`, and `after` / `before`, and applies them as `/messages/filter` does. Structured selections honor `limit`. Search selections use `max_results` for their bound. Results always exclude deleted messages and are ordered newest-first, so `hide_deleted`, `offset`, `sort`, and `direction` have no effect.
 
 ---
 
