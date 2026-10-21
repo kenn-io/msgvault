@@ -143,6 +143,34 @@ Reports can omit one-person meetings. An exact UUID can reach older accessible
 instances within the separate participant-retention limit. At most 100 instances
 and 32 MiB of evidence are staged; fetch or validation errors occur before imports.
 
+### Import Zoom Phone history
+
+Use your own user-level OAuth app with the new read scope
+`phone:read:list_call_logs`, a supported Business/Enterprise account, and a Zoom
+Phone license. This uses `/phone/users/me/call_history`; account-wide access is
+excluded. No new Go dependencies are added.
+
+```sh
+msgvault calls import-zoom-phone --from 2026-10-01 --to 2026-10-15 \
+  --account EXAMPLE_ACCOUNT_ID --owner-id OWNER_EXTENSION_ID --bindings phone-bindings.json \
+  --token-command '["zoom-access-token"]'
+```
+
+For Phone, `--owner-id` is the exact owner extension ID in the API elements.
+Bindings use `ext/PEER_EXTENSION_ID`, or `phone/EXACT_DID_NUMBER` when no extension
+ID is supplied. Numbers are not normalized and names never link people.
+The modern `call_elements` array supplies one record per `call_element_id`;
+only the same explicit `call_id` groups elements as one call. A shared history
+UUID never overwrites separate elements.
+
+Only direct incoming/outgoing elements with explicit owner attribution,
+answered/connected status and a valid answer interval confirm attendance.
+Other-handled, transferred or unfamiliar states remain unknown. Source
+`talk_time` appears only for a confirmed owner-connected leg; missing values
+stay null. Elapsed and billing durations never become talk duration.
+The date window uses the same limits as discovery; at most 1,000 elements and
+32 MiB are staged across the entire run. All elements validate before any upsert.
+
 ## Read the evidence and counts
 
 All commands return JSON. `calls list` includes source/message/record IDs,

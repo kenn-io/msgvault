@@ -103,6 +103,7 @@ func addZoomCommands(root *cobra.Command, open callOpener, write callWriter) {
 	addZoomFetchMode(cmd, &o, open, write)
 	root.AddCommand(cmd)
 	addZoomDiscoveryCommand(root, open, write)
+	addZoomPhoneCommand(root, open, write)
 }
 
 // Stage complete rosters and reconciliation before the first import. A failed

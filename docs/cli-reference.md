@@ -39,6 +39,7 @@ msgvault calls import observation.json   # omit the file or use - for stdin
 msgvault calls import-zoom-meeting --roster roster.json --uuid INSTANCE --account example/owner --owner-id OWNER
 msgvault calls list --person-id 42 --limit 50 --after-id 100
 msgvault calls import-zoom-meetings --from 2026-10-01 --to 2026-10-15 --account example --owner-id OWNER --token-command '["zoom-admin-access-token"]'
+msgvault calls import-zoom-phone --from 2026-10-01 --to 2026-10-15 --account example --owner-id EXTENSION --token-command '["zoom-access-token"]'
 msgvault calls summary --person-id 42 --limit 50 --offset 0
 ```
 
