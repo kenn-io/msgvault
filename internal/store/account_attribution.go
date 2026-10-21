@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/emailattribution"
 )
@@ -288,16 +289,24 @@ func draftEvidenceSQL(m, src string) string {
 	return draftEvidenceInSchemaSQL("", m, src)
 }
 
+func imapDraftFlagSQL(imm string) string {
+	return `LOWER(CAST(` + imm + `.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!'`
+}
+
 // draftEvidenceInSchemaSQL is draftEvidenceSQL reading its evidence tables
 // from schema, such as "src." for an attached source archive.
 func draftEvidenceInSchemaSQL(schema, m, src string) string {
 	return `(EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
 		  AND (l.system_role = '` + LabelSystemRoleDrafts + `'
-		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')))
+		       OR (` + src + `.source_type IN ('gmail', 'maildir') AND l.source_label_id = 'DRAFT')))
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_message_memberships imm
 		WHERE imm.message_id = ` + m + `.id AND imm.source_id = ` + m + `.source_id
-		  AND LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!')
+		  AND ` + imapDraftFlagSQL("imm") + `)
+		OR EXISTS (SELECT 1 FROM ` + schema + `source_merge_messages smm
+		JOIN ` + schema + `imap_message_memberships imm
+		  ON imm.source_id = smm.original_source_id AND imm.message_id = ` + m + `.id
+		WHERE smm.message_id = ` + m + `.id AND ` + imapDraftFlagSQL("imm") + `)
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.current_message_id = ` + m + `.id)
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.pending_original_message_id = ` + m + `.id)
 		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.current_message_id = ` + m + `.id)
@@ -514,6 +523,11 @@ func (s *Store) refreshAccountAttributionTx(
 	}
 	if draft && !authored {
 		if err := markDraftAuthoredTx(ctx, tx, id); err != nil {
+			return malformed, err
+		}
+	}
+	if draft || authored {
+		if err := s.requeueActivityProjectionTx(ctx, tx, id); err != nil {
 			return malformed, err
 		}
 	}
@@ -803,23 +817,53 @@ func (s *Store) refreshAccountAttributionIfOutboundChangedTx(
 		return err
 	}
 	var path sql.NullString
-	var outbound bool
+	var outbound, authored bool
 	err := tx.QueryRowContext(ctx, `
-		SELECT m.account_path, `+outboundEvidenceExistsSQL("m", "src")+`
+		SELECT m.account_path, `+outboundEvidenceExistsSQL("m", "src")+`, m.draft_authored
 		FROM messages m JOIN sources src ON src.id = m.source_id
-		WHERE m.id = ?`, messageID).Scan(&path, &outbound)
+		WHERE m.id = ?`, messageID).Scan(&path, &outbound, &authored)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read outbound evidence for message %d: %w", messageID, err)
 	}
-	if !path.Valid || (path.String != accountPathInbound && path.String != accountPathSent) ||
-		(path.String == accountPathSent) == outbound {
-		return nil
+	if path.Valid && (path.String == accountPathInbound || path.String == accountPathSent) &&
+		(path.String == accountPathSent) != outbound {
+		_, err = s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
+		return err
 	}
-	_, err = s.refreshAccountAttributionTx(ctx, tx, messageID, deliveryInput{})
-	return err
+	if authored {
+		return s.requeueActivityProjectionTx(ctx, tx, messageID)
+	}
+	return nil
+}
+
+func (s *Store) requeueActivityProjectionTx(ctx context.Context, tx *loggedTx, messageID int64) error {
+	if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+		return fmt.Errorf("lock draft activity for message %d: %w", messageID, err)
+	}
+	hasTimestamp := `(m.sent_at <> ? OR m.received_at <> ? OR m.internal_date <> ?)`
+	if s.dialect.DriverName() != postgresDriverName {
+		hasTimestamp = `(julianday(m.sent_at) <> julianday(?) OR julianday(m.received_at) <> julianday(?) OR julianday(m.internal_date) <> julianday(?))`
+	}
+	_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
+		SELECT m.id, 1, CURRENT_TIMESTAMP
+		FROM messages m JOIN sources src ON src.id = m.source_id
+		WHERE m.id = ? AND (EXISTS (
+			SELECT 1 FROM activity_projection_queue q
+			WHERE q.message_id = m.id AND q.revision > q.processed_revision
+		) OR CASE WHEN `+s.activityUnsentSQL()+` THEN EXISTS (
+			SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
+		) ELSE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			AND `+hasTimestamp+` AND NOT EXISTS (
+				SELECT 1 FROM activity_events ae WHERE ae.message_id = m.id
+			)
+		END)`), messageID, time.Time{}, time.Time{}, time.Time{})
+	if err != nil {
+		return fmt.Errorf("requeue draft activity for message %d: %w", messageID, err)
+	}
+	return nil
 }
 
 // labelOutboundFlips collects messages of one source whose labels changed

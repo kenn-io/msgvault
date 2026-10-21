@@ -5,11 +5,95 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		merged bool
+		flags  string
+		unsent bool
+	}{
+		{name: "ordinary_draft", unsent: true},
+		{name: "old_merge_draft", merged: true, flags: `["\\Draft"]`, unsent: true},
+		{name: "old_merge_seen", merged: true, flags: `["\\Seen"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f, personID := activityProjectionFixture(t)
+			olderAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+			newerAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+			olderID := f.NewMessage().WithSentAt(olderAt).Create(t, f.Store)
+			messageID := f.NewMessage().WithSentAt(newerAt).Create(t, f.Store)
+			_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{
+				activityProjectionForMessage(t, f, olderID, personID, olderAt),
+				activityProjectionForMessage(t, f, messageID, personID, newerAt),
+			})
+			require.NoError(err)
+			if tc.merged {
+				original, err := f.Store.GetOrCreateSource("imap", "retired@example.test")
+				require.NoError(err)
+				_, err = activityExec(f.Store, `INSERT INTO source_merge_messages(message_id, original_source_id, original_message_id)
+					SELECT id, ?, source_message_id FROM messages WHERE id = ?`, original.ID, messageID)
+				require.NoError(err)
+				_, err = activityExec(f.Store, `INSERT INTO imap_message_memberships(source_id, mailbox, uidvalidity, uid, message_id, flags)
+					VALUES (?, 'Scratch', 7, 1, ?, ?)`, original.ID, messageID, tc.flags)
+				require.NoError(err)
+				_, err = activityExec(f.Store, `INSERT INTO source_settings(source_id, history_only, merged_into_source_id, retired_at)
+					VALUES (?, TRUE, ?, CURRENT_TIMESTAMP)`, original.ID, f.Source.ID)
+				require.NoError(err)
+			} else {
+				labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+				// Reproduce an older projector's event without running attribution hooks.
+				_, err = activityExec(f.Store, `INSERT INTO message_labels(message_id, label_id) VALUES (?, ?)`, messageID, labels["DRAFT"])
+				require.NoError(err)
+			}
+			var revisionBefore int64
+			require.NoError(activityQueryRow(f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionBefore))
+			var labelsBefore int
+			require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM labels`).Scan(&labelsBefore))
+			_, err = activityExec(f.Store, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`)
+			require.NoError(err)
+			require.NoError(f.Store.InitSchema())
+			queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+			require.NoError(err)
+			if tc.unsent {
+				require.Len(queued, 1)
+				assert.Equal(messageID, queued[0].MessageID)
+				assert.False(queued[0].Eligible)
+				assert.Greater(queued[0].Queue.Revision, revisionBefore)
+				projection := activityProjectionFromCandidate(t, queued[0], personID, newerAt)
+				projection.Event = nil
+				_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+				require.NoError(err)
+			} else {
+				assert.Empty(queued)
+				var revisionAfter int64
+				require.NoError(activityQueryRow(f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionAfter))
+				assert.Equal(revisionBefore, revisionAfter)
+			}
+			state, err := f.Store.ContactStateContext(t.Context(), personID, newerAt)
+			require.NoError(err)
+			require.NotNil(state.LastContactAt)
+			if tc.unsent {
+				assert.Equal(olderAt, state.LastContactAt.UTC())
+				assert.Equal(int64(1), state.InteractionCount)
+			} else {
+				assert.Equal(newerAt, state.LastContactAt.UTC())
+				assert.Equal(int64(2), state.InteractionCount)
+			}
+			var labelsAfter int
+			require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM labels`).Scan(&labelsAfter))
+			assert.Equal(labelsBefore, labelsAfter)
+		})
+	}
+}
 
 // The helper initializes an archive through the combined message and attachment
 // trigger migration, then this test proves that activity triggers are installed.
