@@ -13,7 +13,7 @@ import (
 const healProgressInterval = 10 * time.Second
 
 // Heal derives the account attribution of a source's pending email and
-// calendar rows before a sync or import adds more mail. Rows archived by older
+// calendar rows and explicit email linkage before sync or import. Rows archived by older
 // versions start pending, and an identity change returns the rows it affects
 // to pending. A source with nothing pending costs one indexed lookup, so every
 // sync runs it. A failure is logged instead of returned: committed pages stay
@@ -30,16 +30,37 @@ func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.S
 			"source_id", src.ID, "messages", sum.Scanned)
 	}
 	sum, err := s.RepairAccountAttributionContext(ctx, src.ID, progress)
+	switch {
+	case err != nil && ctx.Err() == nil:
+		logger.Warn("derive account attribution of archived messages failed; retrying on the next sync",
+			"source_id", src.ID, "messages", sum.Scanned, "error", err)
+	case err == nil && sum.Scanned > 0:
+		logger.Info("derived account attribution of archived messages",
+			"source_id", src.ID, "messages", sum.Scanned, "undecodable", sum.Undecodable,
+			"duration", time.Since(start).Round(time.Millisecond))
+	}
+	// Linkage does not read attribution, so one failing leaves the other to run.
+	healEmailLinkage(ctx, logger, s, src)
+}
+
+// healEmailLinkage derives pending explicit MIME keys without provider calls.
+func healEmailLinkage(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.Source) {
+	start := time.Now()
+	lastReport := start
+	sum, err := s.RepairEmailLinkageContext(ctx, src.ID, func(sum store.EmailLinkageRepairSummary) {
+		if time.Since(lastReport) < healProgressInterval {
+			return
+		}
+		lastReport = time.Now()
+		logger.Info("deriving email linkage", "source_id", src.ID, "messages", sum.Scanned)
+	})
 	if err != nil {
 		if ctx.Err() == nil {
-			logger.Warn("derive account attribution of archived messages failed; retrying on the next sync",
-				"source_id", src.ID, "messages", sum.Scanned, "error", err)
+			logger.Warn("derive email linkage failed; retrying on the next sync", "source_id", src.ID, "messages", sum.Scanned, "error", err)
 		}
 		return
 	}
 	if sum.Scanned > 0 {
-		logger.Info("derived account attribution of archived messages",
-			"source_id", src.ID, "messages", sum.Scanned, "undecodable", sum.Undecodable,
-			"duration", time.Since(start).Round(time.Millisecond))
+		logger.Info("derived email linkage", "source_id", src.ID, "messages", sum.Scanned, "incomplete", sum.Incomplete, "duration", time.Since(start).Round(time.Millisecond))
 	}
 }

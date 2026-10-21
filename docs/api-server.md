@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,8 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.24.0 adds owner-only [related copies](#get-apiv1messagesidfamily).
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1698,6 +1700,60 @@ Full message details including body and attachment metadata.
 ```
 
 The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the plain-text body when one exists; for HTML-only messages, it falls back to the HTML body so callers still receive message content.
+
+---
+
+### Related copies {#get-apiv1messagesidfamily}
+
+**Endpoint:** `GET /api/v1/messages/{id}/family`
+
+The other archived copies of an email, plus the replies and forwards that name
+it, across accounts and conversations. Owner credentials only; delegated agent
+tokens are refused. The response is never cached.
+
+**Response:**
+
+```json
+{
+  "anchor_message_id": 12345,
+  "truncated": false,
+  "pending_linkage": false,
+  "members": [
+    {
+      "message_id": 12345,
+      "source_id": 1,
+      "source_type": "imap",
+      "source_identifier": "work@example.com",
+      "account_address": "work@example.com",
+      "account_path": "inbound",
+      "draft": false,
+      "conversation_id": 77,
+      "subject": "Q4 Planning",
+      "sent_at": "2024-10-15T09:30:00Z",
+      "linkage_outcome": "complete",
+      "evidence": "anchor"
+    }
+  ]
+}
+```
+
+`members` includes the opened email. `evidence` is the member's relation to it:
+`anchor`, `copy` (the same Message-ID), `reply`, `replied_to`, `forward`,
+`forwarded_original`, `references`, `indirect` (found through another member) or
+`thread` (in the provider's thread for the opened email or one of its exact copies, with no header link). Members are
+in ascending `message_id` order.
+`account_path` is `inbound` or `sent`, and `draft` is true while the copy is a
+draft. `linkage_outcome` is `complete`, `pending` before the copy's identifiers
+are derived, or the reason they could not be read; anything else may hide
+relations. The lookup follows Message-ID, In-Reply-To, References and
+attached-original identifiers, and, for Gmail and Google Groups, the provider threads of the email and its exact copies. It stops at 500 copies or 5,000 identifiers, setting `truncated`
+and `truncated_reason` (`members` or `identifiers`); the identifier limit can be
+reached with far fewer than 500 copies. When 500 is exceeded, copies with the same
+Message-ID stay first, then direct replies and forwards, then shared references.
+`pending_linkage` is true while any email in the archive has no derived
+identifiers yet; it could be a related copy the lookup cannot see, so an empty or
+short list is not complete. Deleted and non-email messages are
+left out. A missing message returns 404.
 
 ---
 

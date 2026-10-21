@@ -6,6 +6,7 @@
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
+  import RelatedCopies from './RelatedCopies.svelte';
   import KataIssueAction from '../kata/KataIssueAction.svelte';
   import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
@@ -24,6 +25,8 @@
     onToggle?: (id: number) => void;
     onViewModeChange?: (id: number, mode: MessageViewMode) => void;
     client?: APIClient;
+    /** IDs of the messages the thread has loaded. */
+    loadedIDs?: number[];
   }
 
   let {
@@ -36,7 +39,8 @@
     bodyError = '',
     onToggle,
     onViewModeChange,
-    client = undefined
+    client = undefined,
+    loadedIDs = []
   }: Props = $props();
 
   let menuOpen = $state(false);
@@ -104,7 +108,12 @@
         {message.messageType === 'meeting_transcript' ? 'Open conversation' : 'Open meeting'}
       </a>
     {/if}
-    {#if client}<KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />{/if}
+    {#if client}
+      <div class="card-actions">
+        <KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />
+        {#if !message.messageType || message.messageType === 'email'}<RelatedCopies {client} messageID={message.id} {loadedIDs} />{/if}
+      </div>
+    {/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>
@@ -249,6 +258,18 @@
   .related-message {
     display: inline-block;
     margin: var(--space-3) var(--space-4) 0;
+  }
+
+  .card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4) 0;
+  }
+
+  .card-actions:not(:has(*)) {
+    display: none;
   }
 
   .card-header {
