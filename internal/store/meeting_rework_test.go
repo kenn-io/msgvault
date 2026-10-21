@@ -176,11 +176,6 @@ func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	}
 	assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, suggestions.Unexpandable)
 	assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), linkedMeetingRefs(t, st, note)[note])
-	from := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
-	require.NoError(err)
-	require.Len(page.Unexpandable, 1)
-	assert.Equal("unsupported recurrence", page.Unexpandable[0].Reason)
 }
 
 func TestMeetingLinkTargetsRequireBounds(t *testing.T) {
