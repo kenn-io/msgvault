@@ -32,6 +32,38 @@ func TestMeetingLinksCalendarSourceMergeUniqueHistoricalEvent(t *testing.T) {
 	assertions.Equal(destination.ID, page.Occurrences[0].SourceID)
 }
 
+func TestCalendarSyncAfterMergeIntoEmptyRemapsUIDLessLink(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"shared","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+	history, incoming := calendarFixture(t, st, "history-event", raw, "history")
+	destination, err := st.GetOrCreateSource("gcal", "destination")
+	requirements.NoError(err)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{}`)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: incoming}))
+
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: destination.ID})
+	requirements.NoError(err)
+	requirements.Equal(fmt.Sprintf("evt:%d", incoming), linkedMeetingRefs(t, st, note)[note])
+
+	// Calendar sync writes the message before its provider JSON.
+	conversation, err := st.EnsureConversationWithType(destination.ID, "shared", "calendar", "Example event")
+	requirements.NoError(err)
+	visible, err := st.UpsertMessage(&Message{ConversationID: conversation, SourceID: destination.ID, SourceMessageID: "shared", MessageType: "calendar_event"})
+	requirements.NoError(err)
+	requirements.NotEqual(incoming, visible)
+	requirements.NoError(st.UpsertMessageRawWithFormat(visible, []byte(raw), "gcal_json"))
+	assertions.Equal(fmt.Sprintf("evt:%d", visible), linkedMeetingRefs(t, st, note)[note])
+	var staleDecisions int
+	requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE target_message_id = ?`, incoming).Scan(&staleDecisions))
+	assertions.Zero(staleDecisions)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(visible, page.Occurrences[0].MessageID)
+}
+
 func TestMeetingLinksUIDLessCalendarSourceMergeRemapsDecisions(t *testing.T) {
 	for _, tc := range []struct {
 		name                 string
