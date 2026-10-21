@@ -200,7 +200,13 @@ func (s *Server) markVectorIndexStale(ctx context.Context, mismatch error) strin
 	s.vectorFreshNextCheck = time.Now().Add(vectorFreshnessCheckInterval)
 	backend := s.backend
 	s.vectorMu.Unlock()
-	advice, _ := s.staleAdvice(ctx, backend)
+	advice, restart := s.staleAdvice(ctx, backend)
+	if !restart && ctx.Err() != nil {
+		s.vectorMu.Lock()
+		s.vectorFreshNextCheck = time.Time{}
+		s.vectorMu.Unlock()
+		return advice
+	}
 	s.SetVectorStale(mismatch.Error() + "; " + advice)
 	return advice
 }

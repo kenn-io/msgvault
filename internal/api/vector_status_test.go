@@ -224,9 +224,9 @@ func TestMarkVectorIndexStaleCancelledCallerGetsRestartAdvice(t *testing.T) {
 	assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale))
 }
 
-func TestMarkVectorIndexStaleShutdownCancelsDiagnosis(t *testing.T) {
+func TestMarkVectorIndexStaleAbortedDiagnosisIsNotCached(t *testing.T) {
 	t.Parallel()
-	t.Run("timeout without shutdown", func(t *testing.T) {
+	t.Run("timeout", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			started := make(chan struct{})
 			backend := &resolvingVectorBackend{
@@ -249,41 +249,47 @@ func TestMarkVectorIndexStaleShutdownCancelsDiagnosis(t *testing.T) {
 			time.Sleep(30 * time.Second)
 			synctest.Wait()
 			select {
-			case advice := <-done:
-				assert.Equal(t, vectorRebuildAdvice, advice)
+			case <-done:
 			default:
-				assert.Fail(t, "MarkVectorIndexStale must return after the diagnosis timeout without shutdown")
+				require.FailNow(t, "MarkVectorIndexStale must return after the diagnosis timeout without shutdown")
 			}
+			backend.activeGeneration = nil
+			backend.fingerprint = "model-b"
+			assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))
 		})
 	})
-	synctest.Test(t, func(t *testing.T) {
-		started := make(chan struct{})
-		backend := &resolvingVectorBackend{
-			activeGeneration: func(ctx context.Context) (vector.Generation, error) {
-				close(started)
-				<-ctx.Done()
-				return vector.Generation{}, ctx.Err()
-			},
-		}
-		srv := NewServerWithOptions(testServerOptions(t, backend))
-		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		done := make(chan struct{})
-		go func() {
-			srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale)
-			close(done)
-		}()
-		<-started
-		require.NoError(t, srv.Shutdown(context.Background()))
-		synctest.Wait()
-		select {
-		case <-done:
-		default:
-			assert.Fail(t, "MarkVectorIndexStale must return after server shutdown")
-			cancel()
-			<-done
-		}
+	t.Run("shutdown", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			started := make(chan struct{})
+			backend := &resolvingVectorBackend{
+				activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+					close(started)
+					<-ctx.Done()
+					return vector.Generation{}, ctx.Err()
+				},
+			}
+			srv := NewServerWithOptions(testServerOptions(t, backend))
+			srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale)
+				close(done)
+			}()
+			<-started
+			require.NoError(t, srv.Shutdown(context.Background()))
+			synctest.Wait()
+			select {
+			case <-done:
+			default:
+				assert.Fail(t, "MarkVectorIndexStale must return after server shutdown")
+				cancel()
+				<-done
+			}
+			_, detail := srv.VectorStatus()
+			assert.NotContains(t, detail, vectorRebuildAdvice)
+		})
 	})
 }
 
