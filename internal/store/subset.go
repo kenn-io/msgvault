@@ -353,8 +353,18 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("select messages: %w", err)
 	}
 	if _, err := tx.Exec(`CREATE TEMP TABLE selected_message_sources AS
-		SELECT DISTINCT source_id FROM src.messages
-		WHERE id IN (SELECT id FROM selected_messages)`); err != nil {
+		SELECT source_id FROM src.messages
+		WHERE id IN (SELECT id FROM selected_messages)
+		UNION SELECT source_id FROM src.imap_message_memberships
+		WHERE message_id IN (SELECT id FROM selected_messages)
+		UNION SELECT source_id FROM src.imap_drafts
+		WHERE current_message_id IN (SELECT id FROM selected_messages)
+		   OR pending_original_message_id IN (SELECT id FROM selected_messages)
+		UNION SELECT source_id FROM src.gmail_drafts
+		WHERE current_message_id IN (SELECT id FROM selected_messages)
+		   OR pending_original_message_id IN (SELECT id FROM selected_messages)
+		UNION SELECT original_source_id FROM src.source_merge_messages
+		WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("select message sources: %w", err)
 	}
 
@@ -3018,25 +3028,32 @@ func markSubsetDraftsAuthored(tx *sql.Tx) error {
 	return nil
 }
 
-// copySubsetDraftRecords retains draft evidence without pending server operations.
+// copySubsetDraftRecords retains each selected snapshot without pending server operations.
 func copySubsetDraftRecords(tx *sql.Tx) error {
-	if _, err := tx.Exec(`INSERT INTO imap_drafts
-		(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity,
-		 current_uid, revision, discarded_at, created_at, updated_at)
-		SELECT draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity,
-		       current_uid, revision, COALESCE(discarded_at, CURRENT_TIMESTAMP), created_at, updated_at
-		FROM src.imap_drafts
-		WHERE current_message_id IN (SELECT id FROM selected_messages)`); err != nil {
-		return fmt.Errorf("copy subset IMAP drafts: %w", err)
-	}
-	if _, err := tx.Exec(`INSERT INTO gmail_drafts
-		(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id,
-		 thread_id, revision, discarded_at, created_at, updated_at)
-		SELECT draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id,
-		       thread_id, revision, COALESCE(discarded_at, CURRENT_TIMESTAMP), created_at, updated_at
-		FROM src.gmail_drafts
-		WHERE current_message_id IN (SELECT id FROM selected_messages)`); err != nil {
-		return fmt.Errorf("copy subset Gmail drafts: %w", err)
+	for _, draft := range []struct {
+		table, columns, values string
+	}{
+		{"imap_drafts", "current_mailbox, current_uidvalidity, current_uid", `
+			CASE WHEN m.id = d.current_message_id THEN d.current_mailbox ELSE d.pending_original_mailbox END,
+			CASE WHEN m.id = d.current_message_id THEN d.current_uidvalidity ELSE d.pending_original_uidvalidity END,
+			CASE WHEN m.id = d.current_message_id THEN d.current_uid ELSE d.pending_original_uid END`},
+		{"gmail_drafts", "gmail_draft_id, current_gmail_message_id, thread_id", `
+			CASE WHEN m.id = d.current_message_id THEN d.gmail_draft_id ELSE d.gmail_draft_id || ':' || m.id END,
+			CASE WHEN m.id = d.current_message_id THEN d.current_gmail_message_id ELSE d.pending_original_gmail_message_id END,
+			d.thread_id`},
+	} {
+		// A pending original can travel alongside the current snapshot, so it
+		// needs its own archived record ID. Keep the current record's IDs.
+		if _, err := tx.Exec(fmt.Sprintf(`INSERT INTO %s
+			(draft_id, source_id, current_message_id, revision, discarded_at, created_at, updated_at, %s)
+			SELECT CASE WHEN m.id = d.current_message_id THEN d.draft_id ELSE d.draft_id || ':' || m.id END,
+			       d.source_id, m.id, d.revision, COALESCE(d.discarded_at, CURRENT_TIMESTAMP), d.created_at, d.updated_at, %s
+			FROM src.%s d JOIN src.messages m
+			  ON m.id = d.current_message_id OR m.id = d.pending_original_message_id
+			WHERE m.id IN (SELECT id FROM selected_messages)`,
+			draft.table, draft.columns, draft.values, draft.table)); err != nil {
+			return fmt.Errorf("copy subset %s: %w", draft.table, err)
+		}
 	}
 	return nil
 }

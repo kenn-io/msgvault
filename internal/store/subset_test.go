@@ -5424,7 +5424,7 @@ func TestCopySubsetKeepsPendingDraftOutOfReceived(t *testing.T) {
 }
 
 func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
-	for _, evidence := range []string{"label", "flag", "imap_record", "gmail_record"} {
+	for _, evidence := range []string{"label", "flag", "imap_record", "gmail_record", "imap_pending", "gmail_pending"} {
 		for _, sent := range []string{"none", "label", "origin"} {
 			t.Run(evidence+"/"+sent, func(t *testing.T) {
 				require := require.New(t)
@@ -5433,7 +5433,7 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 				src, err := Open(srcDB)
 				require.NoError(err)
 				provider := "imap"
-				if evidence == "gmail_record" {
+				if strings.HasPrefix(evidence, "gmail") {
 					provider = "gmail"
 				}
 				_, err = src.DB().Exec(`UPDATE sources SET source_type = ?`, provider)
@@ -5452,19 +5452,31 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 						(source_id, mailbox, uidvalidity, uid, message_id, flags)
 						VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
 					require.NoError(err)
-				case "imap_record":
+				case "imap_record", "imap_pending":
 					table = "imap_drafts"
 					_, err = src.DB().Exec(`INSERT INTO imap_drafts
 						(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision,
 						 pending_operation, pending_original_message_id, pending_original_mailbox, pending_original_uidvalidity, pending_original_uid, pending_raw)
 						VALUES ('draft', 1, 1, 'Scratch', 7, 1, 2, 'edit', 1, 'Scratch', 7, 1, X'01')`)
 					require.NoError(err)
-				case "gmail_record":
+				case "gmail_record", "gmail_pending":
 					table = "gmail_drafts"
 					_, err = src.DB().Exec(`INSERT INTO gmail_drafts
 						(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision,
 						 pending_operation, pending_original_message_id, pending_original_gmail_message_id, pending_raw)
 						VALUES ('draft', 1, 'provider-draft', 1, 'msg_1', 'thread', 2, 'edit', 1, 'msg_1', X'01')`)
+					require.NoError(err)
+				}
+				if strings.HasSuffix(evidence, "_pending") {
+					currentID, err := src.UpsertMessage(&Message{SourceID: 1, ConversationID: 1, SourceMessageID: "replacement", MessageType: "email"})
+					require.NoError(err)
+					_, err = src.DB().Exec(`UPDATE `+table+` SET current_message_id = ? WHERE draft_id = 'draft'`, currentID)
+					require.NoError(err)
+					if table == "imap_drafts" {
+						_, err = src.DB().Exec(`UPDATE imap_drafts SET current_mailbox = 'Replacement', current_uidvalidity = 9, current_uid = 99`)
+					} else {
+						_, err = src.DB().Exec(`UPDATE gmail_drafts SET current_gmail_message_id = 'replacement'`)
+					}
 					require.NoError(err)
 				}
 				switch sent {
@@ -5494,8 +5506,25 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 					var draftID string
 					var discarded bool
 					require.NoError(dst.DB().QueryRow(`SELECT draft_id, discarded_at IS NOT NULL FROM `+table).Scan(&draftID, &discarded))
-					assert.Equal("draft", draftID)
+					wantDraftID := "draft"
+					if strings.HasSuffix(evidence, "_pending") {
+						wantDraftID = "draft:1"
+					}
+					assert.Equal(wantDraftID, draftID)
 					assert.True(discarded)
+					if table == "imap_drafts" {
+						var mailbox string
+						var validity, uid int64
+						require.NoError(dst.DB().QueryRow(`SELECT current_mailbox, current_uidvalidity, current_uid FROM imap_drafts`).Scan(&mailbox, &validity, &uid))
+						assert.Equal("Scratch", mailbox)
+						assert.Equal(int64(7), validity)
+						assert.Equal(int64(1), uid)
+					} else {
+						var messageID string
+						require.NoError(dst.DB().QueryRow(`SELECT current_gmail_message_id FROM gmail_drafts`).Scan(&messageID))
+						assert.Equal("msg_1", messageID)
+					}
+
 					rows, err := dst.DB().Query(`SELECT * FROM ` + table)
 					require.NoError(err)
 					defer func() { _ = rows.Close() }()
@@ -5519,7 +5548,11 @@ func TestCopySubsetPreservesUnsentDraft(t *testing.T) {
 					if table == "gmail_drafts" {
 						var providerID string
 						require.NoError(dst.DB().QueryRow(`SELECT gmail_draft_id FROM gmail_drafts`).Scan(&providerID))
-						assert.Equal("provider-draft", providerID)
+						wantProviderID := "provider-draft"
+						if strings.HasSuffix(evidence, "_pending") {
+							wantProviderID = "provider-draft:1"
+						}
+						assert.Equal(wantProviderID, providerID)
 					}
 				}
 			})
@@ -5549,4 +5582,58 @@ func TestCopySubsetPreservesBeeperReanchorMarker(t *testing.T) {
 	_, found, err = destination.GetArchiveMarker(t.Context(), BeeperReanchorMarkerKey(99))
 	requirements.NoError(err)
 	assert.False(t, found, "markers for sources outside the subset stay behind")
+}
+
+func TestCopySubsetPreservesMergedIMAPDraft(t *testing.T) {
+	for _, evidence := range []string{"flag", "deleted_record"} {
+		t.Run(evidence, func(t *testing.T) {
+			require := require.New(t)
+			srcDB := createTestSourceDB(t, t.TempDir(), 1)
+			src, err := Open(srcDB)
+			require.NoError(err)
+			_, err = src.DB().Exec(`UPDATE sources SET source_type = 'imap'`)
+			require.NoError(err)
+			into, err := src.GetOrCreateSource("imap", "destination@example.com")
+			require.NoError(err)
+			_, err = src.DB().Exec(`INSERT INTO imap_message_memberships
+				(source_id, mailbox, uidvalidity, uid, message_id, flags)
+				VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
+			require.NoError(err)
+			if evidence == "deleted_record" {
+				_, err = src.DB().Exec(`INSERT INTO imap_drafts
+					(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
+					VALUES ('draft', 1, 1, 'Scratch', 7, 1, 1)`)
+				require.NoError(err)
+				// Another mailbox retains the snapshot after the draft is deleted.
+				_, err = src.DB().Exec(`INSERT INTO imap_message_memberships
+					(source_id, mailbox, uidvalidity, uid, message_id, flags)
+					VALUES (1, 'Retained', 8, 2, 1, '[]')`)
+				require.NoError(err)
+				_, err = src.ClaimIMAPDraftContext(t.Context(), "draft", 1, IMAPDraftOperationDelete, nil)
+				require.NoError(err)
+				require.NoError(src.RecordIMAPDraftOutcomeContext(t.Context(), "draft", 1, IMAPDraftCodeRemoved, nil))
+				_, err = src.FinishIMAPDraftRemovalContext(t.Context(), "draft", 1)
+				require.NoError(err)
+			}
+			_, err = src.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: 1, IntoSourceID: into.ID})
+			require.NoError(err)
+			before, err := src.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(before, 1)
+			require.True(before[0].Unsent)
+			require.False(before[0].Eligible)
+			require.NoError(src.Close())
+			dstDir := filepath.Join(t.TempDir(), "dst")
+			_, err = CopySubset(srcDB, dstDir, 1, false)
+			require.NoError(err)
+			dst, err := Open(filepath.Join(dstDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { _ = dst.Close() })
+			after, err := dst.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.True(t, after[0].Unsent)
+			assert.False(t, after[0].Eligible)
+		})
+	}
 }

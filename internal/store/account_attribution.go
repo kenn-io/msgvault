@@ -299,7 +299,8 @@ func draftEvidenceInSchemaSQL(schema, m, src string) string {
 	return `(EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
 		  AND (l.system_role = '` + LabelSystemRoleDrafts + `'
-		       OR (` + src + `.source_type IN ('gmail', 'maildir') AND l.source_label_id = 'DRAFT')))
+		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')
+		       OR (` + src + `.source_type = 'maildir' AND l.label_type = 'system' AND l.source_label_id = 'DRAFT')))
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_message_memberships imm
 		WHERE imm.message_id = ` + m + `.id AND imm.source_id = ` + m + `.source_id
 		  AND ` + imapDraftFlagSQL("imm") + `)
