@@ -67,6 +67,71 @@ func TestRealClientSyncOffsetFreeTime(t *testing.T) {
 	assertions.Equal("2027-03-02T15:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
 }
 
+func TestRealClientSparseCancellationAcrossOriginalStartFormats(t *testing.T) {
+	const offsetFree = `{"dateTime":"2027-03-09T09:00:00","timeZone":"UTC"}`
+	const offsetBearing = `{"dateTime":"2027-03-09T09:00:00Z"}`
+	for _, tt := range []struct {
+		name, exceptionOriginal, cancellationOriginal, storedKey string
+	}{
+		{"offset-free exception", offsetFree, offsetBearing, "instance"},
+		{"offset-bearing exception", offsetBearing, offsetFree, "master|2027-03-09T09:00:00Z"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			cs := &calFakeServer{
+				calendarListJSON: `{"items":[{"id":"primary","accessRole":"owner","timeZone":"UTC"}]}`,
+				fullPages: map[string]string{"": `{"items":[
+					{"id":"master","status":"confirmed","summary":"Daily","start":{"dateTime":"2027-03-09T09:00:00Z"},"end":{"dateTime":"2027-03-09T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]},
+					{"id":"instance","status":"confirmed","recurringEventId":"master","originalStartTime":` + tt.exceptionOriginal + `,"start":{"dateTime":"2027-03-09T12:00:00Z"},"end":{"dateTime":"2027-03-09T14:00:00Z"},"summary":"Edited","attendees":[{"email":"guest@example.com"}]}
+				],"nextSyncToken":"T1"}`},
+				incPages: map[string]string{"T1": `{"items":[
+					{"id":"instance","status":"cancelled","recurringEventId":"master","originalStartTime":` + tt.cancellationOriginal + `}
+				],"nextSyncToken":"T2"}`},
+			}
+			srv := cs.start(t)
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			syncer := New(realCalClient(t, srv), st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
+			_, err := syncer.Full(t.Context())
+			requirements.NoError(err)
+			src := primarySource(t, st)
+			before, ok := loadEvent(t, st, src.ID, tt.storedKey)
+			requirements.True(ok)
+			requirements.Equal(2, countMessages(t, st, src.ID))
+			requirements.Equal("Edited", before.subject)
+			requirements.Equal("2027-03-09T12:00:00Z", before.meta["start"])
+			requirements.Equal("2027-03-09T14:00:00Z", before.meta["end"])
+			requirements.Equal([]string{"guest@example.com"}, before.to)
+
+			_, err = syncer.Incremental(t.Context())
+			requirements.NoError(err)
+			assertions.Equal(2, countMessages(t, st, src.ID), "one master and one occurrence row")
+			after, ok := loadEvent(t, st, src.ID, tt.storedKey)
+			requirements.True(ok)
+			assertions.Equal(before.id, after.id)
+			assertions.Equal("cancelled", after.meta["status"])
+			assertions.Equal("Edited", after.subject)
+			assertions.Equal("2027-03-09T12:00:00Z", after.meta["start"])
+			assertions.Equal("2027-03-09T14:00:00Z", after.meta["end"])
+			assertions.Equal([]string{"guest@example.com"}, after.to)
+
+			from := time.Date(2027, 3, 9, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			assertions.Empty(page.Unexpandable)
+			requirements.Len(page.Occurrences, 1)
+			occ := page.Occurrences[0]
+			assertions.Equal(before.id, occ.MessageID)
+			assertions.Equal("cancelled", occ.Status)
+			assertions.Equal("Edited", occ.Subject)
+			assertions.Equal("2027-03-09T12:00:00Z", occ.Start.UTC().Format(time.RFC3339))
+			assertions.Equal("2027-03-09T14:00:00Z", occ.End.UTC().Format(time.RFC3339))
+			requirements.Len(occ.Attendees, 1)
+			assertions.Equal("guest@example.com", occ.Attendees[0].Email)
+		})
+	}
+}
+
 func (cs *calFakeServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
