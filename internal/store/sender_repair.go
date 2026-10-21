@@ -240,6 +240,9 @@ func (s *Store) ApplySenderRepairContext(
 
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
 		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockMessageForRecipientWrite(q, messageID); err != nil {
 			return err
 		}

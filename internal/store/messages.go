@@ -2277,6 +2277,9 @@ func (s *Store) persistMessageWithParticipantsTx(
 	afterPersist messagePersistAfter,
 ) (int64, error) {
 	var messageID int64
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return 0, err
+	}
 	if s.dialect.DriverName() != postgresDriverName {
 		// Reserve SQLite's writer slot before any prior-state or related
 		// snapshot reads. Otherwise a concurrent commit can leave this
@@ -2679,6 +2682,9 @@ func (s *Store) ReplaceMessageRecipients(messageID int64, recipientType string, 
 // ReplaceMessageRecipientsContext honors cancellation during ReplaceMessageRecipients.
 func (s *Store) ReplaceMessageRecipientsContext(ctx context.Context, messageID int64, recipientType string, participantIDs []int64, displayNames []string) error {
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
+		if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		// Contextual coverage takes this clock before locking message rows. The
 		// recipient invalidation below also updates messages, so acquire the same
 		// lock first to preserve that order.
@@ -2735,6 +2741,21 @@ func (s *Store) lockEmbeddingChangeClockSharedTxContext(ctx context.Context, tx 
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock_shared(
 		hashtextextended('msgvault.embedding_change_clock', 0))`); err != nil {
 		return fmt.Errorf("lock embedding-change clock for recipient write: %w", err)
+	}
+	return nil
+}
+
+// lockRecipientContextInvalidationTxContext serializes recipient writers that
+// invalidate overlapping contextual messages before they lock their own
+// message rows. The shared embedding clock protects publication, but cannot
+// order two independent recipient replacements.
+func (s *Store) lockRecipientContextInvalidationTxContext(ctx context.Context, tx *loggedTx) error {
+	if !s.IsPostgreSQL() {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+		hashtextextended('msgvault.recipient_context_invalidation', 0))`); err != nil {
+		return fmt.Errorf("lock recipient context invalidation: %w", err)
 	}
 	return nil
 }

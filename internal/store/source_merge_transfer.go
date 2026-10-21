@@ -10,6 +10,9 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	if err := s.preserveFullProviderBindingsForSourceMergeTx(ctx, tx, from, into); err != nil {
+		return err
+	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
@@ -256,6 +259,52 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		return err
 	}
 	return s.bumpDerivedDataRevision(tx)
+}
+
+// preserveFullProviderBindingsForSourceMergeTx selects the binding to retain
+// while source and conversation ownership still describe the original
+// observations. Moving support first can make a Cold-only provider ID look
+// Full once duplicate support edges are combined.
+func (s *Store) preserveFullProviderBindingsForSourceMergeTx(
+	ctx context.Context, tx *loggedTx, from, into int64,
+) error {
+	identity := `kept.participant_id = incoming.participant_id
+		AND kept.address_kind = incoming.address_kind
+		AND (kept.service_id = incoming.service_id OR
+			(kept.service_id IS NULL AND incoming.service_id IS NULL))
+		AND (kept.scope_kind = incoming.scope_kind OR
+			(kept.scope_kind IS NULL AND incoming.scope_kind IS NULL))
+		AND (kept.scope_value = incoming.scope_value OR
+			(kept.scope_value IS NULL AND incoming.scope_value IS NULL))
+		AND kept.normalized_value = incoming.normalized_value`
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE participant_contact_observations AS kept
+		SET provider_user_id = CASE
+			WHEN kept.provider_user_id IS NOT NULL AND `+FullObservationWhere("kept")+` THEN kept.provider_user_id
+			ELSE (
+				SELECT incoming.provider_user_id
+				FROM participant_contact_observations AS incoming
+				WHERE incoming.source_id = ?
+				  AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+				  AND incoming.provider_user_id IS NOT NULL
+				  AND `+FullObservationWhere("incoming")+`
+				  AND `+identity+`
+				ORDER BY incoming.id
+				LIMIT 1
+			)
+		END,
+		updated_at = `+s.dialect.Now()+`
+		WHERE kept.source_id = ?
+		  AND kept.active_until IS NULL AND kept.superseded_at IS NULL
+		  AND EXISTS (
+			SELECT 1 FROM participant_contact_observations AS incoming
+			WHERE incoming.source_id = ?
+			  AND incoming.active_until IS NULL AND incoming.superseded_at IS NULL
+			  AND `+identity+`
+		  )`, from, into, from); err != nil {
+		return fmt.Errorf("preserve full provider bindings during source merge: %w", err)
+	}
+	return nil
 }
 
 // Copy only occurrences not already represented on the survivor. Compare

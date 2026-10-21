@@ -101,6 +101,93 @@ func TestColdProviderIDDoesNotEnrichFullObservationWithoutProviderID(t *testing.
 	assertions.Nil(current[0].ProviderUserID)
 }
 
+func TestParticipantMergeDoesNotPromoteColdProviderBinding(t *testing.T) {
+	for _, survivorIsCold := range []bool{false, true} {
+		name := "full survivor"
+		if survivorIsCold {
+			name = "cold survivor"
+		}
+		t.Run(name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s, source, full, cold, _ := policyObservationFixture(t)
+			fullParticipant, err := s.EnsureParticipantByIdentifier(
+				"beeper", "synthetic-full-observation", "Synthetic Full Observation",
+			)
+			requirements.NoError(err)
+			coldParticipant, err := s.EnsureParticipantByIdentifier(
+				"beeper", "synthetic-cold-observation", "Synthetic Cold Observation",
+			)
+			requirements.NoError(err)
+
+			fullInput := policyObservationInput(source, &full)
+			fullInput.ProviderUserID = nil
+			_, err = s.RecordContactObservationContext(t.Context(), fullParticipant, fullInput)
+			requirements.NoError(err)
+
+			coldInput := policyObservationInput(source, &cold)
+			coldInput.ProviderUserID = new("provider:cold-only")
+			_, err = s.RecordContactObservationContext(t.Context(), coldParticipant, coldInput)
+			requirements.NoError(err)
+
+			survivorID, absorbedID := fullParticipant, coldParticipant
+			if survivorIsCold {
+				survivorID, absorbedID = coldParticipant, fullParticipant
+			}
+			requirements.NoError(s.MergeParticipantsContext(t.Context(), absorbedID, survivorID))
+
+			current, err := s.ListParticipantObservationsContext(t.Context(), survivorID, true)
+			requirements.NoError(err)
+			requirements.Len(current, 1)
+			assertions.Nil(current[0].ProviderUserID,
+				"a participant merge must not attach a Cold-only provider binding to Full-supported contact evidence")
+		})
+	}
+}
+
+func TestSourceMergePreservesFullProviderBindingOverColdBinding(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := testutil.NewTestStore(t)
+	s.DB().SetMaxOpenConns(4)
+	ctx := t.Context()
+	coldSource, err := s.GetOrCreateSource("beeper", "synthetic-cold-source")
+	requirements.NoError(err)
+	fullSource, err := s.GetOrCreateSource("beeper", "synthetic-full-source")
+	requirements.NoError(err)
+	coldRoom, err := s.EnsureConversation(coldSource.ID, "cold-room", "Cold room")
+	requirements.NoError(err)
+	fullRoom, err := s.EnsureConversation(fullSource.ID, "full-room", "Full room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, coldSource.ID, "cold-room", conversationpolicy.Cold))
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, fullSource.ID, "full-room", conversationpolicy.Full))
+	participantID, err := s.EnsureParticipantByIdentifier(
+		"beeper", "synthetic-source-merge-observation", "Synthetic Source Merge Observation",
+	)
+	requirements.NoError(err)
+
+	coldInput := policyObservationInput(coldSource.ID, &coldRoom)
+	coldInput.ProviderUserID = new("provider:cold-only")
+	_, err = s.RecordContactObservationContext(ctx, participantID, coldInput)
+	requirements.NoError(err)
+	fullInput := policyObservationInput(fullSource.ID, &fullRoom)
+	fullInput.ProviderUserID = new("provider:full")
+	_, err = s.RecordContactObservationContext(ctx, participantID, fullInput)
+	requirements.NoError(err)
+
+	_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: fullSource.ID,
+		IntoSourceID: coldSource.ID,
+	})
+	requirements.NoError(err)
+	current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 1)
+	requirements.NotNil(current[0].ProviderUserID)
+	assertions.Equal("provider:full", *current[0].ProviderUserID,
+		"source merge must preserve the binding with original Full support before transferring room ownership")
+}
+
 func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -72,9 +72,9 @@ func (s *Store) lockParticipantObservationMergeTx(
 
 // rewriteObservationsForMergeTx preserves archive contact evidence when one
 // participant is absorbed into another. Current rows with the same logical
-// identity collapse to the survivor's row; a stable provider ID fills an empty
-// survivor value before the absorbed duplicate is closed. Historical rows do
-// not participate in the current-value identity and are always repointed.
+// identity collapse to the survivor's row; a provider binding survives only
+// when its original observation has Full support. Historical rows do not
+// participate in the current-value identity and are always repointed.
 func (s *Store) rewriteObservationsForMergeTx(
 	ctx context.Context, tx *loggedTx, absorbedID, survivorID int64,
 ) error {
@@ -92,27 +92,26 @@ func (s *Store) rewriteObservationsForMergeTx(
 			(survivor.scope_value IS NULL AND absorbed.scope_value IS NULL))
 		AND survivor.normalized_value = absorbed.normalized_value`
 
-	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
-        SELECT survivor.id, support.conversation_id FROM participant_contact_observations absorbed
-        JOIN participant_contact_observations survivor ON `+matchingIdentity+`
-        JOIN participant_contact_observation_conversations support ON support.observation_id=absorbed.id
-        WHERE absorbed.participant_id=? AND survivor.participant_id=? AND `+absorbedCurrent+` AND `+survivorCurrent+`
-        ON CONFLICT(observation_id,conversation_id) DO NOTHING`, absorbedID, survivorID); err != nil {
-		return fmt.Errorf("merge observation room support: %w", err)
-	}
-
+	// Decide which provider binding is supported before copying room edges.
+	// Otherwise a Cold-only binding can inherit the other observation's Full
+	// support and become eligible after the merge.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE participant_contact_observations AS survivor
-		SET provider_user_id = COALESCE(survivor.provider_user_id, (
-			SELECT absorbed.provider_user_id
-			FROM participant_contact_observations AS absorbed
-			WHERE absorbed.participant_id = ?
-			  AND `+absorbedCurrent+`
-			  AND absorbed.provider_user_id IS NOT NULL
-			  AND `+matchingIdentity+`
-			ORDER BY absorbed.id
-			LIMIT 1
-		)), updated_at = `+s.dialect.Now()+`
+		SET provider_user_id = CASE
+			WHEN survivor.provider_user_id IS NOT NULL AND `+FullObservationWhere("survivor")+` THEN survivor.provider_user_id
+			ELSE (
+				SELECT absorbed.provider_user_id
+				FROM participant_contact_observations AS absorbed
+				WHERE absorbed.participant_id = ?
+				  AND `+absorbedCurrent+`
+				  AND absorbed.provider_user_id IS NOT NULL
+				  AND `+FullObservationWhere("absorbed")+`
+				  AND `+matchingIdentity+`
+				ORDER BY absorbed.id
+				LIMIT 1
+			)
+		END,
+		updated_at = `+s.dialect.Now()+`
 		WHERE survivor.participant_id = ?
 		  AND `+survivorCurrent+`
 		  AND EXISTS (
@@ -120,8 +119,17 @@ func (s *Store) rewriteObservationsForMergeTx(
 			WHERE absorbed.participant_id = ?
 			  AND `+absorbedCurrent+`
 			  AND `+matchingIdentity+`
-		)`, absorbedID, survivorID, absorbedID); err != nil {
+		  )`, absorbedID, survivorID, absorbedID); err != nil {
 		return fmt.Errorf("merge participant observation provider IDs: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
+        SELECT survivor.id, support.conversation_id FROM participant_contact_observations absorbed
+        JOIN participant_contact_observations survivor ON `+matchingIdentity+`
+        JOIN participant_contact_observation_conversations support ON support.observation_id=absorbed.id
+        WHERE absorbed.participant_id=? AND survivor.participant_id=? AND `+absorbedCurrent+` AND `+survivorCurrent+`
+        ON CONFLICT(observation_id,conversation_id) DO NOTHING`, absorbedID, survivorID); err != nil {
+		return fmt.Errorf("merge observation room support: %w", err)
 	}
 
 	now := s.dialect.Now()
