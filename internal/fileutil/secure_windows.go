@@ -191,7 +191,7 @@ var createDirectory = windows.CreateDirectory
 func createProtectedDirectory(dir string, attributes *windows.SecurityAttributes) error {
 	path16, err := windows.UTF16PtrFromString(win32CreatePath(dir))
 	if err != nil {
-		return err
+		return fmt.Errorf("fileutil: encode directory path %s: %w", dir, err)
 	}
 	return createDirectory(path16, attributes)
 }

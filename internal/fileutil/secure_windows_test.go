@@ -31,14 +31,14 @@ func TestSecureMkdirAllProtectedAtCreation(t *testing.T) {
 		err := windows.CreateDirectory(path16, attributes)
 		require.NoError(t, err)
 		dir := windows.UTF16PtrToString(path16)
-		if strings.HasPrefix(dir, `\\?\UNC\`) {
-			dir = `\\` + strings.TrimPrefix(dir, `\\?\UNC\`)
+		if rest, ok := strings.CutPrefix(dir, `\\?\UNC\`); ok {
+			dir = `\\` + rest
 		} else {
 			dir = strings.TrimPrefix(dir, `\\?\`)
 		}
 		assertProtectedDirectory(t, dir)
 		calls = append(calls, dir)
-		return err
+		return nil
 	}
 
 	require.NoError(t, SecureMkdirAll(path, 0o700))
@@ -106,6 +106,7 @@ func TestSecureMkdirAllPathForms(t *testing.T) {
 		{
 			name: "long path",
 			prepare: func(t *testing.T) (string, string) {
+				t.Helper()
 				root, err := filepath.Abs(t.TempDir())
 				require.NoError(t, err)
 				path := filepath.Join(root, strings.Repeat("a", 100), strings.Repeat("b", 100), strings.Repeat("c", 100))
@@ -116,6 +117,7 @@ func TestSecureMkdirAllPathForms(t *testing.T) {
 		{
 			name: "ordinary trailing dot",
 			prepare: func(t *testing.T) (string, string) {
+				t.Helper()
 				path := filepath.Join(t.TempDir(), "out.")
 				return path, path
 			},
@@ -124,6 +126,7 @@ func TestSecureMkdirAllPathForms(t *testing.T) {
 		{
 			name: "extended path trailing dot",
 			prepare: func(t *testing.T) (string, string) {
+				t.Helper()
 				path := `\\?\` + filepath.Join(t.TempDir(), "out.")
 				return path, path
 			},
@@ -131,6 +134,7 @@ func TestSecureMkdirAllPathForms(t *testing.T) {
 		{
 			name: "relative path under long working directory",
 			prepare: func(t *testing.T) (string, string) {
+				t.Helper()
 				long := filepath.Join(t.TempDir(), strings.Repeat("w", 100), strings.Repeat("x", 100))
 				require.NoError(t, SecureMkdirAll(long, 0o700))
 				t.Chdir(long)
