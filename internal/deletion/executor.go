@@ -414,6 +414,10 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	if opts == nil {
 		opts = DefaultExecuteOptions()
 	}
+	batchSize := opts.BatchSize
+	if batchSize == 0 {
+		batchSize = DefaultExecuteOptions().BatchSize
+	}
 
 	manifest, err := e.prepareExecution(manifestID, opts.Method)
 	if err != nil {
@@ -579,7 +583,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 		}
 
 		// Save checkpoint periodically
-		if (i+1)%opts.BatchSize == 0 {
+		if (i+1)%batchSize == 0 {
 			e.saveCheckpoint(manifest, manifestID, i+1, succeeded, failed, failedIDs)
 			e.progress.OnProgress(i+1, succeeded, failed)
 		}

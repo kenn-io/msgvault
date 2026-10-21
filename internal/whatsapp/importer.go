@@ -507,7 +507,10 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 					} else if waMsg.SenderUser.Valid {
 						senderAddr = normalizePhone(waMsg.SenderUser.String, waMsg.SenderServer.String)
 					}
-					_ = imp.store.UpsertFTS(messageID, "", bodyText.String, senderAddr, "", "")
+					if err := imp.store.UpsertFTS(messageID, "", bodyText.String, senderAddr, "", ""); err != nil {
+						summary.Errors++
+						imp.progress.OnError(fmt.Errorf("upsert FTS: %w", err))
+					}
 				}
 			}
 

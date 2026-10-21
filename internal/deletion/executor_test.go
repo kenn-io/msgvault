@@ -592,6 +592,7 @@ func TestExecutor_WithProgress(t *testing.T) {
 }
 
 func TestExecutor_Execute_Scenarios(t *testing.T) {
+	zeroBatchOpts := trashOpts(0)
 	tests := []struct {
 		name       string
 		ids        []string
@@ -657,6 +658,17 @@ func TestExecutor_Execute_Scenarios(t *testing.T) {
 			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
 				t.Helper()
 				ctx.AssertTrashCalls(5)
+			},
+		},
+		{
+			name:     "ZeroBatchSize",
+			ids:      msgIDs(3),
+			opts:     zeroBatchOpts,
+			wantSucc: 3, wantFail: 0,
+			assertions: func(t *testing.T, ctx *TestContext, m *Manifest) {
+				t.Helper()
+				assert.Equal(t, m.GmailIDs, ctx.MockAPI.TrashCalls)
+				assert.Zero(t, zeroBatchOpts.BatchSize, "caller's options must remain unchanged")
 			},
 		},
 		{
