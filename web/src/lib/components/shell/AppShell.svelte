@@ -545,7 +545,7 @@
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
   $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
-  $effect(() => { if (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building') return reportError(() => client, () => exploreState.current.query.trim() ? 'search' : 'other'); });
+  $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => exploreState.current.query.trim() ? 'search' : 'other'); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
     loader.submitted = true;
     loader.retry();

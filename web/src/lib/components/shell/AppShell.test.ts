@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createRawSnippet } from 'svelte';
+import { createRawSnippet, tick } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
@@ -107,6 +107,49 @@ describe('AppShell', () => {
     await screen.findByText('Browse unavailable');
     state.destroy();
     await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
+  });
+
+  it.each([false, true])('reports an export error only while its view is displayed, leave=%s', async (leave) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+    const state = new ExploreState(window);
+    let finishExport!: (response: Response) => void;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore')) return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      if (path.endsWith('/explore/preflight')) return Response.json({
+        count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+        unavailable_actions: [], action_targets: [{ action: 'export', message_id: 1, filename: 'message.eml' }]
+      });
+      if (path.endsWith('/cli/message/raw')) return new Promise<Response>(resolve => { finishExport = resolve; });
+      return Response.json({});
+    });
+    const view = render(AppShell, { client, state });
+    await screen.findByText('Synthetic subject 1');
+    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Export selection' }));
+    await waitFor(() => expect(finishExport).toBeTypeOf('function'));
+    if (leave) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Sources' }));
+      await screen.findByRole('main', { name: 'Sources' });
+    }
+    const response = Response.json({ message: 'Synthetic export failure' }, { status: 500 });
+    finishExport(response);
+    await waitFor(() => expect(response.bodyUsed).toBe(true));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await tick();
+    if (leave) {
+      expect(screen.queryByText('The authorized raw message export is no longer available.')).toBeNull();
+      expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([]);
+    } else {
+      await screen.findByText('The authorized raw message export is no longer available.');
+      await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([
+        { event: 'error_shown', properties: { surface: 'web', kind: 'other' } }
+      ]));
+    }
+    view.unmount();
+    state.destroy();
   });
 
   it('reports each displayed archived meeting request error once', async () => {
