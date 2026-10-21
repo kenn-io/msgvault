@@ -380,10 +380,10 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
  AND ` + observation + `.scope_value ` + nullSafeEqual + ` ` + alias + `.scope_value`
 	// Beeper's identifier is its account/user fallback anchor; provider_user_id
 	// may instead be a native provider key. Source merges move observations to the
-	// destination source, but source_ref and source_merge_conversations retain the
-	// account that originally supplied the participant. Rebuild against that
-	// account, not the observation's current source, using byte lengths for the
-	// length-delimited anchor and character positions for the textual source ref.
+	// destination source, while source_ref retains the account that originally
+	// supplied the participant. Rebuild against that account, not the observation's
+	// current source, using byte lengths for the length-delimited anchor and
+	// character positions for the textual source ref.
 	prefix := `('beeper:' || ` + originSource + `.identifier || ':')`
 	user := `SUBSTR(` + observation + `.source_ref,LENGTH(` + prefix + `)+1)`
 	byteLength := func(value string) string {
@@ -395,6 +395,7 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	anchor := `('beeper:' || CAST(` + byteLength(originSource+`.identifier`) + ` AS TEXT) || ':' || ` + originSource + `.identifier || ':' || CAST(` + byteLength(user) + ` AS TEXT) || ':' || ` + user + `)`
 	beeper := alias + `.identifier_type='beeper' AND EXISTS(SELECT 1 FROM sources ` + originSource + `
 	 WHERE ` + originSource + `.source_type='beeper'
+		 AND ` + source + `.source_type='beeper'
 	 AND SUBSTR(` + observation + `.source_ref,1,LENGTH(` + prefix + `))=` + prefix + `
 	 AND LENGTH(` + user + `)>0 AND ` + alias + `.identifier_value=` + anchor + `)`
 	provider := alias + `.identifier_type<>'beeper' AND ` + observation + `.provider_user_id=` + alias + `.identifier_value
