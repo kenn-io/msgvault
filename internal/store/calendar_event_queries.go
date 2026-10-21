@@ -332,12 +332,18 @@ func inheritSparseCalendarCancellation(row, master CalendarEventRow, fields map[
 }
 
 func inheritSparseCalendarAttendees(own, master []calevent.Attendee, fields map[string]any) []calevent.Attendee {
+	_, attendeesSupplied := fields["attendees"]
+	_, organizerSupplied := fields["organizer"]
+	return mergeCalendarAttendeeEvidence(own, master, attendeesSupplied, organizerSupplied)
+}
+
+func mergeCalendarAttendeeEvidence(own, master []calevent.Attendee, attendeesSupplied, organizerSupplied bool) []calevent.Attendee {
 	attendees := master
-	if _, supplied := fields["attendees"]; supplied {
+	if attendeesSupplied {
 		attendees = own
 	}
 	organizers := master
-	if _, supplied := fields["organizer"]; supplied || slices.ContainsFunc(own, func(a calevent.Attendee) bool { return a.Role == "organizer" }) {
+	if organizerSupplied || slices.ContainsFunc(own, func(a calevent.Attendee) bool { return a.Role == "organizer" }) {
 		organizers = own
 	}
 	attendees = slices.Clone(attendees)

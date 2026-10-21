@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -393,6 +394,83 @@ func TestProviderCancellationMergesExplicitFieldsWithInheritedDetails(t *testing
 	assertions.Empty(rows[0].Subject, "an explicitly empty provider summary must remain empty")
 }
 
+func TestProviderCancellationMergesAttendeeAndOrganizerFieldsIndependently(t *testing.T) {
+	freshRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"organizer":{"email":"owner@example.org","displayName":"Series Owner","self":true},"attendees":[{"email":"guest@example.org","responseStatus":"accepted"},{"email":"owner@example.org","organizer":true,"responseStatus":"accepted","displayName":"Series Owner","self":true}]}`
+	cases := []struct {
+		name            string
+		cancellationRaw string
+		want            []calevent.Attendee
+	}{
+		{
+			name:            "attendee update preserves omitted organizer",
+			cancellationRaw: `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","attendees":[{"email":"new@example.org","responseStatus":"declined"}]}`,
+			want: []calevent.Attendee{
+				{Email: "new@example.org", Role: "required", RSVP: "declined"},
+				{Email: "owner@example.org", DisplayName: "Series Owner", Role: "organizer", RSVP: "accepted", IsCopySelf: true},
+			},
+		},
+		{
+			name:            "empty attendees preserves omitted organizer",
+			cancellationRaw: `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","attendees":[]}`,
+			want: []calevent.Attendee{
+				{Email: "owner@example.org", DisplayName: "Series Owner", Role: "organizer", RSVP: "accepted", IsCopySelf: true},
+			},
+		},
+		{
+			name:            "unchanged organizer preserves omitted details",
+			cancellationRaw: `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","organizer":{"email":"owner@example.org"}}`,
+			want: []calevent.Attendee{
+				{Email: "guest@example.org", Role: "required", RSVP: "accepted"},
+				{Email: "owner@example.org", DisplayName: "Series Owner", Role: "organizer", RSVP: "accepted", IsCopySelf: true},
+			},
+		},
+		{
+			name:            "replacement organizer preserves attendees",
+			cancellationRaw: `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled","organizer":{"email":"new-owner@example.org"}}`,
+			want: []calevent.Attendee{
+				{Email: "guest@example.org", Role: "required", RSVP: "accepted"},
+				{Email: "new-owner@example.org", Role: "organizer", RSVP: "unknown"},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			calendarFixture(t, st, "fresh-alias", freshRaw)
+			_, cancelled := calendarFixture(t, st, "cancelled-alias", `{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"status":"cancelled"}`)
+			requirements.NoError(st.UpsertMessageRawWithFormat(cancelled, []byte(tc.cancellationRaw), "gcal_json"))
+			rows := calendarRows(t, st, cancelled)
+			requirements.Len(rows, 1)
+			assertions.ElementsMatch(tc.want, rows[0].Event.Attendees)
+		})
+	}
+}
+
+func TestCancelledAllDayExceptionUsesEventZoneOverCalendarZone(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, event := calendarFixture(t, st, "all-day-event-zone", `{"id":"instance","iCalUID":"allday@example.org","recurringEventId":"missing-series","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14","timeZone":"America/New_York"},"end":{"date":"2027-03-15","timeZone":"America/New_York"},"summary":"All-day exception"}`)
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"calendar@example.com","time_zone":"America/Los_Angeles"}`))
+	metadata, err := st.GetMessageMetadata(event)
+	requirements.NoError(err)
+	var fields map[string]any
+	requirements.NoError(json.Unmarshal([]byte(metadata.String), &fields))
+	fields["status"] = "cancelled"
+	encoded, err := json.Marshal(fields, json.Deterministic(true))
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: string(encoded), Valid: true}))
+
+	rows := calendarRows(t, st, event)
+	requirements.Len(rows, 1)
+	assertions.Equal("America/New_York", rows[0].Event.EventTimeZone)
+	assertions.Equal("America/Los_Angeles", rows[0].Event.CalendarTimeZone)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(time.Date(2027, 3, 14, 5, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2027, 3, 15, 4, 0, 0, 0, time.UTC), *rows[0].Event.End)
+}
+
 func TestCancelledAllDayExceptionRecomputesBoundsAfterSourceZoneChange(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -549,6 +627,43 @@ func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 	rows := calendarRows(t, reopened, id)
 	requirements.Len(rows, 1)
 	assertions.Equal("event-example", rows[0].Event.ProviderEventID)
+}
+
+func TestCalendarEventUpgradeProjectsCompleteAliasesBeforeCancellations(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
+	staleRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series",` + original + `,"status":"cancelled","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"},"summary":"Stale details"}`
+	freshRaw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series",` + original + `,"start":{"dateTime":"2027-03-14T14:00:00Z"},"end":{"dateTime":"2027-03-14T15:00:00Z"},"summary":"Fresh details"}`
+	_, cancelled := calendarFixture(t, st, "cancelled-alias", staleRaw)
+	_, fresh := calendarFixture(t, st, "fresh-alias", freshRaw)
+	newer := time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC)
+	_, err := st.db.Exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, newer, cancelled)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`UPDATE messages SET last_modified = ? WHERE id = ?`, newer.Add(-time.Hour), fresh)
+	requirements.NoError(err)
+	for _, query := range []string{`DROP TABLE calendar_event_attendees`, `DROP TABLE calendar_events`, `DELETE FROM applied_migrations WHERE name = 'calendar_event_projection_v1'`, `UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`} {
+		_, err := st.db.Exec(query)
+		requirements.NoError(err)
+	}
+	requirements.NoError(st.Close())
+	reopened, err := OpenForTest(st.dbPath)
+	requirements.NoError(err)
+	t.Cleanup(func() { assertions.NoError(reopened.Close()) })
+	requirements.NoError(reopened.InitSchemaContext(t.Context()))
+	rows := calendarRows(t, reopened, cancelled)
+	requirements.Len(rows, 1)
+	assertions.Equal("cancelled", rows[0].Event.Status)
+	requirements.NotNil(rows[0].Event.Start)
+	requirements.NotNil(rows[0].Event.End)
+	assertions.Equal(time.Date(2027, 3, 14, 14, 0, 0, 0, time.UTC), *rows[0].Event.Start)
+	assertions.Equal(time.Date(2027, 3, 14, 15, 0, 0, 0, time.UTC), *rows[0].Event.End)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := reopened.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(cancelled, page.Occurrences[0].MessageID)
+	assertions.Equal(from.Add(14*time.Hour), page.Occurrences[0].Start)
 }
 
 func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {

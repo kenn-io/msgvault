@@ -18,6 +18,19 @@ func (s *Store) backfillMeetingProjectionsContext(ctx context.Context) error {
 // message under its evidence lock. Completed rows survive a cancelled upgrade.
 // table is an internal projection table name, supplied only by the wrappers.
 func (s *Store) backfillMessageProjectionsContext(ctx context.Context, messageType, table string, version int, refresh func(context.Context, *loggedTx, int64) error) error {
+	return s.backfillMessageProjectionsMatchingContext(ctx, messageType, table, version, nil, refresh)
+}
+
+// backfillMessageProjectionsMatchingContext lets a projection migration defer
+// rows whose reconstruction depends on other rows being projected first.
+// Matching happens under the same evidence lock as the refresh.
+func (s *Store) backfillMessageProjectionsMatchingContext(
+	ctx context.Context,
+	messageType, table string,
+	version int,
+	include func(context.Context, *loggedTx, int64) (bool, error),
+	refresh func(context.Context, *loggedTx, int64) error,
+) error {
 	// The first batch has no lower bound: zero, negative IDs, and MinInt64
 	// are legal. Later batches advance past the last selected ID. A restarted
 	// invocation starts without a cursor and excludes already current versions.
@@ -81,6 +94,15 @@ func (s *Store) backfillMessageProjectionsContext(ctx context.Context, messageTy
 				}
 				if currentType.String != messageType || (currentVersion.Valid && currentVersion.Int64 >= int64(version)) {
 					return nil
+				}
+				if include != nil {
+					matches, err := include(ctx, tx, id)
+					if err != nil {
+						return fmt.Errorf("check message projection %d eligibility: %w", id, err)
+					}
+					if !matches {
+						return nil
+					}
 				}
 				return refresh(ctx, tx, id)
 			})

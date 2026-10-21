@@ -319,42 +319,24 @@ func mergeCancelledCalendarException(latest, current calevent.Event, rawFields m
 		if rawFields["recurrence"] != nil {
 			merged.Recurrence = current.Recurrence
 		}
-		if rawFields["attendees"] != nil {
-			merged.Attendees = current.Attendees
-		} else if rawFields["organizer"] != nil {
-			merged.Attendees = mergeCalendarOrganizer(latest.Attendees, current.Attendees)
+		if rawFields["attendees"] != nil || rawFields["organizer"] != nil {
+			_, attendeesSupplied := rawFields["attendees"]
+			_, organizerSupplied := rawFields["organizer"]
+			merged.Attendees = mergeCalendarAttendeeEvidence(current.Attendees, latest.Attendees, attendeesSupplied, organizerSupplied)
 		}
 	}
 	if merged.AllDay && merged.StartDate != "" && merged.EndDate != "" {
-		start, end, err := calendarAllDayBounds(merged.StartDate, merged.EndDate, merged.CalendarTimeZone)
+		zone := merged.EventTimeZone
+		if zone == "" {
+			zone = merged.CalendarTimeZone
+		}
+		start, end, err := calendarAllDayBounds(merged.StartDate, merged.EndDate, zone)
 		if err != nil {
 			return calevent.Event{}, err
 		}
 		merged.Start, merged.End = start, end
 	}
 	return merged, nil
-}
-
-func mergeCalendarOrganizer(previous, current []calevent.Attendee) []calevent.Attendee {
-	var organizers []calevent.Attendee
-	organizerEmails := make(map[string]struct{})
-	for _, attendee := range current {
-		if attendee.Role == "organizer" {
-			organizers = append(organizers, attendee)
-			organizerEmails[attendee.Email] = struct{}{}
-		}
-	}
-	merged := make([]calevent.Attendee, 0, len(previous)+len(organizers))
-	for _, attendee := range previous {
-		if attendee.Role == "organizer" {
-			continue
-		}
-		if _, replaced := organizerEmails[attendee.Email]; replaced {
-			continue
-		}
-		merged = append(merged, attendee)
-	}
-	return append(merged, organizers...)
 }
 
 func calendarAllDayBounds(startDate, endDate, zone string) (*time.Time, *time.Time, error) {
