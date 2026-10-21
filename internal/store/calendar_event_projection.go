@@ -117,6 +117,11 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 			return fmt.Errorf("write calendar attendee %d: %w", ordinal, err)
 		}
 	}
+	if event.ProviderEventID != "" {
+		if err := remapHiddenCalendarMeetingDecisionsTx(ctx, tx, sourceID, event.ProviderEventID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
