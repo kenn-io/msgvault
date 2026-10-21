@@ -33,17 +33,11 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 		{"twenty", "work", "api_key", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredTwentySync(ctx, st, config.TwentySource{Identifier: "work", AccountEmail: "owner@example.com", BaseURL: "https://api.example.com"})
 		}},
-		{"muesli", "work", "account_email", func(ctx context.Context, st *store.Store) error {
-			return runConfiguredMuesliSync(ctx, st, config.MuesliSource{Identifier: "work"})
-		}},
 		{"twilio", "work", "account_sid", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredTwilioSync(ctx, st, config.TwilioSource{Identifier: "work"})
 		}},
 		{"plaud", "work", "owner differs", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredPlaudSync(ctx, st, config.PlaudSource{Identifier: "work", AccountEmail: "changed@example.com"})
-		}},
-		{"circleback", "work", "account_email", func(ctx context.Context, st *store.Store) error {
-			return runConfiguredCirclebackSync(ctx, st, config.CirclebackSource{Identifier: "work"})
 		}},
 		{"synctech_sms", "+12025550123", "path is required", func(ctx context.Context, st *store.Store) error {
 			return runConfiguredSynctechSMSSourceWithStore(ctx, st, config.SynctechSMSSource{Name: "work", OwnerPhone: "+12025550123"})

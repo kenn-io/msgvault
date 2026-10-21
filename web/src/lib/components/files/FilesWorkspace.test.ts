@@ -77,6 +77,25 @@ describe('FilesWorkspace', () => {
     expect(fetchFn).toHaveBeenCalledOnce();
   });
 
+  it.each(['failed', 'unavailable'])('retries an unchanged %s search before reporting acceptance', async (failure) => {
+    let resolveRetry!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>(resolve => { resolveRetry = resolve; }))
+      .mockResolvedValueOnce(Response.json(failure === 'failed' ? { message: 'Search failed' } : {
+        error: 'analytical_cache_unavailable', message: 'Unavailable', readiness: 'missing', recovery_action: ''
+      }, { status: failure === 'failed' ? 500 : 503 }));
+    const rendered = render(FilesWorkspace, {
+      client: createAPIClient(fetchFn), predicate: { query: 'missing', search_mode: 'full_text', filters: [], presentation: 'table' },
+      sort: { field: 'occurred_at', direction: 'desc' },
+    });
+    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+    await rendered.rerender({ submitted: true });
+    expect(telemetryEvents.filter(event => event.event === 'search_run')).toHaveLength(0);
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    resolveRetry(Response.json({ ...response(), files: [], total_count: 0 }));
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'search_run')).toHaveLength(1));
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'search_empty')).toHaveLength(1));
+  });
+
   it.each(['text', 'submitted', 'preview', 'nonempty', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
     const events = telemetryEvents;
     const empty = kind !== 'text' && kind !== 'nonempty' && kind !== 'combined';

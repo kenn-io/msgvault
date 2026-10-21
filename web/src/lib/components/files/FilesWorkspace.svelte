@@ -425,8 +425,9 @@
   }
   function resubmitSearch(): void {
     if (!submitted || loading) return;
+    if (untrack(() => error || unavailable)) return reloadListing();
     submitted = false;
-    const count = untrack(() => error || unavailable ? undefined : rows.length);
+    const count = untrack(() => rows.length);
     reportWhenVisible(() => {
       void reportSearch(client, predicate.query ?? '', predicate.search_mode ?? 'full_text', hostedVisualSearch ? undefined : count);
       if (hostedVisualSearch && count === 0) void reportAction(client, 'search_empty', 'search_type', 'semantic');

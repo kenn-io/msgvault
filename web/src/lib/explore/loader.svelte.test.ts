@@ -1,5 +1,5 @@
 import { flushSync } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { ExploreLoader, type ExploreLoaderCallbacks } from './loader.svelte';
@@ -74,24 +74,49 @@ function setup(
 }
 
 describe('ExploreLoader', () => {
-  it('accepts Enter during a same-query preview once and excludes a later sort', async ({ onTestFinished }) => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'files', groupingChain: ['source'], query: 'missing' }))}`);
+  it.each([
+    ['files', 'missing', 'full_text', 0],
+    ['files', 'replacement', 'full_text', undefined],
+    ['files', 'missing', 'semantic', undefined],
+    ['everything', 'replacement', 'full_text', undefined],
+  ] as const)('keeps a %s submission with its query and mode: %s %s', async (workspace, query, mode, count) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace, groupingChain: ['source'], query: 'missing' }))}`);
     const state = new ExploreState(window), onSearchAccepted = vi.fn();
     let resolvePreview!: (response: Response) => void;
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse())).mockImplementationOnce(() => new Promise<Response>(resolve => { resolvePreview = resolve; }));
     const { loader, cleanup } = setup(fetchFn, state, { onSearchAccepted });
     onTestFinished(() => { cleanup(); state.destroy(); });
     await vi.waitFor(() => expect(resolvePreview).toBeDefined());
-    loader.submitted = true;
+    loader.submitted = !loader.resubmit('missing', 'full_text');
+    state.commitSearch(query, mode); flushSync();
+    if (query !== 'missing' || mode !== 'full_text') await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
     resolvePreview(Response.json(exploreResponse()));
     await vi.waitFor(() => expect(loader.loading).toBe(false));
-    expect(onSearchAccepted.mock.calls).toEqual([['missing', 'full_text', expect.any(AbortSignal), 0]]);
+    expect(onSearchAccepted.mock.calls).toEqual([[query, mode, expect.any(AbortSignal), count]]);
     onSearchAccepted.mockClear();
     state.commitNavigation({ fileSort: { field: 'filename', direction: 'asc' } }); flushSync();
     expect(onSearchAccepted).not.toHaveBeenCalled();
     loader.retry(); flushSync();
     await vi.waitFor(() => expect(onSearchAccepted).toHaveBeenCalledOnce());
-    expect(onSearchAccepted).toHaveBeenLastCalledWith('missing', 'full_text', expect.any(AbortSignal), undefined);
+    expect(onSearchAccepted).toHaveBeenLastCalledWith(query, mode, expect.any(AbortSignal), undefined);
+  });
+
+  it.each(['failed', 'unavailable'])('retries an unchanged %s search before accepting it', async (failure) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'missing' }))}`);
+    const state = new ExploreState(window), onSearchAccepted = vi.fn();
+    let resolveRetry!: (response: Response) => void;
+    const fetchFn = vi.fn<typeof fetch>(() => new Promise<Response>(resolve => { resolveRetry = resolve; }))
+      .mockResolvedValueOnce(Response.json(failure === 'failed' ? { error: 'failed' } : {
+        error: 'analytical_cache_unavailable', message: 'Unavailable', readiness: 'missing', recovery_action: ''
+      }, { status: failure === 'failed' ? 500 : 503 }));
+    const { loader, cleanup } = setup(fetchFn, state, { onSearchAccepted });
+    onTestFinished(() => { cleanup(); state.destroy(); });
+    await vi.waitFor(() => expect(loader.loading).toBe(false));
+    loader.submitted = !loader.resubmit('missing', 'full_text'); flushSync();
+    expect(onSearchAccepted).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
+    resolveRetry(Response.json(exploreResponse()));
+    await vi.waitFor(() => expect(onSearchAccepted).toHaveBeenLastCalledWith('missing', 'full_text', expect.any(AbortSignal), 0));
   });
 
   it('consumes an empty search submission once and excludes grouping changes and retries', async ({ onTestFinished }) => {
@@ -105,7 +130,7 @@ describe('ExploreLoader', () => {
       error: 'analytical_cache_unavailable', message: 'The analytical cache is being prepared',
       readiness: 'building', recovery_action: ''
     }, { status: 503 }));
-    loader.submitted = true;
+    loader.submitted = !loader.resubmit('missing', 'full_text');
     state.commitSearch('missing', 'full_text'); flushSync();
     await vi.waitFor(() => expect(loader.unavailable?.readiness).toBe('building'));
     await vi.waitFor(() => expect(onSearchAccepted).toHaveBeenLastCalledWith('missing', 'full_text', expect.any(AbortSignal), 0), { timeout: 5000 });
