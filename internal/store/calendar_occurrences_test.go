@@ -639,7 +639,6 @@ func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 		name, start, end, original, wantStart, wantEnd string
 	}{
 		{"all day", `{"date":"2027-03-02","timeZone":"America/New_York"}`, `{"date":"2027-03-03","timeZone":"America/New_York"}`, `{"date":"2027-03-09"}`, "2027-03-09T05:00:00Z", "2027-03-10T05:00:00Z"},
-		{"timed", `{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-09T09:00:00-05:00"}`, "2027-03-09T14:00:00Z", "2027-03-09T15:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)

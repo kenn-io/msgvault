@@ -21,8 +21,8 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 type CalendarEventRow struct {
 	MessageID, SourceID       int64
 	ProviderObservationOrder  int64
-	ProviderUpdatedAtUnixNano int64
-	ProviderSequence          int64
+	ProviderUpdatedAtUnixNano sql.NullInt64
+	ProviderSequence          sql.NullInt64
 	Subject                   string
 	ICalUID                   string
 	DeletedFromSource         bool
@@ -66,20 +66,20 @@ func calendarEventVisibility(event, message string) string {
    OR other.message_id < %[1]s.message_id)))`, event, message)
 }
 
-func calendarProviderMetadataNumberExpression(d Dialect, column, key string) string {
+func calendarProviderMetadataNullableNumberExpression(d Dialect, column, key string) string {
 	if d.DriverName() == postgresDriverName {
 		value := "(" + column + " ->> '" + key + "')"
-		return "CASE WHEN " + value + " ~ '^-?[0-9]+$' THEN " + value + "::BIGINT ELSE 0 END"
+		return "CASE WHEN " + value + " ~ '^-?[0-9]+$' THEN " + value + "::BIGINT END"
 	}
-	return "CASE WHEN json_valid(" + column + ") THEN CAST(COALESCE(json_extract(" + column + ", '$." + key + "'), 0) AS INTEGER) ELSE 0 END"
+	return "CASE WHEN json_valid(" + column + ") THEN CAST(json_extract(" + column + ", '$." + key + "') AS INTEGER) END"
 }
 
 func calendarEventSnapshotNewer(candidate, current CalendarEventRow) bool {
-	if candidate.ProviderUpdatedAtUnixNano != 0 && current.ProviderUpdatedAtUnixNano != 0 && candidate.ProviderUpdatedAtUnixNano != current.ProviderUpdatedAtUnixNano {
-		return candidate.ProviderUpdatedAtUnixNano > current.ProviderUpdatedAtUnixNano
+	if candidate.ProviderUpdatedAtUnixNano.Valid && current.ProviderUpdatedAtUnixNano.Valid && candidate.ProviderUpdatedAtUnixNano.Int64 != current.ProviderUpdatedAtUnixNano.Int64 {
+		return candidate.ProviderUpdatedAtUnixNano.Int64 > current.ProviderUpdatedAtUnixNano.Int64
 	}
-	if candidate.ProviderSequence != current.ProviderSequence {
-		return candidate.ProviderSequence > current.ProviderSequence
+	if candidate.ProviderSequence.Valid && current.ProviderSequence.Valid && candidate.ProviderSequence.Int64 != current.ProviderSequence.Int64 {
+		return candidate.ProviderSequence.Int64 > current.ProviderSequence.Int64
 	}
 	if candidate.ProviderObservationOrder != current.ProviderObservationOrder {
 		return candidate.ProviderObservationOrder > current.ProviderObservationOrder
@@ -111,8 +111,8 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 		return nil, err
 	}
 	query := fmt.Sprintf(calendarEventSelect,
-		calendarProviderMetadataNumberExpression(r.dialect, "m.metadata", "provider_updated_at_unix_nano"),
-		calendarProviderMetadataNumberExpression(r.dialect, "m.metadata", "sequence"),
+		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "provider_updated_at_unix_nano"),
+		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "sequence"),
 		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ") ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
@@ -128,7 +128,7 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 		var row CalendarEventRow
 		e := &row.Event
 		var original, start, end sql.NullTime
-		var providerUpdatedAtUnixNano, providerSequence int64
+		var providerUpdatedAtUnixNano, providerSequence sql.NullInt64
 		var originalDate, recurrence string
 		var uid sql.NullString
 		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.ProviderObservationOrder, &providerUpdatedAtUnixNano, &providerSequence, &row.DeletedFromSource,

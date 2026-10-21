@@ -318,10 +318,12 @@ func freshestOrphanCalendarException(ctx context.Context, r reboundReader, row C
 }
 
 func latestVisibleCalendarExceptionPredicate(d Dialect) string {
-	newerUpdated := calendarProviderMetadataNumberExpression(d, "newer_message.metadata", "provider_updated_at_unix_nano")
-	currentUpdated := calendarProviderMetadataNumberExpression(d, "m.metadata", "provider_updated_at_unix_nano")
-	newerSequence := calendarProviderMetadataNumberExpression(d, "newer_message.metadata", "sequence")
-	currentSequence := calendarProviderMetadataNumberExpression(d, "m.metadata", "sequence")
+	newerUpdated := calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "provider_updated_at_unix_nano")
+	currentUpdated := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "provider_updated_at_unix_nano")
+	newerSequence := calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "sequence")
+	currentSequence := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "sequence")
+	updatedEqualOrUnknown := "(" + newerUpdated + " IS NULL OR " + currentUpdated + " IS NULL OR " + newerUpdated + " = " + currentUpdated + ")"
+	sequenceEqualOrUnknown := "(" + newerSequence + " IS NULL OR " + currentSequence + " IS NULL OR " + newerSequence + " = " + currentSequence + ")"
 	return `NOT EXISTS (
 		SELECT 1 FROM calendar_events newer_event
 		JOIN messages newer_message ON newer_message.id = newer_event.message_id
@@ -336,9 +338,9 @@ func latestVisibleCalendarExceptionPredicate(d Dialect) string {
 			SELECT 1 FROM source_merge_archive_only_messages newer_archive
 			WHERE newer_archive.message_id = newer_message.id
 		  )
-		  AND ((` + newerUpdated + ` <> 0 AND ` + currentUpdated + ` <> 0 AND ` + newerUpdated + ` > ` + currentUpdated + `)
-		    OR ((` + newerUpdated + ` = 0 OR ` + currentUpdated + ` = 0 OR ` + newerUpdated + ` = ` + currentUpdated + `) AND ` + newerSequence + ` > ` + currentSequence + `)
-		    OR ((` + newerUpdated + ` = 0 OR ` + currentUpdated + ` = 0 OR ` + newerUpdated + ` = ` + currentUpdated + `) AND ` + newerSequence + ` = ` + currentSequence + `
+		  AND ((` + newerUpdated + ` IS NOT NULL AND ` + currentUpdated + ` IS NOT NULL AND ` + newerUpdated + ` > ` + currentUpdated + `)
+		    OR (` + updatedEqualOrUnknown + ` AND ` + newerSequence + ` IS NOT NULL AND ` + currentSequence + ` IS NOT NULL AND ` + newerSequence + ` > ` + currentSequence + `)
+		    OR (` + updatedEqualOrUnknown + ` AND ` + sequenceEqualOrUnknown + `
 		      AND (newer_event.provider_observation_order > e.provider_observation_order
 		        OR (newer_event.provider_observation_order = e.provider_observation_order AND newer_event.message_id > e.message_id))))
 	)`
