@@ -2337,7 +2337,7 @@ func stringArrayArg(args map[string]any, key string) ([]string, error) {
 }
 
 // maxStageDeletionResults limits how many messages can be staged in one call.
-const maxStageDeletionResults = 100000
+const maxStageDeletionResults = query.MaxDeletionTargetSearchResults - 1
 
 // stageDeletionPageSize matches the daemon API's 500-row cap on fast and deep
 // search pages (internal/api maxPageSize).
@@ -2429,15 +2429,6 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
-	accounts, err := h.engine.ListAccounts(ctx)
-	if err != nil {
-		return dependencyError("list deletion sources", err)
-	}
-	accountsByID := make(map[int64]query.AccountInfo, len(accounts))
-	for _, info := range accounts {
-		accountsByID[info.ID] = info
-	}
-
 	var targets []query.DeletionTarget
 	var description string
 	var searchNote string
@@ -2455,42 +2446,66 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if err := selection.applyToQuery(q); err != nil {
 			return toolErrorResult(err.Error()), nil
 		}
-
-		deep := func(limit, offset int) ([]query.MessageSummary, error) {
-			return h.engine.Search(ctx, q, limit, offset)
-		}
-		var results []query.MessageSummary
+		mode := query.DeletionSearchFast
 		if q.HasOR() && q.HasTextTerms() {
-			results, err = searchAllForDeletion(deep)
+			mode = query.DeletionSearchDeep
 			searchNote = "Full-text OR search includes body matches. "
+		} else if q.HasTextTerms() {
+			mode = query.DeletionSearchFastThenDeep
+		}
+		if resolver, ok := h.engine.(query.BoundedDeletionTargetSearchResolver); ok {
+			filter := query.MessageFilter{}
+			selection.applyToFilter(&filter)
+			targets, err = resolver.GetDeletionTargetsBySearchBounded(
+				ctx, q, filter, mode, maxStageDeletionResults+1,
+			)
 		} else {
-			filter := query.MessageFilter{SourceID: sourceID}
-			results, err = searchAllForDeletion(func(limit, offset int) ([]query.MessageSummary, error) {
-				return h.engine.SearchFast(ctx, q, filter, limit, offset)
-			})
-			if err == nil && len(results) == 0 && q.HasTextTerms() {
+			// Keep custom engines that predate the bounded capability usable. All
+			// built-in archive engines use the bounded resolver above.
+			deep := func(limit, offset int) ([]query.MessageSummary, error) {
+				return h.engine.Search(ctx, q, limit, offset)
+			}
+			var results []query.MessageSummary
+			if q.HasOR() && q.HasTextTerms() {
 				results, err = searchAllForDeletion(deep)
+			} else {
+				filter := query.MessageFilter{SourceID: sourceID}
+				results, err = searchAllForDeletion(func(limit, offset int) ([]query.MessageSummary, error) {
+					return h.engine.SearchFast(ctx, q, filter, limit, offset)
+				})
+				if err == nil && len(results) == 0 && q.HasTextTerms() {
+					results, err = searchAllForDeletion(deep)
+				}
+			}
+			if err == nil {
+				var accounts []query.AccountInfo
+				accounts, err = h.engine.ListAccounts(ctx)
+				if err == nil {
+					accountsByID := make(map[int64]query.AccountInfo, len(accounts))
+					for _, info := range accounts {
+						accountsByID[info.ID] = info
+					}
+					for _, msg := range results {
+						if msg.SourceID <= 0 {
+							return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+						}
+						info, ok := accountsByID[msg.SourceID]
+						if !ok {
+							return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
+						}
+						if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
+							return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
+						}
+						targets = append(targets, query.DeletionTarget{
+							MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
+							SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
+						})
+					}
+				}
 			}
 		}
 		if err != nil {
 			return dependencyError("search messages for deletion", err)
-		}
-
-		for _, msg := range results {
-			if msg.SourceID <= 0 {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-			}
-			info, ok := accountsByID[msg.SourceID]
-			if !ok {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-			}
-			if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
-				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
-			}
-			targets = append(targets, query.DeletionTarget{
-				MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
-				SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
-			})
 		}
 		description = "query: " + queryStr
 		if len(description) > 50 {

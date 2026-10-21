@@ -122,10 +122,16 @@ type VirtualAccountLister interface {
 type DeletionSearchMode string
 
 const (
-	DeletionSearchFast      DeletionSearchMode = "fast"
-	DeletionSearchDeep      DeletionSearchMode = "deep"
-	DeletionSearchAggregate DeletionSearchMode = "aggregate"
+	DeletionSearchFast         DeletionSearchMode = "fast"
+	DeletionSearchDeep         DeletionSearchMode = "deep"
+	DeletionSearchFastThenDeep DeletionSearchMode = "fast_then_deep"
+	DeletionSearchAggregate    DeletionSearchMode = "aggregate"
 )
+
+// MaxDeletionTargetSearchResults is the largest permitted bounded search
+// result set. Callers use the extra row as an overflow sentinel for the
+// 100,000-target staging limit.
+const MaxDeletionTargetSearchResults = 100_001
 
 // DeletionTargetSearchResolver resolves a filtered search and source deletion
 // eligibility in one backend query. Keeping this capability separate from
@@ -137,6 +143,19 @@ type DeletionTargetSearchResolver interface {
 		searchQuery *search.Query,
 		filter MessageFilter,
 		mode DeletionSearchMode,
+	) ([]DeletionTarget, error)
+}
+
+// BoundedDeletionTargetSearchResolver resolves at most maxResults exact
+// search matches for one-shot staging. The existing unbounded resolver stays
+// available to callers such as the TUI that intentionally stage every match.
+type BoundedDeletionTargetSearchResolver interface {
+	GetDeletionTargetsBySearchBounded(
+		ctx context.Context,
+		searchQuery *search.Query,
+		filter MessageFilter,
+		mode DeletionSearchMode,
+		maxResults int,
 	) ([]DeletionTarget, error)
 }
 

@@ -6381,6 +6381,9 @@ components:
           items:
             type: string
           type: array
+        max_results:
+          format: int64
+          type: integer
         search_mode:
           type: string
         search_query:
@@ -16270,7 +16273,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24151,11 +24154,17 @@ paths:
           name: q
           schema:
             type: string
-        - description: "Search mode: fast, deep, or aggregate; required with q"
+        - description: "Search mode: fast, deep, or aggregate; fast_then_deep is bounded staging only and requires max_results"
           in: query
           name: search_mode
           schema:
             type: string
+        - description: Maximum results for bounded search-aware deletion resolution (max 100001)
+          in: query
+          name: max_results
+          schema:
+            format: int64
+            type: integer
         - description: Aggregate view type; required for aggregate search
           in: query
           name: view_type

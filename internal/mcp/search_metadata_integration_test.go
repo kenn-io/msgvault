@@ -41,6 +41,16 @@ func seedMetadataSearch(t *testing.T, db *sql.DB) {
 
 // metadataDaemon serves engine over HTTP. A store lets the daemon list accounts.
 func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32, st ...*store.Store) *daemonclient.Engine {
+	return metadataDaemonWithPeer(t, engine, requests, nil, "", st...)
+}
+
+func metadataDaemonWithPeer(
+	t *testing.T,
+	engine query.Engine,
+	fastRequests, boundedDeletionRequests *atomic.Int32,
+	remoteAddr string,
+	st ...*store.Store,
+) *daemonclient.Engine {
 	t.Helper()
 	opts := api.ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIKey: "synthetic-owner-key"}},
@@ -51,8 +61,16 @@ func metadataDaemon(t *testing.T, engine query.Engine, requests *atomic.Int32, s
 	}
 	server := api.NewServerWithOptions(opts)
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/search/fast" {
-			requests.Add(1)
+		if r.URL.Path == "/api/v1/search/fast" && fastRequests != nil {
+			fastRequests.Add(1)
+		}
+		if r.URL.Path == "/api/v1/messages/gmail-ids" && r.URL.Query().Get("max_results") != "" && boundedDeletionRequests != nil {
+			boundedDeletionRequests.Add(1)
+		}
+		if remoteAddr != "" {
+			request := r.Clone(r.Context())
+			request.RemoteAddr = remoteAddr
+			r = request
 		}
 		server.Router().ServeHTTP(w, r)
 	}))
@@ -110,7 +128,7 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert.Len(observer.Statements(), 3)
 }
 
-func TestStageDeletionThroughDaemonStagesEveryMatch(t *testing.T) {
+func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchRequest(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
 	persist := func(key, subject, body string) {
@@ -134,7 +152,9 @@ func TestStageDeletionThroughDaemonStagesEveryMatch(t *testing.T) {
 		persist(fmt.Sprintf("body-%03d", i), "plain", "bodyneedle")
 	}
 	var requests atomic.Int32
-	daemon := metadataDaemon(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests, st)
+	var boundedRequests atomic.Int32
+	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
+		&boundedRequests, "203.0.113.9:4242", st)
 
 	stage := func(t *testing.T, args map[string]any) *captureDeletionManifestSaver {
 		t.Helper()
@@ -146,11 +166,17 @@ func TestStageDeletionThroughDaemonStagesEveryMatch(t *testing.T) {
 	}
 
 	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
+		before := boundedRequests.Load()
 		saver := stage(t, map[string]any{"query": "subject:selectionmarker"})
 		assert.Len(t, saver.manifest.GmailIDs, 600)
+		assert.Equal(t, before+1, boundedRequests.Load())
+		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
 	})
 	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
+		before := boundedRequests.Load()
 		saver := stage(t, map[string]any{"query": "bodyneedle"})
 		assert.Len(t, saver.manifest.GmailIDs, 150)
+		assert.Equal(t, before+1, boundedRequests.Load())
+		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
 	})
 }

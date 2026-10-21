@@ -1,6 +1,8 @@
 package query
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,6 +20,16 @@ type rebindRecordingDialect struct {
 	Dialect
 
 	queries []string
+}
+
+type recordingSQLReader struct {
+	store.SQLReader
+	argumentCounts []int
+}
+
+func (r *recordingSQLReader) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	r.argumentCounts = append(r.argumentCounts, len(args))
+	return r.SQLReader.QueryContext(ctx, query, args...)
 }
 
 func (d *rebindRecordingDialect) Rebind(query string) string {
@@ -962,6 +974,42 @@ func TestGetDeletionTargetsBySearchCombinesSearchFilterAndActiveScope(t *testing
 			assert.Equal(t, []string{"msg1"}, ids)
 		})
 	}
+}
+
+func TestGetDeletionTargetsBySearchBoundedUsesSearchResultsAndExplicitLimit(t *testing.T) {
+	env := newTestEnv(t)
+	filter := MessageFilter{
+		Sender:     "alice@example.com",
+		Pagination: Pagination{Offset: 100, Limit: 1},
+	}
+	visible, err := env.Engine.SearchFast(env.Ctx, search.Parse("Hello"), filter, 1, 0)
+	require.NoError(t, err)
+	require.Len(t, visible, 1)
+
+	targets, err := env.Engine.GetDeletionTargetsBySearchBounded(
+		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, 1,
+	)
+	require.NoError(t, err)
+	ids, err := deletionTargetSourceMessageIDs(targets, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{visible[0].SourceMessageID}, ids)
+
+	_, err = env.Engine.GetDeletionTargetsBySearchBounded(
+		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
+	)
+	require.ErrorContains(t, err, "bounded deletion search limit cannot exceed")
+}
+
+func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
+	env := newTestEnv(t)
+	reader := &recordingSQLReader{SQLReader: env.DB}
+	messages := make([]MessageSummary, inListChunkSize+1)
+	for i := range messages {
+		messages[i].ID = int64(i + 1)
+	}
+
+	require.NoError(t, fetchLabelsForMessageList(env.Ctx, reader, SQLiteQueryDialect{}.Rebind, "", messages))
+	assert.Equal(t, []int{inListChunkSize, 1}, reader.argumentCounts)
 }
 
 func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) {

@@ -1013,6 +1013,44 @@ func TestEngineGetDeletionTargetsBySearchUsesVersionedExactScope(t *testing.T) {
 	}}, targets)
 }
 
+func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var targetRequests int
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.24.0"})
+		case "/api/v1/messages/gmail-ids":
+			targetRequests++
+			assertions.Equal("bodyneedle", r.URL.Query().Get("q"))
+			assertions.Equal("fast_then_deep", r.URL.Query().Get("search_mode"))
+			assertions.Equal("100001", r.URL.Query().Get("max_results"))
+			writeJSONResponse(t, w, map[string]any{
+				"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
+				"search_mode": "fast_then_deep", "max_results": 100001,
+				"targets": []map[string]any{{
+					"message_id": 1, "source_id": 7, "source_type": "gmail",
+					"source_identifier": "account@example.test", "source_message_id": "gm-1",
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	targets, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
+		t.Context(), search.Parse("bodyneedle"), query.MessageFilter{},
+		query.DeletionSearchFastThenDeep, query.MaxDeletionTargetSearchResults,
+	)
+	requirements.NoError(err)
+	assertions.Equal(1, targetRequests)
+	assertions.Equal([]query.DeletionTarget{{
+		MessageID: 1, SourceID: 7, SourceType: "gmail",
+		SourceIdentifier: "account@example.test", SourceMessageID: "gm-1",
+	}}, targets)
+}
+
 func TestEngineGetDeletionTargetsByAggregateSearchForwardsDisplayedRow(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

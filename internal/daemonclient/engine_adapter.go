@@ -41,6 +41,8 @@ const (
 	accountScopeMinAPISchemaVersion = "3.11.0"
 	// filenameMinAPISchemaVersion is the first daemon contract with filename: filters.
 	filenameMinAPISchemaVersion = "3.14.0"
+	// boundedDeletionSearchMinAPISchemaVersion adds one-request bounded MCP staging.
+	boundedDeletionSearchMinAPISchemaVersion = "3.24.0"
 )
 
 // Engine implements query.Engine by making HTTP calls to a msgvault daemon.
@@ -66,6 +68,7 @@ var _ query.CollectionScopeLister = (*Engine)(nil)
 var _ query.MessageBodySearcher = (*Engine)(nil)
 var _ query.SemanticMessageSearcher = (*Engine)(nil)
 var _ query.DeletionTargetSearchResolver = (*Engine)(nil)
+var _ query.BoundedDeletionTargetSearchResolver = (*Engine)(nil)
 var _ query.DeletionTargetAggregateSearchResolver = (*Engine)(nil)
 
 const tuiSearchContractMinAPISchemaVersion = "2.16.0"
@@ -1275,6 +1278,65 @@ func (e *Engine) GetDeletionTargetsBySearch(
 	}
 	if stringValue(resp.JSON200.SearchQuery) != queryString || stringValue(resp.JSON200.SearchMode) != modeString {
 		return nil, errors.New("daemon did not confirm the deletion search scope; upgrade the daemon and retry")
+	}
+	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
+		return nil, err
+	}
+	return deletionTargetsFromGenerated(resp.JSON200)
+}
+
+func (e *Engine) GetDeletionTargetsBySearchBounded(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter query.MessageFilter,
+	mode query.DeletionSearchMode,
+	maxResults int,
+) ([]query.DeletionTarget, error) {
+	if filter.SourceIDs != nil && len(filter.SourceIDs) == 0 {
+		return []query.DeletionTarget{}, nil
+	}
+	if maxResults < 1 || maxResults > query.MaxDeletionTargetSearchResults {
+		return nil, fmt.Errorf("bounded deletion search limit must be between 1 and %d", query.MaxDeletionTargetSearchResults)
+	}
+	if mode != query.DeletionSearchFast && mode != query.DeletionSearchDeep && mode != query.DeletionSearchFastThenDeep {
+		return nil, fmt.Errorf("unsupported bounded deletion search mode %q", mode)
+	}
+	if err := validateParsedSearchQuery(searchQuery); err != nil {
+		return nil, err
+	}
+	queryString := search.Format(searchQuery)
+	if queryString == "" {
+		return nil, errors.New("bounded deletion search requires a nonempty query")
+	}
+	if err := e.requireListIDCapability(ctx, searchQuery, filter); err != nil {
+		return nil, err
+	}
+	compatible, err := e.store.SupportsAPISchemaVersion(ctx, boundedDeletionSearchMinAPISchemaVersion)
+	if err != nil {
+		return nil, fmt.Errorf("check bounded daemon search-aware deletion capability: %w", err)
+	}
+	if !compatible {
+		return nil, fmt.Errorf("bounded search-aware deletion resolution requires daemon API schema %s or newer", boundedDeletionSearchMinAPISchemaVersion)
+	}
+	modeString := string(mode)
+	limit := int64(maxResults)
+	params := gmailIDsFilterQuery(filter)
+	params.Q = &queryString
+	params.SearchMode = &modeString
+	params.MaxResults = &limit
+	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.GetGmailIDsByFilterResp, error) {
+		return client.GetGmailIDsByFilterWithResponse(ctx, &generated.GetGmailIDsByFilterRequestOptions{Query: params})
+	})
+	if err != nil {
+		return nil, err
+	}
+	if stringValue(resp.JSON200.SearchQuery) != queryString ||
+		stringValue(resp.JSON200.SearchMode) != modeString ||
+		resp.JSON200.MaxResults == nil || *resp.JSON200.MaxResults != limit {
+		return nil, errors.New("daemon did not confirm the bounded deletion search scope; upgrade the daemon and retry")
+	}
+	if len(resp.JSON200.Targets) > maxResults {
+		return nil, fmt.Errorf("daemon returned %d deletion targets above the %d-row limit", len(resp.JSON200.Targets), maxResults)
 	}
 	if err := requireAppliedSourceIDs(filter.SourceIDs, resp.JSON200.AppliedSourceIds, "deletion-target"); err != nil {
 		return nil, err
