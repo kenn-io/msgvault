@@ -1932,6 +1932,10 @@ func TestAcceptedSearchActions(t *testing.T) {
 				if tc.lifecycle == "error" {
 					apply(dataLoadedMsg{requestID: oldID, searchQuery: "needle", err: errors.New("synthetic")})
 					m, _ = sendKey(t, m, keyEsc())
+					m, _ = sendKey(t, m, keyTab())
+					apply(dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle"})
+					assert.Equal(tc.want, events)
+					return
 				}
 				m, _ = sendKey(t, m, key('/'))
 				m.searchInput.SetValue("needle")

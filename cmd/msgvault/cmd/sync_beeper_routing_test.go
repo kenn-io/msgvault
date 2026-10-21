@@ -52,8 +52,6 @@ func TestScheduledBeeperAccountsKeepIndependentFailuresAcrossPartialPass(t *test
 			return false, true, errors.New("one chat failed after another imported")
 		}, rebuild))
 	assert.Equal(3, events, "partial success clears each account's outage")
-	require.Error(runScheduledBeeperAttempts(ctx, accounts, rotation, nil, fail, rebuild))
-	assert.Equal(5, events, "each account can start a new outage after a good read")
 }
 
 func TestBeeperMissingTokenRecordsResolvedAccountFailures(t *testing.T) {

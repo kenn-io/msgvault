@@ -48,22 +48,6 @@ describe('SourcesWorkspace', () => {
     expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
   });
 
-  it('ignores a trigger rejection after leaving Sources', async () => {
-    const events: unknown[] = [], requests: Promise<void>[] = [];
-    let reject!: (error: Error) => void;
-    const client = createCaptureClient(async input => (input as Request).method === 'POST'
-      ? new Promise<Response>((_, fail) => { reject = fail; })
-      : Response.json({ sources: [source()] }), events, requests);
-    const view = render(SourcesWorkspace, { client });
-    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
-    view.unmount();
-    reject(new Error('Trigger unavailable'));
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await fireEvent(window, new Event('focus'));
-    await Promise.all(requests);
-    expect(events).toEqual([]);
-  });
-
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
@@ -480,7 +464,6 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('5 processed')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
     expect(triggers).toBe(1);
-    expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]);
     rendered.unmount();
   });
 

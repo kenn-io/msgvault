@@ -877,8 +877,8 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
-    it.each([['everything', false], ['everything', true], ['everything', 'pending']] as const)('counts an explicit empty %s submission with media ready=%s', async (workspace, ready) => {
-      const state = shellState(workspace), events = telemetryEvents;
+    it.each([false, true, 'pending'] as const)('gates empty search reporting with media readiness %s', async (ready) => {
+      const state = shellState('everything'), events = telemetryEvents;
       const client = createAPIClient(vi.fn<typeof fetch>(async () => {
         return Response.json(exploreResponse());
       }));
@@ -887,7 +887,7 @@ describe('AppShell', () => {
         return ready;
       });
       render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
-      if (ready === true && workspace === 'everything') await waitFor(() => expect(media.ready).toBe(true));
+      if (ready === true) await waitFor(() => expect(media.ready).toBe(true));
       if (ready === false) await waitFor(() => expect(media.absent).toBe(true));
       const search = screen.getByRole('searchbox', { name: 'Search everything' });
       await fireEvent.input(search, { target: { value: 'missing' } });
@@ -896,7 +896,7 @@ describe('AppShell', () => {
       await fireEvent.submit(search.closest('form')!);
       await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
       media.dispose();
-      if (ready && workspace === 'everything') {
+      if (ready !== false) {
         expect(events.some((event) => event.event === 'search_empty')).toBe(false);
         return;
       }

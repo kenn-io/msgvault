@@ -4523,8 +4523,6 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
-	logger := state.logger
 	email := src.Identifier
 
 	// Seed the default identity and converge legacy migrations before
@@ -4534,18 +4532,20 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	// "me" identity. Auto-default-identity must run BEFORE the legacy
 	// migration retry (see account_identity.go); serve is a daemon, so
 	// the confirmation message has no terminal and is discarded.
-	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", logger)
+	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", state.logger)
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	client, err := newTeamsClient(ctx, cfg, logger, email)
+	client, err := newTeamsClient(ctx, state.cfg, state.logger, email)
 	if err != nil {
 		return err
 	}
-	opts := scheduledTeamsImportOptions(email, cfg)
-	sum, err := teams.NewImporter(s, client).Import(ctx, opts)
+	sum, err := teams.NewImporter(s, client).Import(ctx, scheduledTeamsImportOptions(email, state.cfg))
 	*goodRead = sum != nil && sum.MessagesProcessed > 0
+	if err == nil && sum != nil && sum.Errors > 0 && !*goodRead {
+		err = fmt.Errorf("teams sync had %d errors without reading messages", sum.Errors)
+	}
 	return err
 }
 

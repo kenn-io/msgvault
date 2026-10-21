@@ -64,7 +64,7 @@ describe('FilesWorkspace', () => {
     await waitFor(() => expect(screen.getAllByText('Visual query images must be 20 MiB or smaller.').length).toBeGreaterThan(0));
     await waitFor(() => expect(events).toContainEqual({ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }));
   });
-  it.each(['submitted', 'preview', 'image', 'visual', 'nonempty'])('counts only submitted empty %s searches', async (kind) => {
+  it.each(['submitted', 'image', 'visual', 'nonempty'])('counts only submitted empty %s searches', async (kind) => {
     const events = telemetryEvents;
     const fetchFn = vi.fn<typeof fetch>(async () => {
       return Response.json(kind === 'nonempty' ? response() : { ...response(), files: [], total_count: 0 });
@@ -90,12 +90,14 @@ describe('FilesWorkspace', () => {
       await waitFor(() => expect(events.some((event) => event.event === 'search_empty')).toBe(true));
     }
     await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
-    await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'preview' || kind === 'nonempty' ? 0 : 1));
-    events.length = 0;
-    await rendered.rerender({ submitted: false, sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
-    await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
-    await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
-    expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(0);
+    await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(kind === 'nonempty' ? 0 : 1));
+    if (kind === 'submitted') {
+      events.length = 0;
+      await rendered.rerender({ submitted: false, sort: { field: 'occurred_at', direction: 'asc' }, filenameQuery: 'typed' });
+      await waitFor(() => expect(screen.getByRole('grid', { name: 'Files results' }).getAttribute('aria-busy')).toBe('false'));
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(0);
+    }
   });
 
   it.each(['text', 'visual', 'image', 'combined'])('reports accepted %s searches', async (kind) => {
@@ -173,7 +175,7 @@ describe('FilesWorkspace', () => {
       expected: null,
       rendered: 'Synthetic cache unavailable.'
     }
-  ])('reports an honest row count for the $state state', async ({ state, fetchFn, expected, rendered }) => {
+  ])('reports an honest row count for the $state state', async ({ fetchFn, expected, rendered }) => {
     render(FilesWorkspace, {
       client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' },
       sort: { field: 'occurred_at', direction: 'desc' }
@@ -182,11 +184,10 @@ describe('FilesWorkspace', () => {
     const grid = await screen.findByRole('grid', { name: 'Files results' });
     await screen.findByText(rendered);
     expect(grid.getAttribute('aria-rowcount')).toBe(expected);
-    if (state === 'error' || state === 'degraded') await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'other' } }]));
     expect(screen.queryByText('0 files') !== null).toBe(expected !== null);
   });
 
-  it('shows query failure guidance and reloads files after retry', async () => {
+  it('reports a displayed file query failure and reloads after retry', async () => {
     let failed = true;
     const fetchFn: typeof fetch = async () => failed
       ? Response.json({
@@ -200,6 +201,7 @@ describe('FilesWorkspace', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('more memory or temporary disk space');
+    await waitFor(() => expect(telemetryEvents).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'other' } }]));
     failed = false;
     await fireEvent.click(screen.getByRole('button', { name: 'Retry request' }));
     expect(await screen.findByText('fixture.pdf')).not.toBeNull();

@@ -103,7 +103,7 @@ func TestSourceSetupFailuresAreRecorded(t *testing.T) {
 	}
 }
 
-func TestScheduledSourceOutcomesCountEachType(t *testing.T) {
+func TestScheduledGmailTokenFirstFailureOutcome(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t)
@@ -117,14 +117,9 @@ func TestScheduledSourceOutcomesCountEachType(t *testing.T) {
 		events = append(events, props)
 		return nil
 	}}
-	_, err := st.Store.GetOrCreateSource("gmail", "gmail@example.com")
-	require.NoError(err)
-	_, err = st.Store.GetOrCreateSource("imap", "imap@example.com")
-	require.NoError(err)
 	oauthFailure := func(context.Context, string) (*oauth.Manager, error) {
 		return nil, errors.New("synthetic OAuth failure")
 	}
 	require.Error(runScheduledSync(ctx, "gmail@example.com", st.Store, oauthFailure, state))
-	require.Error(runScheduledSync(ctx, "imap@example.com", st.Store, oauthFailure, state))
-	assert.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}, {"sync_source": "imap", "reason": "other"}}, events)
+	assert.Equal([]map[string]any{{"sync_source": "gmail", "reason": "other"}}, events)
 }

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/circleback"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
-	"go.kenn.io/msgvault/internal/imazingcsv"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/msmail"
@@ -74,7 +74,7 @@ func TestOutcomeWire(t *testing.T) {
 	for i, want := range []map[string]any{
 		{"surface": "web", "search_type": "text"},
 		{"surface": "tui", "kind": "other"}, {"surface": "tui", "kind": "other"},
-		{"sync_source": "other", "reason": "other"}, {"sync_source": "other", "reason": "other"},
+		{"sync_source": "gmail", "reason": "auth"}, {"sync_source": "gmail", "reason": "auth"},
 	} {
 		assert.Equal([]string{"search_empty", "error_shown", "error_shown", "sync_failed", "sync_failed"}[i], events[i]["event"])
 		props, ok := events[i]["properties"].(map[string]any)
@@ -88,23 +88,12 @@ func TestOutcomeWire(t *testing.T) {
 
 func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Reporter) {
 	t.Helper()
-	t.Run("registered source types", func(t *testing.T) {
-		for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
-			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
-			assert.Equal(t, sourceType, properties["sync_source"], sourceType)
-		}
-		// File imports have no scheduled sync and deliberately use the fallback.
-		for _, sourceType := range []string{imazingcsv.SourceType} {
-			properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
-			assert.Equal(t, "other", properties["sync_source"], sourceType)
-		}
-	})
 	for _, body := range []string{
 		`{"event":"error_shown","properties":{"surface":"web"}}`,
 		`{"event":"error_shown","properties":{"kind":"search"}}`,
 		`{"event":"search_empty","properties":{"surface":"web","search_type":"text","private":"synthetic"}}`,
 		`{"event":"error_shown","properties":{"surface":"tui","kind":"unlisted"}}`,
-		`{"event":"sync_failed","properties":{"sync_source":"` + imazingcsv.SourceType + `","reason":"other"}}`,
+		`{"event":"sync_failed","properties":{"sync_source":"gmail","reason":"auth"}}`,
 	} {
 		for range 2 {
 			want := http.StatusAccepted
@@ -115,6 +104,18 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 		}
 	}
 	for range 2 {
-		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": imazingcsv.SourceType, "reason": "other", "private": "synthetic"}))
+		require.NoError(t, reporter.Capture(EventSyncFailed, map[string]any{"sync_source": "gmail", "reason": "auth", "private": "synthetic"}))
+	}
+}
+
+func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
+	t.Setenv(EnabledEnv, "1")
+	t.Setenv(posthog.GenericEnabledEnv, "")
+	stub := newWireStub(t)
+	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, stub.server.URL, slog.Default())
+	defer func() { require.NoError(t, reporter.Close()) }()
+	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
+		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
+		assert.Equal(t, sourceType, properties["sync_source"], sourceType)
 	}
 }

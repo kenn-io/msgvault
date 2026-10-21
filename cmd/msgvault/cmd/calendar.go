@@ -1063,7 +1063,7 @@ func runConfiguredGCalSync(ctx context.Context, st *store.Store, src config.GCal
 	return runConfiguredGCalSyncWithClientBuilder(ctx, st, src, buildCalendarClient)
 }
 
-func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) (err error) {
+func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store, src config.GCalSource, buildClient calendarSyncClientBuilder) error {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
@@ -1094,20 +1094,14 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		return nil
 	}
 	existing = activeExisting
-	refreshing := false
-	defer func() {
-		if !refreshing {
-			_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
-		}
-	}()
 	appDecision, err := calendarSyncOAuthAppDecision(st, email, existing, src.OAuthApp, src.OAuthApp != "")
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	}
 
 	client, err := buildClient(ctx, email, appDecision.OAuthApp, false)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -1121,16 +1115,16 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		syncer = syncer.WithLogger(logger)
 	}
 
+	var result calsync.Result
 	if calendarSyncShouldRunFullForSources(existing, false, false, "", src.Calendars, false) {
-		_, err = syncer.Full(ctx)
+		result, err = syncer.Full(ctx)
 	} else {
-		_, err = syncer.Incremental(ctx)
+		result, err = syncer.Incremental(ctx)
 	}
+	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err, result.CalendarsSynced > 0)
 	if err != nil {
 		return err
 	}
-	refreshing = true
-	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, nil)
 	return rebuildCacheAfterScheduledSync(ctx, "gcal:"+src.Name)
 }
 

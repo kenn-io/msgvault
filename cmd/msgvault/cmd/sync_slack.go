@@ -264,20 +264,20 @@ func runConfiguredSlackSync(ctx context.Context, s *store.Store) error {
 		return err
 	}
 	return runScheduledSlackAttempts(ctx, sources, scheduledSlackRotation,
-		func(src *store.Source) (bool, error) {
+		func(src *store.Source) (bool, bool, error) {
 			teamID, userID, ok := splitSlackIdentifier(src.Identifier)
 			if !ok {
-				return false, fmt.Errorf("slack %s: malformed identifier", src.Identifier)
+				return false, false, fmt.Errorf("slack %s: malformed identifier", src.Identifier)
 			}
 			token, terr := slack.LoadToken(cfg.TokensDir(), teamID, userID)
 			if terr != nil {
-				return false, fmt.Errorf("slack %s: %w", teamID, terr)
+				return false, false, fmt.Errorf("slack %s: %w", teamID, terr)
 			}
-			imp := slack.NewImporter(s, slack.NewClient("", token), teamID)
-			if _, serr := imp.Import(ctx, slackImportOptions(teamID, userID, cfg)); serr != nil {
-				return true, fmt.Errorf("slack %s: %w", teamID, serr)
+			summary, serr := slack.NewImporter(s, slack.NewClient("", token), teamID).Import(ctx, slackImportOptions(teamID, userID, cfg))
+			if serr != nil {
+				serr = fmt.Errorf("slack %s: %w", teamID, serr)
 			}
-			return true, nil
+			return true, summary != nil && summary.MessagesProcessed > 0, serr
 		}, func() error {
 			// Rebuild analytics after any import attempt: even a failed or
 			// canceled attempt may have committed messages from healthy channels.
@@ -325,7 +325,7 @@ func runScheduledSlackAttempts(
 	ctx context.Context,
 	sources []*store.Source,
 	rotation *slackWorkspaceRotation,
-	attempt func(*store.Source) (bool, error),
+	attempt func(*store.Source) (bool, bool, error),
 	rebuild func() error,
 ) error {
 	var errs []error
@@ -337,8 +337,8 @@ func runScheduledSlackAttempts(
 			resumeAt = src.Identifier
 			break
 		}
-		started, err := attempt(src)
-		_ = recordSyncAttempt(ctx, sourceTypeSlack, src.Identifier, err)
+		started, goodRead, err := attempt(src)
+		_ = recordSyncAttempt(ctx, sourceTypeSlack, src.Identifier, err, goodRead)
 		attempted = attempted || started
 		if err != nil {
 			errs = append(errs, err)

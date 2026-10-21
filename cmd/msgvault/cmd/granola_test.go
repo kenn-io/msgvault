@@ -350,49 +350,21 @@ func TestManualGranolaPrevalidatesAllSourcesBeforeImport(t *testing.T) {
 	assert.ErrorIs(statErr, os.ErrNotExist, "invalid configuration must not create or write the archive")
 }
 
-func TestGranolaCacheFailureDoesNotStartOutage(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	server := newGranolaSyncTestServer(t, true, false)
-	installGranolaClientFactory(t, server.URL)
-	st := testutil.NewTestStore(t)
-	_, err := st.GetOrCreateSource(granola.SourceType, "work")
-	require.NoError(err)
-	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
-	events := 0
-	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
-	ctx := withInvocation(t.Context(), state)
-	refresh := rebuildGranolaCacheAfterScheduledSync
-	t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = refresh })
-	cacheErr := errors.New("cache unavailable")
-	rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) error { return cacheErr }
-
-	err = runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"})
-
-	require.ErrorIs(err, cacheErr)
-	var count int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&count))
-	assert.Positive(count)
-	assert.Zero(events)
-	failing := newGranolaSyncTestServer(t, false, true)
-	installGranolaClientFactory(t, failing.URL)
-	require.Error(runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"}))
-	assert.Equal(1, events, "provider failures still count after a failed cache refresh")
-}
-
 func TestGranolaPartialSyncClearsOutage(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		good, prior bool
-		want, next  int
+		name                      string
+		good, prior, cacheFailure bool
+		want, next                int
 	}{
-		{"partial", true, false, 0, 1},
-		{"recovery", true, true, 1, 2},
-		{"all failed", false, false, 1, 1},
+		{"partial", true, false, false, 0, 1},
+		{"recovery", true, true, false, 1, 2},
+		{"all failed", false, false, false, 1, 1},
+		{"cache error", true, false, true, 0, 1},
+		{"provider and cache errors", false, false, true, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			server := newGranolaSyncTestServer(t, tc.good, true)
+			server := newGranolaSyncTestServer(t, tc.good, !tc.cacheFailure || !tc.good)
 			installGranolaClientFactory(t, server.URL)
 			st := testutil.NewTestStore(t)
 			_, err := st.GetOrCreateSource(granola.SourceType, "work")
@@ -409,10 +381,20 @@ func TestGranolaPartialSyncClearsOutage(t *testing.T) {
 				state.syncFailures.Record(ctx, "granola", "work", errors.New("prior outage"))
 			}
 			refresh := rebuildGranolaCacheAfterScheduledSync
-			rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) error { return nil }
+			cacheErr := errors.New("cache unavailable")
+			rebuildGranolaCacheAfterScheduledSync = func(context.Context, string) error {
+				if tc.cacheFailure {
+					return cacheErr
+				}
+				return nil
+			}
 			t.Cleanup(func() { rebuildGranolaCacheAfterScheduledSync = refresh })
 			err = runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"})
-			require.ErrorContains(err, "partial Granola sync")
+			if tc.cacheFailure && tc.good {
+				require.ErrorIs(err, cacheErr)
+			} else {
+				require.ErrorContains(err, "partial Granola sync")
+			}
 			assert.Equal(tc.want, events)
 			state.syncFailures.Record(ctx, "granola", "work", errors.New("later outage"))
 			assert.Equal(tc.next, events, "only a good read clears the earlier outage")

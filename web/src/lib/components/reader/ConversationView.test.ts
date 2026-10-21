@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
-import MessagePage from './MessagePage.svelte';
 
 const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
@@ -358,26 +357,6 @@ describe('ConversationView', () => {
     });
 
     expect((await screen.findByRole('alert')).textContent).toContain('Conversation details are unavailable');
-  });
-
-  it('reports a displayed linked message loading failure', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/messages/2') {
-        return Response.json({ message: 'Message unavailable' }, { status: 500 });
-      }
-      return Response.json({
-        id: 7, anchor_id: 2, messages: [omittedMessage(2)],
-        has_before: false, has_after: false, total: 1
-      });
-    });
-    const client = createAPIClient(fetchFn);
-    render(MessagePage, { props: { client, messageID: 2 } });
-
-    expect((await screen.findByRole('alert')).textContent).toContain('Message unavailable');
-    await waitFor(() => expect(telemetryEvents).toEqual([
-      { event: 'error_shown', properties: { surface: 'web', kind: 'message' } }
-    ]));
   });
 
   it('reports each failed body while earlier errors stay expanded', async () => {

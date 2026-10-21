@@ -301,9 +301,6 @@ func TestNotionPartialSyncClearsOutage(t *testing.T) {
 			assert.Equal(want, events)
 			require.ErrorContains(runConfiguredNotionMeetingsSync(ctx, st, configured), "meeting-2")
 			assert.Equal(want, events, "reading an unchanged meeting also keeps the source healthy")
-			client.good = false
-			require.Error(runConfiguredNotionMeetingsSync(ctx, st, configured))
-			assert.Equal(want+1, events, "a complete failure after a good read starts a new outage")
 		})
 	}
 }

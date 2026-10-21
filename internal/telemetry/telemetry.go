@@ -16,6 +16,7 @@ import (
 	"github.com/emersion/go-imap/v2"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/beeper"
+	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/discord"
@@ -209,7 +210,7 @@ func reason(err error) string {
 	_, graphThrottled := errors.AsType[*msgraph.ThrottledError](err)
 	retrieveError, _ := errors.AsType[*oauth2.RetrieveError](err)
 	switch {
-	case errors.Is(err, granola.ErrUnauthorized) || errors.Is(err, omi.ErrUnauthorized) || (retrieveError != nil && retrieveError.ErrorCode == "invalid_grant") || errors.Is(err, msgraph.ErrUnauthorized) || errors.Is(err, gcal.ErrUnauthorized) || errors.Is(err, slack.ErrAuth) || errors.Is(err, notionmeetings.ErrUnauthorized) || errors.Is(err, oauth.ErrTokenUnrefreshable) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, beeper.ErrUnauthorized) || errors.Is(err, chatwoot.ErrUnauthorized) || imapErr != nil && imapErr.Code == imap.ResponseCodeAuthenticationFailed || status == 401:
+	case errors.Is(err, calcontrol.ErrDenied) || errors.Is(err, granola.ErrUnauthorized) || errors.Is(err, omi.ErrUnauthorized) || (retrieveError != nil && retrieveError.ErrorCode == "invalid_grant") || errors.Is(err, msgraph.ErrUnauthorized) || errors.Is(err, gcal.ErrUnauthorized) || errors.Is(err, slack.ErrAuth) || errors.Is(err, notionmeetings.ErrUnauthorized) || errors.Is(err, oauth.ErrTokenUnrefreshable) || errors.Is(err, oauth.ErrInvalidTokenJSON) || errors.Is(err, beeper.ErrUnauthorized) || errors.Is(err, chatwoot.ErrUnauthorized) || imapErr != nil && imapErr.Code == imap.ResponseCodeAuthenticationFailed || status == 401:
 		return "auth"
 	case gmailThrottled || graphThrottled || errors.Is(err, gcal.ErrRateLimited) || notionErr != nil && notionErr.Status == 429 || status == 429:
 		return "rate_limited"
