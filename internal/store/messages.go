@@ -2425,6 +2425,14 @@ func (s *Store) persistMessageWith(
 		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
 		}
+		// Only email has linkage, so other message types skip the refresh's lookups.
+		if IsEmailMessageType(message.MessageType) {
+			input := emailLinkageForRaw(rawFormat, data.RawMIME)
+			input.emailChecked = true
+			if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID, input); err != nil {
+				return 0, fmt.Errorf("refresh email linkage: %w", err)
+			}
+		}
 	}
 
 	for _, rs := range data.Recipients {
@@ -6157,6 +6165,13 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		}
 		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
+		}
+		// Non-MIME raw has no linkage to derive, and only a replaced MIME payload
+		// leaves keys to clear. Anything else would look the message type up for nothing.
+		if format == "mime" || replacesMIME {
+			if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID, emailLinkageForRaw(format, rawData)); err != nil {
+				return err
+			}
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err

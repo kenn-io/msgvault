@@ -209,6 +209,27 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
+### Related copies
+
+Choose **Related copies** above a message to see its other archived copies,
+and the replies and forwards that name it, in other accounts and conversations.
+Each row shows the account, whether that account sent or received the copy (or
+holds it as a draft), the date, and the evidence that connects it: the same
+message, a reply, a forward, shared references, a relation through another copy,
+or, for sources that keep the provider's own threads such as Gmail, the same
+thread as the email or one of its exact copies. Messages the conversation view already shows have no row. Open a row to
+read that copy. The panel loads when you open it and makes no request while
+closed.
+
+A warning appears when the opened email, a copy, or any email in the archive
+hasn't been indexed yet, because it could be a related copy the panel cannot
+see, and when an email's headers couldn't be read. The next sync indexes
+pending emails; for a source that no longer syncs, run
+`msgvault repair-derived`. When the lookup stops at its
+500-email or 5,000-identifier limit, the panel says which. An empty panel
+reports what the search found, so it never claims that no related copy exists.
+Only the owner can use the panel.
+
 ## Meeting context and follow-ups
 
 Filter Everything to meetings to see **Meeting activity and follow-ups**.

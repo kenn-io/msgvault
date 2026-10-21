@@ -33,7 +33,7 @@ the verbatim payload stored alongside every message. Sources with retained MIME,
 including custom email labels, rebuild bodies, HTML, previews, and search.
 For every source it also derives account attribution (the
 address searched by account: and received:) for email and calendar rows still
-waiting for it.
+waiting for it. It also derives explicit email linkage from archived MIME.
 
 Syncing already heals an archive on its own — each source re-derives once, on its
 next sync, and every sync or import derives pending account attribution — so
@@ -123,14 +123,18 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 	report := func(sum store.AccountAttributionRepairSummary) {
 		progress(fmt.Sprintf("account attribution: %d messages", sum.Scanned))
 	}
-	sum, err := s.RepairAccountAttributionContext(ctx, src.ID, report)
-	if err != nil {
-		return err
-	}
-	if sum.Scanned > 0 {
+	sum, attributionErr := s.RepairAccountAttributionContext(ctx, src.ID, report)
+	if attributionErr == nil && sum.Scanned > 0 {
 		_, _ = fmt.Fprint(out, formatAccountAttributionSummary(label, sum))
 	}
-	return nil
+	// Linkage does not read attribution, so one failing leaves the other to run.
+	linkage, linkageErr := s.RepairEmailLinkageContext(ctx, src.ID, func(sum store.EmailLinkageRepairSummary) {
+		progress(fmt.Sprintf("email linkage: %d messages", sum.Scanned))
+	})
+	if linkageErr == nil && linkage.Scanned > 0 {
+		_, _ = fmt.Fprintf(out, "%s: email linkage derived for %d messages (%d incomplete)\n", label, linkage.Scanned, linkage.Incomplete)
+	}
+	return errors.Join(attributionErr, linkageErr)
 }
 
 func formatRepairDerivedSummary(label string, sum *rederive.Summary) string {

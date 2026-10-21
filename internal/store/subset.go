@@ -871,6 +871,16 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy message_raw: %w", err)
 	}
 
+	present, err := sourceTableExists(tx, "email_link_keys")
+	if err != nil {
+		return nil, fmt.Errorf("check email_link_keys: %w", err)
+	}
+	if present {
+		if _, err := copyByName(tx, "email_link_keys", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy email_link_keys: %w", err)
+		}
+	}
+
 	if _, err := copyByName(tx, "message_recipients",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)

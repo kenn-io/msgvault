@@ -1973,6 +1973,20 @@ type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
 
+type GetEmailFamilyResponse = EmailFamily
+
+type GetEmailFamilyErrorResponse = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON403 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON404 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON503 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSONDefault = ErrorResponse
+
 type GetMessageInlinePartResponse = runtime.File
 
 type GetMessageInlinePartErrorResponse = ErrorResponse
@@ -5806,6 +5820,19 @@ type GetMessageResp struct {
 	StatusCode   int
 	JSON200      *GetMessageResponse
 	JSONDefault  *GetMessageErrorResponse
+}
+
+type GetEmailFamilyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmailFamilyResponse
+	JSON400      *GetEmailFamilyErrorResponse
+	JSON401      *GetEmailFamilyErrorResponseJSON
+	JSON403      *GetEmailFamilyErrorResponseJSON403
+	JSON404      *GetEmailFamilyErrorResponseJSON404
+	JSON503      *GetEmailFamilyErrorResponseJSON503
+	JSONDefault  *GetEmailFamilyErrorResponseJSONDefault
 }
 
 type GetMessageInlinePartResp struct {

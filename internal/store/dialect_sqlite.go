@@ -1996,6 +1996,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN list_id TEXT`, "list_id"},
 		{`ALTER TABLE messages ADD COLUMN account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN email_linkage_outcome TEXT`, "email_linkage_outcome"},
 		{`ALTER TABLE messages ADD COLUMN draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},

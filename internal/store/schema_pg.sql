@@ -1376,6 +1376,7 @@ CREATE TABLE IF NOT EXISTS messages (
     identity_is_from_me BOOLEAN NOT NULL DEFAULT FALSE,
     account_address TEXT,
     account_path TEXT,
+    email_linkage_outcome TEXT,
     draft_authored BOOLEAN NOT NULL DEFAULT FALSE,
 
     subject TEXT,
@@ -1560,6 +1561,18 @@ CREATE TABLE IF NOT EXISTS message_raw (
     compression TEXT DEFAULT 'zlib',
     encryption_version INTEGER DEFAULT 0
 );
+
+-- Explicit MIME identifiers (In-Reply-To, References, attached originals),
+-- indexed across archived email copies. A copy's own Message-ID is
+-- messages.rfc822_message_id. messages.email_linkage_outcome IS NULL marks a
+-- copy whose keys are not derived yet.
+CREATE TABLE IF NOT EXISTS email_link_keys (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL CHECK (kind IN ('reply', 'reference', 'attached')),
+    value TEXT COLLATE "C" NOT NULL,
+    PRIMARY KEY (message_id, kind, value)
+);
+CREATE INDEX IF NOT EXISTS idx_email_link_keys_value ON email_link_keys(value, message_id);
 
 CREATE TABLE IF NOT EXISTS attachment_role_repair_progress (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
