@@ -76,6 +76,12 @@ type fixtureCount struct {
 	f *serviceFixture
 }
 
+// fixedRetriever supplies cosine scores directly, so service unit tests can
+// model a backend whose saturated results are already cosine ordered.
+type fixtureCosineOrderBackend struct{ vector.Backend }
+
+func (fixtureCosineOrderBackend) CosineSearchOrderGuaranteed() bool { return true }
+
 func (c fixtureCount) CoverageCountsScoped(_ context.Context, _ int64, types []string, _ []int64) (int64, int64, int64, int64, error) {
 	c.f.counted = append(c.f.counted, types)
 	return c.f.waiting, 0, 0, c.f.waiting, c.f.countErr
@@ -107,7 +113,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	}
 	fixture.service = &whoknows.Service{
 		Retriever: fixture.retriever, Data: fixtureCount{f.Store, fixture},
-		Now: func() time.Time { return serviceNow },
+		Index: fixtureCosineOrderBackend{}, Now: func() time.Time { return serviceNow },
 	}
 	return fixture
 }

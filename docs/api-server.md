@@ -167,11 +167,13 @@ topic is plain words; search operators return `400 invalid_parameter`.
 
 The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
 lists each way the search came up short: `pool_full` when the search hit its
-result limit and a message matched, or the SQLite vector index ranked
-vectors that are not unit length; `partial_index` when the vector index leaves
-out some message types with authors or some accounts, or, for an empty
-answer, some message still waits for its vector; and `declared_truncated` when more than 5,000
-declared topics exist. Both lists empty with no limits means no message
+result limit and may have omitted messages whose cosine similarity clears
+`min_score`; SQLite reports this for every saturated pool because its L2
+ranking cannot prove cosine order from returned vectors alone; `partial_index`
+when the vector index leaves out some message types with authors or some
+accounts, or, for an empty answer, some message still waits for its vector;
+and `declared_truncated` when more than 5,000 declared topics exist. Both
+lists empty with no limits means no message
 cleared `min_score`. Lower `min_score` to widen the search; people may still
 have written about the topic. Each entry has a `score` split into
 `message_score` and `declared_boost`, `authored_messages`, and `citations`,

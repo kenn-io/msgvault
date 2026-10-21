@@ -422,10 +422,11 @@ func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
 
 func TestFindReportsVectorPoolLimits(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		setup        func(*testing.T, *evalFixture, []float32)
-		wantContacts *int
-		wantLimits   []string
+		name           string
+		setup          func(*testing.T, *evalFixture, []float32)
+		wantContacts   *int
+		wantLimits     []string
+		postgresLimits []string
 	}{
 		{
 			name: "full vector pool despite low keyword cosine",
@@ -450,7 +451,7 @@ func TestFindReportsVectorPoolLimits(t *testing.T) {
 			wantLimits: []string{LimitPoolFull},
 		},
 		{
-			name: "only the best vector clears the floor",
+			name: "unit candidates do not prove the saturated SQLite index is normalized",
 			setup: func(t *testing.T, f *evalFixture, topic []float32) {
 				t.Helper()
 				f.fillPool(t, topic, 1)
@@ -459,8 +460,9 @@ func TestFindReportsVectorPoolLimits(t *testing.T) {
 				match[off] = float32(math.Sqrt(1 - .9*.9))
 				f.post(t, "captain@example.net", "airship tethering", match)
 			},
-			wantContacts: new(1),
-			wantLimits:   []string{},
+			wantContacts:   new(1),
+			wantLimits:     []string{LimitPoolFull},
+			postgresLimits: []string{},
 		},
 		{
 			name: "full pool of vectors that are not unit length",
@@ -484,7 +486,11 @@ func TestFindReportsVectorPoolLimits(t *testing.T) {
 			tc.setup(t, f, embedWords("zeppelin mooring"))
 			got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
 			require.NoError(t, err)
-			assert.Equal(t, tc.wantLimits, got.Limits)
+			wantLimits := tc.wantLimits
+			if f.store.IsPostgreSQL() && tc.postgresLimits != nil {
+				wantLimits = tc.postgresLimits
+			}
+			assert.Equal(t, wantLimits, got.Limits)
 			if tc.wantContacts != nil {
 				require.Len(t, got.UnsavedContacts, *tc.wantContacts)
 			}
@@ -494,4 +500,47 @@ func TestFindReportsVectorPoolLimits(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFindReportsSaturatedSQLitePoolWithHiddenNonUnitMatch(t *testing.T) {
+	f := newEvalFixture(t)
+	if f.store.IsPostgreSQL() {
+		t.Skip("pgvector ranks by cosine distance")
+	}
+	topic := embedWords("zeppelin mooring")
+	f.fillPool(t, topic, 1)
+	hiddenID := f.post(t, "captain@example.net", "airship tethering", scaled(topic, 10))
+
+	hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	require.True(t, meta.PoolSaturated)
+	assert.False(t, slices.ContainsFunc(hits, func(hit vector.FusedHit) bool { return hit.MessageID == hiddenID }),
+		"L2 retrieval omits the longer vector with cosine 1")
+
+	ids := make([]int64, 0, len(hits))
+	for _, hit := range hits {
+		if !math.IsNaN(hit.VectorScore) {
+			ids = append(ids, hit.MessageID)
+		}
+	}
+	scorer, ok := f.backend.(interface {
+		MessageCosines(ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
+	})
+	require.True(t, ok)
+	scores, err := scorer.MessageCosines(t.Context(), vector.Generation{ID: f.generation, Dimension: embedDimension}, topic, ids)
+	require.NoError(t, err)
+	assert.True(t, scores.UnitLength, "the returned candidates alone all have unit-length vectors")
+	for _, hit := range hits {
+		if !math.IsNaN(hit.VectorScore) {
+			assert.InDelta(t, .3, scores.Scores[hit.MessageID], 1e-5)
+		}
+	}
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.People)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
 }

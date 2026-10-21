@@ -11,6 +11,11 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
+// CosineSearchOrderGuaranteed reports whether vector retrieval ranks the
+// searched index by cosine similarity. SQLite orders by L2 distance, which
+// agrees with cosine only when every indexed vector is unit length.
+func (*Backend) CosineSearchOrderGuaranteed() bool { return false }
+
 // MessageCosines returns, for each listed message embedded in gen, the
 // cosine similarity of its closest chunk to queryVec. Search scores a hit as
 // 1 - L2 distance, whose ordering matches cosine for unit-length vectors. The

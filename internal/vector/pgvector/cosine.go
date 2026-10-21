@@ -9,6 +9,10 @@ import (
 	"go.kenn.io/msgvault/internal/vector"
 )
 
+// CosineSearchOrderGuaranteed reports that vector retrieval uses cosine
+// distance as its ranking metric.
+func (*Backend) CosineSearchOrderGuaranteed() bool { return true }
+
 // MessageCosines returns each embedded message's best chunk cosine in gen.
 // Messages without chunks are omitted. Zero vectors score 0. UnitLength is
 // true because pgvector's search order already follows cosine distance.

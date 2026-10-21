@@ -52,6 +52,12 @@ type cosineScorer interface {
 	MessageCosines(ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
 }
 
+// cosineOrderGuaranteer reports whether vector retrieval uses cosine as its
+// ranking metric, rather than inferring cosine order from returned candidates.
+type cosineOrderGuaranteer interface {
+	CosineSearchOrderGuaranteed() bool
+}
+
 // searchTypes are the message types worth searching for authors: everything
 // but meeting transcripts and calendar entries, which have organizers and
 // attendees rather than authors. It also reports that the index scope leaves
@@ -151,7 +157,13 @@ func (s *Service) searchAuthors(ctx context.Context, p Params, types []string, o
 		}
 	}
 	result := searchResult{generation: meta.Generation.ID}
-	result.poolFull = (meta.PoolSaturated || len(hits) >= SearchPool) && (len(counted) > 0 && lowest >= p.MinScore || !scores.UnitLength)
+	poolSaturated := meta.PoolSaturated || len(hits) >= SearchPool
+	cosineOrderGuaranteed := false
+	if guarantee, ok := s.Index.(cosineOrderGuaranteer); ok {
+		cosineOrderGuaranteed = guarantee.CosineSearchOrderGuaranteed()
+	}
+	mayHideQualifyingVectors := !cosineOrderGuaranteed || (len(counted) > 0 && lowest >= p.MinScore)
+	result.poolFull = poolSaturated && mayHideQualifyingVectors
 	result.candidates, err = s.attribute(ctx, counted, owner)
 	return result, err
 }

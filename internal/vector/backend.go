@@ -288,8 +288,9 @@ type ChunkHit struct {
 }
 
 // CosineScores maps each message to the cosine similarity of its closest
-// chunk to a query. UnitLength reports that the query and every vector read
-// have length 1, so ranking by L2 distance follows cosine order.
+// chunk to a query. UnitLength reports whether the backend can establish
+// cosine-equivalent order for the scored candidates. For L2 search, this
+// covers only returned vectors and says nothing about omitted index rows.
 type CosineScores struct {
 	Scores     map[int64]float64
 	UnitLength bool
