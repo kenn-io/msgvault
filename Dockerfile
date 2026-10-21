@@ -11,7 +11,7 @@ RUN cd web && bun run generate && bun run build
 
 # Go build stage.
 # Pin by digest for reproducibility; update periodically.
-FROM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
+FROM golang:1.27.3-bookworm@sha256:5c3e9b43cfd3bb95c7937462e29d87ada57b481a96fa23ad0eb61778d7a00110 AS builder
 
 # Install build dependencies for CGO (SQLite, DuckDB).
 # libsqlite3-dev provides sqlite3.h, required to compile the sqlite-vec
