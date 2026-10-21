@@ -16,9 +16,61 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/syncerr"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestScheduledGranolaNoteFailureClassification(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		status     int
+		wantReason string
+	}{
+		{"rate limited", http.StatusTooManyRequests, "rate_limited"},
+		{"invalid ID", http.StatusOK, "other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/v1/notes":
+					_, _ = w.Write([]byte(`{"notes":[{"id":"listed-note"}],"hasMore":false}`))
+				case "/v1/notes/listed-note":
+					w.Header().Set("Retry-After", "0")
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(`{"id":"different-note"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			installGranolaClientFactory(t, server.URL)
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource(granola.SourceType, "work")
+			require.NoError(err)
+			ctx := testInvocationContext(t.Context(), lifecycleTestConfig(t.TempDir()), invocationOptions{})
+			var events []map[string]any
+			invocationFromContext(ctx).syncFailures = &telemetry.SyncFailures{Capture: func(event string, props map[string]any) error {
+				assert.Equal("sync_failed", event)
+				events = append(events, props)
+				return nil
+			}}
+
+			err = runConfiguredGranolaSync(ctx, st, config.GranolaSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "synthetic"})
+
+			require.ErrorContains(err, "partial Granola sync: 1 note(s) failed")
+			assert.Equal(tt.status == http.StatusTooManyRequests, errors.Is(err, granola.ErrRateLimited))
+			assert.Equal(tt.wantReason, syncerr.Reason(err))
+			assert.Equal([]map[string]any{{"sync_source": "granola", "reason": tt.wantReason}}, events)
+			if tt.status == http.StatusOK {
+				assert.EqualError(err, "granola sync work failed: partial Granola sync: 1 note(s) failed")
+			}
+		})
+	}
+}
 
 func newGranolaSyncTestServer(t *testing.T, includeSuccessfulNote, includeMissingNote bool) *httptest.Server {
 	t.Helper()

@@ -441,15 +441,15 @@ func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.Pla
 		if errors.Is(err, store.ErrSourceRetired) {
 			return nil
 		}
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, errors.New("configuration is unavailable"))
 	}
 	email, err := src.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	mgr := plaudManager(&src, state)
 	session, err := plaud.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))

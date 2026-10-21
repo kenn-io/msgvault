@@ -364,21 +364,21 @@ func runCirclebackProbe(ctx context.Context, out io.Writer, session circlebackPr
 func runConfiguredCirclebackSync(ctx context.Context, st *store.Store, src config.CirclebackSource) error {
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, errors.New("configuration is unavailable"))
 	}
 	notRegistered := fmt.Errorf(
 		"circleback source %q is not registered; run msgvault add-circleback %s first",
 		src.Identifier, src.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, circleback.SourceType, src.Identifier, notRegistered)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, circleback.SourceType, src.Identifier, err)
 	}
 	mgr := circleback.NewManager(src.Endpoint, state.cfg.TokensDir(), state.logger)
 	session, err := circleback.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
