@@ -301,8 +301,7 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, 
 		writes = sum.MeetingsAdded + sum.MeetingsUpdated
 	}
 	if sum == nil || sum.PauseReason == nil {
-		// The importer pauses on a bare budget expiry, so an error here is a provider failure even after the deadline.
-		_ = recordSyncAttempt(context.WithoutCancel(ctx), omi.SourceType, src.Identifier, err, sum != nil && (writes > 0 || sum.MeetingsProcessed > sum.Errors))
+		_ = recordSyncAttempt(context.WithoutCancel(ctx), omi.SourceType, src.Identifier, err)
 	}
 	err = (meetingSyncRun{provider: "omi", identifier: src.Identifier, writes: writes, err: err}).finishScheduled(ctx, "omi:"+src.Identifier, rebuildOmiCacheAfterScheduledSync)
 	if err == nil && sum != nil && sum.PauseReason != nil {

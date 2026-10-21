@@ -4143,25 +4143,25 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			sourceType = sourceTypeGmail
 		}
 
-		var summary *gmail.SyncSummary
-		var err error
-		var goodRead bool
+		var (
+			summary *gmail.SyncSummary
+			err     error
+		)
 		switch sourceType {
 		case sourceTypeGmail:
 			summary, err = runScheduledGmailSync(ctx, identifier, src, s, getOAuthMgr, state)
 		case sourceTypeIMAP:
 			summary, err = runScheduledIMAPSync(ctx, src, s, state)
 		case sourceTypeTeams:
-			err = runScheduledTeamsSync(ctx, src, s, state, &goodRead)
+			err = runScheduledTeamsSync(ctx, src, s, state)
 		case sourceTypeMSMail:
-			err = runScheduledMSMailSync(ctx, src, s, state, &goodRead)
+			err = runScheduledMSMailSync(ctx, src, s, state)
 		case sourceTypeDiscord:
 			var discordSummary *discord.ImportSummary
 			discordSummary, err = importDiscordSourceForScheduledRun(
 				ctx, s, src, defaultDiscordCommandDeps().bind(ctx), false, time.Time{}, nil,
 			)
 			logScheduledDiscordIssues(identifier, discordSummary, logger)
-			goodRead = discordSummary != nil && discordSummary.MessagesProcessed > 0
 		default:
 			err = fmt.Errorf("source %q has type %q which is not supported by the daemon scheduler", identifier, sourceType)
 		}
@@ -4171,7 +4171,7 @@ func runScheduledSync(ctx context.Context, identifier string, s *store.Store, ge
 			}
 			return scheduledSyncYieldResult(ctx, errs...)
 		}
-		state.syncFailures.Record(ctx, sourceType, src.Identifier, err, goodRead)
+		state.syncFailures.Record(ctx, sourceType, src.Identifier, err)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s (%s): %w", identifier, sourceType, err))
 			continue
@@ -4516,13 +4516,15 @@ func runScheduledIMAPSync(ctx context.Context, src *store.Source, s *store.Store
 }
 
 // runScheduledTeamsSync runs a Teams sync for the daemon.
-func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation, goodRead *bool) error {
+func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Store, state *invocation) error {
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
 		return errors.New("configuration is unavailable")
 	}
+	cfg := state.cfg
+	logger := state.logger
 	email := src.Identifier
 
 	// Seed the default identity and converge legacy migrations before
@@ -4532,20 +4534,17 @@ func runScheduledTeamsSync(ctx context.Context, src *store.Source, s *store.Stor
 	// "me" identity. Auto-default-identity must run BEFORE the legacy
 	// migration retry (see account_identity.go); serve is a daemon, so
 	// the confirmation message has no terminal and is discarded.
-	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", state.logger)
+	confirmDefaultIdentity(io.Discard, s, src.ID, email, email, "account-identifier", logger)
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
 
-	client, err := newTeamsClient(ctx, state.cfg, state.logger, email)
+	client, err := newTeamsClient(ctx, cfg, logger, email)
 	if err != nil {
 		return err
 	}
-	sum, err := teams.NewImporter(s, client).Import(ctx, scheduledTeamsImportOptions(email, state.cfg))
-	*goodRead = sum != nil && sum.MessagesProcessed > 0
-	if err == nil && sum != nil && sum.Errors > 0 && !*goodRead {
-		err = fmt.Errorf("teams sync had %d errors without reading messages", sum.Errors)
-	}
+	opts := scheduledTeamsImportOptions(email, cfg)
+	_, err = teams.NewImporter(s, client).Import(ctx, opts)
 	return err
 }
 

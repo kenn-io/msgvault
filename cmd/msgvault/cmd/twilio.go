@@ -270,7 +270,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 			state.logger.Warn("twilio sync diagnostic", "source", source.Identifier, "diagnostic", diagnostic)
 		}
 	}
-	_ = recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr, summary != nil && (summary.MeetingsAdded+summary.MeetingsUpdated > 0 || summary.MeetingsProcessed > summary.Errors))
+	_ = recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr)
 	refreshCtx := context.WithoutCancel(ctx)
 	refresh := func() error { return rebuildTwilioCacheAfterScheduledSync(refreshCtx, "twilio:"+source.Identifier) }
 	if importErr != nil {

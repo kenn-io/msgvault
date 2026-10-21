@@ -330,7 +330,7 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 	run := meetingSyncRun{
 		provider: "notion meetings", identifier: source.Identifier, writes: writes, err: importErr,
 	}
-	_ = recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, importErr, summary != nil && (writes > 0 || summary.MeetingsProcessed > summary.Errors))
+	_ = recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, importErr)
 	return run.finishScheduled(ctx, "notion-meetings:"+source.Identifier,
 		rebuildNotionMeetingsCacheAfterScheduledSync)
 }

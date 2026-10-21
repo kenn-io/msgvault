@@ -461,7 +461,7 @@ func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.Pla
 	return finishScheduledPlaudImport(ctx, src.Identifier, sum, err, rebuildCacheAfterScheduledSync)
 }
 func finishScheduledPlaudImport(ctx context.Context, identifier string, sum *plaud.ImportSummary, importErr error, refresh func(context.Context, string) error) error {
-	_ = recordSyncAttempt(ctx, sourceTypePlaud, identifier, importErr, sum != nil && (sum.MeetingsAdded+sum.MeetingsUpdated > 0 || sum.MeetingsProcessed > sum.Errors))
+	_ = recordSyncAttempt(ctx, sourceTypePlaud, identifier, importErr)
 	detached := context.WithoutCancel(ctx)
 	finish := func() error {
 		if refresh == nil {

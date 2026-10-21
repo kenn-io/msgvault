@@ -1115,13 +1115,12 @@ func runConfiguredGCalSyncWithClientBuilder(ctx context.Context, st *store.Store
 		syncer = syncer.WithLogger(logger)
 	}
 
-	var result calsync.Result
 	if calendarSyncShouldRunFullForSources(existing, false, false, "", src.Calendars, false) {
-		result, err = syncer.Full(ctx)
+		_, err = syncer.Full(ctx)
 	} else {
-		result, err = syncer.Incremental(ctx)
+		_, err = syncer.Incremental(ctx)
 	}
-	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err, result.CalendarsSynced > 0)
+	_ = recordSyncAttempt(ctx, sourceTypeCalendar, email, err)
 	if err != nil {
 		return err
 	}

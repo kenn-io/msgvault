@@ -84,9 +84,9 @@ func invocationFromContext(ctx context.Context) *invocation {
 	return inv
 }
 
-func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error, goodRead ...bool) error {
+func recordSyncAttempt(ctx context.Context, sourceType, identifier string, err error) error {
 	if state := invocationFromContext(ctx); state != nil {
-		state.syncFailures.Record(ctx, sourceType, identifier, err, goodRead...)
+		state.syncFailures.Record(ctx, sourceType, identifier, err)
 	}
 	return err
 }

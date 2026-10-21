@@ -167,19 +167,19 @@ func TestScheduledSlackAttemptsResumeAfterInterruptedWorkspace(t *testing.T) {
 	rotation := &slackWorkspaceRotation{}
 	ctx, cancel := context.WithCancel(context.Background())
 	var first []string
-	err = runScheduledSlackAttempts(ctx, sources, rotation, func(src *store.Source) (bool, bool, error) {
+	err = runScheduledSlackAttempts(ctx, sources, rotation, func(src *store.Source) (bool, error) {
 		first = append(first, src.Identifier)
 		cancel() // the scheduler's hard yield interrupted this workspace
-		return true, false, context.Canceled
+		return true, context.Canceled
 	}, func() error { return nil })
 	require.ErrorIs(err, context.Canceled)
 	assert.Equal([]string{sources[0].Identifier}, first)
 
 	var resumed []string
 	err = runScheduledSlackAttempts(context.Background(), sources, rotation,
-		func(src *store.Source) (bool, bool, error) {
+		func(src *store.Source) (bool, error) {
 			resumed = append(resumed, src.Identifier)
-			return true, false, nil
+			return true, nil
 		}, func() error { return nil })
 	require.NoError(err)
 	assert.Equal(append(append([]string{}, sources[1].Identifier, sources[2].Identifier), sources[0].Identifier), resumed,

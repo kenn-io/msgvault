@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/notionmeetings"
-	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -248,59 +247,4 @@ func TestScheduledNotionSyncUsesUsersToken(t *testing.T) {
 	assert.Equal(1, users.retrieved)
 	_, absent := configuredNotionClients(config.NotionMeetingsSource{Token: "pat-example"})
 	assert.Nil(absent)
-}
-
-type partialNotionSource struct {
-	fakeNotionProbe
-
-	good bool
-}
-
-func (f *partialNotionSource) RetrieveBlock(_ context.Context, id string) (*notionmeetings.Block, error) {
-	if id == "meeting-1" && f.good {
-		return &notionmeetings.Block{Object: "block", ID: id, Type: "meeting_notes"}, nil
-	}
-	return nil, &notionmeetings.APIError{Status: 503}
-}
-
-func TestNotionPartialSyncClearsOutage(t *testing.T) {
-	for _, prior := range []bool{false, true} {
-		t.Run(fmt.Sprintf("prior=%t", prior), func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st := testutil.NewTestStore(t)
-			src, err := st.GetOrCreateSource(notionmeetings.SourceType, "work")
-			require.NoError(err)
-			client := &partialNotionSource{good: true}
-			client.result = &notionmeetings.QueryResult{}
-			for _, id := range []string{"meeting-1", "meeting-2"} {
-				client.result.Results = append(client.result.Results, notionmeetings.MeetingNote{Object: "block", ID: id, Type: "meeting_notes", Parent: notionmeetings.Parent{PageID: "page-1"}, CreatedTime: "2026-08-29T10:00:00Z", MeetingNotes: notionmeetings.MeetingNotesData{Status: "notes_ready"}})
-			}
-			factory, rebuild := newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterScheduledSync
-			newNotionMeetingsClient = func(string, string) notionmeetings.Source { return client }
-			rebuildNotionMeetingsCacheAfterScheduledSync = func(context.Context, string) error { return nil }
-			t.Cleanup(func() { newNotionMeetingsClient, rebuildNotionMeetingsCacheAfterScheduledSync = factory, rebuild })
-			state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
-			events := 0
-			state.syncFailures = &telemetry.SyncFailures{Capture: func(event string, _ map[string]any) error {
-				assert.Equal("sync_failed", event)
-				events++
-				return nil
-			}}
-			ctx := withInvocation(t.Context(), state)
-			want := 0
-			if prior {
-				state.syncFailures.Record(ctx, notionmeetings.SourceType, "work", errors.New("prior outage"))
-				want = 1
-			}
-			configured := config.NotionMeetingsSource{Identifier: "work", AccountEmail: "owner@example.com", Token: "synthetic"}
-			require.ErrorContains(runConfiguredNotionMeetingsSync(ctx, st, configured), "meeting-2")
-			ids, err := st.MessageExistsBatch(src.ID, []string{"meeting-1", "meeting-2"})
-			require.NoError(err)
-			assert.Len(ids, 1)
-			assert.NotZero(ids["meeting-1"])
-			assert.Equal(want, events)
-			require.ErrorContains(runConfiguredNotionMeetingsSync(ctx, st, configured), "meeting-2")
-			assert.Equal(want, events, "reading an unchanged meeting also keeps the source healthy")
-		})
-	}
 }

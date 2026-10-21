@@ -31,27 +31,22 @@ func TestScheduledBeeperAccountsKeepIndependentFailuresAcrossPartialPass(t *test
 	rotation := &beeperAccountRotation{}
 	accounts := []string{"signal", "telegram"}
 	rebuild := func() error { return nil }
-	fail := func(string) (bool, bool, error) { return false, false, errors.New("synthetic outage") }
+	fail := func(string) (bool, error) { return false, errors.New("synthetic outage") }
 	require.Error(runScheduledBeeperAttempts(ctx, accounts, rotation, nil, fail, rebuild))
 	assert.Equal(2, events, "each account starts its own outage")
 	var visited []string
-	require.NoError(runScheduledBeeperAttempts(ctx, accounts, rotation, nil, func(account string) (bool, bool, error) {
+	require.NoError(runScheduledBeeperAttempts(ctx, accounts, rotation, nil, func(account string) (bool, error) {
 		visited = append(visited, account)
-		return true, false, nil // Budget exhausted before completing this account.
+		return true, nil // Budget exhausted before completing this account.
 	}, rebuild))
 	assert.Equal([]string{"signal"}, visited)
 	require.Error(runScheduledBeeperAttempts(ctx, accounts, rotation, nil, fail, rebuild))
 	assert.Equal(2, events, "a budget stop leaves both outages unresolved")
 	require.NoError(runScheduledBeeperAttempts(ctx, accounts, rotation, nil,
-		func(string) (bool, bool, error) { return false, false, nil }, rebuild))
+		func(string) (bool, error) { return false, nil }, rebuild))
 	require.Error(runScheduledBeeperAttempts(ctx, accounts, rotation, nil,
-		func(string) (bool, bool, error) { return true, false, errors.New("synthetic outage") }, rebuild))
+		func(string) (bool, error) { return true, errors.New("synthetic outage") }, rebuild))
 	assert.Equal(3, events, "a stopped attempt still records a real error after recovery")
-	require.Error(runScheduledBeeperAttempts(ctx, accounts, rotation, nil,
-		func(string) (bool, bool, error) {
-			return false, true, errors.New("one chat failed after another imported")
-		}, rebuild))
-	assert.Equal(3, events, "partial success clears each account's outage")
 }
 
 func TestBeeperMissingTokenRecordsResolvedAccountFailures(t *testing.T) {
@@ -179,12 +174,12 @@ func TestScheduledBeeperAttemptsRebuildAfterPartialFailure(t *testing.T) {
 		[]string{"signal", "telegram"},
 		&beeperAccountRotation{},
 		nil,
-		func(accountID string) (bool, bool, error) {
+		func(accountID string) (bool, error) {
 			attempted = append(attempted, accountID)
 			if accountID == "signal" {
-				return false, false, errors.New("partial sync")
+				return false, errors.New("partial sync")
 			}
-			return false, false, nil
+			return false, nil
 		},
 		func() error {
 			rebuilds++
@@ -206,7 +201,7 @@ func TestScheduledBeeperAttemptsReturnsRefreshError(t *testing.T) {
 		[]string{"signal"},
 		&beeperAccountRotation{},
 		nil,
-		func(string) (bool, bool, error) { return false, false, importErr },
+		func(string) (bool, error) { return false, importErr },
 		func() error { return refreshErr },
 	)
 
@@ -222,25 +217,25 @@ func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
 
 	var first []string
 	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, bool, error) {
+		func(id string) (bool, error) {
 			first = append(first, id)
-			return id == "b", false, nil
+			return id == "b", nil
 		}, noRebuild))
 	assert.Equal([]string{"a", "b"}, first, "a stopped account ends the job")
 
 	var second []string
 	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, bool, error) {
+		func(id string) (bool, error) {
 			second = append(second, id)
-			return false, false, nil
+			return false, nil
 		}, noRebuild))
 	assert.Equal([]string{"c", "a", "b"}, second, "the next run reaches accounts after the stopped account")
 
 	var third []string
 	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, bool, error) {
+		func(id string) (bool, error) {
 			third = append(third, id)
-			return false, false, nil
+			return false, nil
 		}, noRebuild))
 	assert.Equal([]string{"a", "b", "c"}, third, "a complete run restarts from the first account")
 }
@@ -252,10 +247,10 @@ func TestScheduledBeeperAttemptsStopBetweenAccounts(t *testing.T) {
 	stopped := false
 	require.NoError(t, runScheduledBeeperAttempts(context.Background(), []string{"a", "b", "c"}, rotation,
 		func() bool { return stopped },
-		func(id string) (bool, bool, error) {
+		func(id string) (bool, error) {
 			attempted = append(attempted, id)
 			stopped = true // budget spent by the first account
-			return false, false, nil
+			return false, nil
 		}, func() error { return nil }))
 	assert.Equal([]string{"a"}, attempted)
 	assert.Equal([]string{"b", "c", "a"}, rotation.order([]string{"a", "b", "c"}),
@@ -269,13 +264,13 @@ func TestScheduledBeeperAttemptsResumeAtAccountInterruptedByYield(t *testing.T) 
 	ctx, cancel := context.WithCancel(context.Background())
 	var attempted []string
 	err := runScheduledBeeperAttempts(ctx, []string{"a", "b", "c"}, rotation, nil,
-		func(id string) (bool, bool, error) {
+		func(id string) (bool, error) {
 			attempted = append(attempted, id)
 			if id == "b" {
 				cancel() // an API request made the scheduled job yield mid-account
-				return false, false, context.Canceled
+				return false, context.Canceled
 			}
-			return false, false, nil
+			return false, nil
 		}, func() error { return nil })
 	require.ErrorIs(err, context.Canceled)
 	assert.Equal([]string{"a", "b"}, attempted)
@@ -377,9 +372,9 @@ func TestScheduledBeeperAttemptsRotateWhenEveryAccountStops(t *testing.T) {
 	var attempted []string
 	for range 3 {
 		require.NoError(t, runScheduledBeeperAttempts(t.Context(), []string{"a", "b", "c"}, rotation, nil,
-			func(id string) (bool, bool, error) {
+			func(id string) (bool, error) {
 				attempted = append(attempted, id)
-				return true, false, nil
+				return true, nil
 			}, func() error { return nil }))
 	}
 	assert.Equal(t, []string{"a", "b", "c"}, attempted, "each stopped account yields the next tick")
