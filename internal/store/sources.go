@@ -507,6 +507,32 @@ func (s *Store) removeSourceExec(
 type sourceIdentityQuery func(context.Context, string, ...any) (rowsScanner, error)
 type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
 
+// observationHasNoConflictingProviderBindingSQL keeps a stable provider ID
+// from supporting a current match when the same participant has a different
+// Full binding for the same source-scoped address.
+func observationHasNoConflictingProviderBindingSQL(observationAlias string) string {
+	return `NOT EXISTS (
+		SELECT 1 FROM participant_contact_observations contradictory
+		WHERE contradictory.participant_id = ` + observationAlias + `.participant_id
+		  AND contradictory.source_id = ` + observationAlias + `.source_id
+		  AND contradictory.address_kind = ` + observationAlias + `.address_kind
+		  AND (contradictory.service_id = ` + observationAlias + `.service_id OR
+			(contradictory.service_id IS NULL AND ` + observationAlias + `.service_id IS NULL))
+		  AND (contradictory.scope_kind = ` + observationAlias + `.scope_kind OR
+			(contradictory.scope_kind IS NULL AND ` + observationAlias + `.scope_kind IS NULL))
+		  AND (contradictory.scope_value = ` + observationAlias + `.scope_value OR
+			(contradictory.scope_value IS NULL AND ` + observationAlias + `.scope_value IS NULL))
+		  AND contradictory.normalized_value = ` + observationAlias + `.normalized_value
+		  AND (contradictory.source_ref = ` + observationAlias + `.source_ref OR
+			(contradictory.source_ref IS NULL AND ` + observationAlias + `.source_ref IS NULL))
+		  AND contradictory.provider_user_id IS NOT NULL
+		  AND contradictory.provider_user_id != c.normalized_value
+		  AND contradictory.active_until IS NULL
+		  AND contradictory.superseded_at IS NULL
+		  AND ` + FullObservationWhere("contradictory") + `
+	)`
+}
+
 // currentCandidateObservationPairSQL verifies the conjunctive observation
 // behind Beeper's generated participant matches. It deliberately derives the
 // pair from current observations instead of persisted source associations, so
@@ -529,7 +555,9 @@ var currentCandidateObservationPairSQL = `EXISTS (
         OR
 		(c.basis = 'stable_provider_id'
 		 AND observation_left.provider_user_id = c.normalized_value
-		 AND observation_right.provider_user_id = c.normalized_value)
+		 AND observation_right.provider_user_id = c.normalized_value
+		 AND ` + observationHasNoConflictingProviderBindingSQL("observation_left") + `
+		 AND ` + observationHasNoConflictingProviderBindingSQL("observation_right") + `)
 		OR
 		(c.basis = 'service_scope_username'
 		 AND c.observation_conflict_origin IS NULL
@@ -668,6 +696,8 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 						  AND observation_right.superseded_at IS NULL AND `+FullObservationWhere("observation_left")+` AND `+FullObservationWhere("observation_right")+`
 						  AND observation_left.provider_user_id = c.normalized_value
 						  AND observation_right.provider_user_id = c.normalized_value
+						  AND `+observationHasNoConflictingProviderBindingSQL("observation_left")+`
+						  AND `+observationHasNoConflictingProviderBindingSQL("observation_right")+`
 						  AND identity_match_evidence.detail = c.normalized_value
 					 ))
 					OR

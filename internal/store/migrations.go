@@ -18,6 +18,8 @@ import (
 // startup on a large archive).
 const (
 	migrationAppleWhatsAppNameProvenance      = "apple_whatsapp_name_provenance_v1"
+	migrationNativeEmailObservationProvenance = "native_email_observation_provenance_v1"
+	migrationParticipantObservationIdentity   = "participant_contact_observation_identity_v2"
 	migrationMeetingProjectionV1              = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique     = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique       = "attachment_occurrence_unique_indexes_v1"

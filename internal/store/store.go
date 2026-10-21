@@ -1648,6 +1648,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationParticipantObservationIdentity, 1, false,
+		s.ensureParticipantObservationIdentityIndex,
+	); err != nil {
+		return fmt.Errorf("upgrade participant observation identity index: %w", err)
+	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through
 	// the legacy migrations above. PostgreSQL builds them concurrently in
@@ -2335,6 +2341,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 
 	if err := s.runOnceMigration(ctx, migrationAppleWhatsAppNameProvenance, 1, false, s.backfillAppleParticipantNamesContext); err != nil {
 		return fmt.Errorf("backfill Apple WhatsApp name provenance: %w", err)
+	}
+	if err := s.runOnceMigration(
+		ctx, migrationNativeEmailObservationProvenance, 1, false,
+		s.backfillNativeEmailObservationProvenanceContext,
+	); err != nil {
+		return fmt.Errorf("backfill native email observation provenance: %w", err)
 	}
 
 	// Reconcile the system relationship type catalog on every open: insert

@@ -3179,7 +3179,7 @@ CREATE INDEX IF NOT EXISTS idx_participant_observations_provider_user
 CREATE UNIQUE INDEX IF NOT EXISTS idx_participant_observations_identity
     ON participant_contact_observations(
         participant_id, source_id, address_kind, service_id, scope_kind, scope_value,
-        normalized_value
+        normalized_value, COALESCE(provider_user_id, ''), COALESCE(source_ref, '')
     ) WHERE active_until IS NULL AND superseded_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS identity_match_candidates (

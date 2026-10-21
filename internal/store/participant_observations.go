@@ -89,9 +89,10 @@ func sameParticipantObservationBinding(left, right string) string {
 
 // rewriteObservationsForMergeTx preserves archive contact evidence when one
 // participant is absorbed into another. Current rows with the same logical
-// identity collapse to the survivor's row; a provider binding survives only
-// when its original observation has Full support. Historical rows do not
-// participate in the current-value identity and are always repointed.
+// identity collapse to the survivor's row with their room-support edges. The
+// provider binding stays attached to that evidence while eligibility follows
+// the exact support rooms' current policies. Historical rows do not participate
+// in the current-value identity and are always repointed.
 func (s *Store) rewriteObservationsForMergeTx(
 	ctx context.Context, tx *loggedTx, absorbedID, survivorID int64,
 ) error {
@@ -110,37 +111,10 @@ func (s *Store) rewriteObservationsForMergeTx(
 		AND survivor.normalized_value = absorbed.normalized_value
 		AND ` + sameParticipantObservationBinding("survivor", "absorbed")
 
-	// Decide which provider binding is supported before copying room edges.
-	// Otherwise a Cold-only binding can inherit the other observation's Full
-	// support and become eligible after the merge.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE participant_contact_observations AS survivor
-		SET provider_user_id = CASE
-			WHEN survivor.provider_user_id IS NOT NULL AND `+FullObservationWhere("survivor")+` THEN survivor.provider_user_id
-			ELSE (
-				SELECT absorbed.provider_user_id
-				FROM participant_contact_observations AS absorbed
-				WHERE absorbed.participant_id = ?
-				  AND `+absorbedCurrent+`
-				  AND absorbed.provider_user_id IS NOT NULL
-				  AND `+FullObservationWhere("absorbed")+`
-				  AND `+matchingIdentity+`
-				ORDER BY absorbed.id
-				LIMIT 1
-			)
-		END,
-		updated_at = `+s.dialect.Now()+`
-		WHERE survivor.participant_id = ?
-		  AND `+survivorCurrent+`
-		  AND EXISTS (
-			SELECT 1 FROM participant_contact_observations AS absorbed
-			WHERE absorbed.participant_id = ?
-			  AND `+absorbedCurrent+`
-			  AND `+matchingIdentity+`
-		  )`, absorbedID, survivorID, absorbedID); err != nil {
-		return fmt.Errorf("merge participant observation provider IDs: %w", err)
-	}
-
+	// Provider bindings remain recorded even when their rooms are Cold. Live
+	// eligibility is evaluated from each row's exact room support, so merging
+	// rows must not erase a binding before support is copied or duplicate rows
+	// are identified.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations(observation_id,conversation_id)
         SELECT survivor.id, support.conversation_id FROM participant_contact_observations absorbed
         JOIN participant_contact_observations survivor ON `+matchingIdentity+`
@@ -282,6 +256,7 @@ func (s *Store) RecordContactObservationContext(
 		providerContradicted := false
 		observationEnriched := false
 		skipConversationSupport := false
+		observationBindingChanged := false
 		if errors.Is(err, ErrProfileValueNotFound) && input.SourceID != nil {
 			chatSource, sourceErr := tieredChatObservationSourceTx(ctx, tx, *input.SourceID)
 			if sourceErr != nil {
@@ -331,6 +306,7 @@ func (s *Store) RecordContactObservationContext(
 							}
 							result.Observation = observation
 							observationEnriched = true
+							observationBindingChanged = true
 						}
 					case input.ProviderUserID != nil && candidate.ProviderUserID != nil &&
 						*candidate.ProviderUserID != *input.ProviderUserID:
@@ -365,8 +341,11 @@ func (s *Store) RecordContactObservationContext(
 			if input.ProviderUserID == nil || sameProvider {
 				result.Observation = observation
 				added, err := s.recordObservationConversationTx(ctx, tx, observation, input.ConversationID)
-				if err != nil || !added {
+				if err != nil {
 					return err
+				}
+				if !added && !observationBindingChanged {
+					return nil
 				}
 				// A new room support edge must reach matching even for a deduplicated value.
 				observationEnriched = true
@@ -399,13 +378,9 @@ func (s *Store) RecordContactObservationContext(
 					if err != nil {
 						return err
 					}
-					if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
-						ctx, tx,
-					); err != nil {
-						return err
-					}
 					result.Observation = observation
 					observationEnriched = true
+					observationBindingChanged = true
 				} else {
 					// A Full observation with a different non-null provider ID
 					// contradicts the current row. Close it and record the new
@@ -470,6 +445,14 @@ func (s *Store) RecordContactObservationContext(
 
 		if !skipConversationSupport {
 			if _, err := s.recordObservationConversationTx(ctx, tx, result.Observation, input.ConversationID); err != nil {
+				return err
+			}
+		}
+		if observationBindingChanged {
+			if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+				return err
+			}
+			if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
 				return err
 			}
 		}
