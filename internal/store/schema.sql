@@ -4693,8 +4693,15 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     event_time_zone TEXT NOT NULL DEFAULT '',
     calendar_time_zone TEXT NOT NULL DEFAULT '',
     recurrence_json TEXT NOT NULL DEFAULT '[]',
-    recurrence_end_at DATETIME
+    recurrence_end_at DATETIME,
+    provider_observation_order BIGINT NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS calendar_event_observation_clock (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    observation_order BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO calendar_event_observation_clock (singleton, observation_order)
+VALUES (1, 0) ON CONFLICT (singleton) DO NOTHING;
 CREATE INDEX IF NOT EXISTS idx_calendar_events_series_id ON calendar_events(series_provider_id);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
@@ -4790,7 +4797,17 @@ OR OLD.end_date IS NOT NEW.end_date
 OR OLD.event_time_zone IS NOT NEW.event_time_zone
 OR OLD.calendar_time_zone IS NOT NEW.calendar_time_zone
 OR OLD.recurrence_json IS NOT NEW.recurrence_json
-OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at BEGIN
+OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at
+OR (OLD.provider_observation_order IS NOT NEW.provider_observation_order
+    AND NEW.kind = 'exception'
+    AND NEW.series_provider_id <> ''
+    AND (NEW.original_start_at IS NOT NULL OR NEW.original_start_date <> '')
+    AND EXISTS (SELECT 1 FROM calendar_events c
+                WHERE c.series_provider_id = NEW.series_provider_id
+                  AND c.kind = 'exception'
+                  AND c.message_id <> NEW.message_id
+                  AND c.original_start_at IS NEW.original_start_at
+                  AND c.original_start_date = NEW.original_start_date)) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);
     INSERT INTO cache_related_change_journal (dataset, message_id)
     SELECT 'meeting_links', NEW.message_id WHERE NEW.message_id <> OLD.message_id;

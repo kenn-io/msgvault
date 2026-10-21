@@ -2290,6 +2290,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
+	if err := s.runOnceMigration(ctx, migrationCalendarProviderObservationV1, 1, false, s.backfillCalendarProviderObservationOrderContext); err != nil {
+		return fmt.Errorf("initialize calendar provider observation order: %w", err)
+	}
 
 	if err := s.runOnceMigration(ctx, migrationRoomRecipientsV1, 1, false, s.repairRoomRecipientsContext); err != nil {
 		return fmt.Errorf("repair room recipients: %w", err)

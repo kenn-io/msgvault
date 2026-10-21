@@ -222,3 +222,42 @@ func TestMeetingCountKeysExceptionCopyWithoutUID(t *testing.T) {
 	assertions.Equal(want, keys[exception], "an exception without its own UID shares its series occurrence key")
 	assertions.NotContains(keys, master, "a recurring series master remains unkeyed")
 }
+
+func TestMeetingCountKeysExceptionAliases(t *testing.T) {
+	for _, uid := range []string{"weekly@example.org", ""} {
+		for _, masterPresent := range []bool{true, false} {
+			t.Run(fmt.Sprintf("uid=%q/master=%t", uid, masterPresent), func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				var master int64
+				if masterPresent {
+					_, master = calendarFixture(t, st, "series", strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", uid))
+				}
+				var aliases []int64
+				for i, id := range []string{"instance", "series|2027-03-14T10:00:00Z"} {
+					// Sparse exception UIDs exercise discovery through the master.
+					exceptionUID := uid
+					if masterPresent {
+						exceptionUID = ""
+					}
+					raw := fmt.Sprintf(`{"id":"instance","iCalUID":%q,"recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T%d:00:00Z"},"end":{"dateTime":"2027-03-14T%d:00:00Z"}}`, exceptionUID, 12+i*2, 13+i*2)
+					_, alias := calendarFixture(t, st, id, raw)
+					aliases = append(aliases, alias)
+				}
+				_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: aliases[0]}))
+				keys, err := st.MeetingCountKeysContext(t.Context())
+				requirements.NoError(err)
+				want := "uid:weekly@example.org/20270314T100000Z"
+				if uid == "" {
+					canonical := master
+					if !masterPresent {
+						canonical = aliases[1]
+					}
+					want = fmt.Sprintf("evt:%d/20270314T100000Z", canonical)
+				}
+				assertions.Equal(map[int64]string{note: want, aliases[0]: want, aliases[1]: want}, keys)
+			})
+		}
+	}
+}

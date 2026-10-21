@@ -49,6 +49,122 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d@20270316T170000Z", master), page.Occurrences[0].Ref)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
+
+func TestCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
+	alias := func(updated, start, end string) string {
+		return fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q},"updated":%q}`, start, end, updated)
+	}
+	_, first := calendarFixture(t, st, "instance", alias("2027-03-01T00:00:00Z", "2027-03-14T12:00:00Z", "2027-03-14T13:00:00Z"))
+	_, _ = calendarFixture(t, st, "weekly|2027-03-14T10:00:00Z", alias("2027-03-02T00:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z"))
+	_, updatedFirst := calendarFixture(t, st, "instance", alias("2027-03-03T00:00:00Z", "2027-03-14T14:00:00Z", "2027-03-14T15:00:00Z"))
+	requirements.Equal(first, updatedFirst)
+
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(first, page.Occurrences[0].MessageID)
+	assertions.Equal("2027-03-14T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-14T15:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
+}
+
+func TestCalendarOccurrenceWindowIgnoresStaleAliasWhenLatestMovedOut(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
+	alias := func(updated, start, end string) string {
+		return fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q},"updated":%q}`, start, end, updated)
+	}
+	_, _ = calendarFixture(t, st, "instance", alias("2027-03-01T00:00:00Z", "2027-04-01T10:00:00Z", "2027-04-01T11:00:00Z"))
+	_, _ = calendarFixture(t, st, "weekly|2027-03-14T10:00:00Z", alias("2027-03-02T00:00:00Z", "2027-04-01T12:00:00Z", "2027-04-01T13:00:00Z"))
+	_, latest := calendarFixture(t, st, "instance", alias("2027-03-03T00:00:00Z", "2027-04-02T10:00:00Z", "2027-04-02T11:00:00Z"))
+
+	from := time.Date(2027, 4, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Empty(page.Occurrences)
+	latestWindow := time.Date(2027, 4, 2, 0, 0, 0, 0, time.UTC)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), latestWindow, latestWindow.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(latest, page.Occurrences[0].MessageID)
+	assertions.Equal("2027-04-02T10:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+}
+
+func TestCalendarUnsupportedRecurrenceShowsOnlyLatestExceptionAlias(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
+	alias := func(updated, start, end string) string {
+		return fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q},"updated":%q}`, start, end, updated)
+	}
+	_, latest := calendarFixture(t, st, "instance", alias("2027-03-03T00:00:00Z", "2027-03-14T14:00:00Z", "2027-03-14T15:00:00Z"))
+	_, _ = calendarFixture(t, st, "weekly|2027-03-14T10:00:00Z", alias("2027-03-02T00:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z"))
+
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(latest, page.Occurrences[0].MessageID)
+	assertions.Equal("2027-03-14T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+}
+
+func TestListCalendarOccurrencesUsesFreshestExceptionAliasAfterMaintenance(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	dataA, aliasA := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-03-10T09:00:00Z"},"end":{"dateTime":"2027-03-10T10:00:00Z"}}`)
+	_, aliasB := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"start":{"dateTime":"2027-04-09T09:00:00Z"},"end":{"dateTime":"2027-04-09T10:00:00Z"}}`)
+	setCalendarEventLastModified(t, st, aliasA, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
+	setCalendarEventLastModified(t, st, aliasB, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
+
+	dataA.RawMIME = []byte(`{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00Z"},"status":"cancelled"}`)
+	_, err := st.PersistMessage(dataA)
+	requirements.NoError(err)
+	var orderA, orderB int64
+	requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasA).Scan(&orderA))
+	requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasB).Scan(&orderB))
+	assertions.Greater(orderA, orderB, "reimporting alias A must advance its provider observation order")
+
+	// Embedding maintenance changes the row watermark but must not change the
+	// order in which calendar evidence was observed.
+	_, err = st.db.Exec(st.Rebind(`UPDATE messages SET embed_gen = COALESCE(embed_gen, 0) + 1 WHERE id = ?`), aliasB)
+	requirements.NoError(err)
+	var modifiedA, modifiedB time.Time
+	requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasA).Scan(&modifiedA))
+	requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT last_modified FROM messages WHERE id = ?`), aliasB).Scan(&modifiedB))
+	assertions.False(modifiedB.Before(modifiedA), "maintenance should make the stale row watermark at least as recent")
+	var orderBAfter int64
+	requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT provider_observation_order FROM calendar_events WHERE message_id = ?`), aliasB).Scan(&orderBAfter))
+	assertions.Equal(orderB, orderBAfter, "message maintenance must not change provider observation order")
+
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, time.Date(2027, 5, 1, 0, 0, 0, 0, time.UTC))
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 3)
+	var cancellation *CalendarOccurrence
+	for i := range page.Occurrences {
+		if page.Occurrences[i].MessageID == aliasA {
+			cancellation = &page.Occurrences[i]
+		}
+		assertions.NotEqual(aliasB, page.Occurrences[i].MessageID)
+	}
+	requirements.NotNil(cancellation)
+	assertions.Equal(master, cancellation.SeriesMessageID)
+	assertions.Equal("cancelled", cancellation.Status)
+	assertions.Equal("2027-03-09T09:00:00Z", cancellation.Start.Format(time.RFC3339))
+}
+
+func setCalendarEventLastModified(t *testing.T, st *Store, messageID int64, at time.Time) {
+	t.Helper()
+	_, err := st.db.Exec(st.Rebind(`UPDATE messages SET last_modified = ? WHERE id = ?`), at, messageID)
+	require.NoError(t, err)
+}
+
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -459,12 +575,70 @@ func TestListCalendarOccurrencesMultiDayExceptions(t *testing.T) {
 	}
 }
 
+func TestListCalendarOccurrencesExceptionZone(t *testing.T) {
+	for _, tc := range []struct {
+		name, bounds, wantStart, wantEnd string
+		wantAllDay                       bool
+		wantIndex                        int
+	}{
+		{
+			name:      "all-day calendar zone",
+			bounds:    `"start":{"date":"2027-03-09"},"end":{"date":"2027-03-10"}`,
+			wantStart: "2027-03-08T15:00:00Z", wantEnd: "2027-03-09T15:00:00Z",
+			wantAllDay: true,
+		},
+		{
+			name:      "omitted bounds inherit master zone",
+			bounds:    `"status":"cancelled"`,
+			wantStart: "2027-03-09T14:00:00Z", wantEnd: "2027-03-09T15:00:00Z",
+			wantIndex: 1,
+		},
+		{
+			name:      "timed explicit zone",
+			bounds:    `"start":{"dateTime":"2027-03-09T09:00:00","timeZone":"Asia/Tokyo"},"end":{"dateTime":"2027-03-09T10:00:00","timeZone":"Asia/Tokyo"}`,
+			wantStart: "2027-03-09T00:00:00Z", wantEnd: "2027-03-09T01:00:00Z",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			data, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+			_, exception := calendarFixture(t, st, "exception", fmt.Sprintf(`{"id":"exception","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T09:00:00-05:00"},%s}`, tc.bounds))
+			_, single := calendarFixture(t, st, "single", `{"id":"single","start":{"dateTime":"2027-03-09T03:00:00Z"},"end":{"dateTime":"2027-03-09T04:00:00Z"}}`)
+			requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"time_zone":"Asia/Tokyo"}`))
+			if tc.wantAllDay {
+				rows := calendarRows(t, st, exception)
+				requirements.Len(rows, 1)
+				assertions.Empty(rows[0].Event.EventTimeZone)
+				assertions.Equal("Asia/Tokyo", rows[0].Event.CalendarTimeZone)
+				assertions.Equal(tc.wantStart, rows[0].Event.Start.UTC().Format(time.RFC3339))
+				assertions.Equal(tc.wantEnd, rows[0].Event.End.UTC().Format(time.RFC3339))
+			}
+			from := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 3))
+			requirements.NoError(err)
+			assertions.Empty(page.Unexpandable)
+			requirements.Len(page.Occurrences, 2)
+			assertions.Equal(exception, page.Occurrences[tc.wantIndex].MessageID, "exception sort position")
+			assertions.Equal(single, page.Occurrences[1-tc.wantIndex].MessageID, "single event sort position")
+			for _, occurrence := range page.Occurrences {
+				if occurrence.MessageID != exception {
+					continue
+				}
+				assertions.Equal(master, occurrence.SeriesMessageID)
+				assertions.Equal(tc.wantAllDay, occurrence.AllDay)
+				assertions.Equal(tc.wantStart, occurrence.Start.UTC().Format(time.RFC3339))
+				assertions.Equal(tc.wantEnd, occurrence.End.UTC().Format(time.RFC3339))
+			}
+		})
+	}
+}
+
 func TestListCalendarOccurrencesSparseCancellationZone(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, end, original, wantStart, wantEnd string
 	}{
 		{"all day", `{"date":"2027-03-02","timeZone":"America/New_York"}`, `{"date":"2027-03-03","timeZone":"America/New_York"}`, `{"date":"2027-03-09"}`, "2027-03-09T05:00:00Z", "2027-03-10T05:00:00Z"},
-		{"timed", `{"dateTime":"2027-03-02T09:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-02T10:00:00-05:00","timeZone":"America/New_York"}`, `{"dateTime":"2027-03-09T09:00:00-05:00"}`, "2027-03-09T14:00:00Z", "2027-03-09T15:00:00Z"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)

@@ -50,7 +50,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		}
 		return nil
 	}
-	if messageType.String != "calendar_event" {
+	if messageType.String != MessageTypeCalendarEvent {
 		return clearProjection()
 	}
 	var stored []byte
@@ -116,6 +116,38 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		if _, err := q.Exec(`INSERT INTO calendar_event_attendees (message_id, ordinal, email, display_name, role, rsvp, is_copy_self) VALUES (?, ?, ?, ?, ?, ?, ?)`, messageID, ordinal, attendee.Email, attendee.DisplayName, attendee.Role, attendee.RSVP, attendee.IsCopySelf); err != nil {
 			return fmt.Errorf("write calendar attendee %d: %w", ordinal, err)
 		}
+	}
+	if event.ProviderEventID != "" {
+		if err := remapHiddenCalendarMeetingDecisionsTx(ctx, tx, sourceID, event.ProviderEventID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isCalendarProviderRawFormat(format string) bool {
+	return format == gcalmodel.RawFormat
+}
+
+func (s *Store) markCalendarEventProviderObservedWith(ctx context.Context, tx *loggedTx, messageID int64) error {
+	q := boundQuerier{ctx: ctx, q: tx}
+	var exists bool
+	if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM calendar_events WHERE message_id = ?)`, messageID).Scan(&exists); err != nil {
+		return fmt.Errorf("check calendar event %d before recording provider observation: %w", messageID, err)
+	}
+	if !exists {
+		return nil
+	}
+	var order int64
+	err := q.QueryRow(`UPDATE calendar_event_observation_clock
+SET observation_order = observation_order + 1
+WHERE singleton = 1
+RETURNING observation_order`).Scan(&order)
+	if err != nil {
+		return fmt.Errorf("advance calendar provider observation order: %w", err)
+	}
+	if _, err := q.Exec(`UPDATE calendar_events SET provider_observation_order = ? WHERE message_id = ?`, order, messageID); err != nil {
+		return fmt.Errorf("record calendar event %d provider observation: %w", messageID, err)
 	}
 	return nil
 }

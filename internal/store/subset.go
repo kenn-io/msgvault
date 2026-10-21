@@ -219,6 +219,13 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, err
 	}
+	calendarObservationOrders, err := subsetCalendarObservationOrders(tx)
+	if err != nil {
+		_ = tx.Rollback()
+		_, _ = db.Exec("DETACH DATABASE src")
+		closeAndCleanup()
+		return nil, fmt.Errorf("preserve copied calendar observation order: %w", err)
+	}
 
 	// The empty destination's schema initialization already recorded this
 	// migration. Rebuild derived meetings from copied raw, including old sources
@@ -233,6 +240,12 @@ func CopySubsetWithOptions(
 		_ = tx.Rollback()
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarProviderObservationV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar observation migration: %w", err)
 	}
 
 	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationRoomRecipientsV1); err != nil {
@@ -292,6 +305,11 @@ func CopySubsetWithOptions(
 		cleanup()
 		return nil, fmt.Errorf("reconcile copied subset derived data: %w", err)
 	}
+	if err := normalized.restoreSubsetCalendarObservationOrders(context.Background(), calendarObservationOrders); err != nil {
+		_ = normalized.Close()
+		cleanup()
+		return nil, fmt.Errorf("restore copied calendar observation order: %w", err)
+	}
 	// Initial schema creation ledgered the inference migration before any
 	// people existed. Recheck the transferred projection for legacy source
 	// rows without state, preserving every copied positive revision.
@@ -350,6 +368,55 @@ func verifyForeignKeys(db *sql.DB) error {
 		)
 	}
 	return nil
+}
+
+type subsetCalendarObservationOrder struct {
+	messageID int64
+	order     int64
+}
+
+func subsetCalendarObservationOrders(tx *sql.Tx) (orders []subsetCalendarObservationOrder, resultErr error) {
+	hasProjection, err := sourceTableExists(tx, "calendar_events")
+	if err != nil || !hasProjection {
+		return nil, err
+	}
+	hasOrder, err := sourceColumnExists(tx, "calendar_events", "provider_observation_order")
+	if err != nil || !hasOrder {
+		return nil, err
+	}
+	rows, err := tx.Query(`SELECT e.message_id, e.provider_observation_order
+		FROM src.calendar_events e
+		JOIN messages selected ON selected.id = e.message_id
+		ORDER BY e.message_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, rows.Close()) }()
+	for rows.Next() {
+		var order subsetCalendarObservationOrder
+		if err := rows.Scan(&order.messageID, &order.order); err != nil {
+			return nil, err
+		}
+		orders = append(orders, order)
+	}
+	return orders, rows.Err()
+}
+
+func (s *Store) restoreSubsetCalendarObservationOrders(ctx context.Context, orders []subsetCalendarObservationOrder) error {
+	if len(orders) == 0 {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		for _, order := range orders {
+			if _, err := tx.ExecContext(ctx, `UPDATE calendar_events SET provider_observation_order = ? WHERE message_id = ?`, order.order, order.messageID); err != nil {
+				return fmt.Errorf("restore calendar event %d observation order: %w", order.messageID, err)
+			}
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE calendar_event_observation_clock
+			SET observation_order = (SELECT COALESCE(MAX(provider_observation_order), 0) FROM calendar_events)
+			WHERE singleton = 1`)
+		return err
+	})
 }
 
 // copyData executes INSERT INTO ... SELECT in dependency order.

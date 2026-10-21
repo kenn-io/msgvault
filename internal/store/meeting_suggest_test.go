@@ -156,19 +156,19 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksAllDayExceptionUsesSeriesZone(t *testing.T) {
+func TestMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
 	_, edit := calendarFixture(t, st, "edit", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"date":"2027-03-14"},"start":{"date":"2027-03-14"},"end":{"date":"2027-03-15"}}`)
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-15T02:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
 	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
 	require.NoError(err)
 	require.Len(page.Occurrences, 1)
 	listed := page.Occurrences[0]
-	assert.Equal("2027-03-14T05:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-	assert.Equal("2027-03-15T04:00:00Z", listed.End.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-14T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-15T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314"}, {MessageID: edit}} {
 		require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
 		links, err := st.MeetingLinksContext(t.Context(), note)

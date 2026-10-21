@@ -96,6 +96,8 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 		return nil, err
 	}
 	var copies []int64
+	var exceptions []CalendarEventRow
+	seen := make(map[int64]bool)
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID}
 		if row.Event.Kind == meetingSeriesKind || row.Event.Kind == singleKind && identity.OccurrenceKey != "" {
@@ -116,7 +118,25 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 				}
 				copyID = occurrence.Row.MessageID
 			}
-			copies = append(copies, copyID)
+			if !seen[copyID] {
+				copies = append(copies, copyID)
+				seen[copyID] = true
+			}
+			if occurrence.Row.Event.Kind == meetingExceptionKind && occurrence.Row.Event.Original != nil {
+				exceptions = append(exceptions, occurrence.Row)
+			}
+		}
+	}
+	// Every stored alias represents the winning exception, including copies
+	// whose sparse UID kept them out of the identity lookup.
+	aliases, err := queryCalendarExceptionAliases(ctx, r, exceptions, len(exceptions)+max(budget, 0))
+	if err != nil {
+		return nil, err
+	}
+	for _, alias := range aliases {
+		if !seen[alias.MessageID] {
+			copies = append(copies, alias.MessageID)
+			seen[alias.MessageID] = true
 		}
 	}
 	return copies, nil

@@ -530,3 +530,55 @@ func TestMeetingLinkDecisionRefreshesCounts(t *testing.T) {
 		})
 	}
 }
+
+func TestMeetingCountsExceptionAliases(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	path := filepath.Join(t.TempDir(), "archive.db")
+	st, err := store.OpenForTest(path)
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchema())
+	source, err := st.GetOrCreateSource("gcal", "owner@example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.test", "explicit"))
+	owner, err := st.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	requirements.NoError(err)
+	person, err := st.EnsureParticipant("person@example.test", "Person", "example.test")
+	requirements.NoError(err)
+	at := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	persist := func(id, kind, format, raw string, recipients bool) int64 {
+		data := &store.MessagePersistData{
+			Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: kind, SentAt: sql.NullTime{Time: at, Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: id, ConversationType: "meeting"},
+			RawFormat:    format, RawMIME: []byte(raw),
+		}
+		if recipients {
+			data.Recipients = []store.RecipientSet{{Type: "to", ParticipantIDs: []int64{owner, person}}}
+		}
+		messageID, err := st.PersistMessage(data)
+		requirements.NoError(err)
+		return messageID
+	}
+	master := persist("series", "calendar_event", "gcal_json", `{"id":"series","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`, false)
+	var aliases []int64
+	for i, id := range []string{"instance", "series|2027-03-14T10:00:00Z"} {
+		raw := fmt.Sprintf(`{"id":"instance","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T%d:00:00Z"},"end":{"dateTime":"2027-03-14T%d:00:00Z"}}`, 12+i*2, 13+i*2)
+		aliases = append(aliases, persist(id, "calendar_event", "gcal_json", raw, true))
+	}
+	note := persist("note", "meeting_transcript", "plaud_json", `{}`, true)
+	requirements.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: aliases[0]}))
+	keys, err := st.MeetingCountKeysContext(t.Context())
+	requirements.NoError(err)
+	wantKey := fmt.Sprintf("evt:%d/20270314T100000Z", master)
+	assertions.Equal(map[int64]string{note: wantKey, aliases[0]: wantKey, aliases[1]: wantKey}, keys)
+	cache := filepath.Join(t.TempDir(), "analytics")
+	_, err = buildCache(path, cache, true)
+	requirements.NoError(err)
+	engine, err := query.NewDuckDBEngine(cache, "", nil)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(engine.Close()) }()
+	result, err := engine.Relationships(t.Context(), query.RelationshipsRequest{Now: at.Add(24 * time.Hour)})
+	requirements.NoError(err)
+	requirements.Len(result.Rows, 1)
+	assertions.Equal(int64(1), result.Rows[0].Signals.MeetingCount)
+}
