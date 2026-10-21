@@ -394,6 +394,7 @@ var operationGateExemptPaths = map[string]bool{
 	meetingImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	callImportPath:                     true,
+	slackCallImportPath:                true,
 	"/api/v1/cli/add-calendar/plan":    true,
 	"/api/v1/cli/delete-staged/plan":   true,
 	"/api/v1/cli/embeddings/plan":      true,

@@ -25,3 +25,7 @@ func (a *storeAPIAdapter) ListCallObservationsContext(ctx context.Context, q sto
 func (a *storeAPIAdapter) SummarizeCallsContext(ctx context.Context, q store.CallQuery) ([]store.PersonCallSummary, error) {
 	return a.store.SummarizeCallsContext(ctx, q)
 }
+
+func (a *storeAPIAdapter) SlackHuddleObservationContext(ctx context.Context, messageID int64) (callhistory.Observation, error) {
+	return a.store.SlackHuddleObservationContext(ctx, messageID)
+}

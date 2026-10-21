@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,8 +18,10 @@ import (
 )
 
 const callsMinAPIVersion = "3.24.0"
+const slackCallsMinAPIVersion = "3.25.0"
 
 type callCommandClient interface {
+	ImportSlackHuddle(ctx context.Context, messageID int64) (daemonclient.CallImportResult, error)
 	APISchemaVersion(ctx context.Context) (string, error)
 	ImportCallObservation(ctx context.Context, data []byte) (daemonclient.CallImportResult, error)
 	ListCallObservations(ctx context.Context, q store.CallQuery) (daemonclient.CallEvidencePage, error)
@@ -32,18 +36,18 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		Use: "calls", Short: "Import and inspect call history",
 		Long: "Read call evidence through the daemon. Scheduled invitations never count as answered calls. All output is JSON.",
 	}
-	open := func(ctx context.Context) (callCommandClient, func(), error) {
+	open := func(ctx context.Context, minimum string) (callCommandClient, func(), error) {
 		client, cleanup, err := deps.open(ctx)
 		if err != nil {
 			return nil, func() {}, err
 		}
 		version, err := client.APISchemaVersion(ctx)
-		if err != nil || !daemonclient.APISchemaVersionAtLeast(version, callsMinAPIVersion) {
+		if err != nil || !daemonclient.APISchemaVersionAtLeast(version, minimum) {
 			cleanup()
 			if err != nil {
 				return nil, func() {}, err
 			}
-			return nil, func() {}, fmt.Errorf("calls require daemon API %s or newer; daemon reports %s", callsMinAPIVersion, version)
+			return nil, func() {}, fmt.Errorf("calls require daemon API %s or newer; daemon reports %s", minimum, version)
 		}
 		return client, cleanup, nil
 	}
@@ -80,7 +84,17 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			if _, err := callhistory.DecodeImport(bytes.NewReader(data)); err != nil {
 				return err
 			}
-			client, cleanup, err := open(cmd.Context())
+			var envelope struct {
+				Format string `json:"format"`
+			}
+			if err := json.Unmarshal(data, &envelope); err != nil {
+				return err
+			}
+			minimum := callsMinAPIVersion
+			if envelope.Format == "slack_huddle" {
+				minimum = slackCallsMinAPIVersion
+			}
+			client, cleanup, err := open(cmd.Context(), minimum)
 			if err != nil {
 				return err
 			}
@@ -93,6 +107,25 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		},
 	}
 	root.AddCommand(importCommand)
+	root.AddCommand(&cobra.Command{
+		Use: "import-slack <message-id>", Short: "Derive call evidence from one archived Slack huddle", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil || id <= 0 {
+				return errors.New("message-id must be a positive archive ID")
+			}
+			client, cleanup, err := open(cmd.Context(), slackCallsMinAPIVersion)
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+			result, err := client.ImportSlackHuddle(cmd.Context(), id)
+			if err != nil {
+				return err
+			}
+			return write(cmd, result)
+		},
+	})
 	for _, summary := range []bool{false, true} {
 		name, description := "list", "Inspect source observations and participant attendance"
 		if summary {
@@ -124,7 +157,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 				}
 				*bound.target = &at
 			}
-			client, cleanup, err := open(cmd.Context())
+			client, cleanup, err := open(cmd.Context(), callsMinAPIVersion)
 			if err != nil {
 				return err
 			}

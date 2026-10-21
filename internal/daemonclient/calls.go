@@ -99,3 +99,10 @@ func (c *Client) SummarizeCalls(ctx context.Context, q store.CallQuery) (CallSum
 	}
 	return callRequest[CallSummaryPage](ctx, c, http.MethodGet, "/api/v1/calls/summary", callOptions{query: callQueryValues(q, true)})
 }
+
+func (c *Client) ImportSlackHuddle(ctx context.Context, messageID int64) (CallImportResult, error) {
+	if messageID <= 0 {
+		return CallImportResult{}, fmt.Errorf("%w: message_id must be positive", callhistory.ErrInvalid)
+	}
+	return callRequest[CallImportResult](ctx, c, http.MethodPost, "/api/v1/import/calls/slack", callOptions{body: map[string]int64{"message_id": messageID}})
+}

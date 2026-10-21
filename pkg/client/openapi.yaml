@@ -14917,6 +14917,16 @@ components:
         - generation
         - messages
       type: object
+    SlackCallImportRequest:
+      additionalProperties: false
+      properties:
+        message_id:
+          format: int64
+          minimum: 1
+          type: integer
+      required:
+        - message_id
+      type: object
     Source:
       additionalProperties: false
       properties:
@@ -16456,7 +16466,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.24.0
+  version: 3.25.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -23003,6 +23013,33 @@ paths:
       security:
         - apiKey: []
       summary: Import one supplied call or scheduled meeting observation
+      tags:
+        - API
+  /api/v1/import/calls/slack:
+    post:
+      operationId: importSlackHuddle
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SlackCallImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallImportResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Derive call evidence from one archived Slack huddle
       tags:
         - API
   /api/v1/import/meeting:

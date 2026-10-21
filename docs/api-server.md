@@ -161,6 +161,7 @@ Imports use the daemon mutation gate and return stable message/source IDs.
 | Route | Contract |
 | --- | --- |
 | `POST /api/v1/import/calls` | One JSON request containing `format`, `account`, `record`, and optional explicit `bindings`; 1 MiB request limit. Returns `message_id` and `source_id`. |
+| `POST /api/v1/import/calls/slack` | Derive one archived huddle from `{"message_id": 123}`. Uses the source account and existing Slack identifiers; returns `message_id` and `source_id`. Requires schema 3.25.0. |
 | `GET /api/v1/calls` | Typed observations, including withdrawn evidence. Supports `person_id`, `after`, `before`, `limit` and `after_id`. |
 | `GET /api/v1/calls/summary` | Per-person counts ordered by answered count then person ID. Supports `person_id`, `after`, `before`, `limit` and `offset`. |
 
@@ -178,7 +179,7 @@ describes every response field.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.24.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,

@@ -14385,6 +14385,14 @@ func (s SimilarSearchResponse) Validate() error {
 	return errors
 }
 
+type SlackCallImportRequest struct {
+	MessageID int64 `json:"message_id" validate:"gte=1"`
+}
+
+func (s SlackCallImportRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
 type Source struct {
 	AccountEmail string  `json:"account_email" validate:"required"`
 	DisplayName  *string `json:"display_name,omitzero" validate:"omitempty,max=256"`

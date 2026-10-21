@@ -45,12 +45,57 @@ Supported formats:
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
 | `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; every binding stays invited even when the RSVP says accepted. Recurring masters and events without a start are rejected. |
+| `slack_huddle` | Requires daemon API 3.25.0 or newer. One archived `huddle_thread` message JSON. Account is `<workspace_id>:<owner_user_id>`. Bindings may name room roster peers, excluding the owner. Roster association remains unknown attendance. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. An observation allows 100 participants and 32 phone/link entry
 points. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
+
+## Import an archived Slack huddle
+
+With daemon API 3.25.0 or newer, derive one huddle from a message already
+archived by the native Slack or Slack export importer:
+
+```sh
+msgvault calls import-slack 123
+```
+
+Use the archive message ID, not Slack's timestamp or room ID. The daemon reads
+that message's original `slack_json`, derives the workspace and owner from its
+source, and binds peers through existing workspace-scoped Slack identifiers.
+Unknown identities remain unbound. This command makes no requests to Slack.
+Reimporting the same room and account replaces its observation.
+
+To supply a payload instead, `calls import huddle.json` accepts this request:
+
+```json
+{
+  "format": "slack_huddle",
+  "account": "T_EXAMPLE:U_OWNER",
+  "record": {
+    "type": "message",
+    "subtype": "huddle_thread",
+    "team": "T_EXAMPLE",
+    "ts": "1790841600.000001",
+    "room": {
+      "id": "R_EXAMPLE",
+      "date_start": 1790841600,
+      "date_end": 0,
+      "participant_history": ["U_OWNER", "U_PEER"]
+    }
+  },
+  "bindings": {"U_PEER": 42}
+}
+```
+
+Room timestamps use Unix seconds; a missing or zero end stays unknown.
+Roster presence, invitations, creator and sender do not establish an answer
+or joined attendance. Associated people count under `unknown`; elapsed room
+time is not talk duration. The imported observation is an independent snapshot:
+deleting or retiring the original Slack source does not withdraw it. To
+withdraw it, reimport its normalized observation with `withdrawn: true`.
 
 ## Read the evidence and counts
 
@@ -105,7 +150,8 @@ can recreate it. Scheduled cancellation is an update, not a sticky withdrawal.
 - **Slack:** [huddle history objects](https://docs.slack.dev/reference/objects/conversation-object/)
   can contain room timestamps and participant history. The
   [third-party Calls API](https://docs.slack.dev/apis/web-api/using-the-calls-api)
-  is not a general historical call-log API. No automatic adapter is included.
+  is not a general historical call-log API. The adapter uses supplied or already
+  archived message payloads, with no additional scopes or automatic sync hook.
 - **Discord:** [private-channel call objects](https://docs.discord.com/developers/resources/message#message-call-object)
   describe participants and end time. The existing guild bot source does not
   establish access to private historical calls. No alternate account or client

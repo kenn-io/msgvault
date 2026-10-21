@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -36,9 +37,10 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	})
 	requirements.NoError(err)
 	defer func() { _ = client.Close() }()
+	var commandClient callCommandClient = client
 	run := func(input string, args ...string) (string, error) {
 		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) {
-			return client, func() {}, nil
+			return commandClient, func() {}, nil
 		}})
 		var output bytes.Buffer
 		command.SetOut(&output)
@@ -70,4 +72,60 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 	requirements.Error(err)
 	_, err = run("{", "import", "-")
 	requirements.Error(err)
+	// Only the advertised schema version is replaced; imports still use the real daemon.
+	commandClient = oldCallDaemon{client}
+	slackInput := `{"format":"slack_huddle","account":"T:U","record":{"type":"message","subtype":"huddle_thread","ts":"1","room":{"id":"R","date_start":1}}}`
+	_, err = run(slackInput, "import", "-")
+	require.ErrorContains(t, err, "calls require daemon API 3.25.0 or newer; daemon reports 3.24.0")
+	_, err = run("", "import-slack", "1")
+	require.ErrorContains(t, err, "calls require daemon API 3.25.0 or newer; daemon reports 3.24.0")
+	_, err = run(input, "import", "-")
+	require.NoError(t, err, "existing formats remain compatible with 3.24.0")
+}
+
+type oldCallDaemon struct{ callCommandClient }
+
+func (oldCallDaemon) APISchemaVersion(context.Context) (string, error) { return "3.24.0", nil }
+
+func TestCallsImportSlackThroughDaemon(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "T_EXAMPLE:U_OWNER")
+	require.NoError(err)
+	convID, err := st.EnsureConversation(source.ID, "C", "Example channel")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{ConversationID: convID, SourceID: source.ID, SourceMessageID: "C:1", MessageType: "slack"})
+	require.NoError(err)
+	raw := []byte(`{"type":"message","subtype":"huddle_thread","ts":"1","room":{"id":"R_EXAMPLE","date_start":1790841600,"participants":["U_OWNER","U_PEER"]}}`)
+	require.NoError(st.UpsertMessageRawWithFormat(id, raw, "slack_json"))
+	peer, err := st.EnsureParticipantByIdentifier("slack", "T_EXAMPLE:U_PEER", "Example Peer")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	cfg := &config.Config{Server: config.ServerConfig{APIKey: "synthetic-call-key"}}
+	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}
+	server := httptest.NewServer(api.NewServer(cfg, adapter, nil, slog.New(slog.DiscardHandler)).Router())
+	defer server.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(err)
+	defer func() { _ = client.Close() }()
+	var first string
+	for range 2 {
+		command := newCallsCommand(callCommandDeps{open: func(context.Context) (callCommandClient, func(), error) { return client, func() {}, nil }})
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetArgs([]string{"import-slack", strconv.FormatInt(id, 10)})
+		require.NoError(command.ExecuteContext(t.Context()))
+		if first == "" {
+			first = output.String()
+		} else {
+			assert.Equal(first, output.String())
+		}
+	}
+	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{PersonID: person.ID})
+	require.NoError(err)
+	require.Len(summary, 1)
+	assert.Zero(summary[0].Answered)
+	assert.Equal(1, summary[0].Unknown)
 }

@@ -940,6 +940,7 @@ export * from "./settingValidation";
 export * from "./settingValidationFormat";
 export * from "./settingValue";
 export * from "./similarSearchResponse";
+export * from "./slackCallImportRequest";
 export * from "./source";
 export * from "./sourceCount";
 export * from "./sourceIdentitiesResponse";

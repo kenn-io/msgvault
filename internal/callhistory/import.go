@@ -12,8 +12,8 @@ var ErrImportTooLarge = errors.New("call import exceeds size limit")
 var ErrMalformedImport = errors.New("malformed call import JSON")
 
 // ImportRequest accepts one supplied record, never credentials or database
-// paths. Account is the stable source namespace: a Signal account identifier
-// or a Google calendar ID. Bindings explicitly map native peer IDs or attendee
+// paths. Account is the stable source namespace: a Signal account identifier,
+// a Google calendar ID, or Slack workspace:owner. Bindings map native IDs or
 // email addresses to existing archive participant IDs.
 type ImportRequest struct {
 	Format   string           `json:"format"`
@@ -59,6 +59,8 @@ func (r ImportRequest) Observation() (Observation, error) {
 		if o.Account != r.Account {
 			return o, invalid("account mismatch")
 		}
+	case "slack_huddle":
+		o, err = r.slackObservation()
 	case "signal_desktop":
 		o, err = r.signalObservation()
 	case "google_calendar":

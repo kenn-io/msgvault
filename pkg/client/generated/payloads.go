@@ -122,6 +122,8 @@ type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
 type ImportCallObservationBody = CallImportRequest
 
+type ImportSlackHuddleBody = SlackCallImportRequest
+
 type ImportMeetingBody = MeetingImportRequest
 
 type ImportMuesliBody = MuesliRemoteRequest

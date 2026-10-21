@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"reflect"
@@ -16,8 +18,14 @@ import (
 )
 
 const callImportPath = "/api/v1/import/calls"
+const slackCallImportPath = callImportPath + "/slack"
+
+type SlackCallImportRequest struct {
+	MessageID int64 `json:"message_id" minimum:"1"`
+}
 
 type CallHistoryStore interface {
+	SlackHuddleObservationContext(ctx context.Context, messageID int64) (callhistory.Observation, error)
 	GetOrCreateSourceContext(ctx context.Context, sourceType, identifier string) (*store.Source, error)
 	PutCallObservationContext(ctx context.Context, sourceID int64, observation callhistory.Observation) (int64, error)
 	ListCallObservationsContext(ctx context.Context, q store.CallQuery) ([]store.CallObservationView, error)
@@ -48,6 +56,11 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 	op.Responses = jsonResponsesFor[CallImportResponse](api)
 	op.Errors = []int{400, 401, 409, 413, 415, 422, 500, 503}
 	registerRawHumaRoute(api, op, s.handleCallImport)
+	slackOp := rawAPIV1Operation("importSlackHuddle", http.MethodPost, "/import/calls/slack", "Derive call evidence from one archived Slack huddle")
+	slackOp.RequestBody = jsonRequestBodyFor[SlackCallImportRequest](api)
+	slackOp.Responses = jsonResponsesFor[CallImportResponse](api)
+	slackOp.Errors = op.Errors
+	registerRawHumaRoute(api, slackOp, s.handleCallImport)
 	for _, summary := range []bool{false, true} {
 		id, path, title := "listCallObservations", "/calls", "Inspect call and scheduled meeting observations"
 		if summary {
@@ -96,7 +109,28 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 415, "unsupported_media_type", "Content-Type must be application/json")
 		return
 	}
-	o, err := callhistory.DecodeImport(r.Body)
+	var o callhistory.Observation
+	var archivedID int64
+	if r.URL.Path == slackCallImportPath {
+		data, readErr := io.ReadAll(io.LimitReader(r.Body, callhistory.MaxRequestBytes+1))
+		var req SlackCallImportRequest
+		switch {
+		case readErr != nil:
+			err = readErr
+		case len(data) > callhistory.MaxRequestBytes:
+			err = callhistory.ErrImportTooLarge
+		default:
+			if json.Unmarshal(data, &req, json.RejectUnknownMembers(true)) != nil {
+				err = callhistory.ErrMalformedImport
+			} else if req.MessageID <= 0 {
+				err = callhistory.ErrInvalid
+			} else {
+				archivedID = req.MessageID
+			}
+		}
+	} else {
+		o, err = callhistory.DecodeImport(r.Body)
+	}
 	if err != nil {
 		s.writeCallError(w, err)
 		return
@@ -114,6 +148,13 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer done()
+	if archivedID != 0 {
+		o, err = st.SlackHuddleObservationContext(r.Context(), archivedID)
+		if err != nil {
+			s.writeCallError(w, err)
+			return
+		}
+	}
 	source, err := st.GetOrCreateSourceContext(r.Context(), callhistory.SourceType, o.SourceIdentifier())
 	if err != nil {
 		s.writeCallError(w, err)
