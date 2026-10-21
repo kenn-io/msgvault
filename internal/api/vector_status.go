@@ -148,6 +148,8 @@ const vectorRestartAdvice = "the embedding settings in config.toml changed after
 
 const vectorRebuildAdvice = "if this is a one-off account-scoped generation, set matching [vector.embed.scope] accounts and restart the daemon; otherwise run `msgvault embeddings build --full-rebuild` to rebuild"
 
+const vectorUncheckedAdvice = "the daemon could not yet check whether a restart or a rebuild fixes this; retry in a moment for the recovery step"
+
 // SetVectorRestartFingerprint installs the daemon's startup config resolver.
 func (s *Server) SetVectorRestartFingerprint(fn func(context.Context) (string, error)) {
 	s.vectorMu.Lock()
@@ -202,10 +204,10 @@ func (s *Server) markVectorIndexStale(ctx context.Context, mismatch error) strin
 	s.vectorMu.Unlock()
 	advice, restart := s.staleAdvice(ctx, backend)
 	if !restart && ctx.Err() != nil {
+		advice = vectorUncheckedAdvice
 		s.vectorMu.Lock()
 		s.vectorFreshNextCheck = time.Time{}
 		s.vectorMu.Unlock()
-		return advice
 	}
 	s.SetVectorStale(mismatch.Error() + "; " + advice)
 	return advice

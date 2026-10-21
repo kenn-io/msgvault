@@ -249,13 +249,20 @@ func TestMarkVectorIndexStaleAbortedDiagnosisIsNotCached(t *testing.T) {
 			time.Sleep(30 * time.Second)
 			synctest.Wait()
 			select {
-			case <-done:
+			case advice := <-done:
+				assert.Equal(t, vectorUncheckedAdvice, advice)
 			default:
 				require.FailNow(t, "MarkVectorIndexStale must return after the diagnosis timeout without shutdown")
 			}
+			status, detail := srv.VectorStatus()
+			assert.Equal(t, VectorStatusStale, status)
+			assert.Contains(t, detail, vector.ErrIndexStale.Error())
+			assert.NotContains(t, detail, vectorRebuildAdvice)
 			backend.activeGeneration = nil
 			backend.fingerprint = "model-b"
 			assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(t.Context(), vector.ErrIndexStale))
+			_, detail = srv.VectorStatus()
+			assert.True(t, strings.HasSuffix(detail, vectorRestartAdvice), "detail must end with restart advice")
 		})
 	})
 	t.Run("shutdown", func(t *testing.T) {
