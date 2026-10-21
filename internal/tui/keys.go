@@ -1794,8 +1794,11 @@ func (m Model) commitInlineSearch() (tea.Model, tea.Cmd) {
 		return m, tea.Batch(spinCmd, m.loadData())
 	}
 	// Aggregate rows already match the committed debounced search.
-	cmd := m.acceptedSearchAction(queryStr, m.searchMode, len(m.rows))
-	return m, cmd
+	m.submittedQuery = ""
+	if !m.aggregateLoadFailed && len(m.rows) == 0 {
+		return m, m.reportActionCmd("search_empty", "search_type", "text")
+	}
+	return m, nil
 }
 
 func (m Model) searchInputValidationError(queryStr string) error {
@@ -1875,6 +1878,7 @@ func (m *Model) clearPreSearchSnapshot() {
 }
 
 func (m *Model) activateInlineSearch(placeholder string) tea.Cmd {
+	m.submittedQuery = ""
 	// Snapshot current message list so Esc can restore instantly.
 	// Only take a snapshot if we don't already have one (re-searches
 	// keep the original snapshot). This also handles inherited search

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRawSnippet } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient as createClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
@@ -15,15 +15,7 @@ import { SIDEBAR_COLLAPSED_KEY } from './navigation';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-function createAPIClient(fetchFn: typeof fetch) {
-  return createClient(async (input, init) => {
-    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      telemetryEvents.push(await (input as Request).json());
-      return Response.json({ status: 'queued' }, { status: 202 });
-    }
-    return fetchFn(input, init);
-  });
-}
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {

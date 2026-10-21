@@ -10,44 +10,72 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestEnterAfterFailedAggregatePreviewWaitsForReload(t *testing.T) {
+func TestFailedAggregatePreviewKeepsFilter(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := NewBuilder().Build()
 	m.width, m.height = 100, 24
-	m.level = levelAggregates
 	m.inlineSearchActive = true
-	m.inlineSearchLoading = true
 	m.searchQuery = "needle"
 	m.searchInput.SetValue("needle")
 	var events []string
-	m.reportAction = func(_ context.Context, event, _, _ string) error {
-		if event == "search_run" || event == "search_empty" {
-			events = append(events, event)
-		}
-		return nil
-	}
-	updated, cmd := m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, err: errors.New("synthetic preview failure")})
+	m.reportAction = func(_ context.Context, event, _, _ string) error { events = append(events, event); return nil }
+	updated, cmd := m.Update(dataLoadedMsg{err: errors.New("synthetic preview failure")})
 	m = asModel(t, updated)
-	require.Equal(modalError, m.modal)
 	_ = runBatchCommand(t, cmd)
+	require.Equal(modalError, m.modal)
+	assert.Equal("needle", m.searchQuery)
 	updated, _ = m.Update(keyEsc())
 	m = asModel(t, updated)
 	previousRequest := m.aggregateRequestID
 	updated, cmd = m.Update(keyEnter())
 	m = asModel(t, updated)
-	results := runBatchCommand(t, cmd)
-	assert.Empty(events, "stale empty rows must not count as an accepted search")
-	assert.Greater(m.aggregateRequestID, previousRequest)
-	for _, result := range results {
-		if loaded, ok := result.(dataLoadedMsg); ok {
-			require.NoError(loaded.err)
-			updated, cmd = m.Update(loaded)
-			m = asModel(t, updated)
-			_ = runBatchCommand(t, cmd)
-		}
+	if cmd != nil {
+		_ = runBatchCommand(t, cmd)
 	}
-	assert.Equal([]string{"search_run", "search_empty"}, events)
+	assert.Equal(previousRequest, m.aggregateRequestID)
+	assert.Equal([]string{"error_shown"}, events, "a failed preview has no accepted empty result")
+}
+
+func TestSupersededSubmissionDoesNotCountLaterPreview(t *testing.T) {
+	for name, failed := range map[string]bool{"superseded": false, "errored": true} {
+		t.Run(name, func(t *testing.T) {
+			m := NewBuilder().Build()
+			m.width, m.height = 100, 24
+			m.level, m.inlineSearchActive = levelAggregates, true
+			m.searchInput.SetValue("needle")
+			var events []string
+			m.reportAction = func(_ context.Context, event, _, _ string) error { events = append(events, event); return nil }
+			updated, _ := m.Update(keyEnter())
+			m = asModel(t, updated)
+			oldID := m.aggregateRequestID
+			if failed {
+				updated, cmd := m.Update(dataLoadedMsg{requestID: oldID, searchQuery: "needle", err: errors.New("synthetic")})
+				m = asModel(t, updated)
+				if cmd != nil {
+					_ = runBatchCommand(t, cmd)
+				}
+				updated, _ = m.Update(keyEsc())
+				m = asModel(t, updated)
+			}
+			updated, _ = m.Update(key('/'))
+			m = asModel(t, updated)
+			m.searchInput.SetValue("needle")
+			updated, _ = m.Update(searchDebounceMsg{query: "needle", debounceID: m.inlineSearchDebounce})
+			m = asModel(t, updated)
+			updated, cmd := m.Update(dataLoadedMsg{requestID: oldID, searchQuery: "needle"})
+			m = asModel(t, updated)
+			if cmd != nil {
+				_ = runBatchCommand(t, cmd)
+			}
+			updated, cmd = m.Update(dataLoadedMsg{requestID: m.aggregateRequestID, searchQuery: "needle"})
+			m = asModel(t, updated)
+			if cmd != nil {
+				_ = runBatchCommand(t, cmd)
+			}
+			assert.NotContains(t, events, "search_empty")
+		})
+	}
 }
 
 func TestDelayedEmailFailureDuringTextsSearchRetainsEmailQuery(t *testing.T) {
@@ -87,6 +115,7 @@ func TestErrorShownOnModalTransition(t *testing.T) {
 		{"global texts search", "search", modeTexts, textSearchResultMsg{err: errors.New("synthetic")}},
 		{"message", "message", modeEmail, messageDetailLoadedMsg{err: errors.New("synthetic")}},
 		{"texts browse", "other", modeTexts, textConversationsLoadedMsg{err: errors.New("synthetic")}},
+		{"messages search", "search", modeEmail, messagesLoadedMsg{err: errors.New("synthetic")}},
 		{"archive browse", "other", modeEmail, dataLoadedMsg{err: errors.New("synthetic")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

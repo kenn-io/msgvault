@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient as createClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
 import MessagePage from './MessagePage.svelte';
 import MessageCard from './MessageCard.svelte';
@@ -11,17 +11,7 @@ const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
 beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
-function createAPIClient(fetchFn: typeof fetch) {
-  return createClient(async (input, init) => {
-    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      const capture = (input as Request).json().then(event => { telemetryEvents.push(event); });
-      telemetryRequests.push(capture);
-      await capture;
-      return Response.json({ status: 'queued' }, { status: 202 });
-    }
-    return fetchFn(input, init);
-  });
-}
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
   return {
     id,

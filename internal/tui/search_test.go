@@ -1835,7 +1835,7 @@ func TestAcceptedSearchActions(t *testing.T) {
 		{name: "texts conversation", mode: modeTexts, msg: textMessagesLoadedMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:text"}},
 		{name: "meetings", mode: modeMeetings, msg: meetingSearchLoadedMsg{requestID: 2, query: "needle"}, want: []string{"search_run:search_type:text"}},
 		{name: "submitted pending", enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
-		{name: "submitted preview already loaded", enter: true, loadedPreview: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
+		{name: "submitted preview already loaded", enter: true, loadedPreview: true, want: []string{"search_empty:search_type:text"}},
 		{name: "submitted texts", mode: modeTexts, enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
 		{name: "submitted meetings", mode: modeMeetings, enter: true, want: []string{"search_run:search_type:text", "search_empty:search_type:text"}},
 		{name: "submitted nonempty", enter: true, nonempty: true, want: []string{"search_run:search_type:text"}},

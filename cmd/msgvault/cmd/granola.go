@@ -231,7 +231,7 @@ func runConfiguredGranolaSync(ctx context.Context, st *store.Store, src config.G
 		src.Identifier, src.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, granola.SourceType, src.Identifier, notRegistered)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, granola.SourceType, src.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil

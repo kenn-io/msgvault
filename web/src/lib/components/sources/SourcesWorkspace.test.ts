@@ -1,9 +1,11 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
 function source(overrides: Record<string, unknown> = {}) {
   return {
@@ -30,6 +32,45 @@ afterEach(() => {
 });
 
 describe('SourcesWorkspace', () => {
+  it.each(['run', 'scheduler'])('reports each accepted failed sync once: %s', async (failure) => {
+    const events: unknown[] = [];
+    let reads = 0;
+    const fetchFn: typeof fetch = async input => {
+      if ((input as Request).method === 'POST') return Response.json({ status: 'accepted' }, { status: 202 });
+      reads++;
+      return Response.json({ sources: [source(reads === 1 ? {} : {
+        latest_sync: run('failed', 0, { id: reads < 4 ? 10 : 11, error_message: failure === 'run' ? 'Sync refused' : null }),
+        scheduler_last_error: failure === 'scheduler' ? 'Sync refused' : null,
+      })] });
+    };
+    const view = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    await screen.findByText('Failed');
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]));
+    // Visibility refreshes reload the same failed run, then a new one.
+    for (const count of [1, 2]) {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await waitFor(() => expect(reads).toBe(count + 2));
+      await waitFor(() => expect(events).toHaveLength(count));
+    }
+    view.unmount();
+  });
+
+  it('ignores a trigger rejection after leaving Sources', async () => {
+    const events: unknown[] = [];
+    let reject!: (error: Error) => void;
+    const client = createCaptureClient(async input => (input as Request).method === 'POST'
+      ? new Promise<Response>((_, fail) => { reject = fail; })
+      : Response.json({ sources: [source()] }), events);
+    const view = render(SourcesWorkspace, { client });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Sync now Archive' }));
+    view.unmount();
+    reject(new Error('Trigger unavailable'));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await fireEvent(window, new Event('focus'));
+    expect(events).toEqual([]);
+  });
+
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
@@ -416,7 +457,6 @@ describe('SourcesWorkspace', () => {
     const events: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>((input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname === '/api/v1/telemetry/events') return request.json().then((event) => { events.push(event); return Response.json({ status: 'queued' }, { status: 202 }); });
       if (request.method === 'POST') {
         triggers += 1;
         return new Promise<Response>((_resolve, reject) => {
@@ -432,7 +472,7 @@ describe('SourcesWorkspace', () => {
       ] }));
     });
     const rendered = render(SourcesWorkspace, {
-      client: createAPIClient(fetchFn), requestTimeoutMs: 20
+      client: createCaptureClient(fetchFn, events), requestTimeoutMs: 20
     });
 
     const archiveButton = await screen.findByRole<HTMLButtonElement>('button', { name: 'Sync now Archive' });
@@ -448,7 +488,7 @@ describe('SourcesWorkspace', () => {
     expect(screen.queryByRole('button', { name: 'Sync now Archive' })).toBeNull();
     expect(triggers).toBe(1);
     expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }]);
-    await rendered.rerender({ client: createAPIClient(fetchFn) });
+    await rendered.rerender({ client: createCaptureClient(fetchFn, events) });
     expect(events).toHaveLength(1);
     rendered.unmount();
   });
@@ -456,15 +496,17 @@ describe('SourcesWorkspace', () => {
   it('holds a first-load error until manual Retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
+    const events: unknown[] = [];
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 1) throw new Error('status endpoint unreachable');
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events) });
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
+    await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'other' } }]));
 
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(1);

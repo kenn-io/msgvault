@@ -306,7 +306,7 @@ func runConfiguredNotionMeetingsSync(ctx context.Context, st *store.Store, sourc
 		st, notionmeetings.SourceType, source.Identifier, notRegistered,
 	)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, notionmeetings.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil

@@ -493,6 +493,7 @@ type Model struct {
 
 	// Inline search state (vim-like search bar on info line)
 	submittedQuery       string
+	aggregateLoadFailed  bool
 	inlineSearchActive   bool   // True when inline search bar is active
 	inlineSearchDebounce uint64 // Increment to cancel pending debounce timers
 	inlineSearchLoading  bool   // True when a debounced search query is in-flight
@@ -1407,7 +1408,7 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			switch msg.(type) {
 			case searchResultsMsg, textSearchResultMsg, meetingSearchLoadedMsg:
 				kind = "search"
-			case dataLoadedMsg, textMessagesLoadedMsg:
+			case dataLoadedMsg, messagesLoadedMsg, textMessagesLoadedMsg:
 				if m.mode == modeEmail && m.searchQuery != "" || m.mode == modeTexts && m.textState.filter.SearchQuery != "" || m.mode == modeMeetings && m.meetingState.searchQuery != "" {
 					kind = "search"
 				}
@@ -1702,11 +1703,9 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if active {
 		m.inlineSearchLoading = false
+		m.aggregateLoadFailed = msg.err != nil
 	}
 	if msg.err != nil {
-		if active && m.inlineSearchActive {
-			m.searchQuery = ""
-		}
 		if active {
 			m.err = query.HintRepairEncoding(msg.err)
 			m.modal = modalError

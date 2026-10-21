@@ -1,8 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import { KataReadiness, kataReadinessKey } from '../../kata/kata-ready.svelte';
 import KataFileIssueAction from './KataFileIssueAction.svelte';
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('KataFileIssueAction', () => {
   it('discards dismissed searches and reports an accepted passage search', async () => {
@@ -37,7 +39,8 @@ describe('KataFileIssueAction', () => {
     ]));
   });
 
-  it('reports a failed passage search', async () => {
+  it.each(['visible', 'close', 'unmount', 'replace'])('reports a failed passage search only while displayed: %s', async (action) => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(action === 'visible' ? 'visible' : 'hidden');
     const events: unknown[] = [];
     const client = createAPIClient(async (input) => {
       const request = input as Request, path = new URL(request.url).pathname;
@@ -45,11 +48,21 @@ describe('KataFileIssueAction', () => {
       if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example', message: 'Ready' });
       return Response.json({ message: 'Search unavailable' }, { status: 500 });
     });
-    render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
+    const view = render(KataFileIssueAction, { props: { client, attachmentID: 12, messageID: 42, filename: 'transcript.txt' }, context: new Map([[kataReadinessKey, new KataReadiness(client)]]) });
     await fireEvent.click(await screen.findByRole('button', { name: 'Create Kata issue from file' }));
     await fireEvent.input(screen.getByLabelText('Find a passage'), { target: { value: 'needle' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
     expect((await screen.findByRole('alert')).textContent).toContain('Search unavailable');
+    if (action !== 'visible') {
+      if (action === 'unmount') view.unmount();
+      else if (action === 'close') await fireEvent.keyDown(window, { key: 'Escape' });
+      else await fireEvent.click(screen.getByRole('button', { name: 'Search this file' }));
+      if (action === 'replace') await screen.findByRole('alert');
+      visibility.mockReturnValue('visible');
+      await fireEvent(window, new Event('focus'));
+      expect(events).toEqual(action === 'replace' ? [{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }] : []);
+      return;
+    }
     await waitFor(() => expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }]));
     await fireEvent.keyDown(window, { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Create Kata issue from file' }));

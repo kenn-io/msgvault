@@ -1,20 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createAPIClient as createClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import FilesWorkspace from './FilesWorkspace.svelte';
 
 const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-function createAPIClient(fetchFn: typeof fetch) {
-  return createClient(async (input, init) => {
-    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      telemetryEvents.push(await (input as Request).json());
-      return Response.json({ status: 'queued' }, { status: 202 });
-    }
-    return fetchFn(input, init);
-  });
-}
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
 
 function response() {
   return {

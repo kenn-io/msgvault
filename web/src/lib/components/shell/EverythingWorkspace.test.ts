@@ -5,7 +5,7 @@ import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient as createClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
@@ -16,15 +16,7 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-function createAPIClient(fetchFn: typeof fetch) {
-  return createClient(async (input, init) => {
-    if (new URL((input as Request).url).pathname === '/api/v1/telemetry/events') {
-      telemetryEvents.push(await (input as Request).json());
-      return Response.json({ status: 'queued' }, { status: 202 });
-    }
-    return fetchFn(input, init);
-  });
-}
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
 
 function renderRecordingShell(client: ReturnType<typeof createAPIClient>, state: ExploreState, probe: (signal: AbortSignal) => Promise<boolean | undefined> = async () => true) {
   const readiness = new IntegrationReadiness(probe);

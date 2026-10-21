@@ -237,7 +237,7 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil

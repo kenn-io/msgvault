@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { reportAction, reportWhenVisible } from '../../telemetry/actions';
+  import { reportError } from '../../telemetry/actions';
   import {
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
@@ -46,6 +46,16 @@
   let statusError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
+  const reportedRuns = new Set<string>();
+  $effect(() => { if (statusError) return reportError(() => client, () => 'other'); });
+  $effect(() => { if (triggerError) return reportError(() => client, () => 'sync'); });
+  $effect(() => {
+    const pending = sources.filter(source => !source.active_sync && (source.latest_sync?.status === 'failed' || source.scheduler_last_error)).map(source => {
+      const key = `${source.id}:${source.latest_sync?.id ?? source.scheduler_started_at}`;
+      if (!reportedRuns.has(key)) return reportError(() => client, () => 'sync', undefined, () => reportedRuns.add(key));
+    });
+    return () => pending.forEach(cancel => cancel?.());
+  });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -245,6 +255,7 @@
         ...client,
         signal,
       });
+      if (disposed) return;
       if (response.status !== 202 || !data) {
         throw new Error(messageFor(responseError, `Unable to start sync for ${source.identifier}.`));
       }
@@ -256,10 +267,10 @@
       awaitingState = 'awaiting';
       await load();
     } catch (cause) {
+      if (disposed) return;
       triggerError = signal.aborted
         ? 'Starting sync timed out. Check source status before trying again.'
         : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;
-      reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', 'sync'));
       schedulePoll(MIN_POLL_MS);
     } finally {
       triggering = undefined;

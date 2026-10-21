@@ -1,11 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { recording, recordingSearchHit as hit, recordingSearchReport as report } from '../../archive/recording-fixtures.test-support';
 import TranscriptHits from './TranscriptHits.svelte';
 
 function mount(fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()))) {
-  const client = createAPIClient(fetchFn);
+  const client = createCaptureClient(fetchFn, []);
   return { client, fetchFn, ...render(TranscriptHits, { props: { client, query: 'quarterly', supported: true } }) };
 }
 
@@ -100,7 +101,8 @@ describe('TranscriptHits', () => {
     if (refresh) fetchFn.mockResolvedValueOnce(Response.json(report()));
     fetchFn.mockResolvedValueOnce(Response.json({ error: status === 503 ? 'media_search_unavailable' : 'rate_limit_exceeded' }, { status }));
     fetchFn.mockResolvedValue(Response.json(report({ results: refresh ? [] : [hit()] })));
-    const view = mount(fetchFn);
+    const events: unknown[] = [];
+    const view = render(TranscriptHits, { client: createCaptureClient(fetchFn, events), query: 'quarterly', supported: true });
     expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     if (refresh) {
       await vi.advanceTimersByTimeAsync(300);
@@ -111,6 +113,9 @@ describe('TranscriptHits', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
     expect(screen.getByText(status === 503 ? 'Recording search unavailable.' : 'Could not load recording matches.')).toBeTruthy();
+    expect(events).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'search' } }]);
+    await fireEvent(window, new Event('focus'));
+    expect(events).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await vi.advanceTimersByTimeAsync(300);
     if (refresh) expect(screen.getByText('No spoken matches.')).toBeTruthy();
@@ -198,7 +203,7 @@ describe('TranscriptHits', () => {
   ])('keeps %s %s terminal until the query changes', async (status, error, text, query = 'quarterly', message = text) => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ error, message }, { status }));
-    const client = createAPIClient(fetchFn);
+    const client = createCaptureClient(fetchFn, []);
     const view = render(TranscriptHits, { props: { client, query, supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     expect(screen.getByText(text)).toBeTruthy();

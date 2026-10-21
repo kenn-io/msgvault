@@ -65,7 +65,7 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
-  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
 
@@ -176,7 +176,7 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
-  $effect(() => { if (error || pageError || unavailable && unavailable.readiness !== 'building') return untrack(() => reportWhenVisible(() => reportAction(client, 'error_shown', 'kind', predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'))); });
+  $effect(() => { if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
