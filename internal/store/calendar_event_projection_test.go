@@ -110,7 +110,9 @@ func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
 	data, id := calendarFixture(t, st, "unchanged", calendarRaw)
 	rejectCalendarWrites(t, st)
 	requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error { return st.refreshCalendarEventProjectionWith(t.Context(), tx, id) }))
-	// Canonical persistence also skips an identical typed projection.
+	// Metadata-only persistence does not represent a new provider observation,
+	// so it also skips the unchanged typed projection.
+	data.RawMIME = nil
 	_, err := st.PersistMessage(data)
 	requirements.NoError(err)
 }
