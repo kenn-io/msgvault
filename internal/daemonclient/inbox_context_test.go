@@ -2,7 +2,6 @@ package daemonclient_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
-
-type inboxContextClient interface {
-	InboxContext(ctx context.Context, request inboxcontrol.ContextRequest) (*inboxcontrol.Context, error)
-}
 
 // Exercise the real client against hostile HTTP responses. The native Store,
 // router and issued content grants are covered by the API context regression.
@@ -133,9 +128,7 @@ func TestInboxContextClientContract(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, AgentToken: "synthetic-context-token", HTTPClient: server.Client()})
 			requirements.NoError(err)
 			defer func() { assertions.NoError(client.Close()) }()
-			reader, ok := any(client).(inboxContextClient)
-			requirements.True(ok, "daemon client must expose scoped context reads")
-			result, err := reader.InboxContext(t.Context(), request)
+			result, err := client.InboxContext(t.Context(), request)
 			switch mode {
 			case "success", "chat-success", "empty", "unavailable":
 				requirements.NoError(err)
@@ -181,8 +174,6 @@ func TestInboxContextClientRejectsInvalidBeforeHTTP(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
 	requirements.NoError(err)
 	defer func() { assertions.NoError(client.Close()) }()
-	reader, ok := any(client).(inboxContextClient)
-	requirements.True(ok)
 	target := inboxcontrol.Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "reader@example.test", AccountID: "reader@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 7, ProviderID: "synthetic-context"}
 	for _, request := range []inboxcontrol.ContextRequest{
 		{},
@@ -190,7 +181,7 @@ func TestInboxContextClientRejectsInvalidBeforeHTTP(t *testing.T) {
 		{Target: target, MaxBytes: inboxcontrol.MaxContextBytes + 1},
 		{Target: target, MessageID: 7},
 	} {
-		result, err := reader.InboxContext(t.Context(), request)
+		result, err := client.InboxContext(t.Context(), request)
 		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 		assertions.Nil(result)
 	}
@@ -198,7 +189,7 @@ func TestInboxContextClientRejectsInvalidBeforeHTTP(t *testing.T) {
 	chat.SourceType, chat.SourceIdentifier, chat.AccountID = "beeper", "synthetic-account", "synthetic-account"
 	chat.Scope = inboxcontrol.ScopeChat
 	for _, messageID := range []int64{0, -1} {
-		result, err := reader.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: chat, MessageID: messageID})
+		result, err := client.InboxContext(t.Context(), inboxcontrol.ContextRequest{Target: chat, MessageID: messageID})
 		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 		assertions.Nil(result)
 	}

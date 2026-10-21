@@ -1,7 +1,6 @@
 package daemonclient_test
 
 import (
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -14,10 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
-
-type inboxControlClient interface {
-	ControlInbox(ctx context.Context, request inboxcontrol.Request) (*inboxcontrol.Result, error)
-}
 
 func TestInboxClientRejectsOldDaemonBeforeControl(t *testing.T) {
 	for _, version := range []string{"", "3.12.0", "3.13.0", "3.14.0", "invalid"} {
@@ -37,9 +32,7 @@ func TestInboxClientRejectsOldDaemonBeforeControl(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
 			requirements.NoError(err)
 			defer func() { assert.NoError(t, client.Close()) }()
-			control, ok := any(client).(inboxControlClient)
-			requirements.True(ok)
-			_, err = control.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: "receipt-a"})
+			_, err = client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpReceiptGet, ReceiptID: "receipt-a"})
 			require.ErrorIs(t, err, inboxcontrol.ErrUnavailable)
 			assertions.Equal(int64(0), posts.Load())
 		})
@@ -79,9 +72,7 @@ func TestInboxClientPreservesSignedRequestAndUnknownReceipt(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: "synthetic-agent-token", AllowInsecure: true, HTTPClient: server.Client()})
 	requirements.NoError(err)
 	defer func() { assert.NoError(t, client.Close()) }()
-	control, ok := any(client).(inboxControlClient)
-	requirements.True(ok)
-	result, err := control.ControlInbox(t.Context(), request)
+	result, err := client.ControlInbox(t.Context(), request)
 	requirements.ErrorIs(err, inboxcontrol.ErrOutcomeUnknown)
 	requirements.NotNil(result)
 	requirements.NotNil(result.Receipt)
@@ -133,11 +124,9 @@ func TestInboxClientNeverRetriesUncertainMutationOrFollowsRedirect(t *testing.T)
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
 			requirements.NoError(err)
 			defer func() { assert.NoError(t, client.Close()) }()
-			control, ok := any(client).(inboxControlClient)
-			requirements.True(ok)
 			target := inboxcontrol.Target{SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test", Scope: inboxcontrol.ScopeMessage, ItemID: 2, ProviderID: "chat-a"}
 			before := inboxcontrol.State{Target: target, Inbox: new(true), ObservedAt: time.Now().UTC()}
-			_, err = control.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, Expected: &before, PreviewToken: "signed-preview", IdempotencyKey: "operation-a"})
+			_, err = client.ControlInbox(t.Context(), inboxcontrol.Request{Operation: inboxcontrol.OpArchive, Target: &target, Expected: &before, PreviewToken: "signed-preview", IdempotencyKey: "operation-a"})
 			require.ErrorIs(t, err, inboxcontrol.ErrOutcomeUnknown)
 			assertions.Equal(int64(1), posts.Load())
 			assertions.Equal(int64(0), followed.Load())

@@ -2,7 +2,6 @@ package daemonclient_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -15,10 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/inboxcontrol"
 )
-
-type inboxCandidateClient interface {
-	InboxCandidates(ctx context.Context, source inboxcontrol.SourceIdentity, scope inboxcontrol.Scope, limit int, cursor string) (*inboxcontrol.CandidatePage, error)
-}
 
 // The server fixture proves the native HTTP contract, including exact query
 // binding and caller credentials; real candidate queries are tested by Store/API.
@@ -132,9 +127,7 @@ func TestInboxCandidateClientContract(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, AgentToken: "synthetic-agent-token", HTTPClient: server.Client()})
 			requirements.NoError(err)
 			defer func() { assertions.NoError(client.Close()) }()
-			reader, ok := any(client).(inboxCandidateClient)
-			requirements.True(ok, "daemon client must expose candidate listing")
-			page, err := reader.InboxCandidates(t.Context(), source, scope, 2, "opaque-cursor")
+			page, err := client.InboxCandidates(t.Context(), source, scope, 2, "opaque-cursor")
 			switch mode {
 			case "success", "partial-read", "chat-success", "chat-partial":
 				requirements.NoError(err)
@@ -181,17 +174,15 @@ func TestInboxCandidateClientRejectsInvalidBeforeHTTP(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
 	requirements.NoError(err)
 	defer func() { assertions.NoError(client.Close()) }()
-	reader, ok := any(client).(inboxCandidateClient)
-	requirements.True(ok)
 	source := inboxcontrol.SourceIdentity{SourceID: 1, SourceType: "gmail", SourceIdentifier: "owner@example.test", AccountID: "owner@example.test"}
 	for _, limit := range []int{-1, 0, 101} {
-		_, err := reader.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, limit, "")
+		_, err := client.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, limit, "")
 		requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	}
-	_, err = reader.InboxCandidates(t.Context(), source, inboxcontrol.ScopeChat, 1, "")
+	_, err = client.InboxCandidates(t.Context(), source, inboxcontrol.ScopeChat, 1, "")
 	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	source.SourceID = 0
-	_, err = reader.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
+	_, err = client.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
 	requirements.ErrorIs(err, inboxcontrol.ErrInvalid)
 	assertions.Equal(int64(0), calls.Load())
 }

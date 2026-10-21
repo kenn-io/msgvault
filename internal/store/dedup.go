@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -512,11 +513,13 @@ func (s *Store) MergeDuplicates(
 
 	ctx := context.Background()
 	lock := attributionLock{}
+	messageSourceIDs := make(map[int64]int64, len(duplicateIDs)+1)
 	for _, id := range append([]int64{survivorID}, duplicateIDs...) {
 		sourceID, err := s.messageSourceIDContext(ctx, id)
 		if err != nil {
 			return nil, err
 		}
+		messageSourceIDs[id] = sourceID
 		if sourceID != 0 {
 			lock.Sources = append(lock.Sources, sourceID)
 		}
@@ -559,13 +562,32 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 
+		changedSources := make(map[int64]struct{})
 		for _, dupID := range duplicateIDs {
 			if _, err := tx.Exec(`UPDATE messages SET reply_to_message_id = ?
 				WHERE reply_to_message_id = ?`, survivorID, dupID); err != nil {
 				return fmt.Errorf("repoint replies from duplicate %d: %w", dupID, err)
 			}
-			if _, err := tx.Exec(softDeleteSQL, batchID, dupID); err != nil {
+			res, err := tx.Exec(softDeleteSQL, batchID, dupID)
+			if err != nil {
 				return fmt.Errorf("soft-delete duplicate %d: %w", dupID, err)
+			}
+			affected, err := res.RowsAffected()
+			if err != nil {
+				return fmt.Errorf("count soft-deleted duplicate %d: %w", dupID, err)
+			}
+			if affected > 0 && messageSourceIDs[dupID] != 0 {
+				changedSources[messageSourceIDs[dupID]] = struct{}{}
+			}
+		}
+		changedSourceIDs := make([]int64, 0, len(changedSources))
+		for sourceID := range changedSources {
+			changedSourceIDs = append(changedSourceIDs, sourceID)
+		}
+		slices.Sort(changedSourceIDs)
+		for _, sourceID := range changedSourceIDs {
+			if err := bumpInboxSourceRevisionTx(ctx, tx, sourceID); err != nil {
+				return err
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
@@ -723,15 +745,54 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
 func (s *Store) UndoDedup(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
-		UPDATE messages
-		SET deleted_at = NULL, delete_batch_id = NULL
-		WHERE delete_batch_id = ?
-	`, batchID)
+	ctx := context.Background()
+	var restored int64
+	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT source_id FROM messages
+			WHERE delete_batch_id = ? AND deleted_at IS NOT NULL GROUP BY source_id ORDER BY source_id`, batchID)
+		if err != nil {
+			return fmt.Errorf("read sources for dedup restore: %w", err)
+		}
+		var sourceIDs []int64
+		for rows.Next() {
+			var sourceID int64
+			if err := rows.Scan(&sourceID); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("scan source for dedup restore: %w", err)
+			}
+			sourceIDs = append(sourceIDs, sourceID)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("read sources for dedup restore: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("close dedup restore sources: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE messages
+			SET deleted_at = NULL, delete_batch_id = NULL
+			WHERE delete_batch_id = ?`, batchID)
+		if err != nil {
+			return fmt.Errorf("restore dedup messages: %w", err)
+		}
+		restored, err = result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("count restored dedup messages: %w", err)
+		}
+		if restored == 0 {
+			return nil
+		}
+		for _, sourceID := range sourceIDs {
+			if err := bumpInboxSourceRevisionTx(ctx, tx, sourceID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return 0, fmt.Errorf("undo dedup: %w", err)
 	}
-	return result.RowsAffected()
+	return restored, nil
 }
 
 // DeleteDedupedBatch permanently deletes all hidden rows associated with a

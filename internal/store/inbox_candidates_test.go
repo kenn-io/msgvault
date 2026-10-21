@@ -119,6 +119,52 @@ func TestInboxCandidatesCursorRejectsStaleAndForeignScope(t *testing.T) {
 	assertions.ErrorIs(err, inboxcontrol.ErrPlanChanged)
 }
 
+func TestInboxCandidatesCursorInvalidatedByDedupMembershipSwap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	f, source, states := inboxCandidateFixture(t)
+	base := time.Now().UTC()
+	for i := range states {
+		states[i].ObservedAt = base.Add(time.Duration(i) * time.Hour)
+		_, err := f.Store.ObserveInboxState(t.Context(), states[i])
+		requirements.NoError(err)
+	}
+	// This candidate sorts ahead of the first active candidate once restored.
+	states[1].ObservedAt = base.Add(4 * time.Hour)
+	_, err := f.Store.ObserveInboxState(t.Context(), states[1])
+	requirements.NoError(err)
+	_, err = f.Store.MergeDuplicates(states[3].Target.ItemID, []int64{states[1].Target.ItemID}, "restore-later")
+	requirements.NoError(err)
+
+	first, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	requirements.Len(first.Candidates, 1)
+	requirements.NotEmpty(first.NextCursor)
+	assertions.Equal(states[3].Target.ItemID, first.Candidates[0].State.Target.ItemID)
+
+	_, err = f.Store.MergeDuplicates(states[3].Target.ItemID, []int64{states[2].Target.ItemID}, "delete-now")
+	requirements.NoError(err)
+	restored, err := f.Store.UndoDedup("restore-later")
+	requirements.NoError(err)
+	requirements.Equal(int64(1), restored)
+
+	var total, maxID int64
+	requirements.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`
+		SELECT COUNT(*), COALESCE(MAX(id), 0) FROM messages
+		WHERE source_id = ? AND deleted_at IS NULL AND deleted_from_source_at IS NULL`), source.SourceID).Scan(&total, &maxID))
+	requirements.Equal(int64(3), total)
+	requirements.Equal(states[3].Target.ItemID, maxID)
+
+	changed, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, "")
+	requirements.NoError(err)
+	assertions.NotEqual(first.ArchiveRevision, changed.ArchiveRevision)
+	continued, err := f.Store.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 1, first.NextCursor)
+	requirements.ErrorIs(err, inboxcontrol.ErrPlanChanged)
+	assertions.Nil(continued)
+}
+
 func TestInboxCandidatesCursorRejectsAnotherArchive(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -368,6 +414,49 @@ func TestInboxCandidatesIMAPVanishedMembershipInvalidatesPage(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(page.Candidates, 1)
 	assert.Equal(t, uint32(2), page.Candidates[0].State.Target.UID)
+}
+
+func TestInboxCandidatesIMAPRequiresObservationForEachCurrentCopy(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	t.Parallel()
+	st := testutil.NewTestStore(t)
+	archived, err := st.GetOrCreateSource("imap", "imap://owner%40example.test@mail.example.test:143")
+	requirements.NoError(err)
+	source := inboxcontrol.SourceIdentity{SourceID: archived.ID, SourceType: "imap", SourceIdentifier: archived.Identifier, AccountID: "owner@example.test"}
+	conv, err := st.EnsureConversation(source.SourceID, "native-mailbox", "Synthetic mailbox")
+	requirements.NoError(err)
+	const providerID = "multi-copy"
+	mid, err := st.UpsertMessage(&store.Message{SourceID: source.SourceID, ConversationID: conv, SourceMessageID: providerID, MessageType: "email"})
+	requirements.NoError(err)
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.SourceID, []store.IMAPMailboxDelta{
+		{Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 77, UIDNext: 2}, Memberships: []store.IMAPMembershipObservation{{Mailbox: "INBOX", UIDValidity: 77, UID: 1, SourceMessageID: providerID}}},
+		{Mailbox: "Archive", State: store.IMAPFolderState{Mailbox: "Archive", UIDValidity: 88, UIDNext: 8}, Memberships: []store.IMAPMembershipObservation{{Mailbox: "Archive", UIDValidity: 88, UID: 7, SourceMessageID: providerID}}},
+	}))
+
+	seedInboxReadState(t, st, inboxcontrol.State{
+		Target:     inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: providerID, Mailbox: "Archive", UIDValidity: 88, UID: 7},
+		Inbox:      new(false),
+		Read:       new(false),
+		ObservedAt: time.Now().UTC(),
+	})
+	page, err := st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
+	requirements.NoError(err)
+	assertions.Empty(page.Candidates)
+	assertions.True(page.Unavailable, "the unobserved INBOX copy leaves provider coverage incomplete")
+
+	seedInboxReadState(t, st, inboxcontrol.State{
+		Target:     inboxcontrol.Target{SourceID: source.SourceID, SourceType: source.SourceType, SourceIdentifier: source.SourceIdentifier, AccountID: source.AccountID, Scope: inboxcontrol.ScopeMessage, ItemID: mid, ProviderID: providerID, Mailbox: "INBOX", UIDValidity: 77, UID: 1},
+		Inbox:      new(true),
+		Read:       new(false),
+		ObservedAt: time.Now().UTC().Add(time.Second),
+	})
+	page, err = st.InboxCandidates(t.Context(), source, inboxcontrol.ScopeMessage, 100, "")
+	requirements.NoError(err)
+	assertions.False(page.Unavailable)
+	requirements.Len(page.Candidates, 1)
+	assertions.Equal("INBOX", page.Candidates[0].State.Target.Mailbox)
 }
 
 func TestInboxCandidatesDeletedUnknownDoesNotMakeInboxUnavailable(t *testing.T) {

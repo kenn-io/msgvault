@@ -30,7 +30,7 @@ func (s *Store) InboxCandidates(ctx context.Context, source inboxcontrol.SourceI
 	if source.Validate() != nil || limit < 1 || limit > 100 || len(cursor) > 16384 {
 		return nil, inboxcontrol.ErrInvalid
 	}
-	if (source.SourceType == "beeper" && scope != inboxcontrol.ScopeChat) || (source.SourceType != "beeper" && scope != inboxcontrol.ScopeMessage) {
+	if (source.SourceType == sourceTypeBeeper && scope != inboxcontrol.ScopeChat) || (source.SourceType != sourceTypeBeeper && scope != inboxcontrol.ScopeMessage) {
 		return nil, inboxcontrol.ErrInvalid
 	}
 	var position inboxCandidateCursor
@@ -110,7 +110,7 @@ func (s *Store) InboxCandidates(ctx context.Context, source inboxcontrol.SourceI
 			if err != nil || stateKey != key {
 				return inboxcontrol.ErrUnavailable
 			}
-			candidate.Available = candidate.State.Read != nil && (source.SourceType != "beeper" || candidate.State.MarkedUnread != nil)
+			candidate.Available = candidate.State.Read != nil && (source.SourceType != sourceTypeBeeper || candidate.State.MarkedUnread != nil)
 			if !candidate.Available {
 				page.Unavailable = true
 			}
@@ -180,14 +180,32 @@ func inboxCandidateRevision(ctx context.Context, tx *loggedTx, source inboxcontr
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM inbox_source_revisions WHERE source_id=?),0)`, source.SourceID).Scan(&generation); err != nil {
 		return "", false, fmt.Errorf("read inbox archive revision: %w", err)
 	}
-	query := fmt.Sprintf(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM inbox_provider_states p
+	var query string
+	if source.SourceType == sourceTypeIMAP {
+		query = fmt.Sprintf(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN
+  NOT EXISTS (SELECT 1 FROM imap_message_memberships member
+    WHERE member.source_id=r.source_id AND member.message_id=r.id
+      AND EXISTS (SELECT 1 FROM imap_folder_state folder WHERE folder.source_id=member.source_id
+        AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity))
+  OR EXISTS (SELECT 1 FROM imap_message_memberships member
+    WHERE member.source_id=r.source_id AND member.message_id=r.id
+      AND EXISTS (SELECT 1 FROM imap_folder_state folder WHERE folder.source_id=member.source_id
+        AND folder.mailbox=member.mailbox AND folder.uidvalidity=member.uidvalidity)
+      AND NOT EXISTS (SELECT 1 FROM inbox_provider_states p
+        WHERE p.source_id=member.source_id AND p.scope=? AND p.item_id=member.message_id
+          AND p.provider_id=r.%s AND p.mailbox=member.mailbox
+          AND p.uidvalidity=member.uidvalidity AND p.uid=member.uid AND p.is_inbox IS NOT NULL))
+  THEN 1 ELSE 0 END),0) FROM %s r WHERE r.source_id=? AND %s`, providerID, table, active)
+	} else {
+		query = fmt.Sprintf(`SELECT COUNT(*),COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM inbox_provider_states p
   WHERE p.source_id=r.source_id AND p.scope=? AND p.item_id=r.id AND p.provider_id=r.%s AND p.is_inbox IS NOT NULL AND %s)
   THEN 1 ELSE 0 END),0) FROM %s r WHERE r.source_id=? AND %s`, providerID, inboxCandidateMembershipSQL(source), table, active)
+	}
 	if err := tx.QueryRowContext(ctx, query, scope, source.SourceID).Scan(&total, &missing); err != nil {
 		return "", false, fmt.Errorf("read inbox observation coverage: %w", err)
 	}
 	unknownMarkers := "p.provider_read IS NULL"
-	if source.SourceType == "beeper" {
+	if source.SourceType == sourceTypeBeeper {
 		unknownMarkers += " OR p.marked_unread IS NULL"
 	}
 	unknownQuery := fmt.Sprintf(`SELECT COUNT(*) FROM inbox_provider_states p JOIN %s r

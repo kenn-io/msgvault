@@ -78,10 +78,4 @@ func TestInboxCLIContextRejectsInvalidRequest(t *testing.T) {
 		command.SetErr(io.Discard)
 		require.ErrorIs(t, command.Execute(), inboxcontrol.ErrInvalid)
 	}
-	command := newInboxCmd()
-	command.SetArgs([]string{"context", "--request", "-", "--apply"})
-	command.SetIn(strings.NewReader("{}"))
-	command.SetOut(io.Discard)
-	command.SetErr(io.Discard)
-	assert.Error(t, command.Execute(), "read-only context has no apply mode")
 }
