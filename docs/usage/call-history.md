@@ -45,12 +45,69 @@ Supported formats:
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
 | `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; every binding stays invited even when the RSVP says accepted. Recurring masters and events without a start are rejected. |
+| `discord` | One native type-3 CALL message. Account is the owner’s canonical Discord user ID. Bind only user IDs in `call.participants` to existing archive participants. |
+| `discord_chat_exporter` | One `type: "Call"` message extracted from a supplied DiscordChatExporter JSON export. Its roster is unavailable, so bindings are rejected. |
+| `discord_archived` | `{"message_id": 123}` references one existing archive message by its positive integer primary key. The daemon requires a live Discord message with `discord_json` raw data. Account and bindings follow `discord`. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
 to 512 KiB. An observation allows 100 participants and 32 phone/link entry
 points. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
+
+## Import Discord call evidence
+
+These formats require an unreleased daemon build containing the Discord adapter;
+an older call-history daemon rejects them. The existing guild-bot source does
+not retrieve private call history. This importer uses stored or supplied JSON
+and does not contact Discord or need a token, new scope or additional dependency.
+
+To map an already archived CALL message, supply its **archive message ID**, the
+owner's native Discord user ID, and optional exact peer-to-participant bindings:
+
+```sh
+printf '%s\n' '{"format":"discord_archived","account":"1","record":{"message_id":123},"bindings":{"2":42}}' | msgvault calls import -
+```
+
+Alternatively, wrap one supplied native message in a `discord` request:
+
+```json
+{
+  "format": "discord",
+  "account": "1",
+  "record": {
+    "id": "100", "channel_id": "200", "type": 3,
+    "timestamp": "2026-10-01T00:00:00Z",
+    "call": {"participants": ["1", "2"], "ended_timestamp": null}
+  },
+  "bindings": {"2": 42}
+}
+```
+
+All IDs above are synthetic. Discord IDs must be nonzero decimal strings with
+no leading zeros. Bindings name existing **participant IDs**, not person IDs.
+Only the call roster proves joined attendance; authors, mentions and channel
+membership do not. Owner absence stays unknown. Direction, outcome and talk
+duration remain unknown even when the call has an end timestamp. A bound peer
+therefore contributes an unknown count, never an answered count.
+
+For an existing DiscordChatExporter JSON file, extract a single Call message:
+
+```sh
+jq '{format:"discord_chat_exporter",account:"1",record:(.messages | map(select(.type == "Call")) | first)}' export.json > discord-call.json
+msgvault calls import discord-call.json
+```
+
+Exporter messages appear in `calls list`, but lack a participant roster and
+produce no per-person summary row. Native and exporter representations retain
+separate original evidence and share the same owner/message canonical identity.
+Reimporting an archived/native record replaces that native observation; it does
+not create another call. Later changes to the original archived message do not
+automatically update or withdraw its separately imported call evidence.
+
+The documented Discord data package's message transcript lacks structured call
+type and attendance fields. That lossy shape, whole export files and ZIP files
+are not accepted as single call records. Calls are never inferred from prose.
 
 ## Read the evidence and counts
 

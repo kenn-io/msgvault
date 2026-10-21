@@ -62,7 +62,7 @@ func callRequest[T any](ctx context.Context, c *Client, method, path string, opt
 }
 
 func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (CallImportResult, error) {
-	if _, err := callhistory.DecodeImport(bytes.NewReader(data)); err != nil {
+	if _, err := callhistory.DecodeImportRequest(bytes.NewReader(data)); err != nil {
 		return CallImportResult{}, err
 	}
 	return callRequest[CallImportResult](ctx, c, http.MethodPost, "/api/v1/import/calls", callOptions{body: jsontext.Value(data)})

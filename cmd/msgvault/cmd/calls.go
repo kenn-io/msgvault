@@ -77,7 +77,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 			if len(data) > callhistory.MaxRequestBytes {
 				return callhistory.ErrImportTooLarge
 			}
-			if _, err := callhistory.DecodeImport(bytes.NewReader(data)); err != nil {
+			if _, err := callhistory.DecodeImportRequest(bytes.NewReader(data)); err != nil {
 				return err
 			}
 			client, cleanup, err := open(cmd.Context())

@@ -25,3 +25,7 @@ func (a *storeAPIAdapter) ListCallObservationsContext(ctx context.Context, q sto
 func (a *storeAPIAdapter) SummarizeCallsContext(ctx context.Context, q store.CallQuery) ([]store.PersonCallSummary, error) {
 	return a.store.SummarizeCallsContext(ctx, q)
 }
+
+func (a *storeAPIAdapter) GetDiscordCallRecordContext(ctx context.Context, messageID int64) ([]byte, error) {
+	return a.store.GetDiscordCallRecordContext(ctx, messageID)
+}

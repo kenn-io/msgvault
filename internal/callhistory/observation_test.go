@@ -1,8 +1,10 @@
 package callhistory
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -108,37 +110,47 @@ func FuzzObservationDurationValidation(f *testing.F) {
 	})
 }
 
-func FuzzNormalizedImportRoundtrip(f *testing.F) {
-	f.Add(uint64(0), false, true)
-	f.Add(math.Float64bits(math.MaxFloat64), false, true)
-	f.Add(uint64(0), true, false)
-	f.Fuzz(func(t *testing.T, bits uint64, scheduled, hasDuration bool) {
-		// Materialize any finite nonnegative IEEE value, without rejecting
-		// generated inputs. Validation of negative/nonfinite inputs is separate.
-		bits &^= uint64(1) << 63
-		if bits>>52 == 0x7ff {
-			bits &^= uint64(1) << 52
+func FuzzNormalizedImportPreservesWireFields(f *testing.F) {
+	f.Add(uint64(0), uint32(0), uint32(0), uint8(0), uint32(1))
+	f.Add(math.Float64bits(42.5), uint32(1790841600), uint32(999999999), uint8(255), uint32(42))
+	f.Fuzz(func(t *testing.T, durationBits uint64, seconds, nanoseconds uint32, peer uint8, callIDSuffix uint32) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+
+		// Generate finite, nonnegative durations while preserving broad float coverage.
+		durationBits &^= uint64(1) << 63
+		if durationBits>>52 == 0x7ff {
+			durationBits &^= uint64(1) << 52
 		}
-		o := exampleObservation()
-		if scheduled {
-			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
-			o.Participants = []Participant{}
-		} else {
-			o.NativeCallID = "call-1"
-			if hasDuration {
-				duration := math.Float64frombits(bits)
-				o.DurationSeconds = &duration
-			}
-		}
-		wire, err := json.Marshal(o)
-		require.NoError(t, err)
-		got, err := (ImportRequest{Format: "normalized", Account: o.Account, Record: wire}).Observation()
-		require.NoError(t, err)
-		assert.Equal(t, o.NativeCallID, got.NativeCallID)
-		assert.Equal(t, scheduled, got.CanonicalKey() == "")
-		assert.Equal(t, o.DurationSeconds, got.DurationSeconds)
-		assert.True(t, o.OccurredAt.Equal(got.OccurredAt))
-		assert.Equal(t, o.Participants, got.Participants)
-		assert.Equal(t, o.CanonicalKey(), got.CanonicalKey())
+		duration := math.Float64frombits(durationBits)
+		occurredAt := time.Unix(int64(seconds), int64(nanoseconds%1_000_000_000)).UTC()
+		nativeCallID := "call-" + strconv.FormatUint(uint64(callIDSuffix), 10)
+		participantID := int64(peer) + 1
+
+		// Keep these public JSON field names independent of Observation's tags.
+		record, err := json.Marshal(map[string]any{
+			"record_id": "record-1", "version": 1, "provider": "signal",
+			"account": "example-account", "native_call_id": nativeCallID,
+			"kind": "call", "direction": "incoming", "outcome": "answered",
+			"owner_participation": "joined", "occurred_at": occurredAt,
+			"duration_seconds": duration, "precision": "instant",
+			"participants": []map[string]any{{"participant_id": participantID, "participation": "joined"}},
+			"raw":          map[string]any{"callId": nativeCallID, "status": "Accepted"},
+		})
+		requirements.NoError(err)
+		wire, err := json.Marshal(ImportRequest{Format: "normalized", Account: "example-account", Record: record})
+		requirements.NoError(err)
+		got, err := DecodeImport(bytes.NewReader(wire))
+		requirements.NoError(err)
+
+		assertions.Equal("record-1", got.RecordID)
+		assertions.Equal("example-account", got.Account)
+		assertions.Equal(nativeCallID, got.NativeCallID)
+		assertions.True(occurredAt.Equal(got.OccurredAt))
+		requirements.NotNil(got.DurationSeconds)
+		assertions.Equal(math.Float64bits(duration), math.Float64bits(*got.DurationSeconds))
+		assertions.Equal([]Participant{{ID: participantID, Participation: "joined"}}, got.Participants)
+		expectedKey := (Evidence{Provider: "signal", Account: "example-account", NativeCallID: nativeCallID}).CanonicalKey()
+		assertions.Equal(expectedKey, got.CanonicalKey())
 	})
 }

@@ -76,7 +76,7 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, callhistory.ErrImportTooLarge):
-		writeError(w, 413, "request_too_large", "Call import exceeds 1 MiB")
+		writeError(w, 413, "request_too_large", "Call import exceeds the 1 MiB request or 512 KiB record limit")
 	case errors.Is(err, callhistory.ErrMalformedImport):
 		writeError(w, 400, "bad_request", "Invalid call import JSON")
 	case errors.Is(err, callhistory.ErrInvalid):
@@ -96,7 +96,7 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 415, "unsupported_media_type", "Content-Type must be application/json")
 		return
 	}
-	o, err := callhistory.DecodeImport(r.Body)
+	request, err := callhistory.DecodeImportRequest(r.Body)
 	if err != nil {
 		s.writeCallError(w, err)
 		return
@@ -114,6 +114,31 @@ func (s *Server) handleCallImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer done()
+	if request.Format == "discord_archived" {
+		reader, ok := s.store.(interface {
+			GetDiscordCallRecordContext(ctx context.Context, messageID int64) ([]byte, error)
+		})
+		if !ok {
+			writeError(w, 503, "service_unavailable", "Archived Discord call import is unavailable")
+			return
+		}
+		messageID, err := request.DiscordArchiveID()
+		if err != nil {
+			s.writeCallError(w, err)
+			return
+		}
+		raw, err := reader.GetDiscordCallRecordContext(r.Context(), messageID)
+		if err != nil {
+			s.writeCallError(w, err)
+			return
+		}
+		request.Format, request.Record = "discord", raw
+	}
+	o, err := request.Observation()
+	if err != nil {
+		s.writeCallError(w, err)
+		return
+	}
 	source, err := st.GetOrCreateSourceContext(r.Context(), callhistory.SourceType, o.SourceIdentifier())
 	if err != nil {
 		s.writeCallError(w, err)
