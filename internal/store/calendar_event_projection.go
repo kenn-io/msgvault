@@ -90,8 +90,10 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 	if !ok {
 		return clearProjection()
 	}
+	// Rebuilds and config refreshes must keep the selected alias snapshot. The
+	// cancelled message's own raw payload can be older while still having bounds.
 	if event.Kind == "exception" && event.Status == meetingCancelledStatus && event.Original != nil &&
-		(cancellationMetadata || event.Start == nil && event.End == nil) {
+		(cancellationMetadata || !providerEvidence || event.Start == nil && event.End == nil) {
 		latest, found, err := s.freshestCalendarExceptionDetailsWith(ctx, tx, sourceID, event)
 		if err != nil {
 			return err
@@ -100,7 +102,7 @@ func (s *Store) refreshCalendarEventProjectionModeWith(ctx context.Context, tx *
 			status, providerID, seriesID, original := event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original
 			event = latest.Event
 			event.Status, event.ProviderEventID, event.SeriesProviderID, event.Original = status, providerID, seriesID, original
-			if latest.Subject != "" && (cancellationMetadata || !subject.Valid || subject.String == "") {
+			if cancellationMetadata || latest.Subject != "" && (!subject.Valid || subject.String == "") {
 				if _, err := q.Exec(`UPDATE messages SET subject = ? WHERE id = ?`, latest.Subject, messageID); err != nil {
 					return fmt.Errorf("preserve cancellation event subject: %w", err)
 				}

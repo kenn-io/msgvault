@@ -2543,9 +2543,10 @@ func copyMessages(tx *sql.Tx) error {
 	return nil
 }
 
-// copyCalendarEventProjections carries provider-evidence freshness into the
-// subset. Mark copied projections stale so InitSchema rebuilds their derived
-// fields from raw provider snapshots while retaining their freshness times.
+// copyCalendarEventProjections carries provider-evidence freshness and
+// inherited attendee details into the subset. Mark copied projections stale
+// so InitSchema rebuilds derived fields from raw snapshots while retaining
+// their freshness times.
 func copyCalendarEventProjections(tx *sql.Tx) error {
 	hasEvents, err := sourceTableExists(tx, "calendar_events")
 	if err != nil || !hasEvents {
@@ -2557,6 +2558,15 @@ func copyCalendarEventProjections(tx *sql.Tx) error {
 	}
 	if _, err := copyByName(tx, "calendar_events", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return err
+	}
+	hasAttendees, err := sourceTableExists(tx, "calendar_event_attendees")
+	if err != nil {
+		return err
+	}
+	if hasAttendees {
+		if _, err := copyByName(tx, "calendar_event_attendees", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return fmt.Errorf("copy calendar event attendees: %w", err)
+		}
 	}
 	if _, err := tx.Exec(`UPDATE calendar_events SET projection_version = 0 WHERE message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return err

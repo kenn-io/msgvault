@@ -297,8 +297,13 @@ func calendarExceptionWindowFor(dialect Dialect, lower, upper time.Time, eventAl
 	return predicate, args
 }
 
-// Only sparse cancellations inherit omitted details from the master.
+// Only cancellations whose projection still lacks complete bounds inherit
+// omitted details from raw evidence and then the master. A complete projection
+// may hold details inherited from another alias while its raw payload is sparse.
 func inheritCalendarCancellation(ctx context.Context, r SQLReader, row, master CalendarEventRow) (CalendarEventRow, error) {
+	if (row.Event.Start != nil && row.Event.End != nil) || (row.Event.StartDate != "" && row.Event.EndDate != "") {
+		return row, nil
+	}
 	var stored []byte
 	var compression sql.NullString
 	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ?`, row.MessageID).Scan(&stored, &compression); err != nil {
