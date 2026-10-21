@@ -194,11 +194,67 @@ func TestHealthReportsStaleVectorStatus(t *testing.T) {
 type resolvingVectorBackend struct {
 	vector.Backend
 
-	fingerprint string
+	fingerprint      string
+	activeGeneration func(context.Context) (vector.Generation, error)
 }
 
-func (b *resolvingVectorBackend) ActiveGeneration(context.Context) (vector.Generation, error) {
+func (b *resolvingVectorBackend) ActiveGeneration(ctx context.Context) (vector.Generation, error) {
+	if b.activeGeneration != nil {
+		return b.activeGeneration(ctx)
+	}
 	return vector.Generation{ID: 1, Fingerprint: b.fingerprint}, nil
+}
+
+func TestMarkVectorIndexStaleCancelledCallerGetsRestartAdvice(t *testing.T) {
+	t.Parallel()
+	backend := &resolvingVectorBackend{
+		activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+			if err := ctx.Err(); err != nil {
+				return vector.Generation{}, err
+			}
+			return vector.Generation{ID: 1, Fingerprint: "model-b"}, nil
+		},
+	}
+	srv := NewServerWithOptions(testServerOptions(t, backend))
+	defer func() { require.NoError(t, srv.Shutdown(context.Background())) }()
+	srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	assert.Equal(t, vectorRestartAdvice, srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale))
+}
+
+func TestMarkVectorIndexStaleShutdownCancelsDiagnosis(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		backend := &resolvingVectorBackend{
+			activeGeneration: func(ctx context.Context) (vector.Generation, error) {
+				close(started)
+				<-ctx.Done()
+				return vector.Generation{}, ctx.Err()
+			},
+		}
+		srv := NewServerWithOptions(testServerOptions(t, backend))
+		srv.SetVectorRestartFingerprint(func(context.Context) (string, error) { return "model-b", nil })
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan struct{})
+		go func() {
+			srv.MarkVectorIndexStale(ctx, vector.ErrIndexStale)
+			close(done)
+		}()
+		<-started
+		require.NoError(t, srv.Shutdown(context.Background()))
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			assert.Fail(t, "MarkVectorIndexStale must return after server shutdown")
+			cancel()
+			<-done
+		}
+	})
 }
 
 func TestMarkVectorIndexStaleCoalescesConcurrentDiagnosis(t *testing.T) {

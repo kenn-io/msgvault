@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/operations"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -173,10 +174,11 @@ func (s *Server) staleAdvice(ctx context.Context, backend vector.Backend) (strin
 }
 
 // MarkVectorIndexStale records the mismatch and returns its recovery advice.
-// Concurrent callers share the first caller's diagnosis and its advice.
+// Concurrent callers share one diagnosis that runs on the server's lifetime
+// rather than the caller's request.
 func (s *Server) MarkVectorIndexStale(ctx context.Context, mismatch error) string {
 	v, _, _ := s.vectorStaleFlight.Do("stale", func() (any, error) {
-		return s.markVectorIndexStale(ctx, mismatch), nil
+		return s.markVectorIndexStale(store.WithRequestID(s.importContext, store.RequestIDFromContext(ctx)), mismatch), nil
 	})
 	advice, _ := v.(string)
 	return advice
