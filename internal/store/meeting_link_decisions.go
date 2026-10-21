@@ -146,7 +146,7 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 		if d.target.Valid && d.target.Int64 == from {
 			d.target.Int64 = to
 		}
-		_, err := tx.ExecContext(ctx, meetingDecisionUpsert+` WHERE meeting_link_decisions.created_at < excluded.created_at OR (meeting_link_decisions.created_at = excluded.created_at AND excluded.decision = 'split')`, d.member, d.uid, d.target, d.key, d.decision, d.created)
+		_, err := tx.ExecContext(ctx, meetingDecisionUpsertIfNewer, d.member, d.uid, d.target, d.key, d.decision, d.created)
 		if err != nil {
 			return fmt.Errorf("copy meeting decision: %w", err)
 		}
@@ -154,4 +154,57 @@ func copyMeetingLinkDecisionsTx(ctx context.Context, tx *loggedTx, from, to int6
 	return nil
 }
 
+func remapHiddenCalendarMeetingDecisionsTx(ctx context.Context, tx *loggedTx, from, into int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT d.member_message_id, d.target_message_id, d.target_ical_uid, d.occurrence_key, d.decision, d.created_at,
+	 (SELECT candidate_message.id FROM calendar_events other_event JOIN messages candidate_message ON candidate_message.id = other_event.message_id
+	  WHERE other_event.provider_event_id = e.provider_event_id
+	    AND candidate_message.source_id = m.source_id AND candidate_message.id != m.id AND candidate_message.deleted_at IS NULL
+	    AND `+calendarEventVisibility("other_event", "candidate_message")+`
+	  ORDER BY candidate_message.id LIMIT 1)
+ FROM meeting_link_decisions d
+ JOIN messages m ON m.id = d.target_message_id
+ JOIN calendar_events e ON e.message_id = m.id
+ JOIN source_merge_archive_only_messages am ON am.message_id = m.id
+ JOIN source_merge_messages sm ON sm.message_id = m.id
+ WHERE d.target_ical_uid = '' AND m.source_id = ? AND m.deleted_at IS NULL
+   AND e.provider_event_id != '' AND sm.original_source_id = ?
+   AND NOT (`+calendarEventVisibility("e", "m")+`)
+ ORDER BY d.created_at, d.member_message_id, d.target_message_id, d.occurrence_key`, into, from)
+	if err != nil {
+		return fmt.Errorf("find hidden calendar meeting decisions: %w", err)
+	}
+	type remap struct {
+		member, oldTarget  int64
+		replacement        sql.NullInt64
+		uid, key, decision string
+		created            time.Time
+	}
+	var decisions []remap
+	for rows.Next() {
+		var d remap
+		if err := rows.Scan(&d.member, &d.oldTarget, &d.uid, &d.key, &d.decision, &d.created, &d.replacement); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan hidden calendar meeting decision: %w", err)
+		}
+		if d.replacement.Valid {
+			decisions = append(decisions, d)
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("read hidden calendar meeting decisions: %w", err)
+	}
+	for _, d := range decisions {
+		_, err := tx.ExecContext(ctx, meetingDecisionUpsertIfNewer,
+			d.member, d.uid, d.replacement, d.key, d.decision, d.created)
+		if err != nil {
+			return fmt.Errorf("remap hidden calendar meeting decision: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM meeting_link_decisions WHERE member_message_id = ? AND target_ical_uid = ? AND target_message_id = ? AND occurrence_key = ?`, d.member, d.uid, d.oldTarget, d.key); err != nil {
+			return fmt.Errorf("remove hidden calendar meeting decision: %w", err)
+		}
+	}
+	return nil
+}
+
 const meetingDecisionUpsert = `INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,target_message_id,occurrence_key,decision,created_at) VALUES (?,?,?,?,?,?) ON CONFLICT(member_message_id,target_ical_uid,(COALESCE(target_message_id,0)),occurrence_key) DO UPDATE SET decision = excluded.decision,created_at = excluded.created_at`
+const meetingDecisionUpsertIfNewer = meetingDecisionUpsert + ` WHERE meeting_link_decisions.created_at < excluded.created_at OR (meeting_link_decisions.created_at = excluded.created_at AND excluded.decision = 'split')`

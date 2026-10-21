@@ -31,3 +31,59 @@ func TestMeetingLinksCalendarSourceMergeUniqueHistoricalEvent(t *testing.T) {
 	assertions.Equal(event, page.Occurrences[0].MessageID)
 	assertions.Equal(destination.ID, page.Occurrences[0].SourceID)
 }
+
+func TestMeetingLinksUIDLessCalendarSourceMergeRemapsDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		incomingDecision     string
+		newerVisibleDecision bool
+		wantDecision         string
+		wantLink             bool
+	}{
+		{name: "link", incomingDecision: "link", wantDecision: "link", wantLink: true},
+		{name: "split", incomingDecision: "split", wantDecision: "split"},
+		{name: "newer visible decision wins", incomingDecision: "split", newerVisibleDecision: true, wantDecision: "link", wantLink: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := `{"id":"shared","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`
+			history, incoming := calendarFixture(t, st, "history-event", raw, "history")
+			destination, visible := calendarFixture(t, st, "destination-event", raw, "destination")
+			_, note := projectionFixture(t, st, "note", "twenty_json", `{}`)
+			writeDecision := st.LinkMeetingContext
+			if tc.incomingDecision == "split" {
+				writeDecision = st.UnlinkMeetingContext
+			}
+			requirements.NoError(writeDecision(t.Context(), note, OccurrenceRef{MessageID: incoming}))
+			if tc.newerVisibleDecision {
+				requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: visible}))
+				later := time.Date(2099, time.January, 1, 0, 0, 0, 0, time.UTC)
+				_, err := st.db.Exec(`UPDATE meeting_link_decisions SET created_at = ? WHERE member_message_id = ? AND target_message_id = ?`, later, note, visible)
+				requirements.NoError(err)
+			}
+
+			_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: destination.Message.SourceID})
+			requirements.NoError(err)
+
+			var target int64
+			var decision string
+			requirements.NoError(st.db.QueryRow(`SELECT target_message_id, decision FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&target, &decision))
+			assertions.Equal(visible, target)
+			assertions.Equal(tc.wantDecision, decision)
+			var staleDecisionCount int
+			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ? AND target_message_id = ?`, note, incoming).Scan(&staleDecisionCount))
+			assertions.Zero(staleDecisionCount)
+			linked := linkedMeetingRefs(t, st, note)[note]
+			if tc.wantLink {
+				assertions.Equal(fmt.Sprintf("evt:%d", visible), linked)
+			} else {
+				assertions.Empty(linked)
+			}
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 15, 0, 0, 0, 0, time.UTC))
+			requirements.NoError(err)
+			requirements.Len(page.Occurrences, 1)
+			assertions.Equal(visible, page.Occurrences[0].MessageID)
+		})
+	}
+}
