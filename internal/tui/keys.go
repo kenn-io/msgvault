@@ -248,7 +248,7 @@ func (m Model) handleGlobalKeys(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 		m.mode = next
 		// A frozen view and the email search loading flags describe the mode
 		// being left. Do not let them obscure or animate the destination mode.
-		m.transitionBuffer = ""
+		m.transitionBuffer, m.submittedQuery = "", ""
 		m.inlineSearchLoading = false
 		m.searchLoadingMore = false
 		switch m.mode {

@@ -8,7 +8,39 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
 )
+
+func TestModeSwitchDoesNotSubmitRestoredTextSearch(t *testing.T) {
+	require := require.New(t)
+	m := NewBuilder().Build()
+	m.width, m.height = 100, 24
+	m.textEngine = meetingModeTextEngine{}
+	m.textState.level = textLevelTimeline
+	m.textState.selectedConvID = 701
+	m.textState.filter = query.TextFilter{SearchQuery: "needle"}
+	var events []string
+	m.reportAction = func(_ context.Context, event, _, _ string) error { events = append(events, event); return nil }
+	m, _ = sendKey(t, m, key('/'))
+	m.searchInput.SetValue("needle")
+	m, _ = sendKey(t, m, keyEnter())
+	require.True(m.inlineSearchLoading)
+	m, cmd := sendKey(t, m, key('m'))
+	require.Equal(modeTexts, m.mode)
+	require.NotNil(cmd)
+	for _, msg := range runBatchCommand(t, cmd) {
+		if reply, ok := msg.(textMessagesLoadedMsg); ok {
+			require.NoError(reply.err)
+			require.Equal("needle", reply.query)
+			updated, report := m.Update(reply)
+			m = asModel(t, updated)
+			if report != nil {
+				_ = runBatchCommand(t, report)
+			}
+		}
+	}
+	assert.Equal(t, []string{"search_run"}, events)
+}
 
 func TestFailedAggregatePreviewDoesNotCountEmptyOnEnter(t *testing.T) {
 	assert := assert.New(t)

@@ -51,7 +51,6 @@ func TestReason(t *testing.T) {
 		{&discord.APIError{StatusCode: 429}, "rate_limited"},
 		{&imap.Error{Code: imap.ResponseCodeAuthenticationFailed}, "auth"},
 		{notionmeetings.ErrUnauthorized, "auth"},
-		{notionmeetings.ErrRateLimited, "rate_limited"},
 		{oauth.ErrTokenUnrefreshable, "auth"},
 		{oauth.ErrInvalidTokenJSON, "auth"},
 		{&gmail.ThrottledError{}, "rate_limited"},
@@ -72,6 +71,14 @@ func TestProviderFailureReasons(t *testing.T) {
 		want   string
 		run    func(context.Context, string) error
 	}{
+		{"notion exhausted throttling", 429, "", "rate_limited", func(ctx context.Context, url string) error {
+			_, err := notionmeetings.NewClient(url, "synthetic").ListUsers(ctx, "")
+			return err
+		}},
+		{"notion exhausted server failures", 503, "", "other", func(ctx context.Context, url string) error {
+			_, err := notionmeetings.NewClient(url, "synthetic").ListUsers(ctx, "")
+			return err
+		}},
 		{"calendar unauthorized", 401, "", "auth", func(ctx context.Context, url string) error {
 			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
 			return err
