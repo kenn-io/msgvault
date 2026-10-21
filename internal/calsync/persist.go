@@ -200,7 +200,7 @@ func (s *Syncer) flagCancelled(sourceID int64, cal gcal.Calendar, ev gcal.Event)
 		if err != nil {
 			return 0, false, err
 		}
-		if err := s.store.SetCalendarEventProviderMetadata(id, merged); err != nil {
+		if err := s.store.SetMessageMetadata(id, merged); err != nil {
 			return 0, false, fmt.Errorf("flag cancelled metadata: %w", err)
 		}
 		return id, false, nil

@@ -18,7 +18,6 @@ import (
 // startup on a large archive).
 const (
 	migrationCalendarEventProjectionV1      = "calendar_event_projection_v1"
-	migrationCalendarProviderObservationV1  = "calendar_provider_observation_v1"
 	migrationMeetingProjectionV1            = "meeting_projection_v1"
 	migrationAttachmentsContentHashUnique   = "attachments_content_hash_unique_index"
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
