@@ -276,6 +276,7 @@ type GmailIDsResponse struct {
 	Targets          []query.DeletionTarget `json:"targets,omitempty"`
 	SearchQuery      string                 `json:"search_query,omitempty"`
 	SearchMode       string                 `json:"search_mode,omitempty"`
+	MatchedCount     *int64                 `json:"matched_count,omitempty"`
 	MaxResults       *int64                 `json:"max_results,omitempty"`
 	AppliedSourceIDs []int64                `json:"applied_source_ids,omitempty"`
 }
@@ -3370,10 +3371,11 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		maxResults = &value
 	}
 	if maxResults != nil && (searchQuery == "" || searchMode == string(query.DeletionSearchAggregate)) {
-		writeError(w, http.StatusBadRequest, "invalid_max_results", "max_results requires q and a fast, deep, or fast_then_deep search mode")
+		writeError(w, http.StatusBadRequest, "invalid_max_results", "max_results requires q and a fast or deep search mode")
 		return
 	}
 	var targets []query.DeletionTarget
+	var matched int
 	if searchQuery == "" {
 		if searchMode != "" {
 			writeError(w, http.StatusBadRequest, "invalid_search", "search_mode requires q")
@@ -3387,24 +3389,20 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		switch searchMode {
-		case string(query.DeletionSearchFast), string(query.DeletionSearchDeep), string(query.DeletionSearchFastThenDeep):
+		case string(query.DeletionSearchFast), string(query.DeletionSearchDeep):
 			if maxResults != nil {
 				resolver, ok := engine.(query.BoundedDeletionTargetSearchResolver)
 				if !ok {
 					writeError(w, http.StatusServiceUnavailable, "search_unavailable", "Bounded search-aware deletion resolution is not available")
 					return
 				}
-				targets, err = resolver.GetDeletionTargetsBySearchBounded(
+				targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(
 					r.Context(), parsed, filter, query.DeletionSearchMode(searchMode), int(*maxResults),
 				)
 				if err == nil && len(targets) > int(*maxResults) {
 					err = fmt.Errorf("bounded deletion search returned %d targets above its %d-row limit", len(targets), *maxResults)
 				}
 				break
-			}
-			if searchMode == string(query.DeletionSearchFastThenDeep) {
-				writeError(w, http.StatusBadRequest, "invalid_search_mode", "fast_then_deep requires max_results")
-				return
 			}
 			resolver, ok := engine.(query.DeletionTargetSearchResolver)
 			if !ok {
@@ -3433,7 +3431,7 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 				r.Context(), searchQuery, filter, viewType, r.URL.Query().Get("aggregate_key"),
 			)
 		default:
-			writeError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be fast, deep, fast_then_deep, or aggregate")
+			writeError(w, http.StatusBadRequest, "invalid_search_mode", "search_mode must be fast, deep, or aggregate")
 			return
 		}
 	}
@@ -3448,7 +3446,12 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 	if targets == nil {
 		targets = []query.DeletionTarget{}
 	}
+	var matchedCount *int64
+	if maxResults != nil {
+		matchedCount = new(int64(matched))
+	}
 	writeJSON(w, http.StatusOK, GmailIDsResponse{
+		MatchedCount:     matchedCount,
 		GmailIDs:         deletion.SourceMessageIDs(targets),
 		Targets:          targets,
 		SearchQuery:      searchQuery,

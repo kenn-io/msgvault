@@ -166,9 +166,9 @@ func TestUnattributedAccountNarrowsTextQueries(t *testing.T) {
 			bodyQuery = q
 			return nil, nil
 		},
-		SearchFastFunc: func(_ context.Context, q *search.Query, _ query.MessageFilter, _, _ int) ([]query.MessageSummary, error) {
+		GetDeletionTargetsBySearchBoundedFunc: func(_ context.Context, q *search.Query, _ query.MessageFilter, _ query.DeletionSearchMode, _ int) ([]query.DeletionTarget, int, error) {
 			fastQuery = q
-			return []query.MessageSummary{{ID: 100, SourceID: 1, SourceMessageID: "m100"}}, nil
+			return []query.DeletionTarget{{MessageID: 100, SourceID: 1, SourceType: "gmail", SourceIdentifier: "alice@example.com", SourceMessageID: "m100"}}, 1, nil
 		},
 	}
 	h := &handlers{engine: engine, dataDir: t.TempDir()}

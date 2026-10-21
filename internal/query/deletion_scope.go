@@ -9,6 +9,9 @@ import (
 // staged for deletion at the source.
 const deletableSourceTypesSQL = "('gmail', 'msmail')"
 
+// executableDeletionSourceTypesSQL matches delete-staged's canDeleteAtSource.
+const executableDeletionSourceTypesSQL = "('gmail', 'imap', 'msmail')"
+
 // searchMessageVisibilityWhere returns the message visibility predicate for
 // the lexical Search path. An explicit scope wins; the zero value keeps the
 // historical HideDeleted-driven visibility so callers that never set a scope

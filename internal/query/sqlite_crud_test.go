@@ -989,15 +989,16 @@ func TestGetDeletionTargetsBySearchBoundedUsesSearchResultsAndExplicitLimit(t *t
 	requirements.NoError(err)
 	requirements.Len(visible, 1)
 
-	targets, err := env.Engine.GetDeletionTargetsBySearchBounded(
+	targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
 		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, 1,
 	)
 	requirements.NoError(err)
+	assertions.Equal(1, matched)
 	ids, err := deletionTargetSourceMessageIDs(targets, nil)
 	requirements.NoError(err)
 	assertions.Equal([]string{visible[0].SourceMessageID}, ids)
 
-	_, err = env.Engine.GetDeletionTargetsBySearchBounded(
+	_, _, err = env.Engine.GetDeletionTargetsBySearchBounded(
 		env.Ctx, search.Parse("Hello"), filter, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
 	)
 	requirements.ErrorContains(err, "bounded deletion search limit cannot exceed")
@@ -1015,24 +1016,33 @@ func TestGetDeletionTargetsBySearchBoundedSkipsSourceDeletedBeforeLimit(t *testi
 	})
 	env.MarkDeletedByID(deletedID)
 
-	targets, err := env.Engine.GetDeletionTargetsBySearchBounded(
+	targets, matched, err := env.Engine.GetDeletionTargetsBySearchBounded(
 		env.Ctx, search.Parse("boundedneedle"), MessageFilter{}, DeletionSearchFast, 1,
 	)
 	requirements.NoError(err)
 	requirements.Len(targets, 1)
+	assertions.Equal(1, matched)
 	assertions.Equal(activeID, targets[0].MessageID)
 }
 
 func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
+	assertions := assert.New(t)
 	env := newTestEnv(t)
 	reader := &recordingSQLReader{SQLReader: env.DB}
 	messages := make([]MessageSummary, inListChunkSize+1)
 	for i := range messages {
-		messages[i].ID = int64(i + 1)
+		messages[i].ID = env.AddMessage(dbtest.MessageOpts{Subject: "label chunk"})
 	}
 
+	firstLabel := env.AddLabel(dbtest.LabelOpts{Name: "first chunk"})
+	lastLabel := env.AddLabel(dbtest.LabelOpts{Name: "second chunk"})
+	env.AddMessageLabel(messages[0].ID, firstLabel)
+	env.AddMessageLabel(messages[inListChunkSize].ID, lastLabel)
+
 	require.NoError(t, fetchLabelsForMessageList(env.Ctx, reader, SQLiteQueryDialect{}.Rebind, "", messages))
-	assert.Equal(t, []int{inListChunkSize, 1}, reader.argumentCounts)
+	assertions.Equal([]int{inListChunkSize, 1}, reader.argumentCounts)
+	assertions.Equal([]string{"first chunk"}, messages[0].Labels)
+	assertions.Equal([]string{"second chunk"}, messages[inListChunkSize].Labels)
 }
 
 func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) {

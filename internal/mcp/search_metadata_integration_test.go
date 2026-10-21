@@ -177,7 +177,45 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		before := boundedRequests.Load()
 		saver := stage(t, map[string]any{"query": "bodyneedle"})
 		assert.Len(t, saver.manifest.GmailIDs, 150)
-		assert.Equal(t, before+1, boundedRequests.Load())
+		assert.Equal(t, before+2, boundedRequests.Load())
 		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
 	})
+	t.Run("archive-only match is skipped and counted", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		_, err := st.DB().Exec(`INSERT INTO source_merge_archive_only_messages (message_id) SELECT id FROM messages WHERE source_message_id = 'meta-000'`)
+		requirements.NoError(err)
+		saver := &captureDeletionManifestSaver{}
+		h := &handlers{engine: daemon, manifestSaver: saver}
+		before := boundedRequests.Load()
+		resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "subject:selectionmarker"})
+		assertions.Equal(599, resp.MessageCount)
+		assertions.Equal(1, resp.SkippedCount)
+		assertions.Contains(resp.NextStep, "1 of 600 matching item(s)")
+		requirements.NotNil(saver.manifest)
+		assertions.Len(saver.manifest.GmailIDs, 599)
+		assertions.NotContains(saver.manifest.GmailIDs, "meta-000")
+		assertions.Equal(before+1, boundedRequests.Load())
+	})
+}
+
+func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec(`UPDATE sources SET source_type = 'imap' WHERE id = ?`, f.Source.ID)
+	requirements.NoError(err)
+	for i := range 3 {
+		f.NewMessage().WithSourceMessageID(fmt.Sprintf("imap-%d", i)).WithSubject("imapneedle").Create(t, f.Store)
+	}
+	var boundedRequests atomic.Int32
+	daemon := metadataDaemonWithPeer(t, query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), nil, &boundedRequests, "", f.Store)
+	saver := &captureDeletionManifestSaver{}
+	h := &handlers{engine: daemon, manifestSaver: saver}
+	resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "subject:imapneedle", "account": f.Source.Identifier})
+	assertions.Equal(3, resp.MessageCount)
+	requirements.NotNil(saver.manifest)
+	assertions.Equal("imap", saver.manifest.Source.Type)
+	assertions.ElementsMatch([]string{"imap-0", "imap-1", "imap-2"}, saver.manifest.GmailIDs)
+	assertions.Equal(int32(1), boundedRequests.Load())
 }

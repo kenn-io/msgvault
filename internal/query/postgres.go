@@ -69,10 +69,10 @@ func (e *pgEngine) GetDeletionTargetsBySearchBounded(
 	filter MessageFilter,
 	mode DeletionSearchMode,
 	maxResults int,
-) ([]DeletionTarget, error) {
+) ([]DeletionTarget, int, error) {
 	resolver, ok := e.Engine.(BoundedDeletionTargetSearchResolver)
 	if !ok {
-		return nil, ErrNotImplemented
+		return nil, 0, ErrNotImplemented
 	}
 	return resolver.GetDeletionTargetsBySearchBounded(ctx, searchQuery, filter, mode, maxResults)
 }

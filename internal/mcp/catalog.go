@@ -869,7 +869,7 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 func stageDeletionDefinition(_ *handlers) toolDefinition {
 	return writeDefinition(
 		ToolStageDeletion,
-		fmt.Sprintf("Stage messages for deletion: every match, or none. At most %d messages per call; narrow larger selections with before:/after: or account. ", maxStageDeletionResults)+
+		fmt.Sprintf("Stage messages for deletion: every match its source can delete, or none. At most %d messages per call; narrow larger selections with before:/after: or account. ", maxStageDeletionResults)+
 			"Use EITHER 'query' (Gmail-style search) OR structured filters (from, domain, label, etc.), not both. Does NOT delete immediately. To execute, set '[deletion] remote_enabled = true' in the invoking CLI's config.toml for durable consent, then run 'msgvault delete-staged'. One-command alternative: MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgAccount:   accountProperty(),
@@ -1016,6 +1016,7 @@ type exportAttachmentResponse struct {
 }
 
 type stageDeletionResponse struct {
+	SkippedCount int    `json:"skipped_count,omitempty"`
 	BatchID      string `json:"batch_id"`
 	MessageCount int    `json:"message_count"`
 	Status       string `json:"status"`

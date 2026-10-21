@@ -2669,10 +2669,11 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 	requirements.NoError(err)
 	assertions.Equal([]string{"msg4"}, ids)
 
-	bounded, err := engine.GetDeletionTargetsBySearchBounded(
+	bounded, matched, err := engine.GetDeletionTargetsBySearchBounded(
 		t.Context(), q, filter, DeletionSearchFast, 1,
 	)
 	requirements.NoError(err)
+	assertions.Equal(1, matched)
 	ids, err = deletionTargetSourceMessageIDs(bounded, nil)
 	requirements.NoError(err)
 	assertions.Equal([]string{"msg1"}, ids,
@@ -2680,11 +2681,12 @@ func TestDuckDBEngine_GetDeletionTargetsUseAuthoritativeSQLiteScope(t *testing.T
 
 	_, err = tdb.DB.Exec(`UPDATE messages SET deleted_from_source_at = '2026-09-04 12:00:00' WHERE id = 1`)
 	requirements.NoError(err)
-	_, err = engine.GetDeletionTargetsBySearchBounded(
+	bounded, matched, err = engine.GetDeletionTargetsBySearchBounded(
 		t.Context(), q, filter, DeletionSearchFast, 10,
 	)
-	requirements.ErrorContains(err, "search returned 1 messages but only 0 eligible targets remain",
-		"staging must fail closed when SQLite can no longer resolve every Parquet result")
+	requirements.NoError(err)
+	assertions.Empty(bounded)
+	assertions.Equal(1, matched)
 }
 
 // buildEmptyBucketsTestData creates a TestDataBuilder with messages that have

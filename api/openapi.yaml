@@ -6382,6 +6382,9 @@ components:
           items:
             type: string
           type: array
+        matched_count:
+          format: int64
+          type: integer
         max_results:
           format: int64
           type: integer
@@ -24387,7 +24390,7 @@ paths:
           name: q
           schema:
             type: string
-        - description: "Search mode: fast, deep, or aggregate; fast_then_deep is bounded staging only and requires max_results"
+        - description: "Search mode: fast, deep, or aggregate"
           in: query
           name: search_mode
           schema:

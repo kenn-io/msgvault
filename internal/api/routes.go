@@ -1017,7 +1017,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 	case "getGmailIDsByFilter":
 		return append(messageFilterParams(),
 			queryStringParam("q", "Structured search query", false),
-			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate; fast_then_deep is bounded staging only and requires max_results", false),
+			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate", false),
 			queryIntegerParam("max_results", "Maximum results for bounded search-aware deletion resolution (max 100001)"),
 			queryStringParam("view_type", "Aggregate view type; required for aggregate search", false),
 			queryStringParam("aggregate_key", "Displayed aggregate row key; required for aggregate search", false),

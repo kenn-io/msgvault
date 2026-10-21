@@ -2339,55 +2339,6 @@ func stringArrayArg(args map[string]any, key string) ([]string, error) {
 // maxStageDeletionResults limits how many messages can be staged in one call.
 const maxStageDeletionResults = query.MaxDeletionTargetSearchResults - 1
 
-// stageDeletionPageSize matches the daemon API's 500-row cap on fast and deep
-// search pages (internal/api maxPageSize).
-const stageDeletionPageSize = 500
-
-// searchAllForDeletion walks the search pages twice and refuses when the walks
-// differ: a row that stops matching between page requests shifts later offsets
-// and can hide a message that matched throughout.
-func searchAllForDeletion(page func(limit, offset int) ([]query.MessageSummary, error)) ([]query.MessageSummary, error) {
-	first, ids, err := walkDeletionPages(page)
-	if err != nil || len(first) > maxStageDeletionResults {
-		return first, err
-	}
-	second, _, err := walkDeletionPages(page)
-	if err != nil {
-		return nil, err
-	}
-	changed := len(second) != len(first)
-	for _, row := range second {
-		changed = changed || !ids[row.ID]
-	}
-	if changed {
-		return nil, &expectedHandlerError{message: "the archive changed during staging; retry stage_deletion"}
-	}
-	return first, nil
-}
-
-// walkDeletionPages fetches search pages at increasing offsets, keeping each
-// message once, until a short page or more than maxStageDeletionResults rows.
-func walkDeletionPages(page func(limit, offset int) ([]query.MessageSummary, error)) ([]query.MessageSummary, map[int64]bool, error) {
-	var results []query.MessageSummary
-	seen := make(map[int64]bool)
-	for offset := 0; len(results) <= maxStageDeletionResults; offset += stageDeletionPageSize {
-		rows, err := page(stageDeletionPageSize, offset)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, row := range rows {
-			if !seen[row.ID] {
-				seen[row.ID] = true
-				results = append(results, row)
-			}
-		}
-		if len(rows) < stageDeletionPageSize {
-			break
-		}
-	}
-	return results, seen, nil
-}
-
 func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
 
@@ -2432,6 +2383,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 	var targets []query.DeletionTarget
 	var description string
 	var searchNote string
+	var skipped int
 
 	if hasQuery {
 		// Query-based search
@@ -2450,63 +2402,28 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if q.HasOR() && q.HasTextTerms() {
 			mode = query.DeletionSearchDeep
 			searchNote = "Full-text OR search includes body matches. "
-		} else if q.HasTextTerms() {
-			mode = query.DeletionSearchFastThenDeep
 		}
-		if resolver, ok := h.engine.(query.BoundedDeletionTargetSearchResolver); ok {
-			filter := query.MessageFilter{}
-			selection.applyToFilter(&filter)
-			targets, err = resolver.GetDeletionTargetsBySearchBounded(
-				ctx, q, filter, mode, maxStageDeletionResults+1,
-			)
-		} else {
-			// Keep custom engines that predate the bounded capability usable. All
-			// built-in archive engines use the bounded resolver above.
-			deep := func(limit, offset int) ([]query.MessageSummary, error) {
-				return h.engine.Search(ctx, q, limit, offset)
-			}
-			var results []query.MessageSummary
-			if q.HasOR() && q.HasTextTerms() {
-				results, err = searchAllForDeletion(deep)
-			} else {
-				filter := query.MessageFilter{SourceID: sourceID}
-				results, err = searchAllForDeletion(func(limit, offset int) ([]query.MessageSummary, error) {
-					return h.engine.SearchFast(ctx, q, filter, limit, offset)
-				})
-				if err == nil && len(results) == 0 && q.HasTextTerms() {
-					results, err = searchAllForDeletion(deep)
-				}
-			}
-			if err == nil {
-				var accounts []query.AccountInfo
-				accounts, err = h.engine.ListAccounts(ctx)
-				if err == nil {
-					accountsByID := make(map[int64]query.AccountInfo, len(accounts))
-					for _, info := range accounts {
-						accountsByID[info.ID] = info
-					}
-					for _, msg := range results {
-						if msg.SourceID <= 0 {
-							return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-						}
-						info, ok := accountsByID[msg.SourceID]
-						if !ok {
-							return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-						}
-						if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
-							return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
-						}
-						targets = append(targets, query.DeletionTarget{
-							MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
-							SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
-						})
-					}
-				}
-			}
+		resolver, ok := h.engine.(query.BoundedDeletionTargetSearchResolver)
+		if !ok {
+			return dependencyError("search messages for deletion", errors.New("query engine requires bounded deletion search support"))
+		}
+		filter := query.MessageFilter{}
+		selection.applyToFilter(&filter)
+		var matched int
+		targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, mode, maxStageDeletionResults+1)
+		if err == nil && mode == query.DeletionSearchFast && matched == 0 && q.HasTextTerms() {
+			targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, query.DeletionSearchDeep, maxStageDeletionResults+1)
 		}
 		if err != nil {
 			return dependencyError("search messages for deletion", err)
 		}
+		if matched > maxStageDeletionResults {
+			return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
+		}
+		if matched > 0 && len(targets) == 0 {
+			return toolErrorResult(fmt.Sprintf("%d messages match, but none can be deleted from their source", matched)), nil
+		}
+		skipped = matched - len(targets)
 		description = "query: " + queryStr
 		if len(description) > 50 {
 			description = description[:50]
@@ -2604,11 +2521,15 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 
 	resp := stageDeletionResponse{
 		BatchID:      manifest.ID,
+		SkippedCount: skipped,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
 		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
 	}
 
+	if skipped > 0 {
+		resp.NextStep = fmt.Sprintf("%d of %d matching item(s) cannot be deleted from their source (chats, meetings, or mail from other sources) and were skipped. ", skipped, skipped+len(targets)) + resp.NextStep
+	}
 	return jsonResult(resp)
 }
 

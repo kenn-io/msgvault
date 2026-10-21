@@ -1025,12 +1025,12 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 		case "/api/v1/messages/gmail-ids":
 			targetRequests++
 			assertions.Equal("bodyneedle", r.URL.Query().Get("q"))
-			assertions.Equal("fast_then_deep", r.URL.Query().Get("search_mode"))
+			assertions.Equal("fast", r.URL.Query().Get("search_mode"))
 			assertions.Equal("100001", r.URL.Query().Get("max_results"))
 			assertions.Equal(`[{"source_id":7,"unattributed":true}]`, r.URL.Query().Get("account_scopes"))
 			writeJSONResponse(t, w, map[string]any{
 				"gmail_ids": []string{"gm-1"}, "search_query": "bodyneedle",
-				"search_mode": "fast_then_deep", "max_results": 100001,
+				"search_mode": "fast", "max_results": 100001, "matched_count": 2,
 				"targets": []map[string]any{{
 					"message_id": 1, "source_id": 7, "source_type": "gmail",
 					"source_identifier": "account@example.test", "source_message_id": "gm-1",
@@ -1041,15 +1041,16 @@ func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testi
 		}
 	})
 
-	targets, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
+	targets, matched, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(
 		t.Context(), &search.Query{
 			TextTerms:     []string{"bodyneedle"},
 			AccountIDs:    []int64{accountID},
 			AccountScopes: []search.AccountScope{{SourceID: &accountID, Unattributed: true}},
 		}, query.MessageFilter{},
-		query.DeletionSearchFastThenDeep, query.MaxDeletionTargetSearchResults,
+		query.DeletionSearchFast, query.MaxDeletionTargetSearchResults,
 	)
 	requirements.NoError(err)
+	assertions.Equal(2, matched)
 	assertions.Equal(1, targetRequests)
 	assertions.Equal([]query.DeletionTarget{{
 		MessageID: 1, SourceID: 7, SourceType: "gmail",
@@ -2750,4 +2751,20 @@ func TestEngineListVirtualAccountsFailsWhenCatalogUnavailable(t *testing.T) {
 	})
 	_, err := NewEngineAdapter(store).ListVirtualAccounts(context.Background())
 	require.ErrorIs(t, err, errVirtualAccountsUnavailable, "an unread catalog is not an empty one")
+}
+
+func TestEngineGetDeletionTargetsBySearchBoundedRequiresMatchedCount(t *testing.T) {
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			writeJSONResponse(t, w, map[string]any{"status": "ok", "api_schema_version": "3.24.0"})
+		case "/api/v1/messages/gmail-ids":
+			writeJSONResponse(t, w, map[string]any{"gmail_ids": []string{}, "search_query": "needle", "search_mode": "fast", "max_results": 100001})
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	targets, _, err := NewEngineAdapter(store).GetDeletionTargetsBySearchBounded(t.Context(), search.Parse("needle"), query.MessageFilter{}, query.DeletionSearchFast, query.MaxDeletionTargetSearchResults)
+	require.ErrorContains(t, err, "did not confirm the bounded deletion search scope")
+	assert.Empty(t, targets)
 }

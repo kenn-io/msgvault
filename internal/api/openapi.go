@@ -375,7 +375,7 @@ import (
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds bounded search-aware deletion resolution with an explicit
-// max_results cap and fast-then-deep fallback mode.
+// max_results cap and matched_count for skipped matches.
 const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

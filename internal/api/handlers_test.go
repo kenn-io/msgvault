@@ -5519,7 +5519,7 @@ func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
 type boundedDeletionSearchTestEngine struct {
 	query.Engine
 
-	resolve func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, error)
+	resolve func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error)
 }
 
 func (e boundedDeletionSearchTestEngine) GetDeletionTargetsBySearchBounded(
@@ -5528,7 +5528,7 @@ func (e boundedDeletionSearchTestEngine) GetDeletionTargetsBySearchBounded(
 	filter query.MessageFilter,
 	mode query.DeletionSearchMode,
 	maxResults int,
-) ([]query.DeletionTarget, error) {
+) ([]query.DeletionTarget, int, error) {
 	return e.resolve(ctx, searchQuery, filter, mode, maxResults)
 }
 
@@ -5538,31 +5538,32 @@ func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
 	var calls int
 	engine := boundedDeletionSearchTestEngine{
 		Engine: &querytest.MockEngine{},
-		resolve: func(_ context.Context, parsed *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, error) {
+		resolve: func(_ context.Context, parsed *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
 			calls++
 			assertions.Equal([]string{"bodyneedle"}, parsed.TextTerms)
 			assertions.Equal("alice@example.test", filter.Sender)
-			assertions.Equal(query.DeletionSearchFastThenDeep, mode)
+			assertions.Equal(query.DeletionSearchFast, mode)
 			assertions.Equal(query.MaxDeletionTargetSearchResults, maxResults)
 			return []query.DeletionTarget{{
 				MessageID: 1, SourceID: 7, SourceType: "gmail",
 				SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-one",
-			}}, nil
+			}}, 2, nil
 		},
 	}
 	srv := newTestServerWithEngine(t, engine)
 	req := httptest.NewRequest(http.MethodGet,
-		"/api/v1/messages/gmail-ids?sender=alice@example.test&q=bodyneedle&search_mode=fast_then_deep&max_results=100001", nil)
+		"/api/v1/messages/gmail-ids?sender=alice@example.test&q=bodyneedle&search_mode=fast&max_results=100001", nil)
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 
 	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
 	var resp GmailIDsResponse
 	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assertions.Equal(new(int64(2)), resp.MatchedCount)
 	assertions.Equal(1, calls)
 	assertions.Equal([]string{"gmail-one"}, resp.GmailIDs)
 	assertions.Equal("bodyneedle", resp.SearchQuery)
-	assertions.Equal("fast_then_deep", resp.SearchMode)
+	assertions.Equal("fast", resp.SearchMode)
 	requirements.NotNil(resp.MaxResults)
 	assertions.Equal(int64(query.MaxDeletionTargetSearchResults), *resp.MaxResults)
 }
