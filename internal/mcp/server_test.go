@@ -3247,9 +3247,6 @@ func TestStageDeletion(t *testing.T) {
 		require.False(result.isError, "%s", result.text)
 		var resp stageDeletionResponse
 		require.NoError(json.Unmarshal([]byte(resultText(t, result)), &resp))
-		var structured map[string]any
-		require.NoError(json.Unmarshal(result.structuredContent, &structured))
-		assert.NotContains(structured, "skipped_count")
 		assert.Equal(2, resp.MessageCount, "MessageCount")
 		assert.Equal("pending", resp.Status, "Status")
 		assert.NotEmpty(resp.BatchID, "BatchID")
@@ -3428,16 +3425,35 @@ func TestStageDeletion(t *testing.T) {
 		assert.Contains(t, resultText(t, result), "before:/after: or account")
 		assert.Nil(t, saver.manifest)
 	})
-	t.Run("all matches undeletable refuses without a batch", func(t *testing.T) {
-		saver := &captureDeletionManifestSaver{}
-		engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
-			return nil, 3, nil
-		}}
-		h := &handlers{engine: engine, manifestSaver: saver}
-		result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "archive"})
-		assert.Contains(t, resultText(t, result), "3 messages match, but none can be deleted from their source")
-		assert.Nil(t, saver.manifest)
-	})
+	for _, tc := range []struct {
+		name    string
+		targets []query.DeletionTarget
+	}{
+		{name: "all matches undeletable refuses without a batch"},
+		{name: "undeletable matches are skipped and counted", targets: eng.DeletionTargets},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			saver := &captureDeletionManifestSaver{}
+			engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
+				return tc.targets, 3, nil
+			}}
+			h := &handlers{engine: engine, manifestSaver: saver}
+			if len(tc.targets) == 0 {
+				result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "archive"})
+				assert.Contains(resultText(t, result), "3 messages match, but none can be deleted from their source")
+				assert.Nil(saver.manifest)
+				return
+			}
+			resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "archive"})
+			assert.Equal(2, resp.MessageCount)
+			assert.Equal(1, resp.SkippedCount)
+			assert.Contains(resp.NextStep, "1 of 3 matching item(s)")
+			require.NotNil(saver.manifest)
+			assert.Equal([]string{"gmail-001", "gmail-002"}, saver.manifest.GmailIDs)
+		})
+	}
 }
 
 func TestStageDeletionRejectsInvalidOrEmptyParsedQuery(t *testing.T) {

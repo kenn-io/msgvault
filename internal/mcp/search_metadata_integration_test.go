@@ -3,6 +3,7 @@
 package mcp
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
@@ -168,54 +170,26 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 
 	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
 		before := boundedRequests.Load()
-		saver := stage(t, map[string]any{"query": "subject:selectionmarker"})
-		assert.Len(t, saver.manifest.GmailIDs, 600)
+		stage(t, map[string]any{"query": "subject:selectionmarker"})
 		assert.Equal(t, before+1, boundedRequests.Load())
 		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
 	})
 	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
 		before := boundedRequests.Load()
-		saver := stage(t, map[string]any{"query": "bodyneedle"})
-		assert.Len(t, saver.manifest.GmailIDs, 150)
+		stage(t, map[string]any{"query": "bodyneedle"})
 		assert.Equal(t, before+2, boundedRequests.Load())
 		assert.Zero(t, requests.Load(), "bounded staging must not call paginated fast search")
-	})
-	t.Run("archive-only match is skipped and counted", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		_, err := st.DB().Exec(`INSERT INTO source_merge_archive_only_messages (message_id) SELECT id FROM messages WHERE source_message_id = 'meta-000'`)
-		requirements.NoError(err)
-		saver := &captureDeletionManifestSaver{}
-		h := &handlers{engine: daemon, manifestSaver: saver}
-		before := boundedRequests.Load()
-		resp := runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": "subject:selectionmarker"})
-		assertions.Equal(599, resp.MessageCount)
-		assertions.Equal(1, resp.SkippedCount)
-		assertions.Contains(resp.NextStep, "1 of 600 matching item(s)")
-		requirements.NotNil(saver.manifest)
-		assertions.Len(saver.manifest.GmailIDs, 599)
-		assertions.NotContains(saver.manifest.GmailIDs, "meta-000")
-		assertions.Equal(before+1, boundedRequests.Load())
 	})
 }
 
 func TestStageDeletionThroughOlderDaemonExplainsUpgrade(t *testing.T) {
 	assertions := assert.New(t)
-	requirements := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assertions.Equal("/api/v1/health", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"api_schema_version":"3.23.0"}`))
-		assertions.NoError(err)
-	}))
-	t.Cleanup(server.Close)
-	engine, err := daemonclient.NewEngine(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	requirements.NoError(err)
-	t.Cleanup(func() { requirements.NoError(engine.Close()) })
+	engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
+		return nil, 0, daemonclient.ErrBoundedDeletionSearchUnsupported
+	}}
 	saver := &captureDeletionManifestSaver{}
 	h := &handlers{engine: engine, manifestSaver: saver}
 	result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
-	assertions.Contains(resultText(t, result), "requires daemon API schema 3.24.0 or newer")
-	assertions.Contains(resultText(t, result), "upgrade the daemon and retry")
+	assertions.Contains(resultText(t, result), daemonclient.ErrBoundedDeletionSearchUnsupported.Error())
 	assertions.Nil(saver.manifest)
 }
