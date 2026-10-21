@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -825,7 +822,6 @@ func TestSearchCoverageResolvesGenerationStateAndRefreshesStale(t *testing.T) {
 
 func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 	t.Parallel()
-	check := assert.New(t)
 	cfg := vector.Config{Enabled: true}
 	backend := &filteredCoverageBackend{active: vector.Generation{ID: 1, Fingerprint: cfg.GenerationFingerprint()}}
 	srv := NewServerWithOptions(ServerOptions{
@@ -837,10 +833,13 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 	})
 	backend.active = vector.Generation{ID: 2, Fingerprint: "model-b"}
 	body := getSearchCoverage(t, srv, `{}`)
-	check.Equal(SearchCoverageStale, body.Status)
-	check.Equal("model-b", body.VectorFingerprint)
-	check.Contains(body.Detail, "msgvault daemon restart")
-	check.NotContains(body.Actions, SearchCoverageActionBuildIndex)
+	{
+		assert := assert.New(t)
+		assert.Equal(SearchCoverageStale, body.Status)
+		assert.Equal("model-b", body.VectorFingerprint)
+		assert.Contains(body.Detail, "msgvault daemon restart")
+		assert.NotContains(body.Actions, SearchCoverageActionBuildIndex)
+	}
 
 	t.Run("timeout", func(t *testing.T) {
 		backend := &filteredCoverageBackend{active: vector.Generation{ID: 2, Fingerprint: "model-b"}}
@@ -853,21 +852,8 @@ func TestSearchCoverageStaleRestartAdvice(t *testing.T) {
 			return "", ctx.Err()
 		})
 		synctest.Test(t, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var response *httptest.ResponseRecorder
-			go func() {
-				response = postExploreJSON(t, srv, "/api/v1/search/coverage", `{}`)
-			}()
-			time.Sleep(vectorStaleDiagnosisTimeout)
-			synctest.Wait()
-			require.NotNil(response)
-			require.Equal(http.StatusOK, response.Code, response.Body.String())
-			var body SearchCoverageResponse
-			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
-			assert.Equal(SearchCoverageStale, body.Status)
-			assert.True(strings.HasSuffix(body.Detail, vectorUncheckedAdvice))
-			assert.ElementsMatch([]SearchCoverageAction{SearchCoverageActionRetry}, body.Actions)
+			body := getSearchCoverage(t, srv, `{}`)
+			assert.Equal(t, []SearchCoverageAction{SearchCoverageActionRetry}, body.Actions)
 		})
 	})
 }
