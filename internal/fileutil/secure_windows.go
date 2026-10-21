@@ -120,9 +120,11 @@ func SecureWriteFile(path string, data []byte, perm os.FileMode) error {
 }
 
 // SecureMkdirAll creates a directory path and all parents that do not yet exist.
-// For owner-only modes, each directory it creates gets a protected DACL granting
-// access only to the current user. Existing directories, including one another
-// process creates first, keep their permissions.
+// For owner-only modes, each directory it creates starts with a protected DACL
+// granting access only to the current user. If Windows rejects that DACL, the
+// directory is created normally and restricted afterward, with a warning if
+// that also fails. Existing directories, including one another process
+// creates first, keep their permissions.
 func SecureMkdirAll(path string, perm os.FileMode) error {
 	if !isOwnerOnly(perm) || path == "" {
 		return os.MkdirAll(path, perm)
@@ -150,29 +152,47 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 		return nil
 	}
 
-	descriptor, err := protectedDirectoryDescriptor(path)
-	if err != nil {
-		return err
-	}
-	attributes := &windows.SecurityAttributes{
-		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
-		SecurityDescriptor: descriptor,
+	var attributes *windows.SecurityAttributes
+	if descriptor, err := protectedDirectoryDescriptor(abs); err != nil {
+		slog.Warn("fileutil: protected directory creation unavailable", "path", abs, "err", err)
+	} else {
+		attributes = &windows.SecurityAttributes{
+			Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+			SecurityDescriptor: descriptor,
+		}
 	}
 	for _, dir := range slices.Backward(missing) {
-		path16, err := windows.UTF16PtrFromString(win32CreatePath(dir))
-		if err != nil {
-			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
-		}
-		if err := windows.CreateDirectory(path16, attributes); err != nil {
-			if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-				if info, statErr := os.Stat(dir); statErr == nil && info.IsDir() {
-					continue
-				}
+		if attributes != nil {
+			err := createProtectedDirectory(dir, attributes)
+			if err == nil || errors.Is(err, windows.ERROR_ALREADY_EXISTS) && isDir(dir) {
+				continue
 			}
-			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
+			slog.Warn("fileutil: protected directory creation failed", "path", dir, "err", err)
+		}
+		if err := os.Mkdir(dir, perm); err != nil {
+			if os.IsExist(err) && isDir(dir) {
+				continue
+			}
+			return err
+		}
+		if err := restrictToCurrentUser(dir); err != nil {
+			slog.Warn("fileutil: best-effort DACL failed", "path", dir, "err", err)
 		}
 	}
 	return nil
+}
+
+func createProtectedDirectory(dir string, attributes *windows.SecurityAttributes) error {
+	path16, err := windows.UTF16PtrFromString(win32CreatePath(dir))
+	if err != nil {
+		return err
+	}
+	return windows.CreateDirectory(path16, attributes)
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func win32CreatePath(dir string) string {
