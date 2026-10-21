@@ -5637,3 +5637,144 @@ func TestCopySubsetPreservesMergedIMAPDraft(t *testing.T) {
 		})
 	}
 }
+
+func TestCopySubsetExcludesMergedAwaySourcesAndIMAPMemberships(t *testing.T) {
+	require := require.New(t)
+	sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(source.Close()) })
+	_, err = source.DB().Exec(`UPDATE sources SET source_type = 'imap'`)
+	require.NoError(err)
+	_, err = source.DB().Exec(`INSERT INTO imap_message_memberships
+		(source_id, mailbox, uidvalidity, uid, message_id, flags)
+		VALUES (1, 'Archive', 7, 1, 1, '["\\Seen"]')`)
+	require.NoError(err)
+	destination, err := source.GetOrCreateSource("imap", "destination@example.com")
+	require.NoError(err)
+	_, err = source.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: 1, IntoSourceID: destination.ID})
+	require.NoError(err)
+	var memberships int
+	require.NoError(source.DB().QueryRow(`SELECT COUNT(*) FROM imap_message_memberships`).Scan(&memberships))
+	require.Equal(1, memberships, "the source archive retains server membership evidence after merging")
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+	subset, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(subset.Close()) })
+	var retiredSources, selectedSources int
+	require.NoError(subset.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE id = 1`).Scan(&retiredSources))
+	assert.Equal(t, 0, retiredSources, "the merged-away source must stay outside the subset")
+	require.NoError(subset.DB().QueryRow(`SELECT COUNT(*) FROM sources WHERE id = ?`, destination.ID).Scan(&selectedSources))
+	assert.Equal(t, 1, selectedSources)
+	require.NoError(subset.DB().QueryRow(`SELECT COUNT(*) FROM imap_message_memberships`).Scan(&memberships))
+	assert.Equal(t, 0, memberships, "subsets must omit server mailbox and UID state")
+}
+
+func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
+	for _, tc := range []struct {
+		name, provider, evidence string
+		merged, sent             bool
+	}{
+		{name: "merged_flag_only_imap", provider: "imap", evidence: "flag", merged: true},
+		{name: "imap_record_only", provider: "imap", evidence: "record"},
+		{name: "gmail_record_only", provider: "gmail", evidence: "record"},
+		{name: "imap_pending_original_only", provider: "imap", evidence: "pending"},
+		{name: "gmail_pending_original_only", provider: "gmail", evidence: "pending"},
+		{name: "record_on_merged_away_source", provider: "imap", evidence: "record", merged: true},
+		{name: "sent", provider: "imap", sent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			sourcePath := createTestSourceDB(t, t.TempDir(), 1)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(source.Close()) })
+			_, err = source.DB().Exec(`UPDATE sources SET source_type = ?`, tc.provider)
+			require.NoError(err)
+			currentID := int64(1)
+			if tc.evidence == "pending" {
+				// Only the old snapshot is selected; the newer, undated replacement stays behind.
+				currentID, err = source.UpsertMessage(&Message{
+					SourceID: 1, ConversationID: 2, SourceMessageID: "replacement", MessageType: MessageTypeEmail,
+				})
+				require.NoError(err)
+				require.NotEqual(int64(1), currentID)
+			}
+			switch tc.evidence {
+			case "flag":
+				_, err = source.DB().Exec(`INSERT INTO imap_message_memberships
+					(source_id, mailbox, uidvalidity, uid, message_id, flags)
+					VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
+				require.NoError(err)
+			case "record", "pending":
+				if tc.provider == "imap" {
+					_, err = source.DB().Exec(`INSERT INTO imap_drafts
+						(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
+						VALUES ('draft', 1, ?, 'Scratch', 7, 2, 2)`, currentID)
+				} else {
+					_, err = source.DB().Exec(`INSERT INTO gmail_drafts
+						(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
+						VALUES ('draft', 1, 'provider-draft', ?, 'replacement', 'thread', 2)`, currentID)
+				}
+				require.NoError(err)
+				if tc.evidence == "pending" {
+					if tc.provider == "imap" {
+						_, err = source.DB().Exec(`UPDATE imap_drafts SET pending_operation = 'edit',
+							pending_original_message_id = 1, pending_original_mailbox = 'Scratch',
+							pending_original_uidvalidity = 7, pending_original_uid = 1, pending_raw = X'01'`)
+					} else {
+						_, err = source.DB().Exec(`UPDATE gmail_drafts SET pending_operation = 'edit',
+							pending_original_message_id = 1, pending_original_gmail_message_id = 'msg_1', pending_raw = X'01'`)
+					}
+					require.NoError(err)
+				}
+			}
+			if tc.sent {
+				require.NoError(source.AddMessageLabels(1, []int64{2}))
+			}
+			if tc.merged {
+				if tc.evidence == "record" {
+					// A retained, discarded draft record permits the account merge.
+					_, err = source.DB().Exec(`UPDATE imap_drafts SET discarded_at = CURRENT_TIMESTAMP`)
+					require.NoError(err)
+				}
+				destination, err := source.GetOrCreateSource(tc.provider, "destination@example.com")
+				require.NoError(err)
+				_, err = source.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: 1, IntoSourceID: destination.ID})
+				require.NoError(err)
+				var evidenceSourceID int64
+				if tc.evidence == "flag" {
+					require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_message_memberships WHERE message_id = 1`).Scan(&evidenceSourceID))
+				} else {
+					require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_drafts WHERE current_message_id = 1`).Scan(&evidenceSourceID))
+				}
+				require.Equal(int64(1), evidenceSourceID, "the only draft evidence belongs to the retired source")
+			}
+			before, err := source.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(before, 1)
+			require.Equal(!tc.sent, before[0].Unsent)
+			require.Equal(tc.sent, before[0].Eligible)
+
+			destinationDir := filepath.Join(t.TempDir(), "subset")
+			_, err = CopySubset(sourcePath, destinationDir, 1, false)
+			require.NoError(err, "export must succeed with the selected draft evidence")
+			subset, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(subset.Close()) })
+			after, err := subset.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.Equal(t, !tc.sent, after[0].Unsent, "the selected snapshot must retain its unsent status")
+			assert.Equal(t, tc.sent, after[0].Eligible, "only sent messages may count as contact")
+			if tc.evidence == "pending" {
+				var replacementCount int
+				require.NoError(subset.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE id = ?`, currentID).Scan(&replacementCount))
+				assert.Zero(t, replacementCount, "the original must stay unsent without copying its replacement")
+			}
+		})
+	}
+}
