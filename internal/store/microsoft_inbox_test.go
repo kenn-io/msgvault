@@ -71,6 +71,35 @@ func TestMicrosoftInboxObservationKnownEmptyAndPartial(t *testing.T) {
 	assertions.True(localRead, "native read=false must preserve the local UI read=true")
 }
 
+func TestMicrosoftInboxObservationPreservesTombstones(t *testing.T) {
+	for _, column := range []string{"deleted_at", "deleted_from_source_at"} {
+		t.Run(column, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st, before, folder := microsoftObservationFixture(t)
+			_, err := st.DB().Exec(st.Rebind("UPDATE messages SET "+column+"=CURRENT_TIMESTAMP WHERE id=?"), before.Target.ItemID)
+			requirements.NoError(err)
+			requirements.ErrorIs(st.ValidateInboxTargetContext(t.Context(), before.Target), inboxcontrol.ErrInvalid, "provider operations still require a live item")
+
+			after := before
+			after.Tags = []string{"Next"}
+			after.Revision = "version-2"
+			after.ObservedAt = before.ObservedAt.Add(time.Second)
+			changed, err := st.ObserveMicrosoftMailStateContext(t.Context(), after, &folder, &after.Tags)
+			requirements.NoError(err, "sync may refresh metadata for a retained Microsoft message")
+			assertions.False(changed, "result means folder changed; categories can reconcile independently")
+			observed, err := st.GetInboxProviderState(t.Context(), before.Target)
+			requirements.NoError(err)
+			requirements.NotNil(observed)
+			assertions.Equal(after, *observed)
+			assertions.ElementsMatch([]string{"Inbox", "Category: Next"}, messageLabels(t, st, before.Target.ItemID))
+			var stillTombstoned int
+			requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT COUNT(*) FROM messages WHERE id=? AND "+column+" IS NOT NULL"), before.Target.ItemID).Scan(&stillTombstoned))
+			assertions.Equal(1, stillTombstoned, "metadata refresh preserves the deletion marker")
+		})
+	}
+}
+
 func TestMicrosoftInboxObservationRequiresExactFolderMapping(t *testing.T) {
 	for _, kind := range []string{"missing", "wrong", "foreign", "category"} {
 		t.Run(kind, func(t *testing.T) {

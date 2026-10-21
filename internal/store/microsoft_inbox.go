@@ -36,7 +36,7 @@ func (s *Store) ObserveMicrosoftMailStateContext(ctx context.Context, state inbo
 	}
 	var changed bool
 	err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{target.SourceID}}, func(tx *loggedTx) error {
-		if err := validateInboxArchiveTarget(ctx, tx, target); err != nil {
+		if err := validateInboxArchiveObservationTarget(ctx, tx, target); err != nil {
 			return err
 		}
 		hash, err := inboxcontrol.SemanticFingerprint(state)
