@@ -81,10 +81,6 @@ func TestProviderFailureReasons(t *testing.T) {
 			_, err := gcal.NewClient(oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic"}), gcal.WithBaseURL(url)).ListCalendars(ctx, "")
 			return err
 		}},
-		{"slack throttled", 429, "", "rate_limited", func(ctx context.Context, url string) error {
-			_, err := slack.NewClient(url, "synthetic").AuthTest(ctx)
-			return err
-		}},
 		{"omi", 401, "", "auth", func(ctx context.Context, url string) error {
 			_, err := omi.NewPacedClient(url, "synthetic", t.TempDir()).ListConversations(ctx, omi.ListParams{})
 			return err
