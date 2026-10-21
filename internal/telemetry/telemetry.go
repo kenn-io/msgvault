@@ -198,6 +198,8 @@ func reason(err error) string {
 		status = e.StatusCode
 	} else if e, ok := errors.AsType[*carddav.StatusError](err); ok {
 		status = e.StatusCode
+	} else if e, ok := errors.AsType[*omi.StatusError](err); ok {
+		status = e.StatusCode
 	} else if e, ok := errors.AsType[mautrix.HTTPError](err); ok && e.Response != nil {
 		status = e.Response.StatusCode
 	}

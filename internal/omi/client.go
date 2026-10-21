@@ -266,7 +266,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 		// the pass deadline.
 		serverErr = nil
 		if resp.StatusCode >= 500 {
-			serverErr = statusError(resp.StatusCode)
+			serverErr = &StatusError{StatusCode: resp.StatusCode}
 		}
 		var cooldownUntil time.Time
 		var cooldownErr error
@@ -333,13 +333,15 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 			case <-timer.C:
 			}
 		default:
-			return nil, statusError(resp.StatusCode)
+			return nil, &StatusError{StatusCode: resp.StatusCode}
 		}
 	}
 	return nil, errors.Join(errors.New("omi list conversations: exhausted retries"), serverErr)
 }
 
-// statusError omits the provider error body, which can contain private content.
-func statusError(status int) error {
-	return fmt.Errorf("omi list conversations: HTTP %d", status)
+// StatusError omits the provider error body, which can contain private content.
+type StatusError struct{ StatusCode int }
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("omi list conversations: HTTP %d", e.StatusCode)
 }

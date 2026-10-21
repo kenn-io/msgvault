@@ -47,6 +47,7 @@ func TestOmiOutageOutlastingBudget(t *testing.T) {
 		require.ErrorIs(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)
 		require.Len(events, 1)
 		assert.Equal(t, "omi", events[0]["sync_source"])
+		assert.Equal(t, "other", events[0]["reason"])
 	})
 }
 

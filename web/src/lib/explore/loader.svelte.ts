@@ -75,6 +75,7 @@ export class ExploreLoader {
   loading = $state(false);
   loadingMore = $state(false);
   error = $state('');
+  errorKind = $state<'other' | undefined>();
   /** Cursor-page failure. Kept apart from `error` so a failed later page
    * never hides the rows already loaded; while `nextCursor` survived (a
    * transient failure) a retry re-attempts the same page. */
@@ -176,6 +177,7 @@ export class ExploreLoader {
     this.loadingMore = false;
     this.loading = true;
     this.error = '';
+    this.errorKind = undefined;
     this.pageError = '';
     this.unavailable = undefined;
     // A fresh predicate load must not leave the previous result visible and

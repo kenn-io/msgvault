@@ -103,6 +103,10 @@ func TestProviderFailureReasons(t *testing.T) {
 			_, err := omi.NewPacedClient(url, "synthetic", t.TempDir()).ListConversations(ctx, omi.ListParams{})
 			return err
 		}},
+		{"omi request timeout", 0, "", "network", func(ctx context.Context, url string) error {
+			_, err := omi.NewPacedClient(url, "synthetic", t.TempDir()).ListConversations(ctx, omi.ListParams{})
+			return err
+		}},
 		{"granola", 401, "", "auth", func(ctx context.Context, url string) error {
 			_, err := granola.NewClient(url, "synthetic").ListNotes(ctx, granola.ListNotesParams{})
 			return err
@@ -127,6 +131,10 @@ func TestProviderFailureReasons(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if tc.status == 0 {
+						<-r.Context().Done()
+						return
+					}
 					w.Header().Set("Retry-After", "1")
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))

@@ -109,8 +109,8 @@ describe('AppShell', () => {
     await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
   });
 
-  it.each([false, true])('reports an export error only while its view is displayed, leave=%s', async (leave) => {
-    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  it.each([{ query: '', leave: false }, { query: 'needle', leave: false }, { query: '', leave: true }, { query: 'needle', leave: true }])('reports an export error only while its view is displayed, query=$query leave=$leave', async ({ query, leave }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
     const state = new ExploreState(window);
     let finishExport!: (response: Response) => void;
     const client = createAPIClient(async input => {
