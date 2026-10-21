@@ -1013,7 +1013,7 @@ func TestEngineGetDeletionTargetsBySearchUsesVersionedExactScope(t *testing.T) {
 	}}, targets)
 }
 
-func TestEngineGetDeletionTargetsBySearchBoundedUsesOneConfirmedRequest(t *testing.T) {
+func TestEngineGetDeletionTargetsBySearchBoundedGatesOnDaemonSchemaAndForwardsMaxResults(t *testing.T) {
 	for _, tc := range []struct {
 		name, schema string
 	}{

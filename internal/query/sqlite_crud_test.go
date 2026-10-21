@@ -2502,14 +2502,12 @@ func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
 	// SQLite's 32,766-parameter limit for a single label lookup.
 	messages := make([]MessageSummary, MaxDeletionTargetSearchResults)
 	for i := range messages {
-		messages[i].ID = int64(1_000_000 + i)
+		messages[i].ID = env.AddMessage(dbtest.MessageOpts{Subject: "label lookup"})
 	}
-	messages[0].ID = 1
-	messages[len(messages)-1].ID = 5
 	firstLabel := env.AddLabel(dbtest.LabelOpts{Name: "first chunk"})
 	lastLabel := env.AddLabel(dbtest.LabelOpts{Name: "last chunk"})
-	env.AddMessageLabel(1, firstLabel)
-	env.AddMessageLabel(5, lastLabel)
+	env.AddMessageLabel(messages[0].ID, firstLabel)
+	env.AddMessageLabel(messages[len(messages)-1].ID, lastLabel)
 
 	require.NoError(t, fetchLabelsForMessageList(env.Ctx, env.DB, SQLiteQueryDialect{}.Rebind, "", messages))
 	assert.Contains(t, messages[0].Labels, "first chunk")

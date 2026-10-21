@@ -85,12 +85,12 @@ func TestBoundedDeletionSearchCountsOnlyExecutableSources(t *testing.T) {
 				require.Len(t, targets, 1)
 				assert.Equal(t, visible[0].SourceMessageID, targets[0].SourceMessageID)
 			})
-			t.Run("limit above maximum", func(t *testing.T) {
-				_, _, err := env.Engine.GetDeletionTargetsBySearchBounded(
-					env.Ctx, search.Parse("Hello"), MessageFilter{}, mode, MaxDeletionTargetSearchResults+1,
-				)
-				require.ErrorContains(t, err, "bounded deletion search limit cannot exceed")
-			})
 		})
 	}
+	t.Run("limit above maximum", func(t *testing.T) {
+		_, _, err := env.Engine.GetDeletionTargetsBySearchBounded(
+			env.Ctx, search.Parse("Hello"), MessageFilter{}, DeletionSearchFast, MaxDeletionTargetSearchResults+1,
+		)
+		require.ErrorContains(t, err, "bounded deletion search limit cannot exceed")
+	})
 }

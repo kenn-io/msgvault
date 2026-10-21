@@ -3,7 +3,6 @@
 package mcp
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -19,7 +18,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
@@ -191,16 +189,4 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Equal(before+2, boundedRequests.Load())
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
-}
-
-func TestStageDeletionThroughOlderDaemonExplainsUpgrade(t *testing.T) {
-	assertions := assert.New(t)
-	engine := &querytest.MockEngine{GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
-		return nil, 0, daemonclient.ErrBoundedDeletionSearchUnsupported
-	}}
-	saver := &captureDeletionManifestSaver{}
-	h := &handlers{engine: engine, manifestSaver: saver}
-	result := runToolExpectError(t, "stage_deletion", h.stageDeletion, map[string]any{"query": "from:news"})
-	assertions.Contains(resultText(t, result), daemonclient.ErrBoundedDeletionSearchUnsupported.Error())
-	assertions.Nil(saver.manifest)
 }
