@@ -2394,7 +2394,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if q.IsEmpty() {
 			return toolErrorResult("query must contain at least one search term or filter"), nil
 		}
-		// The selection travels in the query so the FTS fallback keeps it.
+		// Query scopes survive FTS fallback; SourceID also crosses the daemon boundary.
 		if err := selection.applyToQuery(q); err != nil {
 			return toolErrorResult(err.Error()), nil
 		}
@@ -2407,7 +2407,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if !ok {
 			return dependencyError("search messages for deletion", errors.New("query engine requires bounded deletion search support"))
 		}
-		filter := query.MessageFilter{}
+		filter := query.MessageFilter{SourceID: sourceID}
 		var matched int
 		targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, mode, maxStageDeletionResults+1)
 		if err == nil && mode == query.DeletionSearchFast && matched == 0 && q.HasTextTerms() {

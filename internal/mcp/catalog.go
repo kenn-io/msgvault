@@ -1016,7 +1016,7 @@ type exportAttachmentResponse struct {
 }
 
 type stageDeletionResponse struct {
-	SkippedCount int    `json:"skipped_count,omitempty"`
+	SkippedCount int    `json:"skipped_count,omitzero"`
 	BatchID      string `json:"batch_id"`
 	MessageCount int    `json:"message_count"`
 	Status       string `json:"status"`

@@ -100,7 +100,7 @@ export type GetGmailIDsByFilterParams = {
    */
   q?: string;
   /**
-   * Search mode: fast, deep, or aggregate
+   * Search mode: fast, deep, or aggregate; required with q
    */
   search_mode?: string;
   /**

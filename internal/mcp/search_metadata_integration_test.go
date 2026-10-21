@@ -4,6 +4,7 @@ package mcp
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -218,6 +219,61 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assertions.NotContains(saver.manifest.GmailIDs, "meta-000")
 		assertions.Equal(before+1, boundedRequests.Load())
 	})
+}
+
+func TestStageDeletionPreservesAccountScope(t *testing.T) {
+	f := storetest.New(t)
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(t, err)
+	conversation, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other account")
+	require.NoError(t, err)
+	_, err = f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: other.ID, ConversationID: conversation, SourceMessageID: "other-mail", MessageType: "email",
+			Subject: sql.NullString{String: "selectionmarker", Valid: true},
+		},
+		BodyText: sql.NullString{String: "bodyneedle", Valid: true},
+		FTS:      &store.FTSDoc{Subject: "selectionmarker", Body: "bodyneedle"},
+	})
+	require.NoError(t, err)
+	local := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())
+	daemon := metadataDaemon(t, local, nil, f.Store)
+	for _, engine := range []struct {
+		name   string
+		engine query.Engine
+	}{{"local", local}, {"daemon", daemon}} {
+		for _, text := range []string{"subject:selectionmarker", "bodyneedle", "bodyneedle | subject:selectionmarker"} {
+			t.Run(engine.name+"/"+text, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				for _, account := range []string{f.Source.Identifier, store.VirtualUnattributedKey(f.Source.ID)} {
+					saver := &captureDeletionManifestSaver{}
+					h := &handlers{engine: engine.engine, manifestSaver: saver}
+					result := callToolDirect(t, "stage_deletion", h.stageDeletion, map[string]any{"query": text, "account": account})
+					assert.True(result.isError, "account %s: %s", account, result.text)
+					assert.Contains(result.text, "no messages match")
+					assert.Nil(saver.manifest)
+				}
+				saver := &captureDeletionManifestSaver{}
+				h := &handlers{engine: engine.engine, manifestSaver: saver}
+				runTool[stageDeletionResponse](t, "stage_deletion", h.stageDeletion, map[string]any{"query": text, "account": other.Identifier})
+				require.NotNil(saver.manifest)
+				assert.Equal([]string{"other-mail"}, saver.manifest.GmailIDs)
+			})
+		}
+	}
+}
+
+func TestStageDeletionStructuredResponseOmitsZeroSkippedCount(t *testing.T) {
+	f := storetest.New(t)
+	f.NewMessage().WithAttachmentCount(1).Create(t, f.Store)
+	daemon := metadataDaemon(t, query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()), nil, f.Store)
+	h := &handlers{engine: daemon, manifestSaver: &captureDeletionManifestSaver{}}
+	result := callToolDirect(t, "stage_deletion", h.stageDeletion, map[string]any{"has_attachment": true})
+	require.False(t, result.isError, "%s", result.text)
+	var structured map[string]any
+	require.NoError(t, json.Unmarshal(result.structuredContent, &structured))
+	assert.NotContains(t, structured, "skipped_count")
 }
 
 func TestStageDeletionThroughDaemonIncludesIMAP(t *testing.T) {

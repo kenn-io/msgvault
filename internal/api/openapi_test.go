@@ -2335,6 +2335,18 @@ func generatedGoFiles(dir string) ([]string, error) {
 	return files, nil
 }
 
+func TestOpenAPIDeletionSearchModeRequiredWithQuery(t *testing.T) {
+	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		var description string
+		for _, parameter := range doc.Paths["/api/v1/messages/gmail-ids"].Get.Parameters {
+			if parameter.Name == "search_mode" {
+				description = parameter.Description
+			}
+		}
+		assert.Contains(t, description, "required with q")
+	}
+}
+
 func TestOpenAPICollectionScopeContracts(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

@@ -5516,29 +5516,12 @@ func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
 	assertions.Equal("deep", resp.SearchMode)
 }
 
-type boundedDeletionSearchTestEngine struct {
-	query.Engine
-
-	resolve func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error)
-}
-
-func (e boundedDeletionSearchTestEngine) GetDeletionTargetsBySearchBounded(
-	ctx context.Context,
-	searchQuery *search.Query,
-	filter query.MessageFilter,
-	mode query.DeletionSearchMode,
-	maxResults int,
-) ([]query.DeletionTarget, int, error) {
-	return e.resolve(ctx, searchQuery, filter, mode, maxResults)
-}
-
 func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	var calls int
-	engine := boundedDeletionSearchTestEngine{
-		Engine: &querytest.MockEngine{},
-		resolve: func(_ context.Context, parsed *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsBySearchBoundedFunc: func(_ context.Context, parsed *search.Query, filter query.MessageFilter, mode query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
 			calls++
 			assertions.Equal([]string{"bodyneedle"}, parsed.TextTerms)
 			assertions.Equal("alice@example.test", filter.Sender)
@@ -5566,17 +5549,39 @@ func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
 	assertions.Equal("fast", resp.SearchMode)
 }
 
-func TestHandleGmailIDsByFilterRejectsEmptyMaxResults(t *testing.T) {
-	srv := newTestServerWithEngine(t, &querytest.MockEngine{})
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?q=subject:newsletter&search_mode=fast&max_results=", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	var resp struct {
-		Error string `json:"error"`
+func TestHandleGmailIDsByFilterRejectsInvalidMaxResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, parameters string
+	}{
+		{"empty", "q=subject:newsletter&search_mode=fast&max_results="},
+		{"zero", "q=subject:newsletter&search_mode=fast&max_results=0"},
+		{"over limit", "q=subject:newsletter&search_mode=fast&max_results=100002"},
+		{"aggregate", "q=subject:newsletter&search_mode=aggregate&max_results=10"},
+		{"without query", "max_results=10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			calls := 0
+			engine := &querytest.MockEngine{
+				GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
+					calls++
+					return nil, 0, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?"+tc.parameters, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusBadRequest, w.Code)
+			var resp struct {
+				Error string `json:"error"`
+			}
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal("invalid_max_results", resp.Error)
+			assert.Zero(calls)
+		})
 	}
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.Equal(t, "invalid_max_results", resp.Error)
 }
 
 func TestHandleGmailIDsByFilterResolvesDisplayedAggregateSearch(t *testing.T) {

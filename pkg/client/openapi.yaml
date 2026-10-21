@@ -24154,7 +24154,7 @@ paths:
           name: q
           schema:
             type: string
-        - description: "Search mode: fast, deep, or aggregate"
+        - description: "Search mode: fast, deep, or aggregate; required with q"
           in: query
           name: search_mode
           schema:
