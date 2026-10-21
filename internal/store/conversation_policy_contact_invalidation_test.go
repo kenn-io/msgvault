@@ -98,6 +98,73 @@ func TestCuratedContactPointMutationRefreshesParticipantProjectionAndContext(t *
 		"in-flight contextual publication must fail after curated support is withdrawn")
 }
 
+func TestObservationEligibilityChangeInvalidatesContextualParticipantMessages(t *testing.T) {
+	for _, scenario := range []string{"first Full room support", "native name evidence"} {
+		t.Run(scenario, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+			chatSource, err := s.GetOrCreateSource("beeper", "observation-context-invalidation")
+			requirements.NoError(err)
+			contextRoom, err := s.EnsureConversation(chatSource.ID, "context", "Context")
+			requirements.NoError(err)
+			requirements.NoError(s.SetConversationPolicyOverride(ctx, chatSource.ID, "context", conversationpolicy.Full))
+			participantID, err := s.EnsureParticipantByIdentifier(
+				"beeper", "synthetic-observation-context-user", "Synthetic Observation Context")
+			requirements.NoError(err)
+			messageID, err := s.UpsertMessageContext(ctx, &store.Message{
+				SourceID: chatSource.ID, ConversationID: contextRoom,
+				SourceMessageID: "observation-context", MessageType: "beeper",
+				SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+			})
+			requirements.NoError(err)
+			requirements.NoError(s.SetEmbedGen(ctx, []int64{messageID}, 73))
+
+			var beforeRevision int64
+			requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+				`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&beforeRevision))
+			var eligible bool
+			requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+
+				store.FullParticipantNameWhere("p.id", "p.display_name")+
+				` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+			assertions.False(eligible, "the participant name has no support before the observation change")
+
+			input := store.ParticipantContactObservationInput{
+				SourceID: &chatSource.ID, AddressKind: store.ContactAddressDisplayName,
+				OriginalValue: "Synthetic Observation Context",
+				Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			}
+			if scenario == "first Full room support" {
+				coldRoom, err := s.EnsureConversation(chatSource.ID, "cold-support", "Cold support")
+				requirements.NoError(err)
+				requirements.NoError(s.SetConversationPolicyOverride(ctx, chatSource.ID, "cold-support", conversationpolicy.Cold))
+				input.ConversationID = &coldRoom
+				_, err = s.RecordContactObservationContext(ctx, participantID, input)
+				requirements.NoError(err)
+				input.ConversationID = &contextRoom
+			} else {
+				nativeSource, err := s.GetOrCreateSource("whatsapp", "native-observation-context")
+				requirements.NoError(err)
+				input.SourceID = &nativeSource.ID
+			}
+			_, err = s.RecordContactObservationContext(ctx, participantID, input)
+			requirements.NoError(err)
+
+			requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+
+				store.FullParticipantNameWhere("p.id", "p.display_name")+
+				` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+			assertions.True(eligible, "the new Full or native observation makes the display name eligible")
+			var generation sql.NullInt64
+			var afterRevision int64
+			requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+				`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), messageID).Scan(&generation, &afterRevision))
+			assertions.False(generation.Valid, "cached context must be withdrawn when its participant inputs change")
+			assertions.Greater(afterRevision, beforeRevision, "in-flight contextual publication must fail its revision check")
+		})
+	}
+}
+
 func TestPersonProfileContactPointPatchRefreshesParticipantProjectionAndContext(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

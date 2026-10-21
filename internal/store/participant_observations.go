@@ -381,6 +381,11 @@ func (s *Store) RecordContactObservationContext(
 		if err != nil || !eligible {
 			return err
 		}
+		if result.Created && input.ConversationID == nil {
+			if err := s.invalidateContextualParticipantMessagesTx(ctx, tx, []int64{participantID}); err != nil {
+				return fmt.Errorf("invalidate contextual messages for new participant observation: %w", err)
+			}
+		}
 
 		result.CandidateIDs, err = s.recordObservationConflictsTx(ctx, tx, result.Observation, serviceID)
 		if err != nil {

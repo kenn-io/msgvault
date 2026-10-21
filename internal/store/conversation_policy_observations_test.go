@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -186,6 +187,116 @@ func TestSourceMergePreservesFullProviderBindingOverColdBinding(t *testing.T) {
 	requirements.NotNil(current[0].ProviderUserID)
 	assertions.Equal("provider:full", *current[0].ProviderUserID,
 		"source merge must preserve the binding with original Full support before transferring room ownership")
+}
+
+func TestSourceMergeKeepsBeeperIdentifierTiedToOriginalAccount(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := testutil.NewTestStore(t)
+	s.DB().SetMaxOpenConns(4)
+	ctx := t.Context()
+	origin, err := s.GetOrCreateSource("beeper", "synthetic-origin-account")
+	requirements.NoError(err)
+	intermediate, err := s.GetOrCreateSource("beeper", "synthetic-intermediate-account")
+	requirements.NoError(err)
+	const roomID = "!shared-provenance:example.test"
+	originRoom, err := s.EnsureConversation(origin.ID, roomID, "Shared provenance")
+	requirements.NoError(err)
+	intermediateRoom, err := s.EnsureConversation(intermediate.ID, roomID, "Shared provenance")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, origin.ID, roomID, conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, intermediate.ID, roomID, conversationpolicy.Full))
+
+	const userID = "@synthetic:beeper.local"
+	originIdentifier := "beeper:" + strconv.Itoa(len(origin.Identifier)) + ":" + origin.Identifier + ":" +
+		strconv.Itoa(len(userID)) + ":" + userID
+	participantID, err := s.EnsureParticipantByIdentifier("beeper", originIdentifier, "Synthetic User")
+	requirements.NoError(err)
+	sourceRef := "beeper:" + origin.Identifier + ":" + userID
+	_, err = s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		SourceID: &origin.ID, ConversationID: &originRoom,
+		AddressKind: store.ContactAddressEmail, OriginalValue: "synthetic@example.test",
+		Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef},
+	})
+	requirements.NoError(err)
+
+	eligible := func() bool {
+		var value bool
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`SELECT `+store.FullParticipantIdentifierWhereSQLite("pi")+
+			` FROM participant_identifiers pi WHERE pi.participant_id=? AND pi.identifier_type='beeper' AND pi.identifier_value=?`),
+			participantID, originIdentifier).Scan(&value)
+		requirements.NoError(err)
+		return value
+	}
+	assertions.True(eligible(), "the origin account identifier is supported before the source merge")
+	_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: origin.ID, IntoSourceID: intermediate.ID,
+	})
+	requirements.NoError(err)
+	assertions.True(eligible(), "historical Beeper identifiers must keep using their source_ref account after merge")
+	assertions.NotEqual(originRoom, intermediateRoom)
+
+	destination, err := s.GetOrCreateSource("beeper", "synthetic-destination-account")
+	requirements.NoError(err)
+	destinationRoom, err := s.EnsureConversation(destination.ID, roomID, "Shared provenance")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, destination.ID, roomID, conversationpolicy.Full))
+	_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: intermediate.ID, IntoSourceID: destination.ID,
+	})
+	requirements.NoError(err)
+	assertions.True(eligible(), "origin account provenance must survive sequential source merges")
+	assertions.NotEqual(intermediateRoom, destinationRoom)
+}
+
+func TestSourceMergeDropsProviderBindingsWithoutCurrentFullSupport(t *testing.T) {
+	for _, scenario := range []struct {
+		name            string
+		originTier      conversationpolicy.Tier
+		destinationTier conversationpolicy.Tier
+	}{
+		{name: "cold evidence cannot inherit a Full destination", originTier: conversationpolicy.Cold, destinationTier: conversationpolicy.Full},
+		{name: "Full evidence loses its binding when destination is Cold", originTier: conversationpolicy.Full, destinationTier: conversationpolicy.Cold},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s := testutil.NewTestStore(t)
+			s.DB().SetMaxOpenConns(4)
+			ctx := t.Context()
+			origin, err := s.GetOrCreateSource("beeper", "synthetic-provider-origin-"+strconv.Itoa(len(scenario.name)))
+			requirements.NoError(err)
+			destination, err := s.GetOrCreateSource("beeper", "synthetic-provider-destination-"+strconv.Itoa(len(scenario.name)))
+			requirements.NoError(err)
+			const roomID = "!provider-merge:example.test"
+			originRoom, err := s.EnsureConversation(origin.ID, roomID, "Provider merge")
+			requirements.NoError(err)
+			_, err = s.EnsureConversation(destination.ID, roomID, "Provider merge")
+			requirements.NoError(err)
+			requirements.NoError(s.SetConversationPolicyOverride(ctx, origin.ID, roomID, scenario.originTier))
+			requirements.NoError(s.SetConversationPolicyOverride(ctx, destination.ID, roomID, scenario.destinationTier))
+			participantID, err := s.EnsureParticipantByIdentifier("beeper", "synthetic-provider-merge-user", "Synthetic Provider User")
+			requirements.NoError(err)
+			observation, err := s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+				SourceID: &origin.ID, ConversationID: &originRoom,
+				AddressKind: store.ContactAddressEmail, OriginalValue: "provider-merge@example.test",
+				ProviderUserID: new("provider:origin-account"),
+				Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+			})
+			requirements.NoError(err)
+			requirements.NotNil(observation.Observation.ProviderUserID)
+
+			_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+				FromSourceID: origin.ID, IntoSourceID: destination.ID,
+			})
+			requirements.NoError(err)
+			current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
+			requirements.NoError(err)
+			requirements.Len(current, 1)
+			assertions.Nil(current[0].ProviderUserID,
+				"a provider binding must not survive without the Full-tier evidence that authorizes it")
+		})
+	}
 }
 
 func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing.T) {

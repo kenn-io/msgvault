@@ -125,6 +125,9 @@ func (s *Store) recordObservationConversationTx(ctx context.Context, tx *loggedT
 		if err = s.invalidateConversationPolicyPersonInputsTx(ctx, tx, people); err != nil {
 			return false, err
 		}
+		if err = s.invalidateContextualParticipantMessagesTx(ctx, tx, []int64{observation.ParticipantID}); err != nil {
+			return false, err
+		}
 		if err = s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
 			return false, err
 		}
@@ -367,6 +370,7 @@ func FullParticipantIdentifierWherePostgres(alias string) string {
 func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 	const observation = "identifier_observation"
 	const source = "identifier_source"
+	const originSource = "identifier_origin_source"
 	nullSafeEqual := "IS"
 	if postgres {
 		nullSafeEqual = "IS NOT DISTINCT FROM"
@@ -375,10 +379,12 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
  AND ` + observation + `.scope_kind ` + nullSafeEqual + ` ` + alias + `.scope_kind
  AND ` + observation + `.scope_value ` + nullSafeEqual + ` ` + alias + `.scope_value`
 	// Beeper's identifier is its account/user fallback anchor; provider_user_id
-	// may instead be a native provider key. The recorder's source_ref binds the
-	// raw user to the source account. Rebuild the existing length-delimited anchor
-	// using byte lengths, while SUBSTR indexes the textual source-ref prefix.
-	prefix := `('beeper:' || ` + source + `.identifier || ':')`
+	// may instead be a native provider key. Source merges move observations to the
+	// destination source, but source_ref and source_merge_conversations retain the
+	// account that originally supplied the participant. Rebuild against that
+	// account, not the observation's current source, using byte lengths for the
+	// length-delimited anchor and character positions for the textual source ref.
+	prefix := `('beeper:' || ` + originSource + `.identifier || ':')`
 	user := `SUBSTR(` + observation + `.source_ref,LENGTH(` + prefix + `)+1)`
 	byteLength := func(value string) string {
 		if postgres {
@@ -386,10 +392,17 @@ func fullParticipantIdentifierWhere(alias string, postgres bool) string {
 		}
 		return `LENGTH(CAST(` + value + ` AS BLOB))`
 	}
-	anchor := `('beeper:' || CAST(` + byteLength(source+`.identifier`) + ` AS TEXT) || ':' || ` + source + `.identifier || ':' || CAST(` + byteLength(user) + ` AS TEXT) || ':' || ` + user + `)`
-	beeper := alias + `.identifier_type='beeper' AND ` + source + `.source_type='beeper'
- AND SUBSTR(` + observation + `.source_ref,1,LENGTH(` + prefix + `))=` + prefix + `
- AND LENGTH(` + user + `)>0 AND ` + alias + `.identifier_value=` + anchor
+	anchor := `('beeper:' || CAST(` + byteLength(originSource+`.identifier`) + ` AS TEXT) || ':' || ` + originSource + `.identifier || ':' || CAST(` + byteLength(user) + ` AS TEXT) || ':' || ` + user + `)`
+	beeper := alias + `.identifier_type='beeper' AND EXISTS(SELECT 1 FROM sources ` + originSource + `
+	 WHERE ` + originSource + `.source_type='beeper'
+	 AND (` + originSource + `.id=` + observation + `.source_id OR EXISTS(
+	  SELECT 1 FROM participant_contact_observation_conversations identifier_edge
+	  JOIN source_merge_conversations identifier_merge
+	    ON identifier_merge.destination_conversation_id=identifier_edge.conversation_id
+	  WHERE identifier_edge.observation_id=` + observation + `.id
+	    AND identifier_merge.original_source_id=` + originSource + `.id))
+	 AND SUBSTR(` + observation + `.source_ref,1,LENGTH(` + prefix + `))=` + prefix + `
+	 AND LENGTH(` + user + `)>0 AND ` + alias + `.identifier_value=` + anchor + `)`
 	provider := alias + `.identifier_type<>'beeper' AND ` + observation + `.provider_user_id=` + alias + `.identifier_value
  AND (` + source + `.source_type=` + alias + `.identifier_type
  OR (` + source + `.source_type='slackdump' AND ` + alias + `.identifier_type='slack')

@@ -10,11 +10,26 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	var hasParticipantObservations bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM participant_contact_observations WHERE source_id IN (?, ?)
+	)`, from, into).Scan(&hasParticipantObservations); err != nil {
+		return fmt.Errorf("check source merge participant observations: %w", err)
+	}
+	if _, err := s.clearIneligibleProviderBindingsForSourceMergeTx(ctx, tx, from, into); err != nil {
+		return err
+	}
 	if err := s.preserveFullProviderBindingsForSourceMergeTx(ctx, tx, from, into); err != nil {
 		return err
 	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
+		// A later merge can move a destination room again. Keep every earlier
+		// source-to-room provenance row pointed at the room's current destination.
+		if _, err := tx.ExecContext(ctx, `UPDATE source_merge_conversations
+			SET destination_conversation_id = ? WHERE destination_conversation_id = ?`, c.destination, c.id); err != nil {
+			return fmt.Errorf("advance merged conversation provenance: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
 			return err
 		}
@@ -258,7 +273,41 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
+	if hasParticipantObservations {
+		if err := s.bumpParticipantIdentifierRevision(ctx, tx); err != nil {
+			return err
+		}
+	}
 	return s.bumpDerivedDataRevision(tx)
+}
+
+// Provider IDs are only admitted by exact Full support. Clear bindings that
+// currently lack that support before source ownership and room tiers can change
+// and make a Cold observation look eligible under the destination account.
+func (s *Store) clearIneligibleProviderBindingsForSourceMergeTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceIDs ...int64,
+) (bool, error) {
+	sourceIDs = sortedInt64Set(mapInt64Set(sourceIDs))
+	if len(sourceIDs) == 0 {
+		return false, nil
+	}
+	marks, args := sortedIDPlaceholders(sourceIDs)
+	result, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations AS observation
+		SET provider_user_id = NULL, updated_at = `+s.dialect.Now()+`
+		WHERE observation.source_id IN (`+marks+`)
+		  AND observation.active_until IS NULL AND observation.superseded_at IS NULL
+		  AND observation.provider_user_id IS NOT NULL
+		  AND NOT `+FullObservationWhere("observation"), args...)
+	if err != nil {
+		return false, fmt.Errorf("clear unsupported provider bindings before source merge: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check unsupported provider binding changes: %w", err)
+	}
+	return changed > 0, nil
 }
 
 // preserveFullProviderBindingsForSourceMergeTx selects the binding to retain

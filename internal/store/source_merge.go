@@ -217,6 +217,18 @@ func (s *Store) MergeSourcesContext(ctx context.Context, req MergeSourcesRequest
 		if err := s.finishConversationPolicyLifecycleTx(ctx, tx, policyState); err != nil {
 			return err
 		}
+		bindingsCleared, err := s.clearIneligibleProviderBindingsForSourceMergeTx(ctx, tx, req.IntoSourceID)
+		if err != nil {
+			return err
+		}
+		if bindingsCleared {
+			if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+				return fmt.Errorf("reconcile observations after source merge provider binding cleanup: %w", err)
+			}
+			if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
+				return err
+			}
+		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			return err
