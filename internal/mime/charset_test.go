@@ -40,7 +40,7 @@ func charsetHeaders() string {
 		"To: recipient@example.org\r\nSubject: " + stdmime.QEncoding.Encode("utf-8", "Zählerablesung") + "\r\nMIME-Version: 1.0\r\n"
 }
 
-// The German prose makes the HTML detector prefer Windows-1252 over valid UTF-8.
+// The German prose makes the charset detector prefer Windows-1252 over valid UTF-8.
 // Short fragments do not reproduce the reported corruption.
 func TestParse_DeclaredUTF8Bodies(t *testing.T) {
 	for _, tc := range []struct{ charset, transfer string }{
@@ -63,6 +63,14 @@ func TestParse_DeclaredUTF8Bodies(t *testing.T) {
 			assert.Contains(strings.Join(msg.Errors, "\n"), enmime.ErrorPlainTextFromHTML)
 		})
 	}
+}
+
+func TestParse_DeclaredUTF8PlainBody(t *testing.T) {
+	raw := charsetHeaders() + "Content-Type: text/plain; charset=utf-8\r\n\r\n" + charsetText
+	msg := mustParse(t, []byte(raw))
+	assert.Equal(t, charsetText, msg.BodyText)
+	assert.Equal(t, charsetText, msg.GetBodyText())
+	assert.Empty(t, msg.BodyHTML)
 }
 
 func TestParse_DeclaredUTF8NestedBodyPreservesAttachments(t *testing.T) {
