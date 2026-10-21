@@ -287,8 +287,7 @@ func (s *Server) resolveSearchCoverageGeneration(
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		fullBuildAvailable := buildingErr == nil && (building == nil ||
 			expectedFingerprint == "" || building.Fingerprint == expectedFingerprint)
-		restart := strings.HasSuffix(detail, vectorRestartAdvice)
-		return SearchCoverageStale, detail, &generation, fullBuildAvailable && !restart
+		return SearchCoverageStale, detail, &generation, fullBuildAvailable && cachedStaleAdvice(detail) == vectorRebuildAdvice
 	case errors.Is(err, vector.ErrIndexBuilding):
 		building, buildingErr := backend.BuildingGeneration(ctx)
 		if buildingErr != nil || building == nil {
