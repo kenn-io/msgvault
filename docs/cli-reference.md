@@ -2891,7 +2891,7 @@ msgvault person who-knows <topic words...> [flags]
 | `--after`, `--before` | none | RFC3339 or YYYY-MM-DD; after is inclusive, before is exclusive. They narrow messages only; declared topics have no date |
 | `--json` | false | Return the API JSON |
 
-See [topic search](/docs/usage/people/#find-who-knows-about-a-topic) for scoring
+See [topic search](usage/people.md#find-who-knows-about-a-topic) for scoring
 and exclusions.
 
 ### person track, provider, sweep, and facts

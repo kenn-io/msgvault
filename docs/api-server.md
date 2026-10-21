@@ -183,7 +183,7 @@ the sender; an email From address is not a verified identity.
 
 A topic with no free text returns `400 missing_free_text`. Vector search
 failures keep their usual `503` errors. See
-[topic search](/docs/usage/people/#find-who-knows-about-a-topic) for scoring.
+[topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
 
 ## API compatibility
 
