@@ -44,16 +44,9 @@ func TestSecureMkdirAllProtectedAtCreation(t *testing.T) {
 	require.NoError(t, SecureMkdirAll(path, 0o700))
 	assert.Equal(t, []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path}, calls)
 	assert.Empty(t, logs.String(), "protected creation must succeed without falling back")
-}
-
-func TestSecureMkdirAllProtectedDirectories(t *testing.T) {
-	require := require.New(t)
-	root := t.TempDir()
-	path := filepath.Join(root, "a", "b", "tokens")
-	require.NoError(SecureMkdirAll(path, 0o700))
 	for _, dir := range []string{filepath.Join(root, "a"), filepath.Join(root, "a", "b"), path} {
 		assertProtectedDirectory(t, dir)
-		require.NoError(os.WriteFile(filepath.Join(dir, "secret"), []byte("test-secret"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "secret"), []byte("test-secret"), 0o600))
 	}
 }
 
