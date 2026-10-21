@@ -159,17 +159,7 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 		SecurityDescriptor: descriptor,
 	}
 	for _, dir := range slices.Backward(missing) {
-		createPath := dir
-		// The prefix disables Win32 path normalization, which filepath.Abs has
-		// already applied. Use it only where Win32 needs it, as os does.
-		if len(dir) >= 248 && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
-			if strings.HasPrefix(dir, `\\`) {
-				createPath = `\\?\UNC\` + dir[2:]
-			} else {
-				createPath = `\\?\` + dir
-			}
-		}
-		path16, err := windows.UTF16PtrFromString(createPath)
+		path16, err := windows.UTF16PtrFromString(win32CreatePath(dir))
 		if err != nil {
 			return &os.PathError{Op: "mkdir", Path: dir, Err: err}
 		}
@@ -183,6 +173,18 @@ func SecureMkdirAll(path string, perm os.FileMode) error {
 		}
 	}
 	return nil
+}
+
+func win32CreatePath(dir string) string {
+	// The prefix disables Win32 path normalization, which filepath.Abs has
+	// already applied. Use it only where Win32 needs it, as os does.
+	if len(dir) >= 248 && !strings.HasPrefix(dir, `\\?\`) && !strings.HasPrefix(dir, `\\.\`) {
+		if strings.HasPrefix(dir, `\\`) {
+			return `\\?\UNC\` + dir[2:]
+		}
+		return `\\?\` + dir
+	}
+	return dir
 }
 
 // SecureChmod changes the mode of the named file.

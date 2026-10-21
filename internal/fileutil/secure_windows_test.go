@@ -119,6 +119,32 @@ func TestSecureMkdirAllConcurrentCreation(t *testing.T) {
 	require.True(info.IsDir())
 }
 
+func TestWin32CreatePath(t *testing.T) {
+	drive247 := `C:\` + strings.Repeat("a", 244)
+	drive248 := `C:\` + strings.Repeat("a", 245)
+	unc247 := `\\server\share\` + strings.Repeat("a", 232)
+	unc248 := `\\server\share\` + strings.Repeat("a", 233)
+	tests := []struct {
+		name   string
+		dir    string
+		length int
+		want   string
+	}{
+		{"drive at 247", drive247, 247, drive247},
+		{"drive at 248", drive248, 248, `\\?\C:\` + strings.Repeat("a", 245)},
+		{"UNC at 248", unc248, 248, `\\?\UNC\server\share\` + strings.Repeat("a", 233)},
+		{"UNC at 247", unc247, 247, unc247},
+		{"extended prefix", `\\?\` + drive248, 252, `\\?\` + drive248},
+		{"device prefix", `\\.\` + drive248, 252, `\\.\` + drive248},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Len(t, tt.dir, tt.length)
+			assert.Equal(t, tt.want, win32CreatePath(tt.dir))
+		})
+	}
+}
+
 func TestSecureMkdirAllLongPath(t *testing.T) {
 	require := require.New(t)
 	root, err := filepath.Abs(t.TempDir())
