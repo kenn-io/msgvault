@@ -26,7 +26,7 @@ type calendarRunner func(context.Context, calcontrol.Request) (*calcontrol.Resul
 func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 	var account, sendUpdates string
 	var dryRun, readOnly, jsonOutput bool
-	root := &cobra.Command{Use: "calendar", Short: "Control live calendar events and query availability", Long: "Create, update, delete, move, or respond to live Google Calendar events through the daemon.\nRequires an explicit --account; calendar IDs and configured aliases select the target calendar.\nWrites require add-calendar --write plus write_calendars in the source configuration.\nGuest changes also require invite_calendars. Notifications default to none.\nCalendar IDs: primary, a calendar ID, or an alias from config.toml.", Example: `  msgvault calendar freebusy primary --account you@example.com --from 2026-10-10T09:00 --to 2026-10-10T18:00 --tz Europe/London --json`}
+	root := &cobra.Command{Use: "calendar", Short: "Read archived events and control live calendars", Long: "List archived events with calendar events --from --to.\nCreate, update, delete, move, or respond to live Google Calendar events through the daemon.\nLive commands require an explicit --account; calendar IDs and configured aliases select the target calendar.\nWrites require add-calendar --write plus write_calendars in the source configuration.\nGuest changes also require invite_calendars. Notifications default to none.\nCalendar IDs: primary, a calendar ID, or an alias from config.toml.", Example: `  msgvault calendar freebusy primary --account you@example.com --from 2026-10-10T09:00 --to 2026-10-10T18:00 --tz Europe/London --json`}
 	root.PersistentFlags().StringVar(&account, "account", "", "configured calendar source name or OAuth account (required)")
 	root.PersistentFlags().StringVar(&sendUpdates, "send-updates", "none", "guest notifications: none, all, or externalOnly")
 	root.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "verify access and print the proposed changes without writing")
@@ -231,6 +231,7 @@ func newCalendarControlCmd(run calendarRunner) *cobra.Command {
 		}
 		root.AddCommand(command)
 	}
+	root.AddCommand(newCalendarEventsCommand(openCalendarEvents))
 	return root
 }
 func parseCalendarBound(value, tz string, allDay bool) (gcal.EventDateTime, error) {

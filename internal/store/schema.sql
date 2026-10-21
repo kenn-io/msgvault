@@ -4674,3 +4674,38 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Typed calendar evidence rebuilt from raw provider snapshots.
+CREATE TABLE IF NOT EXISTS calendar_events (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider_event_id TEXT NOT NULL DEFAULT '',
+    series_provider_id TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    original_start_at DATETIME,
+    original_start_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    all_day BOOLEAN NOT NULL DEFAULT FALSE,
+    start_at DATETIME,
+    end_at DATETIME,
+    start_date TEXT NOT NULL DEFAULT '',
+    end_date TEXT NOT NULL DEFAULT '',
+    event_time_zone TEXT NOT NULL DEFAULT '',
+    calendar_time_zone TEXT NOT NULL DEFAULT '',
+    recurrence_json TEXT NOT NULL DEFAULT '[]',
+    recurrence_end_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_recurrence_end ON calendar_events(recurrence_end_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_provider_id ON calendar_events(provider_event_id);
+CREATE TABLE IF NOT EXISTS calendar_event_attendees (
+    message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    email TEXT NOT NULL DEFAULT '',
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL,
+    rsvp TEXT NOT NULL,
+    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
+    PRIMARY KEY (message_id, ordinal)
+);
