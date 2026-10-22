@@ -198,7 +198,7 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CoverageIncomplete: true}, 50, now))
-	assert.Equal("No open loops.\nOnly 1000 stored messages were checked; more loops may be missing.\n", out.String())
+	assert.Equal("No open loops.\nMore history remains. Run the list again to continue checking; these results cover checked conversations.\n", out.String())
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Items: []generated.LoopItem{

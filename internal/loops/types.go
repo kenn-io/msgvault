@@ -6,7 +6,6 @@ package loops
 import (
 	"time"
 
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -17,9 +16,6 @@ const (
 	MaxLimit       = 200
 	ReplyOwedAfter = 24 * time.Hour
 	AwaitingAfter  = 72 * time.Hour
-	// Lookback is how recent a conversation's last message must be for it to
-	// list. A loop that lists keeps the age of the message that started it.
-	Lookback = 30 * 24 * time.Hour
 )
 
 // Loop is one conversation turn that waits on a reply.
@@ -36,12 +32,7 @@ type Loop struct {
 	Questions      []store.LoopMessage
 }
 
-// Reader supplies what Detect cannot read from the loaded messages. Each read
-// is one primary-key lookup, made only for messages the walk examines.
+// Reader supplies the message facts Detect needs.
 type Reader interface {
-	Body(messageID int64) (string, error)
-	// Original reports automation signals, file-attachment evidence, and
-	// unreadable=true when the stored original fails MIME parsing. A message
-	// with no stored original has no signals or attachment evidence.
-	Original(messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
+	Evidence(messageID int64) (store.LoopMessageEvidence, error)
 }

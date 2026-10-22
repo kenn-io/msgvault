@@ -41,3 +41,11 @@ func (a *storeAPIAdapter) MarkLoopDoneContext(ctx context.Context, anchorID int6
 func (a *storeAPIAdapter) SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error) {
 	return a.store.SnoozeLoopContext(ctx, anchorID, until, questions)
 }
+
+func (a *storeAPIAdapter) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
+	return a.store.LoopMessageEvidenceContext(ctx, id, version)
+}
+
+func (a *storeAPIAdapter) SaveLoopMessageEvidenceContext(ctx context.Context, id int64, version int, token string, evidence store.LoopMessageEvidence) error {
+	return a.store.SaveLoopMessageEvidenceContext(ctx, id, version, token, evidence)
+}

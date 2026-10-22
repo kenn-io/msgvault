@@ -6854,7 +6854,7 @@ func (l LoopItem) Validate() error {
 }
 
 type LoopListResponse struct {
-	// CoverageIncomplete True when the scan reached the stored original read limit; returned items may be incomplete
+	// CoverageIncomplete True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue
 	CoverageIncomplete bool       `json:"coverage_incomplete"`
 	Items              []LoopItem `json:"items" validate:"required"`
 

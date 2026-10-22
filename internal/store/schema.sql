@@ -4680,3 +4680,36 @@ CREATE TABLE IF NOT EXISTS loop_decisions (
  snoozed_until DATETIME,
  CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
 );
+
+-- Retained message facts for bounded request-time loop detection.
+CREATE TABLE IF NOT EXISTS loop_message_evidence (
+ message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ rule_version INTEGER NOT NULL,
+ body_version TEXT NOT NULL,
+ token TEXT NOT NULL,
+ facts TEXT
+);
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_insert
+AFTER INSERT ON message_raw FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_update
+AFTER UPDATE ON message_raw FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_delete
+AFTER DELETE ON message_raw FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_insert
+AFTER INSERT ON message_bodies FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_update
+AFTER UPDATE ON message_bodies FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
+AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
+END;

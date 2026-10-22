@@ -93,7 +93,7 @@ describe("PersonOpenLoops", () => {
     const empty = clientFor([], false, 1);
     render(PersonOpenLoops, { client: empty.client, personID: 7 });
     expect(
-      await screen.findByText("Nothing open with this person in the last 30 days."),
+      await screen.findByText("Nothing open with this person."),
     ).toBeDefined();
     expect(
       screen.getByText(
@@ -108,7 +108,7 @@ describe("PersonOpenLoops", () => {
     const view = render(PersonOpenLoops, { client, personID: 7 });
     expect(
       await screen.findByText(
-        "Only 1,000 stored messages were checked; more loops may be missing.",
+        "More history remains. Refresh to continue checking; these results cover checked conversations.",
       ),
     ).toBeDefined();
     view.unmount();
@@ -155,7 +155,7 @@ describe("PersonOpenLoops", () => {
     const view = render(PersonOpenLoops, { client, personID: 7 });
     await view.rerender({ client, personID: 8 });
     expect(
-      await screen.findByText("Nothing open with this person in the last 30 days."),
+      await screen.findByText("Nothing open with this person."),
     ).toBeDefined();
     resolveOld(
       Response.json({

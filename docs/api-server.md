@@ -1735,17 +1735,14 @@ Attachment metadata and message details include an optional `docbank` array of r
 ### Open loops
 
 `GET /api/v1/loops` lists conversations that wait on a reply, oldest first.
-Query parameters are `person_id` and `limit` (1 to 200, default 50). It lists conversations with a message in
-the last 30 days, plus conversations containing snooze decisions, read from the archive when you ask. It returns `items` and `truncated`. Each
+Query parameters are `person_id` and `limit` (1 to 200, default 50). It reads conversations of any age from the archive when you ask. It returns `items` and `truncated`. Each
 item has `kind`, `anchor_message_id`,
 `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty`
 (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`,
 `owed_since_at`, and `last_activity_at`. `truncated` is true when more loops are
 open than `limit`. `skipped_unparseable` counts stored messages the list could
 not read, because their original failed to parse. A reply in one of them may
-have settled a loop that still lists. The scan checks at most 1,000 stored
-originals per request. If it needs another, it returns completed conversations
-and sets `coverage_incomplete`; other loops may be missing. A very large
+have settled a loop that still lists. The scan computes evidence for at most 1,000 uncached messages per request. It retains body classifications and MIME facts, so another request continues farther through history. If the budget runs out, it returns only completed conversations and sets `coverage_incomplete`; displayed results cover checked conversations. A very large
 eligible set can still exceed the default 60-second request budget and return
 HTTP 500 (`internal_error`) without partial results. A smaller `limit` may not
 reduce that work. A bad parameter returns 400.
@@ -1758,7 +1755,7 @@ oldest open question supplies the anchor and age. They return
 `anchor_message_id`, `state` (`done` or `snoozed`), and `snoozed_until`. They
 re-read the conversation first and return 404 `loop_not_found` when the
 message is not a loop that list would show now: it anchors no current loop,
-the conversation is outside the 30 days and has no snooze decisions, or the loop has not waited out its
+the loop has not waited out its
 24 or 72 hours. A snooze time in the past returns 400. Responses are
 not cacheable. These routes are owner-only: delegated agent tokens receive 401.
 See [Open loops](usage/open-loops.md) for the rules.

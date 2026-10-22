@@ -22,7 +22,7 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 	if conv.GroupChat || (conv.ConversationType != "email_thread" && conv.ConversationType != "direct_chat") {
 		return Detection{}, nil
 	}
-	w := walker{email: conv.ConversationType == "email_thread", r: r, texts: map[int64]string{}}
+	w := walker{email: conv.ConversationType == "email_thread", r: r, evidence: map[int64]store.LoopMessageEvidence{}}
 	turns := map[loopParticipantIdentity]Loop{}
 	latest := map[loopParticipantIdentity]time.Time{}
 	for m, err := range conv.Walk() {
@@ -115,25 +115,18 @@ func (w *walker) touch(latest map[loopParticipantIdentity]time.Time, key loopPar
 }
 
 type walker struct {
-	email     bool
-	r         Reader
-	texts     map[int64]string
-	originals map[int64]originalEvidence
-	unparsed  int
-	replies   []store.LoopMessage
-	sent      []store.LoopMessage
-	answered  map[int64]bool
+	email    bool
+	r        Reader
+	evidence map[int64]store.LoopMessageEvidence
+	unparsed int
+	replies  []store.LoopMessage
+	sent     []store.LoopMessage
+	answered map[int64]bool
 	// settledParticipants remembers people whose newer, verified exchange
 	// settles their older requests. Their older messages cannot reopen the
 	// same turn, so paged history can skip parsing them while looking for
 	// unanswered requests from other people.
 	settledParticipants map[loopParticipantIdentity]bool
-}
-
-type originalEvidence struct {
-	signals           mime.AutomationSignals
-	hasFileAttachment bool
-	unreadable        bool
 }
 
 type loopParticipantIdentity struct {
@@ -191,45 +184,22 @@ func (w *walker) isSettledParticipantMessage(m store.LoopMessage) bool {
 	}
 }
 
-// text is what the sender wrote in the message, without quotes or signature.
-func (w *walker) text(id int64) (string, error) {
-	if text, ok := w.texts[id]; ok {
-		return text, nil
+func (w *walker) facts(id int64) (store.LoopMessageEvidence, error) {
+	if e, ok := w.evidence[id]; ok {
+		return e, nil
 	}
-	body, err := w.r.Body(id)
+	e, err := w.r.Evidence(id)
 	if err != nil {
-		return "", err
+		return e, err
 	}
-	w.texts[id] = ownText(body)
-	return w.texts[id], nil
-}
-
-func (w *walker) original(id int64) (originalEvidence, error) {
-	if evidence, ok := w.originals[id]; ok {
-		return evidence, nil
-	}
-	signals, hasFileAttachment, unreadable, err := w.r.Original(id)
-	if err != nil {
-		return originalEvidence{}, err
-	}
-	evidence := originalEvidence{
-		signals: signals, hasFileAttachment: hasFileAttachment, unreadable: unreadable,
-	}
-	if unreadable {
-		// The original failed to parse, so it says nothing about what the
-		// sender wrote. Count it once even when both attachment and automation
-		// checks need the same parsed result.
+	if e.Unreadable {
 		w.unparsed++
 	}
-	if w.originals == nil {
-		w.originals = map[int64]originalEvidence{}
-	}
-	w.originals[id] = evidence
-	return evidence, nil
+	w.evidence[id] = e
+	return e, nil
 }
 
-// neutral applies the checks that read only the message's columns and text,
-// then checks stored MIME for a possible file attachment when needed.
+// neutral applies the message columns and cached body and attachment facts.
 func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 	if m.Direction != store.DirectionInbound && m.Direction != store.DirectionOutbound {
 		return true, nil
@@ -246,25 +216,19 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 		return true, nil
 	}
 	if !m.HasFileAttachment {
-		text, err := w.text(m.ID)
+		evidence, err := w.facts(m.ID)
 		if err != nil {
 			return false, err
 		}
-		if strings.TrimSpace(text) == "" {
+		if evidence.Empty {
 			if !m.MayHaveFileAttachment {
 				return true, nil
 			}
-		} else if !isAcknowledgementOnly(text) {
+		} else if !evidence.Acknowledgement {
 			return false, nil
 		}
-		if m.MayHaveFileAttachment {
-			evidence, err := w.original(m.ID)
-			if err != nil {
-				return false, err
-			}
-			if evidence.hasFileAttachment {
-				return false, nil
-			}
+		if m.MayHaveFileAttachment && evidence.Attachment {
+			return false, nil
 		}
 		return true, nil
 	}
@@ -273,10 +237,10 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 
 // acknowledges reports whether a neutral inbound or outbound message contains
 // only an acknowledgement. Its timestamp can keep an unanswered question
-// recent without opening or settling a loop.
+// active without opening or settling a loop.
 func (w *walker) acknowledges(m store.LoopMessage) bool {
-	text, ok := w.texts[m.ID]
-	return ok && strings.TrimSpace(text) != "" && isAcknowledgementOnly(text)
+	e, ok := w.evidence[m.ID]
+	return ok && !e.Empty && e.Acknowledgement
 }
 
 // vouched reports whether the stored original leaves a message in play: it is
@@ -287,17 +251,11 @@ func (w *walker) vouched(m store.LoopMessage) (bool, error) {
 	if !w.email {
 		return true, nil
 	}
-	if _, err := w.text(m.ID); err != nil {
-		return false, err
-	}
-	evidence, err := w.original(m.ID)
+	evidence, err := w.facts(m.ID)
 	if err != nil {
 		return false, err
 	}
-	signals := evidence.signals
-	automated := signals.AutoSubmitted || signals.CalendarPart || signals.ReplyToNoReply ||
-		signals.PrecedenceBulk || signals.ListUnsubscribe
-	return !automated && !evidence.unreadable, nil
+	return !evidence.Automated && !evidence.Unreadable, nil
 }
 
 // opens reports whether m can anchor a loop, and the loop it anchors: it asks
@@ -307,8 +265,8 @@ func (w *walker) opens(m store.LoopMessage) (kind string, counterparty store.Loo
 	if w.answered[m.ID] || (m.Direction == store.DirectionInbound && !w.addressedToOwner(m)) {
 		return "", store.LoopParticipant{}, false, nil
 	}
-	text, err := w.text(m.ID)
-	if err != nil || !asks(text) {
+	evidence, err := w.facts(m.ID)
+	if err != nil || !evidence.Asks {
 		return "", store.LoopParticipant{}, false, err
 	}
 	if vouched, err := w.vouched(m); err != nil || !vouched {

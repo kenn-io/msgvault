@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -156,26 +158,21 @@ func (s *Store) loopTimeParam(instant time.Time) any {
 	return sqliteutil.TimestampKey(instant)
 }
 
-// LoopConversationsContext yields the email threads and direct chats with a
-// live message from a person rather than a list since q.Since, the one with
-// the oldest first message first. A caller that wants the oldest loops can
-// stop once FirstAt passes the oldest loop it needs, since no later
-// conversation can start a loop earlier. It loads loopChunkConversations conversations at a time,
-// each with its newest messages classified for the owner, and reads nothing
-// past a chunk the caller doesn't ask for.
+// LoopConversationsContext yields conversations newest-activity first in bounded
+// chunks. Each conversation walks messages newest first on demand.
 func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.Seq2[LoopConversation, error] {
 	return func(yield func(LoopConversation, error) bool) {
 		owners, err := s.loopOwnerIdentities(ctx)
 		var heads []LoopConversation
 		if err == nil {
-			heads, err = s.loopConversationHeads(ctx, q)
+			heads, err = s.loopConversationHeads(ctx, q, 0)
 		}
 		if err != nil {
 			yield(LoopConversation{}, err)
 			return
 		}
-		for start := 0; start < len(heads); start += loopChunkConversations {
-			chunk, err := s.loopChunk(ctx, heads[start:min(start+loopChunkConversations, len(heads))], owners)
+		for offset := 0; len(heads) > 0; {
+			chunk, err := s.loopChunk(ctx, heads, owners)
 			if err != nil {
 				yield(LoopConversation{}, err)
 				return
@@ -185,6 +182,12 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 					return
 				}
 			}
+			offset += len(heads)
+			heads, err = s.loopConversationHeads(ctx, q, offset)
+			if err != nil {
+				yield(LoopConversation{}, err)
+				return
+			}
 		}
 	}
 }
@@ -192,8 +195,10 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 // loopConversationHeads picks the conversations to read, newest first. With a
 // PersonID, it keeps conversations where one of the person's participants
 // sent, received, or belongs.
-func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery) ([]LoopConversation, error) {
+func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, offset int) ([]LoopConversation, error) {
 	query, args := s.loopConversationQuery(q)
+	query += ` LIMIT ? OFFSET ?`
+	args = append(args, loopChunkConversations, offset)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list loop conversations: %w", err)
@@ -246,7 +251,7 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 		args = append(args, q.PersonID)
 	}
 	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type
-		ORDER BY ` + s.loopTimeKey("first_at") + `, m.conversation_id`
+		ORDER BY MAX(` + s.loopTimeKey("m.sent_at") + `) DESC, m.conversation_id DESC`
 	return query, args
 }
 
@@ -731,5 +736,51 @@ func (s *Store) copyLoopDecisionTx(ctx context.Context, tx *loggedTx, from, into
    state = CASE WHEN loop_decisions.state = 'done' OR excluded.state = 'done' THEN 'done' ELSE 'snoozed' END,
    snoozed_until = CASE WHEN loop_decisions.state = 'done' OR excluded.state = 'done' THEN NULL
     WHEN loop_decisions.snoozed_until > excluded.snoozed_until THEN loop_decisions.snoozed_until ELSE excluded.snoozed_until END`, into, from)
+	return err
+}
+
+// LoopMessageEvidence retains classification facts, never message text.
+type LoopMessageEvidence struct {
+	Empty           bool `json:"empty"`
+	Acknowledgement bool `json:"acknowledgement"`
+	Asks            bool `json:"asks"`
+	Automated       bool `json:"automated"`
+	Attachment      bool `json:"attachment"`
+	Unreadable      bool `json:"unreadable"`
+}
+
+// LoopMessageEvidenceContext returns cached facts only for the current body and rules.
+func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, string, bool, error) {
+	var e LoopMessageEvidence
+	var token string
+	var facts sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT e.token, e.facts FROM loop_message_evidence e
+ JOIN messages m ON m.id = e.message_id
+ WHERE e.message_id = ? AND e.body_version = CAST(m.last_modified AS TEXT) AND e.rule_version = ?`, id, version).Scan(&token, &facts)
+	if err == nil && facts.Valid {
+		err = json.Unmarshal([]byte(facts.String), &e)
+		return e, token, err == nil, err
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return e, "", false, err
+	}
+	token = rand.Text()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,body_version,token,facts)
+ SELECT id, ?, CAST(last_modified AS TEXT), ?, NULL FROM messages WHERE id = ?
+ ON CONFLICT(message_id) DO UPDATE SET rule_version=excluded.rule_version, body_version=excluded.body_version, token=excluded.token, facts=NULL`, version, token, id)
+	return e, token, false, err
+}
+
+// SaveLoopMessageEvidenceContext saves only while the computation's token is
+// current. Body and original edits delete it, preventing a stale computation
+// from restoring invalidated facts even when last_modified shares a clock tick.
+func (s *Store) SaveLoopMessageEvidenceContext(ctx context.Context, id int64, version int, token string, e LoopMessageEvidence) error {
+	facts, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
+ WHERE message_id = ? AND rule_version = ? AND token = ?
+ AND body_version = (SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?)`, string(facts), id, version, token, id)
 	return err
 }

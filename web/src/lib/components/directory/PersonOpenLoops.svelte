@@ -68,7 +68,7 @@
       {#if loading}<p role="status">Loading open loops…</p>
       {:else if failed}<p role="alert">Couldn't load open loops.</p>
       {:else if items.length === 0 && coverageIncomplete}<p>No loops found in the messages checked.</p>
-      {:else if items.length === 0}<p>Nothing open with this person in the last 30 days.</p>
+      {:else if items.length === 0}<p>Nothing open with this person.</p>
       {:else}
         <ul>
           {#each items as loop (loop.anchor_message_id)}
@@ -88,7 +88,7 @@
         </p>
       {/if}
       {#if !loading && !failed && coverageIncomplete}
-        <p class="note">Only 1,000 stored messages were checked; more loops may be missing.</p>
+        <p class="note">More history remains. Refresh to continue checking; these results cover checked conversations.</p>
       {/if}
     </div>
   </Card>

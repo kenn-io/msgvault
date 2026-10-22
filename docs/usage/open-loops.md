@@ -119,8 +119,7 @@ passes. A new question must wait its own 24 or 72 hours before it lists.
 Both commands take the current message ID from `loops list` and re-read the
 conversation before acting. A covered anchor, an archived answer, or a
 question still inside its grace period makes the action fail with the
-existing not-open error. A requester whose last activity falls outside the 30-day window also fails,
-except for their exact questions with expired snoozes.
+existing not-open error.
 
 A confirmed duplicate inherits the original question's decision. Hiding a
 duplicate preserves its own decision so undo restores it too. Done wins over
@@ -134,21 +133,10 @@ question. Deleting a question removes only that question's decision.
   Alex answers an address of another account of yours, that reply sits in
   that account's conversation, and the loop stays until you run
   `msgvault loops done`.
-- The list reads conversations that are not mailing-list mail and have a
-  message in the last 30 days or a snooze decision, oldest first. It stops once it holds more loops
-  than you asked for, so a list with few or no loops reads every one of those
-  conversations. It reads a stored original only when it could change the
-  answer. Each list checks at most 1,000 stored originals. If it needs another,
-  it stops and returns completed conversations with `coverage_incomplete` set;
-  other loops may be missing. A very large eligible set can still exceed the
-  API's default 60-second request budget, which returns HTTP 500
-  (`internal_error`) without a partial list. Lowering `--limit` may not shorten
-  a sparse scan. Each person-card view follows the same limit for that person's
-  conversations.
-- A requester leaves the list after 30 days without activity, even when a
-  question remains unanswered. Their unanswered questions can return when
-  they become active again. An exact snoozed question returns after expiry,
-  including past day 30; this exception leaves other quiet questions hidden.
+- Each request checks up to 1,000 uncached messages, starting with the most recently active conversations. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
+- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Refresh to continue checking.
+- A very large archive can still exceed the API's default 60-second request budget and return HTTP 500 (`internal_error`). Successful evidence writes remain available for the next request. A smaller `limit` may still scan the same history.
+- Unanswered questions remain eligible at any age. Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
 - The CLI and API have no action to undo done or end a snooze early.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something

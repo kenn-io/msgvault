@@ -3,6 +3,7 @@ package loops_test
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,10 +123,10 @@ func TestListBoundsStoredOriginalReads(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	st := storetest.NewLoopOriginalReadStore(f.Store, loops.MaxListOriginalReads+1, now)
+	st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, now)
 	result, err := loops.List(t.Context(), st, loops.Options{}, now)
 	require.NoError(err)
-	assert.Equal(loops.MaxListOriginalReads, st.OriginalReads, "a list request caps stored MIME reads")
+	assert.Equal(loops.MaxListEvidenceComputations, st.OriginalReads, "a list request caps stored MIME reads")
 	assert.True(result.CoverageIncomplete)
 	require.Len(result.Loops, 1, "the complete conversation before exhaustion stays in the result")
 }
@@ -135,7 +136,7 @@ func TestListReturnsCanceledOriginalRead(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	f := storetest.New(t)
-	st := storetest.NewLoopOriginalReadStore(f.Store, 1, now)
+	st := storetest.NewLoopOriginalReadStore(f, 1, now)
 	result, err := loops.List(ctx, st, loops.Options{}, now)
 	require.ErrorIs(err, context.Canceled)
 	require.False(result.CoverageIncomplete)
@@ -259,7 +260,7 @@ func TestDoneAcceptsWhatListShows(t *testing.T) {
 	}{
 		{name: "missing message", missing: true, wantErr: true},
 		{name: "inside the grace period", age: 2 * time.Hour, wantErr: true},
-		{name: "silent for 31 days", age: 31 * day, wantErr: true},
+		{name: "silent for 31 days", age: 31 * day},
 		{name: "listed", age: 3 * day},
 		{name: "grace period passed", age: 2 * time.Hour, advance: 23 * time.Hour},
 	} {
@@ -328,7 +329,7 @@ func (c *countingStore) LoopOriginalEvidenceContext(
 	return c.Store.LoopOriginalEvidenceContext(ctx, messageID)
 }
 
-func TestListStopsReadingOnceTheOldestLoopsAreKnown(t *testing.T) {
+func TestListSortsOldestFirstAcrossNewestFirstConversations(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -358,7 +359,7 @@ func TestListStopsReadingOnceTheOldestLoopsAreKnown(t *testing.T) {
 		}
 		assert.Equal(limit < 60, result.Truncated, "limit %d", limit)
 		if limit <= 5 {
-			assert.Less(counted.originals, 25, "limit %d reads %d originals, not all 61 threads", limit, counted.originals)
+			assert.Zero(counted.originals, "cached evidence avoids repeated MIME reads")
 		}
 	}
 }
@@ -411,7 +412,7 @@ func TestRequesterDecisionsStayIndependent(t *testing.T) {
 	assert.Equal(second, result.Loops[0].Anchor.ID)
 }
 
-func TestExpiredSnoozeOnlyRestoresItsQuestion(t *testing.T) {
+func TestExpiredSnoozeRestoresQuestionAlongsideQuietQuestions(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -425,13 +426,15 @@ func TestExpiredSnoozeOnlyRestoresItsQuestion(t *testing.T) {
 	assert.Equal(samQuestion, before.Loops[0].Anchor.ID, "the active snooze hides Alex while Sam remains open")
 	after, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(31*day))
 	require.NoError(err)
-	require.Len(after.Loops, 1)
+	require.Len(after.Loops, 2)
 	assert.Equal(alexQuestion, after.Loops[0].Anchor.ID)
-	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you review the invoice?", SentAt: ago(26 * day)})
+	assert.Equal(samQuestion, after.Loops[1].Anchor.ID)
+	olderQuestion := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you review the invoice?", SentAt: ago(26 * day)})
 	quiet, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(31*day))
 	require.NoError(err)
-	require.Len(quiet.Loops, 1, "an expired snooze restores only the exact marked question")
-	assert.Equal(alexQuestion, quiet.Loops[0].Anchor.ID)
+	require.Len(quiet.Loops, 2, "quiet unanswered questions remain eligible")
+	assert.Equal(olderQuestion, quiet.Loops[0].Anchor.ID)
+	assert.Len(quiet.Loops[0].Questions, 2)
 }
 
 func TestNeutralRequesterAcknowledgementKeepsOlderQuestionOpen(t *testing.T) {
@@ -439,7 +442,7 @@ func TestNeutralRequesterAcknowledgementKeepsOlderQuestionOpen(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(40 * day)})
-	require.Empty(list(t, f, loops.Options{}).Loops)
+	require.Len(list(t, f, loops.Options{}).Loops, 1)
 	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Thanks!", SentAt: ago(day)})
 	result := list(t, f, loops.Options{})
 	require.Len(result.Loops, 1)
@@ -476,4 +479,92 @@ func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
 			assert.Equal(fresh, after.Loops[0].Anchor.ID)
 		})
 	}
+}
+
+func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Can you send the original?", SentAt: ago(80 * day)})
+	for i := range loops.MaxListEvidenceComputations {
+		f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(4*day + time.Duration(i)*time.Minute)})
+	}
+	current := f.PersistEmail(storetest.EmailSpec{Thread: "current", From: "sam@example.test", To: []string{me}, Body: "Can you send the current draft?", SentAt: ago(2 * day)})
+	counted := &countingStore{Store: f.Store}
+	first, err := loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	require.True(first.CoverageIncomplete)
+	require.Len(first.Loops, 1, "the interrupted conversation cannot expose a provisional anchor")
+	assert.Equal(current, first.Loops[0].Anchor.ID)
+	assert.Equal(loops.MaxListEvidenceComputations, counted.bodies)
+	assert.Equal(loops.MaxListEvidenceComputations, counted.originals)
+	counted.bodies, counted.originals = 0, 0
+	second, err := loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	assert.False(second.CoverageIncomplete)
+	require.Len(second.Loops, 2)
+	assert.Equal(anchor, second.Loops[0].Anchor.ID, "cached facts let the next scan reach the oldest question")
+	assert.Equal(current, second.Loops[1].Anchor.ID)
+	assert.Equal(2, counted.bodies)
+	assert.Equal(2, counted.originals)
+	counted.bodies, counted.originals = 0, 0
+	third, err := loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	assert.False(third.CoverageIncomplete)
+	assert.Equal(second.Loops, third.Loops)
+	assert.Zero(counted.bodies)
+	assert.Zero(counted.originals)
+}
+
+func TestListRefreshesCachedFactsAfterBodyAndOriginalChanges(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the report?", SentAt: ago(4 * day), NoRaw: true})
+	counted := &countingStore{Store: f.Store}
+	result, err := loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	require.Len(result.Loops, 1)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`), question)
+	require.NoError(err)
+	result, err = loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	assert.Empty(result.Loops, "body edits replace the cached question classification")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_bodies SET body_text = 'Can you send the report?' WHERE message_id = ?`), question)
+	require.NoError(err)
+	result, err = loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	require.Len(result.Loops, 1)
+	for _, sql := range []string{
+		`INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime','none') ON CONFLICT(message_id) DO UPDATE SET raw_data=excluded.raw_data,compression=excluded.compression`,
+		`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`,
+	} {
+		raw := []byte("Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nCan you send the report?")
+		if strings.HasPrefix(sql, "UPDATE") {
+			raw = []byte("Content-Type: text/plain\r\n\r\nCan you send the report?")
+		}
+		if strings.HasPrefix(sql, "INSERT") {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(sql), question, raw)
+		} else {
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(sql), raw, question)
+		}
+		require.NoError(err)
+		result, err = loops.List(t.Context(), counted, loops.Options{}, now)
+		require.NoError(err)
+		if strings.HasPrefix(sql, "INSERT") {
+			assert.Empty(result.Loops, "inserted automation evidence prevents an automated message from opening a loop")
+		} else {
+			assert.Len(result.Loops, 1, "updated original replaces cached automation evidence")
+		}
+	}
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), []byte("Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nCan you send the report?"), question)
+	require.NoError(err)
+	result, err = loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	require.Empty(result.Loops)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM message_raw WHERE message_id = ?`), question)
+	require.NoError(err)
+	result, err = loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	assert.Len(result.Loops, 1, "removing an original invalidates its automation evidence")
 }

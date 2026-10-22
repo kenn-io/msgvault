@@ -86,7 +86,7 @@ func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	st := storetest.NewLoopOriginalReadStore(f.Store, loops.MaxListOriginalReads+1, time.Now().UTC())
+	st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil))

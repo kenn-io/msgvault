@@ -44,7 +44,7 @@ const (
 // invalidate any index built under a different preprocessing policy so
 // the operator must --full-rebuild rather than silently mixing
 // inconsistently-prepared vectors in one generation.
-const preprocessVersion = 1
+const preprocessVersion = 2
 
 // embedPolicyVersion identifies the embed-worker output layout for a
 // given Preprocess result. Bump whenever a change to internal/vector/

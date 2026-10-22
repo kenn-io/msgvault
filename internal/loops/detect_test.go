@@ -124,19 +124,12 @@ type fakeReader struct {
 	parses   int
 }
 
-func (f *fakeReader) Body(id int64) (string, error) {
+func (f *fakeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 	if f.reads != nil {
 		f.reads[id]++
 	}
-	return f.bodies[id], f.err
-}
-
-func (f *fakeReader) Original(id int64) (mime.AutomationSignals, bool, bool, error) {
 	f.parses++
-	if f.rawFails[id] {
-		return mime.AutomationSignals{}, false, true, f.err
-	}
-	return f.signals[id], f.files[id], false, f.err
+	return classify(f.bodies[id], f.signals[id], f.files[id], f.rawFails[id]), f.err
 }
 
 const (

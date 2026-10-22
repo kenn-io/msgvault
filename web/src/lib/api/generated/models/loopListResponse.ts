@@ -4,7 +4,7 @@
 import type { LoopItem } from "./loopItem";
 
 export interface LoopListResponse {
-  /** True when the scan reached the stored original read limit; returned items may be incomplete */
+  /** True when more history remains after checking 1,000 uncached messages; another request reuses saved evidence to continue */
   coverage_incomplete: boolean;
   items: LoopItem[];
   /** Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop */

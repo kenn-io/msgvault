@@ -31,7 +31,7 @@ func newLoopsCommand() *cobra.Command {
 Each person gets a separate loop anchored on their oldest open question or
 request. A reply you owe lists after 24 hours, and a reply you are waiting on
 lists after 72 hours. Each list reads the archive as it is. Quiet conversations
-leave the list after 30 days; snooze reminders remain eligible after expiry.
+stay eligible at any age; snooze reminders remain eligible after expiry.
 The wording rules read English only.`,
 	}
 	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand())
@@ -238,7 +238,7 @@ func writeLoopWarnings(sb *strings.Builder, skipped int64, incomplete bool) {
 		fmt.Fprintf(sb, "%d stored messages could not be read, so a reply in one may have settled a loop.\n", skipped)
 	}
 	if incomplete {
-		fmt.Fprintf(sb, "Only %d stored messages were checked; more loops may be missing.\n", loops.MaxListOriginalReads)
+		fmt.Fprint(sb, "More history remains. Run the list again to continue checking; these results cover checked conversations.\n")
 	}
 }
 

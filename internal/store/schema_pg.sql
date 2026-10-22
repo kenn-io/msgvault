@@ -4233,3 +4233,30 @@ CREATE TABLE IF NOT EXISTS loop_decisions (
  snoozed_until TIMESTAMPTZ,
  CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
 );
+
+-- Retained message facts for bounded request-time loop detection.
+CREATE TABLE IF NOT EXISTS loop_message_evidence (
+ message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ rule_version INTEGER NOT NULL,
+ body_version TEXT NOT NULL,
+ token TEXT NOT NULL,
+ facts TEXT
+);
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_raw() RETURNS TRIGGER AS $$
+BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_raw ON message_raw;
+CREATE TRIGGER trg_loop_evidence_message_raw AFTER INSERT OR UPDATE OR DELETE ON message_raw
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_raw();
+CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
+BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+ RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies;
+CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
+ FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies();

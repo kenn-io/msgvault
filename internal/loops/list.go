@@ -7,6 +7,7 @@ import (
 	"errors"
 	"iter"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
@@ -22,8 +23,8 @@ type Options struct {
 // Result is the oldest-first slice of open loops. Truncated is set when more
 // than Limit loops are open. SkippedUnparseable counts the stored originals
 // the list could not read, which may hide a reply that settled a loop.
-// CoverageIncomplete is set when List stopped after MaxListOriginalReads
-// stored originals; the loops come from the conversations read in full.
+// CoverageIncomplete is set when List stopped after MaxListEvidenceComputations
+// uncached messages; the loops come from the conversations read in full.
 type Result struct {
 	Loops              []Loop
 	Truncated          bool
@@ -31,29 +32,11 @@ type Result struct {
 	CoverageIncomplete bool
 }
 
-// MaxListOriginalReads caps the stored MIME originals one List reads.
-const MaxListOriginalReads = 1000
+// MaxListEvidenceComputations bounds uncached message classifications per request.
+const MaxListEvidenceComputations = 1000
+const evidenceVersion = 1
 
-var errOriginalBudget = errors.New("loops: stored original read budget exhausted")
-
-// originalBudget fails stored original reads past its budget, so List stops
-// before the read that would exceed it.
-type originalBudget struct {
-	Store
-
-	left int
-}
-
-func (b *originalBudget) LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (mime.AutomationSignals, bool, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return mime.AutomationSignals{}, false, false, err
-	}
-	if b.left <= 0 {
-		return mime.AutomationSignals{}, false, false, errOriginalBudget
-	}
-	b.left--
-	return b.Store.LoopOriginalEvidenceContext(ctx, messageID)
-}
+var errEvidenceBudget = errors.New("loops: message evidence budget exhausted")
 
 // Store is what List, Done, and Snooze read and write; *store.Store
 // implements it.
@@ -62,36 +45,56 @@ type Store interface {
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
+	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
+	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 }
 
 type storeReader struct {
-	ctx context.Context
-	st  Store
+	ctx  context.Context
+	st   Store
+	left int
 }
 
-func (r storeReader) Body(id int64) (string, error) { return r.st.GetMessageBodyTextContext(r.ctx, id) }
-
-func (r storeReader) Original(id int64) (mime.AutomationSignals, bool, bool, error) {
-	return r.st.LoopOriginalEvidenceContext(r.ctx, id)
+func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
+	e, token, hit, err := r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
+	if err != nil || hit {
+		return e, err
+	}
+	if r.left == 0 {
+		return e, errEvidenceBudget
+	}
+	r.left--
+	body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
+	if err != nil {
+		return e, err
+	}
+	signals, attachment, unreadable, err := r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	if err != nil {
+		return e, err
+	}
+	e = classify(body, signals, attachment, unreadable)
+	return e, r.st.SaveLoopMessageEvidenceContext(r.ctx, id, evidenceVersion, token, e)
 }
 
-// find runs Detect over the conversations q selects, oldest first message
-// first, and passes each loop that lists at now to found. Before it reads a
-// conversation it asks done with that conversation's first message time, and
-// it stops when done says so. It returns how many originals it could not read
-// in the conversations it finished, even when it also returns an error.
-func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, done func(first time.Time) bool, found func(Loop) error) (int, error) {
-	reader := storeReader{ctx: ctx, st: st}
+func classify(body string, signals mime.AutomationSignals, attachment, unreadable bool) store.LoopMessageEvidence {
+	text := ownText(body)
+	return store.LoopMessageEvidence{
+		Empty: strings.TrimSpace(text) == "", Acknowledgement: isAcknowledgementOnly(text), Asks: asks(text),
+		Automated:  signals.AutoSubmitted || signals.CalendarPart || signals.ReplyToNoReply || signals.PrecedenceBulk || signals.ListUnsubscribe,
+		Attachment: attachment, Unreadable: unreadable,
+	}
+}
+
+// find derives loops only from conversations whose detection completed.
+func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, found func(Loop) error) (int, error) {
+	reader := &storeReader{ctx: ctx, st: st, left: MaxListEvidenceComputations}
 	var unparsed int
 	for conv, err := range st.LoopConversationsContext(ctx, q) {
 		if err != nil {
 			return 0, err
-		}
-		if done(conv.FirstAt) {
-			break
 		}
 		detection, err := Detect(conv, reader)
 		if err != nil {
@@ -119,9 +122,7 @@ func graceElapsed(kind string, asked, now time.Time) bool {
 	return !now.Before(asked.Add(after))
 }
 
-// List returns unanswered questions from recently active requesters.
-// Exact expired snoozes remain eligible after the activity window. Decisions
-// apply only to the questions the owner marked.
+// List returns unanswered questions. Decisions apply only to marked questions.
 func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = DefaultLimit
@@ -131,10 +132,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, &originalBudget{Store: st, left: MaxListOriginalReads}, store.LoopQuery{Since: now.Add(-Lookback), PersonID: opts.PersonID}, now, marks,
-		func(first time.Time) bool {
-			return len(kept) > opts.Limit && kept[opts.Limit-1].OwedSince.Before(first)
-		},
+	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks,
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
 				return nil
@@ -149,7 +147,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	if err != nil && ctx.Err() != nil {
 		return Result{}, ctx.Err()
 	}
-	incomplete := errors.Is(err, errOriginalBudget)
+	incomplete := errors.Is(err, errEvidenceBudget)
 	if err != nil && !incomplete {
 		return Result{}, err
 	}
@@ -168,9 +166,6 @@ func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Lo
 		mark := marks[question.ID]
 		if !graceElapsed(loop.Kind, question.OccurredAt, now) {
 			return true
-		}
-		if loop.LastActivity.Before(now.Add(-Lookback)) {
-			return mark.State != store.LoopStateSnoozed || mark.SnoozedUntil == nil || now.Before(*mark.SnoozedUntil)
 		}
 		return mark.State == store.LoopStateDone || (mark.SnoozedUntil != nil && now.Before(*mark.SnoozedUntil))
 	})
@@ -203,8 +198,8 @@ func Snooze(ctx context.Context, st Store, messageID int64, until, now time.Time
 	return st.SnoozeLoopContext(ctx, messageID, until, loop.Questions)
 }
 
-// requireAnchor returns the loop List would show anchored at the message: inside
-// the lookback and past the grace period, read as it is now. A reply that
+// requireAnchor returns the loop List would show anchored at the message,
+// past its grace period and read as it is now. A reply that
 // arrived since the list was read makes the action fail instead of hiding a
 // closed loop. Covered questions cannot anchor an action.
 func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time) (Loop, error) {
@@ -220,8 +215,7 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time
 		return Loop{}, err
 	}
 	var anchored Loop
-	_, err = find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), ConversationID: ref.ConversationID}, now, marks,
-		func(time.Time) bool { return false },
+	_, err = find(ctx, st, store.LoopQuery{ConversationID: ref.ConversationID}, now, marks,
 		func(l Loop) error {
 			if l.Anchor.ID == messageID {
 				anchored = l
