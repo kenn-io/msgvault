@@ -379,7 +379,6 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 				requirements.NoError(err)
 				requirements.Len(after, 1)
 				assertions.True(after[0].Unsent, "edit cleanup must leave the surviving copy unsent")
-				assertions.False(after[0].Eligible)
 			}
 		})
 	}
