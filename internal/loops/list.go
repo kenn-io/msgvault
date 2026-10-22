@@ -34,7 +34,7 @@ type Result struct {
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
 const MaxListEvidenceComputations = 1000
-const evidenceVersion = 1
+const evidenceVersion = 2
 
 // EvidenceIncompleteError means an action needs another request to finish reading evidence.
 type EvidenceIncompleteError struct{}

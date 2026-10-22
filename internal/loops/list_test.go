@@ -118,15 +118,35 @@ func TestRecipientlessOutboundKeepsQuestionOpen(t *testing.T) {
 	assert.Equal(question, result.Loops[0].Anchor.ID)
 }
 
+type cancelOriginalReadStore struct {
+	*store.Store
+
+	cancel    context.CancelFunc
+	originals int
+}
+
+func (s *cancelOriginalReadStore) LoopOriginalEvidenceContext(ctx context.Context, id int64) (mime.AutomationSignals, bool, bool, error) {
+	signals, attachment, unreadable, err := s.Store.LoopOriginalEvidenceContext(ctx, id)
+	if err == nil {
+		s.originals++
+		s.cancel()
+	}
+	return signals, attachment, unreadable, err
+}
+
 func TestListReturnsCanceledOriginalRead(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
+	defer cancel()
 	f := storetest.New(t)
-	st := storetest.NewLoopOriginalReadStore(f, 1, now)
+	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(2 * day)})
+	st := &cancelOriginalReadStore{Store: f.Store, cancel: cancel}
 	result, err := loops.List(ctx, st, loops.Options{}, now)
 	require.ErrorIs(err, context.Canceled)
-	require.False(result.CoverageIncomplete)
+	assert.Equal(1, st.originals, "cancellation follows a completed real original read")
+	assert.Empty(result.Loops)
+	assert.False(result.CoverageIncomplete)
 }
 
 func TestListPersonFilterRetainsUnansweredQuestionAfterAnotherPersonIsAnswered(t *testing.T) {
@@ -475,4 +495,38 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	assert.Equal(second.Loops, third.Loops)
 	assert.Zero(counted.bodies)
 	assert.Zero(counted.originals)
+}
+
+func TestListWrappedQuoteRepliesKeepOutgoingQuestionOpen(t *testing.T) {
+	const quote = "On Tuesday 20 October 2026\nOwner Example <owner@example.test> wrote:\n> Can you review the draft?"
+	for _, reply := range []struct{ name, body string }{
+		{"quote only", quote},
+		{"acknowledgement and quote", "Thanks!\n\n" + quote},
+	} {
+		for _, cached := range []bool{false, true} {
+			name := reply.name + "/fresh"
+			if cached {
+				name = reply.name + "/stale rule 1"
+			}
+			t.Run(name, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := storetest.New(t)
+				question := f.PersistEmail(storetest.EmailSpec{Thread: "wrapped-quote", From: me, To: []string{alex}, Body: "Can you review the draft?", SentAt: ago(5 * day)})
+				response := f.PersistEmail(storetest.EmailSpec{Thread: "wrapped-quote", From: alex, To: []string{me}, Body: reply.body, SentAt: ago(2 * day)})
+				if cached {
+					_, token, _, err := f.Store.LoopMessageEvidenceContext(t.Context(), response, 1)
+					require.NoError(err)
+					require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), response, 1, token, store.LoopMessageEvidence{}))
+					_, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), response, 1)
+					require.NoError(err)
+					require.True(hit, "the old substantive classification is persisted")
+				}
+				result := list(t, f, loops.Options{})
+				require.Len(result.Loops, 1, "quoted text and acknowledgements leave the outgoing question unanswered")
+				assert.Equal(question, result.Loops[0].Anchor.ID)
+				assert.Equal(loops.AwaitingReply, result.Loops[0].Kind)
+			})
+		}
+	}
 }
