@@ -1699,6 +1699,10 @@ type ImportMuesliResponseJSON = MuesliRemoteResult
 
 type ImportMuesliErrorResponse = ErrorResponse
 
+type ImportMuesliRecordingResponse = MuesliRemoteResult
+
+type ImportMuesliRecordingErrorResponse = ErrorResponse
+
 type CreateImportJobResponse = ImportJobResponse
 
 type CreateImportJobErrorResponse = ErrorResponse
@@ -5579,6 +5583,13 @@ type ImportMuesliResp struct {
 	JSON200      *ImportMuesliResponse
 	JSON201      *ImportMuesliResponseJSON
 	JSONDefault  *ImportMuesliErrorResponse
+}
+
+type ImportMuesliRecordingResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportMuesliRecordingResponse
 }
 
 type CreateImportJobResp struct {

@@ -573,6 +573,19 @@ type ListPersonMatchJudgmentsQuery struct {
 	BeforeID *int64 `json:"before_id,omitempty"`
 }
 
+type ImportMuesliRecordingQuery struct {
+	Identifier   string `json:"identifier" validate:"required"`
+	AccountEmail string `json:"account_email" validate:"required"`
+	MessageID    int    `json:"message_id"`
+	Sha256       string `json:"sha256" validate:"required"`
+	Size         int    `json:"size"`
+	NoBuildCache *bool  `json:"no_build_cache,omitempty"`
+}
+
+func (i ImportMuesliRecordingQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
 type FindKataIssuesQuery struct {
 	// MessageID Message the issues cite
 	MessageID int64 `json:"message_id"`

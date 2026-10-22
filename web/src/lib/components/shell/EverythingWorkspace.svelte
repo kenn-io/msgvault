@@ -4,6 +4,7 @@
 
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { reportError } from '../../telemetry/actions';
   import { ArchiveMessageLoader } from '../../archive/message-loader.svelte';
   import { parseRecordingSelection } from '../../archive/recording-selection';
   import type {
@@ -115,6 +116,7 @@
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
+  $effect(() => { if (recording.error) return reportError(() => client, () => 'message'); });
   const readiness = mediaReadiness();
   const recordingSelection = $derived(parseRecordingSelection(readingTargetKey));
   const recordingParticipantID = $derived.by(() => {

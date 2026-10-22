@@ -680,8 +680,8 @@ func (s *Store) CommitCardDAVPublicationContext(
 				if err := tx.QueryRowContext(ctx, `INSERT INTO carddav_resources (
 				address_book_id, href, remote_uid, remote_etag, remote_body,
 				remote_semantic_hash, local_hash, mapping_status, mapping_revision,
-				governance, person_id, person_revision_at_bind
-			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, 1, ?, ?, ?) RETURNING id`,
+				governance, locally_published, person_id, person_revision_at_bind
+			) VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, 1, ?, TRUE, ?, ?) RETURNING id`,
 					current.AddressBookID, input.Remote.Href, input.Remote.RemoteUID,
 					input.Remote.RemoteETag, input.Remote.RemoteBody, input.Remote.SemanticHash,
 					current.LocalHash, CardDAVMappingMapped, CardDAVGovernanceLocal,
@@ -698,7 +698,13 @@ func (s *Store) CommitCardDAVPublicationContext(
 				_, err = tx.ExecContext(ctx, `UPDATE carddav_resources SET
 					remote_uid = NULLIF(?, ''), remote_etag = ?, remote_body = ?,
 					remote_semantic_hash = ?, local_hash = ?, mapping_status = ?,
-					governance = ?, updated_at = `+s.dialect.Now()+` WHERE id = ?`,
+					governance = ?, locally_published = locally_published OR EXISTS (
+						SELECT 1 FROM carddav_publications publication
+						WHERE publication.person_id = carddav_resources.person_id
+						  AND publication.address_book_id = carddav_resources.address_book_id
+						  AND publication.href = carddav_resources.href
+						  AND publication.created_at < carddav_resources.created_at
+					), updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 					input.Remote.RemoteUID, input.Remote.RemoteETag, input.Remote.RemoteBody,
 					input.Remote.SemanticHash, current.LocalHash, CardDAVMappingMapped,
 					CardDAVGovernanceLocal, resource.ID)
@@ -717,7 +723,13 @@ func (s *Store) CommitCardDAVPublicationContext(
 			_, err = tx.ExecContext(ctx, `UPDATE carddav_resources SET
 				remote_uid = NULLIF(?, ''), remote_etag = ?, remote_body = ?,
 				remote_semantic_hash = ?, local_hash = ?, mapping_status = ?,
-				governance = ?, updated_at = `+s.dialect.Now()+` WHERE id = ?`,
+				governance = ?, locally_published = locally_published OR EXISTS (
+					SELECT 1 FROM carddav_publications publication
+					WHERE publication.person_id = carddav_resources.person_id
+					  AND publication.address_book_id = carddav_resources.address_book_id
+					  AND publication.href = carddav_resources.href
+					  AND publication.created_at < carddav_resources.created_at
+				), updated_at = `+s.dialect.Now()+` WHERE id = ?`,
 				input.Remote.RemoteUID, input.Remote.RemoteETag, input.Remote.RemoteBody,
 				input.Remote.SemanticHash, current.LocalHash, CardDAVMappingMapped,
 				CardDAVGovernanceLocal, resource.ID)

@@ -44,7 +44,7 @@ func TestMuesliScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 		requested = append(requested, key)
 		return nil
 	}
-	require.NoError(runConfiguredMuesliSync(t.Context(), st, source))
+	require.NoError(runConfiguredMuesliSync(t.Context(), st, source, t.TempDir()))
 	assert.Equal([]string{"muesli:recorder"}, requested,
 		"an unchanged scheduled scan still asks the refresher to check the cache")
 }

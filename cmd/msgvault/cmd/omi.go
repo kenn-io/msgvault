@@ -279,17 +279,17 @@ Examples:
 func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, src config.OmiSource) error {
 	source, err := st.GetSourceByTypeAndIdentifier(omi.SourceType, src.Identifier)
 	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
-		return err
+		return recordSyncAttempt(ctx, omi.SourceType, src.Identifier, err)
 	}
 	if source != nil && source.MergedIntoSourceID != 0 {
 		return nil
 	}
 	if src.APIKey == "" {
-		return fmt.Errorf("omi source %q has no api_key", src.Identifier)
+		return recordSyncAttempt(ctx, omi.SourceType, src.Identifier, fmt.Errorf("omi source %q has no api_key", src.Identifier))
 	}
 	accountEmail, err := src.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, omi.SourceType, src.Identifier, err)
 	}
 	imp := omi.NewImporter(st, newOmiClient(src.BaseURL, src.APIKey, paceDir))
 	sum, err := imp.Import(ctx, omi.ImportOptions{
@@ -299,6 +299,9 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, 
 	var writes int64
 	if sum != nil {
 		writes = sum.MeetingsAdded + sum.MeetingsUpdated
+	}
+	if sum == nil || sum.PauseReason == nil {
+		_ = recordSyncAttempt(context.WithoutCancel(ctx), omi.SourceType, src.Identifier, err)
 	}
 	err = (meetingSyncRun{provider: "omi", identifier: src.Identifier, writes: writes, err: err}).finishScheduled(ctx, "omi:"+src.Identifier, rebuildOmiCacheAfterScheduledSync)
 	if err == nil && sum != nil && sum.PauseReason != nil {

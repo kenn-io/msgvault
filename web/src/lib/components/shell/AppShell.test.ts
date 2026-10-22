@@ -1,15 +1,21 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { appShortcuts } from '@kenn-io/kit-ui';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createRawSnippet } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRawSnippet, tick } from 'svelte';
 
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
-import { createAPIClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, serializeExploreURLState } from '../../explore/state.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import AppShell from './AppShell.svelte';
+import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
+import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { SIDEBAR_COLLAPSED_KEY } from './navigation';
+
+const telemetryEvents: Array<{ event: string; properties: { search_type: string } }> = [];
+beforeEach(() => { telemetryEvents.length = 0; });
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents);
 
 function exploreResponse(overrides: Record<string, unknown> = {}) {
   return {
@@ -88,6 +94,83 @@ describe('AppShell', () => {
       match: {}
     };
   }
+
+  it.each([{ query: 'needle', cache: false }, { query: '', cache: true }])('labels an Everything load failure for $query with cache=$cache', async ({ query, cache }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
+    const client = createAPIClient(async (input) => {
+      const request = input as Request, path = new URL(request.url).pathname;
+      if (path.endsWith('/explore')) return Response.json(cache ? { error: 'analytical_cache_unavailable', message: 'Browse unavailable', readiness: 'absent', recovery_action: 'msgvault build-cache' } : { message: 'Browse unavailable' }, { status: cache ? 503 : 500 });
+      return Response.json({});
+    });
+    const state = new ExploreState(window);
+    render(AppShell, { client, state });
+    await screen.findByText('Browse unavailable');
+    state.destroy();
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: query ? 'search' : 'other' } }]));
+  });
+
+  it.each([{ query: 'needle', leave: false }, { query: '', leave: true }])('reports an export error only while its view is displayed, query=$query leave=$leave', async ({ query, leave }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query }))}`);
+    const state = new ExploreState(window);
+    let finishExport!: (response: Response) => void;
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore')) return Response.json(exploreResponse({ rows: [entry(1)], total_count: 1 }));
+      if (path.endsWith('/explore/preflight')) return Response.json({
+        count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
+        unavailable_actions: [], action_targets: [{ action: 'export', message_id: 1, filename: 'message.eml' }]
+      });
+      if (path.endsWith('/cli/message/raw')) return new Promise<Response>(resolve => { finishExport = resolve; });
+      return Response.json({});
+    });
+    const view = render(AppShell, { client, state });
+    await screen.findByText('Synthetic subject 1');
+    const grid = screen.getByRole('grid', { name: 'Everything results' });
+    grid.focus();
+    await fireEvent.keyDown(grid, { key: ' ' });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Export selection' }));
+    await waitFor(() => expect(finishExport).toBeTypeOf('function'));
+    if (leave) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Sources' }));
+      await screen.findByRole('main', { name: 'Sources' });
+    }
+    const response = Response.json({ message: 'Synthetic export failure' }, { status: 500 });
+    finishExport(response);
+    await waitFor(() => expect(response.bodyUsed).toBe(true));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await tick();
+    if (leave) {
+      expect(screen.queryByText('The authorized raw message export is no longer available.')).toBeNull();
+      expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([]);
+    } else {
+      await screen.findByText('The authorized raw message export is no longer available.');
+      await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([
+        { event: 'error_shown', properties: { surface: 'web', kind: 'other' } }
+      ]));
+    }
+    view.unmount();
+    state.destroy();
+  });
+
+  it('reports each displayed archived meeting request error once', async () => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', selectedRow: 'archive-meeting:42' }))}`);
+    const state = new ExploreState(window);
+    const client = createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/messages/42')) return Response.json({ message: 'Meeting request failed' }, { status: 500 });
+      if (path.endsWith('/explore')) return Response.json(exploreResponse());
+      return Response.json({});
+    });
+    const view = render(AppShell, { client, state });
+    await screen.findByText('Meeting request failed');
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
+    await view.rerender({ client, state });
+    expect(telemetryEvents.filter(event => event.event === 'error_shown')).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry archived meeting' }));
+    await screen.findByText('Meeting request failed');
+    await waitFor(() => expect(telemetryEvents.filter(event => event.event === 'error_shown')).toHaveLength(2));
+    state.destroy();
+  });
 
   it('focuses search with slash and leaves Escape to the search input', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
@@ -794,14 +877,38 @@ describe('AppShell', () => {
       await waitFor(() => expect(search.value).toBe(''));
     });
 
+    it.each([false, true, 'pending'] as const)('gates empty search reporting with media readiness %s', async (ready) => {
+      const state = shellState('everything'), events = telemetryEvents;
+      const client = createAPIClient(vi.fn<typeof fetch>(async () => {
+        return Response.json(exploreResponse());
+      }));
+      const media = new IntegrationReadiness(async () => {
+        if (ready === 'pending') return new Promise(() => {});
+        return ready;
+      });
+      render(AppShell, { props: { client, state }, context: new Map([[mediaReadinessKey, media]]) });
+      if (ready === true) await waitFor(() => expect(media.ready).toBe(true));
+      if (ready === false) await waitFor(() => expect(media.absent).toBe(true));
+      const search = screen.getByRole('searchbox', { name: 'Search everything' });
+      await fireEvent.input(search, { target: { value: 'missing' } });
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      events.length = 0;
+      await fireEvent.submit(search.closest('form')!);
+      await waitFor(() => expect(events.some((event) => event.event === 'search_run')).toBe(true));
+      media.dispose();
+      if (ready !== false) {
+        expect(events.some((event) => event.event === 'search_empty')).toBe(false);
+        return;
+      }
+      await waitFor(() => expect(events.filter((event) => event.event === 'search_empty')).toHaveLength(1));
+      expect(events.find((event) => event.event === 'search_empty')?.properties).toEqual({ surface: 'web', search_type: 'text' });
+    });
+
     it.each(['visible', 'destroy'])('reports an accepted Everything search after %s', async (trigger) => {
       const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue(trigger === 'visible' ? 'visible' : 'hidden');
-      const state = shellState('everything'), events: string[] = [];
+      const state = shellState('everything');
+      const events = () => telemetryEvents.filter(event => event.event === 'search_run').map(event => event.properties.search_type);
       const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-        if (new URL((input as Request).url).pathname.endsWith('/telemetry/events')) {
-          const event = await (input as Request).json();
-          if (event.event === 'search_run') events.push(event.properties.search_type);
-        }
         const request = input as Request;
         const predicate = request.method === 'POST' ? await request.clone().json() : {};
         return Response.json(exploreResponse({ rows: predicate.query === 'gas' ? [entry(1)] : [] }));
@@ -811,16 +918,16 @@ describe('AppShell', () => {
       expect(state.current.query).toBe('gas');
       await screen.findByText('Synthetic subject 1');
       if (trigger !== 'visible') {
-        expect(events).toHaveLength(0);
+        expect(events()).toHaveLength(0);
         if (trigger === 'destroy') view.unmount();
         visibility.mockReturnValue('visible');
         await fireEvent(window, new Event('focus'));
       }
-      if (trigger === 'destroy') expect(events).toHaveLength(0);
+      if (trigger === 'destroy') expect(events()).toHaveLength(0);
       else {
-        await waitFor(() => expect(events).toEqual(['text']));
+        await waitFor(() => expect(events()).toEqual(['text']));
         await fireEvent(window, new Event('focus'));
-        expect(events).toEqual(['text']);
+        expect(events()).toEqual(['text']);
       }
       visibility.mockRestore();
     });

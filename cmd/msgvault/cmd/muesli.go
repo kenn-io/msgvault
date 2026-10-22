@@ -194,6 +194,7 @@ Examples:
 			accountEmail, _ := source.EffectiveAccountEmail()
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Muesli for %s\n\n", source.Identifier)
 			options := muesliImportOptions(source)
+			options.AttachmentsDir = cfg.AttachmentsDir()
 			options.AccountEmail = accountEmail
 			options.Full, options.Limit, options.StartedAfter = syncMuesliFull, syncMuesliLimit, after
 			options.MeetingID = syncMuesliMeetingID
@@ -225,6 +226,9 @@ func writeMuesliSummary(out io.Writer, summary *muesli.ImportSummary) {
 	_, _ = fmt.Fprintf(out, "  Meetings processed: %d\n", summary.MeetingsProcessed)
 	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
 	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
+	if summary.RecordingsStored > 0 || summary.RecordingsSkipped > 0 {
+		_, _ = fmt.Fprintf(out, "  Recordings stored:  %d (deferred: %d)\n", summary.RecordingsStored, summary.RecordingsSkipped)
+	}
 	if summary.SkippedInProgress > 0 {
 		_, _ = fmt.Fprintf(out, "  Still in progress:  %d (archived by a later sync)\n", summary.SkippedInProgress)
 	}
@@ -246,6 +250,7 @@ func writeMuesliSummary(out io.Writer, summary *muesli.ImportSummary) {
 // settings into an import.
 func muesliImportOptions(source config.MuesliSource) muesli.ImportOptions {
 	return muesli.ImportOptions{
+		Recordings: source.Recordings, RecordingMaxBytes: source.EffectiveRecordingMaxBytes(),
 		Identifier: source.Identifier, AccountEmail: source.AccountEmail,
 		DBPath:          source.EffectiveDBPath(),
 		ContactsEnabled: source.ContactsEnabled(), ContactsPath: source.EffectiveContactsPath(),
@@ -255,22 +260,23 @@ func muesliImportOptions(source config.MuesliSource) muesli.ImportOptions {
 
 // runConfiguredMuesliSync is the daemon-scheduler entry point for one
 // [[muesli]] source.
-func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config.MuesliSource) error {
+func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config.MuesliSource, attachmentsDir string) error {
 	notRegistered := fmt.Errorf(
 		"muesli source %q is not registered; run msgvault add-muesli %s first",
 		source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, muesli.SourceType, source.Identifier, notRegistered)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	accountEmail, err := source.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, err)
 	}
 	options := muesliImportOptions(source)
+	options.AttachmentsDir = attachmentsDir
 	options.AccountEmail = accountEmail
 	summary, importErr := muesli.NewImporter(st).Import(ctx, options)
 	var writes int64
@@ -283,6 +289,7 @@ func runConfiguredMuesliSync(ctx context.Context, st *store.Store, source config
 	// Check the cache even when this scan wrote nothing: a hook or manual
 	// import may have been throttled by min_rebuild_interval, and the
 	// background refresher schedules the retry that import did not.
+	_ = recordSyncAttempt(ctx, muesli.SourceType, source.Identifier, importErr)
 	return run.finishScheduled(ctx, "muesli:"+source.Identifier,
 		rebuildMuesliCacheAfterScheduledSync)
 }

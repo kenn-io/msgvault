@@ -152,7 +152,8 @@ func (m Model) handleMeetingSearchLoaded(msg meetingSearchLoadedMsg) (tea.Model,
 	m.meetingState.searchOffset = len(m.meetingState.messages)
 	m.meetingState.searchComplete = len(msg.messages) < searchPageSize
 	if active && msg.offset == 0 {
-		return m, m.acceptedSearchAction(msg.query, searchModeFast)
+		cmd := m.acceptedSearchAction(msg.query, searchModeFast, len(msg.messages))
+		return m, cmd
 	}
 	return m, nil
 }

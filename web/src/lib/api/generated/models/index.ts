@@ -449,6 +449,7 @@ export * from "./importJobRequest";
 export * from "./importJobResponse";
 export * from "./importJobResponseStatus";
 export * from "./importJobSummary";
+export * from "./importMuesliRecordingParams";
 export * from "./importRequest";
 export * from "./importResult";
 export * from "./kataEvidenceLinkRequest";

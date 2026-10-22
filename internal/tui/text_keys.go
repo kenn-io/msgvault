@@ -219,6 +219,7 @@ func (m Model) handleTextInlineSearchKeys(
 		if queryStr == "" {
 			return m, nil
 		}
+		m.submittedQuery = queryStr
 		// Timeline search stays scoped to the selected conversation and runs
 		// through the full-text index. Other views use global FTS.
 		if m.textState.level == textLevelTimeline && !m.textState.globalSearchTimeline {

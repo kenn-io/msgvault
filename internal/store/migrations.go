@@ -66,13 +66,14 @@ const (
 	// must reinstall both backend trigger sets so document evidence lifecycle
 	// changes can match the canonical document lane instead of only the owning
 	// conversation_text or meeting_text row.
-	migrationPersonSweepChangeTriggers   = "person_sweep_change_triggers_v5"
-	migrationIdentityMatchSourceSupport  = "identity_match_source_support_v1"
-	migrationCardDAVDisplayNameOwnership = "carddav_display_name_ownership_v1"
-	migrationVCardSourceResourceIdentity = "vcard_source_resource_identity_v1"
-	migrationOrganizationDomainIDNA      = "organization_domain_idna_v1"
-	migrationGmailChatClassification     = "gmail_chat_classification_v1"
-	migrationSyncRunResumeMetadata       = "sync_run_resume_metadata_v1"
+	migrationPersonSweepChangeTriggers     = "person_sweep_change_triggers_v5"
+	migrationIdentityMatchSourceSupport    = "identity_match_source_support_v1"
+	migrationCardDAVDisplayNameOwnership   = "carddav_display_name_ownership_v1"
+	migrationCardDAVLocalPublicationOrigin = "carddav_local_publication_origin_v1"
+	migrationVCardSourceResourceIdentity   = "vcard_source_resource_identity_v1"
+	migrationOrganizationDomainIDNA        = "organization_domain_idna_v1"
+	migrationGmailChatClassification       = "gmail_chat_classification_v1"
+	migrationSyncRunResumeMetadata         = "sync_run_resume_metadata_v1"
 	// v3: the SQLite conversation trigger narrowed from a blanket
 	// AFTER UPDATE to conversation_type changes only; archives that
 	// installed the blanket trigger need the repair to re-run.

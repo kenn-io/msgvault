@@ -268,6 +268,20 @@ across syncs. Later profile changes are reconciled to the write target.
 Turning publication off removes the remote card while retaining the local
 profile.
 
+When the card uses the person's display name, changing that name updates the
+card on the next publish or sync. A formatted or structured profile name takes
+priority over the display label, including a formatted name imported from an
+address book. Edit that profile name to change the card's name. If another
+device removes or blanks the card's name and msgvault would otherwise upload
+the display name in its place, sync records a conflict instead.
+
+Cards published by earlier msgvault versions keep the name from their first
+upload as a separate formatted-name (`FN`) line. On the next publish or sync,
+msgvault replaces that line when it is the card's first plain `FN` line, still
+matches the first upload, and was never imported from the address book. Names
+with parameters, grouped names, repeated names, and names changed since the
+first upload stay on the card.
+
 The same actions are available from the CLI:
 
 ```bash
@@ -405,6 +419,21 @@ remote state changed again, reload the conflict and review the new comparison.
 For contacts with an active publication, a remote choice that would restore a
 protected value or cannot be rendered safely leaves the conflict unresolved.
 An unresolved conflict prevents conflicting publication work from proceeding.
+
+When a card's name comes from the display name, `keep_remote` handles it as
+follows:
+
+- If neither side renamed the card, the display name keeps controlling the
+  card's name. Later renames still update the card.
+- If either side renamed it, `keep_remote` keeps the remote name and rejects a
+  local rename. Msgvault imports the card's formatted name as a profile name so
+  the next sync keeps it. That imported name then takes priority over later
+  display-name changes.
+- If the remote card has no formatted name and no other profile name would
+  take its place, `keep_remote` clears the display name. This applies to any
+  published card, whatever supplied its earlier name.
+
+Typed local profile names remain protected.
 
 A saved person with an active CardDAV publication cannot be merged with another
 profile. Remove the publication and settle pending work before following the

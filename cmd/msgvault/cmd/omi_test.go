@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -686,13 +687,18 @@ func TestScheduledOmiCooldownDefersWithoutFailure(t *testing.T) {
 	defer server.Close()
 	cfg := lifecycleTestConfig(t.TempDir())
 	state := testInvocationWithConfig(cfg)
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
 	sched := scheduler.New(nil).WithLogger(testDiscardLogger())
 	defer func() { <-sched.Stop().Done() }()
 	require.NoError(registerScheduledOmiJob(sched, state, st, config.OmiSource{Identifier: "work", AccountEmail: "owner@example.com", APIKey: "omi_dev_synthetic", BaseURL: server.URL, Enabled: true, Schedule: "0 0 1 1 *"}))
 	require.Error(sched.TriggerJob("omi:work"))
+	assert.Equal(1, events)
 	require.NotEmpty(sched.JobStatus()[0].LastError)
 	require.NoError(sched.TriggerJob("omi:work"))
 	assert.Equal(2, requests)
+	state.syncFailures.Record(t.Context(), omi.SourceType, "work", errors.New("still failing"))
+	assert.Equal(1, events, "a paused import must preserve the existing outage")
 	latest, err := st.GetLatestCheckpointedSyncByType(src.ID, omi.SourceType)
 	require.NoError(err)
 	assert.Equal(store.SyncStatusPaused, latest.Status)

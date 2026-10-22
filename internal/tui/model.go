@@ -492,6 +492,8 @@ type Model struct {
 	restorePosition bool // When true, don't reset cursor/scroll on data load (used by goBack)
 
 	// Inline search state (vim-like search bar on info line)
+	submittedQuery       string
+	aggregateLoadFailed  bool
 	inlineSearchActive   bool   // True when inline search bar is active
 	inlineSearchDebounce uint64 // Increment to cancel pending debounce timers
 	inlineSearchLoading  bool   // True when a debounced search query is in-flight
@@ -1397,6 +1399,21 @@ func (m Model) Update(msg tea.Msg) (result tea.Model, command tea.Cmd) {
 			updated.messageReportedDay = day
 			command = tea.Batch(command, updated.reportActionCmd("message_opened", "", ""))
 		}
+		if updated.modal == modalError && m.modal != modalError {
+			updated.submittedQuery = ""
+			kind := "other"
+			switch msg.(type) {
+			case searchResultsMsg, textSearchResultMsg, meetingSearchLoadedMsg:
+				kind = "search"
+			case dataLoadedMsg, messagesLoadedMsg, textMessagesLoadedMsg:
+				if m.mode == modeEmail && m.searchQuery != "" || m.mode == modeTexts && m.textState.filter.SearchQuery != "" || m.mode == modeMeetings && m.meetingState.searchQuery != "" {
+					kind = "search"
+				}
+			case messageDetailLoadedMsg, threadMessagesLoadedMsg, textMessageLoadedMsg, meetingDetailLoadedMsg:
+				kind = "message"
+			}
+			command = tea.Batch(command, updated.reportActionCmd("error_shown", "kind", kind))
+		}
 		updated.visibleDetailID = detailID
 		result = updated
 	}()
@@ -1602,7 +1619,8 @@ func (m Model) handleTextMessagesLoaded(msg textMessagesLoadedMsg) (tea.Model, t
 	}
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, m.acceptedSearchAction(msg.query, searchModeFast)
+	cmd := m.acceptedSearchAction(msg.query, searchModeFast, len(msg.messages))
+	return m, cmd
 }
 
 // handleTextSearchResult processes text search results.
@@ -1627,7 +1645,8 @@ func (m Model) handleTextSearchResult(msg textSearchResultMsg) (tea.Model, tea.C
 	m.textState.unfilteredMessages = nil
 	m.textState.cursor = 0
 	m.textState.scrollOffset = 0
-	return m, m.acceptedSearchAction(msg.query, searchModeFast)
+	cmd := m.acceptedSearchAction(msg.query, searchModeFast, len(msg.messages))
+	return m, cmd
 }
 
 // handleTextStatsLoaded processes text stats load completion.
@@ -1681,6 +1700,7 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 	active := m.finishModePresentation(modeEmail, msg.presentationGeneration)
 	if active {
 		m.inlineSearchLoading = false
+		m.aggregateLoadFailed = msg.err != nil
 	}
 	if msg.err != nil {
 		if active {
@@ -1719,7 +1739,8 @@ func (m Model) handleDataLoaded(msg dataLoadedMsg) (tea.Model, tea.Cmd) {
 		m.contextStats = nil
 	}
 	if active {
-		return m, m.acceptedSearchAction(msg.searchQuery, searchModeFast)
+		cmd := m.acceptedSearchAction(msg.searchQuery, searchModeFast, len(msg.rows))
+		return m, cmd
 	}
 	return m, nil
 }
@@ -1995,7 +2016,8 @@ func (m Model) handleSearchResults(msg searchResultsMsg) (tea.Model, tea.Cmd) {
 		m.replaceSearchResults(msg)
 	}
 	if active && !msg.append {
-		return m, m.acceptedSearchAction(msg.query, msg.searchMode)
+		cmd := m.acceptedSearchAction(msg.query, msg.searchMode, len(msg.messages))
+		return m, cmd
 	}
 	return m, nil
 }
@@ -2588,7 +2610,9 @@ func reportTelemetryCmd(report func(context.Context) error) tea.Cmd {
 	}
 }
 
-func (m Model) acceptedSearchAction(query string, mode searchModeKind) tea.Cmd {
+func (m *Model) acceptedSearchAction(query string, mode searchModeKind, count int) tea.Cmd {
+	submitted := m.submittedQuery == query
+	m.submittedQuery = ""
 	if strings.TrimSpace(query) == "" {
 		return nil
 	}
@@ -2596,5 +2620,9 @@ func (m Model) acceptedSearchAction(query string, mode searchModeKind) tea.Cmd {
 	if mode == searchModeSemantic {
 		kind = "hybrid"
 	}
-	return m.reportActionCmd("search_run", "search_type", kind)
+	var empty tea.Cmd
+	if submitted && count == 0 {
+		empty = m.reportActionCmd("search_empty", "search_type", kind)
+	}
+	return tea.Batch(m.reportActionCmd("search_run", "search_type", kind), empty)
 }

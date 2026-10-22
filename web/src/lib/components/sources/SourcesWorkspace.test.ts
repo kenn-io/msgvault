@@ -1,9 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
 
-import { createAPIClient } from '../../api/client';
+import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { formatDateTime } from '../../util/format';
 import SourcesWorkspace from './SourcesWorkspace.svelte';
+
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, []);
 
 function source(overrides: Record<string, unknown> = {}) {
   return {
@@ -30,6 +33,22 @@ afterEach(() => {
 });
 
 describe('SourcesWorkspace', () => {
+  it('reports each rejected click despite an unchanged stored run', async () => {
+    const events: unknown[] = [];
+    const client = createCaptureClient(async input => (input as Request).method === 'POST'
+      ? Response.json({ message: 'Credentials unavailable' }, { status: 500 })
+      : Response.json({ sources: [source({ latest_sync: run('failed', 0) })] }), events);
+    render(SourcesWorkspace, { client });
+    await screen.findByText('Failed');
+    expect(events).toEqual([]);
+    for (const count of [1, 2]) {
+      await fireEvent.click(screen.getByRole('button', { name: 'Sync now Archive' }));
+      await screen.findByText('Credentials unavailable');
+      await waitFor(() => expect(events).toHaveLength(count));
+    }
+    expect(events).toEqual(Array(2).fill({ event: 'error_shown', properties: { surface: 'web', kind: 'sync' } }));
+  });
+
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
       source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
@@ -451,15 +470,19 @@ describe('SourcesWorkspace', () => {
   it('holds a first-load error until manual Retry', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
+    const events: unknown[] = [], requests: Promise<void>[] = [];
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       if (reads === 1) throw new Error('status endpoint unreachable');
       return Response.json({ sources: [source()] });
     });
-    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    const rendered = render(SourcesWorkspace, { client: createCaptureClient(fetchFn, events, requests) });
 
     expect((await screen.findByRole('alert')).textContent).toContain('status endpoint unreachable');
     expect(reads).toBe(1);
+    await tick();
+    await Promise.all(requests);
+    expect(events).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(8_000);
     expect(reads).toBe(1);

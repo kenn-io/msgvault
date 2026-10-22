@@ -350,6 +350,9 @@ func runConfiguredBeeperSync(ctx context.Context, s *store.Store) error {
 	}
 	token, err := beeper.LoadToken(cfg.TokensDir())
 	if err != nil {
+		for _, id := range accountIDs {
+			_ = recordSyncAttempt(ctx, sourceTypeBeeper, id, err)
+		}
 		return err
 	}
 	imp := beeper.NewImporter(s, beeperClient(cfg, token))
@@ -434,6 +437,9 @@ func runScheduledBeeperAttempts(
 		}
 		attempted++
 		stopped, err := attempt(accountID)
+		if err != nil || !stopped {
+			_ = recordSyncAttempt(ctx, sourceTypeBeeper, accountID, err)
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("beeper %s: %w", accountID, err))
 		}

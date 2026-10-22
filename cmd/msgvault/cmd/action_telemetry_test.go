@@ -12,6 +12,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -76,17 +78,26 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 		},
 	} {
 		for _, outcome := range []struct {
-			name                                   string
-			fails, paused, outputFails, json, body bool
+			name                                             string
+			indexState                                       string
+			fails, paused, outputFails, json, body, nonempty bool
 		}{
 			{name: "success"},
+			{name: "nonempty", nonempty: true},
 			{name: "failure", fails: true},
+			{name: "building", indexState: "building"},
 			{name: "paused", paused: true},
 			{name: "output failure", outputFails: true},
 			{name: "JSON output failure", outputFails: true, json: true},
 			{name: "body output failure", outputFails: true, body: true},
 		} {
 			fails, outputFails := outcome.fails, outcome.outputFails
+			if outcome.nonempty && action != "search" && action != "media" && action != "documents" && action != "visual" && action != "vector" && action != "hybrid" {
+				continue
+			}
+			if outcome.indexState != "" && action != "search" {
+				continue
+			}
 			if outcome.paused && action != "sync-omi" || outputFails && action != "show-message" {
 				continue
 			}
@@ -95,6 +106,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 			}
 			t.Run(fmt.Sprintf("%s/%s", action, outcome.name), func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
+				var eventsMu sync.Mutex
 				var events []map[string]any
 				mux := http.NewServeMux()
 				registerStatsProbeHandler(mux)
@@ -104,7 +116,9 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 					if r.URL.Path == "/api/v1/telemetry/events" {
 						var event map[string]any
 						assert.NoError(json.UnmarshalRead(r.Body, &event))
+						eventsMu.Lock()
 						events = append(events, event)
+						eventsMu.Unlock()
 						w.WriteHeader(http.StatusServiceUnavailable)
 						return
 					}
@@ -116,11 +130,17 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						w.WriteHeader(http.StatusInternalServerError)
 						return
 					}
+					results := "[]"
+					if outcome.nonempty {
+						results = `[{"id":1,"subject":"Synthetic result"}]`
+					}
 					switch action {
+					case "search":
+						_, _ = fmt.Fprintf(w, `{"results":%s,"index_state":%q}`, results, outcome.indexState)
 					case "show-message":
 						_, _ = w.Write([]byte(`{"id":1,"message_type":"email"}`))
 					case "documents":
-						_, _ = w.Write([]byte(`{"results":[],"effective_mode":"hybrid"}`))
+						_, _ = fmt.Fprintf(w, `{"results":%s,"effective_mode":"hybrid"}`, results)
 					case "sync-omi":
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = fmt.Fprintln(w, `{"type":"stdout","data":"Omi sync output"}`)
@@ -136,7 +156,7 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 						w.Header().Set("Content-Type", "application/x-ndjson")
 						_, _ = w.Write([]byte("{\"type\":\"complete\"}\n"))
 					default:
-						_, _ = w.Write([]byte(`{"results":[]}`))
+						_, _ = fmt.Fprintf(w, `{"results":%s}`, results)
 					}
 				}))
 				server := httptest.NewServer(mux)
@@ -192,12 +212,16 @@ func TestCLIActionOwnersReportSuccessAndSuppressHooksAndFailures(t *testing.T) {
 				if kind != "" {
 					properties["search_type"], event = kind, "search_run"
 				}
-				assert.Equal([]map[string]any{{"event": event, "properties": properties}}, events)
+				want := []map[string]any{{"event": event, "properties": properties}}
+				if kind != "" && outcome.indexState == "" && !outcome.nonempty {
+					want = append([]map[string]any{{"event": "search_empty", "properties": properties}}, want...)
+				}
+				assert.ElementsMatch(want, events)
 				if action == "search" {
 					searchOffset = 1
 					require.NoError(run(cmd))
 					invocationFromCommand(cmd).sends.Wait(time.Second)
-					assert.Len(events, 1, "continuation pages do not count")
+					assert.Len(events, len(want), "continuation pages do not count")
 				}
 			})
 		}
@@ -225,14 +249,14 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				release := make(chan struct{})
-				requests := 0
+				var requests atomic.Int32
 				mux := http.NewServeMux()
 				registerStatsProbeHandler(mux)
 				mux.HandleFunc("/api/v1/cli/search", func(w http.ResponseWriter, r *http.Request) {
-					_, _ = w.Write([]byte(`{"results":[]}`))
+					_, _ = w.Write([]byte(`{"results":[{"id":1,"subject":"Synthetic result"}]}`))
 				})
 				mux.HandleFunc("/api/v1/telemetry/events", func(w http.ResponseWriter, _ *http.Request) {
-					requests++
+					requests.Add(1)
 					if tc.name == "stalled" {
 						<-release
 					} else {
@@ -265,7 +289,7 @@ func TestCLIActionDeliveryDeadline(t *testing.T) {
 				elapsed := time.Since(exitStart)
 				synctest.Wait()
 				assert.Equal(tc.want, elapsed)
-				assert.Equal(1, requests)
+				assert.Equal(int32(1), requests.Load())
 				close(release)
 				invocationFromCommand(root).sends.Wait(time.Second)
 			})

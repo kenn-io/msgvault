@@ -6,11 +6,14 @@ import (
 	"database/sql"
 	"fmt"
 	"go.kenn.io/msgvault/internal/activity"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/muesli"
+	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -32,7 +36,7 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	cfg.Analytics.AutoBuildCache = false
 	cfg.Server.APIKey = "synthetic-owner-key"
 	adapter := &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}
-	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Logger: adapter.logger, OperationGate: api.NewSerialOperationGate()}).Router())
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: adapter, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: adapter.logger, OperationGate: api.NewSerialOperationGate()}).Router())
 	defer server.Close()
 	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: cfg.Server.APIKey, AllowInsecure: true})
 	require.NoError(err)
@@ -48,6 +52,23 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
  INSERT INTO meetings VALUES (43,'Unfinished','2026-09-01T14:00:00Z','2026-09-01 14:00:04','processing','unfinished','',NULL)`)
 	require.NoError(err)
 	options := muesli.ImportOptions{Identifier: source.Identifier, AccountEmail: source.AccountEmail, DBPath: path, LockDir: t.TempDir()}
+	audio := filepath.Join(filepath.Dir(path), "meeting-recordings", "synthetic.wav")
+	require.NoError(os.MkdirAll(filepath.Dir(audio), 0700))
+	require.NoError(os.WriteFile(audio, testWAV(), 0600))
+	old := time.Now().Add(-time.Minute)
+	require.NoError(os.Chtimes(audio, old, old))
+	_, err = db.Exec(`ALTER TABLE meetings ADD COLUMN saved_recording_path TEXT`)
+	require.NoError(err)
+	_, err = db.Exec(`UPDATE meetings SET saved_recording_path=? WHERE id=42`, audio)
+	require.NoError(err)
+	options.Recordings = true
+	options.SendRecording = func(ctx context.Context, upload muesli.RecordingUpload, recording *muesli.Recording) error {
+		upload.NoBuildCache = true
+		uploadCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		return client.ImportMuesliRecording(uploadCtx, upload, recording)
+	}
+
 	scan := func() *muesli.ImportSummary {
 		summary, err := muesli.ScanRemote(t.Context(), options, client.ImportMuesli)
 		require.NoError(err)
@@ -66,6 +87,20 @@ func TestMuesliLocalReaderToRemoteArchive(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(detail.Body, "Edited synthetic transcript")
 	assert.Contains(detail.Body, "Later notes")
+	require.Len(detail.Attachments, 1)
+	assert.True(detail.HasAttachments)
+	assert.Equal("audio/wav", detail.Attachments[0].MimeType)
+	request, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/attachments/%s/content", server.URL, detail.Attachments[0].ContentHash), nil)
+	require.NoError(err)
+	request.Header.Set("X-Api-Key", cfg.Server.APIKey)
+	response, err := server.Client().Do(request)
+	require.NoError(err)
+	content, err := io.ReadAll(response.Body)
+	require.NoError(err)
+	require.NoError(response.Body.Close())
+	require.Equal(http.StatusOK, response.StatusCode, string(content))
+	assert.Equal(testWAV(), content)
+
 	_, err = db.Exec(`UPDATE meetings SET deleted_at='2026-09-02T00:00:00Z' WHERE id=42`)
 	require.NoError(err)
 	assert.Equal(int64(1), scan().SkippedDeleted)

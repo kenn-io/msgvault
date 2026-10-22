@@ -37,6 +37,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -3300,47 +3301,69 @@ func TestScheduledTeamsImportOptionsApplyMediaPolicy(t *testing.T) {
 }
 
 func TestRunScheduledSyncUsesSharedDiscordImporterAndRebuildsOnce(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	cfg := config.NewDefaultConfig()
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	st := storetest.New(t)
-	source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
-	require.NoError(err)
+	importErr := errors.New("synthetic Discord import failure")
+	cacheErr := errors.New("synthetic cache failure")
+	for _, tc := range []struct {
+		name       string
+		importErr  error
+		rebuildErr error
+		wantErr    error
+	}{
+		{"import failure", importErr, nil, importErr},
+		{"cache failure", nil, cacheErr, cacheErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			cfg := config.NewDefaultConfig()
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			state := invocationFromContext(testCtx)
+			events := 0
+			state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+			st := storetest.New(t)
+			source, err := st.Store.GetOrCreateSource(sourceTypeDiscord, "113456789012345678")
+			require.NoError(err)
 
-	originalImport := importDiscordSourceForScheduledRun
-	originalRebuild := rebuildCacheAfterScheduledSourceRun
-	t.Cleanup(func() {
-		importDiscordSourceForScheduledRun = originalImport
-		rebuildCacheAfterScheduledSourceRun = originalRebuild
-	})
+			originalImport := importDiscordSourceForScheduledRun
+			originalRebuild := rebuildCacheAfterScheduledSourceRun
+			t.Cleanup(func() {
+				importDiscordSourceForScheduledRun = originalImport
+				rebuildCacheAfterScheduledSourceRun = originalRebuild
+			})
 
-	var imported []int64
-	importDiscordSourceForScheduledRun = func(
-		_ context.Context, gotStore *store.Store, gotSource *store.Source,
-		deps discordCommandDeps, full bool, after time.Time, progress func(string),
-	) (*discord.ImportSummary, error) {
-		assert.Same(st.Store, gotStore)
-		assert.False(full)
-		assert.True(after.IsZero())
-		assert.Nil(progress)
-		assert.NotNil(deps.tokenManager)
-		imported = append(imported, gotSource.ID)
-		return nil, errors.New("synthetic Discord import failure")
+			var imported []int64
+			importDiscordSourceForScheduledRun = func(
+				_ context.Context, gotStore *store.Store, gotSource *store.Source,
+				deps discordCommandDeps, full bool, after time.Time, progress func(string),
+			) (*discord.ImportSummary, error) {
+				assert.Same(st.Store, gotStore)
+				assert.False(full)
+				assert.True(after.IsZero())
+				assert.Nil(progress)
+				assert.NotNil(deps.tokenManager)
+				imported = append(imported, gotSource.ID)
+				return &discord.ImportSummary{}, tc.importErr
+			}
+			rebuilds := 0
+			rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error {
+				rebuilds++
+				return tc.rebuildErr
+			}
+
+			err = runScheduledSync(testCtx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
+				require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
+				return nil, errors.New("unreachable Gmail OAuth resolution")
+			}, state)
+			require.ErrorIs(err, tc.wantErr)
+			assert.Equal([]int64{source.ID}, imported)
+			assert.Equal(1, rebuilds)
+			if tc.importErr == nil {
+				assert.Zero(events)
+			} else {
+				assert.Equal(1, events)
+			}
+		})
 	}
-	rebuilds := 0
-	rebuildCacheAfterScheduledSourceRun = func(context.Context, string) error {
-		rebuilds++
-		return nil
-	}
-
-	err = runScheduledSync(testCtx, source.Identifier, st.Store, func(ctx context.Context, _ string) (*oauth.Manager, error) {
-		require.FailNow("Discord scheduled sync must not resolve Gmail OAuth")
-		return nil, errors.New("unreachable Gmail OAuth resolution")
-	}, invocationFromContext(testCtx))
-	require.ErrorContains(err, "synthetic Discord import failure")
-	assert.Equal([]int64{source.ID}, imported)
-	assert.Equal(1, rebuilds)
 }
 
 func TestRunScheduledSyncStopsAfterYield(t *testing.T) {

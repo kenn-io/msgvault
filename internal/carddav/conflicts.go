@@ -328,16 +328,17 @@ func (s *Service) prepareMappingConflict(
 	if !unresolved && localTombstone && remoteTombstone {
 		return store.CardDAVConflictCapture{}, false, nil
 	}
+	var localEnvelope vcard.ResourceEnvelope
 	if mapping.PersonID != nil && !localTombstone {
 		person, err := s.store.GetPersonContext(ctx, *mapping.PersonID)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}
-		body, hash, err := s.renderPublicationCard(ctx, *person, book, &mapping)
+		localEnvelope, localHash, err = s.renderPublicationEnvelope(ctx, *person, book, &mapping)
 		if err != nil {
 			return store.CardDAVConflictCapture{}, false, err
 		}
-		localBody, localHash = body, hash
+		localBody = localEnvelope.StoredBody
 	}
 	if !unresolved && !localTombstone && !remoteTombstone {
 		localSemanticHash, err := SemanticHash(localBody)
@@ -345,7 +346,12 @@ func (s *Service) prepareMappingConflict(
 			return store.CardDAVConflictCapture{}, false, err
 		}
 		if localSemanticHash == remote.SemanticHash {
+			metadata, err := vcard.MarshalResourceMetadata(localEnvelope)
+			if err != nil {
+				return store.CardDAVConflictCapture{}, false, err
+			}
 			remote.EquivalentLocalHash = localHash
+			remote.EquivalentLocalBody, remote.EquivalentLocalMetadata = localBody, metadata
 			return store.CardDAVConflictCapture{}, false, nil
 		}
 	}
