@@ -149,6 +149,14 @@ type ControlCalendarErrorResponseJSON502 = ErrorResponse
 
 type ControlCalendarErrorResponseJSON503 = ErrorResponse
 
+type ListCallObservationsResponse = CallEvidenceResponse
+
+type ListCallObservationsErrorResponse = ErrorResponse
+
+type SummarizeCallsResponse = CallSummaryResponse
+
+type SummarizeCallsErrorResponse = ErrorResponse
+
 type SaveCardDAVAccountResponse = CardDAVAccountResponse
 
 type SaveCardDAVAccountErrorResponse = ErrorResponse
@@ -1542,6 +1550,10 @@ type GetPersonMatchScoringStatusErrorResponse = ErrorResponse
 type UnlinkIdentityParticipantsResponse = IdentityLinkResponse
 
 type UnlinkIdentityParticipantsErrorResponse = ErrorResponse
+
+type ImportCallObservationResponse = CallImportResponse
+
+type ImportCallObservationErrorResponse = ErrorResponse
 
 type ImportMeetingResponse = MeetingImportResponse
 
@@ -3827,6 +3839,20 @@ type ControlCalendarResp struct {
 	JSON503      *ControlCalendarErrorResponseJSON503
 }
 
+type ListCallObservationsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCallObservationsResponse
+}
+
+type SummarizeCallsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SummarizeCallsResponse
+}
+
 type SaveCardDAVAccountResp503Headers struct {
 	RetryAfter string `header:"Retry-After"`
 }
@@ -4972,6 +4998,13 @@ type UnlinkIdentityParticipantsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *UnlinkIdentityParticipantsResponse
+}
+
+type ImportCallObservationResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ImportCallObservationResponse
 }
 
 type ImportMeetingResp struct {
