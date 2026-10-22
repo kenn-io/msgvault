@@ -575,6 +575,7 @@ func searchMessageBodiesDefinition(_ *handlers) toolDefinition {
 	searchIntro := "Keyword full-text search over message bodies. " +
 		"Returns messages whose body text contains the query terms, newest-first, " +
 		"each with matches — up to 5 excerpt snippets centered on matched terms. " +
+		"Each row includes hidden_text_present, indicating whether stored HTML may hide readable text; older mail is flagged after a one-time archive backfill. " +
 		"Backend excerpts may omit char_offset and line when efficient source locations are unavailable; use search_in_message when exact locations are needed. " +
 		"When matches_truncated is true on a hit, more than 5 excerpts matched — use search_in_message or get_message to read the full body. " +
 		"Known Gmail operators (from:, subject:, label:, etc.) apply as metadata filters only and do not satisfy the free-text requirement. " +

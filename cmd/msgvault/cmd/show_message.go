@@ -13,7 +13,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -100,7 +99,7 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 	if showMessageJSON {
 		return outputMessageJSON(cmd.OutOrStdout(), msg)
 	}
-	if mime.HTMLHasHiddenText(msg.BodyHTML) {
+	if msg.HiddenTextPresent {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: this message's HTML may hide text.")
 	}
 	return outputMessageText(cmd.OutOrStdout(), msg)
@@ -249,7 +248,7 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"attachments":            attachments,
 		"body_text":              msg.BodyText,
 		"body_html":              msg.BodyHTML,
-		"hidden_text_present":    mime.HTMLHasHiddenText(msg.BodyHTML),
+		"hidden_text_present":    msg.HiddenTextPresent,
 	}
 
 	if msg.RelatedMessageID != nil {

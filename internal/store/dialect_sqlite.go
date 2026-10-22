@@ -2003,6 +2003,7 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE imap_folder_state ADD COLUMN highest_modseq TEXT NOT NULL DEFAULT '0'`, "imap_folder_state.highest_modseq"},
 		{`ALTER TABLE messages ADD COLUMN rfc822_message_id TEXT`, "rfc822_message_id"},
 		{`ALTER TABLE messages ADD COLUMN list_id TEXT`, "list_id"},
+		{`ALTER TABLE messages ADD COLUMN hidden_text_present BOOLEAN NOT NULL DEFAULT 0`, "hidden_text_present"},
 		{`ALTER TABLE messages ADD COLUMN account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN account_path TEXT`, "account_path"},
 		{`ALTER TABLE messages ADD COLUMN draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},

@@ -1417,6 +1417,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
     -- RFC 2919 List-Id for email list membership
     list_id TEXT,
+    hidden_text_present BOOLEAN NOT NULL DEFAULT 0,
 
     -- Message classification
     message_type TEXT NOT NULL,  -- 'email', 'imessage', 'sms', 'mms', 'rcs', 'whatsapp', 'fbmessenger', 'teams'

@@ -2443,6 +2443,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			m.sent_at,
 			COALESCE(m.size_estimate, 0),
 			m.has_attachments,
+			m.hidden_text_present,
 			m.attachment_count,
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, '')
@@ -2482,6 +2483,7 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 			&sentAt,
 			&msg.SizeEstimate,
 			&msg.HasAttachments,
+			&msg.HiddenTextPresent,
 			&msg.AttachmentCount,
 			&deletedAt,
 			&msg.MessageType,

@@ -2629,6 +2629,8 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
+On newer `main` builds, every JSON result includes `hidden_text_present`.
+See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
 meaning alone. Date operators filter before ranking; `--sort date` only sorts
@@ -4635,8 +4637,9 @@ HTML that fails to parse also sets the flag. Text output writes
 `Warning: this message's HTML may hide text.` to stderr when flagged, including
 with `--body-only`. Message bodies stay unchanged. The check excludes
 stylesheets and browser layout. MCP `get_message` and `search_in_message`
-return the same flag. Search result rows from CLI search and MCP
-`search_message_bodies` aren't flagged.
+return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
+also include it on every result row. Archive schema 15 flags older mail during
+a one-time backfill at archive initialization; new HTML writes refresh the flag.
 
 ## show-thread
 

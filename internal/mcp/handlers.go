@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
@@ -1751,7 +1750,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		Bcc:                  msg.Bcc,
 		BodyText:             bodyText,
 		BodyHTML:             bodyHTML,
-		HiddenTextPresent:    mime.HTMLHasHiddenText(msg.BodyHTML),
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		BodyFormat:           bodyFormat,
 		BodyLength:           bodyLen,
 		BodyReturned:         len(bodySlice),
@@ -1847,7 +1846,7 @@ func (h *handlers) vectorMatchesInMessage(
 	if offset >= len(allMatches) {
 		return jsonResult(searchInMessageResponse{
 			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
-			HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+			HiddenTextPresent: msg.HiddenTextPresent,
 		})
 	}
 	end := min(offset+limit, len(allMatches))
@@ -1858,7 +1857,7 @@ func (h *handlers) vectorMatchesInMessage(
 	}
 	return jsonResult(searchInMessageResponse{
 		paginatedResponse: newPaginatedResponse(page, total, offset),
-		HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+		HiddenTextPresent: msg.HiddenTextPresent,
 	})
 }
 
@@ -1904,13 +1903,13 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	if offset >= len(allMatches) {
 		return jsonResult(searchInMessageResponse{
 			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
-			HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+			HiddenTextPresent: msg.HiddenTextPresent,
 		})
 	}
 	end := min(offset+limit, len(allMatches))
 	return jsonResult(searchInMessageResponse{
 		paginatedResponse: newPaginatedResponse(allMatches[offset:end], total, offset),
-		HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+		HiddenTextPresent: msg.HiddenTextPresent,
 	})
 }
 

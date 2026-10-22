@@ -376,6 +376,7 @@ func outputSearchResultsJSON(results []query.MessageSummary) error {
 			"source_conversation_id": msg.SourceConversationID,
 			"subject":                msg.Subject,
 			"snippet":                msg.Snippet,
+			"hidden_text_present":    msg.HiddenTextPresent,
 			"from_email":             msg.FromEmail,
 			"from_name":              msg.FromName,
 			"sent_at":                msg.SentAt.Format(time.RFC3339),
