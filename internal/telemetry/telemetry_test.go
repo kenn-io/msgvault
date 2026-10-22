@@ -27,15 +27,20 @@ const (
 	wireConfigOffEnv = "MSGVAULT_TELEMETRY_WIRE_CONFIG_OFF"
 )
 
-// An install file the daemon can't create must leave serve running with telemetry off.
-func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
-	assert := assert.New(t)
+func enableTelemetryForTest(t *testing.T) {
+	t.Helper()
 	t.Setenv(EnabledEnv, "1")
 	t.Setenv(posthog.GenericEnabledEnv, "")
 	for _, name := range []string{"CI", "DO_NOT_TRACK"} {
 		t.Setenv(name, os.Getenv(name))
 		require.NoError(t, os.Unsetenv(name))
 	}
+}
+
+// An install file the daemon can't create must leave serve running with telemetry off.
+func TestNewReporterOrDisabledFallsBackWhenInstallFails(t *testing.T) {
+	assert := assert.New(t)
+	enableTelemetryForTest(t)
 	notDir := filepath.Join(t.TempDir(), "data")
 	require.NoError(t, os.WriteFile(notDir, []byte("x"), 0o600))
 	var logs bytes.Buffer
