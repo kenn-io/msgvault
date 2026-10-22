@@ -542,6 +542,8 @@ func TestPersonEnrichmentCompleteRunDerivesTruthfulState(t *testing.T) {
 		require.NoError(t, err)
 		person, _, err := f.store.CreatePersonFromParticipantContext(t.Context(), participantID)
 		require.NoError(t, err)
+		_, err = f.store.SetPersonTrackingContext(t.Context(), person.ID, true)
+		require.NoError(t, err)
 		require.NoError(t, f.store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
 			PersonID: person.ID, ProfileFingerprint: f.profile.Fingerprint,
 			Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: "revision:1"},

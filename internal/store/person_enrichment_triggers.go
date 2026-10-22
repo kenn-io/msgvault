@@ -39,13 +39,19 @@ func (s *Store) enqueuePersonEnrichmentTx(
 	if err := validateEnrichmentTriggerInput(input); err != nil {
 		return err
 	}
+	// Serialize authorization and publication with tier opt-out cancellation.
+	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+		return err
+	}
 	var authorized bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM person_tracking pt
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` c ON c.fingerprint = ?
 			WHERE pt.person_id = ?
-		)`, input.ProfileFingerprint, input.PersonID).Scan(&authorized); err != nil {
+			  AND (`+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
+			       OR `+personEnrichmentManualTargetForPersonSQL("pt.person_id", "?")+`)
+		)`, input.ProfileFingerprint, input.PersonID, input.ProfileFingerprint).Scan(&authorized); err != nil {
 		return fmt.Errorf("authorize person enrichment trigger: %w", err)
 	}
 	if !authorized {
@@ -103,11 +109,20 @@ func (s *Store) publishPersonEnrichmentTx(
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO person_enrichment_work
-			(person_id, profile_fingerprint, trigger_mask, trigger_generation, due_at)
-		SELECT ?, c.fingerprint, ?, ?, ?
+			(person_id, profile_fingerprint, trigger_mask, trigger_generation, due_at, run_id)
+		SELECT ?, c.fingerprint, ?, ?, ?, (
+			SELECT manual_target.run_id
+			FROM person_enrichment_manual_run_targets manual_target
+			JOIN person_enrichment_runs manual_run ON manual_run.id = manual_target.run_id
+			WHERE manual_target.person_id = pt.person_id
+			  AND manual_target.profile_fingerprint = c.fingerprint
+			  AND manual_run.state IN ('queued', 'running')
+			ORDER BY manual_target.run_id LIMIT 1)
 		FROM `+activeConsentsSQL(ConsentPersonEnrichment)+` c
 		JOIN person_tracking pt ON pt.person_id = ?
-		WHERE 1 = 1`+personEnrichmentWorkConflictClause,
+		WHERE (`+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
+			OR `+personEnrichmentManualTargetForPersonSQL("pt.person_id", "c.fingerprint")+`)`+
+		personEnrichmentWorkConflictClause,
 		personID, mask, strings.TrimSpace(generation), dueAt.UTC(), personID)
 	if err != nil {
 		return fmt.Errorf("publish authorized person enrichment work: %w", err)
@@ -223,6 +238,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			 AND w.profile_fingerprint = g.provider_policy_fingerprint
 			WHERE c.origin = 'enrichment'
 			  AND g.provider_policy_fingerprint IN (`+profilePlaceholders+`)
+			  AND `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
 			  AND c.valid_until IS NOT NULL
 			  AND c.valid_until <= ?
 			  AND NOT EXISTS (
@@ -240,7 +256,10 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 				  AND newer.provider_policy_fingerprint = g.provider_policy_fingerprint
 				  AND newer.id > g.id
 			  )
-			  AND (w.person_id IS NULL OR (w.trigger_mask & ?) = 0 OR w.due_at > ?)
+			  AND (w.person_id IS NULL OR (w.trigger_mask & ?) = 0
+			       OR (w.due_at > ? AND NOT `+personEnrichmentManualTargetForPersonSQL(
+			"w.person_id", "w.profile_fingerprint",
+		)+`))
 			GROUP BY c.person_id, g.provider_policy_fingerprint
 			ORDER BY c.person_id, g.provider_policy_fingerprint
 			LIMIT ?`, expiredArgs...)
@@ -292,6 +311,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  ON w.person_id = pt.person_id
 			 AND w.profile_fingerprint = c.fingerprint
 			WHERE c.fingerprint IN (`+profilePlaceholders+`)
+			  AND `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
 			  AND w.person_id IS NULL
 			  AND NOT EXISTS (
 				SELECT 1 FROM person_enrichment_attempts attempted

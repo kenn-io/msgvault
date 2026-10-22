@@ -175,7 +175,6 @@ func assertPersonMergeTableInventory(t *testing.T, st *Store) {
 	sort.Strings(classified)
 	assert.Equal(actual, classified,
 		"every live foreign key to persons must have an explicit merge policy")
-
 	for _, want := range []struct {
 		table, idColumn, kindColumn, kindValue string
 	}{

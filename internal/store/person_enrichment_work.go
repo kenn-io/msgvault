@@ -123,7 +123,8 @@ type personEnrichmentBudgetPolicy struct {
 // personEnrichmentWorkConflictClause keeps the generation attached to the
 // trigger kind selected by triggerFromMaskAndGeneration. Each publisher writes
 // one trigger bit, so a generation replaces the stored value only when that
-// incoming kind has at least the stored kind's priority.
+// incoming kind has at least the stored kind's priority. An open manual target
+// also retains its deferred due time when scheduled triggers coalesce.
 const personEnrichmentWorkConflictClause = `
 	ON CONFLICT (person_id, profile_fingerprint) DO UPDATE SET
 		trigger_mask = CASE
@@ -160,8 +161,17 @@ const personEnrichmentWorkConflictClause = `
 			THEN TRUE
 			ELSE person_enrichment_work.has_fresh_trigger
 		END,
-		due_at = CASE WHEN excluded.due_at < person_enrichment_work.due_at
-		              THEN excluded.due_at ELSE person_enrichment_work.due_at END
+		due_at = CASE
+			WHEN excluded.trigger_mask <> 16 AND EXISTS (
+				SELECT 1 FROM person_enrichment_manual_run_targets manual_target
+				JOIN person_enrichment_runs manual_run ON manual_run.id = manual_target.run_id
+				WHERE manual_target.person_id = person_enrichment_work.person_id
+				  AND manual_target.profile_fingerprint = person_enrichment_work.profile_fingerprint
+				  AND manual_run.state IN ('queued', 'running')
+			) THEN person_enrichment_work.due_at
+			WHEN excluded.due_at < person_enrichment_work.due_at
+			THEN excluded.due_at ELSE person_enrichment_work.due_at
+		END
 	WHERE NOT EXISTS (
 		SELECT 1 FROM person_enrichment_attempts consumed
 		WHERE consumed.id = person_enrichment_work.active_attempt_id
@@ -362,6 +372,9 @@ func (s *Store) claimWorkOnce(
 			JOIN person_enrichment_profiles p ON p.fingerprint = w.profile_fingerprint
 			WHERE p.provider_name = ? AND w.profile_fingerprint = ?
 			  AND (w.run_id = ? OR w.run_id IS NULL)
+			  AND ` + personEnrichmentClaimAuthoritySQL(
+			"w.person_id", "w.profile_fingerprint", "?",
+		) + `
 			  AND w.due_at <= ?
 			  AND (w.lease_owner IS NULL OR w.lease_until <= ?)
 			ORDER BY CASE WHEN w.run_id = ? THEN 0 ELSE 1 END, w.due_at, w.person_id
@@ -383,7 +396,8 @@ func (s *Store) claimWorkOnce(
 			until                               nullableTimestamp
 		)
 		err := tx.QueryRowContext(ctx, query,
-			options.ProviderName, options.ProfileFingerprint, options.RunID, options.Now, options.Now, options.RunID,
+			options.ProviderName, options.ProfileFingerprint, options.RunID, options.RunID,
+			options.Now, options.Now, options.RunID,
 			options.RunID, options.Owner, leaseUntil).Scan(
 			&personID, &fingerprint, &triggerMask, &generation, &runID, &activeID, &fence, &until)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1046,8 +1060,13 @@ func (s *Store) AuthorizeAttemptPoll(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			WHERE tracked.person_id = ?
+			  AND EXISTS (
+				SELECT 1 FROM person_enrichment_work w
+				WHERE w.person_id = tracked.person_id
+				  AND w.profile_fingerprint = ? AND w.run_id = ?
+				  AND `+personEnrichmentWorkAuthoritySQL()+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.ProfileFingerprint, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment poll authority: %w", err)
 		}
 		if !active {
@@ -1113,8 +1132,13 @@ func (s *Store) AuthorizeAttemptDispatch(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			WHERE tracked.person_id = ?
+			  AND EXISTS (
+				SELECT 1 FROM person_enrichment_work w
+				WHERE w.person_id = tracked.person_id
+				  AND w.profile_fingerprint = ? AND w.run_id = ?
+				  AND `+personEnrichmentWorkAuthoritySQL()+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.ProfileFingerprint, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment dispatch authority: %w", err)
 		}
 		if !active {
