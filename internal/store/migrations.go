@@ -155,6 +155,27 @@ func (s *Store) backfillSyncRunResumeMetadata(
 	return nil
 }
 
+// reprojectDraftEvidenceTx requeues unsent mail with activity events so the
+// projector retracts it, and returns drafts to pending account attribution so
+// the attribution repair rederives rows that older draft evidence missed.
+func (s *Store) reprojectDraftEvidenceTx(ctx context.Context, tx *loggedTx) error {
+	if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
+		SELECT ae.message_id, 1, CURRENT_TIMESTAMP
+		FROM activity_events ae JOIN messages m ON m.id = ae.message_id
+		LEFT JOIN sources src ON src.id = m.source_id
+		WHERE `+s.activityUnsentSQL())); err != nil {
+		return fmt.Errorf("requeue unsent activity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE messages SET account_address = NULL, account_path = NULL
+		WHERE id IN (SELECT m.id FROM messages m LEFT JOIN sources src ON src.id = m.source_id
+			WHERE m.account_path IS NOT NULL AND COALESCE(m.message_type, '') IN ('', 'email')
+			  AND `+draftEvidenceSQL("m", "src")+`)`); err != nil {
+		return fmt.Errorf("mark draft account attribution pending: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) classifyLegacyGmailChats(ctx context.Context, tx *loggedTx) error {
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE conversations

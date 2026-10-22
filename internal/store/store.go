@@ -1864,12 +1864,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				); err != nil {
 					return err
 				}
-				_, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
-					SELECT ae.message_id, 1, CURRENT_TIMESTAMP
-					FROM activity_events ae JOIN messages m ON m.id = ae.message_id
-					LEFT JOIN sources src ON src.id = m.source_id
-					WHERE `+s.activityUnsentSQL()))
-				return err
+				return s.reprojectDraftEvidenceTx(ctx, tx)
 			})
 		},
 	); err != nil {
