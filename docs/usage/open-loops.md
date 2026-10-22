@@ -104,16 +104,22 @@ message.
 msgvault loops done 4521
 msgvault loops snooze 4521 --until 48h
 msgvault loops snooze 4521 --until 2026-10-25
+msgvault loops reopen 4521
 ```
 
 `done` hides this person's open questions. `snooze` hides them until the time
-passes. Done and snooze cover the questions the list shows when you act. A question
-still inside its 24- or 72-hour wait stays undecided and lists when its wait
-ends. A distinct question imported later can reopen the loop, whatever its
-message date. For example, Alex asks for the contract on Monday and you mark
-it done. "And the invoice?" on Wednesday starts a new visible wait dated
-Wednesday. An invoice question from Sunday imported afterward also appears.
-A message that asks nothing leaves the loop hidden.
+passes. They cover the questions the list shows when you act. A question still
+inside its 24- or 72-hour wait stays undecided and lists when its wait ends. A
+distinct question imported later can list again, whatever its message date. For
+example, Alex asks for the contract on Monday and you mark it done. "And the
+invoice?" on Wednesday starts a new visible wait dated Wednesday. An invoice
+question from Sunday imported afterward also appears. A message that asks
+nothing leaves the loop hidden.
+
+`reopen` clears the done or snooze choice on one exact question. Use the
+message ID from the earlier list or decision output. Other questions keep
+their decisions, and the question lists again only if it still waits for an
+answer and has passed its grace period.
 
 If an action reaches the evidence limit, retry it to continue checking the
 conversation before saving the decision. The HTTP API returns
@@ -125,10 +131,11 @@ and uses that question's age and message ID. Distinct questions keep their
 own snooze deadlines through a merge, and each reopens when its deadline
 passes. A new question must wait its own 24 or 72 hours before it lists.
 
-Both commands take the current message ID from `loops list` and re-read the
-conversation before acting. A covered anchor, an archived answer, or a
+`done` and `snooze` take the current message ID from `loops list` and re-read
+the conversation before acting. A covered anchor, an archived answer, or a
 question still inside its grace period makes the action fail with the
-existing not-open error.
+existing not-open error. `reopen` clears the decision by exact message ID; it
+returns an error when that question has no decision.
 
 A confirmed duplicate inherits the original question's decision. Hiding a
 duplicate preserves its own decision so undo restores it too. Done wins over
@@ -143,10 +150,9 @@ question. Deleting a question removes only that question's decision.
   that account's conversation, and the loop stays until you run
   `msgvault loops done`.
 - Each request checks up to 1,000 uncached messages, starting with the eligible conversation whose latest activity is oldest. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
-- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Refresh to continue checking.
+- When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Run `msgvault loops list` or issue another API request to continue; the Directory card has a Check more button.
 - A very large archive can still exceed the API's default 60-second request budget and return HTTP 500 (`internal_error`). Successful evidence writes remain available for the next request. A smaller `limit` may still scan the same history.
 - Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
-- The CLI and API have no action to undo done or end a snooze early.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something
   opens a loop, and `msgvault loops done` clears it.

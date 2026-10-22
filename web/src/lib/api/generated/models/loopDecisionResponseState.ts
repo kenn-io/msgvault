@@ -6,6 +6,7 @@ export type LoopDecisionResponseState =
   (typeof LoopDecisionResponseState)[keyof typeof LoopDecisionResponseState];
 
 export const LoopDecisionResponseState = {
+  open: "open",
   done: "done",
   snoozed: "snoozed",
 } as const;

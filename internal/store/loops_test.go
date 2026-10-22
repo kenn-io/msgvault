@@ -1,12 +1,16 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json/v2"
+	"log/slog"
 	"math/rand/v2"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -722,4 +726,42 @@ func TestLoopConversationPagingSurvivesNewRecentConversation(t *testing.T) {
 	for id := range original {
 		assert.Equal(1, counts[id], "original conversation %d must be visited exactly once", id)
 	}
+}
+
+func TestLoopConversationPagingReadsHeadsOnce(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	original := make(map[int64]bool)
+	for i := range 201 {
+		id := f.PersistEmail(storetest.EmailSpec{Thread: "head-" + strconv.Itoa(i), From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(3*loopDay + time.Duration(i)*time.Minute)})
+		original[conversationOf(t, f, id)] = true
+	}
+	require.Len(original, 201)
+
+	var logs bytes.Buffer
+	previous := slog.Default()
+	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	yielded := make(map[int64]bool)
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		require.NoError(err)
+		yielded[conv.ConversationID] = true
+	}
+	slog.SetDefault(previous)
+
+	assert.Equal(original, yielded)
+	aggregates := 0
+	for line := range strings.Lines(logs.String()) {
+		var record struct {
+			Stmt string `json:"stmt"`
+		}
+		require.NoError(json.Unmarshal([]byte(line), &record))
+		if strings.Contains(record.Stmt, "GROUP BY m.conversation_id, c.source_id, c.conversation_type") {
+			aggregates++
+		}
+	}
+	assert.Equal(1, aggregates, "the grouped conversation-head aggregate runs once for both pages")
 }

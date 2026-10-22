@@ -376,7 +376,8 @@ import (
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
 // 3.24.0 adds owner-only open-loop routes: GET /api/v1/loops, and POST
 // /api/v1/loops/{message_id}/done and /snooze.
-const APISchemaVersion = "3.24.0"
+// 3.25.0 adds POST /api/v1/loops/{message_id}/reopen.
+const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

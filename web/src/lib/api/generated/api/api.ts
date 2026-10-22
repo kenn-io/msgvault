@@ -398,6 +398,7 @@ import type {
   RelationshipType,
   RelationshipTypesResponse,
   RemoteImageRequest,
+  ReopenLoopPathParameters,
   ResolveCardDAVConflictPathParameters,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
@@ -2200,6 +2201,21 @@ export const markLoopDone = (
   return orvalFetch<LoopDecisionResponse>(
     {
       url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/done`,
+      method: "POST",
+    },
+    options,
+  );
+};
+/**
+ * @summary Clear a loop decision
+ */
+export const reopenLoop = (
+  { messageId }: ReopenLoopPathParameters,
+  options?: SecondParameter<typeof orvalFetch<LoopDecisionResponse>>,
+) => {
+  return orvalFetch<LoopDecisionResponse>(
+    {
+      url: `/api/v1/loops/${encodeURIComponent(String(messageId))}/reopen`,
       method: "POST",
     },
     options,

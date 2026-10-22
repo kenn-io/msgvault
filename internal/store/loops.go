@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	LoopStateOpen    = "open"
 	LoopStateDone    = "done"
 	LoopStateSnoozed = "snoozed"
 
@@ -83,8 +84,7 @@ type LoopConversation struct {
 	// Messages are the newest live messages, newest first.
 	Messages []LoopMessage
 
-	earlier         iter.Seq2[LoopMessage, error]
-	lastActivityKey any
+	earlier iter.Seq2[LoopMessage, error]
 }
 
 // Walk yields the conversation's live messages newest first: Messages, then
@@ -141,21 +141,23 @@ func (s *Store) loopTimeKey(expression string) string {
 	return sqliteutil.TimestampKeyFunction + "(" + expression + ")"
 }
 
-// LoopConversationsContext yields conversations oldest-activity first in bounded
-// chunks, so a bounded caller reaches its oldest conversations first. Each conversation walks messages newest first on demand.
+// LoopConversationsContext yields conversations oldest-activity first. It
+// retains the small head rows, then hydrates messages in bounded chunks. Each
+// conversation walks messages newest first on demand.
 func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.Seq2[LoopConversation, error] {
 	return func(yield func(LoopConversation, error) bool) {
 		owners, err := s.loopOwnerIdentities(ctx)
 		var heads []LoopConversation
 		if err == nil {
-			heads, err = s.loopConversationHeads(ctx, q, nil)
+			heads, err = s.loopConversationHeads(ctx, q)
 		}
 		if err != nil {
 			yield(LoopConversation{}, err)
 			return
 		}
-		for len(heads) > 0 {
-			chunk, err := s.loopChunk(ctx, heads, owners)
+		for start := 0; start < len(heads); start += loopChunkConversations {
+			end := min(start+loopChunkConversations, len(heads))
+			chunk, err := s.loopChunk(ctx, heads[start:end], owners)
 			if err != nil {
 				yield(LoopConversation{}, err)
 				return
@@ -165,29 +167,16 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 					return
 				}
 			}
-			after := heads[len(heads)-1]
-			heads, err = s.loopConversationHeads(ctx, q, &after)
-			if err != nil {
-				yield(LoopConversation{}, err)
-				return
-			}
 		}
 	}
 }
 
-// loopConversationHeads picks the conversations to read, oldest activity
-// first. With a
-// PersonID, it keeps conversations where one of the person's participants
+// loopConversationHeads picks conversations in oldest-activity order. With a
+// PersonID, it keeps conversations where one of that person's participants
 // sent, received, or belongs.
-func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *LoopConversation) ([]LoopConversation, error) {
+func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery) ([]LoopConversation, error) {
 	query, args := s.loopConversationQuery(q)
-	if after != nil {
-		key := s.loopTimeKey("m.sent_at")
-		query += ` HAVING (MAX(` + key + `) > ? OR (MAX(` + key + `) = ? AND m.conversation_id > ?))`
-		args = append(args, after.lastActivityKey, after.lastActivityKey, after.ConversationID)
-	}
-	query += ` ORDER BY last_activity_key, m.conversation_id LIMIT ?`
-	args = append(args, loopChunkConversations)
+	query += ` ORDER BY MAX(` + s.loopTimeKey("m.sent_at") + `), m.conversation_id`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list loop conversations: %w", err)
@@ -196,7 +185,7 @@ func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *L
 	var heads []LoopConversation
 	for rows.Next() {
 		var c LoopConversation
-		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType, &c.lastActivityKey); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType); err != nil {
 			return nil, err
 		}
 		heads = append(heads, c)
@@ -205,8 +194,7 @@ func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *L
 }
 
 func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
-	query := `SELECT m.conversation_id, c.source_id, c.conversation_type,
-			MAX(` + s.loopTimeKey("m.sent_at") + `) AS last_activity_key
+	query := `SELECT m.conversation_id, c.source_id, c.conversation_type
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
@@ -666,6 +654,19 @@ func (s *Store) SnoozeLoopContext(ctx context.Context, anchorID int64, until tim
 	return s.putLoopDecision(ctx, LoopDecision{AnchorMessageID: anchorID, State: LoopStateSnoozed, SnoozedUntil: &until}, questions)
 }
 
+// ClearLoopDecisionContext removes the done or snooze decision on one exact question.
+func (s *Store) ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM loop_decisions WHERE message_id = ?`, messageID)
+	if err != nil {
+		return false, fmt.Errorf("clear loop decision: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("count cleared loop decisions: %w", err)
+	}
+	return count > 0, nil
+}
+
 func (s *Store) putLoopDecision(ctx context.Context, d LoopDecision, questions []LoopMessage) (LoopDecision, error) {
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		allDone := len(questions) > 0
@@ -741,8 +742,30 @@ func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, versio
 	token = rand.Text()
 	_, err = s.db.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,token,facts)
  SELECT id, ?, ?, NULL FROM messages WHERE id = ?
- ON CONFLICT(message_id) DO UPDATE SET rule_version=excluded.rule_version, token=excluded.token, facts=NULL`, version, token, id)
-	return e, token, false, err
+ ON CONFLICT(message_id) DO UPDATE SET
+  rule_version = excluded.rule_version,
+  token = CASE WHEN loop_message_evidence.rule_version < excluded.rule_version THEN excluded.token ELSE loop_message_evidence.token END,
+  facts = CASE WHEN loop_message_evidence.rule_version < excluded.rule_version THEN NULL ELSE loop_message_evidence.facts END
+ WHERE loop_message_evidence.rule_version <= excluded.rule_version`, version, token, id)
+	if err != nil {
+		return e, "", false, err
+	}
+	var currentVersion int
+	err = s.db.QueryRowContext(ctx, `SELECT rule_version, token, facts FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&currentVersion, &token, &facts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, "", false, nil
+	}
+	if err != nil {
+		return e, "", false, err
+	}
+	if currentVersion > version {
+		return e, "", false, nil
+	}
+	if facts.Valid {
+		err = json.Unmarshal([]byte(facts.String), &e)
+		return e, token, err == nil, err
+	}
+	return e, token, false, nil
 }
 
 // SaveLoopMessageEvidenceContext saves only while the computation's token is

@@ -30,10 +30,6 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 
 		return token
 	}
-	save()
-	_, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
-	require.NoError(err)
-	assert.False(hit, "detector rule changes invalidate older evidence")
 	for _, mutation := range []struct {
 		statement string
 		args      []any
@@ -60,11 +56,69 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		assert.Equal(fresh, got, "a completed read from before invalidation cannot overwrite fresh evidence")
 	}
 	save()
+	_, newerToken, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
+	require.NoError(err)
+	assert.False(hit, "detector rule changes invalidate older evidence")
+	newer := store.LoopMessageEvidence{Automated: true}
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 2, newerToken, newer))
+	_, olderToken, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.False(hit, "older rules do not read newer facts")
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, olderToken, expected))
+	got, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
+	require.NoError(err)
+	require.True(hit, "an older reader cannot evict newer facts")
+	assert.Equal(newer, got)
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
 	require.NoError(err)
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
 	assert.Zero(count, "deleting a message cascades its cached facts")
+}
+
+func TestLoopMessageEvidenceConcurrentMissesShareToken(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+
+	_, firstToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	require.NoError(err)
+	require.False(hit)
+	_, secondToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	require.NoError(err)
+	require.False(hit)
+	assert.Equal(firstToken, secondToken)
+
+	want := store.LoopMessageEvidence{Asks: true}
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, firstToken, want))
+	got, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	require.NoError(err)
+	require.True(hit)
+	assert.Equal(want, got)
+}
+
+func TestLoopMessageEvidenceOlderRulesCannotReplaceNewerFacts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+
+	_, newerToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 2)
+	require.NoError(err)
+	require.False(hit)
+	want := store.LoopMessageEvidence{Automated: true}
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 2, newerToken, want))
+
+	_, olderToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	require.NoError(err)
+	assert.False(hit)
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, olderToken, store.LoopMessageEvidence{Asks: true}))
+
+	got, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 2)
+	require.NoError(err)
+	require.True(hit)
+	assert.Equal(want, got)
 }
 
 func TestLoopEvidenceSchemaUpgrade(t *testing.T) {

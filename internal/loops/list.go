@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
 // Options selects which loops List returns. A zero Limit means the default.
@@ -38,8 +39,9 @@ const MaxListEvidenceComputations = 1000
 // loopEvidenceRuleVersion changes when ownText or classify changes.
 const loopEvidenceRuleVersion = 1
 
-// evidenceVersion combines the loop and MIME producers of persisted facts.
-const evidenceVersion = loopEvidenceRuleVersion<<16 | mime.AutomationEvidenceVersion
+// evidenceVersion packs detector, text preprocessing, and MIME producer
+// versions into separate 10-bit fields. Keep each value below 1024.
+const evidenceVersion = loopEvidenceRuleVersion<<20 | preprocess.LoopEvidenceTextVersion<<10 | mime.AutomationEvidenceVersion
 
 // EvidenceIncompleteError means an action needs another request to finish reading evidence.
 type EvidenceIncompleteError struct{}
@@ -63,6 +65,7 @@ type Store interface {
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
 	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
 	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
+	ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error)
 }
 
 type storeReader struct {
@@ -227,6 +230,21 @@ func Snooze(ctx context.Context, st Store, messageID int64, until, now time.Time
 		return store.LoopDecision{}, err
 	}
 	return st.SnoozeLoopContext(ctx, messageID, until, loop.Questions)
+}
+
+// ErrDecisionNotFound means the message has no done or snooze choice to clear.
+var ErrDecisionNotFound = errors.New("message has no loop decision")
+
+// Reopen clears the done or snooze choice for one exact question.
+func Reopen(ctx context.Context, st Store, messageID int64) (store.LoopDecision, error) {
+	cleared, err := st.ClearLoopDecisionContext(ctx, messageID)
+	if err != nil {
+		return store.LoopDecision{}, err
+	}
+	if !cleared {
+		return store.LoopDecision{}, ErrDecisionNotFound
+	}
+	return store.LoopDecision{AnchorMessageID: messageID, State: store.LoopStateOpen}, nil
 }
 
 // requireAnchor returns the loop List would show anchored at the message,

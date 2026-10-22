@@ -134,7 +134,7 @@ func TestLoopsRequireDaemonSchema(t *testing.T) {
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.24.0")
+	require.ErrorContains(err, "require daemon API schema 3.25.0")
 	require.ErrorContains(err, `daemon reports "3.23.0"`)
 	assert.Zero(loopRequests)
 }
@@ -204,4 +204,26 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	}}, 50, now))
 	assert.Contains(out.String(), "(unknown)   (no subject)")
 	assert.NotContains(out.String(), "Waiting on you")
+}
+
+func TestLoopsReopenClearsDecision(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, anchor, _ := loopsDaemon(t)
+	id := strconv.FormatInt(anchor, 10)
+	_, err := runLoops(ctx, t, "done", id)
+	require.NoError(err)
+
+	output, err := runLoops(ctx, t, "reopen", id)
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("Reopened %d.\n", anchor), output)
+	output, err = runLoops(ctx, t, "list", "--json")
+	require.NoError(err)
+	var listed generated.LoopListResponse
+	require.NoError(json.Unmarshal([]byte(output), &listed))
+	var anchors []int64
+	for _, item := range listed.Items {
+		anchors = append(anchors, item.AnchorMessageID)
+	}
+	assert.Contains(anchors, anchor)
 }

@@ -106,17 +106,48 @@ describe("PersonOpenLoops", () => {
   it("warns when the scan could not cover all stored originals", async () => {
     const { client } = clientFor([loop()], false, 0, true);
     const view = render(PersonOpenLoops, { client, personID: 7 });
-    expect(
-      await screen.findByText(
-        "More history remains. Refresh to continue checking; these results cover checked conversations.",
-      ),
-    ).toBeDefined();
+    expect(await screen.findByText("More archive history remains.")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Check more" })).toBeDefined();
     view.unmount();
 
     const empty = clientFor([], false, 0, true);
     render(PersonOpenLoops, { client: empty.client, personID: 7 });
     expect(await screen.findByText("No loops found in the messages checked."))
       .toBeDefined();
+  });
+
+  it("checks more archive history when coverage is incomplete", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({
+        items: [loop()],
+        truncated: false,
+        skipped_unparseable: 0,
+        coverage_incomplete: true,
+      }))
+      .mockRejectedValueOnce(new Error("temporary failure"))
+      .mockResolvedValueOnce(Response.json({
+        items: [loop(), loop(43, "awaiting_reply", "Can you review this?")],
+        truncated: false,
+        skipped_unparseable: 0,
+        coverage_incomplete: false,
+      }));
+    render(PersonOpenLoops, { client: createAPIClient(fetcher), personID: 7 });
+
+    const button = await screen.findByRole("button", { name: "Check more" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    button.click();
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Couldn't check more archive history.",
+    );
+    expect(screen.getByRole("link", { name: "Review the draft?" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Check more" })).toBeDefined();
+    button.click();
+
+    expect(await screen.findByRole("link", { name: "Can you review this?" }))
+      .toBeDefined();
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(screen.queryByRole("button", { name: "Check more" })).toBeNull();
   });
 
   it("shows an error", async () => {

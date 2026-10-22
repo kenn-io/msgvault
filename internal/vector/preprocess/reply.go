@@ -2,6 +2,10 @@ package preprocess
 
 import "regexp"
 
+// LoopEvidenceTextVersion changes when StripReplyQuotes or Preprocess output
+// used by loop detection changes for the same body and configuration.
+const LoopEvidenceTextVersion = 1
+
 // notReplyStart begins a line that is not itself an "On ..." attribution, so an
 // authored "On Monday..." line cannot absorb the next reply header.
 const notReplyStart = `(?:[^o \t\r\n]|o[^n\r\n]|on[^ \t\r\n])[^\n]*`

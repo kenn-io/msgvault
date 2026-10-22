@@ -1144,13 +1144,14 @@ type LoopDecisionResponseState string
 
 const (
 	Done    LoopDecisionResponseState = "done"
+	Open    LoopDecisionResponseState = "open"
 	Snoozed LoopDecisionResponseState = "snoozed"
 )
 
 // Validate checks if the LoopDecisionResponseState value is valid
 func (l LoopDecisionResponseState) Validate() error {
 	switch l {
-	case Done, Snoozed:
+	case Done, Open, Snoozed:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LoopDecisionResponseState value, got: %v", l))

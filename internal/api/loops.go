@@ -42,10 +42,10 @@ type LoopListResponse struct {
 	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
 }
 
-// LoopDecisionResponse is the mark stored by done or snooze.
+// LoopDecisionResponse is the result of a done, snooze, or reopen action.
 type LoopDecisionResponse struct {
 	AnchorMessageID int64      `json:"anchor_message_id"`
-	State           string     `json:"state" enum:"done,snoozed"`
+	State           string     `json:"state" enum:"open,done,snoozed"`
 	SnoozedUntil    *time.Time `json:"snoozed_until,omitempty"`
 }
 
@@ -69,6 +69,7 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 	}{
 		{"markLoopDone", "/loops/{message_id}/done", "Mark a loop done", s.handleLoopDone, false},
 		{"snoozeLoop", "/loops/{message_id}/snooze", "Hide a loop until a later time", s.handleLoopSnooze, true},
+		{"reopenLoop", "/loops/{message_id}/reopen", "Clear a loop decision", s.handleLoopReopen, false},
 	} {
 		op := rawAPIV1Operation(action.id, http.MethodPost, action.path, action.summary)
 		op.Errors = []int{400, 401, 403, 404, 413, 415, 500, 503}
@@ -179,6 +180,12 @@ func (s *Server) handleLoopSnooze(w http.ResponseWriter, r *http.Request) {
 	}, &request)
 }
 
+func (s *Server) handleLoopReopen(w http.ResponseWriter, r *http.Request) {
+	s.applyLoopDecision(w, r, func(loopStore loops.Store, id int64) (store.LoopDecision, error) {
+		return loops.Reopen(r.Context(), loopStore, id)
+	}, nil)
+}
+
 var errSnoozeNotFuture = errors.New("until must be in the future")
 
 func (s *Server) applyLoopDecision(
@@ -206,6 +213,8 @@ func (s *Server) applyLoopDecision(
 		writeError(w, http.StatusServiceUnavailable, "loop_scan_incomplete", "More history remains. Retry this action to continue checking.")
 	case errors.Is(err, loops.ErrNotOpen):
 		writeError(w, http.StatusNotFound, "loop_not_found", "That message does not anchor an open loop")
+	case errors.Is(err, loops.ErrDecisionNotFound):
+		writeError(w, http.StatusNotFound, "loop_decision_not_found", "That message has no done or snooze decision")
 	case err != nil:
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to update the loop")
 	default:

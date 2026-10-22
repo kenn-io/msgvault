@@ -173,3 +173,55 @@ func TestLoopActionsRetryAfterIncompleteEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestLoopReopenReturnsQuestionToList(t *testing.T) {
+	for _, tt := range []struct{ action, body string }{
+		{"done", ""},
+		{"snooze", fmt.Sprintf(`{"until":%q}`, time.Now().Add(48*time.Hour).Format(time.RFC3339))},
+	} {
+		t.Run(tt.action, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			l := newLoopFixture(t)
+			decided := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/%s", l.owed, tt.action), tt.body)
+			require.Equal(http.StatusOK, decided.Code, decided.Body.String())
+			for _, item := range l.list(t, "").Items {
+				require.NotEqual(l.owed, item.AnchorMessageID)
+			}
+
+			reopened := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/reopen", l.owed), "")
+			require.Equal(http.StatusOK, reopened.Code, reopened.Body.String())
+			var anchors []int64
+			for _, item := range l.list(t, "").Items {
+				anchors = append(anchors, item.AnchorMessageID)
+			}
+			assert.Contains(anchors, l.owed)
+		})
+	}
+}
+
+func TestLoopReopenLeavesOtherDecisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	l := newLoopFixture(t)
+	open := l.list(t, "").Items
+	require.Len(open, 2)
+	for _, item := range open {
+		w := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/done", item.AnchorMessageID), "")
+		require.Equal(http.StatusOK, w.Code, w.Body.String())
+	}
+
+	w := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/reopen", l.owed), "")
+	require.Equal(http.StatusOK, w.Code, w.Body.String())
+	listed := l.list(t, "").Items
+	require.Len(listed, 1)
+	assert.Equal(l.owed, listed[0].AnchorMessageID)
+}
+
+func TestLoopReopenWithoutDecisionIsNotFound(t *testing.T) {
+	assert := assert.New(t)
+	l := newLoopFixture(t)
+	w := l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/reopen", l.owed), "")
+	assert.Equal(http.StatusNotFound, w.Code)
+	assert.Contains(w.Body.String(), `"error":"loop_decision_not_found"`)
+}

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-10-22"
 title: Web UI & API Server
 description: Daemon-served analytical Web UI and REST API for your msgvault archive, with optional background sync scheduling.
 ---
@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.24.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -181,6 +181,9 @@ Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
 
 Schema 3.24.0 adds the [open-loop](#open-loops) routes.
+
+Schema 3.25.0 adds `POST /api/v1/loops/{message_id}/reopen` to clear a done or
+snooze decision on one exact question.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1750,13 +1753,16 @@ reduce that work. A bad parameter returns 400.
 `POST /api/v1/loops/{message_id}/done` and
 `POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`
 record your decision on this person's currently open questions. A distinct
-question imported later can reopen the loop, whatever its message date. Its
-oldest open question supplies the anchor and age. They return
-`anchor_message_id`, `state` (`done` or `snoozed`), and `snoozed_until`. They
-re-read the conversation first and return 404 `loop_not_found` when the
-message is not a loop that list would show now: it anchors no current loop,
-the loop has not waited out its
-24 or 72 hours. A snooze time in the past returns 400. Responses are
+question imported later can list again, whatever its message date. These
+routes return `anchor_message_id`, `state` (`done` or `snoozed`), and
+`snoozed_until`. They re-read the conversation first and return 404
+`loop_not_found` when the message is not a loop that list would show now: it
+anchors no current loop, or the loop has not waited out its 24 or 72 hours. A
+snooze time in the past returns 400.
+
+`POST /api/v1/loops/{message_id}/reopen` clears the done or snooze decision on
+that exact question. It returns `anchor_message_id` and `state: "open"`, or
+404 `loop_decision_not_found` when the message has no decision. Responses are
 not cacheable. These routes are owner-only: delegated agent tokens receive 401.
 See [Open loops](usage/open-loops.md) for the rules.
 

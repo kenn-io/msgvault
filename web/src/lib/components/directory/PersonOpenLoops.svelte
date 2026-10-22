@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Card, Chip } from '@kenn-io/kit-ui';
+  import { Button, Card, Chip } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import { listLoops } from '../../api/generated/api/api';
   import type { LoopItem } from '../../api/generated/models';
@@ -9,22 +9,32 @@
   const limit = 5;
   let items = $state<LoopItem[]>([]);
   let loading = $state(true);
+  let checkingMore = $state(false);
+  let checkMoreFailed = $state(false);
   let failed = $state(false);
   let truncated = $state(false);
   let coverageIncomplete = $state(false);
   let unreadable = $state(0);
+  let checkMore = $state<() => void>(() => {});
 
   $effect(() => {
     const selectedID = personID;
     const selectedClient = client;
     const controller = new AbortController();
-    items = [];
-    truncated = false;
-    coverageIncomplete = false;
-    unreadable = 0;
-    failed = false;
-    loading = true;
-    void (async () => {
+    checkMoreFailed = false;
+    checkingMore = false;
+    async function load(more = false) {
+      if (more) {
+        checkingMore = true;
+        checkMoreFailed = false;
+      } else {
+        loading = true;
+        items = [];
+        truncated = false;
+        coverageIncomplete = false;
+        unreadable = 0;
+        failed = false;
+      }
       try {
         const result = await listLoops(
           { person_id: selectedID, limit },
@@ -38,11 +48,17 @@
         unreadable = result.data.skipped_unparseable ?? 0;
       } catch {
         if (controller.signal.aborted) return;
-        failed = true;
+        if (more) checkMoreFailed = true;
+        else failed = true;
       } finally {
-        if (!controller.signal.aborted) loading = false;
+        if (!controller.signal.aborted) {
+          if (more) checkingMore = false;
+          else loading = false;
+        }
       }
-    })();
+    }
+    checkMore = () => void load(true);
+    void load();
     return () => controller.abort();
   });
 
@@ -88,7 +104,9 @@
         </p>
       {/if}
       {#if !loading && !failed && coverageIncomplete}
-        <p class="note">More history remains. Refresh to continue checking; these results cover checked conversations.</p>
+        <p class="note">More archive history remains.</p>
+        {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
+        <Button size="sm" surface="outline" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} />
       {/if}
     </div>
   </Card>

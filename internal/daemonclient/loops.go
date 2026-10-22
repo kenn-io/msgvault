@@ -13,6 +13,9 @@ import (
 // open loop.
 const LoopNotFoundCode = "loop_not_found"
 
+// LoopDecisionNotFoundCode is returned when a message has no decision to clear.
+const LoopDecisionNotFoundCode = "loop_decision_not_found"
+
 // LoopListOptions selects loops. Zero values use the daemon's defaults.
 type LoopListOptions struct {
 	PersonID int64
@@ -63,6 +66,22 @@ func (c *Client) SnoozeLoop(ctx context.Context, messageID int64, until time.Tim
 		return client.SnoozeLoopWithResponse(ctx, &generated.SnoozeLoopRequestOptions{
 			PathParams: &generated.SnoozeLoopPath{MessageID: messageID},
 			Body:       &generated.SnoozeLoopBody{Until: until},
+		})
+	})
+	if err != nil {
+		return generated.LoopDecisionResponse{}, err
+	}
+	if resp.JSON200 == nil {
+		return generated.LoopDecisionResponse{}, errors.New("empty open loop decision response")
+	}
+	return *resp.JSON200, nil
+}
+
+// ReopenLoop clears a done or snooze decision on the question at messageID.
+func (c *Client) ReopenLoop(ctx context.Context, messageID int64) (generated.LoopDecisionResponse, error) {
+	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ReopenLoopResp, error) {
+		return client.ReopenLoopWithResponse(ctx, &generated.ReopenLoopRequestOptions{
+			PathParams: &generated.ReopenLoopPath{MessageID: messageID},
 		})
 	})
 	if err != nil {

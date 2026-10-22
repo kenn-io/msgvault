@@ -42,6 +42,10 @@ func (a *storeAPIAdapter) SnoozeLoopContext(ctx context.Context, anchorID int64,
 	return a.store.SnoozeLoopContext(ctx, anchorID, until, questions)
 }
 
+func (a *storeAPIAdapter) ClearLoopDecisionContext(ctx context.Context, messageID int64) (bool, error) {
+	return a.store.ClearLoopDecisionContext(ctx, messageID)
+}
+
 func (a *storeAPIAdapter) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
 	return a.store.LoopMessageEvidenceContext(ctx, id, version)
 }

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-10-22"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -31,7 +31,7 @@ appear in full under Inherited Flags.
 ## loops
 
 Show the conversations waiting on a reply, and clear them, through the
-selected daemon. Requires API schema 3.24.0. See [Open loops](usage/open-loops.md)
+selected daemon. Requires API schema 3.25.0. See [Open loops](usage/open-loops.md)
 for the rules.
 
 ```bash
@@ -40,19 +40,22 @@ msgvault loops list --limit 10 --json
 msgvault loops list --person 42
 msgvault loops done 4521
 msgvault loops snooze 4521 --until 48h
+msgvault loops reopen 4521
 ```
 
 | Command | Flags and behavior |
 |---|---|
 | `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
-| `done` | One message ID; marks that loop done. A distinct question can list it again |
+| `done` | One message ID; marks that loop done. A distinct question can list again |
 | `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions |
+| `reopen` | One message ID; clears the done or snooze decision on that exact question |
 
 `list` prints a "Waiting on you" section and a "Waiting on them" section,
 oldest first, with the age, person, subject, and message ID of each loop. A
-section with no loops is left out. The footer counts both sections. When `--limit` cuts the list, the footer says so
-and gives no counts. A line also says how many stored messages could not be
-read, when there are any. If the scan needs more than 1,000 stored originals,
+section with no loops is left out. The footer counts both sections. When
+`--limit` cuts the list, the footer says so and gives no counts. A line also
+says how many stored messages could not be read, when there are any. If the
+scan needs more than 1,000 uncached message classifications,
 the command returns completed conversations and warns that more loops may be
 missing; JSON sets `coverage_incomplete`. An empty complete list prints
 `No open loops.` A message that is not an open loop, such as one you already

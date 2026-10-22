@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const loopsMinAPISchemaVersion = "3.24.0"
+const loopsMinAPISchemaVersion = "3.25.0"
 
 func init() {
 	rootCmd.AddCommand(newLoopsCommand())
@@ -25,7 +25,7 @@ func init() {
 func newLoopsCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "loops",
-		Short: "Show conversations waiting on a reply, and clear them",
+		Short: "List and manage open loops",
 		Long: `Show who is waiting on a reply from you and who you are waiting on.
 
 Each person gets a separate loop anchored on their oldest open question or
@@ -34,7 +34,7 @@ lists after 72 hours. Each list reads the archive as it is. Quiet conversations
 stay eligible at any age; snooze reminders remain eligible after expiry.
 The wording rules read English only.`,
 	}
-	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand())
+	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand())
 	return group
 }
 
@@ -78,8 +78,8 @@ func newLoopsDoneCommand() *cobra.Command {
 		Use:   "done <message-id>",
 		Short: "Mark a loop done",
 		Long: `Mark a loop done. The message ID is the last column of 'msgvault loops list'.
-A distinct question can reopen the loop, whatever its message date. The oldest
-open question supplies the message ID and age.`,
+A distinct question can list again, whatever its message date. Use 'reopen' to
+clear this question's done decision.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := positivePersonCLIArg(cmd, args[0], "message")
@@ -138,6 +138,33 @@ currently open questions. Use the current message ID from loops list.`,
 		})
 	}
 	return command
+}
+
+func newLoopsReopenCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "reopen <message-id>",
+		Short: "Clear a done or snooze decision",
+		Long:  "Clear the done or snooze decision for one exact question. The message ID is the last column of 'msgvault loops list'.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := positivePersonCLIArg(cmd, args[0], "message")
+			if err != nil {
+				return err
+			}
+			return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+				if _, err := client.ReopenLoop(cmd.Context(), id); err != nil {
+					if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Code == daemonclient.LoopDecisionNotFoundCode {
+						return errors.New(strconv.FormatInt(id, 10) + " has no done or snooze decision.")
+					}
+					return err
+				}
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Reopened %d.\n", id); err != nil {
+					return fmt.Errorf("write loop result: %w", err)
+				}
+				return nil
+			})
+		},
+	}
 }
 
 func loopActionError(id int64, err error) error {

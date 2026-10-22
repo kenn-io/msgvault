@@ -5714,6 +5714,50 @@ func (o *MarkLoopDoneRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ReopenLoopRequestOptions is the options needed to make a request to ReopenLoop.
+type ReopenLoopRequestOptions struct {
+	PathParams *ReopenLoopPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ReopenLoopRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ReopenLoopRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ReopenLoopRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ReopenLoopRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ReopenLoopRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SnoozeLoopRequestOptions is the options needed to make a request to SnoozeLoop.
 type SnoozeLoopRequestOptions struct {
 	PathParams *SnoozeLoopPath

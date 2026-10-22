@@ -1719,6 +1719,24 @@ type MarkLoopDoneErrorResponseJSON500 = ErrorResponse
 
 type MarkLoopDoneErrorResponseJSON503 = ErrorResponse
 
+type ReopenLoopResponse = LoopDecisionResponse
+
+type ReopenLoopErrorResponse = ErrorResponse
+
+type ReopenLoopErrorResponseJSON = ErrorResponse
+
+type ReopenLoopErrorResponseJSON403 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON404 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON413 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON415 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON500 = ErrorResponse
+
+type ReopenLoopErrorResponseJSON503 = ErrorResponse
+
 type SnoozeLoopResponse = LoopDecisionResponse
 
 type SnoozeLoopErrorResponse = ErrorResponse
@@ -5209,6 +5227,26 @@ type MarkLoopDoneResp struct {
 	JSON500      *MarkLoopDoneErrorResponseJSON500
 	JSON503      *MarkLoopDoneErrorResponseJSON503
 	Headers503   *MarkLoopDoneResp503Headers
+}
+
+type ReopenLoopResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
+type ReopenLoopResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ReopenLoopResponse
+	JSON400      *ReopenLoopErrorResponse
+	JSON401      *ReopenLoopErrorResponseJSON
+	JSON403      *ReopenLoopErrorResponseJSON403
+	JSON404      *ReopenLoopErrorResponseJSON404
+	JSON413      *ReopenLoopErrorResponseJSON413
+	JSON415      *ReopenLoopErrorResponseJSON415
+	JSON500      *ReopenLoopErrorResponseJSON500
+	JSON503      *ReopenLoopErrorResponseJSON503
+	Headers503   *ReopenLoopResp503Headers
 }
 
 type SnoozeLoopResp503Headers struct {

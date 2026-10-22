@@ -51,6 +51,27 @@ func TestListReplyOwedAndAwaiting(t *testing.T) {
 	assert.Equal(store.ChannelEmail, result.Loops[1].Channel)
 }
 
+func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{
+		From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(3 * day),
+	})
+
+	// This is the cached-version format before the loop text producers were
+	// included. Its stale facts must not hide the question from the current list.
+	const previousEvidenceVersion = 1<<16 | mime.AutomationEvidenceVersion
+	_, token, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, previousEvidenceVersion)
+	require.NoError(err)
+	require.False(hit)
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, previousEvidenceVersion, token, store.LoopMessageEvidence{Empty: true}))
+
+	result := list(t, f, loops.Options{})
+	require.Len(result.Loops, 1)
+	assert.Equal(id, result.Loops[0].Anchor.ID)
+}
+
 func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, raw string
