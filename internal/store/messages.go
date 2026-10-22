@@ -952,9 +952,34 @@ func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) err
 
 // SetMessageMetadataContext honors cancellation during SetMessageMetadata.
 func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, metadata sql.NullString) error {
+	return s.setMessageMetadataContext(ctx, messageID, metadata, false)
+}
+
+// SetCalendarEventProviderMetadata records calendar metadata supplied by the
+// provider, including cancellation deltas that do not include a raw snapshot.
+func (s *Store) SetCalendarEventProviderMetadata(messageID int64, metadata sql.NullString) error {
+	return s.SetCalendarEventProviderMetadataContext(context.Background(), messageID, metadata)
+}
+
+// SetCalendarEventProviderMetadataContext honors cancellation while saving
+// provider metadata and advancing the calendar observation order.
+func (s *Store) SetCalendarEventProviderMetadataContext(ctx context.Context, messageID int64, metadata sql.NullString) error {
+	return s.setMessageMetadataContext(ctx, messageID, metadata, true)
+}
+
+func (s *Store) setMessageMetadataContext(ctx context.Context, messageID int64, metadata sql.NullString, providerObservation bool) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
 			return err
+		}
+		if providerObservation {
+			var messageType string
+			if err := tx.QueryRowContext(ctx, `SELECT message_type FROM messages WHERE id = ?`, messageID).Scan(&messageType); err != nil {
+				return fmt.Errorf("read message type before calendar provider metadata update: %w", err)
+			}
+			if messageType != MessageTypeCalendarEvent {
+				return fmt.Errorf("message %d is not a calendar event", messageID)
+			}
 		}
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
@@ -962,7 +987,16 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if providerObservation {
+			return s.markCalendarEventProviderObservedWith(ctx, tx, messageID)
+		}
+		return nil
 	})
 }
 
@@ -1198,6 +1232,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := copyMeetingLinkDecisionsTx(context.Background(), tx, legacyID, newID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,
@@ -1438,6 +1475,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2431,6 +2471,14 @@ func (s *Store) persistMessageWith(
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if data.Message.MessageType == MessageTypeCalendarEvent && len(data.RawMIME) > 0 && isCalendarProviderRawFormat(data.RawFormat) {
+		if err := s.markCalendarEventProviderObservedWith(ctx, tx, messageID); err != nil {
+			return 0, err
+		}
 	}
 
 	if !data.PreserveLabels {
@@ -6142,6 +6190,14 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if isCalendarProviderRawFormat(format) {
+			if err := s.markCalendarEventProviderObservedWith(ctx, tx, messageID); err != nil {
+				return err
+			}
 		}
 		switch {
 		case format == "mime":
