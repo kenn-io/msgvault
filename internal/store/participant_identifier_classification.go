@@ -19,22 +19,22 @@ func classifyParticipantIdentifier(
 		classification.ServiceSlug = "imessage"
 	case kind == "whatsapp":
 		classification.ServiceSlug = "whatsapp"
-	case kind == "matrix":
-		classification.ServiceSlug = "matrix"
+	case kind == sourceTypeMatrix:
+		classification.ServiceSlug = sourceTypeMatrix
 		if separator := strings.Index(value, ":"); separator > 0 && separator+1 < len(value) {
 			classification.ScopeKind = new("server")
 			classification.ScopeValue = new(value[separator+1:])
 		} else {
 			return participantIdentifierClassification{}, false
 		}
-	case kind == "discord" || strings.HasPrefix(kind, "discord_"):
-		classification.ServiceSlug = "discord"
+	case kind == sourceTypeDiscord || strings.HasPrefix(kind, "discord_"):
+		classification.ServiceSlug = sourceTypeDiscord
 	case kind == "synctech-sms" || kind == "synctech_sms" || kind == "sms":
 		classification.ServiceSlug = "sms"
 	case kind == "google_voice" || kind == "google-voice":
 		classification.ServiceSlug = "google-voice"
-	case kind == "slack":
-		classification.ServiceSlug = "slack"
+	case kind == sourceTypeSlack:
+		classification.ServiceSlug = sourceTypeSlack
 		if separator := strings.Index(value, ":"); separator > 0 {
 			classification.ScopeKind = new("workspace")
 			classification.ScopeValue = new(value[:separator])

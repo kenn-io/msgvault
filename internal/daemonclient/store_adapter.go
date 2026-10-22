@@ -150,6 +150,8 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		ConversationTitle: stringValue(m.ConversationTitle),
 
 		ID:              m.ID,
+		IsFromMe:        boolValue(m.IsFromMe),
+		Calendar:        calendarProjectionFromGenerated(m.Calendar),
 		SourceID:        int64Value(m.SourceID),
 		SourceMessageID: stringValue(m.SourceMessageID),
 		ConversationID:  int64Value(m.ConversationID),

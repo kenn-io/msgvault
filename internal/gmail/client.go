@@ -27,11 +27,14 @@ import (
 )
 
 const (
-	baseURL         = "https://gmail.googleapis.com/gmail/v1"
-	maxRetries      = 12  // Upper bound; the request deadline also limits retries
-	maxQuotaRetries = 5   // Quota waits use the caller's context, outside the request budget
-	maxBackoff      = 600 // Max backoff in seconds
-	defaultTimeout  = 30 * time.Second
+	baseURL            = "https://gmail.googleapis.com/gmail/v1"
+	gmailScopeReadonly = "https://www.googleapis.com/auth/gmail.readonly"
+	gmailScopeModify   = "https://www.googleapis.com/auth/gmail.modify"
+	gmailScopeFull     = "https://mail.google.com/"
+	maxRetries         = 12  // Upper bound; the request deadline also limits retries
+	maxQuotaRetries    = 5   // Quota waits use the caller's context, outside the request budget
+	maxBackoff         = 600 // Max backoff in seconds
+	defaultTimeout     = 30 * time.Second
 	// Raw MIME includes attachments and needs more time on slow connections.
 	rawRequestTimeout = 5 * time.Minute
 )
@@ -40,11 +43,12 @@ var errWriteOutcomeUnknown = errors.New("gmail write outcome is unknown")
 
 // Client implements the Gmail API interface.
 type Client struct {
-	httpClient  *http.Client
-	rateLimiter *RateLimiter
-	logger      *slog.Logger
-	userID      string // "me" for authenticated user
-	concurrency int    // Max parallel requests for batch operations
+	httpClient    *http.Client
+	rateLimiter   *RateLimiter
+	logger        *slog.Logger
+	userID        string // "me" for authenticated user
+	concurrency   int    // Max parallel requests for batch operations
+	grantedScopes func() []string
 }
 
 // ClientOption configures a Client.
@@ -86,6 +90,38 @@ func (s classifiedTokenSource) Token() (*oauth2.Token, error) {
 		return nil, &tokenSourceFailureError{err: err}
 	}
 	return token, nil
+}
+
+// WithGrantedScopes snapshots native saved OAuth grant metadata. Missing
+// metadata remains unknown; identity/profile success does not fill that gap.
+func WithGrantedScopes(scopes []string) ClientOption {
+	granted := append([]string(nil), scopes...)
+	return WithGrantedScopesReader(func() []string { return granted })
+}
+
+// WithGrantedScopesReader observes current native grant metadata, including
+// narrower grants saved by token refresh. It runs outside Store transactions.
+func WithGrantedScopesReader(reader func() []string) ClientOption {
+	return func(client *Client) { client.grantedScopes = reader }
+}
+
+// NativeMessageReadPermission reports body/raw read permission from the saved
+// native grant. Metadata-only and label-only grants cannot authorize receipts.
+func (c *Client) NativeMessageReadPermission() (read, known bool) {
+	if c.grantedScopes == nil {
+		return false, false
+	}
+	scopes := c.grantedScopes()
+	if len(scopes) == 0 {
+		return false, false
+	}
+	for _, scope := range scopes {
+		switch strings.TrimSpace(scope) {
+		case gmailScopeReadonly, gmailScopeModify, gmailScopeFull:
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // NewClient creates a new Gmail API client.
@@ -211,6 +247,12 @@ func (c *Client) requestWithRetryBudget(ctx context.Context, op Operation, metho
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			// A positive grant revocation is not a retryable network failure.
+			// Return its typed cause so the native observer can retire Events
+			// authority before another request or receipt uses the old grant.
+			if refresh, ok := errors.AsType[*oauth2.RetrieveError](err); ok && refresh.ErrorCode == "invalid_grant" {
+				return nil, fmt.Errorf("http request: %w", err)
+			}
 			if remoteMutation {
 				// A token failure, such as a refresh that could not be saved,
 				// happens before any Gmail request is sent.

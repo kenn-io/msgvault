@@ -42,7 +42,8 @@ type rawBatchWithIdentityValidation interface {
 	GetMessagesRawBatchWithIdentityValidation(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error)
 }
 
-func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error) {
+func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, messageIDs []string) (results []gmail.RawMessageBatchResult, err error) {
+	defer func() { err = s.observeNativeRawBatchDenials(ctx, results, err) }()
 	if client, ok := s.client.(rawBatchWithErrors); ok {
 		return client.GetMessagesRawBatchWithErrors(ctx, messageIDs)
 	}
@@ -52,7 +53,7 @@ func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, message
 		return nil, err
 	}
 
-	results := make([]gmail.RawMessageBatchResult, len(messageIDs))
+	results = make([]gmail.RawMessageBatchResult, len(messageIDs))
 	for i, id := range messageIDs {
 		var raw *gmail.RawMessage
 		if i < len(rawMessages) {
@@ -67,6 +68,18 @@ func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, message
 		}
 	}
 	return results, nil
+}
+
+// A provider denial remains an item error after its grant is retired. Failure
+// to record that reduction is fatal, including in best-effort batch callers.
+func (s *Syncer) observeNativeRawBatchDenials(ctx context.Context, results []gmail.RawMessageBatchResult, cause error) error {
+	cause = errors.Join(cause, s.observeNativeSourceDenial(ctx, cause))
+	for i := range results {
+		reduction := s.observeNativeSourceDenial(ctx, results[i].Err)
+		cause = errors.Join(cause, reduction)
+		results[i].Err = errors.Join(results[i].Err, reduction)
+	}
+	return errors.Join(cause, s.observeNativeSourcePermissionReduction(ctx))
 }
 
 // getMessagesRawBatchWithIdentityValidation fetches validationIDs first with
@@ -96,6 +109,7 @@ func (s *Syncer) getMessagesRawBatchWithIdentityValidation(
 
 	results := make([]gmail.RawMessageBatchResult, len(messageIDs))
 	required, err := client.GetMessagesRawBatchWithIdentityValidation(ctx, requiredIDs)
+	err = s.observeNativeRawBatchDenials(ctx, required, err)
 	if err != nil {
 		return nil, err
 	}

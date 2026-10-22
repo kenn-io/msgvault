@@ -144,7 +144,7 @@ func (s *Store) UpdateSourceSettingsContext(ctx context.Context, sourceID int64,
 		if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id = ?`, sourceID).Scan(&sourceType); err != nil {
 			return err
 		}
-		if (update.HistoryOnly != nil || update.AcceptReanchor) && sourceType != "beeper" {
+		if (update.HistoryOnly != nil || update.AcceptReanchor) && sourceType != sourceTypeBeeper {
 			return fmt.Errorf("%w: %s", ErrSourceSettingsInvalid, "history-only and re-anchor settings require a Beeper source")
 		}
 		if update.DisplayName != nil {

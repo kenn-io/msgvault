@@ -478,7 +478,7 @@ func applyRouteEvidence(
 ) error {
 	e := metadata.Route
 	r.NetworkLabel = e.NetworkLabel
-	if r.SourceType == "beeper" {
+	if r.SourceType == sourceTypeBeeper {
 		r.Network = e.Network
 	}
 	r.MergedIntoChatID = e.MergedIntoChatID

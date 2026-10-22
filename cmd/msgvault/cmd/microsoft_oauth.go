@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/teams"
 )
 
@@ -45,18 +46,26 @@ func requireMicrosoftOAuthConfig(cfg *config.Config) error {
 }
 
 // newTeamsClient builds a Graph client for email's persisted Teams token.
-func newTeamsClient(ctx context.Context, cfg *config.Config, logger *slog.Logger, email string) (*teams.Client, error) {
+func newTeamsClient(ctx context.Context, cfg *config.Config, logger *slog.Logger, email string, st *store.Store) (*teams.Client, error) {
+	source, sourceErr := st.GetSourceByTypeAndIdentifier(sourceTypeTeams, email)
+	if sourceErr != nil && !errors.Is(sourceErr, store.ErrSourceNotFound) {
+		return nil, sourceErr
+	}
+	permission, pinErr := pinNativeMessagePermission(ctx, email, source, st)
+	if pinErr != nil {
+		return nil, pinErr
+	}
 	mgr := microsoft.NewGraphManager(cfg.Microsoft.ClientID, cfg.Microsoft.EffectiveTenantID(),
 		cfg.Microsoft.EffectiveRedirectURI(), cfg.TokensDir(), logger)
 	tokenFn, err := mgr.TokenSource(ctx, email)
 	if err != nil {
-		return nil, err
+		return nil, pauseNativeMessagePermission(ctx, st, permission, err)
 	}
 	qps := float64(cfg.Sync.RateLimitQPS)
 	if qps <= 0 {
 		qps = 5
 	}
-	return teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps), nil
+	return teams.NewClient("https://graph.microsoft.com/v1.0", tokenFn, qps, teams.WithGrantedScopesReader(func() ([]string, error) { return mgr.GrantedScopes(email) })), nil
 }
 
 // microsoftTenantID resolves the tenant, letting a per-command flag

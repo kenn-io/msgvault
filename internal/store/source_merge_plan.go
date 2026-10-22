@@ -405,7 +405,7 @@ func buildSourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, r
 	if err := tx.QueryRowContext(ctx, `SELECT source_type FROM sources WHERE id = ?`, from).Scan(&sourceType); err != nil {
 		return plan, err
 	}
-	if sourceType == "beeper" {
+	if sourceType == sourceTypeBeeper {
 		if err := validateMergeBeeperFamilies(ctx, tx, from, into); err != nil {
 			return plan, err
 		}
@@ -428,7 +428,7 @@ func buildSourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, r
 	for i := range plan.conversations {
 		c := &plan.conversations[i]
 		c.destination = c.id
-		if sourceType == "beeper" && stableMergeConversationID(c.providerID.String) {
+		if sourceType == sourceTypeBeeper && stableMergeConversationID(c.providerID.String) {
 			var metadata sql.NullString
 			err := tx.QueryRowContext(ctx, `SELECT c.id, CAST(c.metadata AS TEXT) FROM conversations c WHERE c.source_id = ? AND (c.source_conversation_id = ? OR EXISTS (SELECT 1 FROM source_merge_conversations smc WHERE smc.conversation_id = c.id AND smc.original_conversation_id = ?)) ORDER BY CASE WHEN c.source_conversation_id = ? THEN 0 ELSE 1 END, c.id LIMIT 1`, into, c.providerID.String, c.providerID.String, c.providerID.String).Scan(&c.destination, &metadata)
 			if errors.Is(err, sql.ErrNoRows) {

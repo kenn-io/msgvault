@@ -281,6 +281,17 @@ func (s *Store) RemoveSourceSerialized(
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+		if _, err := s.mcpClockLock(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+	}
+	if err := s.removeMCPEventSource(ctx, conn, sourceID); err != nil {
+		return false, 0, err
+	}
 
 	if err := s.requireSourceRemovalAllowed(ctx, conn, sourceID); err != nil {
 		return false, 0, err
@@ -430,6 +441,16 @@ func (s *Store) removeSourceExec(
 	// A merge holds the same lock through retirement and journal commit.
 	// Check eligibility only after any earlier merge has finished.
 	if err := s.requireSourceRemovalAllowed(ctx, tx, sourceID); err != nil {
+		return err
+	}
+	if s.captureMCPEnabled() {
+		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
+			return mcpSafeError(err)
+		}
+	}
+	// Retained data is removed within the existing source transaction even
+	// after capture is disabled, without taking an Events clock lock then.
+	if err := s.removeMCPEventSource(ctx, tx.Tx, sourceID); err != nil {
 		return err
 	}
 	if err := s.lockProfileIdentityKeyTxContext(

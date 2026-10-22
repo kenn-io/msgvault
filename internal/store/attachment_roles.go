@@ -531,19 +531,24 @@ func (s *Store) replaceMIMEAttachmentsWith(
 	if replacement == nil {
 		return nil
 	}
-	if _, err := q.Exec(`
-		DELETE FROM attachments
-		WHERE message_id = ? AND source_attachment_id IS NULL
-		  AND NOT EXISTS (
-			SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id
-		  )
-	`, messageID); err != nil {
-		return err
-	}
-	for _, attachment := range *replacement {
+	attachments := make([]AttachmentWrite, len(*replacement))
+	keepPartKeys := make([]string, 0, len(*replacement))
+	for i, attachment := range *replacement {
 		attachment = attachment.normalized()
 		if err := attachment.validate(); err != nil {
 			return err
+		}
+		attachments[i] = attachment
+		if attachment.SourcePartKey != "" {
+			keepPartKeys = append(keepPartKeys, attachment.SourcePartKey)
+		}
+	}
+
+	// Upsert keyed MIME parts before removing stale rows so a stable part key
+	// retains its attachment ID and any derived state for unchanged bytes.
+	for _, attachment := range attachments {
+		if attachment.SourcePartKey == "" {
+			continue
 		}
 		if err := s.upsertAttachmentRecordWithPolicy(
 			q, messageID, attachment, preserveProviderAttachmentConflicts,
@@ -551,7 +556,45 @@ func (s *Store) replaceMIMEAttachmentsWith(
 			return err
 		}
 	}
-	return nil
+	// A keyed write may have upgraded a legacy row in place. Replace only the
+	// remaining unkeyed rows, which do not have a stable occurrence identity.
+	if _, err := q.Exec(`
+		DELETE FROM attachments
+		WHERE message_id = ? AND source_attachment_id IS NULL AND source_part_key IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id
+		  )
+	`, messageID); err != nil {
+		return err
+	}
+	for _, attachment := range attachments {
+		if attachment.SourcePartKey != "" {
+			continue
+		}
+		if err := s.upsertAttachmentRecordWithPolicy(
+			q, messageID, attachment, preserveProviderAttachmentConflicts,
+		); err != nil {
+			return err
+		}
+	}
+	return deleteMIMEAttachmentsExceptSourcePartKeysWith(q, messageID, keepPartKeys)
+}
+
+func deleteMIMEAttachmentsExceptSourcePartKeysWith(q querier, messageID int64, keep []string) error {
+	query := `DELETE FROM attachments
+		WHERE message_id = ? AND source_attachment_id IS NULL AND source_part_key IS NOT NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id
+		  )`
+	args := []any{messageID}
+	if len(keep) > 0 {
+		query += ` AND source_part_key NOT IN (?` + strings.Repeat(`, ?`, len(keep)-1) + `)`
+		for _, key := range keep {
+			args = append(args, key)
+		}
+	}
+	_, err := q.Exec(query, args...)
+	return err
 }
 
 // AttachmentPartsStoredContext reports whether every part key and content hash

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sort"
 	"strings"
@@ -14,10 +15,11 @@ import (
 	"github.com/mattn/go-isatty"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/discord"
+	"go.kenn.io/msgvault/internal/sourcecatalog"
 	"go.kenn.io/msgvault/internal/store"
 )
 
-const sourceTypeDiscord = "discord"
+const sourceTypeDiscord = sourcecatalog.Discord
 
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps
@@ -190,28 +192,48 @@ func discordSourceLabel(source *store.Source) string {
 	return source.Identifier
 }
 
-func newDiscordClientForSource(
-	source *store.Source, deps discordCommandDeps,
-) (*discord.Client, error) {
+func newDiscordClientForSource(source *store.Source, deps discordCommandDeps) (*discord.Client, error) {
+	client, _, err := resolveDiscordClientForSource(source, deps)
+	return client, err
+}
+
+func resolveDiscordClientForSource(source *store.Source, deps discordCommandDeps) (*discord.Client, string, error) {
 	record, err := deps.tokenManager().Resolve(sourceOAuthApp(source))
 	if err != nil {
-		return nil, fmt.Errorf("resolve Discord credential for %s: %w", discordSourceLabel(source), err)
+		return nil, "", fmt.Errorf("resolve Discord credential for %s: %w", discordSourceLabel(source), err)
 	}
 	client, err := deps.client(record.AccessToken())
 	if err != nil {
-		return nil, fmt.Errorf("configure Discord client for %s: %w", discordSourceLabel(source), err)
+		return nil, "", fmt.Errorf("configure Discord client for %s: %w", discordSourceLabel(source), err)
 	}
-	return client, nil
+	return client, record.BotUserID, nil
 }
 
-func newDiscordImporterForSource(
-	st *store.Store, source *store.Source, deps discordCommandDeps,
-) (*discord.Importer, error) {
-	client, err := newDiscordClientForSource(source, deps)
+func newDiscordImporterForSource(ctx context.Context, st *store.Store, source *store.Source, deps discordCommandDeps) (*discord.Importer, string, error) {
+	permission, err := pinNativeMessagePermission(ctx, source.Identifier, source, st)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return discord.NewImporter(st, client), nil
+	client, botID, err := resolveDiscordClientForSource(source, deps)
+	if err != nil {
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, err)
+	}
+	me, err := client.Me(ctx)
+	if err != nil {
+		cause := fmt.Errorf("verify Discord credential identity: %w", err)
+		var apiErr *discord.APIError
+		if permission != nil && errors.As(err, &apiErr) && (apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusNotFound) {
+			permission.Known = true
+		}
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, cause)
+	}
+	if me.ID != botID || !me.Bot {
+		if permission != nil {
+			permission.Known = true
+		}
+		return nil, "", pauseNativeMessagePermission(ctx, st, permission, errors.New("discord current user does not match the bound bot identity"))
+	}
+	return discord.NewImporter(st, client), botID, nil
 }
 
 func discordImportOptions(source *store.Source, deps discordCommandDeps, full bool, after time.Time, progress func(string)) discord.ImportOptions {

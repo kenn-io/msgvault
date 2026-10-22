@@ -34,6 +34,7 @@ type Channel struct {
 // ---- Messages ----
 
 type ChatMessage struct {
+	ChatID               string       `json:"chatId"`
 	ID                   string       `json:"id"`
 	ReplyToID            string       `json:"replyToId"`
 	MessageType          string       `json:"messageType"`
@@ -130,12 +131,14 @@ type Reaction struct {
 	User            *IdentitySet `json:"user"`
 }
 
-// GraphUser is the subset of /users/{id} we resolve for participant email.
+// GraphUser is the Graph profile subset used for participant details and
+// verifying the mailbox that owns the current Teams sync.
 type GraphUser struct {
-	ID                string `json:"id"`
-	Mail              string `json:"mail"`
-	UserPrincipalName string `json:"userPrincipalName"`
-	DisplayName       string `json:"displayName"`
+	ID                string   `json:"id"`
+	Mail              string   `json:"mail"`
+	UserPrincipalName string   `json:"userPrincipalName"`
+	ProxyAddresses    []string `json:"proxyAddresses"`
+	DisplayName       string   `json:"displayName"`
 }
 
 // ---- Importer options/summary ----
