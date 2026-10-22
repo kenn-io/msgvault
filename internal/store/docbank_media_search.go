@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/personscope"
 )
@@ -40,4 +42,90 @@ func (s *Store) MediaSearchLocalGaps(ctx context.Context, destination string, sc
 		err = fmt.Errorf("read media search gaps: %w", err)
 	}
 	return
+}
+
+// DocumentSearchOccurrence links one delivered version to a visible attachment.
+type DocumentSearchOccurrence struct {
+	VersionID       string
+	AttachmentID    int64
+	MessageID       int64
+	ConversationID  int64
+	Filename        string
+	ContainingTitle string
+	OccurredAt      *time.Time
+}
+
+// documentSearchRows shares attachment eligibility, visibility, and person scope.
+func documentSearchRows(destination string, scope *personscope.Scope) (string, []any) {
+	args := []any{destination}
+	query := `
+ FROM attachments a
+ JOIN messages m ON m.id = a.message_id
+ JOIN conversations cv ON cv.id = m.conversation_id
+ LEFT JOIN docbank_attachment_deliveries d
+   ON d.destination_key = ? AND d.content_hash = LOWER(COALESCE(NULLIF(a.content_hash,''),SUBSTR(a.storage_path,4)))
+ WHERE ` + docbankAttachmentEligibleWhere() + ` AND ` + LiveMessagesWhere("m", true)
+	if scope != nil {
+		predicate, values := personscope.MessagePredicate(*scope, "m", "cv")
+		query += " AND (" + predicate + ")"
+		args = append(args, values...)
+	}
+	return query, args
+}
+
+// DocumentSearchVersions pages delivered versions by their newest visible message.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope, offset int) ([]string, error) {
+	query, args := documentSearchRows(destination, scope)
+	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> ''
+ GROUP BY d.version_id ORDER BY MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) DESC NULLS LAST, d.version_id LIMIT 4096 OFFSET ?`
+	args = append(args, offset)
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list document search versions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var versions []string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, fmt.Errorf("scan document search version: %w", err)
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
+}
+
+// DocumentSearchOccurrences maps hit versions to their current visible attachments.
+func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string) ([]DocumentSearchOccurrence, error) {
+	var result []DocumentSearchOccurrence
+	// Keep parameters below both backends' limits.
+	for start := 0; start < len(versionIDs); start += docbankReceiptChunk {
+		chunk := versionIDs[start:min(start+docbankReceiptChunk, len(versionIDs))]
+		query, args := documentSearchRows(destination, scope)
+		query = `SELECT d.version_id, a.id, m.id, cv.id, COALESCE(a.filename,''), ` + containingTitleMCVSQL + `, COALESCE(m.sent_at,m.received_at,m.internal_date)` + query + `
+ AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(chunk)-1) + `) ORDER BY a.id`
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+		if err != nil {
+			return nil, fmt.Errorf("list document search occurrences: %w", err)
+		}
+		for rows.Next() {
+			var o DocumentSearchOccurrence
+			var date nullableTimestamp
+			if err := rows.Scan(&o.VersionID, &o.AttachmentID, &o.MessageID, &o.ConversationID, &o.Filename, &o.ContainingTitle, &date); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan document search occurrence: %w", err)
+			}
+			o.OccurredAt = optionalTimestamp(date)
+			result = append(result, o)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
 }

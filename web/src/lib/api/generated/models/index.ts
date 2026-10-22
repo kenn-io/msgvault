@@ -527,6 +527,8 @@ export * from "./manifest";
 export * from "./matchSummary";
 export * from "./mCPCapabilities";
 export * from "./mCPRouteDescriptor";
+export * from "./mediaDocumentResult";
+export * from "./mediaDocumentSearch";
 export * from "./mediaSearchResponse";
 export * from "./mediaSearchResult";
 export * from "./mediaSearchResultOrigin";

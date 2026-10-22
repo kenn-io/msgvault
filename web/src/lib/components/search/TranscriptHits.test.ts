@@ -221,3 +221,40 @@ describe('TranscriptHits', () => {
   });
 
 });
+
+it('opens attachment messages and keeps recording metadata in its own list', async () => {
+  const onOpen = vi.fn();
+  const attachment = { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Quarterly report', occurred_at: '2026-07-18T12:00:00Z', excerpt: 'quartz inside the PDF' };
+  const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ attachments: { results: [attachment], truncated: true } }))));
+  render(TranscriptHits, { props: { client, query: 'quartz', supported: true, onOpen } });
+  const link = await screen.findByRole('link', { name: 'Quarterly report' });
+  expect(link.getAttribute('href')).toBe('/messages/44');
+  expect(link.textContent).toContain('report.pdf');
+  expect(link.textContent).toContain('quartz inside the PDF');
+  expect(link.querySelectorAll('time')).toHaveLength(1);
+  expect(link.querySelector('.provenance')?.textContent).toBe('report.pdf');
+  expect(screen.getByText('More may match')).toBeTruthy();
+  await fireEvent.click(link);
+  expect(onOpen).toHaveBeenCalledWith(attachment);
+  expect(screen.getByText('Provider transcript')).toBeTruthy();
+});
+
+it.each(['empty', 'error', 'recording error', 'absent'])('shows the attachment %s state', async (state) => {
+  mount(vi.fn<typeof fetch>(async () => Response.json(report({
+    results: [],
+    attachments: state === 'absent' ? undefined : { results: [], truncated: false, error: state === 'error' ? { error: 'transport', message: 'Attachment search is unavailable.' } : undefined },
+    recordings_error: state === 'recording error' ? { error: 'media_search_unavailable', message: 'Docbank transcript search is unavailable' } : undefined,
+  }))));
+  if (state === 'absent') {
+    await screen.findByText('No spoken matches.');
+    expect(screen.queryByRole('heading', { name: /Attachments/ })).toBeNull();
+  } else {
+    await screen.findByRole('heading', { name: /Attachments/ });
+    expect(screen.queryByText('No matches in text Docbank has extracted from mirrored attachments.') !== null).toBe(state !== 'error');
+    if (state === 'error') expect(screen.getByText('Attachment search is unavailable.')).toBeTruthy();
+    if (state === 'recording error') {
+      expect(screen.getByText('Docbank transcript search is unavailable')).toBeTruthy();
+      expect(screen.queryByText('No spoken matches.')).toBeNull();
+    }
+  }
+});

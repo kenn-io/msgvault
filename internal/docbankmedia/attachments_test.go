@@ -116,3 +116,55 @@ func TestEnsureAttachmentFolderCreatesParents(t *testing.T) {
 		})
 	}
 }
+
+func TestVaultUIDCacheAndSearchRejection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	calls := 0
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/info" {
+			calls++
+			_, _ = io.WriteString(w, `{"vault_id":"vault"}`)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer remote.Close()
+	client, err := NewClient(remote.URL, nil)
+	require.NoError(err)
+	for range 2 {
+		vault, err := client.VaultUID(t.Context())
+		require.NoError(err)
+		assert.Equal("vault", vault)
+	}
+	assert.Equal(1, calls)
+	_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", ContentFirst: true, Limit: 20, Profile: "supplied-transcript", Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
+	require.Error(err)
+	_, err = client.VaultUID(t.Context())
+	require.NoError(err)
+	assert.Equal(2, calls)
+}
+
+func TestVaultUID(t *testing.T) {
+	for _, body := range []string{`{"vault_id":"vault"}`, `{}`} {
+		t.Run(body, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(http.MethodGet, r.Method)
+				assert.Equal("/api/v1/info", r.URL.Path)
+				_, _ = io.WriteString(w, body)
+			}))
+			defer remote.Close()
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			vault, err := client.VaultUID(t.Context())
+			if body == `{}` {
+				require.ErrorIs(err, ErrInvalidReceipt)
+			} else {
+				require.NoError(err)
+				assert.Equal("vault", vault)
+			}
+		})
+	}
+}

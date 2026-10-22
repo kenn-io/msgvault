@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -23,6 +24,7 @@ type DocbankAttachmentBackfillResponse struct {
 const DocbankAttachmentMirrorJob = "docbank-attachment-mirror"
 
 type DocbankAttachmentReader struct {
+	Client      *docbankmedia.Client
 	Store       *store.Store
 	Destination string
 	Folder      string

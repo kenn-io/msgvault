@@ -2,15 +2,16 @@
   import { untrack } from 'svelte';
   import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
+  import FileText from '@lucide/svelte/icons/file-text';
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
   import { searchMedia } from '../../api/generated/api/api';
-  import type { MediaSearchResponse, MediaSearchResult } from '../../api/generated/models';
+  import type { MediaSearchResponse, MediaSearchResult, MediaDocumentResult } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate, formatTranscriptOrigin } from '../../util/format';
 
   let { client, query, supported, participantID, selectedMessageID, missingMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; participantID?: number; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult) => void;
+    client: APIClient; query: string; supported: boolean; participantID?: number; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult | MediaDocumentResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
@@ -25,7 +26,7 @@
   $effect(() => {
     const missingID = missingMessageID;
     const current = untrack(() => result);
-    if (missingID !== undefined && current) result = { ...current, results: current.results.filter(hit => hit.message_id !== missingID) };
+    if (missingID !== undefined && current) result = { ...current, results: current.results.filter(hit => hit.message_id !== missingID), attachments: current.attachments ? { ...current.attachments, results: current.attachments.results.filter(hit => hit.message_id !== missingID) } : undefined };
   });
 
   $effect(() => {
@@ -180,7 +181,33 @@
         </li>
       {/each}
     </ol>
-    {#if result.results.length === 0 && !incomplete}<p>No spoken matches.</p>{/if}
+    {#if result.recordings_error}<p role="status">{result.recordings_error.message}</p>
+    {:else if result.results.length === 0 && !incomplete}<p>No spoken matches.</p>{/if}
+    {#if result.attachments}
+      <h2 class="attachments-heading">Attachments <span class="count">{result.attachments.results.length}</span></h2>
+      {#if result.attachments.error}<p role="status">Attachment search is unavailable.</p>{/if}
+      {#if result.attachments.truncated}<p role="status">More may match</p>{/if}
+      <ol>
+        {#each result.attachments.results as hit, index (index)}
+          <li>
+            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
+              aria-labelledby={`${id}-attachment-title-${index}`} aria-describedby={`${id}-attachment-meta-${index} ${id}-attachment-excerpt-${index}`}
+              onclick={(event) => {
+                if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                onOpen(hit);
+              }}>
+              <span class="recording-icon" aria-hidden="true"><FileText size={16} /></span>
+              <strong id={`${id}-attachment-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
+              {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
+              <span class="provenance" id={`${id}-attachment-meta-${index}`}><span class="filename" title={hit.filename}>{hit.filename || 'Unnamed attachment'}</span></span>
+              <span class="transcript"><span class="excerpt" id={`${id}-attachment-excerpt-${index}`}>{hit.excerpt}</span></span>
+            </a>
+          </li>
+        {/each}
+      </ol>
+      {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from mirrored attachments.</p>{/if}
+    {/if}
   {:else}
     <p role="status">Searching recordings…</p>
   {/if}
@@ -208,6 +235,7 @@
   header { justify-content: space-between; min-height: 28px; }
   h2 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
   .count, time, p, .provenance { color: var(--text-secondary); font-size: var(--font-size-xs); }
+  .attachments-heading { margin-top: var(--space-3); }
   .count { font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
   p { margin: var(--space-2) 0 0; }
   ol { margin: var(--space-2) 0 0; padding: 0; list-style: none; }

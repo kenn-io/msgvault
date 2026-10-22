@@ -187,6 +187,8 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
+On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. An empty block says "No matches in text Docbank has extracted from mirrored attachments." Attachment failures say "Attachment search is unavailable." "More may match" marks truncation, including a later chunk failure that keeps earlier hits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+
 ## Read messages
 
 Open a `/messages/<id>` link to go directly to an archived message. CLI

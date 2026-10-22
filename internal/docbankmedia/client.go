@@ -14,6 +14,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 const (
@@ -102,6 +103,8 @@ func ErrorCode(err error) string {
 
 // Client is a transport-only adapter for the Docbank media routes.
 type Client struct {
+	vaultMu   sync.Mutex
+	vaultUID  string
 	baseURL   string
 	lookupKey func() (string, error)
 	http      *http.Client

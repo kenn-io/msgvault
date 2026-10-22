@@ -63,7 +63,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 					state = "\x1b[31mcomplete\x1b[0m\a"
 					excerpt = "quarterly\x1b[31m numbers\x1b[0m\a"
 				}
-				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}}})
+				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{{MessageID: 11, ConversationID: 22, AttachmentID: 33, Origin: generated.MediaSearchResultOriginGenerated, Excerpt: excerpt}}, Attachments: &generated.MediaDocumentSearch{Results: []generated.MediaDocumentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true, ErrorData: &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment search is unavailable.")}}, RecordingsError: &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new("Docbank transcript search is unavailable")}})
 			}))
 			t.Cleanup(daemon.Close)
 			command := newMediaCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -88,6 +88,13 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			assert.Contains(output.String(), "generated")
 			assert.NotContains(output.String(), "\x1b")
 			assert.NotContains(output.String(), "\a")
+			assert.Contains(output.String(), "report.pdf")
+			assert.Contains(output.String(), "quartz")
+			if test.name != "json" {
+				assert.Contains(output.String(), "Attachments truncated true")
+				assert.Contains(output.String(), "Attachment search is unavailable.")
+				assert.Contains(output.String(), "Docbank transcript search is unavailable")
+			}
 		})
 	}
 }

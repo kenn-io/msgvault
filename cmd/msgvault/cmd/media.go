@@ -16,11 +16,11 @@ import (
 )
 
 func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error)) *cobra.Command {
-	parent := &cobra.Command{Use: "media", Short: "Search recording transcripts"}
+	parent := &cobra.Command{Use: "media", Short: "Search transcripts and mirrored attachment text"}
 	var request daemonclient.MediaSearchOptions
 	var directions []string
 	var jsonOutput bool
-	search := &cobra.Command{Use: "search <query>", Short: "Find spoken words in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
+	search := &cobra.Command{Use: "search <query>", Short: "Find transcript and attachment text in visible messages", Args: cobra.MinimumNArgs(1), RunE: func(command *cobra.Command, args []string) (result error) {
 		request.Query = strings.Join(args, " ")
 		if request.Limit < 1 || (command.Flags().Changed("person") && request.PersonID <= 0) {
 			return errors.New("limit and explicit --person must be positive")
@@ -40,7 +40,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		}
 		if strings.TrimSpace(request.Query) != "" {
 			defer reportSuccessfulCLIAction(command, client, "search_run", "search_type", "text", &result)
-			if len(response.Results) == 0 {
+			if len(response.Results) == 0 && (response.Attachments == nil || len(response.Attachments.Results) == 0) {
 				defer reportSuccessfulCLIAction(command, client, "search_empty", "search_type", "text", &result)
 			}
 		}
@@ -63,12 +63,34 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 		if err != nil {
 			return fmt.Errorf("render media search coverage: %w", err)
 		}
+		if response.Attachments != nil {
+			_, _ = fmt.Fprintln(writer, "MESSAGE\tCONVERSATION\tATTACHMENT\tFILENAME\tEXCERPT")
+			for _, hit := range response.Attachments.Results {
+				_, _ = fmt.Fprintf(writer, "%d\t%d\t%d\t%s\t%s\n", hit.MessageID, hit.ConversationID, hit.AttachmentID, strings.Join(strings.Fields(textutil.SanitizeTerminal(hit.Filename)), " "), strings.Join(strings.Fields(textutil.SanitizeTerminal(hit.Excerpt)), " "))
+			}
+			if err := writer.Flush(); err != nil {
+				return fmt.Errorf("render attachment search results: %w", err)
+			}
+			if _, err := fmt.Fprintf(command.OutOrStdout(), "Attachments truncated %t\n", response.Attachments.Truncated); err != nil {
+				return fmt.Errorf("render media search status: %w", err)
+			}
+			if response.Attachments.ErrorData != nil && response.Attachments.ErrorData.Message != nil {
+				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(*response.Attachments.ErrorData.Message)); err != nil {
+					return fmt.Errorf("render media search status: %w", err)
+				}
+			}
+			if response.RecordingsError != nil && response.RecordingsError.Message != nil {
+				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(*response.RecordingsError.Message)); err != nil {
+					return fmt.Errorf("render media search status: %w", err)
+				}
+			}
+		}
 		return nil
 	}}
 	search.Flags().StringVar(&request.Mode, "mode", "lexical", "Search mode: lexical")
 	search.Flags().Int64Var(&request.PersonID, "person", 0, "Limit to one durable person")
 	search.Flags().StringSliceVar(&directions, "direction", nil, "Person relation: from_person, to_person, or group")
-	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences, 1 to 100")
+	search.Flags().IntVarP(&request.Limit, "limit", "n", 20, "Maximum occurrences per list, 1 to 100")
 	search.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured JSON")
 	parent.AddCommand(search)
 	return parent

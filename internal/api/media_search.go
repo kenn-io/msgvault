@@ -39,6 +39,8 @@ func (s *Server) handleMediaSearchStatus(w http.ResponseWriter, r *http.Request)
 }
 
 type MediaSearchResponse struct {
+	Documents              *MediaDocumentSearch        `json:"attachments,omitempty"`
+	RecordingsError        *ErrorResponse              `json:"recordings_error,omitempty"`
 	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
 	PendingOccurrences     int                         `json:"pending_occurrences"`
 	UnavailableOccurrences int                         `json:"unavailable_occurrences"`
@@ -141,27 +143,52 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := reader.search(r.Context(), q, limit, scope, resolve)
-	if err != nil {
-		if scopeErr, ok := errors.AsType[*mediaSearchScopeError](err); ok {
-			s.writePersonScopeError(w, reference, scopeErr.err, "media")
-			return
-		}
-		if s.writeIfContextError(w, err) {
-			return
-		}
-		httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
-		switch {
-		case errors.Is(err, errMediaSearchScope):
-			writeError(w, http.StatusBadRequest, "media_search_scope_limit", "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope")
-		case httpError && httpErr.Status == http.StatusBadRequest:
-			writeError(w, http.StatusBadRequest, "invalid_media_search", "Docbank rejected the search query")
-		default:
-			s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
-			writeError(w, http.StatusServiceUnavailable, "media_search_unavailable", "Docbank transcript search is unavailable")
-		}
+	if scopeErr, ok := errors.AsType[*mediaSearchScopeError](err); ok {
+		s.writePersonScopeError(w, reference, scopeErr.err, "media")
 		return
 	}
+	if s.writeIfContextError(w, r.Context().Err()) {
+		return
+	}
+	if s.docbankAttachments != nil {
+		documents := s.docbankAttachments.SearchDocuments(r.Context(), q, limit, scope)
+		response.Documents = &documents
+		if documents.Error != nil {
+			s.logger.Warn("search mirrored attachments", "code", documents.Error.Error)
+		}
+	}
+	if s.writeIfContextError(w, r.Context().Err()) {
+		return
+	}
+	if err != nil {
+		if response.Documents == nil || response.Documents.Error != nil {
+			if s.writeIfContextError(w, err) {
+				return
+			}
+			status, failure := mediaSearchFailure(err)
+			s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
+			writeError(w, status, failure.Error, failure.Message)
+			return
+		}
+		_, failure := mediaSearchFailure(err)
+		response.RecordingsError = &failure
+		response.Results = []MediaSearchResult{}
+		s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
+	}
+
 	writeJSON(w, http.StatusOK, response)
+}
+
+func mediaSearchFailure(err error) (int, ErrorResponse) {
+	httpErr, httpError := errors.AsType[*docbankmedia.HTTPError](err)
+	switch {
+	case errors.Is(err, errMediaSearchScope):
+		return http.StatusBadRequest, ErrorResponse{Error: "media_search_scope_limit", Message: "Search supports at most 4096 media versions and source selectors; add a Person filter in the browser, set --person in the CLI, or person_id or participant_id in the API to narrow the scope"}
+	case httpError && httpErr.Status == http.StatusBadRequest:
+		return http.StatusBadRequest, ErrorResponse{Error: "invalid_media_search", Message: "Docbank rejected the search query"}
+	default:
+		return http.StatusServiceUnavailable, ErrorResponse{Error: "media_search_unavailable", Message: "Docbank transcript search is unavailable"}
+	}
 }
 
 var errMediaSearchScope = errors.New("media search scope exceeds the supported fence")

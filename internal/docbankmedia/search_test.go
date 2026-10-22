@@ -190,3 +190,77 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchDocumentsContract(t *testing.T) {
+	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "selections", "timed blob", "bad timing", "mixed"} {
+		t.Run(fault, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: "version", Rank: 1, Excerpt: "\x01quartz\x02", Evidence: []SearchEvidence{{Kind: "rendition_segment"}}}}}
+			switch fault {
+			case "vault":
+				report.Results[0].VaultUID = "other"
+			case "version":
+				report.Results[0].ContentVersionID = "other"
+			case "node":
+				report.Results[0].NodeID = 0
+			case "rank":
+				report.Results[0].Rank = 0
+			case "selection":
+				report.MediaSourceSelection = true
+			case "selections":
+				report.MediaSelections = []SearchMediaSelection{{Origin: "generated"}}
+			case "node name":
+				report.Results[0].Evidence[0].Kind = "node_name"
+			case "media":
+				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
+			case "timing":
+				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{EndMS: 10}
+			case "timed blob":
+				report.Results[0].Evidence[0] = SearchEvidence{Kind: "content_blob", TimeSpan: &MediaTimeSpan{StartMS: 1, EndMS: 10}}
+			case "bad timing":
+				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{StartMS: 10, EndMS: 1}
+			case "mixed":
+				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
+			case "kind":
+				report.Results[0].Evidence[0].Kind = "unknown"
+			}
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request SearchRequest
+				if !assert.NoError(json.NewDecoder(r.Body).Decode(&request)) {
+					return
+				}
+				assert.Equal("supplied-transcript", request.Profile)
+				assert.Empty(request.MediaSources)
+				assert.Equal([]string{"version"}, request.Fence.ContentVersionIDs)
+				_ = json.NewEncoder(w).Encode(report)
+			}))
+			defer remote.Close()
+			client, err := NewClient(remote.URL, nil)
+			require.NoError(err)
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 20, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
+			if fault == "node name" {
+				require.NoError(err)
+				assert.Empty(got.Results)
+				return
+			}
+			if fault != "" && fault != "timing" && fault != "timed blob" && fault != "mixed" {
+				require.ErrorIs(err, ErrInvalidReceipt)
+				return
+			}
+			require.NoError(err)
+			assert.Equal("quartz", got.Results[0].Excerpt)
+		})
+	}
+}
+
+func TestSearchDocumentsRejectsUnfencedAndMediaRequests(t *testing.T) {
+	client, err := NewClient("http://127.0.0.1:1", nil)
+	require.NoError(t, err)
+	for _, fence := range []*SearchFence{nil, {VaultUID: "vault"}, {ContentVersionIDs: []string{"version"}}, {VaultUID: "vault", ContentVersionIDs: make([]string, MaxSearchVersions+1)}} {
+		_, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 20, Fence: fence})
+		require.ErrorIs(t, err, ErrInvalidRequest)
+	}
+	_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 20, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}, MediaSources: []SearchMediaSelector{{}}})
+	require.ErrorIs(t, err, ErrInvalidRequest)
+}

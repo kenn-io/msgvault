@@ -121,13 +121,11 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	for _, source := range request.MediaSources {
 		sources[source.SearchMediaSource] = source
 	}
-	var report SearchReport
-	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
+	report, err := c.searchReport(ctx, request)
+	if err != nil {
 		return SearchReport{}, err
 	}
-	if report.MediaSelections == nil || len(report.MediaSelections) > MaxSearchVersions || len(report.MediaSelections) > len(sources) || !report.MediaSourceSelection || report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
-		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
-		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
+	if report.MediaSelections == nil || len(report.MediaSelections) > MaxSearchVersions || len(report.MediaSelections) > len(sources) || !report.MediaSourceSelection {
 		return SearchReport{}, ErrInvalidReceipt
 	}
 	selections := make(map[SearchMediaSource]SearchMediaSelection, len(report.MediaSelections))
@@ -144,7 +142,7 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 	builds := make(map[[2]string]bool)
 	for i := range report.Results {
 		hit := &report.Results[i]
-		if hit.VaultUID != request.Fence.VaultUID || !ids[hit.ContentVersionID] || hit.NodeID <= 0 || hit.Rank <= 0 || len(hit.Excerpt) > 2048 || len(hit.Evidence) != 1 {
+		if !validSearchHit(*hit, request.Fence.VaultUID, ids) || len(hit.Evidence) != 1 {
 			return SearchReport{}, ErrInvalidReceipt
 		}
 		for _, evidence := range hit.Evidence {
@@ -168,7 +166,68 @@ func (c *Client) Search(ctx context.Context, request SearchRequest) (SearchRepor
 				return SearchReport{}, ErrInvalidReceipt
 			}
 		}
-		hit.Excerpt = strings.ReplaceAll(strings.ReplaceAll(hit.Excerpt, "\x01", ""), "\x02", "")
+		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
 	}
 	return report, nil
+}
+
+// searchReport applies the report checks shared by recording and document search.
+func (c *Client) searchReport(ctx context.Context, request SearchRequest) (SearchReport, error) {
+	var report SearchReport
+	if err := c.jsonRequestLimits(ctx, http.MethodPost, "/api/v1/search", request, &report, maxSearchBytes, maxSearchBytes); err != nil {
+		return SearchReport{}, err
+	}
+	if report.ActualMode != "lexical" || report.RequestedMode != "lexical" || report.Results == nil || len(report.Results) > request.Limit ||
+		report.Coverage.State == "" || report.Coverage.ScopedDocuments < 0 || report.Coverage.CompleteDocuments < 0 ||
+		report.Coverage.CompleteDocuments > report.Coverage.ScopedDocuments {
+		return SearchReport{}, ErrInvalidReceipt
+	}
+	return report, nil
+}
+
+func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
+	return hit.VaultUID == vault && ids[hit.ContentVersionID] && hit.NodeID > 0 && hit.Rank > 0 && len(hit.Excerpt) <= 2048
+}
+
+// SearchDocuments searches exact mirrored versions without transcript selectors.
+func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
+	if !validSearchRequest(request) || request.Fence == nil || request.Fence.VaultUID == "" || len(request.MediaSources) != 0 || len(request.Fence.ContentVersionIDs) == 0 || len(request.Fence.ContentVersionIDs) > MaxSearchVersions {
+		return SearchReport{}, ErrInvalidRequest
+	}
+	report, err := c.searchReport(ctx, request)
+	if err != nil {
+		c.clearVaultUID()
+		return SearchReport{}, err
+	}
+	if report.MediaSourceSelection || len(report.MediaSelections) != 0 {
+		return SearchReport{}, ErrInvalidReceipt
+	}
+	ids := make(map[string]bool, len(request.Fence.ContentVersionIDs))
+	for _, id := range request.Fence.ContentVersionIDs {
+		ids[id] = true
+	}
+	results := make([]SearchHit, 0, len(report.Results))
+	for _, hit := range report.Results {
+		if !validSearchHit(hit, request.Fence.VaultUID, ids) || len(hit.Evidence) == 0 {
+			return SearchReport{}, ErrInvalidReceipt
+		}
+		content := false
+		for _, evidence := range hit.Evidence {
+			if !slices.Contains([]string{"rendition_segment", "content_blob", "node_name"}, evidence.Kind) || len(evidence.MediaSources) != 0 || (evidence.TimeSpan != nil && (evidence.TimeSpan.StartMS < 0 || evidence.TimeSpan.EndMS <= evidence.TimeSpan.StartMS)) {
+				return SearchReport{}, ErrInvalidReceipt
+			}
+			content = content || evidence.Kind != "node_name"
+		}
+		if !content {
+			continue
+		}
+		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
+		results = append(results, hit)
+	}
+	report.Results = results
+	return report, nil
+}
+
+func plainSearchExcerpt(excerpt string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(excerpt, "\x01", ""), "\x02", "")
 }

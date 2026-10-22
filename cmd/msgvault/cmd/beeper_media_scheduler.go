@@ -236,11 +236,15 @@ func newDocbankAttachmentReader(ctx context.Context, st *store.Store, cfg config
 	if !cfg.Enabled || !cfg.AttachmentUploadConsent {
 		return nil, nil //nolint:nilnil // a nil reader means attachment mirroring is off; callers branch on it
 	}
+	client, _, err := docbankMediaClient(ctx, st, cfg)
+	if err != nil {
+		return nil, err
+	}
 	destination, err := docbankAttachmentDestination(ctx, st, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &api.DocbankAttachmentReader{Store: st, Destination: destination, Folder: cfg.MirrorFolder()}, nil
+	return &api.DocbankAttachmentReader{Store: st, Client: client, Destination: destination, Folder: cfg.MirrorFolder()}, nil
 }
 
 func docbankAttachmentDestination(ctx context.Context, st *store.Store, cfg config.DocbankIntegrationConfig) (string, error) {
