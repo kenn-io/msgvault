@@ -13,7 +13,7 @@ const replyAttribution = `(?:on [^\n]*\bwrote:|on [^\n]*,[ \t]*\r?\n(?:[^\n]*\r?
 var (
 	// quotedReply drops a wrapped attribution and its quoted lines, keeping
 	// any authored reply above or below them.
-	quotedReply = regexp.MustCompile(`(?im)^[ \t]*` + replyAttribution + `[ \t]*\r?\n(?:>+[ \t]?.*(?:\r?\n|$))+`)
+	quotedReply = regexp.MustCompile(`(?im)^[ \t]*` + replyAttribution + `[ \t]*\r?\n(?:[ \t]*\r?\n)*(?:>+[ \t]?.*(?:\r?\n|$))+`)
 	// quotedStart is where the quoted part begins: a reply attribution that
 	// may wrap onto a second line, an "Original Message" or "Forwarded
 	// message" separator, or Outlook's From:/Sent: header pair.

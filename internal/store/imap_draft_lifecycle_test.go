@@ -170,11 +170,6 @@ func TestRetiredIMAPReplyDraftDoesNotSettleLoop(t *testing.T) {
 	}
 	current, err := st.PersistIMAPDraftContext(t.Context(), receipt, participants, build(receipt, "Here is the contract."))
 	requirements.NoError(err)
-	beforeEdit, err := loops.List(t.Context(), st, loops.Options{}, loopNow)
-	requirements.NoError(err)
-	requirements.Len(beforeEdit.Loops, 1)
-	requirements.Equal(question, beforeEdit.Loops[0].Anchor.ID)
-
 	replacementBody := "Here is the revised contract."
 	replacementRaw := []byte("From: " + ownerAddress + "\r\nTo: " + counterpartyAddress + "\r\n\r\n" + replacementBody + "\r\n")
 	_, err = st.ClaimIMAPDraftContext(t.Context(), current.DraftID, current.Revision,

@@ -54,6 +54,7 @@ func TestAsks(t *testing.T) {
 		{"three-line attribution only", "On Monday, October 12, 2026,\nat 9:00 AM,\nMe <test@example.com> wrote:\n> Can you approve the contract?\n", ""},
 		{"approval above wrapped quote", "Approved, go ahead.\n\n" + quote, "Approved, go ahead."},
 		{"approval below wrapped quote", quote + "\nApproved, go ahead.", "Approved, go ahead."},
+		{"approval below wrapped attribution with blank line", "On Monday, October 12, 2026 at 9:00 AM,\nAlex <alex@example.test> wrote:\n\n> Can you approve the contract?\n\nApproved, go ahead.", "Approved, go ahead."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, strings.TrimSpace(ownText(tt.body)))
@@ -86,7 +87,7 @@ func TestAcknowledgementOnly(t *testing.T) {
 
 func FuzzAsksIgnoresQuotedSuffix(f *testing.F) {
 	f.Add("Can you send it?", "Any news?")
-	f.Add("All set", "Check https://example.test/?q=one")
+	f.Add("All set", "Any news?")
 	f.Fuzz(func(t *testing.T, body, quote string) {
 		if len(body)+len(quote) > 4096 {
 			t.Skip()

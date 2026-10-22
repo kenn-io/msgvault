@@ -22,7 +22,7 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 	if conv.GroupChat || (conv.ConversationType != "email_thread" && conv.ConversationType != "direct_chat") {
 		return Detection{}, nil
 	}
-	w := walker{email: conv.ConversationType == "email_thread", r: r, texts: map[int64]string{}, vouch: map[int64]bool{}}
+	w := walker{email: conv.ConversationType == "email_thread", r: r, texts: map[int64]string{}}
 	turns := map[loopParticipantIdentity]Loop{}
 	latest := map[loopParticipantIdentity]time.Time{}
 	for m, err := range conv.Walk() {
@@ -40,7 +40,13 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 			// A neutral acknowledgement counts as activity but opens or
 			// settles no question.
 			if key := participantIdentity(m.Sender); w.acknowledges(m) && latest[key].IsZero() {
-				latest[key] = m.OccurredAt
+				vouched, err := w.vouched(m)
+				if err != nil {
+					return Detection{}, err
+				}
+				if vouched {
+					latest[key] = m.OccurredAt
+				}
 			}
 			continue
 		}
@@ -53,7 +59,13 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 		}
 		key := participantIdentity(cp)
 		if latest[key].IsZero() {
-			latest[key] = m.OccurredAt
+			vouched, err := w.vouched(m)
+			if err != nil {
+				return Detection{}, err
+			}
+			if vouched {
+				latest[key] = m.OccurredAt
+			}
 		}
 		kind, cp, ok, err := w.opens(m)
 		if err != nil {
@@ -95,12 +107,10 @@ type walker struct {
 	r         Reader
 	texts     map[int64]string
 	originals map[int64]originalEvidence
-	// vouch remembers each original's verdict, so one is read once.
-	vouch    map[int64]bool
-	unparsed int
-	replies  []store.LoopMessage
-	sent     []store.LoopMessage
-	answered map[int64]bool
+	unparsed  int
+	replies   []store.LoopMessage
+	sent      []store.LoopMessage
+	answered  map[int64]bool
 	// settledParticipants remembers people whose newer, verified exchange
 	// settles their older requests. Their older messages cannot reopen the
 	// same turn, so paged history can skip parsing them while looking for
@@ -153,8 +163,17 @@ func (w *walker) isSettledParticipantMessage(m store.LoopMessage) bool {
 	case store.DirectionInbound:
 		return w.isSettledParticipant(m.Sender)
 	case store.DirectionOutbound:
-		participant, ok := w.awaitedParticipant(m)
-		return ok && w.isSettledParticipant(participant)
+		relevant := false
+		for _, recipient := range m.Recipients {
+			if recipient.IsOwner || (recipient.Type != "to" && recipient.Type != "cc") {
+				continue
+			}
+			relevant = true
+			if !w.isSettledParticipant(recipient.LoopParticipant) {
+				return false
+			}
+		}
+		return relevant
 	default:
 		return false
 	}
@@ -256,9 +275,6 @@ func (w *walker) vouched(m store.LoopMessage) (bool, error) {
 	if !w.email {
 		return true, nil
 	}
-	if v, ok := w.vouch[m.ID]; ok {
-		return v, nil
-	}
 	if _, err := w.text(m.ID); err != nil {
 		return false, err
 	}
@@ -269,9 +285,7 @@ func (w *walker) vouched(m store.LoopMessage) (bool, error) {
 	signals := evidence.signals
 	automated := signals.AutoSubmitted || signals.CalendarPart || signals.ReplyToNoReply ||
 		signals.PrecedenceBulk || signals.ListUnsubscribe
-	vouched := !automated && !evidence.unreadable
-	w.vouch[m.ID] = vouched
-	return vouched, nil
+	return !automated && !evidence.unreadable, nil
 }
 
 // opens reports whether m can anchor a loop, and the loop it anchors: it asks

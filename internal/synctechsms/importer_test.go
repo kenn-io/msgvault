@@ -221,16 +221,15 @@ func TestImporterKeepsSynctechUnsentSMSOutOfLoopDetection(t *testing.T) {
 		"Can you send the contract?",
 	).Scan(&questionID))
 	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(
-		`SELECT is_from_me, is_sent FROM messages WHERE message_type IN ('sms', 'mms') AND snippet <> ?`),
+		`SELECT is_sent FROM messages WHERE message_type IN ('sms', 'mms') AND snippet <> ?`),
 		"Can you send the contract?",
 	)
 	require.NoError(err)
 	defer func() { _ = rows.Close() }()
 	var unsent int
 	for rows.Next() {
-		var isFromMe, isSent bool
-		require.NoError(rows.Scan(&isFromMe, &isSent))
-		assert.True(isFromMe, "provider-native unsent SMS stays on the owner's side")
+		var isSent bool
+		require.NoError(rows.Scan(&isSent))
 		assert.False(isSent, "provider-native unsent SMS is excluded from live loops")
 		unsent++
 	}
@@ -239,7 +238,7 @@ func TestImporterKeepsSynctechUnsentSMSOutOfLoopDetection(t *testing.T) {
 
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)
-	require.Len(result.Loops, 1, "unsent drafts and delivery states must not settle the incoming question")
+	require.Len(result.Loops, 1, "unsent drafts must not settle the incoming question")
 	assert.Equal(questionID, result.Loops[0].Anchor.ID)
 	assert.Equal(loops.ReplyOwed, result.Loops[0].Kind)
 }

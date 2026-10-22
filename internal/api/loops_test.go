@@ -22,7 +22,6 @@ type loopFixture struct {
 	f      *storetest.Fixture
 	router http.Handler
 	owed   int64
-	asked  int64
 }
 
 func newLoopFixture(t *testing.T) *loopFixture {
@@ -32,9 +31,9 @@ func newLoopFixture(t *testing.T) *loopFixture {
 	const owner, alex, sam = storetest.OwnerAddress, "alex@example.test", "sam@example.test"
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: owner, To: []string{alex}, Body: "Hello", SentAt: now.Add(-10 * 24 * time.Hour)})
 	owed := f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: alex, To: []string{owner}, Subject: "Contract draft", Body: "Can you send the contract?", SentAt: now.Add(-5 * 24 * time.Hour)})
-	asked := f.PersistEmail(storetest.EmailSpec{Thread: "asked", From: owner, To: []string{sam}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: now.Add(-20 * 24 * time.Hour)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "asked", From: owner, To: []string{sam}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: now.Add(-20 * 24 * time.Hour)})
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
-	return &loopFixture{f: f, router: server.Router(), owed: owed, asked: asked}
+	return &loopFixture{f: f, router: server.Router(), owed: owed}
 }
 
 func (l *loopFixture) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {

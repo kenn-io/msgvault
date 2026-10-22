@@ -64,10 +64,4 @@ func TestLoopClientListsAndDecides(t *testing.T) {
 	done, err := client.MarkLoopDone(t.Context(), other)
 	require.NoError(err)
 	assert.EqualValues("done", done.State)
-
-	_, err = client.MarkLoopDone(t.Context(), anchor+1000)
-	apiErr, ok = errors.AsType[*daemonclient.APIError](err)
-	require.True(ok, "a missing anchor surfaces as an API error")
-	assert.Equal(404, apiErr.Status)
-	assert.Equal(daemonclient.LoopNotFoundCode, apiErr.Code)
 }

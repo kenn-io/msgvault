@@ -102,8 +102,9 @@ msgvault loops snooze 4521 --until 2026-10-25
 ```
 
 `done` hides this person's open questions. `snooze` hides them until the time
-passes. Done and snooze cover this person's questions already present when
-you act. A distinct question imported later can reopen the loop, whatever its
+passes. Done and snooze cover the questions the list shows when you act. A question
+still inside its 24- or 72-hour wait stays undecided and lists when its wait
+ends. A distinct question imported later can reopen the loop, whatever its
 message date. For example, Alex asks for the contract on Monday and you mark
 it done. "And the invoice?" on Wednesday starts a new visible wait dated
 Wednesday. An invoice question from Sunday imported afterward also appears.

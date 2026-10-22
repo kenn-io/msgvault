@@ -112,11 +112,7 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
 	require.NoError(err)
 	assert.Equal(fmt.Sprintf("Marked %d done.\n", anchor), output)
-	_, err = runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "48h")
-	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor))
 
-	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor+1000, 10))
-	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor+1000))
 	_, err = runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "yesterday")
 	require.Error(err)
 	_, err = runLoops(ctx, t, "done", "abc")

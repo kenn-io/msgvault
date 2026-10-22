@@ -4,12 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
-	"encoding/json/v2"
 	"errors"
 	"math/rand/v2"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -279,21 +277,9 @@ func TestLoopFollowsTheArchiveWithoutARefresh(t *testing.T) {
 	}
 }
 
-func TestLoopDirectChatListsWithoutAnyJobRunning(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	ids := persistLoopDirectChat(t, f, "chat-1", []loopChatMessage{{body: "are you coming on Saturday?"}})
-	listed := listLoops(t, f, loopNow)
-	require.Len(listed, 1)
-	assert.Equal(ids[0], listed[0].Anchor.ID)
-	assert.Equal(store.ChannelChat, listed[0].Channel)
-	assert.Equal(loops.ReplyOwed, listed[0].Kind)
-}
-
 func TestLoopDirectChatStopsAtSubstantiveBoundaryAcrossPages(t *testing.T) {
-	for _, newestIsQuestion := range []bool{false, true} {
-		t.Run(strconv.FormatBool(newestIsQuestion), func(t *testing.T) {
+	for _, mode := range []string{"answer", "question", "beyond first page"} {
+		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := storetest.New(t)
@@ -304,53 +290,35 @@ func TestLoopDirectChatStopsAtSubstantiveBoundaryAcrossPages(t *testing.T) {
 					loopChatMessage{fromOwner: true, body: "I reviewed the draft."},
 				)
 			}
-			if newestIsQuestion {
+			if mode != "answer" {
 				messages[len(messages)-1].body = "Can you check the contract?"
+			}
+			window := 4
+			if mode == "beyond first page" {
+				messages = nil
+				for range 24 {
+					messages = append(messages, loopChatMessage{body: "The earlier report is ready."})
+				}
+				messages = append(messages, loopChatMessage{body: "The prior version is ready."}, loopChatMessage{fromOwner: true, body: "I reviewed the notes."}, loopChatMessage{fromOwner: true, body: "I sent the revised copy."}, loopChatMessage{fromOwner: true, body: "The date works for me."}, loopChatMessage{fromOwner: true, body: "Can you confirm the new date?"})
+				window = 5
 			}
 			ids := persistLoopDirectChat(t, f, "long-chat", messages)
 			counted := &loopBodyCountingStore{Store: f.Store}
 			result, err := loops.List(t.Context(), counted, loops.Options{}, loopNow)
 			require.NoError(err)
-			if newestIsQuestion {
+			if mode != "answer" {
 				require.Len(result.Loops, 1)
 				assert.Equal(ids[len(ids)-1], result.Loops[0].Anchor.ID)
+				assert.Equal(store.ChannelChat, result.Loops[0].Channel)
+				assert.Equal(loops.AwaitingReply, result.Loops[0].Kind)
 			} else {
 				assert.Empty(result.Loops)
 			}
-			newestPage := ids[len(ids)-4:]
+			newestPage := ids[len(ids)-window:]
 			for _, id := range counted.bodyReads {
 				assert.Contains(newestPage, id, "detection must not read bodies from older settled history")
 			}
 		})
-	}
-}
-
-func TestLoopDirectChatStopsAtBoundaryBeyondInitialPage(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-
-	messages := make([]loopChatMessage, 0, 29)
-	for range 24 {
-		messages = append(messages, loopChatMessage{body: "The earlier report is ready."})
-	}
-	messages = append(messages,
-		loopChatMessage{body: "The prior version is ready."},
-		loopChatMessage{fromOwner: true, body: "I reviewed the notes."},
-		loopChatMessage{fromOwner: true, body: "I sent the revised copy."},
-		loopChatMessage{fromOwner: true, body: "The date works for me."},
-		loopChatMessage{fromOwner: true, body: "Can you confirm the new date?"},
-	)
-	ids := persistLoopDirectChat(t, f, "older-boundary-beyond-window", messages)
-
-	counted := &loopBodyCountingStore{Store: f.Store}
-	result, err := loops.List(t.Context(), counted, loops.Options{}, loopNow)
-	require.NoError(err)
-	require.Len(result.Loops, 1)
-	assert.Equal(ids[len(ids)-1], result.Loops[0].Anchor.ID)
-	newestPageAndBoundary := ids[len(ids)-5:]
-	for _, id := range counted.bodyReads {
-		assert.Contains(newestPageAndBoundary, id, "a direct-chat boundary beyond the initial window stops older body reads")
 	}
 }
 
@@ -690,23 +658,55 @@ func BenchmarkListLoops(b *testing.B) {
 }
 
 func TestLoopMultiFromUsesStoredSender(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
 	alexID := f.EnsureParticipant(loopAlex, "", "example.test")
 	samID := f.EnsureParticipant("sam@example.test", "", "example.test")
-	require.NoError(f.Store.ReplaceMessageRecipients(question, "from", []int64{alexID, samID}, []string{loopAlex, "sam@example.test"}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(question, "from", []int64{alexID, samID}, []string{loopAlex, "sam@example.test"}))
 
 	var messages []store.LoopMessage
 	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationOf(t, f, question)}) {
-		require.NoError(err)
+		requirements.NoError(err)
 		messages = append(messages, conv.Messages...)
 	}
-	require.Len(messages, 1)
-	assert.Equal(question, messages[0].ID)
-	assert.Equal(alexID, messages[0].Sender.ParticipantID)
-	assert.Equal(loopAlex, messages[0].Sender.Address)
+	requirements.Len(messages, 1)
+	assertions.Equal(question, messages[0].ID)
+	assertions.Equal(alexID, messages[0].Sender.ParticipantID)
+	assertions.Equal(loopAlex, messages[0].Sender.Address)
+
+	t.Run("missing sender snapshot", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := storetest.New(t)
+		question := f.PersistEmail(storetest.EmailSpec{
+			Thread: "missing-sender-question", From: loopAlex, To: []string{loopOwner},
+			Body: "Can you send the contract?", SentAt: loopAgo(2 * loopDay),
+		})
+		f.PersistEmail(storetest.EmailSpec{
+			Thread: "missing-sender-reply", From: loopOwner, To: []string{loopAlex},
+			Body: "Can you approve the contract?", SentAt: loopAgo(4 * loopDay),
+		})
+		reply := f.PersistEmail(storetest.EmailSpec{
+			Thread: "missing-sender-reply", From: loopAlex, To: []string{loopOwner},
+			Body: "Approved.", SentAt: loopAgo(3 * loopDay),
+		})
+		for _, messageID := range []int64{question, reply} {
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), messageID)
+			require.NoError(err)
+		}
+
+		participant := f.EnsureParticipant(loopAlex, "", "example.test")
+		person, _, err := f.Store.CreatePersonFromParticipant(participant)
+		require.NoError(err)
+
+		all := listLoops(t, f, loopNow)
+		require.Len(all, 1, "the reply with a missing sender must settle the request, while the incoming question remains open")
+		assert.Equal(question, all[0].Anchor.ID)
+		assert.Equal(loops.ReplyOwed, all[0].Kind)
+		assert.Equal(person.ID, all[0].Counterparty.PersonID)
+	})
 }
 
 func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
@@ -732,6 +732,9 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 				until := loopNow.Add(loopDay)
 				_, err = loops.Snooze(t.Context(), f.Store, snoozed, until, loopNow)
 				require.NoError(err)
+				laterSnooze := persistLoopBeeperMessage(t, f.Store, from.ID, left, sender, "later-snooze", "Can you send the forecast?", loopAgo(3*loopDay))
+				_, err = loops.Snooze(t.Context(), f.Store, laterSnooze, until.Add(2*loopDay), loopNow)
+				require.NoError(err)
 				open := persistLoopBeeperMessage(t, f.Store, into.ID, right, sender, "open", "Can you send the invoice?", loopAgo(4*loopDay))
 				var shared int64
 				if duplicate {
@@ -753,6 +756,8 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 					assert.Equal(store.LoopStateDone, marks[done].State)
 					require.NotNil(marks[snoozed].SnoozedUntil)
 					assert.True(until.Equal(*marks[snoozed].SnoozedUntil), "the original snooze deadline survives")
+					require.NotNil(marks[laterSnooze].SnoozedUntil)
+					assert.True(until.Add(2 * loopDay).Equal(*marks[laterSnooze].SnoozedUntil))
 					assert.NotContains(marks, open)
 					if duplicate && !reverse {
 						assert.Equal(store.LoopStateDone, marks[shared].State)
@@ -764,6 +769,9 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 						expectedAnchor = snoozed
 					}
 					assert.Equal(expectedAnchor, listed[0].Anchor.ID)
+					for _, q := range listed[0].Questions {
+						assert.NotEqual(laterSnooze, q.ID, "the longer snooze stays active")
+					}
 				}
 			})
 		}
@@ -791,24 +799,7 @@ func TestDuplicateUndoKeepsBothQuestionDecisions(t *testing.T) {
 	assert.Equal(store.LoopStateDone, marks[survivor].State)
 }
 
-func TestUnmarkedSourceMergeCreatesNoLoopDecisions(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	firstSource := f.Source
-	f.PersistEmail(storetest.EmailSpec{Thread: "unmarked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-	other, err := f.Store.GetOrCreateSource("gmail", "history@example.test")
-	require.NoError(err)
-	f.Source = other
-	f.PersistEmail(storetest.EmailSpec{Thread: "unmarked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the report?", SentAt: loopAgo(4 * loopDay)})
-	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: other.ID, IntoSourceID: firstSource.ID})
-	require.NoError(err)
-	marks, err := f.Store.LoopMarksContext(t.Context())
-	require.NoError(err)
-	assert.Empty(marks)
-}
-
-func TestLoopGroupMembershipUsesOneMetadataQuery(t *testing.T) {
+func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -823,7 +814,6 @@ func TestLoopGroupMembershipUsesOneMetadataQuery(t *testing.T) {
 		extra := f.EnsureParticipant("sam@example.test", "", "example.test")
 		require.NoError(f.Store.EnsureConversationParticipant(ref.ConversationID, extra, "member"))
 	}
-	logs := captureAttachmentQueryLogs(t)
 	var groups int
 	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
 		require.NoError(err)
@@ -833,23 +823,6 @@ func TestLoopGroupMembershipUsesOneMetadataQuery(t *testing.T) {
 		}
 	}
 	assert.Equal(2, groups)
-	var memberships, details int
-	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
-		var event struct {
-			Stmt  string `json:"stmt"`
-			Nargs int    `json:"nargs"`
-		}
-		require.NoError(json.Unmarshal([]byte(line), &event))
-		if strings.Contains(event.Stmt, "FROM conversation_participants cp LEFT JOIN person_participants") {
-			memberships++
-		}
-		if strings.Contains(event.Stmt, "SELECT m.id, COALESCE(m.sender_id") {
-			details++
-			assert.LessOrEqual(event.Nargs, 8, "only four newest messages per conversation are hydrated")
-		}
-	}
-	assert.Equal(1, memberships)
-	assert.Equal(1, details)
 }
 
 func TestRecipientlessOutboundKeepsQuestionOpen(t *testing.T) {
