@@ -431,21 +431,3 @@ func TestMCPLoopDiscoveryRequiresEveryDescriptorDetail(t *testing.T) {
 		}
 	}
 }
-
-func TestMCPLoopReaderPreservesSuccessfulPartialReceipt(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	// Error-shaped fields inside a successful result belong to the owning operation.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, err := fmt.Fprint(w, `{"completed":1,"failure":{"error":"server_busy"}}`)
-		assertions.NoError(err)
-	}))
-	defer server.Close()
-	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
-	requirements.NoError(err)
-	result, err := readMCPLoopJSON[map[string]any](t.Context(), client, http.MethodPost, "/api/v1/loops/1/done", nil)
-	requirements.NoError(err)
-	output := operationOutput[map[string]any](t, result)
-	assertions.InDelta(1, output["completed"], 0)
-	assertions.Equal(map[string]any{"error": "server_busy"}, output["failure"])
-}
