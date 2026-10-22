@@ -1624,10 +1624,12 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 				applySchedulerQueueState(&status, scheduled.Queued, scheduled.Pending, scheduled.StartedAt)
 				break
 			}
-		case sourceScheduleNonSchedulable:
+		case sourceScheduleNonSchedulable, sourceScheduleManualOnly:
 		}
 	}
 	switch {
+	case scheduling.kind == sourceScheduleManualOnly:
+		status.SyncUnavailableReason = "sync_manual_only"
 	case scheduling.kind == sourceScheduleNonSchedulable:
 		status.SyncUnavailableReason = "source_not_schedulable"
 	case status.ActiveSync != nil || schedulerRunning || status.SchedulerQueued || status.SchedulerPending:
@@ -1769,6 +1771,9 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 
 	scheduling := classifySourceScheduling(sourceType, account)
 	switch scheduling.kind {
+	case sourceScheduleManualOnly:
+		writeError(w, http.StatusBadRequest, "sync_manual_only", "Sync manually with msgvault sync-caldav")
+		return
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
 		return

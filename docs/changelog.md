@@ -26,6 +26,8 @@ All notable changes to msgvault, grouped by release.
   an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
   them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
 
+- Archives upgrade to schema 12 for civil-day recurrence durations. Older binaries refuse to open an upgraded archive; keep a backup before upgrading if you need to return to an older version.
+- [CalDAV calendars](usage/calendar.md#caldav-calendars-unreleased) can be archived with manual, read-only sync. Unsupported resources are skipped and reported while other events continue.
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.
 - Saved Views written with schema version 1 keep their literal pipe meaning; new views use version 2 for pipe OR.

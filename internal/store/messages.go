@@ -836,13 +836,24 @@ func (s *Store) MessageMetadataBatch(
 // count use this to reconcile rows against the complete archived set instead
 // of probing unbounded higher IDs with one query per candidate group. The
 // result is keyed by source_message_id, holds no message bodies, and stays
-// linear in the archived messages of the source.
-func (s *Store) SourceMessageMetadata(sourceID int64) (map[string]MessageMetadataRecord, error) {
-	rows, err := s.db.Query(`
+// linear in the archived messages of the source. liveOnly omits provider
+// deletions and archive-only history retained by source merges.
+func (s *Store) SourceMessageMetadata(sourceID int64, liveOnly bool) (map[string]MessageMetadataRecord, error) {
+	return s.SourceMessageMetadataContext(context.Background(), sourceID, liveOnly)
+}
+
+// SourceMessageMetadataContext honors cancellation during SourceMessageMetadata.
+func (s *Store) SourceMessageMetadataContext(ctx context.Context, sourceID int64, liveOnly bool) (map[string]MessageMetadataRecord, error) {
+	query := `
 		SELECT m.source_message_id, m.id, m.metadata, c.source_conversation_id
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
-		WHERE m.source_id = ?`, sourceID)
+		WHERE m.source_id = ?`
+	if liveOnly {
+		query += ` AND m.deleted_from_source_at IS NULL
+			AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)`
+	}
+	rows, err := s.db.QueryContext(ctx, query, sourceID)
 	if err != nil {
 		return nil, fmt.Errorf("load source message metadata: %w", err)
 	}
@@ -962,7 +973,10 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
 		}
-		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
+		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		return s.refreshCalendarEventProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -1438,6 +1452,9 @@ func (s *Store) UpsertMessageContext(ctx context.Context, msg *Message) (int64, 
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionAfterWriteTx(ctx, tx, id, deliveryInput{})
@@ -2098,9 +2115,29 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
+	if tx, ok := ctx.Value(calendarResourceTransactionKey{s}).(*loggedTx); ok {
+		return s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, nil, nil)
+	}
 	// The source is known only after build runs, so this entry locks none.
 	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
+}
+
+type calendarResourceTransactionKey struct{ store *Store }
+
+// WithCalendarResourceTransactionContext commits a resource's participant-backed
+// messages, metadata, and tombstone clears together. The callback must use its
+// context and this Store for every write, and return any write error.
+func (s *Store) WithCalendarResourceTransactionContext(ctx context.Context, fn func(context.Context) error) error {
+	return s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
+		// A resource can persist several events. Acquire the directory lock before
+		// the callback so an earlier event cannot hold a participant row while a
+		// later event waits for the lock that participant batches acquire first.
+		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
+			return fmt.Errorf("lock participant directory for calendar resource: %w", err)
+		}
+		return fn(context.WithValue(ctx, calendarResourceTransactionKey{s}, tx))
+	})
 }
 
 // PersistRepairMessageWithParticipantsContext atomically replaces one
@@ -2430,6 +2467,9 @@ func (s *Store) persistMessageWith(
 	}
 
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+		return 0, err
+	}
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
 
@@ -3516,9 +3556,10 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 	}
 
 	var missing []string
+	var missingCalendarIDs []int64
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
 		rows, err := tx.QueryContext(ctx, `
-			SELECT source_message_id
+			SELECT id, source_message_id, message_type
 			FROM messages
 			WHERE source_id = ?
 			  AND deleted_at IS NULL
@@ -3532,13 +3573,18 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			return fmt.Errorf("reconcile source message snapshot: list live messages: %w", err)
 		}
 		for rows.Next() {
+			var id int64
 			var sourceMessageID string
-			if err := rows.Scan(&sourceMessageID); err != nil {
+			var messageType sql.NullString
+			if err := rows.Scan(&id, &sourceMessageID, &messageType); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("reconcile source message snapshot: scan live message: %w", err)
 			}
 			if _, ok := present[sourceMessageID]; !ok {
 				missing = append(missing, sourceMessageID)
+				if messageType.String == "calendar_event" {
+					missingCalendarIDs = append(missingCalendarIDs, id)
+				}
 			}
 		}
 		if err := rows.Close(); err != nil {
@@ -3553,6 +3599,12 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 		if err := execInChunksContext(ctx, tx, missing, []any{sourceID},
 			fmt.Sprintf(`UPDATE messages SET deleted_from_source_at = %s WHERE source_id = ? AND source_message_id IN (%%s) AND deleted_from_source_at IS NULL`, s.dialect.Now())); err != nil {
 			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
+		}
+		// Refresh newly deleted CalDAV message times from their preserved snapshots.
+		for _, id := range missingCalendarIDs {
+			if err := s.refreshCalendarEventProjectionWith(ctx, tx, id); err != nil {
+				return fmt.Errorf("reconcile source message snapshot: refresh calendar event: %w", err)
+			}
 		}
 		return nil
 	})
@@ -6141,6 +6193,9 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}
 		switch {
