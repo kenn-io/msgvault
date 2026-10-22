@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -25,7 +26,9 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		messageType string
 		raw         string
 		wantSent    bool
+		corrupt     bool
 	}{
+		{messageType: "sms", raw: `{"Type":2}`, wantSent: true, corrupt: true},
 		{messageType: "sms", raw: `{"Type":2}`, wantSent: true},
 		{messageType: "sms", raw: `{"Type":3}`, wantSent: false},
 		{messageType: "sms", raw: `{"Type":4}`, wantSent: false},
@@ -47,7 +50,11 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		})
 		require.NoError(err)
 		ids[i] = messageID
-		require.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), "synctech_sms_xml_json"))
+		require.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), synctechstate.RawFormat))
+		if tt.corrupt {
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = ? WHERE message_id = ?`), []byte("broken compressed block"), "zlib", messageID)
+			require.NoError(err)
+		}
 		var isSent bool
 		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT is_sent FROM messages WHERE id = ?`), messageID).Scan(&isSent))

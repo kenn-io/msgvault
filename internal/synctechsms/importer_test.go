@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -65,7 +66,7 @@ func TestImporterImportsSMSMMSCallsAndIsIdempotent(t *testing.T) {
 	_, err = imp.ImportPath(dir)
 	require.NoError(err, "ImportPath second")
 	assertMessageCount(t, f.Store, 3)
-	assertRawFormats(t, f.Store, RawFormat, 3)
+	assertRawFormats(t, f.Store, synctechstate.RawFormat, 3)
 }
 
 func TestImporterRejectsMissingOwnerPhone(t *testing.T) {

@@ -655,7 +655,7 @@ func (s *Store) LoopOriginalEvidenceContext(ctx context.Context, messageID int64
 }
 
 // LoopMarksContext loads exact decisions, including expired snoozes.
-func (s *Store) LoopMarksContext(ctx context.Context, _ time.Time) (map[int64]LoopMark, error) {
+func (s *Store) LoopMarksContext(ctx context.Context) (map[int64]LoopMark, error) {
 	marks := map[int64]LoopMark{}
 	rows, err := s.db.QueryContext(ctx, `SELECT message_id,state,snoozed_until FROM loop_decisions`)
 	if err != nil {

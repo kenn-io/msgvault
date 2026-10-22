@@ -152,7 +152,7 @@ func TestWriteLoopsLayout(t *testing.T) {
 Waiting on them
   5d   Sam Rivera                         Lunch Friday?    4380
 
-Showing the oldest 50 from the last 30 days. Use --limit to see more.
+Showing the oldest 50. Use --limit to see more.
 `, out.String(), "a truncated page does not claim totals")
 
 	out.Reset()
@@ -162,7 +162,7 @@ Showing the oldest 50 from the last 30 days. Use --limit to see more.
 	assert.Equal(`Waiting on you
   3d   Alex Example <alex@example.test>   Contract draft   4521
 
-1 waiting on you, 0 waiting on them in the last 30 days.
+1 waiting on you, 0 waiting on them.
 2 stored messages could not be read, so a reply in one may have settled a loop.
 `, out.String())
 
@@ -174,11 +174,11 @@ Showing the oldest 50 from the last 30 days. Use --limit to see more.
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{}, 50, now))
-	assert.Equal("No open loops in the last 30 days.\n", out.String(), "no line about unreadable messages when there are none")
+	assert.Equal("No open loops.\n", out.String(), "no line about unreadable messages when there are none")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))
-	assert.Equal("No open loops in the last 30 days.\n1 stored message could not be read, so a reply in it may have settled a loop.\n", out.String())
+	assert.Equal("No open loops.\n1 stored message could not be read, so a reply in it may have settled a loop.\n", out.String())
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Items: []generated.LoopItem{

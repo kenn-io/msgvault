@@ -31,7 +31,7 @@ type Result struct {
 // implements it.
 type Store interface {
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
-	LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopMark, error)
+	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
@@ -90,14 +90,14 @@ func listsAt(l Loop, now time.Time) bool {
 	return !now.Before(l.OwedSince.Add(after))
 }
 
-// List returns unanswered requester turns in recently active conversations.
-// Snoozed questions remain eligible after the activity window. Exact decisions
+// List returns unanswered questions from recently active requesters.
+// Exact expired snoozes remain eligible after the activity window. Decisions
 // apply only to the questions the owner marked.
 func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = DefaultLimit
 	}
-	marks, err := st.LoopMarksContext(ctx, now)
+	marks, err := st.LoopMarksContext(ctx)
 	if err != nil {
 		return Result{}, err
 	}
@@ -135,6 +135,9 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Loop, bool) {
 	loop.Questions = slices.DeleteFunc(loop.Questions, func(question store.LoopMessage) bool {
 		mark := marks[question.ID]
+		if loop.LastActivity.Before(now.Add(-Lookback)) {
+			return mark.State != store.LoopStateSnoozed || mark.SnoozedUntil == nil || now.Before(*mark.SnoozedUntil)
+		}
 		return mark.State == store.LoopStateDone || (mark.SnoozedUntil != nil && now.Before(*mark.SnoozedUntil))
 	})
 	if len(loop.Questions) == 0 {
@@ -178,7 +181,7 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time
 	if err != nil {
 		return Loop{}, err
 	}
-	marks, err := st.LoopMarksContext(ctx, now)
+	marks, err := st.LoopMarksContext(ctx)
 	if err != nil {
 		return Loop{}, err
 	}

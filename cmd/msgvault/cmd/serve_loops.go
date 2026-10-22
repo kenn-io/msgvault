@@ -18,8 +18,8 @@ func (a *storeAPIAdapter) LoopConversationsContext(ctx context.Context, q store.
 	return a.store.LoopConversationsContext(ctx, q)
 }
 
-func (a *storeAPIAdapter) LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopMark, error) {
-	return a.store.LoopMarksContext(ctx, now)
+func (a *storeAPIAdapter) LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error) {
+	return a.store.LoopMarksContext(ctx)
 }
 
 func (a *storeAPIAdapter) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {

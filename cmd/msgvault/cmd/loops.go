@@ -169,7 +169,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	}{{title: "Waiting on you", kind: loops.ReplyOwed}, {title: "Waiting on them", kind: loops.AwaitingReply}}
 	if len(result.Items) == 0 {
 		var sb strings.Builder
-		sb.WriteString("No open loops in the last 30 days.\n")
+		sb.WriteString("No open loops.\n")
 		writeSkippedOriginals(&sb, result.SkippedUnparseable)
 		if _, err := io.WriteString(w, sb.String()); err != nil {
 			return fmt.Errorf("write loops: %w", err)
@@ -209,9 +209,9 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	}
 	if result.Truncated {
 		// The page holds the oldest loops, so its counts are not the totals.
-		fmt.Fprintf(&sb, "\nShowing the oldest %d from the last 30 days. Use --limit to see more.\n", limit)
+		fmt.Fprintf(&sb, "\nShowing the oldest %d. Use --limit to see more.\n", limit)
 	} else {
-		fmt.Fprintf(&sb, "\n%d waiting on you, %d waiting on them in the last 30 days.\n", counts[0], counts[1])
+		fmt.Fprintf(&sb, "\n%d waiting on you, %d waiting on them.\n", counts[0], counts[1])
 	}
 	writeSkippedOriginals(&sb, result.SkippedUnparseable)
 	if _, err := io.WriteString(w, sb.String()); err != nil {

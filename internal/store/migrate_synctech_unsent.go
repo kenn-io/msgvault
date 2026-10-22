@@ -10,10 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechstate"
 )
 
-const (
-	synctechSMSRawFormat      = "synctech_sms_xml_json"
-	synctechMigrationPageSize = 500
-)
+const synctechMigrationPageSize = 500
 
 // migrateSynctechUnsentMessages marks provider-native drafts and unsent SMS/MMS
 // rows so live-message readers can exclude them. Synctech imports preserve the
@@ -30,7 +27,7 @@ func (s *Store) migrateSynctechUnsentMessages(ctx context.Context) error {
 			LEFT JOIN message_raw r ON r.message_id = m.id AND r.raw_format = ?
 			WHERE m.id > ? AND m.message_type IN ('sms', 'mms')
 			  AND (m.is_sent IS NULL OR m.is_sent = TRUE)
-			ORDER BY m.id LIMIT ?`, synctechSMSRawFormat, after, synctechMigrationPageSize)
+			ORDER BY m.id LIMIT ?`, synctechstate.RawFormat, after, synctechMigrationPageSize)
 			if err != nil {
 				return fmt.Errorf("list Synctech messages for send-state migration: %w", err)
 			}
@@ -68,7 +65,7 @@ func (s *Store) migrateSynctechUnsentMessages(ctx context.Context) error {
 				}
 				raw, err := decodeMessageRaw(item.raw, item.compression)
 				if err != nil {
-					return fmt.Errorf("decode Synctech message %d for send-state migration: %w", item.id, err)
+					continue
 				}
 				if synctechRawRecordIsUnsent(item.messageType, raw) {
 					unsent = append(unsent, item.id)

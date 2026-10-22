@@ -118,8 +118,8 @@ passes. A new question must wait its own 24 or 72 hours before it lists.
 Both commands take the current message ID from `loops list` and re-read the
 conversation before acting. A covered anchor, an archived answer, or a
 question still inside its grace period makes the action fail with the
-existing not-open error. An ordinary conversation outside the 30-day activity
-window also fails; conversations containing snooze decisions remain eligible.
+existing not-open error. A requester whose last activity falls outside the 30-day window also fails,
+except for their exact questions with expired snoozes.
 
 A confirmed duplicate inherits the original question's decision. Hiding a
 duplicate preserves its own decision so undo restores it too. Done wins over
@@ -144,10 +144,11 @@ question. Deleting a question removes only that question's decision.
   stopped at 50 loops took 0.25 seconds, and a list with no loops took 1 second
   for plain-text messages and 12 seconds when each message carried a 96 KiB
   attachment. Each person-card view runs the same list for that person's conversations.
-- An ordinary quiet conversation leaves the list after 30 days without a
-  message, even when a question remains unanswered. It can return when new
-  activity arrives. Conversations containing snooze decisions remain eligible
-  past day 30, including after expiry, so their reminders can return.
+- A requester leaves the list after 30 days without activity, even when a
+  question remains unanswered. Their unanswered questions can return when
+  they become active again. An exact snoozed question returns after expiry,
+  including past day 30; this exception leaves other quiet questions hidden.
+- The CLI and API have no action to undo done or end a snooze early.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something
   opens a loop, and `msgvault loops done` clears it.

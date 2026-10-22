@@ -282,10 +282,8 @@ func (w *walker) opens(m store.LoopMessage) (kind string, counterparty store.Loo
 	return AwaitingReply, counterparty, ok, nil
 }
 
-// answers reports whether a message in run answers the sender: an inbound
-// message came from them, or your message went to them in To or Cc.
-// A message with no recipients on record is taken as theirs. A forward to
-// someone else, an automated message, or an unreadable original answers nothing.
+// answers reports whether a vouched inbound message came from the awaited
+// sender. An automated message or unreadable original answers nothing.
 func (w *walker) answers(run []store.LoopMessage, sender store.LoopParticipant) (bool, error) {
 	if !w.email {
 		return true, nil
@@ -296,16 +294,7 @@ func (w *walker) answers(run []store.LoopMessage, sender store.LoopParticipant) 
 		} else if !vouched {
 			continue
 		}
-		if m.Direction == store.DirectionInbound {
-			if m.Sender.ParticipantID == sender.ParticipantID || (m.Sender.PersonID != 0 && m.Sender.PersonID == sender.PersonID) {
-				return true, nil
-			}
-			continue
-		}
-		if len(m.Recipients) == 0 || slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool {
-			return (r.Type == "to" || r.Type == "cc") && !r.IsOwner &&
-				(r.ParticipantID == sender.ParticipantID || (r.PersonID != 0 && r.PersonID == sender.PersonID))
-		}) {
+		if m.Sender.ParticipantID == sender.ParticipantID || (m.Sender.PersonID != 0 && m.Sender.PersonID == sender.PersonID) {
 			return true, nil
 		}
 	}
@@ -371,7 +360,7 @@ func (w *walker) answeredByNewerOutbound(sender store.LoopParticipant) (bool, er
 		return len(w.sent) > 0, nil
 	}
 	for _, m := range w.sent {
-		if len(m.Recipients) > 0 && !slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool {
+		if !slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool {
 			return (r.Type == "to" || r.Type == "cc") && !r.IsOwner &&
 				(r.ParticipantID == sender.ParticipantID || (r.PersonID != 0 && r.PersonID == sender.PersonID))
 		}) {

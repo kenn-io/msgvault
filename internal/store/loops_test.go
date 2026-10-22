@@ -677,7 +677,7 @@ func TestDuplicateDecisionLeavesSameTimeQuestionOpen(t *testing.T) {
 	_, err = f.Store.MergeDuplicates(keptCutoff, []int64{duplicateCutoff}, "loop-cutoff-order")
 	require.NoError(err)
 
-	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
+	marks, err := f.Store.LoopMarksContext(t.Context())
 	require.NoError(err)
 	mark, ok := marks[keptCutoff]
 	require.True(ok)
@@ -903,7 +903,7 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 					assert.Zero(result.DuplicatesHidden)
 				}
 				for _, at := range []time.Time{loopNow, until} {
-					marks, err := f.Store.LoopMarksContext(t.Context(), at)
+					marks, err := f.Store.LoopMarksContext(t.Context())
 					require.NoError(err)
 					assert.Equal(store.LoopStateDone, marks[done].State)
 					require.NotNil(marks[snoozed].SnoozedUntil)
@@ -934,7 +934,7 @@ func TestDuplicateUndoKeepsBothQuestionDecisions(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(1), restored)
 	assert.Empty(listLoops(t, f, loopNow), "both restored and surviving questions keep their decisions")
-	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
+	marks, err := f.Store.LoopMarksContext(t.Context())
 	require.NoError(err)
 	assert.Equal(store.LoopStateDone, marks[duplicate].State)
 	assert.Equal(store.LoopStateDone, marks[survivor].State)
@@ -952,7 +952,7 @@ func TestUnmarkedSourceMergeCreatesNoLoopDecisions(t *testing.T) {
 	f.PersistEmail(storetest.EmailSpec{Thread: "unmarked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the report?", SentAt: loopAgo(4 * loopDay)})
 	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: other.ID, IntoSourceID: firstSource.ID})
 	require.NoError(err)
-	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
+	marks, err := f.Store.LoopMarksContext(t.Context())
 	require.NoError(err)
 	assert.Empty(marks)
 }
@@ -999,4 +999,13 @@ func TestLoopGroupMembershipUsesOneMetadataQuery(t *testing.T) {
 	}
 	assert.Equal(1, memberships)
 	assert.Equal(1, details)
+}
+
+func TestRecipientlessOutboundKeepsQuestionOpen(t *testing.T) {
+	f := storetest.New(t)
+	question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you approve the contract?", SentAt: loopAgo(5 * loopDay)})
+	f.PersistEmail(storetest.EmailSpec{From: loopOwner, Body: "The report is ready for review.", SentAt: loopAgo(3 * loopDay)})
+	result := listLoops(t, f, loopNow)
+	require.Len(t, result, 1)
+	assert.Equal(t, question, result[0].Anchor.ID)
 }

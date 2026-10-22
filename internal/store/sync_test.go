@@ -662,6 +662,9 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 		{name: "reply link", write: func() error {
 			return stale.SetMessageReplyContext(t.Context(), messageID, messageID)
 		}},
+		{name: "sent flag", write: func() error {
+			return stale.SetMessageSentStateContext(t.Context(), messageID, false)
+		}},
 		{name: "edited flag", write: func() error {
 			return stale.SetMessageEdited(messageID)
 		}},
@@ -1286,4 +1289,20 @@ func TestStore_InterruptSyncWithCheckpoint(t *testing.T) {
 			require.ErrorIs(err, store.ErrSyncRunNotFound)
 		})
 	}
+}
+
+func TestScopedSentStateRejectsWrongSource(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	messageID := f.CreateMessage("sent-state-source-fence")
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+	require.NoError(err)
+	runID, err := f.Store.StartSync(other.ID, "full")
+	require.NoError(err)
+	t.Cleanup(func() { _ = f.Store.FailSync(runID, "test complete") })
+	err = f.Store.ScopedToSync(other.ID, runID).SetMessageSentStateContext(t.Context(), messageID, false)
+	require.ErrorContains(err, "is scoped to source")
+	var sent bool
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT is_sent FROM messages WHERE id = ?`), messageID).Scan(&sent))
+	assert.True(t, sent)
 }

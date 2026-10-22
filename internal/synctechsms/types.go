@@ -9,7 +9,6 @@ const (
 	AdapterName               = "synctech-sms"
 	SourceType                = "synctech_sms"
 	ParticipantIdentifierType = "synctech_sms"
-	RawFormat                 = "synctech_sms_xml_json"
 )
 
 type BackupKind string

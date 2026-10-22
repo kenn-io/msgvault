@@ -49,11 +49,10 @@ msgvault loops snooze 4521 --until 48h
 
 `list` prints a "Waiting on you" section and a "Waiting on them" section,
 oldest first, with the age, person, subject, and message ID of each loop. A
-section with no loops is left out. The footer counts both sections and ends
-with "in the last 30 days". When `--limit` cuts the list, the footer says so
+section with no loops is left out. The footer counts both sections. When `--limit` cuts the list, the footer says so
 and gives no counts. A line also says how many stored messages could not be
 read, when there are any. An empty list prints
-`No open loops in the last 30 days.` A message that is not an open loop, such as one you already answered, fails
+`No open loops.` A message that is not an open loop, such as one you already answered, fails
 with `<id> isn't an open loop.`
 
 ## meetings
