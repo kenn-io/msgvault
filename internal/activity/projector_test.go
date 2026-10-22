@@ -48,14 +48,27 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 	assert.False(state.Stale)
 }
 
-func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
+func TestProjectorRetractsMessageThatBecomesUnsent(t *testing.T) {
 	require := require.New(t)
-	candidate := store.ActivityCandidate{Unsent: true}
-	projector := &Projector{}
-	projections, err := projector.projections([]store.ActivityCandidate{candidate}, time.UTC, DefaultMaxDirectCounterparts)
+	assert := assert.New(t)
+	f, messageID, personID := projectorFixture(
+		t, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC), false)
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
 	require.NoError(err)
-	require.Len(projections, 1)
-	assert.Equal(t, candidate.Unsent, projections[0].Token.Unsent)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	require.NoError(err)
+	require.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
+
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET is_sent = FALSE WHERE id = ?`), messageID)
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err = f.Store.ContactStateContext(t.Context(), personID, time.Now())
+	require.NoError(err)
+	assert.Empty(state.LastContactRef)
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
