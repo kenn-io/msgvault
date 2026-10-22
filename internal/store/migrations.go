@@ -6,9 +6,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"time"
+
+	"go.kenn.io/msgvault/internal/mime"
 )
 
 // One-time data migrations run by InitSchema and gated on the
@@ -22,6 +25,7 @@ const (
 	migrationAttachmentOccurrenceUnique     = "attachment_occurrence_unique_indexes_v1"
 	migrationMessagesLastModifiedBackfill   = "messages_last_modified_backfill"
 	migrationMessagesLastModifiedNullRepair = "messages_last_modified_null_repair"
+	migrationMessagesHiddenTextBackfill     = "messages_hidden_text_backfill_v1"
 	// v3: messageIdentityAttributionMatch became envelope-authoritative and
 	// gated email identifier matches on the sender lacking a primary email.
 	// Archives that ran v2 reconciled under the old predicate, so the rename
@@ -98,6 +102,67 @@ const (
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
 )
+
+// backfillMessagesHiddenText walks message IDs in bounded transactions. Bodies
+// are fetched by primary key, and only non-empty HTML reaches the detector.
+// content_changed_at stays unchanged; PostgreSQL's blanket last_modified and
+// embedding triggers still run on flag updates.
+func (s *Store) backfillMessagesHiddenText(ctx context.Context) error {
+	const batchSize = 1000
+	query := `SELECT id FROM messages ORDER BY id LIMIT ?`
+	args := []any{batchSize}
+	for {
+		var ids []int64
+		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			rows, err := tx.QueryContext(ctx, query, args...)
+			if err != nil {
+				return fmt.Errorf("read hidden text backfill IDs: %w", err)
+			}
+			for rows.Next() {
+				var id int64
+				if err := rows.Scan(&id); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("scan hidden text backfill ID: %w", err)
+				}
+				ids = append(ids, id)
+			}
+			err = rows.Err()
+			closeErr := rows.Close()
+			if err != nil {
+				return fmt.Errorf("iterate hidden text backfill IDs: %w", err)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close hidden text backfill IDs: %w", closeErr)
+			}
+			for _, id := range ids {
+				var bodyHTML string
+				err := tx.QueryRowContext(ctx, `SELECT body_html FROM message_bodies
+					WHERE message_id = ? AND body_html <> ''`, id).Scan(&bodyHTML)
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				if err != nil {
+					return fmt.Errorf("read hidden text backfill body %d: %w", id, err)
+				}
+				if !mime.HTMLHasHiddenText(bodyHTML) {
+					continue
+				}
+				if _, err := tx.ExecContext(ctx, `UPDATE messages SET hidden_text_present = TRUE
+					WHERE id = ? AND hidden_text_present = FALSE`, id); err != nil {
+					return fmt.Errorf("backfill hidden text flag %d: %w", id, err)
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if len(ids) < batchSize {
+			return nil
+		}
+		query = `SELECT id FROM messages WHERE id > ? ORDER BY id LIMIT ?`
+		args = []any{ids[len(ids)-1], batchSize}
+	}
+}
 
 func (s *Store) backfillSyncRunResumeMetadata(
 	ctx context.Context, tx *loggedTx,

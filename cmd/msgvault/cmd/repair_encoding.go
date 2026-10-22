@@ -347,6 +347,10 @@ func repairMessageFields(s *store.Store, stats *repairStats, logger *slog.Logger
 			// Update messages table (subject, snippet)
 			var msgUpdates []string
 			var msgArgs []any
+			if r.newHTML.Valid {
+				msgUpdates = append(msgUpdates, "hidden_text_present = ?")
+				msgArgs = append(msgArgs, mime.HTMLHasHiddenText(r.newHTML.String))
+			}
 			if r.newSubject.Valid {
 				msgUpdates = append(msgUpdates, "subject = ?")
 				msgArgs = append(msgArgs, r.newSubject.String)

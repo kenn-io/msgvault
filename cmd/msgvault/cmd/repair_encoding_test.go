@@ -211,7 +211,7 @@ func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 	}{
 		{10, "subj\x80bad", "clean body", "", "clean snippet"},
 		{20, "clean subject", "body\xFEbad", "", "snip"},
-		{30, "clean subject", "", "<p>body\xFFbad</p>", "snip"},
+		{30, "clean subject", "", "<div hidden>body\xFFbad</div>", "snip"},
 		{40, "clean subject", "clean body", "", "snip\x81bad"},
 		{50, "clean subject", "clean body", "", "clean snippet"},
 	}
@@ -231,6 +231,9 @@ func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
 	stats := &repairStats{}
 	ids, err := repairMessageFields(st, stats, testDiscardLogger())
 	require.NoError(err, "repairMessageFields")
+	var hidden bool
+	require.NoError(db.QueryRow(`SELECT hidden_text_present FROM messages WHERE id = 30`).Scan(&hidden))
+	assert.True(hidden, "repaired HTML must refresh the stored flag")
 
 	gotSet := map[int64]bool{}
 	for _, id := range ids {

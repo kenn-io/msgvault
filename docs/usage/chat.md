@@ -425,8 +425,9 @@ of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
 HTML that may hide letters or digits, including for mail with a plain-text
 alternative. Non-blank HTML that fails to parse also sets the flag.
 Message bodies stay unchanged. The check excludes stylesheets and browser
-layout. CLI search and MCP `search_message_bodies` return search result rows
-without this flag.
+layout. CLI search JSON and MCP `search_message_bodies` also include the stored
+flag on every result row. Archive schema 11 flags older mail during a one-time
+backfill at archive initialization; new HTML writes refresh the flag.
 
 ### Find a person's messaging routes
 
