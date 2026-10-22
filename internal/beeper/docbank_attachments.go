@@ -567,21 +567,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if !time.Now().Before(deadline) {
 				return true, errors.Join(failures.reported, failures.streak)
 			}
-			actionCtx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
-			var job docbankmedia.JobStatus
-			jobID := d.JobID
-			if d.Outcome == "requested" {
-				job, err = w.client.JobStatus(actionCtx, jobID)
-			} else {
-				selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
-				var plan docbankmedia.ProcessingPlan
-				plan, err = w.client.PlanProcessing(actionCtx, selector)
-				if err == nil {
-					jobID, err = w.client.StartProcessing(actionCtx, selector, plan.Fingerprint)
-				}
-				job.State = "queued"
-			}
-			cancel()
+			job, jobID, err := w.askProcessing(ctx, d)
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
@@ -611,6 +597,27 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			}
 		}
 	}
+}
+
+// askProcessing polls a requested job, or plans and starts one when the file has none.
+// Docbank reopens a job that failed for consent on a new build, so that job is rebuilt:
+// renewed consent resumes the file, and revoked consent blocks the pass as a 428 does.
+func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (job docbankmedia.JobStatus, jobID string, err error) {
+	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
+	defer cancel()
+	jobID = d.JobID
+	if d.Outcome == "requested" {
+		job, err = w.client.JobStatus(ctx, jobID)
+		if err != nil || processingJobOutcome(job) != "consent" {
+			return job, jobID, err
+		}
+	}
+	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
+	plan, err := w.client.PlanProcessing(ctx, selector)
+	if err == nil {
+		jobID, err = w.client.StartProcessing(ctx, selector, plan.Fingerprint)
+	}
+	return docbankmedia.JobStatus{State: "queued"}, jobID, err
 }
 
 func (w *AttachmentMirror) processingBlocked(err error) error {
