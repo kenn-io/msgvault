@@ -4376,6 +4376,8 @@ HTML that fails to parse also sets the flag. Text output writes
 `Warning: this message's HTML may hide text.` to stderr when flagged, including
 with `--body-only`. Message bodies stay unchanged. The check excludes
 stylesheets and browser layout. False does not guarantee that text is visible.
+Many newsletters hide a preview line, called a preheader, and those set the flag
+too. The flag marks hidden text rather than malicious intent.
 MCP `get_message` and `search_in_message`
 return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
 also include it on every result row. Archive schema 11 flags older mail during
