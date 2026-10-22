@@ -173,6 +173,7 @@ var KnownMessageTypes = []string{
 	"google_voice_text",
 	"google_voice_call",
 	"google_voice_voicemail",
+	"call_record",
 	"beeper",
 	"chatwoot",
 	"slack",

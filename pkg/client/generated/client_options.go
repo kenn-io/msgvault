@@ -790,6 +790,94 @@ func (o *ControlCalendarRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ListCallObservationsRequestOptions is the options needed to make a request to ListCallObservations.
+type ListCallObservationsRequestOptions struct {
+	Query *ListCallObservationsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListCallObservationsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListCallObservationsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListCallObservationsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListCallObservationsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListCallObservationsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// SummarizeCallsRequestOptions is the options needed to make a request to SummarizeCalls.
+type SummarizeCallsRequestOptions struct {
+	Query *SummarizeCallsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *SummarizeCallsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *SummarizeCallsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *SummarizeCallsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *SummarizeCallsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *SummarizeCallsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // SaveCardDAVAccountRequestOptions is the options needed to make a request to SaveCardDAVAccount.
 type SaveCardDAVAccountRequestOptions struct {
 	Body *SaveCardDAVAccountBody
@@ -5156,6 +5244,50 @@ func (o *UnlinkIdentityParticipantsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *UnlinkIdentityParticipantsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ImportCallObservationRequestOptions is the options needed to make a request to ImportCallObservation.
+type ImportCallObservationRequestOptions struct {
+	Body *ImportCallObservationBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ImportCallObservationRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ImportCallObservationRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ImportCallObservationRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ImportCallObservationRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ImportCallObservationRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
