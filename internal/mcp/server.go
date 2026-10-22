@@ -131,8 +131,10 @@ type ServeOptions struct {
 	Kata                   KataBackend
 	ContactRoutesBackend   ContactRoutesBackend
 	// KataLookup enables issue lookup and context reads.
-	KataLookup  bool
-	KataDocbank bool
+	KataLookup                bool
+	KataDocbank               bool
+	DeliveryPolicies          DeliveryPolicyBackend
+	AllowDeliveryPolicyWrites bool
 	// AllowProfileWrites exposes person promotion and Notes mutation tools.
 	// It remains false unless the operator explicitly opts in.
 	AllowProfileWrites bool
@@ -396,6 +398,7 @@ func newMCPServerWithPolicy(
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
+		deliveryPolicies:     opts.DeliveryPolicies,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
@@ -416,6 +419,9 @@ func newMCPServerWithPolicy(
 		}
 		if definition.security == toolSecurityPersonMerge &&
 			(!allowWrites || !opts.AllowPersonMerges) {
+			continue
+		}
+		if definition.security == toolSecurityDeliveryPolicyWrite && (!allowWrites || !opts.AllowDeliveryPolicyWrites) {
 			continue
 		}
 		if definition.security == toolSecurityCardDAVWrite &&
@@ -542,6 +548,7 @@ func newMCPHTTPServerWithPolicy(
 				requestOpts.AllowIdentityDecisions = false
 				requestOpts.AllowIdentityScoring = false
 				requestOpts.AllowPersonMerges = false
+				requestOpts.AllowDeliveryPolicyWrites = false
 				requestOpts.AllowCardDAVWrites = false
 				requestOpts.AllowCalendarWrites = false
 			}

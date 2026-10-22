@@ -425,6 +425,7 @@ var operationGateExemptPaths = map[string]bool{
 // while a long archive operation holds the gate. Kata evidence preparation
 // only reads message bodies and extracted document text. Message tag reads and
 // previews bypass the gate here; their handler takes it for actual writes.
+// Delivery policy inspection is also read-only.
 const cardDAVAccountTestPath = "/api/v1/carddav/account/test"
 
 var readOnlyPostRoutePatterns = []string{
@@ -433,6 +434,7 @@ var readOnlyPostRoutePatterns = []string{
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
 	"/api/v1/messages/{id}/tags",
+	"/api/v1/people/delivery-policy/read",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",

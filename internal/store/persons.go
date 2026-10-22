@@ -457,6 +457,14 @@ func (s *Store) deletePersonOnce(ctx context.Context, input DeletePersonEnrichme
 			return fmt.Errorf("clear deleted person's display-name ownership: %w", err)
 		}
 
+		var uid string
+		if err := tx.QueryRowContext(ctx, `SELECT vcard_uid FROM persons WHERE id = ?`, id).Scan(&uid); err != nil {
+			return fmt.Errorf("read person %d UID before delete: %w", id, err)
+		}
+		// The cascade would drop approvals silently; leave an audit row first.
+		if err := s.endDeliveryPoliciesTx(ctx, tx, &Person{ID: id, VCardUID: uid}, expectedRevision+1, input.Actor, "person_deleted", false); err != nil {
+			return err
+		}
 		var deletedUID string
 		err = tx.QueryRowContext(ctx,
 			`DELETE FROM persons WHERE id = ? AND revision = ? RETURNING vcard_uid`,
