@@ -169,6 +169,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
  WHERE source_id = ? AND COALESCE(message_type, '') IN ('', 'email', 'calendar_event')`, into); err != nil {
 		return fmt.Errorf("mark merged account attribution pending: %w", err)
 	}
+	if err := s.refreshSourceCalendarEventsTx(ctx, tx, into); err != nil {
+		return err
+	}
 	// Source-local receipts, sync runs, cursors, re-anchor markers, import receipts
 	// and Beeper media endpoint records remain on the retired source for audit.
 	for _, statement := range []string{
