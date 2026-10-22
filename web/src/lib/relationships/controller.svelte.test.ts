@@ -2047,21 +2047,24 @@ describe('RelationshipsController abort/destroy', () => {
 
 describe('RelationshipsController draft-only targets', () => {
   it.each([
-    { target: 'cluster:12', detailPath: '/api/v1/participants/12', timelinePath: '/api/v1/relationships/12/timeline' },
-    { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', timelinePath: '/api/v1/domains/example.com/timeline' }
-  ])('opens $target without a detail error or calendar', async ({ target, detailPath, timelinePath }) => {
+    { target: 'cluster:12', detailPath: '/api/v1/participants/12', timelinePath: '/api/v1/relationships/12/timeline', filtered: false },
+    { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', timelinePath: '/api/v1/domains/example.com/timeline', filtered: false },
+    { target: 'cluster:12', detailPath: '/api/v1/participants/12', timelinePath: '/api/v1/relationships/12/timeline', filtered: true },
+    { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', timelinePath: '/api/v1/domains/example.com/timeline', filtered: true }
+  ])('opens $target without a detail error or calendar, filtered=$filtered', async ({ target, detailPath, timelinePath, filtered }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
       if (path === detailPath) return Response.json({ error: 'No contact activity' }, { status: 404 });
+      if (path === `${detailPath}/summary`) return Response.json({ error: 'No matching activity' }, { status: 404 });
       if (path === timelinePath) return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
       throw new Error(`unexpected path ${path}`);
     });
     const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
 
-    await controller.openTarget(target, { filters: [], presentation: 'table' });
+    await controller.openTarget(target, { filters: filtered ? [{ dimension: 'source', values: ['1'] }] : [], presentation: 'table' });
 
     expect.soft(controller.timelineError).toBeNull();
     expect.soft(controller.detail).toBeNull();
