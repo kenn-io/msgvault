@@ -683,6 +683,7 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS list_id TEXT`, "list_id"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS account_path TEXT`, "account_path"},
+		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS email_linkage_outcome TEXT`, "email_linkage_outcome"},
 		{`ALTER TABLE messages ADD COLUMN IF NOT EXISTS draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
 		{`ALTER TABLE sources ADD COLUMN IF NOT EXISTS oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN IF NOT EXISTS phone_number TEXT`, "phone_number"},
@@ -2373,7 +2374,7 @@ var exclusiveLockTables = []string{
 	// here without holding tables those transactions still need.
 	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
-	"message_delivery_addresses",
+	"message_delivery_addresses", "email_link_keys",
 	"meeting_details", "meeting_action_items",
 	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,

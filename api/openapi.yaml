@@ -4518,6 +4518,69 @@ components:
         - total_known_seconds
         - average_known_seconds
       type: object
+    EmailFamily:
+      additionalProperties: true
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        members:
+          items:
+            $ref: "#/components/schemas/EmailFamilyMember"
+          type: array
+        pending_linkage:
+          type: boolean
+        truncated:
+          type: boolean
+        truncated_reason:
+          type: string
+      required:
+        - anchor_message_id
+        - members
+        - truncated
+        - pending_linkage
+      type: object
+    EmailFamilyMember:
+      additionalProperties: true
+      properties:
+        account_address:
+          type: string
+        account_path:
+          type: string
+        conversation_id:
+          format: int64
+          type: integer
+        draft:
+          type: boolean
+        evidence:
+          type: string
+        linkage_outcome:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        sent_at:
+          format: date-time
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_type:
+          type: string
+        subject:
+          type: string
+      required:
+        - message_id
+        - source_id
+        - source_type
+        - source_identifier
+        - draft
+        - conversation_id
+        - linkage_outcome
+        - evidence
+      type: object
     EmbeddingBatch:
       additionalProperties: true
       properties:
@@ -16525,7 +16588,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24444,6 +24507,65 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/family:
+    get:
+      operationId: getEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamily"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read the other archived copies, replies and forwards of an email
       tags:
         - API
   /api/v1/messages/{id}/inline:

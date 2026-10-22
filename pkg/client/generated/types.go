@@ -4092,6 +4092,48 @@ func (d DurationTotals) Validate() error {
 	return errors
 }
 
+type EmailFamily struct {
+	AnchorMessageID int64               `json:"anchor_message_id"`
+	Members         []EmailFamilyMember `json:"members" validate:"required"`
+	PendingLinkage  bool                `json:"pending_linkage"`
+	Truncated       bool                `json:"truncated"`
+	TruncatedReason *string             `json:"truncated_reason,omitzero"`
+}
+
+func (e EmailFamily) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range e.Members {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Members[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type EmailFamilyMember struct {
+	AccountAddress   *string    `json:"account_address,omitzero"`
+	AccountPath      *string    `json:"account_path,omitzero"`
+	ConversationID   int64      `json:"conversation_id"`
+	Draft            bool       `json:"draft"`
+	Evidence         string     `json:"evidence" validate:"required"`
+	LinkageOutcome   string     `json:"linkage_outcome" validate:"required"`
+	MessageID        int64      `json:"message_id"`
+	SentAt           *time.Time `json:"sent_at,omitempty"`
+	SourceID         int64      `json:"source_id"`
+	SourceIdentifier string     `json:"source_identifier" validate:"required"`
+	SourceType       string     `json:"source_type" validate:"required"`
+	Subject          *string    `json:"subject,omitzero"`
+}
+
+func (e EmailFamilyMember) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type EmbeddingBatch struct {
 	Attempted      int64                 `json:"attempted"`
 	Chars          int64                 `json:"chars"`
