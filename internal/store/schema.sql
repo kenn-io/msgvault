@@ -4686,9 +4686,6 @@ CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
  next_action_at DATETIME,
  PRIMARY KEY (destination_key, content_hash)
 );
-CREATE INDEX IF NOT EXISTS idx_docbank_processing_unasked
- ON docbank_attachment_deliveries(destination_key, content_hash)
- WHERE state = 'delivered' AND version_id <> '';
 CREATE INDEX IF NOT EXISTS idx_docbank_processing_due
  ON docbank_attachment_processing(destination_key, fingerprint, next_action_at, content_hash)
  WHERE next_action_at IS NOT NULL;
