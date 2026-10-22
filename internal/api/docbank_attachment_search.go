@@ -21,13 +21,12 @@ type MediaAttachmentResult struct {
 }
 
 type MediaAttachmentSearch struct {
-	ScopeTruncated bool                    `json:"scope_truncated" doc:"Only the newest 4096 mirrored versions in the selected scope were searched"`
-	Results        []MediaAttachmentResult `json:"results"`
-	Truncated      bool                    `json:"truncated"`
-	Error          *ErrorResponse          `json:"error,omitempty"`
+	Results   []MediaAttachmentResult `json:"results"`
+	Truncated bool                    `json:"truncated"`
+	Error     *ErrorResponse          `json:"error,omitempty"`
 }
 
-// SearchAttachments searches the newest delivered attachment versions.
+// SearchAttachments searches delivered attachment versions within the scope limit.
 // It keeps Docbank's ranking and maps only to currently visible messages.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
@@ -35,11 +34,13 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 		response.Error = attachmentSearchError(err)
 		return response, err
 	}
-	versions, truncated, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
+	versions, scopeExceeded, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
 	if err != nil {
 		return fail(err)
 	}
-	response.Truncated, response.ScopeTruncated = truncated, truncated
+	if scopeExceeded {
+		return fail(errMediaSearchScope)
+	}
 	if len(versions) == 0 {
 		return response, nil
 	}
@@ -55,7 +56,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.
 	if err != nil {
 		return fail(err)
 	}
-	response.Truncated = response.Truncated || report.Truncated
+	response.Truncated = report.Truncated
 	if err := reader.visible(ctx, &response, report.Results, limit, resolve); err != nil {
 		return fail(err)
 	}
@@ -94,10 +95,14 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 	return nil
 }
 
-// attachmentSearchError keeps Docbank's code, except that a rejected query
-// reads as invalid_media_search, as it does for recordings.
+// attachmentSearchError reuses recordings' scope-limit and rejected-query codes.
+// Other failures keep Docbank's code.
 func attachmentSearchError(err error) *ErrorResponse {
-	if _, failure := mediaSearchFailure(err); failure.Error == "invalid_media_search" {
+	_, failure := mediaSearchFailure(err)
+	if failure.Error == "media_search_scope_limit" {
+		return &failure
+	}
+	if failure.Error == "invalid_media_search" {
 		return &ErrorResponse{Error: failure.Error, Message: "Attachment search rejected this query."}
 	}
 	return &ErrorResponse{Error: docbankmedia.ErrorCode(err), Message: "Attachment search is unavailable."}

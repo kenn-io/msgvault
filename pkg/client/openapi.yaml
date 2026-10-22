@@ -7441,13 +7441,9 @@ components:
           items:
             $ref: "#/components/schemas/MediaAttachmentResult"
           type: array
-        scope_truncated:
-          description: Only the newest 4096 mirrored versions in the selected scope were searched
-          type: boolean
         truncated:
           type: boolean
       required:
-        - scope_truncated
         - results
         - truncated
       type: object

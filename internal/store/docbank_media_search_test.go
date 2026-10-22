@@ -66,9 +66,9 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		}
 	}
 	scope := &personscope.Scope{ParticipantIDs: []int64{participant}, Directions: []personscope.Direction{personscope.FromPerson}}
-	ids, truncated, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
+	ids, scopeExceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 	require.NoError(err)
-	assert.False(truncated)
+	assert.False(scopeExceeded)
 	assert.Equal([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
 	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids)
 	require.NoError(err)
@@ -108,7 +108,7 @@ func TestDocumentSearchSharedVersionOccurrences(t *testing.T) {
 	assert.Equal(old, occurrences[1].MessageID)
 }
 
-func TestDocumentSearchVersionsTruncated(t *testing.T) {
+func TestDocumentSearchVersionsScopeLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -133,10 +133,8 @@ func TestDocumentSearchVersionsTruncated(t *testing.T) {
 		require.NoError(err)
 	}
 	require.NoError(tx.Commit())
-	ids, truncated, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+	ids, scopeExceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
 	require.NoError(err)
-	assert.True(truncated)
-	require.Len(ids, 4096)
-	assert.Equal("00000000-0000-4000-8000-000000001000", ids[0])
-	assert.NotContains(ids, "00000000-0000-4000-8000-000000000fff")
+	assert.True(scopeExceeded)
+	assert.Empty(ids)
 }

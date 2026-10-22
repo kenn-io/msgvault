@@ -900,7 +900,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment failure", "rejected query", "recording timeout", "recording scope limit", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment scope limit", "attachment failure", "rejected query", "recording timeout", "recording scope limit", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -910,6 +910,22 @@ func TestMediaSearchDocuments(t *testing.T) {
 			first, second := f.document(t, server)
 			query := "q=quartz"
 			switch scenario {
+			case "attachment scope limit":
+				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
+				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?,?)`), participant, first, second, recording.messageID)
+				require.NoError(err)
+				query += "&participant_id=" + strconv.FormatInt(participant, 10)
+				tx, err := f.f.Store.DB().BeginTx(t.Context(), nil)
+				require.NoError(err)
+				defer func() { _ = tx.Rollback() }()
+				for i := 2; i <= 4097; i++ {
+					hash := fmt.Sprintf("%064x", i)
+					_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), first, hash, hash[:2]+"/"+hash)
+					require.NoError(err)
+					_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+					require.NoError(err)
+				}
+				require.NoError(tx.Commit())
 			case "occurrence limit":
 				query += "&limit=1"
 			case "docbank limit":
@@ -1007,6 +1023,16 @@ func TestMediaSearchDocuments(t *testing.T) {
 				assert.Equal(recording.messageID, response.Results[0].MessageID)
 				assert.Equal("generated", response.Results[0].Origin)
 			}
+			if scenario == "attachment scope limit" {
+				require.NotNil(response.Attachments.Error)
+				assert.Equal("media_search_scope_limit", response.Attachments.Error.Error)
+				_, failure := mediaSearchFailure(errMediaSearchScope)
+				assert.Equal(failure.Message, response.Attachments.Error.Message)
+				assert.Empty(response.Attachments.Results)
+				assert.False(response.Attachments.Truncated)
+				assert.Empty(f.documentRequests)
+				return
+			}
 			if scenario == "attachment failure" || scenario == "rejected query" {
 				require.NotNil(response.Attachments.Error)
 				assert.Empty(response.Attachments.Results)
@@ -1015,7 +1041,6 @@ func TestMediaSearchDocuments(t *testing.T) {
 				}
 				return
 			}
-			assert.False(response.Attachments.ScopeTruncated)
 			assert.Equal(scenario == "occurrence limit" || scenario == "docbank limit", response.Attachments.Truncated)
 			want := 2
 			if scenario == "occurrence limit" {

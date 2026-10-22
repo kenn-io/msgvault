@@ -75,11 +75,7 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 				return fmt.Errorf("render media search status: %w", err)
 			}
 			if response.Attachments.Truncated {
-				notice := "More may match"
-				if response.Attachments.ScopeTruncated {
-					notice = "Only the newest 4096 mirrored files were searched. Set --person to narrow the search."
-				}
-				if _, err := fmt.Fprintln(command.OutOrStdout(), notice); err != nil {
+				if _, err := fmt.Fprintln(command.OutOrStdout(), "More may match"); err != nil {
 					return fmt.Errorf("render media search status: %w", err)
 				}
 			}

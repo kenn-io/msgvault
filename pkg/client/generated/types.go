@@ -7256,10 +7256,7 @@ func (m MediaAttachmentResult) Validate() error {
 type MediaAttachmentSearch struct {
 	ErrorData *ErrorResponse          `json:"error,omitempty"`
 	Results   []MediaAttachmentResult `json:"results" validate:"required"`
-
-	// ScopeTruncated Only the newest 4096 mirrored versions in the selected scope were searched
-	ScopeTruncated bool `json:"scope_truncated"`
-	Truncated      bool `json:"truncated"`
+	Truncated bool                    `json:"truncated"`
 }
 
 func (m MediaAttachmentSearch) Validate() error {

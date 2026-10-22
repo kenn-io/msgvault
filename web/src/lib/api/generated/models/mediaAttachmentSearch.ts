@@ -7,8 +7,6 @@ import type { MediaAttachmentResult } from "./mediaAttachmentResult";
 export interface MediaAttachmentSearch {
   error?: ErrorResponse;
   results: MediaAttachmentResult[];
-  /** Only the newest 4096 mirrored versions in the selected scope were searched */
-  scope_truncated: boolean;
   truncated: boolean;
   [key: string]: unknown;
 }

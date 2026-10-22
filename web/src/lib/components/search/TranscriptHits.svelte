@@ -197,7 +197,7 @@
   {#if result?.attachments}
     <section class="attachments" aria-label="Attachments">
       <h2>Attachments{#if !result.attachments.error || result.attachments.results.length > 0}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
-      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
+      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? refusedMediaSearchNotice(result.attachments.error.error, result.attachments.error.message, query, participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
           <li>
@@ -218,8 +218,7 @@
         {/each}
       </ol>
       {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from {result.attachments.truncated ? 'searched' : 'mirrored'} attachments.</p>{/if}
-      {#if result.attachments.scope_truncated}<p class="coverage" role="status">Only the newest 4096 mirrored files were searched. Add a Person filter to narrow the search.</p>
-      {:else if result.attachments.truncated}<p class="coverage" role="status">More may match</p>{/if}
+      {#if result.attachments.truncated}<p class="coverage" role="status">More may match</p>{/if}
     </section>
   {/if}
 </section>

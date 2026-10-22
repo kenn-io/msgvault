@@ -74,7 +74,7 @@ func documentSearchRows(destination string, scope *personscope.Scope) (string, [
 }
 
 // DocumentSearchVersions returns up to 4096 delivered versions, newest first.
-// A further version marks the search scope as truncated.
+// A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
 	query, args := documentSearchRows(destination, scope)
 	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id
@@ -92,11 +92,13 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 		}
 		versions = append(versions, version)
 	}
-	truncated := len(versions) > 4096
-	if truncated {
-		versions = versions[:4096]
+	if err := rows.Err(); err != nil {
+		return nil, false, err
 	}
-	return versions, truncated, rows.Err()
+	if len(versions) > 4096 {
+		return nil, true, nil
+	}
+	return versions, false, nil
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.
