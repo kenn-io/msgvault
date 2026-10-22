@@ -102,11 +102,11 @@ func exerciseOutcomes(t *testing.T, handler http.Handler, reporter *posthog.Repo
 }
 
 func TestSyncFailureRegisteredSourceTypes(t *testing.T) {
-	t.Setenv(EnabledEnv, "1")
-	t.Setenv(posthog.GenericEnabledEnv, "")
+	enableTelemetryForTest(t)
 	stub := newWireStub(t)
 	reporter := newReporterOrDisabled(Options{DataDir: t.TempDir(), ConfigEnabled: true}, stub.server.URL, slog.Default())
 	defer func() { require.NoError(t, reporter.Close()) }()
+	assert.False(t, posthog.ProcessDisabled(), "the source registry check must not disable telemetry process-wide")
 	for _, sourceType := range []string{"gmail", "imap", "teams", "discord", "beeper", "slack", "carddav", circleback.SourceType, gcal.SourceType, granola.SourceType, matrix.SourceType, msmail.SourceType, muesli.SourceType, notionmeetings.SourceType, omi.SourceType, plaud.SourceType, synctechsms.SourceType, twenty.SourceType, twilio.SourceType, chatwoot.SourceType} {
 		properties, _ := reporter.SanitizeProperties(EventSyncFailed, map[string]any{"sync_source": sourceType})
 		assert.Equal(t, sourceType, properties["sync_source"], sourceType)

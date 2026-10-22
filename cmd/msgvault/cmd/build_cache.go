@@ -1036,7 +1036,7 @@ func buildCacheLockedAttempt(
 	fullRebuild, recheckStaleness bool,
 	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
-) (*buildResult, error) {
+) (result *buildResult, buildErr error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
 	// below (sqlite ?mode=ro opens, the DuckDB attach, filepath.Dir for the
 	// staging dir) needs a plain filesystem path.
@@ -1167,13 +1167,12 @@ func buildCacheLockedAttempt(
 	}
 	defer func() { _ = staging.cleanup() }()
 
-	db, err := duckdbutil.Open(
-		context.Background(),
-		duckdbutil.BuilderPolicyWithOverrides(
-			filepath.Join(staging.root, "duckdb-tmp"),
-			firstBuilderOverrides(builderOverrides),
-		),
+	policy := duckdbutil.BuilderPolicyWithOverrides(
+		filepath.Join(staging.root, "duckdb-tmp"),
+		firstBuilderOverrides(builderOverrides),
 	)
+	defer func() { buildErr = duckdbutil.BuilderError(buildErr, policy) }()
+	db, err := duckdbutil.Open(context.Background(), policy)
 	if err != nil {
 		return nil, err
 	}
