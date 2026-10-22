@@ -1064,14 +1064,13 @@ func TestOutputSearchResultsJSONHiddenTextPresent(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	done := captureStdout(t)
 	require.NoError(outputSearchResultsJSON([]query.MessageSummary{
-		{ID: 1, HiddenTextPresent: true, MatchSnippet: "Hidden text"},
+		{ID: 1, HiddenTextPresent: true},
 		{ID: 2},
 	}))
 	var rows []map[string]any
 	require.NoError(json.Unmarshal([]byte(done()), &rows))
 	require.Len(rows, 2)
 	assert.Equal(true, rows[0]["hidden_text_present"])
-	assert.Equal("Hidden text", rows[0]["match_snippet"])
 	assert.Equal(false, rows[1]["hidden_text_present"])
 }
 

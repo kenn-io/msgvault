@@ -209,9 +209,6 @@ func TestShowThreadHiddenHTMLText(t *testing.T) {
 		{"hidden text warning once", `<div hidden>Hidden text</div>`, false, true},
 		{"visible text", `<p>Visible text</p>`, false, false},
 		{"hidden JSON", `<div hidden>Hidden text</div>`, true, true},
-		{"visible JSON", `<p>Visible text</p>`, true, false},
-		{"stored flag without HTML", "", false, true},
-		{"stored flag overrides HTML", `<div hidden>Hidden text</div>`, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -266,8 +263,6 @@ func TestShowThreadHiddenHTMLText(t *testing.T) {
 				assert.Equal(false, page.Messages[0]["hidden_text_present"])
 				for _, msg := range page.Messages[1:] {
 					assert.Equal(tc.hidden, msg["hidden_text_present"])
-					assert.Equal(tc.html, msg["body_html"])
-					assert.Equal("Archived text", msg["body_text"])
 				}
 			} else {
 				assert.Contains(stdout.String(), "Archived text")

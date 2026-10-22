@@ -171,14 +171,14 @@ func TestRepairEncodingPreservesAndReportsInvalidMessageIDs(t *testing.T) {
 	assert.Empty(reembedNeededIDs, "Message-ID does not feed the message embedder")
 }
 
-// TestRepairMessageFields_ReturnsReembedNeededIDs guards the re-embedding
+// TestRepairMessageFields_ReembedNeededIDsAndHiddenTextFlag guards the re-embedding
 // hook: when any field that feeds the embedder (subject, body_text,
 // body_html) is repaired, the affected message id must appear in the
 // returned slice so the caller can mark it for re-embedding via
 // ResetEmbedGen (embed_gen -> NULL), which the scan-and-fill worker then
 // re-picks up. Snippet-only repairs must NOT appear because the embedder
-// doesn't read snippet.
-func TestRepairMessageFields_ReturnsReembedNeededIDs(t *testing.T) {
+// doesn't read snippet. Repaired HTML must also refresh the hidden-text flag.
+func TestRepairMessageFields_ReembedNeededIDsAndHiddenTextFlag(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "inserts invalid UTF-8 bytes into TEXT columns; SQLite stores them permissively, PG rejects with invalid_text_representation")

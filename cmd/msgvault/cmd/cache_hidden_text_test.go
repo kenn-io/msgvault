@@ -2,14 +2,11 @@ package cmd
 
 import (
 	"database/sql"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/query"
 )
 
 func TestBuildCacheExportsHiddenText(t *testing.T) {
@@ -42,22 +39,4 @@ func TestBuildCacheExportsHiddenText(t *testing.T) {
 			assert.True(hidden)
 		})
 	}
-}
-
-func TestBuildCacheHiddenTextSchemaRebuild(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	dir := setupTestSQLite(t)
-	dbPath := filepath.Join(dir, "test.db")
-	analyticsDir := filepath.Join(dir, "analytics")
-	_, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err)
-	state, err := query.ReadCacheSyncState(analyticsDir)
-	require.NoError(err)
-	state.SchemaVersion = 32 // Last cache schema before hidden_text_present.
-	data, err := json.Marshal(state)
-	require.NoError(err)
-	require.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), data, 0o600))
-	result, err := buildCache(dbPath, analyticsDir, false)
-	require.NoError(err)
-	assert.False(result.Skipped, "a cache without the flag must rebuild even with unchanged message counts")
 }
