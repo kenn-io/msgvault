@@ -43,19 +43,15 @@ account addresses. A question sent only to an old address you linked in the
 Directory waits on you, mail from your other mailbox opens nothing, and a
 question sent only to it waits on nobody.
 
-A conversation is eligible when it has a live message from the last 30 days.
-A bare acknowledgement or a reply that settles nothing counts toward that
-window; list mail, drafts, and calendar items don't. A conversation quiet for more
-than 30 days leaves the list, and `done` and `snooze` report it as not open.
-A conversation that has a snooze decision stays eligible at any age, including
-after the snooze expires, so a snoozed question still returns when its
-deadline passes.
+Quiet conversations stay eligible at any age. Acknowledgements and replies
+that settle nothing still count toward conversation activity; list mail,
+drafts, and calendar items don't. Snoozed questions return when their deadline
+passes.
 
-An old question in a recently active conversation keeps its original age. For
-example, Alex asks "Can you send the contract?" on Aug 20 and sends "Thanks!"
-on Oct 18. On Oct 20 the loop lists with Aug 20 as its start and 61 days as
-its age. If neither of you had written since Aug 20, the conversation would
-be outside the window and the loop would not list.
+An old question keeps its original age. For example, Alex asks "Can you send
+the contract?" on Aug 20 and sends "Thanks!" on Oct 18. On Oct 20 the loop
+lists with Aug 20 as its start and 61 days as its age. If neither of you had
+written since Aug 20, the loop still lists with the same start and age.
 Your message answers only the people it went to. If Alex asks you, you forward
 the thread to Sam, and Sam replies, Alex still waits on you.
 
@@ -149,7 +145,7 @@ question. Deleting a question removes only that question's decision.
 - Each request checks up to 1,000 uncached messages, starting with the eligible conversation whose latest activity is oldest. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
 - When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Refresh to continue checking.
 - A very large archive can still exceed the API's default 60-second request budget and return HTTP 500 (`internal_error`). Successful evidence writes remain available for the next request. A smaller `limit` may still scan the same history.
-- Only conversations active in the last 30 days, or with a snooze decision, are checked. Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
+- Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
 - The CLI and API have no action to undo done or end a snooze early.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something

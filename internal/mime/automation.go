@@ -6,6 +6,10 @@ import (
 	"github.com/jhillyerd/enmime/v2"
 )
 
+// AutomationEvidenceVersion changes when parsing or classifying automation
+// signals changes, so persisted loop evidence is recomputed with the new rules.
+const AutomationEvidenceVersion = 1
+
 // AutomationSignals records MIME evidence rather than deciding whether a
 // conversation deserves a reply. The parser owns this value type so archive
 // persistence can consume it without a mime-to-store dependency.

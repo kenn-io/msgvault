@@ -39,6 +39,11 @@ type Config struct {
 }
 
 var (
+	// reReplyPreamble matches "On <date>, <name> wrote:" followed by quoted lines.
+	reReplyPreamble = regexp.MustCompile(`(?m)^On [^\n]+wrote:\s*\n(?:>+[ \t]?.*\n?)+`)
+	// reQuoteLine matches standalone quoted lines.
+	reQuoteLine = regexp.MustCompile(`(?m)^>+[ \t]?.*\n?`)
+
 	// reSigDelim matches a signature delimiter "\n-- \n" (or "\n--\n") through
 	// end of string.
 	reSigDelim = regexp.MustCompile(`\n--\s*\n[\s\S]*\z`)
@@ -197,7 +202,8 @@ func Preprocess(subject, body string, maxChars int, cfg Config) (string, bool) {
 		s = stripTrackingParams(s)
 	}
 	if cfg.StripQuotes {
-		s = StripReplyQuotes(s)
+		s = reReplyPreamble.ReplaceAllString(s, "")
+		s = reQuoteLine.ReplaceAllString(s, "")
 	}
 	if cfg.StripSignatures {
 		s = reSigDelim.ReplaceAllString(s, "")

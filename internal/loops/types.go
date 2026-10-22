@@ -16,9 +16,6 @@ const (
 	MaxLimit       = 200
 	ReplyOwedAfter = 24 * time.Hour
 	AwaitingAfter  = 72 * time.Hour
-	// ActivityWindow is how recently a conversation must have live activity
-	// for List and actions to read it. Snoozed conversations stay eligible.
-	ActivityWindow = 30 * 24 * time.Hour
 )
 
 // Loop is one conversation turn that waits on a reply.

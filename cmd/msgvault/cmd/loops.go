@@ -65,7 +65,7 @@ func newLoopsListCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return writePersonAgendaJSON(cmd, result)
+				return writeJSONOutput(cmd, result)
 			}
 			return writeLoops(cmd.OutOrStdout(), result, opts.Limit, time.Now())
 		})

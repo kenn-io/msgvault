@@ -1152,7 +1152,7 @@ func TestNewProgressPrinter_DoesNotBypassThrottleAfterInitialTotal(t *testing.T)
 func TestKitMigrationReusesExistingGenerationForIndexAndSearch(t *testing.T) {
 	ctx := t.Context()
 	backend := openTestBackend(t)
-	const fingerprint = "legacy-model:4:p2-111111:c32768:e1"
+	const fingerprint = "legacy-model:4:p1-111111:c32768:e1"
 	cfg := vector.Config{Embeddings: vector.EmbeddingsConfig{Model: "legacy-model", Dimension: 4}}
 	cfg.ApplyDefaults()
 	require.Equal(t, fingerprint, cfg.GenerationFingerprint())

@@ -34,7 +34,12 @@ type Result struct {
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
 const MaxListEvidenceComputations = 1000
-const evidenceVersion = 3
+
+// loopEvidenceRuleVersion changes when ownText or classify changes.
+const loopEvidenceRuleVersion = 1
+
+// evidenceVersion combines the loop and MIME producers of persisted facts.
+const evidenceVersion = loopEvidenceRuleVersion<<16 | mime.AutomationEvidenceVersion
 
 // EvidenceIncompleteError means an action needs another request to finish reading evidence.
 type EvidenceIncompleteError struct{}
@@ -112,20 +117,13 @@ func classify(body string, signals mime.AutomationSignals, attachment, unreadabl
 	}
 }
 
-// recent limits q to conversations with live activity within ActivityWindow
-// of now. The Store keeps conversations with a snooze decision after it.
-func recent(q store.LoopQuery, now time.Time) store.LoopQuery {
-	q.Since = now.Add(-ActivityWindow)
-	return q
-}
-
 // find derives loops only from conversations whose detection completed. It
-// reads recently active conversations oldest activity first, so a request
-// that stops at MaxListEvidenceComputations has reached the oldest ones.
+// reads conversations oldest activity first, so a request that stops at
+// MaxListEvidenceComputations has reached the oldest ones.
 func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, found func(Loop) error) (int, error) {
 	reader := &storeReader{ctx: ctx, st: st, left: MaxListEvidenceComputations}
 	var unparsed int
-	for conv, err := range st.LoopConversationsContext(ctx, recent(q, now)) {
+	for conv, err := range st.LoopConversationsContext(ctx, q) {
 		if err != nil {
 			return 0, err
 		}

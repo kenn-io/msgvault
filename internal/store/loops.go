@@ -32,10 +32,8 @@ const (
 	loopPageMessages = 20
 )
 
-// LoopQuery selects the conversations a loop request reads. A zero Since
-// reads conversations of any age.
+// LoopQuery selects the conversations a loop request reads.
 type LoopQuery struct {
-	Since          time.Time
 	PersonID       int64
 	ConversationID int64
 }
@@ -68,11 +66,11 @@ type LoopMessage struct {
 	ListID         string
 	Subject        string
 	Snippet        string
-	// HasFileAttachment is true for any attachment that is not inline content.
+	// HasFileAttachment is true only when the archive confirms a non-inline file.
 	HasFileAttachment bool
-	// MayHaveFileAttachment means messages.has_attachments is true but the
-	// archive has no file-attachment rows. Detection checks the stored MIME
-	// lazily only when an otherwise empty or acknowledgement-only body needs it.
+	// MayHaveFileAttachment means messages.has_attachments is true but no
+	// attachment row confirms a file. Detection checks stored MIME lazily when
+	// an otherwise empty or acknowledgement-only body needs it.
 	MayHaveFileAttachment bool
 }
 
@@ -141,15 +139,6 @@ func (s *Store) loopTimeKey(expression string) string {
 		return expression
 	}
 	return sqliteutil.TimestampKeyFunction + "(" + expression + ")"
-}
-
-// loopTimeParam binds a bound instant using the same representation as
-// loopTimeKey on SQLite.
-func (s *Store) loopTimeParam(instant time.Time) any {
-	if s.IsPostgreSQL() {
-		return s.dialect.TimestampParam(instant)
-	}
-	return sqliteutil.TimestampKey(instant)
 }
 
 // LoopConversationsContext yields conversations oldest-activity first in bounded
@@ -224,10 +213,6 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 		WHERE c.conversation_type IN ('email_thread', 'direct_chat')
 			AND (m.list_id IS NULL OR m.list_id = '') AND ` + loopLiveMessageSQL("m", "src")
 	var args []any
-	if !q.Since.IsZero() {
-		query += ` AND (` + s.loopTimeKey("m.sent_at") + ` >= ? OR EXISTS (SELECT 1 FROM loop_decisions ld JOIN messages lm ON lm.id = ld.message_id WHERE lm.conversation_id = c.id AND ld.state = 'snoozed'))`
-		args = append(args, s.loopTimeParam(q.Since))
-	}
 	if q.ConversationID > 0 {
 		query += ` AND m.conversation_id = ?`
 		args = append(args, q.ConversationID)
@@ -578,7 +563,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
 		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
 			EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id
-				AND a.attachment_role IN ('standalone', 'unknown')),
+				AND a.attachment_role = 'standalone'),
 			COALESCE(m.has_attachments, FALSE), m.message_type
 		FROM messages m WHERE m.id IN (%s)`,
 		func(rows *loggedRows) error {
