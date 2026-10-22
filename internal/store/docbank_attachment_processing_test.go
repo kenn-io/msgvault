@@ -175,22 +175,24 @@ func TestDocbankAttachmentProcessingBackfillPreservesTerminalJobs(t *testing.T) 
 			assert.Equal("job-a", jobID)
 		})
 	}
-	t.Run("stale_authority", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		f := storetest.New(t)
-		ctx := t.Context()
-		require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "a"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
-		require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
-		d := store.DocbankAttachmentProcessing{ContentHash: "a", VersionID: "a", Fingerprint: "fp", Outcome: "stale_authority", JobID: "job-a"}
-		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", d, time.Time{}))
-		require.NoError(f.Store.RetryDocbankAttachments(ctx, "dest"))
-		due, err := f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
-		require.NoError(err)
-		counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
-		require.NoError(err)
-		assert.Len(due, 1)
-		assert.Equal(int64(1), counts.Waiting)
-		assert.Empty(counts.Outcomes)
-	})
+	for _, outcome := range []string{"consent", "stale_authority"} {
+		t.Run(outcome, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := storetest.New(t)
+			ctx := t.Context()
+			require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "a"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "a"}, ""))
+			require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
+			d := store.DocbankAttachmentProcessing{ContentHash: "a", VersionID: "a", Fingerprint: "fp", Outcome: outcome, JobID: "job-a"}
+			require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", d, time.Time{}))
+			require.NoError(f.Store.RetryDocbankAttachments(ctx, "dest"))
+			due, err := f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+			require.NoError(err)
+			counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
+			require.NoError(err)
+			assert.Len(due, 1)
+			assert.Equal(int64(1), counts.Waiting)
+			assert.Empty(counts.Outcomes)
+		})
+	}
 }

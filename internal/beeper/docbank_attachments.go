@@ -599,24 +599,20 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	}
 }
 
-// askProcessing polls a requested job, or plans and starts one when the file has none.
-// Docbank reopens a job that failed for consent on a new build, so that job is rebuilt:
-// renewed consent resumes the file, and revoked consent blocks the pass as a 428 does.
-func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (job docbankmedia.JobStatus, jobID string, err error) {
+// askProcessing polls a requested job, or plans and starts one.
+func (w *AttachmentMirror) askProcessing(ctx context.Context, d store.DocbankAttachmentProcessing) (docbankmedia.JobStatus, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
 	defer cancel()
-	jobID = d.JobID
 	if d.Outcome == "requested" {
-		job, err = w.client.JobStatus(ctx, jobID)
-		if err != nil || processingJobOutcome(job) != "consent" {
-			return job, jobID, err
-		}
+		job, err := w.client.JobStatus(ctx, d.JobID)
+		return job, d.JobID, err
 	}
 	selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
 	plan, err := w.client.PlanProcessing(ctx, selector)
-	if err == nil {
-		jobID, err = w.client.StartProcessing(ctx, selector, plan.Fingerprint)
+	if err != nil {
+		return docbankmedia.JobStatus{}, "", err
 	}
+	jobID, err := w.client.StartProcessing(ctx, selector, plan.Fingerprint)
 	return docbankmedia.JobStatus{State: "queued"}, jobID, err
 }
 

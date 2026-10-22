@@ -242,7 +242,7 @@ GROUP BY is_share;
 
 Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank-unreleased).
 
-`msgvault docbank attachments backfill` restarts discovery, retries failed uploads, and retries `stale_authority` processing outcomes after you restore authority in Docbank. A job that loses consent blocks processing until you restore consent in Docbank, then the mirror rebuilds it.
+`msgvault docbank attachments backfill` restarts discovery, retries failed uploads, and retries `consent` and `stale_authority` processing outcomes after you restore consent or authority in Docbank.
 
 ## Send audio to Docbank
 
