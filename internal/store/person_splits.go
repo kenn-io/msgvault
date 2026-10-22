@@ -85,6 +85,9 @@ func (s *Store) splitPersonMergeOnce(
 		if s.personOperationBeforeIdentityLockHook != nil {
 			s.personOperationBeforeIdentityLockHook()
 		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -2014,8 +2017,8 @@ func (s *Store) rebasePriorPersonMergeRowsAfterSplitTx(
 // post-merge state was replaced after the merge, so an exact split inserts the
 // snapshot row for the new person instead of moving the live grant back.
 var personSplitPresenceRowColumns = map[string][]string{
-	"person_tracking":          {"tracked_at"},
-	"person_brief_enrollments": {"enabled_at", "actor"},
+	"person_tracking":          {"tracked_at", "provenance", "actor"},
+	"person_brief_enrollments": {"enabled_at", "actor", "provenance"},
 }
 
 func (s *Store) personSplitPresenceRowReplacedTx(

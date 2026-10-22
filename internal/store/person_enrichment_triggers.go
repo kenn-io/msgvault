@@ -24,7 +24,7 @@ type EnrichmentTriggerInput struct {
 }
 
 // EnqueuePersonEnrichmentContext publishes work only while the person remains
-// tracked and the exact provider policy still has active consent.
+// eligible for scheduled enrichment and the exact provider policy has consent.
 func (s *Store) EnqueuePersonEnrichmentContext(
 	ctx context.Context, input EnrichmentTriggerInput,
 ) error {
@@ -39,12 +39,16 @@ func (s *Store) enqueuePersonEnrichmentTx(
 	if err := validateEnrichmentTriggerInput(input); err != nil {
 		return err
 	}
+	// Keep authorization and publication serialized with opt-out cancellation.
+	if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+		return err
+	}
 	var authorized bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM person_tracking pt
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` c ON c.fingerprint = ?
-			WHERE pt.person_id = ?
+			WHERE pt.person_id = ? AND `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
 		)`, input.ProfileFingerprint, input.PersonID).Scan(&authorized); err != nil {
 		return fmt.Errorf("authorize person enrichment trigger: %w", err)
 	}
@@ -107,7 +111,7 @@ func (s *Store) publishPersonEnrichmentTx(
 		SELECT ?, c.fingerprint, ?, ?, ?
 		FROM `+activeConsentsSQL(ConsentPersonEnrichment)+` c
 		JOIN person_tracking pt ON pt.person_id = ?
-		WHERE 1 = 1`+personEnrichmentWorkConflictClause,
+		WHERE `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+personEnrichmentWorkConflictClause,
 		personID, mask, strings.TrimSpace(generation), dueAt.UTC(), personID)
 	if err != nil {
 		return fmt.Errorf("publish authorized person enrichment work: %w", err)
@@ -222,6 +226,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  ON w.person_id = c.person_id
 			 AND w.profile_fingerprint = g.provider_policy_fingerprint
 			WHERE c.origin = 'enrichment'
+			  AND `+personEnrichmentScheduledAuthoritySQL("c.person_id")+`
 			  AND g.provider_policy_fingerprint IN (`+profilePlaceholders+`)
 			  AND c.valid_until IS NOT NULL
 			  AND c.valid_until <= ?
@@ -292,6 +297,7 @@ func (s *Store) EnqueueDuePersonEnrichmentContext(
 			  ON w.person_id = pt.person_id
 			 AND w.profile_fingerprint = c.fingerprint
 			WHERE c.fingerprint IN (`+profilePlaceholders+`)
+			  AND `+personEnrichmentScheduledAuthoritySQL("pt.person_id")+`
 			  AND w.person_id IS NULL
 			  AND NOT EXISTS (
 				SELECT 1 FROM person_enrichment_attempts attempted
