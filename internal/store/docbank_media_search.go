@@ -73,12 +73,11 @@ func documentSearchRows(destination string, scope *personscope.Scope) (string, [
 	return query, args
 }
 
-// DocumentSearchVersions returns up to 4096 delivered versions, newest first.
+// DocumentSearchVersions returns up to 4096 delivered versions.
 // A larger scope returns no versions and reports that the scope limit was exceeded.
 func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
 	query, args := documentSearchRows(destination, scope)
-	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id
- ORDER BY MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) DESC NULLS LAST, d.version_id LIMIT 4097`
+	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id LIMIT 4097`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, false, fmt.Errorf("list document search versions: %w", err)

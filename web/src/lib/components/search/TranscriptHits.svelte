@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { admitsMediaQuery, refusedMediaSearchNotice } from '../../search/media-query';
+  import { admitsMediaQuery, attachmentScopeNotice, refusedMediaSearchNotice } from '../../search/media-query';
   import { Button, Chip } from '@kenn-io/kit-ui';
   import FileText from '@lucide/svelte/icons/file-text';
   import FileVolume from '@lucide/svelte/icons/file-volume';
@@ -25,6 +25,12 @@
   let retryable = $state(false);
   let retry = $state(0);
   let previousRetry = 0;
+
+  function openHit(event: MouseEvent, hit: MediaSearchResult | MediaAttachmentResult): void {
+    if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onOpen(hit);
+  }
 
   $effect(() => {
     const missingID = missingMessageID;
@@ -165,11 +171,7 @@
           <li>
             <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
               aria-labelledby={`${id}-title-${index}`} aria-describedby={`${id}-meta-${index} ${id}-excerpt-${index}`}
-              onclick={(event) => {
-                if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault();
-                onOpen(hit);
-              }}>
+              onclick={(event) => openHit(event, hit)}>
               <span class="recording-icon" aria-hidden="true"><FileVolume size={16} /></span>
               <strong id={`${id}-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
               {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
@@ -197,17 +199,13 @@
   {#if result?.attachments}
     <section class="attachments" aria-label="Attachments">
       <h2>Attachments{#if !result.attachments.error || result.attachments.results.length > 0}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
-      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? refusedMediaSearchNotice(result.attachments.error.error, result.attachments.error.message, query, participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
+      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.error === 'media_search_scope_limit' ? attachmentScopeNotice(participantID) : result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
           <li>
             <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id && !result.results.some(recording => recording.message_id === hit.message_id) ? 'true' : undefined}
               aria-labelledby={`${id}-attachment-title-${index}`} aria-describedby={`${id}-attachment-meta-${index} ${id}-attachment-excerpt-${index}`}
-              onclick={(event) => {
-                if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                event.preventDefault();
-                onOpen(hit);
-              }}>
+              onclick={(event) => openHit(event, hit)}>
               <span class="recording-icon" aria-hidden="true"><FileText size={16} /></span>
               <strong id={`${id}-attachment-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
               {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}

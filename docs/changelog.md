@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- Media search in Everything, the CLI, HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. It searches the newest 4096 mirrored versions in the selected Person scope and reports when that limit leaves older files unsearched.
+- Media search in Everything, the CLI, HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 delivered attachment versions returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).

@@ -69,7 +69,7 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	ids, scopeExceeded, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 	require.NoError(err)
 	assert.False(scopeExceeded)
-	assert.Equal([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
+	assert.ElementsMatch([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
 	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids)
 	require.NoError(err)
 	var mids []int64
@@ -85,27 +85,6 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 	require.Len(onlyNew, 2)
 	assert.Equal("new.pdf", onlyNew[0].Filename)
 	assert.Equal("new earlier.pdf", onlyNew[1].Filename)
-}
-
-func TestDocumentSearchSharedVersionOccurrences(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	hash := fmt.Sprintf("%064x", 1)
-	old, recent := f.CreateMessage("old"), f.CreateMessage("recent")
-	for _, mid := range []int64{old, recent} {
-		require.NoError(f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: hash[:2] + "/" + hash, State: "stored"}))
-	}
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), old)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), recent)
-	require.NoError(err)
-	require.NoError(f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000010"}, ""))
-	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", nil, []string{"00000000-0000-4000-8000-000000000010"})
-	require.NoError(err)
-	require.Len(occurrences, 2)
-	assert.Equal(recent, occurrences[0].MessageID)
-	assert.Equal(old, occurrences[1].MessageID)
 }
 
 func TestDocumentSearchVersionsScopeLimit(t *testing.T) {

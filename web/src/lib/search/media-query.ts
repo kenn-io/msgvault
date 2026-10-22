@@ -4,6 +4,12 @@ export function admitsMediaQuery(query: string): boolean {
 
 const UNREADABLE_QUERY = 'Recording search cannot read this query. Check archive access or change the query.';
 
+export function attachmentScopeNotice(participantID: number | undefined): string {
+  return participantID === undefined
+    ? 'Attachment search supports at most 4096 mirrored versions. Add a Person filter to search attachments.'
+    : 'This Person filter exceeds the attachment-search limit of 4096 mirrored versions. Choose a Person filter with fewer attachments.';
+}
+
 export function refusedMediaSearchNotice(
   code: string | undefined, message: string | undefined, query: string, participantID: number | undefined,
 ): string {
