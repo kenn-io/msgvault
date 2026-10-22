@@ -22,7 +22,7 @@ const (
 	schemaTypeArray    = "array"
 	schema202012       = "https://json-schema.org/draft/2020-12/schema"
 	maxJSONSafeInteger = float64(9007199254740991)
-	hiddenTextFlagDoc  = "hidden_text_present is a best-effort flag. True means the stored HTML likely hides readable text. False does not guarantee that text is visible. "
+	hiddenTextFlagDoc  = "hidden_text_present is a best-effort flag. True means the stored HTML likely hides readable text, which includes newsletter preheaders, so it marks hidden text rather than malicious intent. False does not guarantee that text is visible. "
 )
 
 type toolSecurityClass uint8
