@@ -102,10 +102,7 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	if errors.Is(err, errBeeperMediaGateBusy) {
 		return false, endMediaPass(processErr)
 	}
-	if processErr != nil {
-		return processMore, errors.Join(endMediaPass(processErr), err)
-	}
-	return discoverMore || replayMore || processMore || uploadMore, err
+	return discoverMore || replayMore || processMore || uploadMore, errors.Join(endMediaPass(processErr), err)
 }
 
 // gated runs one Store step under the operation gate so backup freeze sees no writer.
@@ -158,13 +155,17 @@ func (w *AttachmentMirror) drain(ctx context.Context, deadline time.Time) (bool,
 
 // attachmentUploader holds one pass of uploads and its destination failure streak.
 type attachmentUploader struct {
+	attachmentRetryStreak
+
 	mirror  *AttachmentMirror
 	packed  *attachmentstore.Store
 	parent  int64
 	handled map[string]bool
-	// streak is the latest destination failure; a second one in a row ends the pass.
-	streak error
-	// reported keeps earlier destination failures visible after a later file succeeds.
+}
+
+// attachmentRetryStreak keeps failures visible and stops after two consecutive retries.
+type attachmentRetryStreak struct {
+	streak   error
 	reported error
 }
 
@@ -242,16 +243,20 @@ func (u *attachmentUploader) retryLater(ctx context.Context, d store.DocbankAtta
 		u.endStreak()
 		return err
 	}
+	return errors.Join(err, u.retry(errors.Join(uploadErr, err)))
+}
+
+func (u *attachmentRetryStreak) retry(err error) error {
 	if u.streak != nil {
-		joined := errors.Join(u.streak, uploadErr, err)
+		joined := errors.Join(u.streak, err)
 		u.streak = nil
 		return joined
 	}
-	u.streak = errors.Join(uploadErr, err)
-	return err
+	u.streak = err
+	return nil
 }
 
-func (u *attachmentUploader) endStreak() {
+func (u *attachmentRetryStreak) endStreak() {
 	u.reported = errors.Join(u.reported, u.streak)
 	u.streak = nil
 }
@@ -533,25 +538,26 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 	}); err != nil {
 		return false, err
 	}
-	var reported, streak error
+	var failures attachmentRetryStreak
+	var cursor store.DocbankAttachmentProcessingCursor
 	for {
 		var files []store.DocbankAttachmentProcessing
 		err := w.gated(ctx, func() (err error) {
-			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, 20)
+			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, &cursor, 20)
 			return err
 		})
 		if err != nil {
-			return false, errors.Join(reported, streak, err)
+			return false, errors.Join(failures.reported, failures.streak, err)
 		}
 		if len(files) == 0 {
-			return false, errors.Join(reported, streak)
+			return false, errors.Join(failures.reported, failures.streak)
 		}
 		for _, d := range files {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
 			if !time.Now().Before(deadline) {
-				return true, errors.Join(reported, streak)
+				return true, errors.Join(failures.reported, failures.streak)
 			}
 			actionCtx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
 			var job docbankmedia.JobStatus
@@ -573,9 +579,12 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			}
 			answer := processingAnswer(job, err)
 			if answer.blocked {
-				return false, errors.Join(reported, streak, w.processingBlocked(err))
+				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
-			d.Fingerprint, d.Outcome, d.JobID = profile.Fingerprint, answer.outcome, jobID
+			if !answer.retry {
+				d.Outcome = answer.outcome
+			}
+			d.Fingerprint, d.JobID = profile.Fingerprint, jobID
 			var next time.Time
 			if answer.delay != 0 {
 				next = time.Now().UTC().Add(answer.delay)
@@ -583,15 +592,14 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if saveErr := w.gated(ctx, func() error {
 				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
 			}); saveErr != nil {
-				return false, errors.Join(reported, streak, err, saveErr)
+				return false, errors.Join(failures.reported, failures.streak, err, saveErr)
 			}
 			if answer.retry {
-				if streak != nil {
-					return false, errors.Join(reported, streak, err)
+				if stopErr := failures.retry(err); stopErr != nil {
+					return false, errors.Join(failures.reported, stopErr)
 				}
-				streak = err
 			} else {
-				reported, streak = errors.Join(reported, streak), nil
+				failures.endStreak()
 			}
 		}
 	}

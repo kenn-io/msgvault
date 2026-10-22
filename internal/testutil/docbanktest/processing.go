@@ -16,6 +16,7 @@ type ProcessingHandler struct {
 	Profiles        int
 	NodeIDs         map[string]int64
 	JobFaults       map[string]int
+	PollFaults      map[string]int
 	Reasons         map[string]string
 	Rendition       bool
 	T               *testing.T
@@ -31,7 +32,7 @@ type ProcessingHandler struct {
 
 func NewProcessingHandler(t *testing.T) *ProcessingHandler {
 	t.Helper()
-	return &ProcessingHandler{NodeIDs: map[string]int64{}, JobFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: "profile-one", Rendition: true, PlanFingerprint: "plan-one", Faults: map[string]int{}, States: map[string][3]string{}}
+	return &ProcessingHandler{NodeIDs: map[string]int64{}, JobFaults: map[string]int{}, PollFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: "profile-one", Rendition: true, PlanFingerprint: "plan-one", Faults: map[string]int{}, States: map[string][3]string{}}
 }
 
 func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,10 +98,14 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/processing/jobs/"); ok {
 			h.Polls = append(h.Polls, id)
+			if status := h.PollFaults[id]; status != 0 {
+				w.WriteHeader(status)
+				return
+			}
 			state, ok := h.States[id]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
-				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": "processing_job_not_found"}))
+				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": "not_found"}))
 				return
 			}
 			WriteJobStatus(w, id, state[0], state[1], state[2])

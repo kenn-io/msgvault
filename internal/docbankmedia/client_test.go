@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/testutil/docbanktest"
 )
 
 const testKey = "synthetic-api-key"
@@ -155,8 +156,7 @@ func TestClientMediaWire(t *testing.T) {
 			writeJSON(w, docbankmedia.Receipt{VaultUID: "vault", SourceID: "source", OperationID: retry.OperationID,
 				JobID: strings.Repeat("d", 64), OperationState: "queued", CoverageState: "pending"})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/processing/jobs/"+strings.Repeat("d", 64):
-			writeJSON(w, map[string]any{"job_id": strings.Repeat("d", 64), "state": "completed", "phase": "done",
-				"embedding_job_ids": []string{}, "completed_bindings": 1})
+			docbanktest.WriteJobStatus(w, strings.Repeat("d", 64), "completed", "done", "")
 		default:
 			http.NotFound(w, r)
 		}
