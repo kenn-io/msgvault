@@ -73,23 +73,41 @@ func documentSearchRows(destination string, scope *personscope.Scope) (string, [
 	return query, args
 }
 
-// DocumentSearchVersions pages delivered versions by their newest visible message.
-func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope, offset int) ([]string, error) {
+// DocumentSearchVersion is a delivered version and its newest visible message date.
+// Together they form the cursor for newest-first pagination, with undated versions last.
+type DocumentSearchVersion struct {
+	VersionID  string
+	OccurredAt *time.Time
+}
+
+// DocumentSearchVersions pages delivered versions after the previous ordering key.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope, after *DocumentSearchVersion) ([]DocumentSearchVersion, error) {
 	query, args := documentSearchRows(destination, scope)
-	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> ''
- GROUP BY d.version_id ORDER BY MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) DESC NULLS LAST, d.version_id LIMIT 4096 OFFSET ?`
-	args = append(args, offset)
+	const newest = "MAX(COALESCE(m.sent_at,m.received_at,m.internal_date))"
+	query = `SELECT d.version_id, ` + newest + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id`
+	if after != nil {
+		if after.OccurredAt == nil {
+			query += ` HAVING ` + newest + ` IS NULL AND d.version_id > ?`
+			args = append(args, after.VersionID)
+		} else {
+			query += ` HAVING (` + newest + ` < ? OR ` + newest + ` IS NULL OR (` + newest + ` = ? AND d.version_id > ?))`
+			args = append(args, *after.OccurredAt, *after.OccurredAt, after.VersionID)
+		}
+	}
+	query += ` ORDER BY ` + newest + ` DESC NULLS LAST, d.version_id LIMIT 4096`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return nil, fmt.Errorf("list document search versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var versions []string
+	var versions []DocumentSearchVersion
 	for rows.Next() {
-		var version string
-		if err := rows.Scan(&version); err != nil {
+		var version DocumentSearchVersion
+		var date nullableTimestamp
+		if err := rows.Scan(&version.VersionID, &date); err != nil {
 			return nil, fmt.Errorf("scan document search version: %w", err)
 		}
+		version.OccurredAt = optionalTimestamp(date)
 		versions = append(versions, version)
 	}
 	return versions, rows.Err()
@@ -103,7 +121,7 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 		chunk := versionIDs[start:min(start+docbankReceiptChunk, len(versionIDs))]
 		query, args := documentSearchRows(destination, scope)
 		query = `SELECT d.version_id, a.id, m.id, cv.id, COALESCE(a.filename,''), ` + containingTitleMCVSQL + `, COALESCE(m.sent_at,m.received_at,m.internal_date)` + query + `
- AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(chunk)-1) + `) ORDER BY a.id`
+ AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(chunk)-1) + `) ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id`
 		for _, id := range chunk {
 			args = append(args, id)
 		}

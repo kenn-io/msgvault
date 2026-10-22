@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// MediaDocumentResult links extracted text to a visible message attachment.
-type MediaDocumentResult struct {
+// MediaAttachmentResult links extracted text to a visible message attachment.
+type MediaAttachmentResult struct {
 	MessageID       int64      `json:"message_id"`
 	ConversationID  int64      `json:"conversation_id"`
 	AttachmentID    int64      `json:"attachment_id"`
@@ -20,31 +20,35 @@ type MediaDocumentResult struct {
 	Excerpt         string     `json:"excerpt"`
 }
 
-type MediaDocumentSearch struct {
-	Results   []MediaDocumentResult `json:"results"`
-	Truncated bool                  `json:"truncated"`
-	Error     *ErrorResponse        `json:"error,omitempty"`
+type MediaAttachmentSearch struct {
+	Results   []MediaAttachmentResult `json:"results"`
+	Truncated bool                    `json:"truncated"`
+	Error     *ErrorResponse          `json:"error,omitempty"`
 }
 
-// SearchDocuments searches delivered attachment versions newest chunk first.
+// SearchAttachments searches delivered attachment versions newest chunk first.
 // Each chunk keeps Docbank's ranking and maps only to currently visible messages.
-func (reader *DocbankAttachmentReader) SearchDocuments(ctx context.Context, query string, limit int, scope *personscope.Scope) MediaDocumentSearch {
-	response := MediaDocumentSearch{Results: []MediaDocumentResult{}}
+func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
+	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
 	defer cancel()
-	offset := 0
-	fail := func(err error) MediaDocumentSearch {
+	var after *store.DocumentSearchVersion
+	fail := func(err error) (MediaAttachmentSearch, error) {
 		response.Error = &ErrorResponse{Error: docbankmedia.ErrorCode(err), Message: "Attachment search is unavailable."}
-		response.Truncated = response.Truncated || offset > 0 || len(response.Results) > 0
-		return response
+		response.Truncated = response.Truncated || after != nil || len(response.Results) > 0
+		return response, err
 	}
-	for ; ; offset += docbankmedia.MaxSearchVersions {
-		versions, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, offset)
+	for {
+		versions, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, after)
 		if err != nil {
 			return fail(err)
 		}
 		if len(versions) == 0 {
-			return response
+			return response, nil
+		}
+		versionIDs := make([]string, 0, len(versions))
+		for _, version := range versions {
+			versionIDs = append(versionIDs, version.VersionID)
 		}
 		vault, err := reader.Client.VaultUID(remoteCtx)
 		if err != nil {
@@ -52,7 +56,7 @@ func (reader *DocbankAttachmentReader) SearchDocuments(ctx context.Context, quer
 		}
 		report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
 			Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
-			Limit: limit - len(response.Results), Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versions},
+			Limit: limit - len(response.Results), Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versionIDs},
 		})
 		if err != nil {
 			return fail(err)
@@ -60,6 +64,10 @@ func (reader *DocbankAttachmentReader) SearchDocuments(ctx context.Context, quer
 		ids := make([]string, 0, len(report.Results))
 		for _, hit := range report.Results {
 			ids = append(ids, hit.ContentVersionID)
+		}
+		scope, err = resolve()
+		if err != nil {
+			return response, &mediaSearchScopeError{err}
 		}
 		occurrences, err := reader.Store.DocumentSearchOccurrences(remoteCtx, reader.Destination, scope, ids)
 		if err != nil {
@@ -74,23 +82,24 @@ func (reader *DocbankAttachmentReader) SearchDocuments(ctx context.Context, quer
 			for _, o := range byVersion[hit.ContentVersionID] {
 				if len(response.Results) == limit {
 					response.Truncated = true
-					return response
+					return response, nil
 				}
-				response.Results = append(response.Results, MediaDocumentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt, Excerpt: hit.Excerpt})
+				response.Results = append(response.Results, MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt, Excerpt: hit.Excerpt})
 			}
 		}
+		after = &versions[len(versions)-1]
 		if len(response.Results) == limit {
 			if len(versions) == docbankmedia.MaxSearchVersions {
-				next, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, offset+len(versions))
+				next, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, after)
 				if err != nil {
 					return fail(err)
 				}
 				response.Truncated = response.Truncated || len(next) > 0
 			}
-			return response
+			return response, nil
 		}
 		if len(versions) < docbankmedia.MaxSearchVersions {
-			return response
+			return response, nil
 		}
 	}
 }

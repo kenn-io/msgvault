@@ -39,7 +39,7 @@ func (s *Server) handleMediaSearchStatus(w http.ResponseWriter, r *http.Request)
 }
 
 type MediaSearchResponse struct {
-	Documents              *MediaDocumentSearch        `json:"attachments,omitempty"`
+	Attachments            *MediaAttachmentSearch      `json:"attachments,omitempty"`
 	RecordingsError        *ErrorResponse              `json:"recordings_error,omitempty"`
 	Coverage               docbankmedia.SearchCoverage `json:"coverage"`
 	PendingOccurrences     int                         `json:"pending_occurrences"`
@@ -151,17 +151,21 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.docbankAttachments != nil {
-		documents := s.docbankAttachments.SearchDocuments(r.Context(), q, limit, scope)
-		response.Documents = &documents
-		if documents.Error != nil {
-			s.logger.Warn("search mirrored attachments", "code", documents.Error.Error)
+		attachments, attachmentErr := s.docbankAttachments.SearchAttachments(r.Context(), q, limit, scope, resolve)
+		if scopeErr, ok := errors.AsType[*mediaSearchScopeError](attachmentErr); ok {
+			s.writePersonScopeError(w, reference, scopeErr.err, "media")
+			return
+		}
+		response.Attachments = &attachments
+		if attachments.Error != nil {
+			s.logger.Warn("search mirrored attachments", "code", attachments.Error.Error)
 		}
 	}
 	if s.writeIfContextError(w, r.Context().Err()) {
 		return
 	}
 	if err != nil {
-		if response.Documents == nil || response.Documents.Error != nil {
+		if response.Attachments == nil || (response.Attachments.Error != nil && len(response.Attachments.Results) == 0) {
 			if s.writeIfContextError(w, err) {
 				return
 			}

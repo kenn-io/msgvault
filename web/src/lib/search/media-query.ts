@@ -8,6 +8,8 @@ export function refusedMediaSearchNotice(
   code: string | undefined, message: string | undefined, query: string, participantID: number | undefined,
 ): string {
   switch (code) {
+    case 'media_search_unavailable':
+      return 'Recording search unavailable.';
     case 'media_search_scope_limit':
       return participantID === undefined
         ? 'Add a Person filter to search recordings.'

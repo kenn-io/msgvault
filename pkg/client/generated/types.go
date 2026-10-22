@@ -7239,7 +7239,7 @@ type MatchSummary struct {
 	StrongestExcerpt  *string  `json:"strongest_excerpt,omitzero"`
 }
 
-type MediaDocumentResult struct {
+type MediaAttachmentResult struct {
 	AttachmentID    int64      `json:"attachment_id"`
 	ContainingTitle string     `json:"containing_title" validate:"required"`
 	ConversationID  int64      `json:"conversation_id"`
@@ -7249,17 +7249,17 @@ type MediaDocumentResult struct {
 	OccurredAt      *time.Time `json:"occurred_at,omitempty"`
 }
 
-func (m MediaDocumentResult) Validate() error {
+func (m MediaAttachmentResult) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
-type MediaDocumentSearch struct {
-	ErrorData *ErrorResponse        `json:"error,omitempty"`
-	Results   []MediaDocumentResult `json:"results" validate:"required"`
-	Truncated bool                  `json:"truncated"`
+type MediaAttachmentSearch struct {
+	ErrorData *ErrorResponse          `json:"error,omitempty"`
+	Results   []MediaAttachmentResult `json:"results" validate:"required"`
+	Truncated bool                    `json:"truncated"`
 }
 
-func (m MediaDocumentSearch) Validate() error {
+func (m MediaAttachmentSearch) Validate() error {
 	var errors runtime.ValidationErrors
 	if m.ErrorData != nil {
 		if v, ok := any(m.ErrorData).(runtime.Validator); ok {
@@ -7285,7 +7285,7 @@ func (m MediaDocumentSearch) Validate() error {
 }
 
 type MediaSearchResponse struct {
-	Attachments *MediaDocumentSearch `json:"attachments,omitempty"`
+	Attachments *MediaAttachmentSearch `json:"attachments,omitempty"`
 
 	// AttributionUnavailable Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
 	AttributionUnavailable int64          `json:"attribution_unavailable"`

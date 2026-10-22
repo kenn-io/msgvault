@@ -299,8 +299,8 @@ func TestMediaSearchOversizedPopulation(t *testing.T) {
 	require.Equal(http.StatusOK, status, raw)
 	require.NotNil(response.RecordingsError)
 	assert.Equal("media_search_scope_limit", response.RecordingsError.Error)
-	require.Len(response.Documents.Results, 2)
-	assert.Equal(first, response.Documents.Results[0].MessageID)
+	require.Len(response.Attachments.Results, 2)
+	assert.Equal(first, response.Attachments.Results[0].MessageID)
 }
 
 func TestMediaSearchParticipantScope(t *testing.T) {
@@ -904,7 +904,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "hidden during search", "attachment failure", "recording failure", "both fail", "person filter", "nil reader"} {
+	for _, scenario := range []string{"shared", "hidden during search", "attachment failure", "recording failure", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -927,6 +927,18 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.remoteStatus, f.documentStatus = 503, 503
 			case "nil reader":
 				server.docbankAttachments = nil
+			case "unlinked during search":
+				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
+				alias := f.f.EnsureParticipant("alias@example.com", "Alias", "example.com")
+				_, err := f.f.Store.LinkParticipants(participant, alias)
+				require.NoError(err)
+				_, err = f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), alias, first, second)
+				require.NoError(err)
+				query += "&participant_id=" + strconv.FormatInt(participant, 10)
+				f.duringDocumentSearch = func() {
+					_, err := f.f.Store.UnlinkParticipants(participant, alias)
+					require.NoError(err)
+				}
 			case "person filter":
 				participant := f.f.EnsureParticipant("reader@example.com", "Reader", "example.com")
 				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), participant, first)
@@ -943,12 +955,12 @@ func TestMediaSearchDocuments(t *testing.T) {
 				assert.NotContains(raw, `"attachments"`)
 				return
 			}
-			require.NotNil(response.Documents)
+			require.NotNil(response.Attachments)
 			switch scenario {
 			case "recording failure":
 				require.NotNil(response.RecordingsError)
 				assert.Empty(response.Results)
-			case "person filter":
+			case "person filter", "unlinked during search":
 				assert.Empty(response.Results)
 			default:
 				require.Len(response.Results, 1)
@@ -956,30 +968,30 @@ func TestMediaSearchDocuments(t *testing.T) {
 				assert.Equal("generated", response.Results[0].Origin)
 			}
 			if scenario == "attachment failure" {
-				require.NotNil(response.Documents.Error)
-				assert.Empty(response.Documents.Results)
+				require.NotNil(response.Attachments.Error)
+				assert.Empty(response.Attachments.Results)
 				return
 			}
 			want := 2
-			if scenario == "hidden during search" {
+			if scenario == "hidden during search" || scenario == "unlinked during search" {
 				want = 0
 			}
 			if scenario == "person filter" {
 				want = 1
 			}
-			require.Len(response.Documents.Results, want)
-			for _, hit := range response.Documents.Results {
+			require.Len(response.Attachments.Results, want)
+			for _, hit := range response.Attachments.Results {
 				assert.Equal("quartz in the PDF", hit.Excerpt)
 			}
 			if scenario == "person filter" {
-				assert.Equal(first, response.Documents.Results[0].MessageID)
+				assert.Equal(first, response.Attachments.Results[0].MessageID)
 			}
 		})
 	}
 }
 
 func TestMediaSearchDocumentChunks(t *testing.T) {
-	for _, scenario := range []string{"old match", "limit", "later failure"} {
+	for _, scenario := range []string{"old match", "limit", "later failure", "both fail later", "hidden first page"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -987,12 +999,21 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 			server := f.server(false)
 			server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
 			mid := f.message(t, "documents")
+			firstPageMessage := f.message(t, "first-page")
+			if scenario == "both fail later" {
+				f.match(t, "audio")
+				f.remoteStatus = 503
+			}
 			tx, err := f.f.Store.DB().Begin()
 			require.NoError(err)
 			defer func() { _ = tx.Rollback() }()
 			for i := range docbankmedia.MaxSearchVersions + 1 {
 				hash := fmt.Sprintf("%064x", i)
-				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), mid, hash, hash[:2]+"/"+hash)
+				messageID := mid
+				if i == 0 {
+					messageID = firstPageMessage
+				}
+				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), messageID, hash, hash[:2]+"/"+hash)
 				require.NoError(err)
 				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("version-%04d", i))
 				require.NoError(err)
@@ -1000,12 +1021,16 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 			require.NoError(tx.Commit())
 			f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{}}
 			f.duringDocumentSearch = func() {
-				if scenario == "later failure" && len(f.documentRequests) == 2 {
+				if (scenario == "later failure" || scenario == "both fail later") && len(f.documentRequests) == 2 {
 					f.documentStatus = 503
 					return
 				}
-				if scenario != "old match" || len(f.documentRequests) == 2 {
-					version := f.documentRequests[len(f.documentRequests)-1].Fence.ContentVersionIDs[0]
+				if scenario == "hidden first page" && len(f.documentRequests) == 1 {
+					_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), time.Now().UTC(), firstPageMessage)
+					require.NoError(err)
+				}
+				if (scenario != "old match" && scenario != "hidden first page") || len(f.documentRequests) == 2 {
+					version := f.documentRequests[len(f.documentRequests)-1].Fence.ContentVersionIDs[len(f.documentRequests[len(f.documentRequests)-1].Fence.ContentVersionIDs)-1]
 					f.documentReport.Results = []docbankmedia.SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: version, Rank: 1, Excerpt: "quartz", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}
 				}
 			}
@@ -1015,17 +1040,20 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 			}
 			code, response, raw := searchMediaFor(t, server, "q=quartz&limit="+strconv.Itoa(limit))
 			require.Equal(http.StatusOK, code, raw)
-			require.NotNil(response.Documents)
-			require.Len(response.Documents.Results, 1)
-			assert.Equal(mid, response.Documents.Results[0].MessageID)
+			require.NotNil(response.Attachments)
+			require.Len(response.Attachments.Results, 1)
+			assert.Equal(mid, response.Attachments.Results[0].MessageID)
 			if scenario == "limit" {
 				assert.Len(f.documentRequests, 1)
 			} else {
 				require.Len(f.documentRequests, 2)
 				assert.Equal([]string{"version-4096"}, f.documentRequests[1].Fence.ContentVersionIDs)
 			}
-			assert.Equal(scenario != "old match", response.Documents.Truncated)
-			assert.Equal(scenario == "later failure", response.Documents.Error != nil)
+			if scenario == "both fail later" {
+				require.NotNil(response.RecordingsError)
+			}
+			assert.Equal(scenario != "old match" && scenario != "hidden first page", response.Attachments.Truncated)
+			assert.Equal(scenario == "later failure" || scenario == "both fail later", response.Attachments.Error != nil)
 		})
 	}
 }
@@ -1048,6 +1076,6 @@ func TestMediaSearchRecordingTimeoutKeepsDocuments(t *testing.T) {
 	var response MediaSearchResponse
 	require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 	require.NotNil(response.RecordingsError)
-	require.NotNil(response.Documents)
-	assert.Len(response.Documents.Results, 2)
+	require.NotNil(response.Attachments)
+	assert.Len(response.Attachments.Results, 2)
 }

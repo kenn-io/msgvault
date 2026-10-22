@@ -7405,7 +7405,7 @@ components:
         strongest_excerpt:
           type: string
       type: object
-    MediaDocumentResult:
+    MediaAttachmentResult:
       properties:
         attachment_id:
           format: int64
@@ -7433,13 +7433,13 @@ components:
         - containing_title
         - excerpt
       type: object
-    MediaDocumentSearch:
+    MediaAttachmentSearch:
       properties:
         error:
           $ref: "#/components/schemas/ErrorResponse"
         results:
           items:
-            $ref: "#/components/schemas/MediaDocumentResult"
+            $ref: "#/components/schemas/MediaAttachmentResult"
           type: array
         truncated:
           type: boolean
@@ -7450,7 +7450,7 @@ components:
     MediaSearchResponse:
       properties:
         attachments:
-          $ref: "#/components/schemas/MediaDocumentSearch"
+          $ref: "#/components/schemas/MediaAttachmentSearch"
         attribution_unavailable:
           description: Current recording occurrences whose selected transcript cannot be attributed, including searches with no hits
           format: int64

@@ -6,17 +6,19 @@
   import FileVolume from '@lucide/svelte/icons/file-volume';
   import type { APIClient } from '../../api/client';
   import { searchMedia } from '../../api/generated/api/api';
-  import type { MediaSearchResponse, MediaSearchResult, MediaDocumentResult } from '../../api/generated/models';
+  import type { MediaSearchResponse, MediaSearchResult, MediaAttachmentResult } from '../../api/generated/models';
   import { createStaleRequestGuard } from '../../archive/stale-request';
   import { formatDateTime, formatOffset, formatShortDate, formatTranscriptOrigin } from '../../util/format';
 
   let { client, query, supported, participantID, selectedMessageID, missingMessageID, onOpen }: {
-    client: APIClient; query: string; supported: boolean; participantID?: number; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult | MediaDocumentResult) => void;
+    client: APIClient; query: string; supported: boolean; participantID?: number; missingMessageID?: number; selectedMessageID?: number; onOpen?: (hit: MediaSearchResult | MediaAttachmentResult) => void;
   } = $props();
   const id = $props.id();
   let result = $state<MediaSearchResponse>();
   const admitted = $derived(admitsMediaQuery(query));
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
+  const recordingNotice = $derived(result?.recordings_error ? refusedMediaSearchNotice(result.recordings_error.error, result.recordings_error.message, query, participantID) : '');
+  const recordingRetryable = $derived(result?.recordings_error?.error === 'media_search_unavailable');
   let notice = $state('');
   let expired = $state(false);
   let retryable = $state(false);
@@ -33,7 +35,7 @@
     const requestedQuery = query.trim();
     const requestedClient = client;
     const requestedParticipantID = participantID;
-    const allowed = supported && admitted;
+    const allowed = supported && Boolean(requestedQuery);
     const retryRequested = retry !== previousRetry;
     previousRetry = retry;
     result = undefined;
@@ -130,63 +132,71 @@
 
 </script>
 
-<section class="transcript-hits" aria-label="Recordings" tabindex="-1" data-recording-hits data-scroll>
-  <header>
-    <h2>Recordings{#if result && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
-    {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
-  </header>
-  {#if !supported}
-    <p role="status">Recording search requires Full text with no grouping and at most one Person filter.</p>
-  {:else if !admitted}
-    <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
-  {:else if expired}
-    <p role="status">Recording results expired.</p>
-  {:else if notice}
-    <div class="unavailable" role="status">
-      <span>{notice}</span>
-      {#if retryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
-    </div>
-  {:else if result}
-    {#if incomplete}
-      <p class="coverage" role="status">
-        {#if result.results.length === 0}No matches in searched transcripts.{:else if result.partial}Coverage incomplete.{/if}
-        {#if result.pending_occurrences}<span>{result.pending_occurrences} pending</span>{/if}
-        {#if result.unavailable_occurrences}<span>{result.unavailable_occurrences} unavailable</span>{/if}
-        {#if result.attribution_unavailable}<span>{result.attribution_unavailable} unattributed</span>{/if}
-        {#if result.truncated}<span>More may match</span>{/if}
-      </p>
+<section class="transcript-hits" aria-label="Media search" tabindex="-1" data-recording-hits data-scroll>
+  <section aria-label="Recordings">
+    <header>
+      <h2>Recordings{#if result && admitted && result.results.length > 0}<span class="count">{result.results.length}</span>{/if}</h2>
+      {#if result || expired}<Button label="Refresh" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
+    </header>
+    {#if !supported}
+      <p role="status">Media search requires Full text with no grouping and at most one Person filter.</p>
+    {:else if expired}
+      <p role="status">Recording results expired.</p>
+    {:else if notice}
+      <div class="unavailable" role="status">
+        <span>{notice}</span>
+        {#if retryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
+      </div>
+    {:else if !admitted}
+      <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
+    {:else if result}
+      {#if incomplete}
+        <p class="coverage" role="status">
+          {#if result.results.length === 0}No matches in searched transcripts.{:else if result.partial}Coverage incomplete.{/if}
+          {#if result.pending_occurrences}<span>{result.pending_occurrences} pending</span>{/if}
+          {#if result.unavailable_occurrences}<span>{result.unavailable_occurrences} unavailable</span>{/if}
+          {#if result.attribution_unavailable}<span>{result.attribution_unavailable} unattributed</span>{/if}
+          {#if result.truncated}<span>More may match</span>{/if}
+        </p>
+      {/if}
+      <ol>
+        {#each result.results as hit, index (index)}
+          <li>
+            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
+              aria-labelledby={`${id}-title-${index}`} aria-describedby={`${id}-meta-${index} ${id}-excerpt-${index}`}
+              onclick={(event) => {
+                if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                onOpen(hit);
+              }}>
+              <span class="recording-icon" aria-hidden="true"><FileVolume size={16} /></span>
+              <strong id={`${id}-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
+              {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
+              <span class="provenance" id={`${id}-meta-${index}`}>
+                <span class="filename" title={hit.filename}>{hit.filename || 'Unnamed recording'}</span>
+                <Chip size="xs" tone="neutral" uppercase={false}>{formatTranscriptOrigin(hit.origin)}</Chip>
+              </span>
+              <span class="transcript" class:timed={hit.start_ms !== undefined}>
+                {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`} title={hit.end_ms === undefined ? undefined : `Until ${formatOffset(hit.end_ms)}`}>{formatOffset(hit.start_ms)}</time>{/if}
+                <span class="excerpt" id={`${id}-excerpt-${index}`}>{hit.excerpt}</span>
+              </span>
+            </a>
+          </li>
+        {/each}
+      </ol>
+      {#if recordingNotice}<div class="unavailable" role="status">
+        <span>{recordingNotice}</span>
+        {#if recordingRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}
+      </div>
+      {:else if result.results.length === 0 && !incomplete}<p>No spoken matches.</p>{/if}
+    {:else}
+      <p role="status">Searching recordings…</p>
     {/if}
-    <ol>
-      {#each result.results as hit, index (index)}
-        <li>
-          <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
-            aria-labelledby={`${id}-title-${index}`} aria-describedby={`${id}-meta-${index} ${id}-excerpt-${index}`}
-            onclick={(event) => {
-              if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              onOpen(hit);
-            }}>
-            <span class="recording-icon" aria-hidden="true"><FileVolume size={16} /></span>
-            <strong id={`${id}-title-${index}`} title={hit.containing_title}>{hit.containing_title || 'Untitled message'}</strong>
-            {#if hit.occurred_at}<time class="date" datetime={hit.occurred_at} title={formatDateTime(hit.occurred_at)}>{formatShortDate(hit.occurred_at)}</time>{/if}
-            <span class="provenance" id={`${id}-meta-${index}`}>
-              <span class="filename" title={hit.filename}>{hit.filename || 'Unnamed recording'}</span>
-              <Chip size="xs" tone="neutral" uppercase={false}>{formatTranscriptOrigin(hit.origin)}</Chip>
-            </span>
-            <span class="transcript" class:timed={hit.start_ms !== undefined}>
-              {#if hit.start_ms !== undefined}<time datetime={`PT${hit.start_ms / 1000}S`} title={hit.end_ms === undefined ? undefined : `Until ${formatOffset(hit.end_ms)}`}>{formatOffset(hit.start_ms)}</time>{/if}
-              <span class="excerpt" id={`${id}-excerpt-${index}`}>{hit.excerpt}</span>
-            </span>
-          </a>
-        </li>
-      {/each}
-    </ol>
-    {#if result.recordings_error}<p role="status">{result.recordings_error.message}</p>
-    {:else if result.results.length === 0 && !incomplete}<p>No spoken matches.</p>{/if}
-    {#if result.attachments}
-      <h2 class="attachments-heading">Attachments <span class="count">{result.attachments.results.length}</span></h2>
-      {#if result.attachments.error}<p role="status">Attachment search is unavailable.</p>{/if}
-      {#if result.attachments.truncated}<p role="status">More may match</p>{/if}
+  </section>
+  {#if result?.attachments}
+    <section class="attachments" aria-label="Attachments">
+      <h2>Attachments{#if !result.attachments.error || result.attachments.results.length > 0}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
+      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.message || 'Attachment search is unavailable.'}</span><Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} /></div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
           <li>
@@ -207,9 +217,8 @@
         {/each}
       </ol>
       {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from mirrored attachments.</p>{/if}
-    {/if}
-  {:else}
-    <p role="status">Searching recordings…</p>
+      {#if result.attachments.truncated}<p class="coverage" role="status">More may match</p>{/if}
+    </section>
   {/if}
 </section>
 
@@ -235,7 +244,8 @@
   header { justify-content: space-between; min-height: 28px; }
   h2 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
   .count, time, p, .provenance { color: var(--text-secondary); font-size: var(--font-size-xs); }
-  .attachments-heading { margin-top: var(--space-3); }
+  .attachments { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border-default); }
+  .unavailable { margin-top: var(--space-2); color: var(--text-danger); font-size: var(--font-size-xs); }
   .count { font-weight: var(--font-weight-normal); font-variant-numeric: tabular-nums; }
   p { margin: var(--space-2) 0 0; }
   ol { margin: var(--space-2) 0 0; padding: 0; list-style: none; }
@@ -252,7 +262,7 @@
   .transcript { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1fr); max-width: 72ch; padding-left: var(--space-3); border-left: 2px solid var(--border-muted); margin-top: var(--space-1); }
   .transcript.timed { grid-template-columns: 3.5rem minmax(0, 1fr); column-gap: var(--space-3); }
   .transcript time { padding-top: 0.2em; }
-  .excerpt { display: -webkit-box; line-clamp: 3; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: var(--font-size-sm); line-height: 1.5; white-space: pre-wrap; }
+  .excerpt { overflow-wrap: anywhere; font-size: var(--font-size-sm); line-height: 1.5; white-space: pre-wrap; }
   time { font-variant-numeric: tabular-nums; }
   .coverage { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .coverage span + span::before { content: '·'; margin-right: var(--space-2); }
