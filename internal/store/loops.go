@@ -62,12 +62,13 @@ type LoopMessage struct {
 	ConversationID int64
 	OccurredAt     time.Time
 	Direction      ActivityDirection
-	FromAddress    string
-	Sender         LoopParticipant
-	Recipients     []LoopRecipient
-	ListID         string
-	Subject        string
-	Snippet        string
+	// FromAddress preserves the archived sender envelope across participant merges.
+	FromAddress string
+	Sender      LoopParticipant
+	Recipients  []LoopRecipient
+	ListID      string
+	Subject     string
+	Snippet     string
 	// HasFileAttachment is true only when the archive confirms a non-inline file.
 	HasFileAttachment bool
 }
@@ -545,10 +546,30 @@ func resolvedLoopSenderID(senderID int64, counterparts []ActivityCounterpart) in
 
 func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map[int64]LoopMessage, error) {
 	out := make(map[int64]LoopMessage, len(messageIDs))
+	// Match the archived From address to the resolved sender first. If that
+	// identity is missing, use an address only when the envelope is unambiguous.
 	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
 		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
-			(SELECT COALESCE(MIN(NULLIF(TRIM(mr.email_address), '')), '')
-			 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
+			COALESCE(
+				(SELECT NULLIF(TRIM(mr.email_address), '')
+				 FROM message_recipients mr
+				 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+				   AND mr.participant_id = m.sender_id
+				   AND mr.email_address IS NOT NULL AND TRIM(mr.email_address) <> ''
+				 ORDER BY mr.id LIMIT 1),
+				CASE WHEN (
+					SELECT COUNT(DISTINCT LOWER(TRIM(mr.email_address)))
+					FROM message_recipients mr
+					WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+					  AND mr.email_address IS NOT NULL AND TRIM(mr.email_address) <> ''
+				) = 1 THEN (
+					SELECT NULLIF(TRIM(mr.email_address), '')
+					FROM message_recipients mr
+					WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
+					  AND mr.email_address IS NOT NULL AND TRIM(mr.email_address) <> ''
+					ORDER BY mr.id LIMIT 1
+				) ELSE '' END,
+				''),
 			EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id
 				AND a.attachment_role = 'standalone')
 		FROM messages m WHERE m.id IN (%s)`,

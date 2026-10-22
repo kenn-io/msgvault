@@ -275,9 +275,11 @@ func TestListUsesArchivedFromAddressAfterParticipantMerge(t *testing.T) {
 		name     string
 		from     string
 		survivor string
+		missing  bool
 		wantLoop bool
 	}{
 		{name: "no-reply address absorbed by human address", from: "no-reply@example.test", survivor: alex},
+		{name: "single archived From address when sender is missing", from: "no-reply@example.test", survivor: alex, missing: true},
 		{name: "human address absorbed by no-reply address", from: alex, survivor: "no-reply@example.test", wantLoop: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,6 +291,10 @@ func TestListUsesArchivedFromAddressAfterParticipantMerge(t *testing.T) {
 			question := f.PersistEmail(storetest.EmailSpec{
 				From: tc.from, To: []string{me}, Body: "Can you send the report?", SentAt: ago(3 * day),
 			})
+			if tc.missing {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), question)
+				require.NoError(err)
+			}
 			require.NoError(f.Store.MergeParticipants(sender, survivor))
 
 			result := list(t, f, loops.Options{})
@@ -300,6 +306,39 @@ func TestListUsesArchivedFromAddressAfterParticipantMerge(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestListUsesFromAddressMatchingResolvedSender(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	human := f.EnsureParticipant("z-human@example.test", "", "example.test")
+	noReply := f.EnsureParticipant("a-no-reply@example.test", "", "example.test")
+	owner := f.EnsureParticipant(me, "", "example.com")
+	question := f.PersistEmail(storetest.EmailSpec{
+		Thread: "multiple-from", From: me, To: []string{"z-human@example.test"},
+		Body: "Can you send the report?", SentAt: ago(4 * day),
+	})
+	before := list(t, f, loops.Options{})
+	require.Len(before.Loops, 1)
+	questionRef, err := f.Store.MessageConversationContext(t.Context(), question)
+	require.NoError(err)
+	_, err = f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: questionRef.ConversationID, SourceMessageID: "multiple-from-reply",
+			MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: human, Valid: true},
+			SentAt: sql.NullTime{Time: ago(3 * day), Valid: true},
+		},
+		BodyText: sql.NullString{String: "Here is the report.", Valid: true},
+		Recipients: []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{human, noReply}, EmailAddresses: []string{"z-human@example.test", "a-no-reply@example.test"}},
+			{Type: "to", ParticipantIDs: []int64{owner}, EmailAddresses: []string{me}},
+		},
+	})
+	require.NoError(err)
+
+	result := list(t, f, loops.Options{})
+	assert.Empty(result.Loops)
 }
 
 func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
