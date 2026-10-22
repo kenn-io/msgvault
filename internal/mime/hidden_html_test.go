@@ -164,3 +164,18 @@ func TestHTMLHasHiddenTextAttributeBodies(t *testing.T) {
 		})
 	}
 }
+
+func TestHTMLHasHiddenTextMalformedDeclarations(t *testing.T) {
+	for _, style := range []string{
+		`broken;display:none`,
+		`display:none;broken`,
+		`broken;color:white;font-family:'x;color:black;';background:white`,
+		`font-family:'x;display:none;';broken;color:transparent`,
+		`broken;background:url('https://example.com/a;b');display:none`,
+	} {
+		t.Run(style, func(t *testing.T) {
+			assert.True(t, HTMLHasHiddenText(`<div style="`+style+`">Text</div>`))
+		})
+	}
+	assert.False(t, HTMLHasHiddenText(`<div style="broken;font-family:'x;display:none;';display:block">Text</div>`))
+}

@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/aymerick/douceur/css"
 	"github.com/aymerick/douceur/parser"
 	"github.com/gorilla/css/scanner"
 	"golang.org/x/image/colornames"
@@ -78,30 +79,7 @@ func inlineHTMLStyle(node *html.Node) map[string][]string {
 		if attr.Key != "style" {
 			continue
 		}
-		var clean strings.Builder
-		inDeclaration := false
-		scan := scanner.New(attr.Val)
-		for token := scan.Next(); token.Type != scanner.TokenEOF && token.Type != scanner.TokenError; token = scan.Next() {
-			if token.Type == scanner.TokenComment {
-				continue
-			}
-			if token.Type == scanner.TokenChar && token.Value == ";" {
-				if !inDeclaration {
-					continue
-				}
-				inDeclaration = false
-			} else if token.Type != scanner.TokenS {
-				inDeclaration = true
-			}
-			value := token.Value
-			if token.Type != scanner.TokenString && token.Type != scanner.TokenURI {
-				value = decodeInlineCSSEscapes(value)
-			}
-			clean.WriteString(value)
-		}
-		// Douceur needs a terminator to retain the last declaration's value.
-		declarations, _ := parser.ParseDeclarations(strings.TrimRight(clean.String(), " \t\r\n\f;") + ";")
-		for _, declaration := range declarations {
+		for _, declaration := range inlineHTMLDeclarations(attr.Val) {
 			name := strings.ToLower(declaration.Property)
 			value := strings.ToLower(declaration.Value)
 			if name == "background" {
@@ -125,6 +103,50 @@ func inlineHTMLStyle(node *html.Node) map[string][]string {
 		}
 	}
 	return style
+}
+
+func inlineHTMLDeclarations(value string) []*css.Declaration {
+	var clean strings.Builder
+	var chunks []string
+	depth := 0
+	scan := scanner.New(value)
+	for token := scan.Next(); token.Type != scanner.TokenEOF && token.Type != scanner.TokenError; token = scan.Next() {
+		if token.Type == scanner.TokenComment {
+			continue
+		}
+		if token.Type == scanner.TokenFunction || token.Type == scanner.TokenChar && token.Value == "(" {
+			depth++
+		} else if token.Type == scanner.TokenChar && token.Value == ")" && depth > 0 {
+			depth--
+		}
+		if token.Type == scanner.TokenChar && token.Value == ";" && depth == 0 {
+			if declaration := strings.TrimSpace(clean.String()); declaration != "" {
+				chunks = append(chunks, declaration+";")
+			}
+			clean.Reset()
+			continue
+		}
+		value := token.Value
+		if token.Type != scanner.TokenString && token.Type != scanner.TokenURI {
+			value = decodeInlineCSSEscapes(value)
+		}
+		clean.WriteString(value)
+	}
+	// Douceur needs a terminator to retain the last declaration's value.
+	if declaration := strings.TrimSpace(clean.String()); declaration != "" {
+		chunks = append(chunks, declaration+";")
+	}
+	declarations, err := parser.ParseDeclarations(strings.Join(chunks, ""))
+	if err == nil {
+		return declarations
+	}
+	for _, chunk := range chunks {
+		parsed, err := parser.ParseDeclarations(chunk)
+		if err == nil {
+			declarations = append(declarations, parsed...)
+		}
+	}
+	return declarations
 }
 
 var inlineCSSEscape = regexp.MustCompile(`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f])`)
