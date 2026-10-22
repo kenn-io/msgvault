@@ -64,7 +64,7 @@ func (s *Server) registerDocbankAttachmentRoutes(api huma.API) {
 			}
 		}
 		if s.cfg != nil && s.cfg.Integrations.Docbank.DocumentProfile != "" {
-			processing, err := reader.Store.DocbankAttachmentProcessingCounts(ctx, reader.Destination)
+			processing, err := reader.Store.DocbankAttachmentProcessingCounts(ctx, reader.Destination, s.cfg.Integrations.Docbank.DocumentProfile)
 			if err != nil {
 				return nil, huma.Error500InternalServerError("read attachment processing status")
 			}

@@ -73,7 +73,7 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	for _, hash := range []string{"a", "b", "c", "d", "e", "f"} {
 		require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "v-" + hash}, ""))
 	}
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "fp"))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
 	for _, row := range []struct {
 		hash, outcome string
 		next          time.Time
@@ -93,7 +93,7 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	require.Len(due, 2)
 	assert.Equal("a", due[0].ContentHash)
 	assert.Equal("b", due[1].ContentHash)
-	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest")
+	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(store.DocbankAttachmentProcessingSummary{Waiting: 2, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "operator_required": 1}}, counts)
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "dest"))
@@ -104,7 +104,7 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 		hashes = append(hashes, d.ContentHash)
 	}
 	assert.Equal([]string{"a", "d", "e", "b"}, hashes)
-	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest")
+	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(int64(1), counts.Requested)
 	assert.Equal(int64(1), counts.Extracted)
@@ -115,11 +115,11 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	require.NoError(err)
 	require.Len(due, 5)
 	assert.Equal("replacement", due[1].VersionID)
-	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest")
+	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Zero(counts.Extracted)
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "new-fp"))
-	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest")
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "new-fp"))
+	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(int64(6), counts.Waiting)
 	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "dest", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
@@ -143,9 +143,9 @@ func TestDocbankAttachmentProcessingUpgrade(t *testing.T) {
 	require.NoError(f.Store.InitSchemaContext(ctx))
 	require.NoError(f.Store.ValidateSchemaContext(ctx))
 	require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: "a"}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "version"}, ""))
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "fp"))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
 	require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{ContentHash: "a", VersionID: "version", Fingerprint: "fp", Outcome: "extracted"}, time.Time{}))
-	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest")
+	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(int64(1), counts.Extracted)
 }

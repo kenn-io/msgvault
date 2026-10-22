@@ -26,9 +26,9 @@ type DocbankAttachmentProcessingSummary struct {
 	Outcomes  map[string]int64 `json:"outcomes"`
 }
 
-func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, dest, fingerprint string) error {
+func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, dest, profile, fingerprint string) error {
 	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO archive_metadata (key, value) VALUES (?, ?)
- ON CONFLICT (key) DO UPDATE SET value = excluded.value`), "docbank-processing:"+dest, fingerprint)
+ ON CONFLICT (key) DO UPDATE SET value = excluded.value`), "docbank-processing:"+dest+":"+profile, fingerprint)
 	return err
 }
 
@@ -100,14 +100,14 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 	return err
 }
 
-func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest string) (DocbankAttachmentProcessingSummary, error) {
+func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, profile string) (DocbankAttachmentProcessingSummary, error) {
 	result := DocbankAttachmentProcessingSummary{Outcomes: map[string]int64{}}
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT COALESCE(p.outcome, ''), COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash AND p.version_id = d.version_id
  AND p.fingerprint = (SELECT value FROM archive_metadata WHERE key = ?)
  WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> '' GROUP BY COALESCE(p.outcome, '')`),
-		"docbank-processing:"+dest, dest)
+		"docbank-processing:"+dest+":"+profile, dest)
 	if err != nil {
 		return result, err
 	}

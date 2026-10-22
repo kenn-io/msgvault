@@ -187,7 +187,7 @@ func TestDocbankAttachmentProcessingStatusIsLocal(t *testing.T) {
 	for _, hash := range []string{"waiting", "requested", "extracted", "failed", "skipped"} {
 		require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: hash}, ""))
 	}
-	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "fp"))
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "documents", "fp"))
 	for hash, outcome := range map[string]string{"requested": "requested", "extracted": "extracted", "failed": "provider_timeout", "skipped": "unsupported_format"} {
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: hash, Fingerprint: "fp", Outcome: outcome, JobID: "job-" + hash}, time.Time{}))
 	}
@@ -208,6 +208,18 @@ func TestDocbankAttachmentProcessingStatusIsLocal(t *testing.T) {
 	assert.Equal(int64(5), result.Counts.Delivered)
 	require.NotNil(result.Processing)
 	assert.Equal(store.DocbankAttachmentProcessingSummary{Profile: "documents", Waiting: 1, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "unsupported_format": 1}}, *result.Processing)
+	cfg.Integrations.Docbank.DocumentProfile = "unavailable"
+	result = DocbankAttachmentStatus{}
+	w = httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
+	require.Equal(http.StatusOK, w.Code)
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	require.NotNil(result.Processing)
+	assert.Equal("unavailable", result.Processing.Profile)
+	assert.Equal(int64(5), result.Processing.Waiting)
+	assert.Zero(result.Processing.Extracted)
+	assert.Zero(result.Processing.Requested)
+	assert.Empty(result.Processing.Outcomes)
 }
 
 func TestDocbankAttachmentStatusErrorWithoutProfile(t *testing.T) {
