@@ -289,20 +289,65 @@ func draftEvidenceSQL(m, src string) string {
 	return draftEvidenceInSchemaSQL("", m, src)
 }
 
+// UnsentMessageSQL returns the activity projector's SQLite predicate for aliases
+// m (messages) and src (sources).
+func UnsentMessageSQL() string {
+	return activityUnsentInSchemaSQL("", false)
+}
+
+// UnsentCandidateMessageIDsSQL starts from draft evidence before evaluating
+// the shared predicate. Explicit send-state overrides need no draft evidence.
+func UnsentCandidateMessageIDsSQL() string {
+	var queries []string
+	for _, evidence := range draftEvidenceSources("", "draft_src") {
+		from := evidence.from
+		if evidence.sourceID != "" {
+			from += " JOIN sources draft_src ON draft_src.id = " + evidence.sourceID
+		}
+		query := "SELECT " + evidence.messageID + " FROM " + from
+		if evidence.condition != "" {
+			query += " WHERE " + evidence.condition
+		}
+		queries = append(queries, query)
+	}
+	return strings.Join(queries, " UNION ") + " UNION SELECT id FROM messages WHERE is_sent = FALSE"
+}
+
+type draftEvidenceSource struct {
+	from, messageID, sourceID, condition string
+}
+
+// draftEvidenceSources defines each evidence arm once for both correlated
+// message checks and the cache's evidence-first candidate scan.
+func draftEvidenceSources(schema, src string) []draftEvidenceSource {
+	return []draftEvidenceSource{
+		{from: schema + "message_labels ml JOIN " + schema + "labels l ON l.id = ml.label_id",
+			messageID: "ml.message_id", sourceID: "l.source_id",
+			condition: "(l.system_role = '" + LabelSystemRoleDrafts + "' OR (" + src + ".source_type = 'gmail' AND l.source_label_id = 'DRAFT'))"},
+		{from: schema + "imap_message_memberships imm", messageID: "imm.message_id", sourceID: "imm.source_id",
+			condition: `LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!'`},
+		{from: schema + "imap_drafts d", messageID: "d.current_message_id"},
+		{from: schema + "imap_drafts d", messageID: "d.pending_original_message_id"},
+		{from: schema + "gmail_drafts d", messageID: "d.current_message_id"},
+		{from: schema + "gmail_drafts d", messageID: "d.pending_original_message_id"},
+	}
+}
+
 // draftEvidenceInSchemaSQL is draftEvidenceSQL reading its evidence tables
 // from schema, such as "src." for an attached source archive.
 func draftEvidenceInSchemaSQL(schema, m, src string) string {
-	return `(EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
-		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
-		  AND (l.system_role = '` + LabelSystemRoleDrafts + `'
-		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')))
-		OR EXISTS (SELECT 1 FROM ` + schema + `imap_message_memberships imm
-		WHERE imm.message_id = ` + m + `.id AND imm.source_id = ` + m + `.source_id
-		  AND LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!')
-		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.current_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.pending_original_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.current_message_id = ` + m + `.id)
-		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.pending_original_message_id = ` + m + `.id))`
+	var predicates []string
+	for _, evidence := range draftEvidenceSources(schema, src) {
+		where := evidence.messageID + " = " + m + ".id"
+		if evidence.sourceID != "" {
+			where += " AND " + evidence.sourceID + " = " + m + ".source_id"
+		}
+		if evidence.condition != "" {
+			where += " AND " + evidence.condition
+		}
+		predicates = append(predicates, "EXISTS (SELECT 1 FROM "+evidence.from+" WHERE "+where+")")
+	}
+	return "(" + strings.Join(predicates, " OR ") + ")"
 }
 
 // sourceHasSentFolderSQL is true when source src has a Sent folder, so

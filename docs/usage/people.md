@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-02"
+last_edited: "2026-10-20"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -166,7 +166,9 @@ person and UID.
 
 ### Browse people by last contact
 
-Drafts and unsent messages don't set last contact or cadence.
+Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. Opening someone you have only drafted to shows no contact activity.
+
+Cached views update after a cache refresh. Full checks at startup and during explicit cache builds detect sent-state changes. Scheduled post-sync refresh checks indexed changes first. If those already require a build, `min_rebuild_interval` can delay both the full sent-state check and the visible update. If indexed state is clean, sent state is checked before that interval is applied. Ordinary requests use a cache marker check; they don't scan the archive for sent-state changes.
 
 Use `person directory` to browse promoted people, most recent contact first. It queries the selected daemon and returns a page of up to 50 people by default.
 
@@ -277,6 +279,7 @@ msgvault person files 7 --lane all --query "project proposal" --json
 ```
 
 The default `metadata` lane lists archived attachments without semantic search.
+The `metadata` lane lists only attachments on sent or received mail.
 `--direction` accepts `from_person`, `to_person`, and `group`; it is repeatable.
 `--filename` matches a case-insensitive substring. MIME families are `image`,
 `pdf`, `audio`, `video`, `text`, `document`, `archive`, and `other`.

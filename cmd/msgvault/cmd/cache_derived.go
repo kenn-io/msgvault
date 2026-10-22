@@ -150,6 +150,7 @@ func refreshDerivedDatasetsOnly(
 	}
 	defer func() { _ = sourceSnapshot.Close() }()
 	datasets := []string{
+		"cache_unsent_messages",
 		tableMessages,
 		tableConversations,
 		tableConversationParticipants,
@@ -209,7 +210,7 @@ func refreshDerivedDatasetsOnly(
 			relatedReplacements[dataset] = true
 		}
 	}
-	if err := sourceSnapshot.PrepareDatasets(datasets...); err != nil {
+	if err := sourceSnapshot.PrepareDatasets(state.LastMessageID, datasets...); err != nil {
 		return nil, err
 	}
 	exportDB := sourceSnapshot.DuckDB()
@@ -231,12 +232,18 @@ func refreshDerivedDatasetsOnly(
 		return nil, err
 	}
 
+	unsentFingerprint, err := stageUnsentMessages(ctx, sourceSnapshot, state.LastMessageID)
+	if err != nil {
+		return nil, err
+	}
+
 	if !repairRelated && identityRevision == state.IdentityRevision &&
 		participantIdentifierRevision == state.ParticipantIdentifierRevision &&
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
 		conversationFingerprint == state.ConversationParticipantsFingerprint &&
-		typesFingerprint == state.ConversationTypesFingerprint {
+		typesFingerprint == state.ConversationTypesFingerprint &&
+		unsentFingerprint == state.UnsentFingerprint {
 		// Nothing the derived datasets read has changed (the account-identity
 		// revision was already verified equal above). Republishing would only
 		// advance PublishedAt, invalidating readers' cache revision — and with
@@ -249,7 +256,8 @@ func refreshDerivedDatasetsOnly(
 		participantDisplayNameRevision == state.ParticipantDisplayNameRevision &&
 		personDisplayNameRevision == state.PersonDisplayNameRevision &&
 		conversationFingerprint == state.ConversationParticipantsFingerprint &&
-		typesFingerprint == state.ConversationTypesFingerprint {
+		typesFingerprint == state.ConversationTypesFingerprint &&
+		unsentFingerprint == state.UnsentFingerprint {
 		// Labels and attachment metadata do not enter relationship_activity.
 		// Publish their child rows and marker directly, avoiding a scan of the
 		// expanded relationship population for a small metadata correction.
@@ -346,6 +354,7 @@ func refreshDerivedDatasetsOnly(
 
 	derived, err := identityindex.Build(ctx, exportDB, identityindex.BuildOptions{
 		Mode:           identityindex.ModeIndexOnly,
+		UnsentMessages: "tmp_unsent_messages",
 		CommittedRoot:  analyticsDir,
 		StagedBaseRoot: staging.root,
 		OutputRoot:     staging.root,
@@ -372,6 +381,7 @@ func refreshDerivedDatasetsOnly(
 	state.PersonDisplayNameRevision = personDisplayNameRevision
 	state.ConversationParticipantsFingerprint = conversationFingerprint
 	state.ConversationTypesFingerprint = typesFingerprint
+	state.UnsentFingerprint = unsentFingerprint
 	if repairRelated {
 		state.LastRelatedChangeSeq = relatedChangeSeq
 	}
@@ -597,4 +607,23 @@ func verifyRelatedOnlyAdditions(snapshot *cacheSourceSnapshot, state syncState) 
 			ErrDerivedRefreshRequiresFullBuild)
 	}
 	return nil
+}
+
+// stageUnsentMessages materializes the pinned SQLite result once for the build
+// and its marker, preserving SQLite's indexes on both snapshot paths.
+func stageUnsentMessages(ctx context.Context, snapshot *cacheSourceSnapshot, through int64) (string, error) {
+	query := unsentMessagesSQL(through)
+	relation := "sqlite_db.cache_unsent_messages"
+	if !snapshot.csvSnapshot {
+		relation = "sqlite_query('sqlite_db', '" + strings.ReplaceAll(query, "'", "''") + "')"
+	}
+	db := snapshot.DuckDB()
+	if _, err := db.ExecContext(ctx, "CREATE TEMP TABLE tmp_unsent_messages AS SELECT message_id::BIGINT AS message_id FROM "+relation); err != nil {
+		return "", fmt.Errorf("stage unsent messages: %w", err)
+	}
+	fingerprint, err := messageIDsFingerprint(ctx, db, "SELECT message_id FROM tmp_unsent_messages ORDER BY message_id")
+	if err != nil {
+		return "", fmt.Errorf("fingerprint staged unsent messages: %w", err)
+	}
+	return fingerprint, nil
 }

@@ -51,6 +51,7 @@ type cacheStaleness struct {
 	// in which case the incremental append cannot rewrite the already-committed
 	// rows and a full rebuild is forced below.
 	HasConversationTypeDrift bool
+	HasUnsentDrift           bool
 	// HasParticipantIdentifierDrift signals identifier rows or their
 	// service/scope classification changed since the last build. Identifiers
 	// bake into the identity directory datasets
@@ -130,6 +131,17 @@ func cacheNeedsBuild(dbPath, analyticsDir string) cacheStaleness {
 }
 
 func cacheNeedsBuildContext(ctx context.Context, dbPath, analyticsDir string) cacheStaleness {
+	return inspectCacheWithBuildLock(ctx, dbPath, analyticsDir, false)
+}
+
+// Scheduled preflight can defer archive hashes when indexed drift already
+// requires the authoritative builder. A clean indexed check still needs the
+// full inspection to discover unsent-only or conversation drift.
+func cacheNeedsBuildForScheduledRefresh(ctx context.Context, dbPath, analyticsDir string) cacheStaleness {
+	return inspectCacheWithBuildLock(ctx, dbPath, analyticsDir, true)
+}
+
+func inspectCacheWithBuildLock(ctx context.Context, dbPath, analyticsDir string, indexedFirst bool) cacheStaleness {
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
@@ -141,7 +153,7 @@ func cacheNeedsBuildContext(ctx context.Context, dbPath, analyticsDir string) ca
 		return cacheStalenessFailure(ctx, "cannot acquire cache recovery lock")
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	return cacheNeedsBuildLocked(ctx, dbPath, analyticsDir)
+	return cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, true, false, indexedFirst)
 }
 
 func cacheStalenessFailure(ctx context.Context, reason string) cacheStaleness {
@@ -162,10 +174,11 @@ func cacheNeedsBuildForQuery(ctx context.Context, dbPath, analyticsDir string) (
 	return inspectCacheForQuery(ctx, dbPath, analyticsDir, true, false)
 }
 
-// cacheNeedsBuildForServing omits the two archive-wide conversation hashes.
-// The scheduled background check runs the full inspection when the minimum
-// rebuild interval expires; requests still see indexed sync and revision
-// signals immediately, without scanning millions of membership rows.
+// cacheNeedsBuildForServing omits archive-wide conversation and unsent hashes.
+// Scheduled post-sync refresh checks indexed drift first. When that already
+// requires a build, the minimum interval may defer full hashes too; a clean
+// indexed check reaches full hashes before the interval. Requests still see
+// indexed sync and revision signals without those archive scans.
 func cacheNeedsBuildForServing(ctx context.Context, dbPath, analyticsDir string) (cacheStaleness, error) {
 	return inspectCacheForQuery(ctx, dbPath, analyticsDir, false, true)
 }
@@ -179,7 +192,7 @@ func inspectCacheForQuery(ctx context.Context, dbPath, analyticsDir string, full
 		return cacheStaleness{}, err
 	}
 	defer release()
-	result := cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, markerOnly)
+	result := cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, markerOnly, false)
 	return result, ctx.Err()
 }
 
@@ -193,10 +206,10 @@ func cacheNeedsBuildLocked(ctx context.Context, dbPath, analyticsDir string) cac
 }
 
 func cacheNeedsBuildLockedWithConversationHashes(ctx context.Context, dbPath, analyticsDir string, full bool) cacheStaleness {
-	return cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, false)
+	return cacheNeedsBuildLockedWithOptions(ctx, dbPath, analyticsDir, full, false, false)
 }
 
-func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir string, full, markerOnly bool) cacheStaleness {
+func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir string, full, markerOnly, indexedFirst bool) cacheStaleness {
 	if ctx.Err() != nil {
 		return cacheStaleness{}
 	}
@@ -567,7 +580,7 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 		reasons = append(reasons, "person display names changed")
 	}
 
-	if full {
+	if full && (!indexedFirst || len(reasons) == 0) {
 		if ctx.Err() != nil {
 			return cacheStaleness{}
 		}
@@ -599,9 +612,17 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 			result.HasConversationTypeDrift = true
 			reasons = append(reasons, "conversation metadata changed")
 		}
+		unsentFingerprint, err := messageIDsFingerprint(ctx, db.DB(), unsentMessagesSQL(state.LastMessageID))
+		if err != nil {
+			return cacheStalenessFailure(ctx, "cannot fingerprint unsent messages")
+		}
+		if unsentFingerprint != state.UnsentFingerprint {
+			result.HasUnsentDrift = true
+			reasons = append(reasons, "unsent messages changed")
+		}
 	}
 
-	// Membership and conversation types still require a full build on append.
+	// Membership and conversation types require a full build on append.
 	// Canonical links can instead rebuild the relationship index from retained
 	// message facts plus the appended shards, without re-exporting old messages.
 	if result.HasNew &&
@@ -616,6 +637,16 @@ func cacheNeedsBuildLockedWithOptions(ctx context.Context, dbPath, analyticsDir 
 	}
 
 	return result
+}
+
+func messageIDsFingerprint(ctx context.Context, db sqlRunner, statement string, args ...any) (string, error) {
+	//nolint:rowserrcheck // FingerprintMessageIDs owns iteration and error checking.
+	rows, err := db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return "", fmt.Errorf("query message IDs for fingerprint: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return identityindex.FingerprintMessageIDs(rows)
 }
 
 // sourceConversationTypesFingerprint hashes (id, conversation_type, title) for

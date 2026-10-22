@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -62,26 +63,7 @@ func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t 
 func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("archive@example.com", "gmail")
-	alicePrimary := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
-	aliceAlias := b.AddParticipant("alice@other.example", "other.example", "")
-	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
-	b.AddParticipantIdentifier(alicePrimary, "email", "alice@example.com", "alice@example.com", true)
-	b.AddParticipantIdentifier(aliceAlias, "email", "alice@other.example", "alice@other.example", true)
-	b.LinkCluster(alicePrimary, aliceAlias)
-
-	start := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
-	primaryMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 401, Subject: "From primary", SentAt: start})
-	b.AddFrom(primaryMail, alicePrimary, "Alice Example")
-	aliasMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 402, Subject: "From alias", SentAt: start.Add(time.Hour)})
-	b.AddFrom(aliasMail, aliceAlias, "")
-	b.AddAttachmentWithMIME(901, aliasMail, 100, "alias.pdf", "application/pdf")
-	// One entry addressed to BOTH members must count once for the cluster.
-	bothMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 403, Subject: "To both", SentAt: start.Add(2 * time.Hour)})
-	b.AddFrom(bothMail, bob, "Bob Example")
-	b.AddTo(bothMail, alicePrimary, "Alice Example")
-	b.AddTo(bothMail, aliceAlias, "")
+	b, _, alicePrimary, aliceAlias, bob, start := linkedPeopleFixture(t)
 	engine := b.BuildEngine()
 	ctx := context.Background()
 
@@ -121,6 +103,110 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 	assertions.Equal(bob, bobSearch.Rows[0].ID, "unlinked participants search exactly as before")
 	assertions.Equal("Bob Example", bobSearch.Rows[0].DisplayLabel)
 	assertions.Equal(int64(1), bobSearch.Rows[0].ActivityCount)
+}
+
+func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b, source, alicePrimary, aliceAlias, _, start := linkedPeopleFixture(t)
+	owner := b.AddParticipant("archive@example.com", "example.com", "Archive Owner")
+	b.AddOwnerParticipant(source, owner)
+	draft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Unsent", SentAt: start.Add(3 * time.Hour), IsFromMe: true})
+	b.AddFrom(draft, owner, "Archive Owner")
+	b.AddTo(draft, alicePrimary, "Alice Example")
+	b.AddTo(draft, aliceAlias, "")
+	carol := b.AddParticipant("carol@draft.example", "draft.example", "Carol Example")
+	b.AddTo(draft, carol, "Carol Example")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+	engine := b.BuildEngine()
+	ctx := context.Background()
+	// A date filter takes the logical-entry path instead of the source rollup.
+	after := start.Add(-time.Minute)
+	dateContext := Context{After: &after}
+	dateFiltered, err := engine.SearchPeople(ctx, PersonSearchRequest{
+		Explore: ExploreRequest{Context: dateContext}, Query: "other.example",
+	})
+	requirements.NoError(err)
+	requirements.Len(dateFiltered.Rows, 1)
+	assertions.Equal(int64(3), dateFiltered.Rows[0].ActivityCount)
+	assertions.Equal(start.Add(2*time.Hour), dateFiltered.Rows[0].LastAt)
+
+	domains, err := engine.SearchDomains(ctx, DomainSearchRequest{
+		Explore: ExploreRequest{Context: Context{SourceIDs: []int64{source}}}, Query: "example.com",
+	})
+	requirements.NoError(err)
+	requirements.Len(domains.Rows, 1)
+	assertions.Equal(int64(2), domains.Rows[0].ActivityCount)
+	assertions.Equal(start.Add(2*time.Hour), domains.Rows[0].LastAt)
+	domain, err := engine.GetDomainSummary(ctx, "example.com", ExploreRequest{})
+	requirements.NoError(err)
+	requirements.Len(domain.Rows, 1)
+	assertions.Equal(int64(2), domain.Rows[0].ActivityCount)
+	assertions.Equal(start.Add(2*time.Hour), domain.Rows[0].LastAt)
+	matching, err := engine.GetDomainSummary(ctx, "draft.example", ExploreRequest{
+		Context: Context{SourceIDs: []int64{source}},
+		Search:  SearchSpec{Mode: SearchFullText, Query: "Unsent", CandidateMessageIDs: []int64{draft}, LexicalIndexRevision: "fts5:draft"},
+	})
+	requirements.NoError(err)
+	assertions.Empty(matching.Rows)
+}
+
+func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "synctech_sms")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	member := b.AddParticipant("member@example.net", "example.net", "Member")
+	draftRecipient := b.AddParticipant("draft@example.org", "example.org", "Draft recipient")
+	b.AddConversationParticipant(710, owner)
+	b.AddConversationParticipant(710, member)
+	start := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	sent := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 710, ConversationType: "group_chat", MessageType: "mms", SentAt: start})
+	b.AddFrom(sent, member, "Member")
+	b.AddTo(sent, owner, "Owner")
+	draft := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 710, ConversationType: "group_chat", MessageType: "mms", SentAt: start.Add(time.Hour), IsFromMe: true})
+	b.AddFrom(draft, owner, "Owner")
+	b.AddTo(draft, draftRecipient, "Draft recipient")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
+	engine := b.BuildEngine()
+
+	detail, err := engine.GetPerson(t.Context(), draftRecipient, Context{}, nil)
+	require.NoError(err)
+	assert.Nil(detail, "an unsent recipient outside the roster has no sent relationship")
+	summary, err := engine.GetPersonSummary(t.Context(), draftRecipient, ExploreRequest{Context: Context{SourceIDs: []int64{source}}}, nil)
+	require.NoError(err)
+	assert.Empty(summary.Rows)
+	timeline, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: draftRecipient})
+	require.NoError(err)
+	assert.Empty(timeline.Rows)
+	assert.Zero(timeline.TotalCount)
+}
+
+func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, int64, time.Time) {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "gmail")
+	alicePrimary := b.AddParticipant("alice@example.com", "example.com", "Alice Example")
+	aliceAlias := b.AddParticipant("alice@other.example", "other.example", "")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob Example")
+	b.AddParticipantIdentifier(alicePrimary, "email", "alice@example.com", "alice@example.com", true)
+	b.AddParticipantIdentifier(aliceAlias, "email", "alice@other.example", "alice@other.example", true)
+	b.LinkCluster(alicePrimary, aliceAlias)
+
+	start := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	primaryMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 401, Subject: "From primary", SentAt: start})
+	b.AddFrom(primaryMail, alicePrimary, "Alice Example")
+	aliasMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 402, Subject: "From alias", SentAt: start.Add(time.Hour)})
+	b.AddFrom(aliasMail, aliceAlias, "")
+	b.AddAttachmentWithMIME(901, aliasMail, 100, "alias.pdf", "application/pdf")
+	// One entry addressed to BOTH members must count once for the cluster.
+	bothMail := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 403, Subject: "To both", SentAt: start.Add(2 * time.Hour)})
+	b.AddFrom(bothMail, bob, "Bob Example")
+	b.AddTo(bothMail, alicePrimary, "Alice Example")
+	b.AddTo(bothMail, aliceAlias, "")
+	return b, source, alicePrimary, aliceAlias, bob, start
 }
 
 func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
