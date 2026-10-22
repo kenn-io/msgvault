@@ -201,7 +201,7 @@
       <ol>
         {#each result.attachments.results as hit, index (index)}
           <li>
-            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id ? 'true' : undefined}
+            <a href={`/messages/${hit.message_id}`} aria-current={selectedMessageID === hit.message_id && !result.results.some(recording => recording.message_id === hit.message_id) ? 'true' : undefined}
               aria-labelledby={`${id}-attachment-title-${index}`} aria-describedby={`${id}-attachment-meta-${index} ${id}-attachment-excerpt-${index}`}
               onclick={(event) => {
                 if (!onOpen || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -217,8 +217,9 @@
           </li>
         {/each}
       </ol>
-      {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from mirrored attachments.</p>{/if}
-      {#if result.attachments.truncated}<p class="coverage" role="status">Only the newest 4096 mirrored files were searched. Add a Person filter to search older files.</p>{/if}
+      {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from {result.attachments.truncated ? 'searched' : 'mirrored'} attachments.</p>{/if}
+      {#if result.attachments.scope_truncated}<p class="coverage" role="status">Only the newest 4096 mirrored files were searched. Add a Person filter to narrow the search.</p>
+      {:else if result.attachments.truncated}<p class="coverage" role="status">More may match</p>{/if}
     </section>
   {/if}
 </section>

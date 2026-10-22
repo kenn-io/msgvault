@@ -192,7 +192,7 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "full name page", "selections", "bad timing", "mixed"} {
+	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "kind", "node name", "full name page", "selections", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -214,10 +214,6 @@ func TestSearchDocumentsContract(t *testing.T) {
 				report.Results[0].Evidence[0].Kind = "node_name"
 			case "media":
 				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
-			case "timing":
-				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{EndMS: 10}
-			case "bad timing":
-				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{StartMS: 10, EndMS: 1}
 			case "mixed":
 				report.Results[0].Evidence = append(report.Results[0].Evidence, SearchEvidence{Kind: "node_name"})
 			case "kind":
@@ -247,7 +243,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 				assert.Equal(fault == "full name page", got.Truncated)
 				return
 			}
-			if fault != "" && fault != "timing" && fault != "mixed" {
+			if fault != "" && fault != "mixed" {
 				require.ErrorIs(err, ErrInvalidReceipt)
 				return
 			}

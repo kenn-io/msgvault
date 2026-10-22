@@ -150,11 +150,11 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 	var attachmentErr error
 	var searches sync.WaitGroup
 	searches.Go(func() {
-		response, err = reader.search(searchCtx, q, limit, scope, resolve)
+		response, err = reader.search(r.Context(), searchCtx, q, limit, scope, resolve)
 	})
 	if s.docbankAttachments != nil {
 		searches.Go(func() {
-			attachments, attachmentErr = s.docbankAttachments.SearchAttachments(searchCtx, q, limit, scope, resolve)
+			attachments, attachmentErr = s.docbankAttachments.SearchAttachments(r.Context(), searchCtx, q, limit, scope, resolve)
 		})
 	}
 	searches.Wait()
@@ -235,7 +235,7 @@ func mediaSearchSource(o store.MessageMediaOccurrence) docbankmedia.SearchMediaS
 	return docbankmedia.SearchMediaSource{SourceID: o.DocbankSourceID, SourceVersionID: o.SourceVersionID, ContentVersionID: o.ContentVersionID}
 }
 
-func (reader *MessageRecordingReader) search(ctx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
+func (reader *MessageRecordingReader) search(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaSearchResponse, error) {
 	response := MediaSearchResponse{Results: []MediaSearchResult{}, Coverage: docbankmedia.SearchCoverage{State: "unknown"}}
 	occurrences, err := reader.Store.ListMediaSearchOccurrences(ctx, reader.Destination, scope)
 	if err != nil {
@@ -294,13 +294,13 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
 	var report docbankmedia.SearchReport
 	if len(fence.ContentVersionIDs) == 0 {
-		if err := reader.Client.ValidateSearch(ctx, request); err != nil {
+		if err := reader.Client.ValidateSearch(remoteCtx, request); err != nil {
 			return response, err
 		}
 		response.Coverage.State = "complete"
 	} else {
 		request.Fence, request.MediaSources = &fence, selectors
-		report, err = reader.Client.Search(ctx, request)
+		report, err = reader.Client.Search(remoteCtx, request)
 		if err != nil {
 			return response, err
 		}

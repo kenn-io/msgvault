@@ -187,7 +187,7 @@ sends the query text to the configured Docbank service.
   starts; use **Refresh** for current matches. Transient failures offer
   **Retry**. A query or Person filter change retries a refused search.
 
-On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Attachment queries can contain punctuation; the plain-word restriction applies to recordings. An empty block says "No matches in text Docbank has extracted from mirrored attachments." Attachment failures show the API error message with Retry. "More may match" marks truncation, including a later chunk failure that keeps earlier hits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
+On unreleased builds, the same request adds an **Attachments** block when attachment mirroring is enabled. Rows show the message title and date, filename, and extracted excerpt, and open the containing message. Attachment queries can contain punctuation; the plain-word restriction applies to recordings. An empty block reports no matches in extracted text from searched attachments when results are truncated, or mirrored attachments otherwise. Attachment failures show the API error message with Retry. Search uses one batch of the newest 4096 mirrored versions in the selected scope. When more versions exist, a notice names this limit and suggests a Person filter to narrow the search. "More may match" marks other result limits. Recording failures appear beside attachment results. Both lists follow the same Person filter.
 
 ## Read messages
 

@@ -177,7 +177,7 @@ describe('TranscriptHits', () => {
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     vi.useFakeTimers();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ attachments: {
-      results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false,
+      results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false, scope_truncated: false,
     } })));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
     await vi.advanceTimersByTimeAsync(300);
@@ -230,14 +230,15 @@ describe('TranscriptHits', () => {
 it('opens attachment messages and keeps recording metadata in its own list', async () => {
   const onOpen = vi.fn();
   const attachment = { message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Quarterly report', occurred_at: '2026-07-18T12:00:00Z', excerpt: 'quartz inside the PDF' };
-  const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ attachments: { results: [attachment], truncated: true } }))));
+  const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ attachments: { results: [attachment], truncated: true, scope_truncated: false } }))));
   render(TranscriptHits, { props: { client, query: 'quartz', supported: true, onOpen } });
   const link = await screen.findByRole('link', { name: 'Quarterly report' });
   expect(link.getAttribute('href')).toBe('/messages/44');
   expect(link.textContent).toContain('report.pdf');
   expect(link.textContent).toContain('quartz inside the PDF');
   expect(link.querySelectorAll('time')).toHaveLength(1);
-  expect(screen.getByText('Only the newest 4096 mirrored files were searched. Add a Person filter to search older files.')).toBeTruthy();
+  expect(screen.getByText('More may match')).toBeTruthy();
+  expect(screen.queryByText(/Only the newest 4096/)).toBeNull();
   await fireEvent.click(link);
   expect(onOpen).toHaveBeenCalledWith(attachment);
   expect(screen.getByText('Provider transcript')).toBeTruthy();
@@ -246,7 +247,7 @@ it('opens attachment messages and keeps recording metadata in its own list', asy
 it.each(['empty', 'error', 'absent'])('shows the attachment %s state', async (state) => {
   mount(vi.fn<typeof fetch>(async () => Response.json(report({
     results: [],
-    attachments: state === 'absent' ? undefined : { results: [], truncated: false, error: state === 'error' ? { error: 'transport', message: 'Attachment search timed out.' } : undefined },
+    attachments: state === 'absent' ? undefined : { results: [], truncated: false, scope_truncated: false, error: state === 'error' ? { error: 'transport', message: 'Attachment search timed out.' } : undefined },
   }))));
   if (state === 'absent') {
     await screen.findByText('No spoken matches.');
@@ -266,8 +267,8 @@ it.each([
   ['validation', false], ['unauthorized', false], ['invalid_request', false],
 ])('offers attachment retry for %s only when transient', async (error, retryable) => {
   const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: {
-    results: [], truncated: false, error: { error, message: 'Attachment search is unavailable.' },
-  } }))).mockResolvedValue(Response.json(report({ attachments: { results: [], truncated: false } })));
+    results: [], truncated: false, scope_truncated: false, error: { error, message: 'Attachment search is unavailable.' },
+  } }))).mockResolvedValue(Response.json(report({ attachments: { results: [], truncated: false, scope_truncated: false } })));
   mount(fetchFn);
   await screen.findByText('Attachment search is unavailable.');
   expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
@@ -283,7 +284,7 @@ it.each([
   ['media_search_unavailable', 'Recording search unavailable.', true],
 ])('handles partial recording failure %s alongside attachment hits', async (error, message, retryable) => {
   const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error, message: 'raw server error' }, attachments: {
-    results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false,
+    results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false, scope_truncated: false,
   } }))).mockResolvedValue(Response.json(report()));
   mount(fetchFn);
   await screen.findByRole('link', { name: 'Report' });
@@ -297,4 +298,23 @@ it.each([
     await screen.findByText('Quarterly numbers');
     expect(screen.queryByRole('link', { name: 'Report' })).toBeNull();
   }
+});
+
+it.each([true, false])('limits the empty attachment claim when version scope is truncated: %s', async (scopeTruncated) => {
+  mount(vi.fn<typeof fetch>(async () => Response.json(report({ results: [], attachments: {
+    results: [], truncated: scopeTruncated, scope_truncated: scopeTruncated,
+  } }))));
+  await screen.findByText(scopeTruncated
+    ? 'No matches in text Docbank has extracted from searched attachments.'
+    : 'No matches in text Docbank has extracted from mirrored attachments.');
+  expect(screen.queryByText('Only the newest 4096 mirrored files were searched. Add a Person filter to narrow the search.') !== null).toBe(scopeTruncated);
+});
+
+it('marks a selected message in only one result list', async () => {
+  const client = createAPIClient(vi.fn<typeof fetch>(async () => Response.json(report({ results: [hit({ message_id: 44 })], attachments: {
+    results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false, scope_truncated: false,
+  } }))));
+  render(TranscriptHits, { props: { client, query: 'quartz', supported: true, selectedMessageID: 44 } });
+  await screen.findByRole('link', { name: 'Report' });
+  expect(screen.getAllByRole('link', { current: true })).toHaveLength(1);
 });

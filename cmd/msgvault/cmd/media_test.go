@@ -23,6 +23,8 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 		want   string
 	}{
 		{"table", []string{"search", "quarterly", "numbers", "--person", "7", "--direction", "from_person"}, 200, "Coverage complete"},
+		{"scope limit", []string{"search", "quartz"}, 200, "Only the newest 4096 mirrored files were searched. Set --person to narrow the search."},
+		{"result limit", []string{"search", "quartz"}, 200, "More may match"},
 		{"terminal", []string{"search", "quarterly numbers"}, 200, "Coverage complete"},
 		{"json", []string{"search", "quarterly numbers", "--json"}, 200, `"message_id":44`},
 		{"mode delegated", []string{"search", "words", "--mode", "hybrid"}, 503, "media_search_mode_unavailable"},
@@ -61,7 +63,7 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 				if test.name == "terminal" {
 					state = "\x1b[31mcomplete\x1b[0m\a"
 				}
-				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{}, Partial: true, Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true, ErrorData: &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment search is unavailable.")}}, RecordingsError: &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new("Docbank transcript search is unavailable")}})
+				_ = json.NewEncoder(w).Encode(generated.MediaSearchResponse{Coverage: generated.SearchCoverage{State: state}, Results: []generated.MediaSearchResult{}, Partial: true, Attachments: &generated.MediaAttachmentSearch{Results: []generated.MediaAttachmentResult{{MessageID: 44, ConversationID: 22, AttachmentID: 55, Filename: "report.pdf", Excerpt: "quartz"}}, Truncated: true, ScopeTruncated: test.name == "scope limit", ErrorData: &generated.ErrorResponse{ErrorData: "transport", Message: new("Attachment search is unavailable.")}}, RecordingsError: &generated.ErrorResponse{ErrorData: "media_search_unavailable", Message: new("Docbank transcript search is unavailable")}})
 			}))
 			t.Cleanup(daemon.Close)
 			command := newMediaCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -85,6 +87,9 @@ func TestMediaSearchCLIDaemonRoundTrip(t *testing.T) {
 			assert.NotContains(output.String(), "\x1b")
 			assert.NotContains(output.String(), "\a")
 			assert.Contains(output.String(), "report.pdf")
+			if test.name == "result limit" {
+				assert.NotContains(output.String(), "4096")
+			}
 		})
 	}
 }

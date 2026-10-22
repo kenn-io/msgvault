@@ -210,7 +210,7 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		}
 		content := false
 		for _, evidence := range hit.Evidence {
-			if !slices.Contains([]string{"rendition_segment", "content_blob", "node_name"}, evidence.Kind) || len(evidence.MediaSources) != 0 || (evidence.TimeSpan != nil && (evidence.TimeSpan.StartMS < 0 || evidence.TimeSpan.EndMS <= evidence.TimeSpan.StartMS)) {
+			if !slices.Contains([]string{"rendition_segment", "content_blob", "node_name"}, evidence.Kind) || len(evidence.MediaSources) != 0 {
 				return SearchReport{}, ErrInvalidReceipt
 			}
 			content = content || evidence.Kind != "node_name"

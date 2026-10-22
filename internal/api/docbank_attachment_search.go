@@ -21,14 +21,15 @@ type MediaAttachmentResult struct {
 }
 
 type MediaAttachmentSearch struct {
-	Results   []MediaAttachmentResult `json:"results"`
-	Truncated bool                    `json:"truncated"`
-	Error     *ErrorResponse          `json:"error,omitempty"`
+	ScopeTruncated bool                    `json:"scope_truncated" doc:"Only the newest 4096 mirrored versions in the selected scope were searched"`
+	Results        []MediaAttachmentResult `json:"results"`
+	Truncated      bool                    `json:"truncated"`
+	Error          *ErrorResponse          `json:"error,omitempty"`
 }
 
 // SearchAttachments searches the newest delivered attachment versions.
 // It keeps Docbank's ranking and maps only to currently visible messages.
-func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
+func (reader *DocbankAttachmentReader) SearchAttachments(ctx, remoteCtx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
 	fail := func(err error) (MediaAttachmentSearch, error) {
 		response.Error = attachmentSearchError(err)
@@ -38,16 +39,16 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 	if err != nil {
 		return fail(err)
 	}
-	response.Truncated = truncated
+	response.Truncated, response.ScopeTruncated = truncated, truncated
 	if len(versions) == 0 {
 		return response, nil
 	}
-	vault, err := reader.Client.VaultUID(ctx)
+	vault, err := reader.Client.VaultUID(remoteCtx)
 	if err != nil {
 		return fail(err)
 	}
 	// Docbank lexical search spans profiles but requires a registered name.
-	report, err := reader.Client.SearchDocuments(ctx, docbankmedia.SearchRequest{
+	report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
 		Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
 		Limit: limit, Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versions},
 	})
@@ -55,19 +56,19 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 		return fail(err)
 	}
 	response.Truncated = response.Truncated || report.Truncated
-	if _, err := reader.visible(ctx, &response, report.Results, limit, resolve); err != nil {
+	if err := reader.visible(ctx, &response, report.Results, limit, resolve); err != nil {
 		return fail(err)
 	}
 	return response, nil
 }
 
 // visible replaces response.Results with the hits' attachments in the current
-// scope, in Docbank's rank order, and returns that scope.
-func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *MediaAttachmentSearch, hits []docbankmedia.SearchHit, limit int, resolve func() (*personscope.Scope, error)) (*personscope.Scope, error) {
+// scope, in Docbank's rank order.
+func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *MediaAttachmentSearch, hits []docbankmedia.SearchHit, limit int, resolve func() (*personscope.Scope, error)) error {
 	response.Results = []MediaAttachmentResult{}
 	scope, err := resolve()
 	if err != nil {
-		return nil, &mediaSearchScopeError{err}
+		return &mediaSearchScopeError{err}
 	}
 	ids := make([]string, 0, len(hits))
 	for _, hit := range hits {
@@ -75,7 +76,7 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 	}
 	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	byVersion := make(map[string][]store.DocumentSearchOccurrence)
 	for _, o := range occurrences {
@@ -85,12 +86,12 @@ func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *Me
 		for _, o := range byVersion[hit.ContentVersionID] {
 			if len(response.Results) == limit {
 				response.Truncated = true
-				return scope, nil
+				return nil
 			}
 			response.Results = append(response.Results, MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt, Excerpt: hit.Excerpt})
 		}
 	}
-	return scope, nil
+	return nil
 }
 
 // attachmentSearchError keeps Docbank's code, except that a rejected query

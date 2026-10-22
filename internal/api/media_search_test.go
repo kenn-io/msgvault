@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/docbankmedia"
+	"go.kenn.io/msgvault/internal/personscope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -899,7 +900,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "attachment failure", "rejected query", "recording timeout", "recording scope limit", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "occurrence limit", "docbank limit", "attachment failure", "rejected query", "recording timeout", "recording scope limit", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -909,6 +910,10 @@ func TestMediaSearchDocuments(t *testing.T) {
 			first, second := f.document(t, server)
 			query := "q=quartz"
 			switch scenario {
+			case "occurrence limit":
+				query += "&limit=1"
+			case "docbank limit":
+				f.documentReport.Truncated = true
 			case "attachment failure":
 				f.documentStatus = 503
 			case "rejected query":
@@ -1010,7 +1015,12 @@ func TestMediaSearchDocuments(t *testing.T) {
 				}
 				return
 			}
+			assert.False(response.Attachments.ScopeTruncated)
+			assert.Equal(scenario == "occurrence limit" || scenario == "docbank limit", response.Attachments.Truncated)
 			want := 2
+			if scenario == "occurrence limit" {
+				want = 1
+			}
 			if scenario == "recording failure without attachment matches" {
 				assert.Nil(response.Attachments.Error)
 				want = 0
@@ -1027,6 +1037,47 @@ func TestMediaSearchDocuments(t *testing.T) {
 			}
 			if scenario == "person filter" {
 				assert.Equal(first, response.Attachments.Results[0].MessageID)
+			}
+		})
+	}
+}
+
+// Local attribution can outlast the remote budget after a slow successful response.
+func TestMediaSearchLocalMappingAfterDocbankBudget(t *testing.T) {
+	for _, kind := range []string{"recording", "attachment"} {
+		t.Run(kind, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			recording := f.match(t, "audio")
+			server := f.server(false)
+			first, second := f.document(t, server)
+			remoteCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			slowCtx, slowCancel := context.WithTimeout(t.Context(), time.Second)
+			defer slowCancel()
+			slow := func() { <-slowCtx.Done() }
+			resolve := func() (*personscope.Scope, error) {
+				// The request still has time for local queries when Docbank's budget ends.
+				<-remoteCtx.Done()
+				return nil, nil //nolint:nilnil // No Person filter searches the full visible archive.
+			}
+			if kind == "recording" {
+				f.duringSearch = slow
+				response, err := server.messageRecordings.search(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				require.NoError(err)
+				require.Len(response.Results, 1)
+				assert.Equal(recording.messageID, response.Results[0].MessageID)
+			} else {
+				f.duringDocumentSearch = slow
+				response, err := server.docbankAttachments.SearchAttachments(t.Context(), remoteCtx, "quartz", 20, nil, resolve)
+				require.NoError(err)
+				assert.Nil(response.Error)
+				var messages []int64
+				for _, hit := range response.Results {
+					messages = append(messages, hit.MessageID)
+				}
+				assert.ElementsMatch([]int64{first, second}, messages)
 			}
 		})
 	}
