@@ -153,12 +153,44 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Find who knows about a topic
+
+On unreleased `main`, `GET /api/v1/people/who-knows` ranks the people who wrote
+about a topic. The route is owner-only and returns `Cache-Control: no-store`.
+Restricted agent tokens cannot use it.
+
+Query parameters are `topic` (required) and optional `limit` (1-50),
+`evidence` (1-10), `min_score` (above 0, at most 1; the 0.5 default is not
+calibrated for real embedding models), and `after` and `before` (RFC3339 or
+YYYY-MM-DD), as in the [CLI options](cli-reference.md#person-who-knows). The
+topic is plain words; search operators return `400 invalid_parameter`.
+
+The response holds `topic`, `people`, `unsaved_contacts`, and `limits`, which
+lists each way the search came up short: `pool_full` when the search hit its
+result limit and may have omitted messages whose cosine similarity clears
+`min_score`; SQLite reports this for every saturated pool because its L2
+ranking cannot prove cosine order from returned vectors alone; `partial_index`
+when the vector index leaves out some message types with authors or some
+accounts, or, for an empty answer, some message still waits for its vector;
+and `declared_truncated` when more than 5,000 declared topics exist. Both
+lists empty with no limits means no message
+cleared `min_score`. Lower `min_score` to widen the search; people may still
+have written about the topic. Each entry has a `score` split into
+`message_score` and `declared_boost`, `authored_messages`, and `citations`,
+and sets `person_id` for a saved person or `participant_id` for an unsaved
+contact. A citation's `sender_authenticated` is true only when the source sets
+the sender; an email From address is not a verified identity.
+
+A topic with no free text returns `400 missing_free_text`. Vector search
+failures keep their usual `503` errors. See
+[topic search](usage/people.md#find-who-knows-about-a-topic) for scoring.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -176,6 +208,8 @@ report anonymous usage events through the daemon. See
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
+
+Schema 3.24.0 adds [`GET /api/v1/people/who-knows`](#find-who-knows-about-a-topic).
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.

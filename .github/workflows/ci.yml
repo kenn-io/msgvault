@@ -688,7 +688,7 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -timeout 60m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/whoknows/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.

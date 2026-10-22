@@ -16263,6 +16263,94 @@ components:
       required:
         - text
       type: object
+    WhoKnowsCitation:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        message_type:
+          type: string
+        sender_authenticated:
+          type: boolean
+        sent_at:
+          format: date-time
+          type: string
+        subject:
+          type: string
+      required:
+        - message_id
+        - message_type
+        - sender_authenticated
+      type: object
+    WhoKnowsEntry:
+      properties:
+        ask_me_about:
+          items:
+            type: string
+          type: array
+        authored_messages:
+          format: int64
+          type: integer
+        citations:
+          items:
+            $ref: "#/components/schemas/WhoKnowsCitation"
+          type: array
+        declared_boost:
+          format: double
+          type: number
+        display_name:
+          type: string
+        email_address:
+          type: string
+        message_score:
+          format: double
+          type: number
+        participant_id:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        rank:
+          format: int64
+          type: integer
+        score:
+          format: double
+          type: number
+      required:
+        - rank
+        - score
+        - message_score
+        - declared_boost
+        - authored_messages
+        - citations
+      type: object
+    WhoKnowsResponse:
+      properties:
+        limits:
+          items:
+            enum:
+              - pool_full
+              - partial_index
+              - declared_truncated
+            type: string
+          type: array
+        people:
+          items:
+            $ref: "#/components/schemas/WhoKnowsEntry"
+          type: array
+        topic:
+          type: string
+        unsaved_contacts:
+          items:
+            $ref: "#/components/schemas/WhoKnowsEntry"
+          type: array
+      required:
+        - topic
+        - limits
+        - people
+        - unsaved_contacts
+      type: object
   securitySchemes:
     apiKey:
       in: header
@@ -16270,7 +16358,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -26494,6 +26582,74 @@ paths:
       security:
         - apiKey: []
       summary: Search durable people semantically
+      tags:
+        - API
+  /api/v1/people/who-knows:
+    get:
+      description: "Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. limits lists each way the search came up short: pool_full when more messages may match beyond the search pool, partial_index when the vector index leaves out some message types or accounts or, for an empty answer, has not embedded a message yet, and declared_truncated when declared topics were searched only in part. Both lists empty with no limits means no message cleared min_score. Lower min_score to widen the search. A message's From address is not a verified identity unless its citation has sender_authenticated."
+      operationId: findPeopleWhoKnow
+      parameters:
+        - description: Plain words; search operators are refused
+          in: query
+          name: topic
+          required: true
+          schema:
+            type: string
+        - description: Saved people to return, 1-50; default 10
+          in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - description: Citations per person, 1-10; default 3
+          in: query
+          name: evidence
+          schema:
+            format: int64
+            type: integer
+        - description: Lowest cosine similarity a message needs to count, above 0 and at most 1; default 0.5
+          in: query
+          name: min_score
+          schema:
+            type: number
+        - description: Messages at or after this time (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: after
+          schema:
+            type: string
+        - description: Messages before this time (RFC3339 or YYYY-MM-DD)
+          in: query
+          name: before
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WhoKnowsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Find people who wrote about a topic
       tags:
         - API
   /api/v1/people/{id}:

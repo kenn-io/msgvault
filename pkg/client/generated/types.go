@@ -15513,3 +15513,83 @@ type VisualTextSearchRequest struct {
 func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
+
+type WhoKnowsCitation struct {
+	MessageID           int64      `json:"message_id"`
+	MessageType         string     `json:"message_type" validate:"required"`
+	SenderAuthenticated bool       `json:"sender_authenticated"`
+	SentAt              *time.Time `json:"sent_at,omitempty"`
+	Subject             *string    `json:"subject,omitzero"`
+}
+
+func (w WhoKnowsCitation) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsEntry struct {
+	AskMeAbout       []string           `json:"ask_me_about,omitempty"`
+	AuthoredMessages int64              `json:"authored_messages"`
+	Citations        []WhoKnowsCitation `json:"citations" validate:"required"`
+	DeclaredBoost    float64            `json:"declared_boost"`
+	DisplayName      *string            `json:"display_name,omitzero"`
+	EmailAddress     *string            `json:"email_address,omitzero"`
+	MessageScore     float64            `json:"message_score"`
+	ParticipantID    *int64             `json:"participant_id,omitempty"`
+	PersonID         *int64             `json:"person_id,omitempty"`
+	Rank             int64              `json:"rank"`
+	Score            float64            `json:"score"`
+}
+
+func (w WhoKnowsEntry) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range w.Citations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Citations[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsResponse struct {
+	Limits          []WhoKnowsResponseLimits `json:"limits" validate:"required"`
+	People          []WhoKnowsEntry          `json:"people" validate:"required"`
+	Topic           string                   `json:"topic" validate:"required"`
+	UnsavedContacts []WhoKnowsEntry          `json:"unsaved_contacts" validate:"required"`
+}
+
+func (w WhoKnowsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range w.Limits {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Limits[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range w.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(w.Topic, "required"); err != nil {
+		errors = errors.Append("Topic", err)
+	}
+	for i, item := range w.UnsavedContacts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("UnsavedContacts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
