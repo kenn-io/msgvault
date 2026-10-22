@@ -1917,7 +1917,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		conn, err := net.Dial("tcp", listener.Addr().String())
 		require.NoError(t, err, "dial server")
 		defer func() { _ = conn.Close() }()
-		require.NoError(t, conn.SetDeadline(time.Now().Add(2*time.Second)), "bound test connection")
+		require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)), "bound test connection")
 
 		marker := ""
 		if marked {
@@ -1943,16 +1943,14 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 		case <-time.After(2 * time.Second):
 			require.FailNow(t, "inner handler did not start")
 		}
-		time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 		if marked {
+			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // outlasts the real socket read deadline
 			_, err = conn.Write([]byte("b"))
 			require.NoError(t, err, "write delayed body byte")
-		} else {
-			// The server may close the connection as soon as the ordinary
-			// read deadline expires, so a late control write can return
-			// EPIPE/closed socket before the 408 response is read.
-			_, _ = conn.Write([]byte("b"))
 		}
+		// An unmarked request never receives its last body byte, so the
+		// server can only respond once its ordinary read deadline fires. A
+		// late write would race that deadline on a loaded runner.
 
 		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
 		if err != nil {
@@ -1975,6 +1973,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 			// expires. Either outcome proves the delayed body was bounded.
 			var netErr *net.OpError
 			require.ErrorAs(t, err, &netErr, "read deadline closes the connection")
+			assert.False(t, netErr.Timeout(), "server closed the connection before the client deadline")
 			return
 		}
 		assert.Equal(t, http.StatusRequestTimeout, status)
