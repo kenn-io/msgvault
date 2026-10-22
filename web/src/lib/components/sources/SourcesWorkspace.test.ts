@@ -32,19 +32,90 @@ afterEach(() => {
 describe('SourcesWorkspace', () => {
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
-      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true,
+      source({ display_name: 'Resuming archive', scheduled: true, scheduler_queued: true, scheduler_queued_at: '2026-10-01T15:04:00Z',
         can_sync: false, sync_unavailable_reason: 'sync_already_running', latest_sync: run('cancelled', 5) }),
       source({ id: 2, display_name: 'Broken archive', scheduled: true, scheduler_queued: true,
         can_sync: false, sync_unavailable_reason: 'sync_already_running',
         latest_sync: run('failed', 0, { errors_count: 1, error_message: 'Channel unavailable' }) })
     ] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    expect(await screen.findByText('Queued')).toBeDefined();
+    expect(await screen.findAllByText('Queued')).toHaveLength(2);
     expect(screen.getByText('Failed')).toBeDefined();
     expect(screen.getAllByText('Sync queued')).toHaveLength(2);
+    const queuedTime = screen.getByText('Queued since', { exact: false }).querySelector('time');
+    expect(queuedTime?.getAttribute('datetime')).toBe('2026-10-01T15:04:00Z');
     expect(screen.queryByText('Sync in progress')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Show details for Resuming archive' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Show details for Broken archive' })).toBeDefined();
+  });
+
+  it('discovers queued work after opening idle and follows it through completion', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const queuedAt = '2026-10-01T15:04:00Z';
+    let current = source({ scheduled: true });
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [current] }));
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await screen.findByText('Archive');
+    expect(fetchFn).toHaveBeenCalledOnce();
+
+    current = source({ scheduled: true, scheduler_queued: true, scheduler_queued_at: queuedAt });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(screen.getByText('Queued')).toBeDefined();
+    expect(screen.getByText('Queued since', { exact: false }).querySelector('time')?.getAttribute('datetime')).toBe(queuedAt);
+
+    current = source({ scheduled: true, active_sync: run('running', 7) });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(screen.getByText('7 processed')).toBeDefined();
+    expect(screen.queryByText('Queued since', { exact: false })).toBeNull();
+
+    current = source({ scheduled: true, latest_sync: run('completed', 8, { completed_at: '2026-10-01T15:05:00Z' }) });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(screen.getByText('Completed')).toBeDefined();
+    const completedReads = fetchFn.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(8_000);
+    expect(fetchFn).toHaveBeenCalledTimes(completedReads);
+    hidden.mockReturnValue(true);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchFn).toHaveBeenCalledTimes(completedReads);
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchFn).toHaveBeenCalledTimes(completedReads + 1);
+    rendered.unmount();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchFn).toHaveBeenCalledTimes(completedReads + 1);
+  });
+
+  it.each(['unchanged', 'advanced'] as const)('waits for the next scheduled tick and bounds idle follow-ups (%s)', async (schedule) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let stage = 'initial';
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
+      scheduled: true,
+      next_sync_at: stage === 'initial' ? '2026-10-01T16:00:00Z' : '2026-10-01T17:00:00Z',
+      ...(stage === 'queued' ? { scheduler_queued: true, scheduler_queued_at: '2026-10-01T16:00:01Z' } : {}),
+    })] }));
+    const rendered = render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByText('Archive')).toBeDefined();
+    await vi.advanceTimersByTimeAsync(3_599_999);
+    expect(fetchFn).toHaveBeenCalledOnce();
+    if (schedule === 'advanced') stage = 'advanced';
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    if (schedule === 'advanced') {
+      stage = 'queued';
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(screen.getByText('Queued since', { exact: false }).querySelector('time')?.getAttribute('datetime')).toBe('2026-10-01T16:00:01Z');
+    } else {
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(fetchFn).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(fetchFn).toHaveBeenCalledTimes(5);
+    }
+    rendered.unmount();
   });
 
   it('opens source-sync history from Sync history', async () => {
@@ -663,10 +734,10 @@ describe('SourcesWorkspace', () => {
     rendered.unmount();
   });
 
-  it('caps lock-hold polling and offers a manual refresh', async () => {
+  it.each([false, true])('caps rapid lock-hold polling with scheduled=%s', async (scheduled) => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    const held = source({ can_sync: false, sync_unavailable_reason: 'sync_already_running' });
+    const held = source({ scheduled, can_sync: false, sync_unavailable_reason: 'sync_already_running' });
     const fetchFn = vi.fn<typeof fetch>(async () => {
       reads += 1;
       return Response.json({ sources: [held] });
@@ -678,11 +749,11 @@ describe('SourcesWorkspace', () => {
     await screen.findByText('Sync in progress');
     await vi.advanceTimersByTimeAsync(30_000);
     expect(reads).toBe(4);
-    expect(screen.getByText(/Automatic refresh paused/)).toBeDefined();
+    expect(screen.getByText(/Source status may be stale/)).toBeDefined();
     await vi.advanceTimersByTimeAsync(30_000);
-    expect(reads).toBe(4);
+    expect(reads).toBe(scheduled ? 5 : 4);
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-    expect(reads).toBe(5);
+    expect(reads).toBe(scheduled ? 6 : 5);
     rendered.unmount();
   });
 

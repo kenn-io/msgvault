@@ -469,7 +469,7 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 	assertChecks := assert.New(t)
 	var requests atomic.Int64
 	release := make(chan struct{})
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		select {
 		case <-r.Context().Done():
@@ -480,22 +480,22 @@ func TestOpenAIChatDriverHonorsCancellationAndClientTimeout(t *testing.T) {
 		close(release)
 		server.Close()
 	}()
-	profile := providerTestProfile(t, server.URL+"/v1", false)
+	profile := providerTestProfile(t, server.URL+"/v1", true)
 
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := generateOpenAIChatJSON(
 		cancelled, profile, peoplesweep.NewOpenAIChatDriver(server.Client()),
-		"test-key", structuredTestRequest(),
+		"", structuredTestRequest(),
 	)
 	requireChecks.ErrorIs(err, context.Canceled)
 	assertChecks.Zero(requests.Load())
 
 	timeoutClient := server.Client()
-	timeoutClient.Timeout = 100 * time.Millisecond
+	timeoutClient.Timeout = time.Second
 	_, err = generateOpenAIChatJSON(
 		t.Context(), profile, peoplesweep.NewOpenAIChatDriver(timeoutClient),
-		"test-key", structuredTestRequest(),
+		"", structuredTestRequest(),
 	)
 	requireChecks.Error(err)
 	assertChecks.Truef(

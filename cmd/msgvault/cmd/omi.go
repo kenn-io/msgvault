@@ -301,6 +301,12 @@ func runConfiguredOmiSync(ctx context.Context, st *store.Store, paceDir string, 
 		writes = sum.MeetingsAdded + sum.MeetingsUpdated
 	}
 	err = (meetingSyncRun{provider: "omi", identifier: src.Identifier, writes: writes, err: err}).finishScheduled(ctx, "omi:"+src.Identifier, rebuildOmiCacheAfterScheduledSync)
+	if sum != nil && errors.Is(sum.PauseReason, context.Canceled) && ctx.Err() == nil && jobctx.PreemptionRequested(ctx) {
+		if err == nil {
+			return scheduler.ErrReschedule
+		}
+		return &scheduler.RescheduleError{Err: err}
+	}
 	if err == nil && sum != nil && sum.PauseReason != nil {
 		var cooldown *omi.CooldownError
 		if errors.As(sum.PauseReason, &cooldown) || (!jobctx.HasProgress(ctx) && errors.Is(context.Cause(ctx), jobctx.ErrRunBudgetExceeded)) {

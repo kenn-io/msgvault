@@ -5,12 +5,17 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/clirun"
+	"go.kenn.io/msgvault/internal/jobctx"
+	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -144,48 +149,57 @@ func TestScheduledBeeperAttemptsReturnsRefreshError(t *testing.T) {
 }
 
 func TestScheduledBeeperAttemptsRotatesAfterStop(t *testing.T) {
-	assert := assert.New(t)
-	rotation := &beeperAccountRotation{}
-	accounts := []string{"a", "b", "c"}
-	noRebuild := func() error { return nil }
-
-	var first []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, error) {
-			first = append(first, id)
-			return id == "b", nil
-		}, noRebuild))
-	assert.Equal([]string{"a", "b"}, first, "a stopped account ends the job")
-
-	var second []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, error) {
-			second = append(second, id)
-			return false, nil
-		}, noRebuild))
-	assert.Equal([]string{"c", "a", "b"}, second, "the next run reaches accounts after the stopped account")
-
-	var third []string
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), accounts, rotation, nil,
-		func(id string) (bool, error) {
-			third = append(third, id)
-			return false, nil
-		}, noRebuild))
-	assert.Equal([]string{"a", "b", "c"}, third, "a complete run restarts from the first account")
+	for _, tc := range []struct {
+		name          string
+		accounts      []string
+		stop          string
+		first, second []string
+	}{
+		{name: "middle account", accounts: []string{"a", "b", "c"}, stop: "b", first: []string{"a", "b"}, second: []string{"c", "a", "b"}},
+		{name: "last account", accounts: []string{"a", "b", "c"}, stop: "c", first: []string{"a", "b", "c"}, second: []string{"a", "b", "c"}},
+		{name: "only account", accounts: []string{"a"}, stop: "a", first: []string{"a"}, second: []string{"a"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			ctx := jobctx.WithProgress(t.Context())
+			rotation := &beeperAccountRotation{}
+			noRebuild := func() error { return nil }
+			var first []string
+			require.ErrorIs(t, runScheduledBeeperAttempts(ctx, tc.accounts, rotation, nil,
+				func(id string) (bool, error) {
+					first = append(first, id)
+					if id == tc.stop {
+						jobctx.RecordProgress(ctx)
+					}
+					return id == tc.stop, nil
+				}, noRebuild), scheduler.ErrReschedule)
+			assert.Equal(tc.first, first, "a stopped account ends the job")
+			var second []string
+			require.NoError(t, runScheduledBeeperAttempts(ctx, tc.accounts, rotation, nil,
+				func(id string) (bool, error) { second = append(second, id); return false, nil }, noRebuild))
+			assert.Equal(tc.second, second, "the next run reaches accounts after the stopped account")
+			var third []string
+			require.NoError(t, runScheduledBeeperAttempts(ctx, tc.accounts, rotation, nil,
+				func(id string) (bool, error) { third = append(third, id); return false, nil }, noRebuild))
+			assert.Equal(tc.accounts, third, "a complete run restarts from the first account")
+		})
+	}
 }
 
 func TestScheduledBeeperAttemptsStopBetweenAccounts(t *testing.T) {
 	assert := assert.New(t)
 	rotation := &beeperAccountRotation{}
 	var attempted []string
+	ctx := jobctx.WithProgress(t.Context())
 	stopped := false
-	require.NoError(t, runScheduledBeeperAttempts(context.Background(), []string{"a", "b", "c"}, rotation,
+	require.ErrorIs(t, runScheduledBeeperAttempts(ctx, []string{"a", "b", "c"}, rotation,
 		func() bool { return stopped },
 		func(id string) (bool, error) {
 			attempted = append(attempted, id)
+			jobctx.RecordProgress(ctx)
 			stopped = true // budget spent by the first account
 			return false, nil
-		}, func() error { return nil }))
+		}, func() error { return nil }), scheduler.ErrReschedule)
 	assert.Equal([]string{"a"}, attempted)
 	assert.Equal([]string{"b", "c", "a"}, rotation.order([]string{"a", "b", "c"}),
 		"the next run starts with the first account not reached")
@@ -305,11 +319,13 @@ func TestScheduledBeeperAttemptsRotateWhenEveryAccountStops(t *testing.T) {
 	rotation := &beeperAccountRotation{}
 	var attempted []string
 	for range 3 {
-		require.NoError(t, runScheduledBeeperAttempts(t.Context(), []string{"a", "b", "c"}, rotation, nil,
+		ctx := jobctx.WithProgress(t.Context())
+		require.ErrorIs(t, runScheduledBeeperAttempts(ctx, []string{"a", "b", "c"}, rotation, nil,
 			func(id string) (bool, error) {
 				attempted = append(attempted, id)
+				jobctx.RecordProgress(ctx)
 				return true, nil
-			}, func() error { return nil }))
+			}, func() error { return nil }), scheduler.ErrReschedule)
 	}
 	assert.Equal(t, []string{"a", "b", "c"}, attempted, "each stopped account yields the next tick")
 }
@@ -354,5 +370,48 @@ func TestBeeperBackfillIncludesHistoryOnlyAccounts(t *testing.T) {
 		accounts, err := resolveBeeperAccounts(st, selection, testConfigValue(), true)
 		require.NoError(err)
 		assert.Equal([]string{source.Identifier}, accounts)
+	}
+}
+
+func TestScheduledBeeperBudgetContinuationRequiresProgress(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(committed), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				runs := 0
+				s := scheduler.New(nil)
+				defer func() { <-s.Stop().Done() }()
+				require.NoError(s.AddJob(scheduler.Job{Name: "beeper", Schedule: "0 0 1 1 *", Run: func(ctx context.Context) error {
+					runs++
+					if runs > 1 {
+						return nil
+					}
+					return runScheduledBeeperAttempts(ctx, []string{"account-a"}, &beeperAccountRotation{}, nil,
+						func(string) (bool, error) {
+							time.Sleep(scheduledBeeperBudget - 15*time.Second)
+							if committed {
+								jobctx.RecordProgress(ctx)
+							}
+							return true, nil
+						}, func() error { return nil })
+				}}))
+				_, err := s.StartJob("beeper", false)
+				require.NoError(err)
+				time.Sleep(scheduledBeeperBudget)
+				synctest.Wait()
+				if committed {
+					assert.Equal(2, runs, "committed cursor progress permits a continuation")
+				} else {
+					assert.Equal(1, runs, "a spent budget without cursor progress waits for another trigger")
+					_, err := s.StartJob("beeper", false)
+					require.NoError(err)
+					synctest.Wait()
+					assert.Equal(2, runs, "a later external trigger can retry the stopped account")
+				}
+				assert.False(s.JobStatus()[0].Running)
+				assert.Empty(s.JobStatus()[0].LastError)
+			})
+		})
 	}
 }

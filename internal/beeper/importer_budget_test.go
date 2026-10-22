@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -310,7 +311,8 @@ func TestImportStopsAfterIncrementalPageAndResumesFromCursor(t *testing.T) {
 	f.pagesServed = 0
 	f.mu.Unlock()
 
-	sum, err := imp.Import(context.Background(), ImportOptions{
+	ctx := jobctx.WithProgress(t.Context())
+	sum, err := imp.Import(ctx, ImportOptions{
 		AccountID: "signal", ShouldStop: func() bool {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -319,6 +321,7 @@ func TestImportStopsAfterIncrementalPageAndResumesFromCursor(t *testing.T) {
 	})
 	require.NoError(err, "cooperative stop completes the scheduled run")
 	assert.True(sum.Stopped)
+	assert.True(jobctx.HasProgress(ctx), "the saved incremental cursor permits scheduled continuation")
 	assert.Equal(4, countBeeperMessages(t, imp), "one incremental page is persisted")
 
 	state := latestBeeperState(t, imp)
@@ -704,4 +707,32 @@ func TestImportBudgetAtCompletedChatStillAdvancesCycle(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, 6, countBeeperMessages(t, imp), "a completed chat stays visited when cleanup notices the stop")
+}
+
+func TestImportBudgetStopsEnumerationWithoutCursorProgress(t *testing.T) {
+	f := newFakeBeeper(t)
+	provider := f.handler()
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/chats/search" {
+			<-r.Context().Done()
+			return
+		}
+		provider(w, r)
+	})
+	imp := NewImporter(testutil.NewSQLiteTestStore(t), client)
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		for range 2 {
+			ctx := jobctx.WithProgress(t.Context())
+			start := time.Now()
+			sum, err := imp.Import(ctx, ImportOptions{AccountID: "signal", Scheduled: true, StopAt: start.Add(30 * time.Second)})
+			require.NoError(err)
+			assert.True(sum.Stopped)
+			assert.Equal(30*time.Second, time.Since(start))
+			assert.False(jobctx.HasProgress(ctx), "writing the scan identity does not advance a chat cursor")
+			assert.Empty(imp.loadResumeState(sum.SourceID).Chats)
+		}
+	})
 }

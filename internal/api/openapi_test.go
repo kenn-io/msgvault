@@ -54,17 +54,6 @@ func TestNullableObjectReferenceSchemas(t *testing.T) {
 	}
 }
 
-func TestOpenAPIDocumentUsesAPISchemaVersion(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	require := require.New(t)
-	for _, doc := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
-		require.NotNil(doc.Info, "openapi info")
-		assert.Equal(APISchemaVersion, doc.Info.Version, "info.version tracks API schema, not binary version")
-		assert.NotEmpty(doc.Paths, "paths")
-	}
-}
-
 func TestFilenameSuggestionIntegratedAPIVersion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

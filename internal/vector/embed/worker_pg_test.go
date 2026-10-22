@@ -245,6 +245,12 @@ func TestWorkerPG_RunOnce_EndToEnd(t *testing.T) {
 		Recorder:         newTestOperationRecorder(),
 	})
 
+	_, err = worker.embedBatch(ctx, gen, []int64{1})
+	require.NoError(err)
+	var saved int
+	require.NoError(db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+	require.Positive(saved, "a completed request is checkpointed before publication")
+
 	res, err := worker.RunOnce(ctx, gen, testEmbeddingPassScope())
 	require.NoError(
 		err, "RunOnce must not error on pgx")
@@ -259,6 +265,8 @@ func TestWorkerPG_RunOnce_EndToEnd(t *testing.T) {
 	require.NoError(db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM embeddings WHERE generation_id = $1`, int64(gen)).Scan(&embedded))
 	assert.Equal(n, embedded, "one embedding row per message")
+	require.NoError(db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embedding_checkpoints`).Scan(&saved))
+	assert.Zero(saved, "publication deletes the saved request")
 }
 
 // TestWorkerPG_EmbedBatch_RebindsINClause targets embedBatch directly: it
@@ -287,7 +295,9 @@ func TestWorkerPG_EmbedBatch_RebindsINClause(t *testing.T) {
 		LastModifiedExpr: "m.last_modified",
 	})
 
-	eb, err := w.embedBatch(ctx, []int64{1, 2, 3})
+	gen, err := backend.CreateGeneration(ctx, "m", 4, "")
+	require.NoError(err)
+	eb, err := w.embedBatch(ctx, gen, []int64{1, 2, 3})
 	require.NoError(
 		err, "embedBatch must rebind ? to $N for pgx")
 

@@ -249,9 +249,11 @@ describe('CardDAVController', () => {
     controller.destroy();
   });
 
-  it('uses progress-aware polling, caps backoff, pauses while hidden, and reconciles terminal state', async () => {
+  it('polls queued connections through running and terminal states with bounded backoff', async () => {
     vi.useFakeTimers();
     let statusReads = 0;
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let stage = 'queued';
     let bookReads = 0;
     let runReads = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -264,14 +266,32 @@ describe('CardDAVController', () => {
         runReads += 1;
         return Response.json({ runs: [] });
       }
+      if (stage === 'queued') return Response.json({ ...idleStatus, queued_at: '2026-10-01T15:01:00Z' });
+      if (stage === 'admitted') return Response.json({ ...idleStatus, scheduler_running: true });
+      if (stage === 'active') return Response.json({ ...idleStatus, active: run(8) });
       statusReads += 1;
-      if (statusReads <= 2) return Response.json({ ...idleStatus, active: run(8, 'running', 1) });
-      if (statusReads === 3) return Response.json({ ...idleStatus, active: run(8, 'running', 2) });
-      if (statusReads <= 8) return Response.json({ ...idleStatus, active: run(8, 'running', 2) });
-      return Response.json({ ...idleStatus, latest: run(8, 'succeeded', 2) });
+      if (statusReads <= 8) return Response.json({ ...idleStatus, active: run(8, 'running', statusReads <= 2 ? 1 : 2) });
+      return Response.json({ ...idleStatus, scheduled: true, latest: run(8, 'succeeded', 2) });
     });
     const controller = new CardDAVController(createAPIClient(fetchFn));
     await controller.load();
+    expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+    stage = 'admitted';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.scheduler_running).toBe(true);
+    expect(controller.canSync).toBe(false);
+    stage = 'active';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active?.id).toBe(8);
+    stage = 'queued';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active).toBeUndefined();
+    expect(controller.status?.queued_at).toBe('2026-10-01T15:01:00Z');
+    stage = 'active';
+    await vi.advanceTimersByTimeAsync(500);
+    expect(controller.status?.active?.id).toBe(8);
+    stage = 'progress';
+    await vi.advanceTimersByTimeAsync(500);
 
     await vi.advanceTimersByTimeAsync(500); // unchanged -> next 1s
     await vi.advanceTimersByTimeAsync(1_000); // progress -> next 500ms
@@ -286,20 +306,120 @@ describe('CardDAVController', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(statusReads).toBe(8);
 
-    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
-    document.dispatchEvent(new Event('visibilitychange'));
     await vi.advanceTimersByTimeAsync(8_000);
-    expect(statusReads).toBe(8);
-
-    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
-    document.dispatchEvent(new Event('visibilitychange'));
-    await vi.advanceTimersByTimeAsync(499);
-    expect(statusReads).toBe(8);
-    await vi.advanceTimersByTimeAsync(1);
     expect(statusReads).toBe(9);
     await vi.waitFor(() => expect(bookReads).toBe(2));
     expect(runReads).toBe(2);
     expect(controller.status?.active).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusReads).toBe(11);
+    expect([bookReads, runReads]).toEqual([2, 2]);
+    controller.destroy();
+  });
+
+  it.each(['unchanged', 'advanced'] as const)('polls the next scheduled run with a bounded grace window (%s)', async (schedule) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let statusReads = 0;
+    let stage = 'initial';
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      if (path.endsWith('/runs')) return Response.json({ runs: [] });
+      statusReads += 1;
+      return Response.json({ ...idleStatus, scheduled: true,
+        next_scheduled_at: stage === 'initial' ? '2026-10-01T16:00:00Z' : '2026-10-01T17:00:00Z',
+        ...(stage === 'queued' ? { queued_at: '2026-10-01T16:00:01Z' } : {}),
+      });
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    await vi.advanceTimersByTimeAsync(3_599_999);
+    expect(statusReads).toBe(1);
+    if (schedule === 'advanced') stage = 'advanced';
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusReads).toBe(2);
+    if (schedule === 'advanced') {
+      stage = 'queued';
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(controller.status?.queued_at).toBe('2026-10-01T16:00:01Z');
+    } else {
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(statusReads).toBe(5);
+      await vi.advanceTimersByTimeAsync(86_400_000);
+      expect(statusReads).toBe(5);
+    }
+    controller.destroy();
+  });
+
+  it('retries failed scheduled reads without spending idle follow-ups', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let statusReads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/books')) return Response.json({ books: [] });
+      if (path.endsWith('/runs')) return Response.json({ runs: [] });
+      statusReads += 1;
+      if (statusReads >= 2 && statusReads <= 6) return new Response(null, { status: 503 });
+      return Response.json({ ...idleStatus, scheduled: true, next_scheduled_at: '2026-10-01T15:01:00Z' });
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    await vi.advanceTimersByTimeAsync(83_000);
+    expect(statusReads).toBe(7);
+    expect(controller.statusError).toBeNull();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(statusReads).toBe(10);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(statusReads).toBe(10);
+    controller.destroy();
+  });
+
+  it('refreshes books and history after a sync finishes entirely while hidden', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'));
+    let stage = 'idle';
+    let statusReads = 0;
+    let bookReads = 0;
+    let runReads = 0;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path === '/api/v1/carddav/books') {
+        bookReads += 1;
+        return Response.json({ books: [book(1, { name: stage === 'completed' ? 'Updated book' : 'Original book' })] });
+      }
+      if (path === '/api/v1/carddav/runs') {
+        runReads += 1;
+        return Response.json({ runs: stage === 'completed' ? [{ ...run(1, 'succeeded'), trigger: 'scheduled' }] : [] });
+      }
+      statusReads += 1;
+      return Response.json({ ...idleStatus, scheduled: true,
+        ...(stage !== 'completed' ? { next_scheduled_at: '2026-10-01T15:01:00Z' } : {}),
+        ...(stage === 'completed' ? { latest: { ...run(1, 'succeeded'), trigger: 'scheduled' } } : {}) });
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn));
+    await controller.load();
+    expect(controller.books[0]?.name).toBe('Original book');
+    expect(controller.runs).toEqual([]);
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    const hiddenReads = statusReads;
+    await vi.advanceTimersByTimeAsync(30_000);
+    stage = 'completed';
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(statusReads).toBe(hiddenReads);
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false });
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(statusReads).toBe(hiddenReads + 1);
+    expect(controller.books[0]?.name).toBe('Updated book');
+    expect(controller.runs[0]?.id).toBe(1);
+    expect(controller.runs[0]?.trigger).toBe('scheduled');
+    expect([bookReads, runReads]).toEqual([2, 2]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusReads).toBe(hiddenReads + 3);
+    expect([bookReads, runReads]).toEqual([2, 2]);
     controller.destroy();
   });
 

@@ -253,7 +253,7 @@ func TestProviderDiagnosticsCountActual429Attempts(t *testing.T) {
 				inputs := []DocumentInput{{Chunks: []string{"ab", "cd"}}, {Chunks: []string{"efg"}}}
 				client := NewVoyageClient(VoyageConfig{Endpoint: server.URL, Model: "synthetic", Dimension: 1, Limits: RequestLimits{MaxDocuments: 1}, DocumentPrefix: "document: λ "})
 				w := &ContextWorker{deps: ContextWorkerDeps{Client: client}}
-				vectors, err := w.embedDocumentsMeasured(ctx, inputs)
+				vectors, err := w.embedDocumentsMeasured(ctx, inputs, &contextEmbeddingPage{})
 				require.Error(err)
 				require.Len(vectors, 1, "the first packed request succeeded")
 			}
@@ -272,12 +272,6 @@ func TestProviderDiagnosticsCountActual429Attempts(t *testing.T) {
 			d.finish(nil)
 		})
 	}
-}
-
-type embeddingRoundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f embeddingRoundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
-	return f(r)
 }
 
 func TestMeasuredTransportShowsRetryWaitUntilNextRequest(t *testing.T) {
@@ -485,7 +479,7 @@ func TestContextDiagnosticsSizeRejection(t *testing.T) {
 				inputs = []DocumentInput{{Chunks: []string{strings.Repeat("é", 2048)}}}
 			}
 			d.beginBatch(len(inputs), time.Now())
-			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), inputs)
+			results, err := w.embedDocuments(withEmbeddingDiagnostics(t.Context(), d), inputs, &contextEmbeddingPage{})
 			require.NoError(err, "an oversized document is recovered or left uncovered without failing the pass")
 			require.Len(results, len(inputs))
 			d.finish(nil)
