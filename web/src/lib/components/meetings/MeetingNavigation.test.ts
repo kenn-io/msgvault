@@ -7,7 +7,7 @@ import { ExploreState } from '../../explore/state.svelte';
 import { meetingActions, meetingMetrics } from '../../meetings/fixtures.test-support';
 import AppShell from '../shell/AppShell.svelte';
 
-const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, size_bytes: 10, snippet: 'Archived' };
+const detail: MessageDetail = { id: 42, conversation_id: 8, message_type: 'meeting_transcript', subject: 'Archived review', sent_at: '2026-01-01T00:00:00Z', from: 'Example', to: [], body: 'Archived transcript body', labels: [], attachments: [], has_attachments: false, hidden_text_present: false, size_bytes: 10, snippet: 'Archived' };
 const action = { meeting: { message_id: 42, conversation_id: 8, source_id: 3, source_type: 'zoom', source_identifier: 'example-zoom', source_message_id: 'source-42', title: 'Action provenance title', occurred_at: detail.sent_at, archive_path: '/api/v1/messages/42' },
   action: { ordinal: 0, locator: 'action:0', origin: 'source', title: 'Prepare review', status: 'pending' } };
 
