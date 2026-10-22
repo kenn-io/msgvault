@@ -38,6 +38,10 @@ import type {
   CacheBuildAccepted,
   CacheBuildStatus,
   CacheStats,
+  CallEvidenceResponse,
+  CallImportRequest,
+  CallImportResponse,
+  CallSummaryResponse,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
   CancelSettingsPeopleCodexLoginPathParameters,
@@ -223,6 +227,7 @@ import type {
   LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
+  ListCallObservationsParams,
   ListCardDAVBooksParams,
   ListCardDAVRunsParams,
   ListChangedMessagesParams,
@@ -429,6 +434,7 @@ import type {
   SettingsPatchRequest,
   SettingsResponse,
   SimilarSearchResponse,
+  SlackCallImportRequest,
   SourceIdentitiesResponse,
   SourceStatusResponse,
   SplitPersonMergePathParameters,
@@ -439,6 +445,7 @@ import type {
   Status,
   StatusMessageResponse,
   StructuredPersonProfile,
+  SummarizeCallsParams,
   SyncCLIParams,
   SyncFullCLIParams,
   SyncResult,
@@ -748,6 +755,30 @@ export const getCacheBuildStatus = (
       url: `/api/v1/cache-builds/${encodeURIComponent(String(jobId))}`,
       method: "GET",
     },
+    options,
+  );
+};
+/**
+ * @summary Inspect call and scheduled meeting observations
+ */
+export const listCallObservations = (
+  params?: ListCallObservationsParams,
+  options?: SecondParameter<typeof orvalFetch<CallEvidenceResponse>>,
+) => {
+  return orvalFetch<CallEvidenceResponse>(
+    { url: `/api/v1/calls`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Count call evidence per person
+ */
+export const summarizeCalls = (
+  params?: SummarizeCallsParams,
+  options?: SecondParameter<typeof orvalFetch<CallSummaryResponse>>,
+) => {
+  return orvalFetch<CallSummaryResponse>(
+    { url: `/api/v1/calls/summary`, method: "GET", params },
     options,
   );
 };
@@ -1948,6 +1979,40 @@ export const unlinkIdentityParticipants = (
       method: "POST",
       headers: { "Content-Type": "application/json" },
       data: identityLinkRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Import one supplied call or scheduled meeting observation
+ */
+export const importCallObservation = (
+  callImportRequest: CallImportRequest,
+  options?: SecondParameter<typeof orvalFetch<CallImportResponse>>,
+) => {
+  return orvalFetch<CallImportResponse>(
+    {
+      url: `/api/v1/import/calls`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: callImportRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Derive call evidence from one archived Slack huddle
+ */
+export const importSlackHuddle = (
+  slackCallImportRequest: SlackCallImportRequest,
+  options?: SecondParameter<typeof orvalFetch<CallImportResponse>>,
+) => {
+  return orvalFetch<CallImportResponse>(
+    {
+      url: `/api/v1/import/calls/slack`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: slackCallImportRequest,
     },
     options,
   );
