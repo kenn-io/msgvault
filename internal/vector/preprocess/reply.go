@@ -1,14 +1,14 @@
 package preprocess
 
-import (
-	"regexp"
-	"strings"
-)
+import "regexp"
 
-const replyAttribution = `(?:on [^\n]*\bwrote:|on [^\n]*\r?\n(?:[^\n]*\r?\n){0,2}?[^\n]*\bwrote:)`
+// notReplyStart begins a line that is not itself an "On ..." attribution, so an
+// authored "On Monday..." line cannot absorb the next reply header.
+const notReplyStart = `(?:[^o \t\r\n]|o[^n\r\n]|on[^ \t\r\n])[^\n]*`
+
+const replyAttribution = `(?:on [^\n]*\bwrote:|on [^\n]*\r?\n(?:[ \t]*(?:` + notReplyStart + `)?\r?\n){0,2}?[ \t]*(?:` + notReplyStart + `)?\bwrote:)`
 
 var (
-	replyStart = regexp.MustCompile(`(?im)^[ \t]*on `)
 	// quotedReply drops a wrapped attribution and its quoted lines, keeping
 	// any authored reply above or below them.
 	quotedReply = regexp.MustCompile(`(?im)^[ \t]*` + replyAttribution + `[ \t]*\r?\n(?:[ \t]*\r?\n)*(?:[ \t]*>+[ \t]?.*(?:\r?\n|$))+`)
@@ -23,23 +23,9 @@ var (
 // StripReplyQuotes removes wrapped and indented quotations for loop detection.
 // It keeps authored text above and below marked quotations.
 func StripReplyQuotes(body string) string {
-	// Treat each attribution separately so an authored "On Monday..." line
-	// cannot absorb the next reply header as its wrapped continuation.
-	boundaries := replyStart.FindAllStringIndex(body, -1)
-	boundaries = append(boundaries, []int{len(body)})
-	var text strings.Builder
-	start := 0
-	for _, boundary := range boundaries {
-		part := quotedReply.ReplaceAllString(body[start:boundary[0]], "")
-		stop := false
-		if loc := quotedStart.FindStringIndex(part); loc != nil {
-			part, stop = part[:loc[0]], true
-		}
-		text.WriteString(quotedLine.ReplaceAllString(part, ""))
-		if stop {
-			break
-		}
-		start = boundary[0]
+	body = quotedReply.ReplaceAllString(body, "")
+	if loc := quotedStart.FindStringIndex(body); loc != nil {
+		body = body[:loc[0]]
 	}
-	return text.String()
+	return quotedLine.ReplaceAllString(body, "")
 }
