@@ -128,8 +128,8 @@ func activityUnsentInSchemaSQL(schema string, postgres bool) string {
 	return `((NOT COALESCE(m.is_sent, TRUE) OR ` + draftEvidenceInSchemaSQL(schema, "m", "src") + `)
 		AND COALESCE(` + origin + `, '') <> 'sent'
 		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
-		JOIN ` + schema + `sources ls ON ls.id = l.source_id WHERE ml.message_id = m.id
-		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "ls") + `)))`
+		WHERE ml.message_id = m.id AND l.source_id = m.source_id
+		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `)))`
 }
 
 func (s *Store) activityCandidateColumns() string {
