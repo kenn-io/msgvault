@@ -1766,6 +1766,7 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 				{"filename": "a.pdf", "mime_type": "application/pdf", "size": 100},
 				{"filename": "b.txt", "mime_type": "text/plain", "size": 50},
 			},
+			"hidden_text_present": true,
 		})
 	}))
 	defer srv.Close()
@@ -1780,6 +1781,7 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.Equal("alice@example.com", s.FromEmail, "FromEmail")
 	assert.Equal(2, s.AttachmentCount, "AttachmentCount")
 	assert.True(s.HasAttachments, "HasAttachments")
+	assert.True(s.HiddenTextPresent, "HiddenTextPresent")
 }
 
 func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
