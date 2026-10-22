@@ -1,7 +1,7 @@
 package docbanktest
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -43,7 +43,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/processing/profiles":
 		h.Profiles++
 		assert.Equal(h.T, http.MethodGet, r.Method)
-		assert.NoError(h.T, json.NewEncoder(w).Encode([]map[string]any{{"name": "documents", "fingerprint": h.Fingerprint, "rendition": h.Rendition}}))
+		assert.NoError(h.T, json.MarshalWrite(w, []map[string]any{{"name": "documents", "fingerprint": h.Fingerprint, "rendition": h.Rendition}}))
 	case "/api/v1/processing/plans", "/api/v1/processing/jobs":
 		assert.Equal(h.T, http.MethodPost, r.Method)
 		var input struct {
@@ -55,7 +55,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Fingerprint string `json:"plan_fingerprint"`
 			Consent     *bool  `json:"consent"`
 		}
-		if !assert.NoError(h.T, json.NewDecoder(r.Body).Decode(&input)) {
+		if !assert.NoError(h.T, json.UnmarshalRead(r.Body, &input)) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -71,10 +71,10 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				w.WriteHeader(status)
-				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": h.Reasons[version]}))
+				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
 			}
-			assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"fingerprint": h.PlanFingerprint}))
+			assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"fingerprint": h.PlanFingerprint}))
 		} else {
 			assert.Equal(h.T, h.PlanFingerprint, input.Fingerprint)
 			if assert.NotNil(h.T, input.Consent) {
@@ -87,14 +87,14 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				w.WriteHeader(status)
-				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": h.Reasons[version]}))
+				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": h.Reasons[version]}))
 				return
 			}
 			state, ok := h.States["job-"+version]
 			if !ok || state[0] == "failed" {
 				h.States["job-"+version] = [3]string{"queued", "rendition", ""}
 			}
-			assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]any{"type": "job", "job": map[string]string{"id": "job-" + version}}))
+			assert.NoError(h.T, json.MarshalWrite(w, map[string]any{"type": "job", "job": map[string]string{"id": "job-" + version}}))
 		}
 	default:
 		if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/processing/jobs/"); ok {
@@ -106,7 +106,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			state, ok := h.States[id]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
-				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": "not_found"}))
+				assert.NoError(h.T, json.MarshalWrite(w, map[string]string{"code": "not_found"}))
 				return
 			}
 			WriteJobStatus(w, id, state[0], state[1], state[2])
@@ -118,7 +118,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // WriteJobStatus writes the shared Docbank processing job response.
 func WriteJobStatus(w http.ResponseWriter, id, state, phase, code string) {
-	if err := json.NewEncoder(w).Encode(map[string]any{"job_id": id, "state": state, "phase": phase,
+	if err := json.MarshalWrite(w, map[string]any{"job_id": id, "state": state, "phase": phase,
 		"failure_code": code, "embedding_job_ids": []string{}, "completed_bindings": 1}); err != nil {
 		http.Error(w, "encode job status", http.StatusInternalServerError)
 	}
