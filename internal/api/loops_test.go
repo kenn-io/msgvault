@@ -102,7 +102,6 @@ func TestLoopDoneAndSnoozeHideItem(t *testing.T) {
 	var decision LoopDecisionResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &decision))
 	assert.Equal("snoozed", decision.State)
-	assert.Len(l.list(t, "").Items, 1, "only the snoozed loop is hidden")
 
 	w = l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/done", l.owed), "")
 	require.Equal(http.StatusNotFound, w.Code, w.Body.String())

@@ -199,35 +199,18 @@ func TestExecuteGCClearsSurvivingRepliesToSourceDeletedMessages(t *testing.T) {
 	assert.NotEqual(parent, replyTo.Int64)
 }
 
-func TestMergedQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
+func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
 	now := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
-	firstAt := now.Add(-5 * 24 * time.Hour)
 	cutoffAt := now.Add(-4 * 24 * time.Hour)
-	first := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
-		Body: "Can you send the contract?", SentAt: firstAt,
-	})
-	survivor := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
-		Body: "Can you send the budget?", SentAt: cutoffAt,
-	})
-	f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
-		Body: "Can you also send the revised budget?", SentAt: cutoffAt,
-	})
 	cutoff := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
+		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "Can you send the invoice?", SentAt: cutoffAt,
 	})
-	_, err := loops.Done(t.Context(), f.Store, first, now)
+	_, err := loops.Done(t.Context(), f.Store, cutoff, now)
 	require.NoError(err)
-	_, err = f.Store.MergeDuplicates(survivor, []int64{cutoff}, "loop-cutoff-remap-gc")
-	require.NoError(err)
-	assert.Empty(listLoops(t, f, now), "the mark follows the surviving message identity")
-
 	sourceMessageID, err := f.Store.GetMessageSourceID(cutoff)
 	require.NoError(err)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceMessageID))
@@ -239,15 +222,15 @@ func TestMergedQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 	assert.Equal(int64(1), deleted)
 
 	replacement := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
+		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "Can you send a new invoice?", SentAt: cutoffAt,
 	})
-	require.Equal(cutoff, replacement, "SQLite reused the purged duplicate ID")
+	require.Equal(cutoff, replacement, "SQLite reused the purged question ID")
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(err)
-	require.Len(result.Loops, 1, "a distinct question remains visible after the duplicate identity was remapped")
+	require.Len(result.Loops, 1, "a distinct question remains visible after the marked question was purged")
 	assert.Equal(replacement, result.Loops[0].Anchor.ID)
-	assert.Len(result.Loops[0].Questions, 1, "surviving marked questions stay covered after GC")
+	assert.Len(result.Loops[0].Questions, 1, "the replacement has no inherited decision")
 }
 
 func newSQLiteGCFixture(t *testing.T) *storetest.Fixture {

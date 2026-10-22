@@ -15,7 +15,6 @@ func TestParseAutomationSignals(t *testing.T) {
 		want          AutomationSignals
 	}{
 		{"ordinary", "", AutomationSignals{}},
-		{"auto reply", "Auto-Submitted: auto-replied\n", AutomationSignals{AutoSubmitted: true}},
 		{"bulk", "Precedence: BuLk\n", AutomationSignals{PrecedenceBulk: true}},
 		{"list", "Precedence: list\n", AutomationSignals{PrecedenceBulk: true}},
 		{"junk", "Precedence: junk\n", AutomationSignals{PrecedenceBulk: true}},
@@ -86,6 +85,7 @@ func TestAutoSubmittedKeywordSyntax(t *testing.T) {
 		{"no; x-origin=manual", false},
 		{"(manual (nested)) NO (owner); x-origin=manual", false},
 		{`(escaped \) comment) no`, false},
+		{"auto-replied", true},
 		{"auto-replied (out of office); x-origin=vacation", true},
 		{"(generated) auto-generated; x-origin=cron", true},
 	} {

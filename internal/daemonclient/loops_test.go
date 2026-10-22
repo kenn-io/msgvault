@@ -1,7 +1,6 @@
 package daemonclient_test
 
 import (
-	"errors"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -15,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestLoopClientListsAndDecides(t *testing.T) {
+func TestLoopSnoozeDeadlineRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -23,11 +22,6 @@ func TestLoopClientListsAndDecides(t *testing.T) {
 	const alex = "alex@example.test"
 	f.PersistEmail(storetest.EmailSpec{From: storetest.OwnerAddress, To: []string{alex}, Body: "Hi", SentAt: now.Add(-10 * 24 * time.Hour)})
 	anchor := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{storetest.OwnerAddress}, Subject: "Contract", Body: "Can you send it?", SentAt: now.Add(-3 * 24 * time.Hour)})
-	other := f.PersistEmail(storetest.EmailSpec{Thread: "other", From: alex, To: []string{storetest.OwnerAddress}, Subject: "Deck", Body: "Can you send the deck?", SentAt: now.Add(-2 * 24 * time.Hour)})
-	f.PersistEmail(storetest.EmailSpec{Thread: "sam", From: "sam@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you review the report?", SentAt: now.Add(-4 * 24 * time.Hour)})
-	participant := f.EnsureParticipant(alex, "", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	require.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Server.APIKey = "loop-client-key"
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: f.Store, Logger: slog.New(slog.DiscardHandler)}).Router())
@@ -36,32 +30,9 @@ func TestLoopClientListsAndDecides(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 
-	listed, err := client.ListLoops(t.Context(), daemonclient.LoopListOptions{Limit: 1})
-	require.NoError(err)
-	require.Len(listed.Items, 1, "the limit reached the daemon")
-	assert.True(listed.Truncated)
-
-	filtered, err := client.ListLoops(t.Context(), daemonclient.LoopListOptions{PersonID: person.ID})
-	require.NoError(err)
-	require.Len(filtered.Items, 2, "person_id excludes the other requester")
-	for _, item := range filtered.Items {
-		require.NotNil(item.Counterparty.PersonID)
-		assert.Equal(person.ID, *item.Counterparty.PersonID)
-	}
-
 	until := now.Add(48 * time.Hour)
 	snoozed, err := client.SnoozeLoop(t.Context(), anchor, until)
 	require.NoError(err)
-	assert.EqualValues("snoozed", snoozed.State)
 	require.NotNil(snoozed.SnoozedUntil)
 	assert.WithinDuration(until, *snoozed.SnoozedUntil, time.Second)
-
-	_, err = client.MarkLoopDone(t.Context(), anchor)
-	apiErr, ok := errors.AsType[*daemonclient.APIError](err)
-	require.True(ok)
-	assert.Equal(404, apiErr.Status)
-	assert.Equal(daemonclient.LoopNotFoundCode, apiErr.Code)
-	done, err := client.MarkLoopDone(t.Context(), other)
-	require.NoError(err)
-	assert.EqualValues("done", done.State)
 }

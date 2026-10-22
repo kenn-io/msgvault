@@ -364,27 +364,6 @@ func TestDetect(t *testing.T) {
 	assert.Equal(t, "are you coming?", summary(store.LoopMessage{Snippet: "are you coming?"}), "a chat falls back to its snippet")
 }
 
-func TestDetectStopsAtAnsweredInboundBoundaryBeforeScanningOlderExchanges(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var messages []msg
-	for i := range 10 {
-		age := time.Duration(22-2*i) * day
-		messages = append(messages,
-			msg{out: true, ago: age, body: "Can you review the previous draft?"},
-			msg{ago: age - day, body: "I reviewed it."},
-		)
-	}
-	messages = append(messages, msg{out: true, ago: 2 * day, body: "Can you send the new draft?"})
-	conv, reader := (script{msgs: messages}).conversation()
-
-	detection, err := Detect(conv, reader)
-	require.NoError(err)
-	require.NotEmpty(detection.Loops)
-	assert.Equal(int64(len(messages)), detection.Loops[0].Anchor.ID)
-	assert.LessOrEqual(reader.parses, 8, "an older inbound answer ends the scan before prior exchanges")
-}
-
 func TestDetectPropagatesReadErrors(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -401,6 +380,12 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 	for i := range 25 {
 		nudges = append(nudges, msg{ago: time.Duration(29-i) * hour, body: "Any update?"})
 	}
+	var answered []msg
+	for i := range 10 {
+		age := time.Duration(22-2*i) * day
+		answered = append(answered, msg{out: true, ago: age, body: "Can you review the previous draft?"}, msg{ago: age - day, body: "I reviewed it."})
+	}
+	answered = append(answered, msg{out: true, ago: 2 * day, body: "Can you send the new draft?"})
 	for _, tt := range []struct {
 		name      string
 		script    script
@@ -408,29 +393,32 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 		open      bool
 		questions int
 		unparsed  int
+		maxParses int
+		anchor    int64
 	}{
-		{"a statement with nothing before it", script{msgs: []msg{{ago: 2 * day, body: "See you Saturday!"}}}, 1, false, 0, 0},
-		{"an acknowledgement", script{msgs: []msg{{ago: day + hour, body: "Thanks!"}}}, 1, false, 0, 0},
-		{"a question", script{msgs: []msg{{ago: 2 * day, body: "Can you send the contract?"}}}, 1, true, 0, 0},
+		{"a statement with nothing before it", script{msgs: []msg{{ago: 2 * day, body: "See you Saturday!"}}}, 1, false, 0, 0, 0, 0},
+		{"an acknowledgement", script{msgs: []msg{{ago: day + hour, body: "Thanks!"}}}, 1, false, 0, 0, 0, 0},
+		{"a question", script{msgs: []msg{{ago: 2 * day, body: "Can you send the contract?"}}}, 1, true, 0, 0, 0, 0},
 		{"a statement your own question may hide behind", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Out of office.", signals: mime.AutomationSignals{AutoSubmitted: true}},
-		}}, 2, true, 0, 0},
+		}}, 2, true, 0, 0, 0, 0},
 		{"an answered two-message thread", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Looks good to me."},
-		}}, 2, false, 0, 0},
+		}}, 2, false, 0, 0, 0, 0},
 		{"an older asking message on the answering side", script{msgs: []msg{
 			{ago: 6 * day, body: "Can you send the contract?"},
 			{out: true, ago: 5 * day, body: "On it."},
 			{ago: 4 * day, body: "Looks good to me."},
-		}}, 2, false, 0, 0},
+		}}, 2, false, 0, 0, 0, 0},
 		{"each body read once", script{msgs: []msg{
 			{ago: 3 * day, body: "Can you send the contract?"},
 			{ago: 2 * day, body: "And the deck?"},
-		}}, 2, true, 0, 0},
-		{"25 nudges after the question", script{msgs: nudges}, 26, true, 26, 0},
-		{"unreadable reply settles nothing", script{msgs: []msg{{out: true, ago: 5 * day, body: "Can you review it?"}, {ago: 4 * day, body: "Looks good to me.", rawFails: true}}}, 2, true, 0, 1},
+		}}, 2, true, 0, 0, 0, 0},
+		{"25 nudges after the question", script{msgs: nudges}, 26, true, 26, 0, 0, 0},
+		{"unreadable reply settles nothing", script{msgs: []msg{{out: true, ago: 5 * day, body: "Can you review it?"}, {ago: 4 * day, body: "Looks good to me.", rawFails: true}}}, 2, true, 0, 1, 0, 0},
+		{"answered boundary skips older exchanges", script{msgs: answered}, 0, true, 0, 0, 8, int64(len(answered))},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -439,7 +427,15 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			detection, err := Detect(conv, reader)
 			require.NoError(t, err)
 			assert.Equal(tt.open, len(detection.Loops) > 0)
-			assert.Equal(tt.parses, reader.parses, "originals parsed")
+			if tt.maxParses > 0 {
+				assert.LessOrEqual(reader.parses, tt.maxParses, "an older inbound answer ends the scan before prior exchanges")
+			} else {
+				assert.Equal(tt.parses, reader.parses, "originals parsed")
+			}
+			if tt.anchor != 0 {
+				require.NotEmpty(t, detection.Loops)
+				assert.Equal(tt.anchor, detection.Loops[0].Anchor.ID)
+			}
 			assert.Equal(tt.unparsed, detection.Unparsed)
 			if tt.questions > 0 {
 				assert.Len(detection.Loops[0].Questions, tt.questions, "each eligible question can keep the loop open after a partial mark")

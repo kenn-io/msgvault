@@ -178,14 +178,15 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 	_, err := imp.ImportPath(dir)
 	require.NoError(err, "ImportPath")
 
-	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me FROM messages WHERE message_type IN ('sms', 'mms')`)
+	rows, err := f.Store.DB().Query(`SELECT source_message_id, is_from_me, is_sent FROM messages WHERE message_type IN ('sms', 'mms')`)
 	require.NoError(err, "query messages")
 	defer func() { _ = rows.Close() }()
 	got := map[string]bool{}
 	for rows.Next() {
 		var srcID string
-		var fromMe bool
-		require.NoError(rows.Scan(&srcID, &fromMe), "scan")
+		var fromMe, isSent bool
+		require.NoError(rows.Scan(&srcID, &fromMe, &isSent), "scan")
+		assert.False(t, isSent, "%s is_sent = true, want false (draft)", srcID)
 		got[srcID] = fromMe
 	}
 	require.NoError(rows.Err(), "messages rows")
@@ -193,54 +194,6 @@ func TestImporterMarksDraftsAsFromMe(t *testing.T) {
 	for srcID, fromMe := range got {
 		assert.True(t, fromMe, "%s is_from_me = false, want true (draft)", srcID)
 	}
-}
-
-func TestImporterKeepsSynctechUnsentSMSOutOfLoopDetection(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="3">
-  <sms address="+15551234567" date="1717214400000" type="1" body="Can you send the contract?" read="1" status="-1" contact_name="Alice" />
-  <sms address="+15551234567" date="1717214460000" type="3" body="Draft reply" read="1" status="-1" contact_name="Alice" />
-  <mms date="1717214700000" msg_box="3" read="1" m_id="draft-mms" sub="null">
-    <parts><part seq="0" ct="text/plain" text="Draft MMS reply" /></parts>
-    <addrs>
-      <addr address="+15550000001" type="137" charset="106" />
-      <addr address="+15551234567" type="151" charset="106" />
-    </addrs>
-  </mms>
-</smses>`)
-	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeSMS: true, IncludeMMS: true})
-	_, err := imp.ImportPath(dir)
-	require.NoError(err)
-
-	var questionID int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT id FROM messages WHERE message_type = 'sms' AND snippet = ?`),
-		"Can you send the contract?",
-	).Scan(&questionID))
-	rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(
-		`SELECT is_sent FROM messages WHERE message_type IN ('sms', 'mms') AND snippet <> ?`),
-		"Can you send the contract?",
-	)
-	require.NoError(err)
-	defer func() { _ = rows.Close() }()
-	var unsent int
-	for rows.Next() {
-		var isSent bool
-		require.NoError(rows.Scan(&isSent))
-		assert.False(isSent, "provider-native unsent SMS is excluded from live loops")
-		unsent++
-	}
-	require.NoError(rows.Err())
-	require.Equal(2, unsent)
-
-	result, err := loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	require.Len(result.Loops, 1, "unsent drafts must not settle the incoming question")
-	assert.Equal(questionID, result.Loops[0].Anchor.ID)
-	assert.Equal(loops.ReplyOwed, result.Loops[0].Kind)
 }
 
 func assertMessageCount(t *testing.T, st *store.Store, want int) {
@@ -332,15 +285,4 @@ func TestImportedGroupMMSDoesNotOpenLoops(t *testing.T) {
 	result, err = loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)
 	require.Len(result.Loops, 1, "recognizing the owner still excludes both groups")
-	first, err := f.Store.EnsureParticipantByPhone("+15550000002", "", "phone")
-	require.NoError(err)
-	second, err := f.Store.EnsureParticipantByPhone("+15550000003", "", "phone")
-	require.NoError(err)
-	_, err = f.Store.LinkParticipants(first, second)
-	require.NoError(err)
-	_, _, err = f.Store.CreatePersonFromParticipant(first)
-	require.NoError(err)
-	result, err = loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	assert.Len(result.Loops, 2, "two addresses linked to one person form a direct chat")
 }

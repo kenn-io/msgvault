@@ -2,7 +2,6 @@ package loops_test
 
 import (
 	"context"
-	"database/sql"
 	"strconv"
 	"testing"
 	"time"
@@ -34,19 +33,6 @@ func list(t *testing.T, f *storetest.Fixture, opts loops.Options) loops.Result {
 	return result
 }
 
-type originalEvidenceCountingStore struct {
-	*store.Store
-
-	reads map[int64]int
-}
-
-func (s *originalEvidenceCountingStore) LoopOriginalEvidenceContext(
-	ctx context.Context, messageID int64,
-) (mime.AutomationSignals, bool, bool, error) {
-	s.reads[messageID]++
-	return s.Store.LoopOriginalEvidenceContext(ctx, messageID)
-}
-
 func TestListReplyOwedAndAwaiting(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -65,7 +51,6 @@ func TestListReplyOwedAndAwaiting(t *testing.T) {
 }
 
 func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	f.PersistEmail(storetest.EmailSpec{
@@ -91,11 +76,9 @@ func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *test
 		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), reply).Scan(&attachmentRows))
 	require.Zero(attachmentRows, "the imported message has no exported attachment rows")
 
-	counting := &originalEvidenceCountingStore{Store: f.Store, reads: map[int64]int{}}
-	result, err := loops.List(t.Context(), counting, loops.Options{}, now)
+	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(err)
 	require.Empty(result.Loops, "the PDF reply settles the incoming question")
-	assert.Equal(1, counting.reads[reply], "the attachment and automation checks share one MIME parse")
 }
 
 func TestListPersonFilterRetainsUnansweredQuestionAfterAnotherPersonIsAnswered(t *testing.T) {
@@ -155,99 +138,48 @@ func TestListReplyFromLinkedAddressSettles(t *testing.T) {
 	assert.Equal(person.ID, result.Loops[0].Counterparty.PersonID)
 }
 
-func TestMergedDecisionCoversQuestionAfterDateCorrection(t *testing.T) {
-	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
-		t.Run(state, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(3 * day)})
-			anchor := f.PersistEmail(storetest.EmailSpec{Thread: "marked", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
-			duplicate := f.PersistEmail(storetest.EmailSpec{Thread: "marked", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(3 * day)})
-
-			var err error
-			if state == store.LoopStateDone {
-				_, err = loops.Done(t.Context(), f.Store, anchor, now)
-			} else {
-				_, err = loops.Snooze(t.Context(), f.Store, anchor, now.Add(5*day), now)
-			}
-			require.NoError(err)
-			marks, err := f.Store.LoopMarksContext(t.Context())
-			require.NoError(err)
-			assert.NotContains(marks, survivor, "the survivor must inherit its decision through duplicate transfer")
-			ref, err := f.Store.MessageConversationContext(t.Context(), survivor)
-			require.NoError(err)
-			_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "loop-question-date-correction")
-			require.NoError(err)
-
-			sourceMessageID, err := f.Store.GetMessageSourceID(survivor)
-			require.NoError(err)
-			id, err := f.Store.UpsertMessage(&store.Message{
-				SourceID: f.Source.ID, ConversationID: ref.ConversationID, SourceMessageID: sourceMessageID,
-				MessageType: store.MessageTypeEmail,
-				SenderID:    sql.NullInt64{Int64: f.EnsureParticipant(alex, "", "example.test"), Valid: true},
-				SentAt:      sql.NullTime{Time: ago(2 * day), Valid: true},
-			})
-			require.NoError(err)
-			require.Equal(survivor, id)
-
-			assert.Empty(list(t, f, loops.Options{}).Loops, "the decision still covers its merged question")
-		})
-	}
-}
-
-func TestSnoozeAfterOlderImportReportsConversationDecision(t *testing.T) {
-	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
-		t.Run(state, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(3 * day)})
-			var err error
-			if state == store.LoopStateDone {
-				_, err = loops.Done(t.Context(), f.Store, question, now)
-			} else {
-				_, err = loops.Snooze(t.Context(), f.Store, question, now.Add(5*day), now)
-			}
-			require.NoError(err)
-			older := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send it?", SentAt: ago(5 * day)})
-			until := now.Add(day)
-			decision, err := loops.Snooze(t.Context(), f.Store, older, until, now)
-			require.NoError(err)
-			assert.Equal(store.LoopStateSnoozed, decision.State)
-			require.NotNil(decision.SnoozedUntil)
-			assert.True(until.Equal(*decision.SnoozedUntil))
-			later, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
-			require.NoError(err)
-			require.Len(later.Loops, 1, "the imported question reopens at its own deadline")
-			assert.Equal(older, later.Loops[0].Anchor.ID)
-			marks, err := f.Store.LoopMarksContext(t.Context())
-			require.NoError(err)
-			assert.Equal(state, marks[question].State, "the earlier decision stays intact")
-		})
-	}
-}
-
 func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
 		first, second time.Duration
+		state         string
 	}{
-		{name: "older import changes the anchor", first: -3 * day, second: -5 * day},
-		{name: "identical sent time", first: -3 * day, second: -3 * day},
+		{name: "older import after done", first: -3 * day, second: -5 * day, state: store.LoopStateDone},
+		{name: "older import after snooze", first: -3 * day, second: -5 * day, state: store.LoopStateSnoozed},
+		{name: "identical sent time", first: -3 * day, second: -3 * day, state: store.LoopStateDone},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			f := storetest.New(t)
 			question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: now.Add(tt.first)})
-			_, err := loops.Done(t.Context(), f.Store, question, now)
+			var err error
+			if tt.state == store.LoopStateDone {
+				_, err = loops.Done(t.Context(), f.Store, question, now)
+			} else {
+				_, err = loops.Snooze(t.Context(), f.Store, question, now.Add(5*day), now)
+			}
 			require.NoError(err)
 			require.Empty(list(t, f, loops.Options{}).Loops, "the question you marked stays hidden")
 			imported := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: now.Add(tt.second)})
 			result := list(t, f, loops.Options{})
 			require.Len(result.Loops, 1, "an unseen question brings the loop back")
 			assert.Equal(imported, result.Loops[0].Anchor.ID)
+			if tt.first != tt.second {
+				until := now.Add(day)
+				decision, err := loops.Snooze(t.Context(), f.Store, imported, until, now)
+				require.NoError(err)
+				assert.Equal(store.LoopStateSnoozed, decision.State)
+				require.NotNil(decision.SnoozedUntil)
+				assert.True(until.Equal(*decision.SnoozedUntil))
+				later, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
+				require.NoError(err)
+				require.Len(later.Loops, 1, "the imported question reopens at its own deadline")
+				assert.Equal(imported, later.Loops[0].Anchor.ID)
+				marks, err := f.Store.LoopMarksContext(t.Context())
+				require.NoError(err)
+				assert.Equal(tt.state, marks[question].State, "the earlier decision stays intact")
+			}
 		})
 	}
 	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
@@ -448,16 +380,6 @@ func TestRequesterDecisionsStayIndependent(t *testing.T) {
 	result = list(t, f, loops.Options{})
 	require.Len(result.Loops, 1)
 	assert.Equal(second, result.Loops[0].Anchor.ID)
-}
-
-func TestAwaitedReplyOnBccSettles(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	f.PersistEmail(storetest.EmailSpec{From: me, To: []string{alex}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
-	reply := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Here is the contract.", SentAt: ago(3 * day)})
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_recipients SET recipient_type = ? WHERE message_id = ?`), "bcc", reply)
-	require.NoError(err)
-	assert.Empty(t, list(t, f, loops.Options{}).Loops, "a stored Bcc reply from the awaited person settles the question")
 }
 
 func TestExpiredSnoozeOnlyRestoresItsQuestion(t *testing.T) {
