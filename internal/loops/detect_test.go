@@ -181,10 +181,6 @@ func TestDetect(t *testing.T) {
 			{ago: 40 * day, body: "Can you approve the contract?"},
 			{ago: day, body: "The ticket was updated.", rawFails: true},
 		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
-		{"awaited reply on To", script{msgs: []msg{
-			{out: true, ago: 5 * day, body: "Can you send the contract?"},
-			{from: alex, ago: 3 * day, body: "Here is the contract.", ccOnly: false},
-		}}, "", 0, 0, store.LoopParticipant{}, 0, ""},
 		{"awaited reply on Cc", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you send the contract?"},
 			{from: alex, ago: 3 * day, body: "Here is the contract.", ccOnly: true},

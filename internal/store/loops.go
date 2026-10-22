@@ -123,7 +123,7 @@ type LoopMark struct {
 // loopMessageFilterSQL keeps what the archive still holds. A message deleted
 // at the source stays readable here, so it still anchors and settles loops.
 const loopMessageFilterSQL = `%[1]s.sent_at IS NOT NULL AND %[1]s.deleted_at IS NULL
-	AND %[1]s.message_type NOT IN ('calendar_event', 'meeting_transcript', 'synctech_sms_call')
+	AND COALESCE(%[1]s.message_type, '') NOT IN ('calendar_event', 'meeting_transcript', 'synctech_sms_call')
 	AND COALESCE(%[1]s.is_sent, TRUE)
 	AND NOT (%[1]s.draft_authored OR %[2]s)`
 
@@ -552,7 +552,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
 			EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id
 				AND a.attachment_role = 'standalone'),
-			COALESCE(m.has_attachments, FALSE), m.message_type
+			COALESCE(m.has_attachments, FALSE), COALESCE(m.message_type, '')
 		FROM messages m WHERE m.id IN (%s)`,
 		func(rows *loggedRows) error {
 			var id int64
@@ -563,7 +563,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 				&m.HasFileAttachment, &hasAttachments, &messageType); err != nil {
 				return err
 			}
-			m.MayHaveFileAttachment = messageType == MessageTypeEmail && hasAttachments && !m.HasFileAttachment
+			m.MayHaveFileAttachment = IsEmailMessageType(messageType) && hasAttachments && !m.HasFileAttachment
 			out[id] = m
 			return nil
 		})
