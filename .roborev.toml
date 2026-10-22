@@ -58,4 +58,8 @@ credentials.
 The Jev adapter passes a plain http.Client to Docbank's TypeSafe client,
 which refuses redirects on its own copy. Do not flag redirect handling
 in internal/vector/rerank/jev.go.
+
+CopySubset sources are archives the daemon has already initialized at the
+current schema, including all one-time backfills. Findings about copying
+from older or unmigrated source archives do not apply.
 """

@@ -46,6 +46,13 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 		require.NoError(err)
 	}
 	ids = append(ids, f.CreateMessage("bodyless"))
+	if !f.Store.IsPostgreSQL() {
+		_, err := f.Store.DB().Exec(`
+			DROP TRIGGER trg_cache_message_facts_update;
+			UPDATE applied_migrations SET version = 2 WHERE name = 'cache_message_source_attribution';
+		`)
+		require.NoError(err)
+	}
 	_, err := f.Store.DB().Exec(`ALTER TABLE messages DROP COLUMN hidden_text_present`)
 	require.NoError(err, "simulate an archive before the flag column")
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), migration)
@@ -57,6 +64,11 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 		`SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE id = ?`), ids[0]).Scan(&before))
 
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	if !f.Store.IsPostgreSQL() {
+		var triggerSQL string
+		require.NoError(f.Store.DB().QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_cache_message_facts_update'`).Scan(&triggerSQL))
+		assert.Contains(triggerSQL, "OLD.hidden_text_present IS NOT NEW.hidden_text_present")
+	}
 	for i, id := range ids {
 		var hidden bool
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
