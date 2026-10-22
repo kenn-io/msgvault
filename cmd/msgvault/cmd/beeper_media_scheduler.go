@@ -109,7 +109,7 @@ func configureDocbankAttachmentJob(
 		if err != nil {
 			return err
 		}
-		options := beeper.AttachmentMirrorOptions{URL: cfg.URL, Folder: cfg.MirrorFolder(), AttachmentsDir: attachmentsDir}
+		options := beeper.AttachmentMirrorOptions{URL: cfg.URL, Folder: cfg.MirrorFolder(), AttachmentsDir: attachmentsDir, DocumentProfile: cfg.DocumentProfile}
 		mirror := beeper.NewAttachmentMirror(st, blobs, client, destination, options).
 			WithOperationGate(beeperMediaGate(gate, docbankAttachmentGateLabel))
 		return sched.AddJob(scheduler.Job{

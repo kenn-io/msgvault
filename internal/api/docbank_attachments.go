@@ -11,10 +11,12 @@ import (
 
 // DocbankAttachmentStatus reports mirror outcomes and scan progress.
 type DocbankAttachmentStatus struct {
-	State         string                          `json:"state" enum:"running,docbank_disabled,consent_off,worker_unavailable"`
-	UploadConsent bool                            `json:"upload_consent"`
-	Folder        string                          `json:"folder"`
-	Counts        *store.DocbankAttachmentSummary `json:"counts,omitempty"`
+	State         string                                    `json:"state" enum:"running,docbank_disabled,consent_off,worker_unavailable"`
+	UploadConsent bool                                      `json:"upload_consent"`
+	Folder        string                                    `json:"folder"`
+	LastError     string                                    `json:"last_error,omitempty"`
+	Processing    *store.DocbankAttachmentProcessingSummary `json:"processing,omitempty"`
+	Counts        *store.DocbankAttachmentSummary           `json:"counts,omitempty"`
 }
 
 type DocbankAttachmentBackfillResponse struct {
@@ -54,10 +56,22 @@ func (s *Server) registerDocbankAttachmentRoutes(api huma.API) {
 		if err != nil {
 			return nil, huma.Error500InternalServerError("read attachment mirror status")
 		}
-		return &struct{ Body DocbankAttachmentStatus }{Body: DocbankAttachmentStatus{
-			State: "running", UploadConsent: true,
-			Folder: reader.Folder, Counts: &counts,
-		}}, nil
+		result := DocbankAttachmentStatus{State: "running", UploadConsent: true, Folder: reader.Folder, Counts: &counts}
+		for _, job := range s.scheduler.JobStatus() {
+			if job.Name == DocbankAttachmentMirrorJob {
+				result.LastError = job.LastError
+				break
+			}
+		}
+		if s.cfg != nil && s.cfg.Integrations.Docbank.DocumentProfile != "" {
+			processing, err := reader.Store.DocbankAttachmentProcessingCounts(ctx, reader.Destination)
+			if err != nil {
+				return nil, huma.Error500InternalServerError("read attachment processing status")
+			}
+			processing.Profile = s.cfg.Integrations.Docbank.DocumentProfile
+			result.Processing = &processing
+		}
+		return &struct{ Body DocbankAttachmentStatus }{Body: result}, nil
 	})
 	backfillOp := rawAPIV1Operation("backfillDocbankAttachments", http.MethodPost,
 		"/integrations/docbank/attachments/backfill", "Retry failures and restart attachment mirror discovery")

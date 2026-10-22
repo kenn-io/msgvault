@@ -470,6 +470,9 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 			WHERE destination_key = ? AND state = 'failed'`, destination); err != nil {
 			return fmt.Errorf("requeue failed attachment mirror deliveries: %w", err)
 		}
+		if _, err := q.Exec(`DELETE FROM docbank_attachment_processing WHERE destination_key = ? AND outcome <> '' AND outcome NOT IN ('requested', 'extracted')`, destination); err != nil {
+			return fmt.Errorf("retry attachment processing: %w", err)
+		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)
 		}
@@ -484,7 +487,7 @@ func (s *Store) RecordDocbankAttachmentRetry(
 	_, err := s.db.ExecContext(ctx, s.Rebind(`
 		UPDATE docbank_attachment_deliveries SET reason = ?, next_action_at = ?
 		WHERE destination_key = ? AND content_hash = ? AND state = 'sending'`),
-		reason, s.timestampValue(time.Now().UTC().Add(beeperMediaRetryDelay)), destination, d.ContentHash)
+		reason, s.timestampValue(time.Now().UTC().Add(BeeperMediaRetryDelay)), destination, d.ContentHash)
 	if err != nil {
 		return fmt.Errorf("record attachment mirror retry: %w", err)
 	}
