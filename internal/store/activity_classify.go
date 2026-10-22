@@ -22,6 +22,15 @@ type ActivityClassification struct {
 func ClassifyActivityCandidate(
 	candidate ActivityCandidate, maxDirectCounterparts int,
 ) ActivityClassification {
+	// Call observations have their own attendance-aware summary. Ordinary
+	// contact activity must not credit invitations or unsuccessful attempts.
+	if candidate.MessageType == "call_record" {
+		return ActivityClassification{
+			RefKind:   RefKindMessage,
+			Channel:   activityChannelFor(candidate.ConversationType, false),
+			Direction: DirectionObserved,
+		}
+	}
 	if maxDirectCounterparts <= 0 {
 		maxDirectCounterparts = DefaultMaxDirectActivityCounterparts
 	}
