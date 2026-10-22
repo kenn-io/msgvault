@@ -225,6 +225,38 @@ func TestLoopStoredListIDExcludesLegacyMessages(t *testing.T) {
 	}
 }
 
+func TestLoopEmojiAcknowledgementsDoNotSettleQuestions(t *testing.T) {
+	for _, scenario := range []struct {
+		name       string
+		questioner string
+		responder  string
+		ack        string
+		kind       string
+	}{
+		{name: "other person acknowledges", questioner: loopOwner, responder: loopAlex, ack: "👍", kind: loops.AwaitingReply},
+		{name: "owner acknowledges", questioner: loopAlex, responder: loopOwner, ack: "🙏", kind: loops.ReplyOwed},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			question := f.PersistEmail(storetest.EmailSpec{
+				From: scenario.questioner, To: []string{scenario.responder},
+				Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay),
+			})
+			f.PersistEmail(storetest.EmailSpec{
+				From: scenario.responder, To: []string{scenario.questioner},
+				Body: scenario.ack, SentAt: loopAgo(3 * loopDay),
+			})
+
+			got := listLoops(t, f, loopNow)
+			require.Len(got, 1)
+			assert.Equal(question, got[0].Anchor.ID)
+			assert.Equal(scenario.kind, got[0].Kind)
+		})
+	}
+}
+
 func TestLoopAutomationSignalsReadStoredRaw(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
