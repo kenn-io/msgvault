@@ -178,3 +178,54 @@ func TestDocbankAttachmentFileReceipt(t *testing.T) {
 	assert.Equal(hash, file.ContentHash)
 	assert.Equal([]store.DocbankAttachmentRef{ref}, file.Docbank)
 }
+
+func TestDocbankAttachmentProcessingStatusIsLocal(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	for _, hash := range []string{"waiting", "requested", "extracted", "failed", "skipped"} {
+		require.NoError(f.Store.RecordDocbankAttachment(ctx, "dest", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: hash}, ""))
+	}
+	require.NoError(f.Store.SaveDocbankAttachmentProcessingFingerprint(ctx, "dest", "fp"))
+	for hash, outcome := range map[string]string{"requested": "requested", "extracted": "extracted", "failed": "provider_timeout", "skipped": "unsupported_format"} {
+		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", store.DocbankAttachmentProcessing{ContentHash: hash, VersionID: hash, Fingerprint: "fp", Outcome: outcome, JobID: "job-" + hash}, time.Time{}))
+	}
+	cfg := config.NewDefaultConfig()
+	cfg.Integrations.Docbank = config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true, URL: "http://127.0.0.1:1", DocumentProfile: "documents"}
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{DocbankAttachmentMirrorJob: true}
+	sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: "grant consent in Docbank"}}
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: sched, Logger: slog.New(slog.DiscardHandler)})
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.Store, Destination: "dest"}
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
+	require.Equal(http.StatusOK, w.Code)
+	var result DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal("grant consent in Docbank", result.LastError)
+	require.NotNil(result.Counts)
+	assert.Equal(int64(5), result.Counts.Delivered)
+	require.NotNil(result.Processing)
+	assert.Equal(store.DocbankAttachmentProcessingSummary{Profile: "documents", Waiting: 1, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "unsupported_format": 1}}, *result.Processing)
+}
+
+func TestDocbankAttachmentStatusErrorWithoutProfile(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Integrations.Docbank = config.DocbankIntegrationConfig{Enabled: true, AttachmentUploadConsent: true}
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{DocbankAttachmentMirrorJob: true}
+	sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: "upload unavailable"}}
+	server := NewServerWithOptions(ServerOptions{Config: cfg, Store: f.Store, Scheduler: sched, Logger: slog.New(slog.DiscardHandler)})
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.Store, Destination: "dest"}
+	w := httptest.NewRecorder()
+	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/docbank/attachments", nil))
+	require.Equal(http.StatusOK, w.Code)
+	var result DocbankAttachmentStatus
+	require.NoError(json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal("upload unavailable", result.LastError)
+	assert.Nil(result.Processing)
+}

@@ -4674,3 +4674,15 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Processing requests belong to the mirrored version and Docbank profile fingerprint.
+CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ version_id TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ outcome TEXT NOT NULL,
+ job_id TEXT NOT NULL,
+ next_action_at DATETIME,
+ PRIMARY KEY (destination_key, content_hash)
+);

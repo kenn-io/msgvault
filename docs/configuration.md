@@ -1344,12 +1344,18 @@ url = "http://127.0.0.1:8080"
 api_key_env = "DOCBANK_API_KEY"
 attachment_upload_consent = true
 attachment_folder = "/msgvault"
+document_profile = "documents"
 ```
 
 | Setting | Default | Effect |
 |---------|---------|--------|
 | `attachment_upload_consent` | `false` | Allow attachment bytes from all sources, including future imports, to leave msgvault. Without consent, status reports mirroring as disabled |
+| `document_profile` | Empty | Docbank profile used to process mirrored attachments and search their text |
 | `attachment_folder` | `/msgvault` | Clean absolute virtual directory path; missing directories are created in Docbank |
+
+Set `document_profile` to a Docbank profile with a rendition stage that extracts text. In Docbank, run `docbank processing plan <path-or-id> --profile <name>` on one mirrored file, review the plan, then run `docbank processing build <path-or-id> --profile <name> --plan-fingerprint <fp> --consent`. This grants consent for that profile across documents. msgvault always sends `consent:false`; consent stays in Docbank.
+
+The mirror requests processing for files uploaded before this setting was enabled or before an upgrade. Changing the profile in Docbank requests processing again. `msgvault docbank attachments status` reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors. Use `msgvault docbank attachments backfill` to retry failed or refused processing. For `operator_required`, fix the job in Docbank first, then run `backfill`.
 
 The mirror includes files retained after source deletion or hidden by deduplication. It excludes files whose attachment rows were removed.
 A hashless Slack or Discord attachment uses the content hash in its local storage path.

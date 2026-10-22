@@ -103,3 +103,14 @@ func TestDocbankAttachmentMirrorConfigValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestDocbankDocumentProfileTrimmed(t *testing.T) {
+	t.Setenv("MSGVAULT_HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[integrations.docbank]
+document_profile = " supplied-transcript "
+`), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(t, err)
+	assert.Equal(t, "supplied-transcript", cfg.Integrations.Docbank.DocumentProfile)
+}

@@ -99,6 +99,8 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 		want string
 	}{
 		{"text", []string{"attachments", "status"}, "Folder: /msgvault\nDelivered: 1\nSending: 4\nFiles left to examine: 2\nFailed: 3\nforbidden: 3\nretrying: 4"},
+		{"error_without_profile", []string{"attachments", "status"}, "Last error: upload unavailable"},
+		{"processing", []string{"attachments", "status"}, "Last error: grant consent in Docbank\nDocument profile: documents\nText extracted: 2\nProcessing: 1\nNot yet requested: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2"},
 		{"no_counts", []string{"attachments", "status"}, "State: running"},
 		{"json", []string{"attachments", "status", "--json"}, `"upload_consent":true`},
 		{"backfill", []string{"attachments", "backfill"}, "Attachment mirror backfill scheduled."},
@@ -123,7 +125,15 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 					_, _ = io.WriteString(w, `{"state":"running","upload_consent":false,"folder":"/msgvault"}`)
 					return
 				}
-				_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}}}`)
+				if tc.name == "error_without_profile" {
+					_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`)
+					return
+				}
+				if tc.name == "processing" {
+					_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"grant consent in Docbank","processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`)
 			}))
 			defer daemon.Close()
 			command := newDocbankCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -139,6 +149,10 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			command.SetArgs(tc.args)
 			require.NoError(command.ExecuteContext(t.Context()))
 			assert.Contains(output.String(), tc.want)
+			if tc.name == "text" {
+				assert.Contains(output.String(), "Last error: upload failed")
+				assert.NotContains(output.String(), "Document profile")
+			}
 		})
 	}
 }
