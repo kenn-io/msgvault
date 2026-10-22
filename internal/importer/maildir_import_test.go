@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -181,4 +182,45 @@ func TestImportMaildirFolderNamedLikeFlagLabel(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Equal([]string{"TRASH", "UNREAD"}, labels)
+}
+
+func TestImportMaildirDraftFlagSurvivesFolderCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Maildir flag suffixes contain colons")
+	}
+	for _, folderFirst := range []bool{false, true} {
+		name := "draft_first"
+		if folderFirst {
+			name = "folder_first"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			root := filepath.Join(t.TempDir(), "mail")
+			maildirFixture(t, root)
+			opts := MaildirImportOptions{Identifier: "alice@example.com"}
+			if folderFirst {
+				maildirFixture(t, filepath.Join(root, ".DRAFT"))
+				_, err := ImportMaildir(t.Context(), st, root, opts)
+				require.NoError(err)
+			}
+			raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nDate: Mon, 20 Jul 2026 12:00:00 +0000\r\nSubject: draft\r\n\r\nbody\r\n")
+			require.NoError(os.WriteFile(filepath.Join(root, "cur", "draft:2,D"), raw, 0600))
+			_, err := ImportMaildir(t.Context(), st, root, opts)
+			require.NoError(err)
+			if !folderFirst {
+				maildirFixture(t, filepath.Join(root, ".DRAFT"))
+			}
+			// Rescanning must preserve the flag even after both label uses exist.
+			_, err = ImportMaildir(t.Context(), st, root, opts)
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+			candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+			require.NoError(err)
+			require.Len(candidates, 1)
+			assert.True(t, candidates[0].Unsent)
+			assert.False(t, candidates[0].Eligible)
+		})
+	}
 }

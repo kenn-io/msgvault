@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
@@ -218,7 +219,11 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 	flagLabelIDs := make(map[string]int64)
 	for boxIndex := startBox; boxIndex < len(mailboxes); boxIndex++ {
 		mailbox := mailboxes[boxIndex]
-		labelID, err := st.EnsureLabel(source.ID, mailbox.Label, mailbox.Label, "user")
+		// Folder and flag names share a label row. Keep an existing flag's type.
+		labelID, err := st.LabelIDContext(ctx, source.ID, mailbox.Label)
+		if errors.Is(err, sql.ErrNoRows) {
+			labelID, err = st.EnsureLabel(source.ID, mailbox.Label, mailbox.Label, "user")
+		}
 		if err != nil {
 			failSync(err.Error())
 			return nil, fmt.Errorf("ensure directory label %q: %w", mailbox.Label, err)

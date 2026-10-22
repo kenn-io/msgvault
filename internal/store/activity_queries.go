@@ -112,7 +112,7 @@ const activityCandidateStateCTE = `
 	)`
 
 // activityUnsentSQL keeps sent copies eligible even when dedup retained draft
-// evidence. Saved IMAP Sent origin survives moves out of Sent.
+// evidence or an unsent marker. Saved IMAP Sent origin survives moves out of Sent.
 func (s *Store) activityUnsentSQL() string {
 	return activityUnsentInSchemaSQL("", s.dialect.DriverName() == postgresDriverName)
 }
@@ -125,11 +125,11 @@ func activityUnsentInSchemaSQL(schema string, postgres bool) string {
 		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 	}
 	// A former draft with draft_authored and no live draft evidence counts as contact.
-	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
+	return `((NOT COALESCE(m.is_sent, TRUE) OR ` + draftEvidenceInSchemaSQL(schema, "m", "src") + `)
 		AND COALESCE(` + origin + `, '') <> 'sent'
 		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
-		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
+		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `)))`
 }
 
 func (s *Store) activityCandidateColumns() string {

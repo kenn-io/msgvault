@@ -1592,7 +1592,7 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 			(draft_id, source_id, gmail_draft_id, current_message_id, current_gmail_message_id, thread_id, revision)
 			SELECT 'draft', source_id, 'draft', id, 'message', 'thread', 1 FROM messages WHERE id = ?`},
 		{name: "draft_and_imap_sent_origin", sourceType: "imap", labels: []string{"DRAFT"}, metadata: `{"imap_content_origin":"sent"}`, draftMembership: true},
-		{name: "is_sent_false_with_imap_sent_origin", sourceType: "imap", labels: []string{"DRAFT"}, metadata: `{"imap_content_origin":"sent"}`, draftMembership: true, extraSQL: `UPDATE messages SET is_sent = FALSE WHERE id = ?`, unsent: true},
+		{name: "is_sent_false_with_imap_sent_origin", sourceType: "imap", labels: []string{"DRAFT"}, metadata: `{"imap_content_origin":"sent"}`, draftMembership: true, extraSQL: `UPDATE messages SET is_sent = FALSE WHERE id = ?`},
 		{name: "former_draft", sourceType: "gmail", extraSQL: `UPDATE messages SET draft_authored = TRUE WHERE id = ?`},
 		{name: "merged_imap_flag", sourceType: "imap", draftMembership: true, merged: true, unsent: true},
 		{name: "merged_imap_flag_sent", sourceType: "imap", labels: []string{"SENT"}, draftMembership: true, merged: true},
