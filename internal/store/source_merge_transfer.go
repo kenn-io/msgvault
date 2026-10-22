@@ -71,14 +71,13 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
-	// Canonical provider labels carry trusted roles. Preserve that evidence
+	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
 	// before archive labels lose provider IDs; Drafts takes precedence.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
  WHEN system_role = 'drafts' OR source_label_id = 'DRAFT' THEN 'drafts'
  ELSE 'sent' END
  WHERE source_id IN (?, ?) AND source_label_id IN ('SENT', 'DRAFT')
- AND EXISTS (SELECT 1 FROM sources s WHERE s.id = labels.source_id
- AND (s.source_type = 'gmail' OR (s.source_type = 'maildir' AND labels.label_type = 'system')))`, from, into); err != nil {
+ AND EXISTS (SELECT 1 FROM sources s WHERE s.id = labels.source_id AND s.source_type = 'gmail')`, from, into); err != nil {
 		return err
 	}
 	// Incoming labels are archive organization, not destination provider label IDs.

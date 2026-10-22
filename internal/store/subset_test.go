@@ -5453,8 +5453,6 @@ func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 		merged, sent             bool
 	}{
 		{name: "flag_only_imap", provider: "imap", evidence: "flag"},
-		{name: "merged_deleted_record", provider: "imap", evidence: "deleted_record", merged: true},
-		{name: "merged_flag_only_imap", provider: "imap", evidence: "flag", merged: true},
 		{name: "imap_record_only", provider: "imap", evidence: "record"},
 		{name: "gmail_record_only", provider: "gmail", evidence: "record"},
 		{name: "imap_pending_original_only", provider: "imap", evidence: "pending"},

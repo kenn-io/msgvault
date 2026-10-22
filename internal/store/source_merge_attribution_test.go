@@ -229,7 +229,6 @@ func TestMergeSourcesPreservesGmailLabelRoles(t *testing.T) {
 		{name: "distinct legacy sent name", providerID: "SENT", incomingName: "Historical Sent", destinationRole: store.LabelSystemRoleSent, wantRole: store.LabelSystemRoleSent},
 		{name: "ordinary Gmail label named SENT", providerID: "Label_ordinary", incomingName: "SENT", destinationRole: store.LabelSystemRoleSent, wantInbound: true},
 		{name: "ordinary IMAP label with SENT id", sourceType: "imap", providerID: "SENT", incomingName: "SENT", destinationRole: store.LabelSystemRoleSent, wantInbound: true},
-		{name: "Maildir system draft label", sourceType: "maildir", providerID: "DRAFT", incomingName: "Historical Drafts", destinationRole: store.LabelSystemRoleDrafts, wantRole: store.LabelSystemRoleDrafts, wantDraft: true},
 		{name: "distinct legacy draft name", providerID: "DRAFT", incomingName: "Historical Drafts", destinationRole: store.LabelSystemRoleDrafts, wantRole: store.LabelSystemRoleDrafts, wantDraft: true},
 		{name: "canonical draft overrides sent role", providerID: "DRAFT", incomingName: "DRAFT", incomingRole: store.LabelSystemRoleSent, destinationRole: store.LabelSystemRoleDrafts, wantRole: store.LabelSystemRoleDrafts, wantCoalesced: true, wantDraft: true},
 		{name: "draft role overrides canonical sent", providerID: "SENT", incomingName: "SENT", incomingRole: store.LabelSystemRoleDrafts, destinationRole: store.LabelSystemRoleSent, wantRole: store.LabelSystemRoleDrafts, wantDraft: true},

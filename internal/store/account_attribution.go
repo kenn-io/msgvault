@@ -289,25 +289,16 @@ func draftEvidenceSQL(m, src string) string {
 	return draftEvidenceInSchemaSQL("", m, src)
 }
 
-func imapDraftFlagSQL(imm string) string {
-	return `LOWER(CAST(` + imm + `.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!'`
-}
-
 // draftEvidenceInSchemaSQL is draftEvidenceSQL reading its evidence tables
 // from schema, such as "src." for an attached source archive.
 func draftEvidenceInSchemaSQL(schema, m, src string) string {
 	return `(EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
 		  AND (l.system_role = '` + LabelSystemRoleDrafts + `'
-		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')
-		       OR (` + src + `.source_type = 'maildir' AND l.label_type = 'system' AND l.source_label_id = 'DRAFT')))
+		       OR (` + src + `.source_type = 'gmail' AND l.source_label_id = 'DRAFT')))
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_message_memberships imm
 		WHERE imm.message_id = ` + m + `.id AND imm.source_id = ` + m + `.source_id
-		  AND ` + imapDraftFlagSQL("imm") + `)
-		OR EXISTS (SELECT 1 FROM ` + schema + `source_merge_messages smm
-		JOIN ` + schema + `imap_message_memberships imm
-		  ON imm.source_id = smm.original_source_id AND imm.message_id = ` + m + `.id
-		WHERE smm.message_id = ` + m + `.id AND ` + imapDraftFlagSQL("imm") + `)
+		  AND LOWER(CAST(imm.flags AS TEXT)) LIKE '%"\\draft"%' ESCAPE '!')
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.current_message_id = ` + m + `.id)
 		OR EXISTS (SELECT 1 FROM ` + schema + `imap_drafts d WHERE d.pending_original_message_id = ` + m + `.id)
 		OR EXISTS (SELECT 1 FROM ` + schema + `gmail_drafts d WHERE d.current_message_id = ` + m + `.id)
