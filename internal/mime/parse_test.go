@@ -667,6 +667,97 @@ func TestMessage_GetBodyText(t *testing.T) {
 	assert.Empty(t, msg.GetBodyText())
 }
 
+func TestParse_HiddenHTMLText(t *testing.T) {
+	assert := assert.New(t)
+	msg := parseEmail(t, emailOptions{
+		ContentType: `text/html; charset="utf-8"`,
+		Headers:     map[string]string{"Content-Transfer-Encoding": "quoted-printable"},
+		Body: "<html><body><p>First visible paragraph.</p><div style=3D\"display:none;max-height:0;overflow:hid=\r\n" +
+			"den\">Hidden instructions.</div><p>Last visible paragraph.</p></body></html>",
+	})
+	assert.Equal("First visible paragraph.\n\nLast visible paragraph.", msg.BodyText)
+	assert.Equal(msg.BodyText, msg.GetBodyText())
+	assert.Contains(msg.BodyHTML, "Hidden instructions.")
+	assert.True(msg.HiddenTextPresent)
+}
+
+func TestParse_InlineHTMLVisibility(t *testing.T) {
+	tests := []struct {
+		name   string
+		html   string
+		want   string
+		hidden bool
+	}{
+		{"display none", `<div style="display:none">Hidden</div>`, "", true},
+		{"display block", `<div style="display:block">Visible</div>`, "Visible", false},
+		{"last declaration wins", `<div style="display:none;display:block">Visible</div>`, "Visible", false},
+		{"case and important", `<div style=" DISPLAY : NONE !important ">Hidden</div>`, "", true},
+		{"opacity zero", `<div style="opacity:0.0">Hidden</div>`, "", true},
+		{"opacity nonzero", `<div style="opacity:0.1">Visible</div>`, "Visible", false},
+		{"zero height clipped", `<div style="height:0px;overflow:hidden">Hidden</div>`, "", true},
+		{"zero max height clipped", `<div style="max-height:0;overflow-y:clip">Hidden</div>`, "", true},
+		{"nonzero minimum height", `<div style="height:0;min-height:30px;overflow:hidden">Visible</div>`, "Visible", false},
+		{"overflow alone", `<div style="overflow:hidden">Visible</div>`, "Visible", false},
+		{"zero height alone", `<div style="height:0">Visible</div>`, "Visible", false},
+		{"inline height", `<span style="height:0;overflow:hidden">Visible</span>`, "Visible", false},
+		{"explicit block height", `<span style="display:block;height:0;overflow:hidden">Hidden</span>`, "", true},
+		{"explicit inline height", `<div style="display:inline;height:0;overflow:hidden">Visible</div>`, "Visible", false},
+		{"absolute left offscreen", `<div style="position:absolute;left:-1000px">Hidden</div>`, "", true},
+		{"fixed top offscreen", `<div style="position:fixed;top:-2000px">Hidden</div>`, "", true},
+		{"nearby positioned text", `<div style="position:absolute;left:-999px">Visible</div>`, "Visible", false},
+		{"static offset", `<div style="left:-2000px">Visible</div>`, "Visible", false},
+		{"unknown offset", `<div style="position:absolute;left:calc(-2000px)">Visible</div>`, "Visible", false},
+		{"visibility hidden", `<div style="visibility:hidden">Hidden<span>also hidden</span></div>`, "", true},
+		{"visibility restored", `<div style="visibility:hidden">Hidden<span style="visibility:visible">Visible</span>Hidden</div>`, "Visible", true},
+		{"zero font", `<div style="font-size:0px">Hidden</div>`, "", true},
+		{"font restored", `<div style="font-size:0">Hidden<span style="font-size:14px">Visible</span>Hidden</div>`, "Visible", true},
+		{"font shorthand restored", `<div style="font-size:0">Hidden<span style="font:14px sans-serif">Visible</span></div>`, "Visible", true},
+		{"relative larger font", `<div style="font-size:0"><span style="font-size:larger">Hidden</span></div>`, "", true},
+		{"relative smaller font", `<div style="font-size:0"><span style="font-size:smaller">Hidden</span></div>`, "", true},
+		{"relative em font", `<div style="font-size:0"><span style="font-size:2em">Hidden</span></div>`, "", true},
+		{"relative percent font", `<div style="font-size:0"><span style="font:120% sans-serif">Hidden</span></div>`, "", true},
+		{"root relative font restored", `<div style="font-size:0"><span style="font-size:1rem">Visible</span></div>`, "Visible", false},
+		{"transparent color", `<div style="color:transparent">Hidden</div>`, "", true},
+		{"matching hex colors", `<div style="color:#FFF;background-color:#ffffff">Hidden</div>`, "", true},
+		{"matching named colors", `<div style="color:WHITE;background:white">Hidden</div>`, "", true},
+		{"matching RGB colors", `<div style="color:rgb(255,255,255);background:rgb(255,255,255)">Hidden</div>`, "", true},
+		{"different RGB colors", `<div style="color:rgb(0,0,0);background:rgb(255,255,255)">Visible</div>`, "Visible", false},
+		{"different colors", `<div style="color:#000;background:#fff">Visible</div>`, "Visible", false},
+		{"color restored", `<div style="color:transparent">Hidden<span style="color:black">Visible</span>Hidden</div>`, "Visible", true},
+		{"ancestor background excluded", `<div style="background:white"><span style="color:white">Visible</span></div>`, "Visible", false},
+		{"unknown height", `<div style="height:calc(0px);overflow:hidden">Visible</div>`, "Visible", false},
+		{"unknown height unit", `<div style="height:0unknown;overflow:hidden">Visible</div>`, "Visible", false},
+		{"unknown colors", `<div style="color:var(--ink);background:var(--ink)">Visible</div>`, "Visible", false},
+		{"preheader padding", `<div style="display:none">&#8203;&zwnj;&nbsp;</div><p>Visible</p>`, "Visible", false},
+		{"hidden number", `<div style="display:none">123</div>`, "", true},
+		{"hidden unicode prose", `<div style="display:none">你好</div>`, "", true},
+		{"visible link", `<div style="display:none">Hidden</div><p><a href="https://example.com/report">Report</a></p>`, "Report ( https://example.com/report )", true},
+		{"unchanged HTML", `<p>Hello <b>reader</b>.</p><p><a href="https://example.com/report">Report</a></p>`, "Hello *reader*.\n\nReport ( https://example.com/report )", false},
+		{"leading BOM", "\ufeff<p>Visible</p>", "Visible", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			msg := parseEmail(t, emailOptions{ContentType: `text/html; charset="utf-8"`, Body: tc.html})
+			assert.Equal(tc.want, msg.BodyText)
+			assert.Equal(tc.want, msg.GetBodyText())
+			assert.Equal(tc.hidden, msg.HiddenTextPresent)
+			assert.Equal(tc.hidden, HTMLHasHiddenText(tc.html))
+		})
+	}
+}
+
+func TestParse_PlainTextAlternativePreserved(t *testing.T) {
+	msg := parseEmail(t, emailOptions{
+		ContentType: "multipart/alternative; boundary=alternative",
+		Body: "--alternative\r\nContent-Type: text/plain\r\n\r\nOriginal plain text\r\n" +
+			"--alternative\r\nContent-Type: text/html\r\n\r\n<div style=\"display:none\">Hidden</div>\r\n--alternative--\r\n",
+	})
+	assert.Equal(t, "Original plain text", msg.GetBodyText())
+	assert.False(t, msg.HiddenTextPresent)
+	assert.True(t, HTMLHasHiddenText(msg.BodyHTML))
+}
+
 func TestMessage_GetFirstFrom(t *testing.T) {
 	msg := &Message{
 		From: []Address{

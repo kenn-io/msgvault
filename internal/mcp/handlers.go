@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
@@ -1649,6 +1650,7 @@ type getMessageResponse struct {
 	Bcc                  []query.Address        `json:"bcc"`
 	BodyText             string                 `json:"body_text"`
 	BodyHTML             string                 `json:"body_html"`
+	HiddenTextPresent    bool                   `json:"hidden_text_present"`
 	BodyFormat           string                 `json:"body_format,omitempty"`
 	BodyLength           int                    `json:"body_length"`
 	BodyReturned         int                    `json:"body_returned"`
@@ -1745,6 +1747,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 		Bcc:                  msg.Bcc,
 		BodyText:             bodyText,
 		BodyHTML:             bodyHTML,
+		HiddenTextPresent:    mime.HTMLHasHiddenText(msg.BodyHTML),
 		BodyFormat:           bodyFormat,
 		BodyLength:           bodyLen,
 		BodyReturned:         len(bodySlice),

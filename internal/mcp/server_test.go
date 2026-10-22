@@ -2040,6 +2040,29 @@ func TestGetMessage(t *testing.T) {
 		assert.False(msg.HasMore, "has_more")
 	})
 
+	t.Run("stored HTML hidden text", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			html   string
+			hidden bool
+		}{
+			{"hidden", `<p>Visible</p><div style="display:none">Hidden text</div>`, true},
+			{"visible", `<p>Visible</p>`, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				f := storetest.New(t)
+				messageID := f.CreateMessage("stored-html")
+				require.NoError(t, f.Store.UpsertMessageBody(messageID,
+					sql.NullString{String: "Previously archived text", Valid: true},
+					sql.NullString{String: tc.html, Valid: true}))
+				handlers := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
+				msg := runTool[map[string]any](t, "get_message", handlers.getMessage, map[string]any{"id": float64(messageID)})
+				assert.Equal(t, tc.hidden, msg["hidden_text_present"])
+				assert.Equal(t, "Previously archived text", msg["body_text"])
+			})
+		}
+	})
+
 	t.Run("sender-id-only message", func(t *testing.T) {
 		f := storetest.New(t)
 		senderID := f.EnsureParticipant("sender@example.com", "Test Sender", "example.com")
