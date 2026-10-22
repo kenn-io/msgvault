@@ -1,0 +1,42 @@
+package store
+
+import (
+	"context"
+	"fmt"
+)
+
+// ensureCacheSourceSizeAttribution tracks message size changes in the cache
+// journal. Version 2 of cache_message_source_attribution is already shipped.
+func (s *Store) ensureCacheSourceSizeAttribution(ctx context.Context) error {
+	if s.IsPostgreSQL() {
+		return nil
+	}
+	return s.runOnceMigration(ctx, "cache_message_source_attribution", 3, false,
+		func(ctx context.Context) error {
+			return s.withTxContext(ctx, func(tx *loggedTx) error {
+				_, err := tx.ExecContext(ctx, `
+					DROP TRIGGER IF EXISTS trg_cache_message_facts_update;
+					CREATE TRIGGER trg_cache_message_facts_update
+					AFTER UPDATE OF sender_id, is_from_me, source_is_from_me,
+						has_attachments, attachment_count, size_estimate, account_address, account_path
+						ON messages FOR EACH ROW
+					WHEN OLD.sender_id IS NOT NEW.sender_id OR OLD.is_from_me IS NOT NEW.is_from_me
+						OR OLD.source_is_from_me IS NOT NEW.source_is_from_me
+						OR OLD.has_attachments IS NOT NEW.has_attachments
+						OR OLD.attachment_count IS NOT NEW.attachment_count
+						OR OLD.size_estimate IS NOT NEW.size_estimate
+						OR OLD.account_address IS NOT NEW.account_address
+						OR OLD.account_path IS NOT NEW.account_path BEGIN
+						INSERT INTO cache_related_change_journal (dataset, message_id)
+						VALUES ('message_facts', NEW.id);
+					END;
+					INSERT INTO cache_related_change_journal (dataset, message_id)
+					VALUES ('message_facts', 0);
+				`)
+				if err != nil {
+					return fmt.Errorf("install message-size cache journal: %w", err)
+				}
+				return nil
+			})
+		})
+}

@@ -27,6 +27,43 @@ func TestCacheNeedsBuildContextCanceledDoesNotRequestBuild(t *testing.T) {
 	assert.False(t, got.NeedsBuild, "cancellation is not evidence that the cache is stale: %+v", got)
 }
 
+func TestCacheRefreshMatrixAttachmentSizeUpdatesMessageFacts(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	dir := t.TempDir()
+	dbPath, analyticsDir := filepath.Join(dir, "archive.db"), filepath.Join(dir, "analytics")
+	s, err := store.Open(dbPath)
+	req.NoError(err)
+	t.Cleanup(func() { _ = s.Close() })
+	req.NoError(s.InitSchema())
+	source, err := s.GetOrCreateSource("matrix", "@archive:example.org")
+	req.NoError(err)
+	room, err := s.EnsureConversationWithType(source.ID, "!room:example.org", "direct_chat", "Room")
+	req.NoError(err)
+	messageID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: room, SourceMessageID: "$media", MessageType: "matrix",
+		SentAt: sql.NullTime{Time: time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC), Valid: true},
+	})
+	req.NoError(err)
+	ref := store.AttachmentRef{SourceAttachmentID: "matrix:mxc://example.org/file", StoragePath: "aa/" + strings.Repeat("a", 64), ContentHash: strings.Repeat("a", 64), Size: 1}
+	req.NoError(s.ReplaceMessageMatrixAttachments(t.Context(), messageID, []store.AttachmentRef{ref}))
+	_, err = buildCache(dbPath, analyticsDir, true)
+	req.NoError(err)
+	check.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+	ref.Size = 42
+	req.NoError(s.ReplaceMessageMatrixAttachments(t.Context(), messageID, []store.AttachmentRef{ref}))
+	check.True(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+	_, err = buildCacheAuto(dbPath, analyticsDir)
+	req.NoError(err)
+	db, err := sql.Open("duckdb", "")
+	req.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	var size int64
+	path := filepath.ToSlash(filepath.Join(analyticsDir, "messages", "*", "*.parquet"))
+	req.NoError(db.QueryRow(`SELECT size_estimate FROM read_parquet(?, hive_partitioning=true) WHERE id = ?`, path, messageID).Scan(&size))
+	check.Equal(int64(42), size)
+	check.False(cacheNeedsBuild(dbPath, analyticsDir).NeedsBuild)
+}
+
 func TestCacheStalenessQueriesRespectCancellation(t *testing.T) {
 	st, err := store.OpenForTest(filepath.Join(t.TempDir(), "msgvault.db"))
 	require.NoError(t, err)

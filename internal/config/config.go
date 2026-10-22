@@ -480,10 +480,10 @@ const (
 	DefaultDiscordEditRescanWindow time.Duration = 7 * 24 * time.Hour
 
 	// DefaultMediaMaxParticipants is the participant cap applied to Beeper,
-	// Slack, Discord, and Teams media collection when a config file omits
+	// Slack, Discord, Teams, and Matrix media collection when a config file omits
 	// media_max_participants. Media from rooms above this size is skipped
 	// with a typed participant_threshold marker; direct chats and small
-	// groups keep theirs. NewDefaultConfig pre-fills the four provider
+	// groups keep theirs. NewDefaultConfig pre-fills the provider
 	// fields so a file that omits the key inherits the cap, while an explicit
 	// media_max_participants = 0 still means "no cap" because TOML decoding
 	// overwrites the pre-filled value with the operator's zero.
@@ -872,6 +872,7 @@ func NewDefaultConfig() *Config {
 		GCal:        []GCalSource{},
 		// Group-room media is capped by default; see DefaultMediaMaxParticipants.
 		Beeper:  BeeperConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
+		Matrix:  MatrixConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Slack:   SlackConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
@@ -1624,12 +1625,17 @@ type BeeperConfig struct {
 }
 
 // MatrixConfig configures native Matrix archive sources ([matrix] table).
-// Credentials live under the data directory, never here.
+// Credentials and encryption keys live under the data directory, never here.
 type MatrixConfig struct {
-	Enabled      bool     `toml:"enabled"`
-	Schedule     string   `toml:"schedule"`
-	Rooms        []string `toml:"rooms"`
-	ExcludeRooms []string `toml:"exclude_rooms"`
+	Enabled              bool                          `toml:"enabled"`
+	Schedule             string                        `toml:"schedule"`
+	Rooms                []string                      `toml:"rooms"`
+	ExcludeRooms         []string                      `toml:"exclude_rooms"`
+	Media                *bool                         `toml:"media"`
+	MaxMediaMB           int                           `toml:"max_media_mb"`
+	MediaScope           string                        `toml:"media_scope"`
+	MediaMaxParticipants int                           `toml:"media_max_participants"`
+	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
 // SlackConfig configures Slack workspace archive sources ([slack] table).
@@ -1724,6 +1730,13 @@ func (b BeeperConfig) MediaPolicy(accountID string) attachmentpolicy.Policy {
 		b.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
 }
 
+// MediaPolicy resolves Matrix provider settings and a user-account override.
+func (m MatrixConfig) MediaPolicy(userID string) attachmentpolicy.Policy {
+	account, ok := m.AccountsConfig[userID]
+	return resolveMediaPolicy(m.Media, m.MediaScope, m.MediaMaxParticipants,
+		m.MaxMediaMB, DefaultChatMaxMediaBytes, account, ok)
+}
+
 // MediaPolicy resolves Slack provider settings and a workspace override.
 func (s SlackConfig) MediaPolicy(teamID string) attachmentpolicy.Policy {
 	account, ok := s.AccountsConfig[teamID]
@@ -1797,6 +1810,8 @@ func (c *Config) validateMediaPolicies() error {
 	}{
 		{name: "beeper", policy: c.Beeper.MediaPolicy(""), providerMaxMB: c.Beeper.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Beeper.AccountsConfig)},
+		{name: "matrix", policy: c.Matrix.MediaPolicy(""), providerMaxMB: c.Matrix.MaxMediaMB,
+			accountMaxMedia: mediaAccountMaximums(c.Matrix.AccountsConfig)},
 		{name: "slack", policy: c.Slack.MediaPolicy(""), providerMaxMB: c.Slack.MaxMediaMB,
 			accountMaxMedia: mediaAccountMaximums(c.Slack.AccountsConfig)},
 		{name: "discord", policy: c.Discord.MediaPolicy(""), providerMaxMB: c.Discord.MaxMediaMB,

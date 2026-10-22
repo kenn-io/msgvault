@@ -215,7 +215,7 @@ func readAddIMAPPassword(cmd *cobra.Command, announceEnv bool) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive(prompt, promptOut)
+		return readPasswordInteractive(prompt, promptOut, false)
 	case passwordNoPrompt:
 		return "", errors.New("cannot read password: no terminal available for prompt (try piping the password via stdin or setting MSGVAULT_IMAP_PASSWORD)")
 	case passwordPipe:
@@ -245,7 +245,7 @@ func readPasswordFromPipe(r io.Reader) (string, error) {
 // readPasswordInteractive prompts for a password using a masked
 // input field with asterisk echo. The output writer controls where
 // the TUI renders (typically stderr to avoid polluting stdout).
-func readPasswordInteractive(prompt string, output io.Writer) (string, error) {
+func readPasswordInteractive(prompt string, output io.Writer, allowBlank bool) (string, error) {
 	var password string
 	input := huh.NewInput().
 		Title(prompt).
@@ -257,7 +257,7 @@ func readPasswordInteractive(prompt string, output io.Writer) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read password: %w", err)
 	}
-	if strings.TrimSpace(password) == "" {
+	if strings.TrimSpace(password) == "" && !allowBlank {
 		return "", errors.New("password is required")
 	}
 	return password, nil
