@@ -46,11 +46,16 @@ func newLoopsListCommand() *cobra.Command {
 		Short: "List conversations waiting on replies. Only a question mark or a request phrase opens a loop.",
 		Args:  cobra.NoArgs,
 		Example: `  msgvault loops list
-  msgvault loops list --limit 10 --json`,
+  msgvault loops list --limit 10 --json
+  msgvault loops list --person 42`,
 	}
 	command.Flags().IntVar(&opts.Limit, "limit", loops.DefaultLimit, "Maximum loops (1 through 200)")
+	command.Flags().Int64Var(&opts.PersonID, "person", 0, "Show loops with this person ID")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output as JSON")
 	command.RunE = func(cmd *cobra.Command, _ []string) error {
+		if cmd.Flags().Changed("person") && opts.PersonID <= 0 {
+			return usageErr(cmd, errors.New("--person must be a positive person ID"))
+		}
 		if opts.Limit < 1 || opts.Limit > loops.MaxLimit {
 			return usageErr(cmd, fmt.Errorf("--limit must be from 1 through %d", loops.MaxLimit))
 		}

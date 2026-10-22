@@ -37,13 +37,14 @@ for the rules.
 ```bash
 msgvault loops list
 msgvault loops list --limit 10 --json
+msgvault loops list --person 42
 msgvault loops done 4521
 msgvault loops snooze 4521 --until 48h
 ```
 
 | Command | Flags and behavior |
 |---|---|
-| `list` | `--limit` 1..200 (default 50), `--json` |
+| `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
 | `done` | One message ID; marks that loop done. A distinct question can list it again |
 | `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions |
 

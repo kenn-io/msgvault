@@ -33,24 +33,27 @@ func runLoops(ctx context.Context, t *testing.T, args ...string) (string, error)
 	return output.String(), err
 }
 
-func loopsDaemon(t *testing.T) (context.Context, int64) {
+func loopsDaemon(t *testing.T) (context.Context, int64, int64) {
 	t.Helper()
 	f := storetest.New(t)
 	now := time.Now().UTC()
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Hi", SentAt: now.Add(-10 * 24 * time.Hour)})
 	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Subject: "Contract draft", Body: "Can you send the contract?", SentAt: now.Add(-3 * 24 * time.Hour)})
 	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: storetest.OwnerAddress, To: []string{"sam@example.test"}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: now.Add(-5 * 24 * time.Hour)})
+	participant := f.EnsureParticipant("alex@example.test", "", "example.test")
+	person, _, err := f.Store.CreatePersonFromParticipant(participant)
+	require.NoError(t, err)
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{
 		Config: &config.Config{}, Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler),
 	}).Router())
 	t.Cleanup(server.Close)
-	return withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}}), anchor
+	return withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}}), anchor, person.ID
 }
 
 func TestLoopsListReadsTheDaemonAndPassesLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx, _ := loopsDaemon(t)
+	ctx, _, _ := loopsDaemon(t)
 	output, err := runLoops(ctx, t, "list")
 	require.NoError(err)
 	assert.Contains(output, "alex@example.test")
@@ -74,6 +77,8 @@ func TestLoopsListRejectsBadFlags(t *testing.T) {
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	for _, args := range [][]string{
 		{"list", "--limit", "201"}, {"list", "--limit", "0"},
+		{"list", "--person", "0"}, {"list", "--person", "-1"},
+		{"list", "--person", "abc"}, {"list", "--person", "9223372036854775808"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			require := require.New(t)
@@ -87,7 +92,7 @@ func TestLoopsListRejectsBadFlags(t *testing.T) {
 func TestLoopsDoneAndSnooze(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx, anchor := loopsDaemon(t)
+	ctx, anchor, _ := loopsDaemon(t)
 
 	output, err := runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "48h")
 	require.NoError(err)
@@ -96,7 +101,7 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
 	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor))
 
-	ctx, anchor = loopsDaemon(t)
+	ctx, anchor, _ = loopsDaemon(t)
 	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
 	require.NoError(err)
 	assert.Equal(fmt.Sprintf("Marked %d done.\n", anchor), output)
@@ -186,4 +191,21 @@ Showing the oldest 50. Use --limit to see more.
 	}}, 50, now))
 	assert.Contains(out.String(), "(unknown)   (no subject)")
 	assert.NotContains(out.String(), "Waiting on you")
+}
+
+func TestLoopsListFiltersByPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	ctx, _, personID := loopsDaemon(t)
+	output, err := runLoops(ctx, t, "list", "--person", strconv.FormatInt(personID, 10))
+	require.NoError(err)
+	assert.Contains(output, "Contract draft")
+	assert.NotContains(output, "Lunch Friday?")
+	output, err = runLoops(ctx, t, "list", "--person", strconv.FormatInt(personID, 10), "--json")
+	require.NoError(err)
+	var decoded generated.LoopListResponse
+	require.NoError(json.Unmarshal([]byte(output), &decoded))
+	require.Len(decoded.Items, 1)
+	require.NotNil(decoded.Items[0].Counterparty.PersonID)
+	assert.Equal(personID, *decoded.Items[0].Counterparty.PersonID)
 }
