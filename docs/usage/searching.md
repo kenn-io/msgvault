@@ -338,6 +338,8 @@ msgvault search from:alice@example.com --json
 
 On unreleased builds, media search also returns a separate `attachments` list of matches in text Docbank has extracted from mirrored attachments. Each matching file links to every visible message that holds it. An empty attachment list means no match in extracted text; files awaiting extraction may still contain the words. Attachment errors and truncation appear beside that list. `--limit` applies to each list independently.
 
+Use `documents search` for msgvault's local document index and `media search` for text Docbank has extracted from mirrored attachments.
+
 Media search uses lexical retrieval through the configured Docbank integration. It searches the full allowed population within [the API scope limits](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search). Semantic and hybrid modes are unavailable. An empty recording result proves no match only with complete coverage and `partial=false`. Recording search requires Docbank's source-selected search contract; older servers report search unavailable. See [the CLI reference](https://github.com/kenn-io/msgvault/blob/main/docs/cli-reference.md#media-search) for flags and [the API contract](https://github.com/kenn-io/msgvault/blob/main/docs/api-server.md#media-transcript-search) for coverage fields. Use `msgvault show-message <message_id>` to read a result in context. For browser recording search and its Person filter, see [Everything search](../web-ui.md#recording-matches).
 
 ## Read matches and conversations

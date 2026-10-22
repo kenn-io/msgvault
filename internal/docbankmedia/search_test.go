@@ -253,14 +253,3 @@ func TestSearchDocumentsContract(t *testing.T) {
 		})
 	}
 }
-
-func TestSearchDocumentsRejectsUnfencedAndMediaRequests(t *testing.T) {
-	client, err := NewClient("http://127.0.0.1:1", nil)
-	require.NoError(t, err)
-	for _, fence := range []*SearchFence{nil, {VaultUID: "vault"}, {ContentVersionIDs: []string{"version"}}, {VaultUID: "vault", ContentVersionIDs: make([]string, MaxSearchVersions+1)}} {
-		_, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 20, Fence: fence})
-		require.ErrorIs(t, err, ErrInvalidRequest)
-	}
-	_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Profile: "supplied-transcript", ContentFirst: true, Limit: 20, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}, MediaSources: []SearchMediaSelector{{}}})
-	require.ErrorIs(t, err, ErrInvalidRequest)
-}

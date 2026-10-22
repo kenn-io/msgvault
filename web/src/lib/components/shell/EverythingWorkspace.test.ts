@@ -66,7 +66,7 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it('retries recording details and distinguishes missing messages', async () => {
+  it.each(['recording', 'attachment'])('retries %s details and distinguishes missing messages', async (kind) => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', selectedRow: 'recording:9' }))}`);
     const message = recordingMessage;
     let messageStatus = 500;
@@ -75,7 +75,9 @@ describe('EverythingWorkspace', () => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
       if (path.endsWith('/explore')) exploreBodies.push(await request.clone().json());
-      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
+      if (path.endsWith('/media/search')) return Response.json(kind === 'recording' ? recordingSearchReport() : recordingSearchReport({ results: [], attachments: {
+        results: [{ message_id: 9, conversation_id: 2, attachment_id: 5, filename: 'report.pdf', containing_title: 'Team chat', excerpt: 'Quarterly numbers' }], truncated: false,
+      } }));
       if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
       if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
       if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });
@@ -85,7 +87,7 @@ describe('EverythingWorkspace', () => {
     const view = renderRecordingShell(createAPIClient(fetchFn), state);
     try {
       const link = await screen.findByRole('link', { name: 'Team chat' });
-      await screen.findByText('Could not load this recording message.');
+      await screen.findByText('Could not load this message.');
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([{ event: 'error_shown', properties: { surface: 'web', kind: 'message' } }]));
       messageStatus = 200;
       await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -99,7 +101,7 @@ describe('EverythingWorkspace', () => {
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
-      await screen.findByText('This recording message is no longer available.');
+      await screen.findByText('This message is no longer available.');
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },

@@ -233,7 +233,7 @@
     } => {
       const selected = readingTargetKey;
       if (!selected || readingSelection) return { status: 'ready', message: '' };
-      if (recordingSelection) return { status: !recording.error ? 'loading' : recording.missing ? 'missing' : 'error', message: recording.missing ? 'This recording message is no longer available.' : 'Could not load this recording message.' };
+      if (recordingSelection) return { status: !recording.error ? 'loading' : recording.missing ? 'missing' : 'error', message: recording.missing ? 'This message is no longer available.' : 'Could not load this message.' };
       if (parseGroupSelection(selected)) {
         if (readingDetailUnavailable) {
           return {

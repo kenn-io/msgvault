@@ -19,6 +19,7 @@
   const incomplete = $derived(Boolean(result && (result.partial || result.truncated)));
   const recordingNotice = $derived(result?.recordings_error ? refusedMediaSearchNotice(result.recordings_error.error, result.recordings_error.message, query, participantID) : '');
   const recordingRetryable = $derived(result?.recordings_error?.error === 'media_search_unavailable');
+  const attachmentRetryable = $derived(['transport', 'server_error', 'timeout', 'rate_limited'].includes(result?.attachments?.error?.error ?? ''));
   let notice = $state('');
   let expired = $state(false);
   let retryable = $state(false);
@@ -150,7 +151,7 @@
     {:else if !admitted}
       <p role="status">Recording search supports plain words only. Punctuation and quoted phrases are unavailable.</p>
     {:else if result}
-      {#if incomplete}
+      {#if incomplete && !recordingNotice}
         <p class="coverage" role="status">
           {#if result.results.length === 0}No matches in searched transcripts.{:else if result.partial}Coverage incomplete.{/if}
           {#if result.pending_occurrences}<span>{result.pending_occurrences} pending</span>{/if}
@@ -196,7 +197,7 @@
   {#if result?.attachments}
     <section class="attachments" aria-label="Attachments">
       <h2>Attachments{#if !result.attachments.error || result.attachments.results.length > 0}<span class="count">{result.attachments.results.length}</span>{/if}</h2>
-      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.message || 'Attachment search is unavailable.'}</span><Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} /></div>{/if}
+      {#if result.attachments.error}<div class="unavailable" role="status"><span>{result.attachments.error.message || 'Attachment search is unavailable.'}</span>{#if attachmentRetryable}<Button label="Retry" size="sm" surface="soft" onclick={() => retry += 1} />{/if}</div>{/if}
       <ol>
         {#each result.attachments.results as hit, index (index)}
           <li>
@@ -262,7 +263,7 @@
   .transcript { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(0, 1fr); max-width: 72ch; padding-left: var(--space-3); border-left: 2px solid var(--border-muted); margin-top: var(--space-1); }
   .transcript.timed { grid-template-columns: 3.5rem minmax(0, 1fr); column-gap: var(--space-3); }
   .transcript time { padding-top: 0.2em; }
-  .excerpt { overflow-wrap: anywhere; font-size: var(--font-size-sm); line-height: 1.5; white-space: pre-wrap; }
+  .excerpt { display: -webkit-box; line-clamp: 3; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font-size: var(--font-size-sm); line-height: 1.5; white-space: pre-wrap; }
   time { font-variant-numeric: tabular-nums; }
   .coverage { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
   .coverage span + span::before { content: '·'; margin-right: var(--space-2); }

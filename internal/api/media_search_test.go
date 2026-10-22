@@ -904,7 +904,7 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 }
 
 func TestMediaSearchDocuments(t *testing.T) {
-	for _, scenario := range []string{"shared", "hidden during search", "attachment failure", "recording failure", "both fail", "person filter", "unlinked during search", "nil reader"} {
+	for _, scenario := range []string{"shared", "hidden during search", "attachment failure", "recording failure", "recording failure without attachment matches", "both fail", "person filter", "unlinked during search", "nil reader"} {
 		t.Run(scenario, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -923,6 +923,9 @@ func TestMediaSearchDocuments(t *testing.T) {
 				f.documentStatus = 503
 			case "recording failure":
 				f.remoteStatus = 503
+			case "recording failure without attachment matches":
+				f.remoteStatus = 503
+				f.documentReport.Results = []docbankmedia.SearchHit{}
 			case "both fail":
 				f.remoteStatus, f.documentStatus = 503, 503
 			case "nil reader":
@@ -946,7 +949,7 @@ func TestMediaSearchDocuments(t *testing.T) {
 				query += "&participant_id=" + strconv.FormatInt(participant, 10)
 			}
 			status, response, raw := searchMediaFor(t, server, query)
-			if scenario == "both fail" {
+			if scenario == "both fail" || scenario == "recording failure without attachment matches" {
 				assert.Equal(http.StatusServiceUnavailable, status, raw)
 				return
 			}
@@ -960,6 +963,7 @@ func TestMediaSearchDocuments(t *testing.T) {
 			case "recording failure":
 				require.NotNil(response.RecordingsError)
 				assert.Empty(response.Results)
+				assert.True(response.Partial)
 			case "person filter", "unlinked during search":
 				assert.Empty(response.Results)
 			default:
@@ -1077,5 +1081,6 @@ func TestMediaSearchRecordingTimeoutKeepsDocuments(t *testing.T) {
 	require.NoError(json.Unmarshal(recorder.Body.Bytes(), &response))
 	require.NotNil(response.RecordingsError)
 	require.NotNil(response.Attachments)
+	assert.True(response.Partial)
 	assert.Len(response.Attachments.Results, 2)
 }

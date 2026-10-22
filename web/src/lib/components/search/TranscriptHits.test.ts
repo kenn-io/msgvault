@@ -263,6 +263,22 @@ it.each(['empty', 'error', 'recording error', 'absent'])('shows the attachment %
   }
 });
 
+it.each([
+  ['transport', true], ['server_error', true], ['timeout', true], ['rate_limited', true],
+  ['bad_request', false], ['validation', false], ['unauthorized', false], ['invalid_request', false],
+])('offers attachment retry for %s only when transient', async (error, retryable) => {
+  const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: {
+    results: [], truncated: false, error: { error, message: 'Attachment search is unavailable.' },
+  } }))).mockResolvedValue(Response.json(report({ attachments: { results: [], truncated: false } })));
+  mount(fetchFn);
+  await screen.findByText('Attachment search is unavailable.');
+  expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
+  if (retryable) {
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await screen.findByText('No matches in text Docbank has extracted from mirrored attachments.');
+  }
+});
+
 it('searches attachment text with punctuation while recordings keep their plain-word notice', async () => {
   const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ attachments: {
     results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false,
@@ -280,13 +296,14 @@ it.each([
   ['invalid_media_search', 'Recording search rejected this query. Try different plain words.', false],
   ['media_search_unavailable', 'Recording search unavailable.', true],
 ])('handles partial recording failure %s alongside attachment hits', async (error, message, retryable) => {
-  const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], recordings_error: { error, message: 'raw server error' }, attachments: {
+  const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ results: [], partial: true, recordings_error: { error, message: 'raw server error' }, attachments: {
     results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quartz' }], truncated: false,
   } }))).mockResolvedValue(Response.json(report()));
   mount(fetchFn);
   await screen.findByRole('link', { name: 'Report' });
   expect(screen.getByText(message)).toBeTruthy();
   expect(screen.queryByText('raw server error')).toBeNull();
+  expect(screen.queryByText('No matches in searched transcripts.')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
   if (retryable) {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

@@ -54,6 +54,7 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 		if err != nil {
 			return fail(err)
 		}
+		// Docbank lexical search spans profiles but requires a registered name.
 		report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
 			Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
 			Limit: limit - len(response.Results), Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versionIDs},

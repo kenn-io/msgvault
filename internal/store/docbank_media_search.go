@@ -116,34 +116,28 @@ func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.
 func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination string, scope *personscope.Scope, versionIDs []string) ([]DocumentSearchOccurrence, error) {
 	var result []DocumentSearchOccurrence
-	// Keep parameters below both backends' limits.
-	for start := 0; start < len(versionIDs); start += docbankReceiptChunk {
-		chunk := versionIDs[start:min(start+docbankReceiptChunk, len(versionIDs))]
-		query, args := documentSearchRows(destination, scope)
-		query = `SELECT d.version_id, a.id, m.id, cv.id, COALESCE(a.filename,''), ` + containingTitleMCVSQL + `, COALESCE(m.sent_at,m.received_at,m.internal_date)` + query + `
- AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(chunk)-1) + `) ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id`
-		for _, id := range chunk {
-			args = append(args, id)
-		}
-		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
-		if err != nil {
-			return nil, fmt.Errorf("list document search occurrences: %w", err)
-		}
-		for rows.Next() {
-			var o DocumentSearchOccurrence
-			var date nullableTimestamp
-			if err := rows.Scan(&o.VersionID, &o.AttachmentID, &o.MessageID, &o.ConversationID, &o.Filename, &o.ContainingTitle, &date); err != nil {
-				_ = rows.Close()
-				return nil, fmt.Errorf("scan document search occurrence: %w", err)
-			}
-			o.OccurredAt = optionalTimestamp(date)
-			result = append(result, o)
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return nil, err
-		}
+	if len(versionIDs) == 0 {
+		return result, nil
 	}
-	return result, nil
+	query, args := documentSearchRows(destination, scope)
+	query = `SELECT d.version_id, a.id, m.id, cv.id, COALESCE(a.filename,''), ` + containingTitleMCVSQL + `, COALESCE(m.sent_at,m.received_at,m.internal_date)` + query + `
+ AND d.state = 'delivered' AND d.version_id IN (?` + strings.Repeat(",?", len(versionIDs)-1) + `) ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC NULLS LAST, a.id`
+	for _, id := range versionIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+	if err != nil {
+		return nil, fmt.Errorf("list document search occurrences: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var o DocumentSearchOccurrence
+		var date nullableTimestamp
+		if err := rows.Scan(&o.VersionID, &o.AttachmentID, &o.MessageID, &o.ConversationID, &o.Filename, &o.ContainingTitle, &date); err != nil {
+			return nil, fmt.Errorf("scan document search occurrence: %w", err)
+		}
+		o.OccurredAt = optionalTimestamp(date)
+		result = append(result, o)
+	}
+	return result, rows.Err()
 }

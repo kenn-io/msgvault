@@ -165,7 +165,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		if response.Attachments == nil || (response.Attachments.Error != nil && len(response.Attachments.Results) == 0) {
+		if response.Attachments == nil || len(response.Attachments.Results) == 0 {
 			if s.writeIfContextError(w, err) {
 				return
 			}
@@ -177,6 +177,7 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		_, failure := mediaSearchFailure(err)
 		response.RecordingsError = &failure
 		response.Results = []MediaSearchResult{}
+		response.Partial = true
 		s.logger.Warn("search media transcripts", "code", docbankmedia.ErrorCode(err))
 	}
 

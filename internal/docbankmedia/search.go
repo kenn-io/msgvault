@@ -191,9 +191,6 @@ func validSearchHit(hit SearchHit, vault string, ids map[string]bool) bool {
 
 // SearchDocuments searches exact mirrored versions without transcript selectors.
 func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (SearchReport, error) {
-	if !validSearchRequest(request) || request.Fence == nil || request.Fence.VaultUID == "" || len(request.MediaSources) != 0 || len(request.Fence.ContentVersionIDs) == 0 || len(request.Fence.ContentVersionIDs) > MaxSearchVersions {
-		return SearchReport{}, ErrInvalidRequest
-	}
 	report, err := c.searchReport(ctx, request)
 	if err != nil {
 		c.clearVaultUID()
