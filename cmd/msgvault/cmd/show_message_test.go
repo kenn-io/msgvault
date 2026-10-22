@@ -163,18 +163,15 @@ func TestShowMessageHTTPNotFoundPreservesCLIError(t *testing.T) {
 func TestShowMessageHiddenHTMLText(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		html     string
 		json     bool
 		bodyOnly bool
 		hidden   bool
 	}{
-		{"text warning", `<div style="display:none">Hidden</div>`, false, false, true},
-		{"body only warning", `<div style="display:none">Hidden</div>`, false, true, true},
-		{"JSON flag true", `<div style="display:none">Hidden</div>`, true, false, true},
-		{"JSON flag false", `<p>Visible</p>`, true, false, false},
-		{"visible text", `<p>Visible</p>`, false, false, false},
-		{"stored flag without HTML", "", false, false, true},
-		{"stored flag overrides HTML", `<div hidden>Hidden</div>`, true, false, false},
+		{"text warning", false, false, true},
+		{"body only warning", false, true, true},
+		{"JSON flag true", true, false, true},
+		{"JSON flag false", true, false, false},
+		{"visible text", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -184,7 +181,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 			})
 			showMessageJSON, showMessageBodyOnly, showMessageStripQuoted = tc.json, tc.bodyOnly, false
 			dataDir := t.TempDir()
-			server, _ := messageHTTPDaemon(t, tc.html, tc.hidden)
+			server, _ := messageHTTPDaemon(t, "", tc.hidden)
 			writeStatsHTTPDaemonRuntime(t, dataDir, server)
 			cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
 			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true})

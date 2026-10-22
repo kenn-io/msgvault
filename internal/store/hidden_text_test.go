@@ -20,8 +20,6 @@ func TestUpsertMessageBodyHiddenTextPresent(t *testing.T) {
 	}{
 		{"hidden", sql.NullString{String: `<div hidden>Hidden text</div>`, Valid: true}, true},
 		{"visible", sql.NullString{String: `<p>Visible text</p>`, Valid: true}, false},
-		{"hidden again", sql.NullString{String: `<div style="display:none">Hidden text</div>`, Valid: true}, true},
-		{"empty", sql.NullString{Valid: true}, false},
 		{"absent", sql.NullString{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

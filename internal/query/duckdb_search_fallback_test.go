@@ -29,15 +29,15 @@ func TestDuckDBSearchFallbackHiddenTextPresent(t *testing.T) {
 	}
 	require.Nil(engine.sqliteEngine)
 	for _, tc := range []struct {
-		subject string
-		hidden  bool
+		name, subject string
+		hidden        bool
 	}{
-		{"Sender only", true},
-		{"Explicit wins", false},
+		{"flagged", "Sender only", true},
+		{"unflagged", "Explicit wins", false},
 	} {
 		rows, err := engine.Search(t.Context(), &search.Query{SubjectTerms: []string{tc.subject}}, 10, 0)
-		require.NoError(err)
-		require.Len(rows, 1)
-		assert.Equal(tc.hidden, rows[0].HiddenTextPresent)
+		require.NoError(err, tc.name)
+		require.Len(rows, 1, tc.name)
+		assert.Equal(tc.hidden, rows[0].HiddenTextPresent, tc.name)
 	}
 }

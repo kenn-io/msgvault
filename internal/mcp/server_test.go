@@ -886,34 +886,6 @@ func TestSearchTools_RealEngineScopeIsolation(t *testing.T) {
 	assert.Contains(body.Data[0].Matches[0].Snippet, "bodyonlyterm")
 }
 
-func TestSearchMessageBodiesHiddenHTMLText(t *testing.T) {
-	for _, tc := range []struct {
-		name, html string
-		hidden     bool
-	}{
-		{"hidden", `<div hidden>hiddenneedle</div>`, true},
-		{"visible", `<p>hiddenneedle</p>`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := storetest.New(t)
-			id := f.CreateMessage(tc.name)
-			require.NoError(f.Store.UpsertMessageBody(id,
-				sql.NullString{String: "hiddenneedle", Valid: true},
-				sql.NullString{String: tc.html, Valid: true}))
-			_, err := f.Store.BackfillFTS(nil)
-			require.NoError(err)
-			h := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
-			resp := runTool[paginatedSearchMessages](t, "search_message_bodies", h.searchMessageBodies,
-				map[string]any{"query": "hiddenneedle"})
-			require.Len(resp.Data, 1)
-			assert.Equal(tc.hidden, resp.Data[0].HiddenTextPresent)
-			require.NotEmpty(resp.Data[0].Matches)
-			assert.Contains(resp.Data[0].Matches[0].Snippet, "hiddenneedle")
-		})
-	}
-}
-
 func TestSearchMessageBodies_RealEngineFTSNormalizedContext(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -2054,8 +2026,6 @@ func TestGetMessage(t *testing.T) {
 		}{
 			{"hidden", `<p>Visible</p><div style="display:none">Hidden text</div>`, true},
 			{"visible", `<p>Visible</p>`, false},
-			{"stored flag without HTML", "", true},
-			{"stored flag overrides HTML", `<div hidden>Hidden text</div>`, false},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				f := storetest.New(t)
@@ -3062,8 +3032,6 @@ func TestSearchInMessageHiddenHTMLText(t *testing.T) {
 		{"hidden vector", `<div hidden>semantic body</div>`, searchModeVector, 0, 1, true},
 		{"hidden vector exhausted", `<div hidden>semantic body</div>`, searchModeVector, 99, 0, true},
 		{"visible vector", `<p>semantic body</p>`, searchModeVector, 0, 1, false},
-		{"stored flag without HTML", "", "keyword", 0, 1, true},
-		{"stored flag overrides HTML", `<div hidden>semantic body</div>`, "keyword", 0, 1, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)

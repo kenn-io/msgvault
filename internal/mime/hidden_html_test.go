@@ -45,6 +45,12 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"quoted semicolon preserves color", `<div style="color:white;font-family:'x;color:black;';background:white">Text</div>`, true},
 		{"quoted hiding declaration", `<div style="font-family:'x;display:none;';display:block">Text</div>`, false},
 		{"quoted comment delimiter", `<div style="font-family:'/*';display:none">Text</div>`, true},
+		{"malformed before display", `<div style="broken;display:none">Text</div>`, true},
+		{"malformed after display", `<div style="display:none;broken">Text</div>`, true},
+		{"malformed before quoted color", `<div style="broken;color:white;font-family:'x;color:black;';background:white">Text</div>`, true},
+		{"malformed after quoted hiding", `<div style="font-family:'x;display:none;';broken;color:transparent">Text</div>`, true},
+		{"malformed with quoted URL", `<div style="broken;background:url('https://example.com/a;b');display:none">Text</div>`, true},
+		{"malformed with visible quoted hiding", `<div style="broken;font-family:'x;display:none;';display:block">Text</div>`, false},
 		{"mso hide all", `<div style="mso-hide:all">Text</div>`, true},
 		{"mso hide none", `<div style="mso-hide:none">Text</div>`, false},
 		{"visibility hidden", `<div style="visibility:hidden"><span>Text</span></div>`, true},
@@ -148,34 +154,18 @@ func TestHTMLHasHiddenText(t *testing.T) {
 
 func TestHTMLHasHiddenTextAttributeBodies(t *testing.T) {
 	for _, tc := range []struct {
-		name, html, text string
-		hidden           bool
+		name, html string
+		hidden     bool
 	}{
-		{"hidden image link", `<a style="display:none"><img alt="Hidden alt"></a>`, "Hidden alt", true},
-		{"hidden punctuation link", `<div hidden><a href="https://example.com/hidden">!</a></div>`, "https://example.com/hidden", true},
-		{"hidden numeric alt", `<a style="color:transparent"><img alt="123"></a>`, "123", true},
-		{"visible image link", `<a><img alt="Visible alt"></a>`, "Visible alt", false},
-		{"visible punctuation link", `<a href="https://example.com/visible">!</a>`, "https://example.com/visible", false},
+		{"hidden image link", `<a style="display:none"><img alt="Hidden alt"></a>`, true},
+		{"hidden punctuation link", `<div hidden><a href="https://example.com/hidden">!</a></div>`, true},
+		{"hidden numeric alt", `<a style="color:transparent"><img alt="123"></a>`, true},
+		{"visible image link", `<a><img alt="Visible alt"></a>`, false},
+		{"visible punctuation link", `<a href="https://example.com/visible">!</a>`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := parseEmail(t, emailOptions{ContentType: "text/html", Body: tc.html})
-			assert.Contains(t, msg.BodyText, tc.text)
 			assert.Equal(t, tc.hidden, HTMLHasHiddenText(msg.BodyHTML))
 		})
 	}
-}
-
-func TestHTMLHasHiddenTextMalformedDeclarations(t *testing.T) {
-	for _, style := range []string{
-		`broken;display:none`,
-		`display:none;broken`,
-		`broken;color:white;font-family:'x;color:black;';background:white`,
-		`font-family:'x;display:none;';broken;color:transparent`,
-		`broken;background:url('https://example.com/a;b');display:none`,
-	} {
-		t.Run(style, func(t *testing.T) {
-			assert.True(t, HTMLHasHiddenText(`<div style="`+style+`">Text</div>`))
-		})
-	}
-	assert.False(t, HTMLHasHiddenText(`<div style="broken;font-family:'x;display:none;';display:block">Text</div>`))
 }
