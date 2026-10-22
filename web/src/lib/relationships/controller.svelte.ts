@@ -983,9 +983,9 @@ function hasActiveFilters(context: ExplorePredicate): boolean {
 }
 type FetchResult = { data?: unknown; error?: unknown; response: Response };
 /** The contextual /summary 404s when no sent activity matches the filters;
- * with the unfiltered detail present, that is an empty result, not an error. */
+ * with the unfiltered detail present or missing, that is an empty result. */
 function noMatchingActivity(detail: FetchResult, summary: FetchResult | undefined): boolean {
-  return detail.data !== undefined && summary?.response.status === 404;
+  return (detail.data !== undefined || detail.response.status === 404) && summary?.response.status === 404;
 }
 const NO_PERSON_ACTIVITY = {
   activity_count: 0, file_count: 0, meeting_count: 0, source_counts: [],
