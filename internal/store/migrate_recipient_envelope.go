@@ -86,6 +86,9 @@ func (s *Store) ensureRecipientEnvelopeUniqueIndex(ctx context.Context) error {
 							"restore activity triggers after rebuilding message_recipients: %w", err,
 						)
 					}
+					if err := s.dialect.EnsureLoopProjectionTriggers(boundQuerier{ctx: ctx, q: tx}); err != nil {
+						return fmt.Errorf("restore loop triggers after rebuilding message_recipients: %w", err)
+					}
 				}
 				return nil
 			}); err != nil {

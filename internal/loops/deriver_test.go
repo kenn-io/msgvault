@@ -1,0 +1,727 @@
+package loops
+
+import (
+	"bytes"
+	"compress/zlib"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
+)
+
+func deriveExec(t *testing.T, f *storetest.Fixture, query string, args ...any) {
+	t.Helper()
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(query), args...)
+	require.NoError(t, err)
+}
+func deriveStamp(f *storetest.Fixture, at time.Time) any {
+	if f.Store.IsPostgreSQL() {
+		return at
+	}
+	return at.UTC().Format(store.SQLiteTimestampLayout)
+}
+func deriveFixture(t *testing.T) (*storetest.Fixture, config.LoopsConfig, time.Time) {
+	t.Helper()
+	f := storetest.New(t)
+	cfg := config.DefaultLoopsConfig()
+	cfg.Lookback = 0
+	cfg.SignalsBackfillBatch = 2
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	deriveExec(t, f, "UPDATE conversations SET conversation_type='email_thread',last_message_at=? WHERE id=?", deriveStamp(f, now.Add(-48*time.Hour)), f.ConvID)
+	return f, cfg, now
+}
+func deriveInbound(t *testing.T, f *storetest.Fixture, now time.Time) int64 {
+	t.Helper()
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, peer)
+	id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: fmt.Sprintf("inbound-%d", f.ConvID), MessageType: "email", SenderID: sql.NullInt64{Int64: peer, Valid: true}, SentAt: sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true}, Subject: sql.NullString{String: "A question", Valid: true}})
+	require.NoError(t, err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", id, owner)
+	deriveExec(t, f, "UPDATE messages SET content_changed_at=? WHERE id=?", deriveStamp(f, now.Add(-time.Hour)), id)
+	return id
+}
+
+func persistDeriverGmailDraft(t *testing.T, f *storetest.Fixture, draftID, messageID string, at time.Time, subject, body string) int64 {
+	t.Helper()
+	participants := []store.ParticipantPersistData{
+		{EmailAddress: "owner@example.test", DisplayName: "Owner", Domain: "example.test"},
+		{EmailAddress: "peer@example.test", DisplayName: "Peer", Domain: "example.test"},
+	}
+	receipt := store.GmailDraftReceipt{SourceID: f.Source.ID, GmailDraftID: draftID, GmailMessageID: messageID, ThreadID: "default-thread"}
+	draft, err := f.Store.PersistGmailDraftContext(t.Context(), receipt, participants, func(ids []int64) *store.MessagePersistData {
+		return &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: f.Source.ID, SourceMessageID: messageID, ConversationID: f.ConvID,
+				MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+				SentAt: sql.NullTime{Time: at, Valid: true}, IsFromMe: true,
+				Subject: sql.NullString{String: subject, Valid: true},
+			},
+			Conversation: &store.ConversationPersistData{SourceConversationID: "default-thread", ConversationType: "email_thread", Title: "Default Thread"},
+			Recipients: []store.RecipientSet{
+				{Type: "from", ParticipantIDs: ids[:1], EmailAddresses: []string{"owner@example.test"}},
+				{Type: "to", ParticipantIDs: ids[1:], EmailAddresses: []string{"peer@example.test"}},
+			},
+			BodyText: sql.NullString{String: body, Valid: true},
+		}
+	})
+	require.NoError(t, err)
+	return draft.CurrentMessageID
+}
+
+func TestDeriverUndatedMessageDoesNotStarveOtherConversations(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	message := deriveInbound(t, f, now)
+	deriveExec(t, f, "UPDATE messages SET sent_at=NULL,received_at=NULL,internal_date=NULL WHERE id=?", message)
+	undatedConversation := f.ConvID
+	datedConversation, err := f.Store.EnsureConversation(f.Source.ID, "dated-conversation", "Dated conversation")
+	requirements.NoError(err)
+	f.ConvID = datedConversation
+	deriveInbound(t, f, now)
+	f.ConvID = undatedConversation
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	undated, err := f.Store.ListLiveConversationLoopsContext(t.Context(), undatedConversation)
+	requirements.NoError(err)
+	assertions.Empty(undated, "an unknown occurrence time cannot establish an overdue obligation")
+	dated, err := f.Store.ListLiveConversationLoopsContext(t.Context(), datedConversation)
+	requirements.NoError(err)
+	assertions.Len(dated, 1, "one undated row must not poison the conversation queue")
+}
+
+func TestDeriverUsesMessageRecencyWhenConversationTimestampIsMissingOrStale(t *testing.T) {
+	for _, tt := range []struct {
+		name                 string
+		conversationAge      time.Duration
+		messageAge           time.Duration
+		conversationAbsent   bool
+		recentDeletedMessage bool
+		wantLive             int
+	}{
+		{name: "missing", conversationAbsent: true, messageAge: -48 * time.Hour, wantLive: 1},
+		{name: "behind active message", conversationAge: -6 * 365 * 24 * time.Hour, messageAge: -48 * time.Hour, wantLive: 1},
+		{name: "ahead of active messages", messageAge: -400 * 24 * time.Hour},
+		{name: "recent deleted message does not extend lookback", messageAge: -400 * 24 * time.Hour, recentDeletedMessage: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f, cfg, now := deriveFixture(t)
+			cfg.Lookback = 365 * 24 * time.Hour
+			messageID := deriveInbound(t, f, now)
+			if tt.messageAge != -48*time.Hour {
+				deriveExec(t, f, "UPDATE messages SET sent_at=?,received_at=NULL,internal_date=NULL WHERE id=?", deriveStamp(f, now.Add(tt.messageAge)), messageID)
+			}
+			if tt.recentDeletedMessage {
+				deletedID := f.CreateMessage("recent-deleted-message")
+				deletedAt := deriveStamp(f, now.Add(-time.Hour))
+				deriveExec(t, f, "UPDATE messages SET sent_at=?,deleted_at=?,deleted_from_source_at=? WHERE id=?", deriveStamp(f, now.Add(-48*time.Hour)), deletedAt, deletedAt, deletedID)
+			}
+			if tt.conversationAbsent {
+				deriveExec(t, f, "UPDATE conversations SET last_message_at=NULL WHERE id=?", f.ConvID)
+			} else {
+				deriveExec(t, f, "UPDATE conversations SET last_message_at=? WHERE id=?", deriveStamp(f, now.Add(tt.conversationAge)), f.ConvID)
+			}
+			requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+			d, err := NewDeriver(f.Store, &cfg)
+			requirements.NoError(err)
+			d.now = func() time.Time { return now }
+			_, err = d.RunOnce(t.Context())
+			requirements.NoError(err)
+			live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+			requirements.NoError(err)
+			assertions.Len(live, tt.wantLive, "eligibility should use the latest active message timestamp")
+		})
+	}
+}
+
+func TestDeriverIncludesRecipientsForOutboundOnlyEmailQuestion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	messageID, err := f.Store.UpsertMessage(&store.Message{
+		SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "outbound-only-question",
+		MessageType: "email", SenderID: sql.NullInt64{Int64: owner, Valid: true},
+		SentAt: sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true}, IsFromMe: true,
+	})
+	requirements.NoError(err)
+	deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", messageID, peer)
+	requirements.NoError(f.Store.UpsertMessageBody(messageID, sql.NullString{String: "Could you send the report?", Valid: true}, sql.NullString{}))
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1, "an email recipient is a conversation participant for eligibility")
+	assertions.Equal(AwaitingReply, live[0].Kind)
+}
+
+func TestDeriverIgnoresPersistedGmailDrafts(t *testing.T) {
+	t.Run("draft question does not open awaiting reply", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		f, cfg, now := deriveFixture(t)
+		cfg.AwaitingReplyAfter = 24 * time.Hour
+		requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+		messageID := persistDeriverGmailDraft(t, f, "draft-question", "draft-message-question", now.Add(-48*time.Hour), "Can you review this?", "Can you review this?")
+
+		loaded, err := f.Store.LoadLoopConversationContext(t.Context(), f.ConvID, 10)
+		requirements.NoError(err)
+		requirements.Len(loaded.Messages, 1)
+		assertions.Equal(messageID, loaded.Messages[0].ID)
+		assertions.True(loaded.Messages[0].Draft)
+
+		d, err := NewDeriver(f.Store, &cfg)
+		requirements.NoError(err)
+		d.now = func() time.Time { return now }
+		_, err = d.RunOnce(t.Context())
+		requirements.NoError(err)
+		live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+		requirements.NoError(err)
+		assertions.Empty(live)
+	})
+
+	t.Run("draft reply does not close reply owed", func(t *testing.T) {
+		assertions := assert.New(t)
+		requirements := require.New(t)
+		f, cfg, now := deriveFixture(t)
+		requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+		deriveInbound(t, f, now)
+		d, err := NewDeriver(f.Store, &cfg)
+		requirements.NoError(err)
+		d.now = func() time.Time { return now }
+		_, err = d.RunOnce(t.Context())
+		requirements.NoError(err)
+		live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+		requirements.NoError(err)
+		requirements.Len(live, 1)
+		loopID := live[0].ID
+
+		persistDeriverGmailDraft(t, f, "draft-reply", "draft-message-reply", now.Add(-time.Hour), "Re: A question", "Thanks, I will review this.")
+		requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "changed", now))
+		_, err = d.RunOnce(t.Context())
+		requirements.NoError(err)
+		got, err := f.Store.GetOpenLoopContext(t.Context(), loopID)
+		requirements.NoError(err)
+		assertions.Equal("open", got.Status)
+	})
+}
+
+func TestDeriverUndatedLiveAnchorRetainsCoverageGap(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	message := deriveInbound(t, f, now)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	deriveExec(t, f, "UPDATE messages SET sent_at=NULL,received_at=NULL,internal_date=NULL WHERE id=?", message)
+	requirements.NoError(f.Store.EnqueueLoopConversationsContext(t.Context(), []int64{f.ConvID}, "changed", now))
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	retained, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", retained.Status)
+	var evidence []Evidence
+	requirements.NoError(json.Unmarshal(retained.EvidenceJSON, &evidence))
+	requirements.NotEmpty(evidence)
+	assertions.True(evidence[0].CoverageGap)
+}
+
+func TestStoredVerdictPreservesEvidenceJSONContract(t *testing.T) {
+	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name         string
+		subject      string
+		truncatedRun bool
+		want         string
+	}{
+		{
+			name:    "default optional fields omitted",
+			subject: "Question",
+			want:    `[{"message_id":13,"conversation_id":7,"occurred_at":"2026-10-17T12:00:00Z","subject":"Question"}]`,
+		},
+		{
+			name:         "truncated run retained",
+			subject:      "Question",
+			truncatedRun: true,
+			want:         `[{"message_id":13,"conversation_id":7,"occurred_at":"2026-10-17T12:00:00Z","subject":"Question","truncated_run":true}]`,
+		},
+		{
+			name:    "HTML-sensitive subject remains escaped",
+			subject: "<Question>",
+			want:    `[{"message_id":13,"conversation_id":7,"occurred_at":"2026-10-17T12:00:00Z","subject":"\u003cQuestion\u003e"}]`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ConversationView{ConversationID: 7, SourceID: 11, ConversationType: "email_thread"}
+			anchor := LoopMessage{ID: 13, OccurredAt: at, Subject: tt.subject}
+			spec := Spec{Kind: ReplyOwed, Anchor: anchor, LastActivity: anchor, TruncatedRun: tt.truncatedRun}
+			got, err := storedVerdict(view, Verdict{Open: &spec})
+			require.NoError(t, err)
+			require.NotNil(t, got.Open)
+			assert.Equal(t, tt.want, string(got.Open.EvidenceJSON))
+		})
+	}
+}
+
+func TestDeriverIdentityRescanCreatesFirstLoopAndShrinkWithdraws(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	deriveInbound(t, f, now)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	assertions.Empty(live, "unknown owner remains observed")
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(1, result.RescanConversations)
+	live, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assertions.Equal("open", live[0].Status)
+	cfg.Lookback = 24 * time.Hour
+	d, err = NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	got, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("closed", got.Status)
+	requirements.NotNil(got.ClosedReason)
+	assertions.Equal("withdrawn", *got.ClosedReason)
+}
+func TestDeriverRebuildPreservesDoneAndSnooze(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	deriveInbound(t, f, now)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	until := now.Add(24 * time.Hour)
+	_, err = f.Store.SnoozeLoopContext(t.Context(), live[0].ID, until, now)
+	requirements.NoError(err)
+	deriveExec(t, f, "UPDATE open_loops SET agenda_state='dismissed' WHERE id=?", live[0].ID)
+	requirements.NoError(d.Rebuild(t.Context()))
+	state, err := d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Nil(state.FeedCursorAt)
+	assertions.Equal("rebuild", state.RescanReason)
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	got, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("dismissed", got.AgendaState)
+	requirements.NotNil(got.SnoozedUntil)
+	assertions.True(until.Equal(*got.SnoozedUntil))
+	_, err = f.Store.CloseLoopContext(t.Context(), got.ID, "handled", now)
+	requirements.NoError(err)
+	requirements.NoError(d.Rebuild(t.Context()))
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err = f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	assertions.Empty(live)
+}
+
+func TestDeriverWithdrawsMovedOrReclassifiedAnchor(t *testing.T) {
+	for _, correction := range []string{"conversation", "direction"} {
+		t.Run(correction, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f, cfg, now := deriveFixture(t)
+			anchor := deriveInbound(t, f, now)
+			// Keep the old conversation eligible after its anchor moves.
+			f.CreateMessage("remaining-observation")
+			requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+			d, err := NewDeriver(f.Store, &cfg)
+			requirements.NoError(err)
+			d.now = func() time.Time { return now }
+			_, err = d.RunOnce(t.Context())
+			requirements.NoError(err)
+			live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+			requirements.NoError(err)
+			requirements.Len(live, 1)
+			if correction == "conversation" {
+				destination, err := f.Store.EnsureConversation(f.Source.ID, "corrected-thread", "Corrected thread")
+				requirements.NoError(err)
+				deriveExec(t, f, "UPDATE messages SET conversation_id=? WHERE id=?", destination, anchor)
+			} else {
+				deriveExec(t, f, "UPDATE messages SET source_is_from_me=TRUE WHERE id=?", anchor)
+			}
+			now = now.Add(time.Minute)
+			_, err = d.RunOnce(t.Context())
+			requirements.NoError(err)
+			got, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+			requirements.NoError(err)
+			assertions.Equal("closed", got.Status)
+			requirements.NotNil(got.ClosedReason)
+			assertions.Equal("withdrawn", *got.ClosedReason)
+		})
+	}
+}
+
+func TestDeriverSmallNativeGroupNeedsNoMention(t *testing.T) {
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	var err error
+	f.Source, err = f.Store.GetOrCreateSource("beeper", "synthetic-group-source")
+	requirements.NoError(err)
+	f.ConvID, err = f.Store.EnsureConversation(f.Source.ID, "small-group", "Small group")
+	requirements.NoError(err)
+	deriveExec(t, f, "UPDATE conversations SET conversation_type='group_chat' WHERE id=?", f.ConvID)
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	for _, participant := range []int64{owner, peer} {
+		deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", f.ConvID, participant)
+	}
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	_, err = f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: f.ConvID, SourceMessageID: "group-question", MessageType: "chat", SenderID: sql.NullInt64{Int64: peer, Valid: true}, SentAt: sql.NullTime{Time: now.Add(-48 * time.Hour), Valid: true}})
+	requirements.NoError(err)
+	// Native chat importers store group membership separately and only write
+	// message_recipients for explicit mentions. There is no mention here.
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assert.Equal(t, ReplyOwed, live[0].Kind)
+}
+func TestDeriverFeedFullPagesTieAndZeroCursor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	cfg.BatchMessages = 1
+	cfg.FeedPages = 5
+	override := ""
+	if f.Store.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	for _, id := range []int64{-2, -1, 0, 1, 2, 3} {
+		deriveExec(t, f, "INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type)"+override+" VALUES(?,?,?,?,'email')", id, f.Source.ID, f.ConvID, fmt.Sprintf("tie-%d", id))
+		deriveExec(t, f, "UPDATE messages SET content_changed_at=? WHERE id=?", deriveStamp(f, now.Add(-time.Hour)), id)
+	}
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	result := RunResult{}
+	requirements.NoError(d.consumeFeed(t.Context(), now, &result))
+	assertions.Equal(5, result.FeedPages)
+	assertions.Equal(5, result.ChangedMessages)
+	state, err := d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(int64(2), state.FeedCursorMessageID)
+	requirements.NotNil(state.FeedFrontier)
+	assertions.True(now.Add(-time.Hour).Equal(*state.FeedFrontier))
+	pending, err := f.Store.PendingLoopConversationsContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(pending, 1)
+	assertions.Nil(pending[0].FeedBound, "initial unknown remains despite later page frontier")
+	result = RunResult{}
+	requirements.NoError(d.consumeFeed(t.Context(), now, &result))
+	assertions.Equal(1, result.ChangedMessages)
+	assertions.Equal(2, result.FeedPages)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.True(state.FeedFrontier.After(now.Add(-time.Hour)))
+	requirements.
+		// A consumed legal ID zero must resume strictly after it.
+		NoError(f.Store.CommitLoopFeedContext(t.Context(), nil, store.ChangedMessagesAfter(now.Add(-time.Hour), 0), now.Add(-time.Hour), now))
+	cfg.FeedPages = 1
+	d.cfg = cfg
+	result = RunResult{}
+	requirements.NoError(d.consumeFeed(t.Context(), now, &result))
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(int64(1), state.FeedCursorMessageID)
+}
+func TestDeriverCanceledRunKeepsDurableQueue(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	deriveInbound(t, f, now)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = d.RunOnce(ctx)
+	requirements.ErrorIs(err, context.Canceled)
+	state, err := d.State(t.Context())
+	requirements.NoError(err)
+	assertions.NotEmpty(state.LastError)
+	assertions.Nil(state.LastSuccessAt)
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Empty(state.LastError)
+	assertions.NotNil(state.LastSuccessAt)
+}
+
+func TestDeriverSignalsBackfillWithdrawsAutomatedLiveLoop(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	id := deriveInbound(t, f, now)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	var raw bytes.Buffer
+	w := zlib.NewWriter(&raw)
+	_, err := w.Write([]byte("From: peer@example.test\r\nTo: owner@example.test\r\nAuto-Submitted: auto-generated\r\nSubject: A question\r\n\r\nGenerated text"))
+	requirements.NoError(err)
+	requirements.NoError(w.Close())
+	deriveExec(t, f, "INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES(?,?,'mime','zlib')", id, raw.Bytes())
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(1, result.BackfillParsed)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	got, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("closed", got.Status)
+	requirements.NotNil(got.ClosedReason)
+	assertions.Equal("withdrawn", *got.ClosedReason)
+}
+
+func TestDeriverTimersPromoteHeldAndExpireSnoozeWithoutNewMessages(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	cfg.ReplyOwedAfter = 72 * time.Hour
+	cfg.ReconcileInterval = 365 * 24 * time.Hour
+	deriveInbound(t, f, now)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	live, err := f.Store.ListLiveConversationLoopsContext(t.Context(), f.ConvID)
+	requirements.NoError(err)
+	requirements.Len(live, 1)
+	assertions.Equal("held", live[0].Status)
+	_, err = f.Store.SnoozeLoopContext(t.Context(), live[0].ID, now.Add(time.Hour), now)
+	requirements.NoError(err)
+	now = now.Add(25 * time.Hour)
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(int64(1), result.Promoted)
+	assertions.Equal(int64(1), result.Unsnoozed)
+	got, err := f.Store.GetOpenLoopContext(t.Context(), live[0].ID)
+	requirements.NoError(err)
+	assertions.Equal("open", got.Status)
+	assertions.Nil(got.SnoozedUntil)
+}
+func TestDeriverRescanRestartsMidEpochAndReconciles(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	cfg.RescanBatch = 1
+	cfg.BatchConversations = 1
+	deriveInbound(t, f, now)
+	second, err := f.Store.EnsureConversation(f.Source.ID, "second-conversation", "Second conversation")
+	requirements.NoError(err)
+	deriveExec(t, f, "UPDATE conversations SET conversation_type='email_thread',last_message_at=? WHERE id=?", deriveStamp(f, now), second)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	state, err := d.State(t.Context())
+	requirements.NoError(err)
+	firstEpoch := state.RescanEpoch
+	assertions.NotEmpty(firstEpoch)
+	assertions.Zero(state.RulesetVersion)
+	assertions.Nil(state.AppliedThrough)
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	result, err := d.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.Equal(1, result.RescanConversations)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.NotEqual(firstEpoch, state.RescanEpoch)
+	assertions.Equal(f.ConvID, state.RescanLastConversationID)
+	assertions.Zero(state.RulesetVersion)
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Empty(state.RescanReason)
+	assertions.Equal(RulesetVersion, state.RulesetVersion)
+	assertions.NotNil(state.AppliedThrough)
+	now = now.Add(cfg.ReconcileInterval)
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Equal("reconcile", state.RescanReason)
+	// A changed ruleset certificate restarts even while another scan is running.
+	deriveExec(t, f, "UPDATE loop_derivation_state SET ruleset_version=0,rescan_reason='',rescan_epoch=''")
+	_, err = d.RunOnce(t.Context())
+	requirements.NoError(err)
+	state, err = d.State(t.Context())
+	requirements.NoError(err)
+	assertions.Equal("ruleset", state.RescanReason)
+}
+
+type deriveLogObserver struct{ observe func(slog.Record) }
+
+func (h deriveLogObserver) Enabled(context.Context, slog.Level) bool      { return true }
+func (h deriveLogObserver) Handle(_ context.Context, r slog.Record) error { h.observe(r); return nil }
+func (h deriveLogObserver) WithAttrs([]slog.Attr) slog.Handler            { return h }
+func (h deriveLogObserver) WithGroup(string) slog.Handler                 { return h }
+func TestDeriverPreemptionResumesCommittedConversationAndBoundsBodyReads(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	cfg.RunMessageLimit = 2
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.test", "manual"))
+	owner := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	peer := f.EnsureParticipant("peer@example.test", "Peer", "example.test")
+	second, err := f.Store.EnsureConversation(f.Source.ID, "second", "Second")
+	requirements.NoError(err)
+	for _, conv := range []int64{f.ConvID, second} {
+		deriveExec(t, f, "UPDATE conversations SET conversation_type='email_thread',last_message_at=? WHERE id=?", deriveStamp(f, now), conv)
+		deriveExec(t, f, "INSERT INTO conversation_participants(conversation_id,participant_id) VALUES(?,?)", conv, peer)
+		for i := range 4 {
+			id, err := f.Store.UpsertMessage(&store.Message{SourceID: f.Source.ID, ConversationID: conv, SourceMessageID: fmt.Sprintf("outbound-%d-%d", conv, i), MessageType: "email", SenderID: sql.NullInt64{Int64: owner, Valid: true}, SentAt: sql.NullTime{Time: now.Add(time.Duration(i) * time.Minute), Valid: true}, IsFromMe: true})
+			requirements.NoError(err)
+			deriveExec(t, f, "INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(?,?,'to')", id, peer)
+			deriveExec(t, f, "INSERT INTO message_bodies(message_id,body_text) VALUES(?,?)", id, "Can you confirm?")
+		}
+	}
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	d.now = func() time.Time { return now }
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	bodyReads := 0
+	previous := slog.Default()
+	slog.SetDefault(slog.New(deriveLogObserver{observe: func(r slog.Record) {
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "stmt" && strings.Contains(a.Value.String(), "FROM message_bodies WHERE message_id") {
+				bodyReads++
+			}
+			return true
+		})
+		if r.Message == "sql tx commit" || r.Message == "sql tx slow" {
+			cancel()
+		}
+	}}))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	result := RunResult{}
+	err = d.drain(ctx, now, &result)
+	slog.SetDefault(previous)
+	requirements.ErrorIs(err, context.Canceled)
+	assertions.Equal(1, result.ProcessedConversations)
+	assertions.Equal(2, bodyReads)
+	pending, err := f.Store.PendingLoopConversationsContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(pending, 1)
+	result = RunResult{}
+	requirements.NoError(d.drain(t.Context(), now, &result))
+	assertions.Equal(1, result.ProcessedConversations)
+	pending, err = f.Store.PendingLoopConversationsContext(t.Context(), 10)
+	requirements.NoError(err)
+	assertions.Empty(pending)
+}
+
+func TestDeriverFeedEmptyPageUsesExclusiveDatabaseBound(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	before, err := f.Store.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(time.Time{}), 1)
+	requirements.NoError(err)
+	result := RunResult{}
+	requirements.NoError(d.consumeFeed(t.Context(), now, &result))
+	assertions.Equal(1, result.FeedPages)
+	assertions.Zero(result.ChangedMessages)
+	after, err := f.Store.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(time.Time{}), 1)
+	requirements.NoError(err)
+	state, err := d.State(t.Context())
+	requirements.NoError(err)
+	requirements.NotNil(state.FeedFrontier)
+	assertions.False(state.FeedFrontier.Before(before.CompleteThrough))
+	assertions.False(state.FeedFrontier.After(after.CompleteThrough))
+	assertions.Nil(state.FeedCursorAt)
+}
+func TestDeriverFeedStalledCommitBoundDoesNotClaimWallClock(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f, cfg, now := deriveFixture(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL writer can stay open while projection commits")
+	}
+	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(t.Context(), f.Store.Rebind("INSERT INTO messages(source_id,conversation_id,source_message_id,message_type) VALUES(?,?,'pending-message','email')"), f.Source.ID, f.ConvID)
+	requirements.NoError(err)
+	bound, err := f.Store.ListChangedMessages(t.Context(), store.ChangedMessagesFrom(time.Time{}), 1)
+	requirements.NoError(err)
+	requirements.Empty(bound.Messages)
+	d, err := NewDeriver(f.Store, &cfg)
+	requirements.NoError(err)
+	for range 2 {
+		result := RunResult{}
+		requirements.NoError(d.consumeFeed(t.Context(), now, &result))
+		assertions.Equal(1, result.FeedPages)
+		assertions.Zero(result.ChangedMessages)
+		state, err := d.State(t.Context())
+		requirements.NoError(err)
+		requirements.NotNil(state.FeedFrontier)
+		assertions.True(bound.CompleteThrough.Equal(*state.FeedFrontier))
+	}
+}
