@@ -732,7 +732,6 @@ func (e *DuckDBEngine) parquetCTEs() string {
 		"CAST(snippet AS VARCHAR) AS snippet",
 		"CAST(size_estimate AS BIGINT) AS size_estimate",
 		"COALESCE(TRY_CAST(has_attachments AS BOOLEAN), false) AS has_attachments",
-		"COALESCE(TRY_CAST(hidden_text_present AS BOOLEAN), false) AS hidden_text_present",
 		"CAST(archive_only AS BOOLEAN) AS archive_only",
 	}
 	var msgExtra []string
@@ -773,10 +772,12 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	} else {
 		msgExtra = append(msgExtra, "NULL::TIMESTAMP AS deleted_at")
 	}
-	if e.hasCol(datasetMessages, "is_from_me") {
-		msgReplace = append(msgReplace, "COALESCE(TRY_CAST(is_from_me AS BOOLEAN), false) AS is_from_me")
-	} else {
-		msgExtra = append(msgExtra, "false AS is_from_me")
+	for _, col := range []string{"is_from_me", "hidden_text_present"} {
+		if e.hasCol(datasetMessages, col) {
+			msgReplace = append(msgReplace, "COALESCE(TRY_CAST("+col+" AS BOOLEAN), false) AS "+col)
+		} else {
+			msgExtra = append(msgExtra, "false AS "+col)
+		}
 	}
 	msgCTE := fmt.Sprintf("SELECT * REPLACE (\n\t\t\t\t%s\n\t\t\t)", strings.Join(msgReplace, ",\n\t\t\t\t"))
 	if len(msgExtra) > 0 {
