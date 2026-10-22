@@ -15805,7 +15805,7 @@ func (t TelemetryEventRequest) Validate() error {
 }
 
 type TelemetryEventResponse struct {
-	// Status queued when accepted, including suppressed daily screen duplicates or invalid screen names; disabled when telemetry is off
+	// Status queued when accepted, including suppressed daily screen_viewed and message_opened duplicates or invalid screen names; disabled when telemetry is off
 	Status TelemetryEventResponseStatus `json:"status" validate:"required"`
 }
 
