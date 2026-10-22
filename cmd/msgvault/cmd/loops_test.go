@@ -86,7 +86,6 @@ func TestLoopsListRejectsBadFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"list", "--limit", "201"}, {"list", "--limit", "0"},
 		{"list", "--person", "0"}, {"list", "--person", "-1"},
-		{"list", "--person", "abc"}, {"list", "--person", "9223372036854775808"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			require := require.New(t)

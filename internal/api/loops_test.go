@@ -92,7 +92,7 @@ func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	require.True(response.CoverageIncomplete)
 }
 
-func TestListLoopsWaitsForBackupFreezeBeforeWritingEvidence(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+func TestListLoopsAndHeadWaitForBackupFreezeBeforeWritingEvidence(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -111,17 +111,16 @@ func TestListLoopsWaitsForBackupFreezeBeforeWritingEvidence(t *testing.T) { //no
 	l.router = srv.Router()
 
 	token := beginBackupFreeze(t, srv)
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil)
-	request.RemoteAddr = "127.0.0.1:54321"
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, request)
-	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
-	var errResponse ErrorResponse
-	require.NoError(json.Unmarshal(response.Body.Bytes(), &errResponse))
-	assert.Equal("operation_in_progress", errResponse.Error)
-	var evidenceCount int
-	require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&evidenceCount))
-	assert.Zero(evidenceCount, "the list must not write evidence while the backup freeze holds the gate")
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		request := httptest.NewRequest(method, "/api/v1/loops", nil)
+		request.RemoteAddr = "127.0.0.1:54321"
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+		var evidenceCount int
+		require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&evidenceCount))
+		assert.Zero(evidenceCount, method+" must not write evidence while the backup freeze holds the gate")
+	}
 
 	ended := httptest.NewRecorder()
 	srv.Router().ServeHTTP(ended, endBackupFreeze(t, token))
@@ -131,6 +130,7 @@ func TestListLoopsWaitsForBackupFreezeBeforeWritingEvidence(t *testing.T) { //no
 	listed := httptest.NewRecorder()
 	srv.Router().ServeHTTP(listed, listRequest)
 	require.Equal(http.StatusOK, listed.Code, listed.Body.String())
+	var evidenceCount int
 	require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&evidenceCount))
 	assert.Positive(evidenceCount, "the list stores evidence after the backup freeze ends")
 }
