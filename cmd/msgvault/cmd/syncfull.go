@@ -279,6 +279,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 	case sourceTypeGmail, "":
 		appName := sourceOAuthApp(src)
 		var tokenSource oauth2.TokenSource
+		var readGrantedScopes func() []string
 
 		// Check for service account configuration
 		if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
@@ -286,6 +287,8 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 			if len(scopes) == 0 {
 				scopes = oauth.Scopes
 			}
+			granted := append([]string(nil), scopes...)
+			readGrantedScopes = func() []string { return granted }
 			saMgr, err := oauth.NewServiceAccountManager(saKeyPath, scopes)
 			if err != nil {
 				return nil, fmt.Errorf("service account: %w", err)
@@ -299,6 +302,8 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 			if err != nil {
 				return nil, err
 			}
+			account := src.Identifier
+			readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(ctx, account) }
 			interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 				isatty.IsCygwinTerminal(os.Stdin.Fd())
 			tokenSource, err = getTokenSourceWithReauth(ctx, oauthMgr, src.Identifier, interactive, gmailReauthHint)
@@ -310,6 +315,7 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 		return gmail.NewClient(tokenSource,
 			gmail.WithLogger(logger),
 			gmail.WithRateLimiter(rateLimiter),
+			gmail.WithGrantedScopesReader(readGrantedScopes),
 		), nil
 
 	case sourceTypeIMAP:
@@ -505,7 +511,7 @@ func applyIMAPMailboxDeltas(
 			RFC822MessageID:          observation.RFC822MessageID,
 			RawSHA256:                observation.RawSHA256,
 			RawSize:                  observation.RawSize,
-			Flags:                    append([]string(nil), observation.Flags...),
+			Flags:                    slices.Clone(observation.Flags),
 		})
 	}
 	byMailbox := make(map[string][]store.IMAPMembershipObservation)
@@ -582,11 +588,27 @@ func saveIMAPFolderStates(
 }
 
 func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx context.Context, _ string) (*oauth.Manager, error), src *store.Source, state *invocation) error {
+	var permission *store.NativeSourcePermission
+	if src.SourceType == sourceTypeIMAP {
+		var err error
+		permission, err = pinNativeMessagePermission(ctx, src.Identifier, src, s)
+		if err != nil {
+			return err
+		}
+	}
+	var observeGmailPermissionFailure func(context.Context, error) error
+	if src.SourceType == sourceTypeGmail && src.ID > 0 {
+		var err error
+		observeGmailPermissionFailure, err = sync.PinNativeGmailPermissionObserver(ctx, s, src)
+		if err != nil {
+			return err
+		}
+	}
 	if state == nil {
 		state = invocationFromContext(ctx)
 	}
 	if state == nil || state.cfg == nil || state.logger == nil {
-		return errors.New("configuration is unavailable")
+		return pauseNativeMessagePermission(ctx, s, permission, errors.New("configuration is unavailable"))
 	}
 	cfg := state.cfg
 	logger := state.logger
@@ -617,7 +639,10 @@ func runFullSync(ctx context.Context, s *store.Store, getOAuthMgr func(ctx conte
 	}
 	apiClient, err := buildAPIClient(ctx, src, getOAuthMgr, nil, imapOpts...)
 	if err != nil {
-		return err
+		if observeGmailPermissionFailure != nil {
+			err = observeGmailPermissionFailure(ctx, err)
+		}
+		return pauseNativeMessagePermission(ctx, s, permission, err)
 	}
 	defer func() { _ = apiClient.Close() }()
 

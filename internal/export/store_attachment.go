@@ -152,11 +152,12 @@ type DurableAttachmentReceipt struct {
 }
 
 // StoreAttachmentFileDurable stores attachment content, including an empty
-// blob, through the content-addressed atomic write path. Unlike ordinary
-// ingest, this entry point is reserved for maintenance that will discard an
-// existing authoritative copy after the loose file is durable. Its receipt is
-// populated even when publication succeeded but a later durability step
-// failed, so callers can roll back a newly created blob.
+// blob, through the content-addressed atomic write path. Maintenance callers
+// use the receipt before discarding an existing authoritative copy. Snapshot
+// ingest publishes blobs before committing their SQL references; failed SQL
+// transactions can leave unreferenced blobs for pack reconciliation.
+// The receipt is populated even when publication succeeded but a later
+// durability step failed, so callers can roll back a newly created blob.
 func StoreAttachmentFileDurable(attachmentsDir string, att *mime.Attachment) (DurableAttachmentReceipt, error) {
 	if attachmentsDir == "" {
 		return DurableAttachmentReceipt{}, nil

@@ -83,9 +83,9 @@ func (s *Store) CreateBeeperDraftContext(ctx context.Context, sourceID int64, ch
 			return fmt.Errorf("check Beeper draft for chat: %w", err)
 		}
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO beeper_drafts (draft_id, source_id, chat_id, revision, pending_operation, pending_raw, created_at, updated_at)
-			VALUES (?, ?, ?, 1, ?, ?, `+s.dialect.Now()+`, `+s.dialect.Now()+`)
-		`, draftID, sourceID, chatID, BeeperDraftOperationEdit, []byte(text))
+			INSERT INTO beeper_drafts (draft_id, source_id, chat_id, revision, pending_operation, pending_raw, created_by_principal, created_at, updated_at)
+			VALUES (?, ?, ?, 1, ?, ?, ?, `+s.dialect.Now()+`, `+s.dialect.Now()+`)
+		`, draftID, sourceID, chatID, BeeperDraftOperationEdit, []byte(text), draftCreatorSQL(ctx))
 		if err != nil {
 			return fmt.Errorf("create Beeper draft: %w", err)
 		}
@@ -231,7 +231,13 @@ func (s *Store) FinishBeeperDraftContext(ctx context.Context, draftID string, re
 		if affected, err := result.RowsAffected(); err != nil || affected != 1 {
 			return ErrBeeperDraftState
 		}
-		return nil
+		kind := "updated"
+		if draft.Pending.Operation != BeeperDraftOperationEdit {
+			kind = "deleted"
+		} else if draft.Text == nil {
+			kind = "created"
+		}
+		return s.appendDraftEventTx(ctx, tx, "beeper", draftID, kind)
 	})
 	if err != nil {
 		return BeeperDraft{}, err

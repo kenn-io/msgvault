@@ -13,6 +13,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+var errGmailMetadataRefresh = errors.New("refresh Gmail label metadata")
+
 // Incremental performs an incremental sync using the Gmail History API. It
 // returns ErrHistoryExpired when Gmail requires a full history recovery.
 //
@@ -57,7 +59,7 @@ func (s *Syncer) incremental(
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
 	scoped := *s
-	scoped.store = s.store.ScopedToSync(source.ID, syncID)
+	scoped.store = s.store.ScopedToSync(source.ID, syncID).WithIngestContext(store.IngestContext{Mode: store.IngestUnknown, ObservedAt: time.Now().UTC()})
 	s = &scoped
 	summary.SyncRunID = syncID
 
@@ -75,7 +77,7 @@ func (s *Syncer) incremental(
 	}()
 
 	// Get profile for current history ID
-	profile, err := s.client.GetProfile(ctx)
+	profile, err := s.nativeProfileWithPermission(ctx, source)
 	if err != nil {
 		_ = s.store.FailSync(syncID, err.Error())
 		return nil, fmt.Errorf("get profile: %w", err)
@@ -94,6 +96,20 @@ func (s *Syncer) incremental(
 	// it most. Unlike the post-completion hook below, this re-derives evidence
 	// from local messages and costs one key lookup when there is no debt.
 	s.drainIdentityDiscoveryBacklog(ctx, source.ID)
+
+	// Message history is not a label-presence inventory. Native Gmail refreshes
+	// its complete scope domain even on an otherwise idle sync. Generic archive
+	// readers retain their existing no-op behavior.
+	var labelMap map[string]int64
+	labelsRefreshed := false
+	if _, native := s.client.(nativeMessageReadPermission); native && source.SourceType == sourceTypeGmail {
+		labelMap, err = s.syncLabels(ctx, source.ID)
+		if err != nil {
+			_ = s.store.FailSync(syncID, err.Error())
+			return nil, fmt.Errorf("sync labels: %w", err)
+		}
+		labelsRefreshed = true
+	}
 
 	// If history IDs match, nothing to do locally — but provider inventory can
 	// change while a mailbox is idle, so the post-completion hook still runs,
@@ -114,10 +130,12 @@ func (s *Syncer) incremental(
 	}
 
 	// Sync labels first (new labels may have been created)
-	labelMap, err := s.syncLabels(ctx, source.ID)
-	if err != nil {
-		_ = s.store.FailSync(syncID, err.Error())
-		return nil, fmt.Errorf("sync labels: %w", err)
+	if !labelsRefreshed {
+		labelMap, err = s.syncLabels(ctx, source.ID)
+		if err != nil {
+			_ = s.store.FailSync(syncID, err.Error())
+			return nil, fmt.Errorf("sync labels: %w", err)
+		}
 	}
 
 	checkpoint := &store.Checkpoint{}
@@ -155,6 +173,7 @@ func (s *Syncer) incremental(
 
 		for {
 			historyResp, err := s.client.ListHistory(ctx, startHistoryID, pageToken)
+			err = s.nativeMailPermissionFailure(ctx, err)
 			if err != nil {
 				// Check for 404 - history too old
 				if _, ok := errors.AsType[*gmail.NotFoundError](err); ok {
@@ -165,6 +184,10 @@ func (s *Syncer) incremental(
 				}
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("list history: %w", err)
+			}
+			if err := s.observeNativeGmailPermissionReduction(ctx); err != nil {
+				_ = s.store.FailSync(syncID, err.Error())
+				return nil, fmt.Errorf("observe Gmail message-read permission after history refresh: %w", err)
 			}
 
 			// Collect all message IDs referenced in this page for a single batch existence check
@@ -189,6 +212,14 @@ func (s *Syncer) incremental(
 				_ = s.store.FailSync(syncID, err.Error())
 				return nil, fmt.Errorf("check existing messages: %w", err)
 			}
+			labelMetadata, err := s.readHistoryLabelMetadata(ctx, historyResp.History, existingMap)
+			if err != nil {
+				err = fmt.Errorf("observe Gmail message-read permission after label metadata refresh: %w", err)
+				if failErr := s.store.FailSyncWithCheckpoint(syncID, err.Error(), checkpoint); failErr != nil {
+					return nil, errors.Join(err, fmt.Errorf("fail incremental sync: %w", failErr))
+				}
+				return nil, err
+			}
 
 			// Collect new message IDs to batch-fetch and deleted IDs to batch-mark
 			newMsgThreads := make(map[string]string) // deduplicates by ID
@@ -209,7 +240,13 @@ func (s *Syncer) incremental(
 				}
 			}
 			for _, record := range historyResp.History {
-				s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary)
+				if err := s.processLabelChanges(ctx, syncID, source.ID, record, labelMap, existingMap, labelMetadata, newMsgThreads, updatedExisting, identityDiscoverySet, checkpoint, summary); err != nil {
+					err = fmt.Errorf("process incremental Gmail labels: %w; history cursor retained; repair Gmail metadata access and retry sync", err)
+					if failErr := s.store.FailSyncWithCheckpoint(syncID, err.Error(), checkpoint); failErr != nil {
+						return nil, errors.Join(err, fmt.Errorf("fail incremental sync: %w", failErr))
+					}
+					return nil, err
+				}
 			}
 			checkpoint.MessagesUpdated += int64(len(updatedExisting))
 			checkpoint.MessagesProcessed += int64(len(newMsgThreads) + len(deletedSet) + len(updatedExisting))
@@ -247,7 +284,7 @@ func (s *Syncer) incremental(
 							continue
 						}
 						threadID := newMsgThreads[newMsgIDs[i]]
-						if _, err := s.ingestMessage(
+						if _, err := s.ingestLiveMessage(
 							ctx, source.ID, raw, threadID, labelMap,
 						); err != nil {
 							s.logger.Warn("failed to ingest added message", "id", newMsgIDs[i], "error", err)
@@ -312,9 +349,8 @@ func (s *Syncer) incremental(
 		s.drainIdentityDiscoveryBacklog(ctx, source.ID)
 	}
 
-	// Always advance the cursor so a single permanently-failing
-	// message doesn't block all future incremental syncs.
-	// Failed fetches carry forward to the next incremental run.
+	// Advance when raw fetch errors have durable replay debt. Metadata refresh
+	// failures return above with the source cursor intact.
 	historyIDStr := strconv.FormatUint(profile.HistoryID, 10)
 	if checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("incremental sync completed with errors",
@@ -438,15 +474,86 @@ func (s *Syncer) replayFetchFailures(
 
 // processLabelChanges handles label additions and removals for messages.
 // existingMap maps source_message_id -> internal message_id for known messages.
-func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) {
+func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.HistoryRecord, existingMap map[string]int64) (map[string]gmail.MessageLabelsBatchResult, error) {
+	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
+	}
+	reader, ok := s.client.(messageLabelBatchReader)
+	if !ok {
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
+	}
+
+	messageIDs := make([]string, 0)
+	seen := make(map[string]struct{})
+	add := func(messageID string) {
+		if _, exists := existingMap[messageID]; !exists {
+			return
+		}
+		if _, exists := seen[messageID]; exists {
+			return
+		}
+		seen[messageID] = struct{}{}
+		messageIDs = append(messageIDs, messageID)
+	}
+	for _, record := range records {
+		for _, item := range record.LabelsAdded {
+			add(item.Message.ID)
+		}
+		for _, item := range record.LabelsRemoved {
+			add(item.Message.ID)
+		}
+	}
+	if len(messageIDs) == 0 {
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
+	}
+
+	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)
+	metadataByID := make(map[string]gmail.MessageLabelsBatchResult, len(messageIDs))
+	if err != nil {
+		err = s.nativeMailPermissionFailure(ctx, err)
+		for _, id := range messageIDs {
+			metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: err}
+		}
+		return metadataByID, nil
+	}
+	if len(results) != len(messageIDs) {
+		resultErr := fmt.Errorf("gmail label metadata result count mismatch: got %d, want %d", len(results), len(messageIDs))
+		for i, id := range messageIDs {
+			if i >= len(results) {
+				metadataByID[id] = gmail.MessageLabelsBatchResult{ID: id, Err: resultErr}
+				continue
+			}
+			result := results[i]
+			result.Err = s.nativeMailPermissionFailure(ctx, result.Err)
+			metadataByID[id] = result
+		}
+	} else {
+		for i, id := range messageIDs {
+			result := results[i]
+			result.Err = s.nativeMailPermissionFailure(ctx, result.Err)
+			metadataByID[id] = result
+		}
+	}
+	if err := s.observeNativeGmailPermissionReduction(ctx); err != nil {
+		return metadataByID, err
+	}
+	return metadataByID, nil
+}
+
+func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64, record gmail.HistoryRecord, labelMap map[string]int64, existingMap map[string]int64, labelMetadata map[string]gmail.MessageLabelsBatchResult, newMsgThreads map[string]string, updatedExisting, identityDiscoverySet map[string]struct{}, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) error {
 	for _, item := range record.LabelsAdded {
 		if _, exists := existingMap[item.Message.ID]; !exists {
 			if _, pending := newMsgThreads[item.Message.ID]; pending {
 				continue
 			}
 		}
-		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, labelMetadata, checkpoint, summary)
 		if err != nil {
+			if errors.Is(err, errGmailMetadataRefresh) && !isGmailNotFound(err) {
+				s.recordSyncItem(syncID, item.Message.ID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
+				checkpoint.ErrorsCount++
+				return fmt.Errorf("refresh metadata for message %s: %w", item.Message.ID, err)
+			}
 			s.logLabelChangeError("add", item.Message.ID, err)
 			continue
 		}
@@ -458,8 +565,13 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 		}
 	}
 	for _, item := range record.LabelsRemoved {
-		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, checkpoint, summary)
+		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, false, existingMap, labelMetadata, checkpoint, summary)
 		if err != nil {
+			if errors.Is(err, errGmailMetadataRefresh) && !isGmailNotFound(err) {
+				s.recordSyncItem(syncID, item.Message.ID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindMetadataRefreshError, err)
+				checkpoint.ErrorsCount++
+				return fmt.Errorf("refresh metadata for message %s: %w", item.Message.ID, err)
+			}
 			s.logLabelChangeError("remove", item.Message.ID, err)
 			continue
 		}
@@ -470,12 +582,14 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 			updatedExisting[item.Message.ID] = struct{}{}
 		}
 	}
+	return nil
 }
 
 // handleLabelChange processes a label addition or removal.
-// For existing messages, applies the label diff directly without any API calls.
+// For existing Gmail messages with metadata support, refreshes authoritative labels.
+// Other clients apply the supplied label diff.
 // For unknown messages with labels being added, fetches and ingests the message.
-func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, bool, error) {
+func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, messageID, threadID string, gmailLabelIDs []string, labelMap map[string]int64, isAdd bool, existingMap map[string]int64, labelMetadata map[string]gmail.MessageLabelsBatchResult, checkpoint *store.Checkpoint, summary *gmail.SyncSummary) (bool, bool, error) {
 	internalID, exists := existingMap[messageID]
 
 	if !exists {
@@ -483,6 +597,7 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 		if isAdd {
 			checkpoint.MessagesProcessed++
 			raw, err := s.client.GetMessageRaw(ctx, messageID)
+			err = s.nativeMailPermissionFailure(ctx, err)
 			if err != nil {
 				if isGmailNotFound(err) {
 					s.recordSyncItem(syncID, messageID, syncItemPhaseFetch, store.SyncRunItemStatusSkipped, syncItemKindGmailNotFound, err)
@@ -492,9 +607,9 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 				checkpoint.ErrorsCount++
 				return false, false, err
 			}
-			if _, err := s.ingestMessage(
-				ctx, sourceID, raw, threadID, labelMap,
-			); err != nil {
+			// A label change does not mean the message just arrived; a
+			// new arrival in this history page is fetched by messagesAdded.
+			if _, err := s.ingestMessage(ctx, sourceID, raw, threadID, labelMap); err != nil {
 				s.recordSyncItem(syncID, messageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
 				checkpoint.ErrorsCount++
 				return false, false, err
@@ -512,6 +627,28 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 		return false, false, nil
 	}
 
+	// A current metadata read subsumes the history delta and also refreshes
+	// provider inbox/read markers without downloading the message body.
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		if _, ok := s.client.(messageLabelBatchReader); ok {
+			observedAt := time.Now().UTC()
+			metadata, ok := labelMetadata[messageID]
+			if !ok || metadata.ID != messageID {
+				return false, false, fmt.Errorf("%w: gmail label metadata identity is unavailable", errGmailMetadataRefresh)
+			}
+			if metadata.Err != nil {
+				if isGmailNotFound(metadata.Err) {
+					return false, false, metadata.Err
+				}
+				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, metadata.Err)
+			}
+			changed, err := s.store.RefreshGmailInboxLabelsContext(ctx, sourceID, internalID, messageID, labelIDsFor(metadata.LabelIDs, labelMap), store.GmailInboxObservation{Tags: metadata.LabelIDs, HistoryID: metadata.HistoryID, ObservedAt: observedAt})
+			if err != nil {
+				return false, false, fmt.Errorf("%w: %w", errGmailMetadataRefresh, err)
+			}
+			return changed, changed, nil
+		}
+	}
 	// Convert Gmail label IDs to internal label IDs
 	var labelIDs []int64
 	for _, gmailID := range gmailLabelIDs {
@@ -542,4 +679,12 @@ func (s *Syncer) logLabelChangeError(action, messageID string, err error) {
 	} else {
 		s.logger.Warn("failed to handle label "+action, "id", messageID, "error", err)
 	}
+}
+
+// ingestLiveMessage is restricted to messages obtained from the current
+// history delta. Recovery of earlier fetch failures keeps unknown provenance.
+func (s *Syncer) ingestLiveMessage(ctx context.Context, sourceID int64, raw *gmail.RawMessage, threadID string, labelMap map[string]int64) (bool, error) {
+	scoped := *s
+	scoped.store = s.store.WithIngestContext(store.IngestContext{Mode: store.IngestLive, ObservedAt: time.Now().UTC()})
+	return scoped.ingestMessage(ctx, sourceID, raw, threadID, labelMap)
 }

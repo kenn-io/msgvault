@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
@@ -41,6 +43,8 @@ type fbmessengerCheckpoint struct {
 
 // ImportOptions configures ImportDYI.
 type ImportOptions struct {
+	// NotifyImports opts this logical import into the independently enabled Events family.
+	NotifyImports bool
 	// Me is the importer's own identifier, required to be of the form
 	// "<slug>@facebook.messenger". It is stored as the source identifier
 	// and used to compute is_from_me.
@@ -87,11 +91,13 @@ type ImportSummary struct {
 	FromMeCount          int64
 	Errors               int
 	HardErrors           bool
+	ImportRunID          string
 	WasResumed           bool
 }
 
 // ImportDYI imports a Facebook Messenger DYI export into the store.
-func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*ImportSummary, error) {
+func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (_ *ImportSummary, retErr error) {
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	start := time.Now()
 	summary := &ImportSummary{}
 	logger := opts.Logger
@@ -134,6 +140,10 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		return nil, fmt.Errorf("fbmessenger: abs root: %w", err)
 	}
 
+	if err := st.ValidateNativeImportChoice(ctx, "facebook_messenger", opts.NotifyImports); err != nil {
+		return nil, err
+	}
+
 	// Create source and start sync run.
 	source, err := st.GetOrCreateSource("facebook_messenger", opts.Me)
 	if err != nil {
@@ -144,14 +154,16 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	// running sync, so a live worker cannot be replaced by this import.
 	var (
 		startThreadIdx int
+		hasCheckpoint  bool
 		cp             store.Checkpoint
 	)
 	if !opts.NoResume {
-		prev, err := st.GetLatestCheckpointedSync(source.ID)
+		prev, err := st.GetLatestCheckpointedSyncByType(source.ID, "import-messenger")
 		if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 			return nil, fmt.Errorf("fbmessenger: check checkpointed sync: %w", err)
 		}
 		if prev != nil && prev.CursorBefore.Valid && prev.CursorBefore.String != "" {
+			hasCheckpoint = true
 			var prior fbmessengerCheckpoint
 			if err := json.Unmarshal([]byte(prev.CursorBefore.String), &prior); err == nil {
 				if prior.RootDir != "" && prior.RootDir != absRoot {
@@ -184,7 +196,26 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		}
 	}
 
-	syncID, err := st.StartSync(source.ID, "import-messenger")
+	ownershipCtx := context.WithoutCancel(ctx)
+	execution, err := st.AcquireSyncExecutionContext(ownershipCtx, source.ID)
+	if err != nil {
+		return nil, fmt.Errorf("fbmessenger: acquire source execution: %w", err)
+	}
+	defer func() { retErr = errors.Join(retErr, execution.Release()) }()
+	requestHash := sha256.Sum256([]byte("facebook_messenger\x00" + absRoot + "\x00" + format + "\x00" + opts.AttachmentsDir))
+	requestFingerprint := hex.EncodeToString(requestHash[:])
+	var recoveredSyncID int64
+	if !opts.NoResume {
+		recoveredSyncID, err = st.FindResumableImportAttempt(ownershipCtx, source.ID, "facebook_messenger", requestFingerprint)
+		if err != nil {
+			return nil, fmt.Errorf("fbmessenger: find resumable import: %w", err)
+		}
+	}
+
+	if opts.NotifyImports && hasCheckpoint && recoveredSyncID == 0 {
+		return nil, errors.New("legacy Messenger checkpoint is silent; use --no-resume to start a new notifying run")
+	}
+	syncID, err := execution.StartSyncWithRequestContext(ownershipCtx, "import-messenger", "", requestFingerprint)
 	if err != nil {
 		return nil, fmt.Errorf("fbmessenger: start sync: %w", err)
 	}
@@ -197,6 +228,26 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 			_ = st.CompleteSync(syncID, "")
 		}
 	}()
+
+	logicalRun, err := st.BeginNativeImportAttempt(ownershipCtx, source.ID, "facebook_messenger", opts.NotifyImports, syncID, recoveredSyncID)
+	if err != nil {
+		syncErr = err
+		return nil, fmt.Errorf("fbmessenger: begin import: %w", err)
+	}
+	summary.ImportRunID = logicalRun.ID
+	st, err = st.WithImportRun(ownershipCtx, logicalRun.ID)
+	if err != nil {
+		syncErr = err
+		return nil, fmt.Errorf("fbmessenger: bind import: %w", err)
+	}
+	if recoveredSyncID != 0 {
+		// Native message IDs make a full recovery scan idempotent. A durable
+		// logical run, rather than best-effort progress, owns notification choice.
+		startThreadIdx = 0
+		summary.WasResumed = true
+		summary.MessagesProcessed = 0
+		summary.MessagesAdded = 0
+	}
 
 	// Pre-create label taxonomy.
 	labelIDs := make(map[string]int64)
@@ -215,12 +266,6 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 		labelIDs[pair.name] = lid
 	}
 
-	// Seed the self participant so even an empty import leaves a trace.
-	meAddr := mime.Address{Name: "", Email: opts.Me, Domain: Domain}
-	if _, err := st.EnsureParticipantsBatch([]mime.Address{meAddr}); err != nil {
-		syncErr = err
-		return nil, fmt.Errorf("fbmessenger: seed self participant: %w", err)
-	}
 	meLocal := StripDomain(opts.Me)
 
 	// Discover threads.
@@ -228,6 +273,15 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 	if err != nil {
 		syncErr = err
 		return nil, fmt.Errorf("fbmessenger: discover: %w", err)
+	}
+
+	// Preserve the native empty-import owner trace. Nonempty imports resolve
+	// all participant identities in the canonical message transaction.
+	if len(threads) == 0 {
+		if _, err := st.EnsureParticipantsBatch([]mime.Address{{Email: opts.Me, Domain: Domain}}); err != nil {
+			syncErr = err
+			return nil, fmt.Errorf("fbmessenger: seed empty import owner: %w", err)
+		}
 	}
 
 	// Guard against a checkpoint that points past the current list
@@ -290,6 +344,7 @@ func ImportDYI(ctx context.Context, st *store.Store, opts ImportOptions) (*Impor
 			}
 			summary.Errors++
 			summary.HardErrors = true
+			syncErr = errors.Join(syncErr, err)
 			logger.Warn("fbmessenger: thread failed", "thread", td.Name, "err", err)
 			// Don't advance the checkpoint on a hard thread error.
 			// source_message_id dedup makes retry safe on the next
@@ -457,232 +512,201 @@ func writeThreadToStore(
 	threadIdx int,
 	cp *store.Checkpoint,
 ) error {
-	// Ensure conversation. Use section-qualified name so threads with
-	// the same basename in different sections (e.g. inbox vs archived)
-	// don't collide.
 	threadKey := td.Section + "/" + td.Name
-	convID, err := st.EnsureConversationWithType(sourceID, threadKey, thread.ConvType, thread.Title)
-	if err != nil {
-		return fmt.Errorf("ensure conversation: %w", err)
-	}
-
-	// Build participant address map for this thread.
-	addrs := make([]mime.Address, 0, len(thread.Participants)+1)
-	addrs = append(addrs, mime.Address{Name: "", Email: opts.Me, Domain: Domain})
+	// Descriptor caches contain no speculative SQL IDs. A failed message must
+	// not publish participants or leave IDs that a later message can reuse.
+	nameToAddress := make(map[string]mime.Address)
 	for _, p := range thread.Participants {
-		addrs = append(addrs, Address(p.Name))
+		nameToAddress[p.Name] = Address(p.Name)
 	}
-	partIDs, err := st.EnsureParticipantsBatch(addrs)
-	if err != nil {
-		return fmt.Errorf("ensure participants: %w", err)
-	}
-	summary.ParticipantsResolved += len(partIDs)
-
-	// Map display name → participant ID and email for this thread.
-	nameToID := make(map[string]int64)
-	nameToEmail := make(map[string]string)
-	for _, p := range thread.Participants {
-		addr := Address(p.Name)
-		nameToID[p.Name] = partIDs[addr.Email]
-		nameToEmail[p.Name] = addr.Email
-	}
-	meID := partIDs[opts.Me]
-	// Ensure all participants (incl. self) are linked to the conversation.
-	_ = st.EnsureConversationParticipant(convID, meID, "member")
-	for _, pid := range nameToID {
-		_ = st.EnsureConversationParticipant(convID, pid, "member")
-	}
-
-	// Determine label IDs for this thread.
+	participantsCounted := false
 	parentLabelID := labelIDs["Messenger"]
 	sectionLabelID := labelIDs[sectionLabelName(td.Section)]
-
-	// Raw bytes format tag.
 	rawFormat := "fbmessenger_" + thread.Format
-
-	// Iterate messages.
+	var snapshotErrors error
 	for mi, m := range thread.Messages {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
 			return errLimitReached
 		}
 		summary.MessagesProcessed++
-
-		// Resolve sender.
-		senderName := m.SenderName
-		senderID := sql.NullInt64{}
-		isFromMe := false
-		if senderName != "" {
-			if id, ok := nameToID[senderName]; ok {
-				senderID = sql.NullInt64{Int64: id, Valid: true}
-			} else {
-				// Participant not in the thread's participants list;
-				// synthesize.
-				addr := Address(senderName)
-				m2, err := st.EnsureParticipantsBatch([]mime.Address{addr})
-				if err == nil {
-					if id, ok := m2[addr.Email]; ok {
-						senderID = sql.NullInt64{Int64: id, Valid: true}
-						nameToID[senderName] = id
-						nameToEmail[senderName] = addr.Email
-						_ = st.EnsureConversationParticipant(convID, id, "member")
-					}
-				}
-			}
-		}
-		if senderName != "" {
-			if Slug(senderName) == meLocal {
-				isFromMe = true
-				senderID = sql.NullInt64{Int64: meID, Valid: true}
-				summary.FromMeCount++
-			}
-		}
-
-		// Build the source_message_id. Section-qualified to avoid
-		// collisions across sections with the same thread basename.
 		srcMsgID := fmt.Sprintf("%s__%s%d", threadKey, prefix, m.Index)
-
-		// If we couldn't resolve a sender this run but a previous import
-		// of the same message already recorded one, preserve it — the
-		// UpsertMessage UPDATE path unconditionally overwrites sender_id
-		// with the incoming value, which would nullify valid prior data.
-		// Also rehydrate the sender's display name and email so
-		// downstream writes to message_recipients("from") and FTS don't
-		// clobber the prior display-name / from-address with empty
-		// strings derived from an unresolved current-run senderName.
-		if !senderID.Valid {
-			var priorID sql.NullInt64
+		senderName := m.SenderName
+		isFromMe := senderName != "" && Slug(senderName) == meLocal
+		var priorID sql.NullInt64
+		var priorAddress mime.Address
+		if senderName == "" {
 			var priorName, priorEmail sql.NullString
 			var priorIsFromMe bool
-			// COALESCE onto message_recipients.display_name because the
-			// seeded self (--me) participant is created with an empty
-			// display_name; falling back to what we wrote on the prior
-			// import preserves the sender label for self-authored rows.
-			err := st.DB().QueryRow(
-				st.Rebind(`SELECT m.sender_id, m.is_from_me,
-					COALESCE(NULLIF(p.display_name, ''),
-						(SELECT mr.display_name FROM message_recipients mr
-						 WHERE mr.message_id = m.id AND mr.recipient_type = 'from'
-						 LIMIT 1)),
-					p.email_address
-				 FROM messages m
-				 LEFT JOIN participants p ON p.id = m.sender_id
-				 WHERE m.source_id = ? AND m.source_message_id = ?`),
-				sourceID, srcMsgID,
-			).Scan(&priorID, &priorIsFromMe, &priorName, &priorEmail)
+			err := st.DB().QueryRowContext(ctx, st.Rebind(`SELECT m.sender_id,m.is_from_me,
+			 COALESCE(NULLIF(p.display_name,''),(SELECT mr.display_name FROM message_recipients mr WHERE mr.message_id=m.id AND mr.recipient_type='from' LIMIT 1)),p.email_address
+			 FROM messages m LEFT JOIN participants p ON p.id=m.sender_id WHERE m.source_id=? AND m.source_message_id=?`), sourceID, srcMsgID).Scan(&priorID, &priorIsFromMe, &priorName, &priorEmail)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("read prior Messenger sender: %w", err)
+			}
 			if err == nil && priorID.Valid {
-				senderID = priorID
 				isFromMe = priorIsFromMe
-				if priorIsFromMe {
-					summary.FromMeCount++
+				senderName = priorName.String
+				priorAddress = mime.Address{Name: senderName, Email: priorEmail.String, Domain: Domain}
+			}
+		}
+		addresses := make(map[string]mime.Address, len(nameToAddress)+1)
+		maps.Copy(addresses, nameToAddress)
+		if senderName != "" {
+			address := Address(senderName)
+			if priorAddress.Email != "" {
+				address = priorAddress
+			}
+			addresses[senderName] = address
+		}
+		var participants []store.ParticipantPersistData
+		byEmail := make(map[string]int)
+		add := func(addr mime.Address) int {
+			if index, ok := byEmail[addr.Email]; ok {
+				if addr.Name != "" {
+					participants[index].DisplayName = addr.Name
 				}
-				if priorName.Valid && priorName.String != "" {
-					senderName = priorName.String
-					nameToID[senderName] = priorID.Int64
-					if priorEmail.Valid {
-						nameToEmail[senderName] = priorEmail.String
-					}
-				}
-				// Re-link the rehydrated participant into the
-				// conversation. Older DBs affected by the
-				// pre-fix synthesized-sender bug have a valid
-				// messages.sender_id but no matching
-				// conversation_participants row; this repairs
-				// them on re-import.
-				_ = st.EnsureConversationParticipant(convID, priorID.Int64, "member")
+				return index
 			}
+			index := len(participants)
+			byEmail[addr.Email] = index
+			participants = append(participants, store.ParticipantPersistData{EmailAddress: addr.Email, DisplayName: addr.Name, Domain: addr.Domain})
+			return index
 		}
-
-		snippet := buildSnippet(m.Body)
-		msgRow := &store.Message{
-			ConversationID:  convID,
-			SourceID:        sourceID,
-			SourceMessageID: srcMsgID,
-			MessageType:     "fbmessenger",
-			SentAt:          sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()},
-			ReceivedAt:      sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()},
-			SenderID:        senderID,
-			IsFromMe:        isFromMe,
-			Snippet:         sql.NullString{String: snippet, Valid: snippet != ""},
-			SizeEstimate:    int64(len(m.Body)),
-			HasAttachments:  len(m.Attachments) > 0,
-			AttachmentCount: len(m.Attachments),
-		}
-		messageID, err := st.UpsertMessage(msgRow)
-		if err != nil {
-			summary.Errors++
-			summary.MessagesSkipped++
-			logger.Warn("fbmessenger: upsert message", "err", err)
-			continue
-		}
-		summary.MessagesAdded++
-
-		// Body.
-		bodyText := sql.NullString{String: m.Body, Valid: m.Body != ""}
-		if err := st.UpsertMessageBody(messageID, bodyText, sql.NullString{}); err != nil {
-			summary.Errors++
-			logger.Warn("fbmessenger: upsert body", "err", err)
-		}
-
-		// Raw bytes — store once per thread (first message only) to avoid bloat.
-		if mi == 0 && len(thread.RawBytes) > 0 {
-			if err := st.UpsertMessageRawWithFormat(messageID, thread.RawBytes, rawFormat); err != nil {
-				logger.Warn("fbmessenger: upsert raw", "err", err)
-			}
-		}
-
-		// Recipients: from = sender, to = other participants.
-		// Only rewrite "from" when we have a valid sender — otherwise on
-		// re-import we would clobber a previously-recorded sender with an
-		// empty row.
-		if senderID.Valid {
-			fromIDs := []int64{senderID.Int64}
-			fromNames := []string{senderName}
-			if err := st.ReplaceMessageRecipients(messageID, "from", fromIDs, fromNames); err != nil {
-				logger.Warn("fbmessenger: replace from recipients", "err", err)
-			}
-		}
-
-		var toIDs []int64
-		var toNames []string
-		seenPID := make(map[int64]bool)
-		if senderID.Valid {
-			seenPID[senderID.Int64] = true
-		}
-		sortedNames := make([]string, 0, len(nameToID))
-		for name := range nameToID {
+		meIndex := add(mime.Address{Email: opts.Me, Domain: Domain})
+		sortedNames := make([]string, 0, len(addresses))
+		for name := range addresses {
 			sortedNames = append(sortedNames, name)
 		}
 		sort.Strings(sortedNames)
+		nameIndex := make(map[string]int, len(addresses))
+		nameToEmail := make(map[string]string, len(addresses))
 		for _, name := range sortedNames {
-			pid := nameToID[name]
-			if seenPID[pid] {
-				continue
+			nameIndex[name] = add(addresses[name])
+			nameToEmail[name] = addresses[name].Email
+		}
+		senderIndex := -1
+		if senderName != "" {
+			senderIndex = nameIndex[senderName]
+		}
+		if isFromMe {
+			senderIndex = meIndex
+		}
+		reactionIndices := make([]int, len(m.Reactions))
+		for i, reaction := range m.Reactions {
+			reactionIndices[i] = add(Address(reaction.Actor))
+		}
+		var readyAttachments *store.KeyedAttachmentSnapshot
+		preparedStored := 0
+		if opts.NotifyImports && len(m.Attachments) > 0 {
+			writes := make([]store.AttachmentWrite, 0, len(m.Attachments))
+			for ai, attachment := range m.Attachments {
+				write := prepareMessengerAttachment(attachment, ai, opts.AttachmentsDir)
+				if write.StoragePath != "" {
+					preparedStored++
+				}
+				writes = append(writes, write)
 			}
-			seenPID[pid] = true
-			toIDs = append(toIDs, pid)
-			toNames = append(toNames, name)
+			readyAttachments = &store.KeyedAttachmentSnapshot{Prefix: fbSyntheticAttachmentKeyPrefix, Writes: writes, PreserveStoredOnFailure: true, InvalidateCacheOnChange: true, PreserveUnmentioned: true}
 		}
-		// If message is from someone else, ensure self is in "to".
-		if !isFromMe && !seenPID[meID] {
-			toIDs = append(toIDs, meID)
-			toNames = append(toNames, "")
-			seenPID[meID] = true
+		messageID, err := st.PersistMessageWithParticipantsContext(ctx, participants, func(ids []int64) *store.MessagePersistData {
+			var senderID sql.NullInt64
+			if senderIndex >= 0 {
+				senderID = sql.NullInt64{Int64: ids[senderIndex], Valid: true}
+			} else if priorID.Valid {
+				senderID = priorID
+			}
+			members := []store.ConversationParticipantRef{{ParticipantID: ids[meIndex], Role: "member"}}
+			for _, name := range sortedNames {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: ids[nameIndex[name]], Role: "member"})
+			}
+			if priorID.Valid && senderIndex < 0 {
+				members = append(members, store.ConversationParticipantRef{ParticipantID: priorID.Int64, Role: "member"})
+			}
+			var recipients []store.RecipientSet
+			if senderID.Valid {
+				recipients = append(recipients, store.RecipientSet{Type: "from", ParticipantIDs: []int64{senderID.Int64}, DisplayNames: []string{senderName}})
+			}
+			to := store.RecipientSet{Type: "to"}
+			seen := make(map[int64]bool)
+			if senderID.Valid {
+				seen[senderID.Int64] = true
+			}
+			for _, name := range sortedNames {
+				id := ids[nameIndex[name]]
+				if !seen[id] {
+					seen[id] = true
+					to.ParticipantIDs = append(to.ParticipantIDs, id)
+					to.DisplayNames = append(to.DisplayNames, name)
+				}
+			}
+			if !isFromMe && !seen[ids[meIndex]] {
+				to.ParticipantIDs = append(to.ParticipantIDs, ids[meIndex])
+				to.DisplayNames = append(to.DisplayNames, "")
+			}
+			recipients = append(recipients, to)
+			reactions := make([]store.ReactionRef, 0, len(m.Reactions))
+			for i, reaction := range m.Reactions {
+				reactions = append(reactions, store.ReactionRef{ParticipantID: ids[reactionIndices[i]], Type: "emoji", Value: reaction.Reaction, CreatedAt: m.SentAt})
+			}
+			var raw []byte
+			if mi == 0 {
+				raw = thread.RawBytes
+			}
+			var labels []int64
+			for _, id := range []int64{parentLabelID, sectionLabelID} {
+				if id != 0 {
+					labels = append(labels, id)
+				}
+			}
+			snippet := buildSnippet(m.Body)
+			fromAddr := ""
+			if senderID.Valid {
+				fromAddr = nameToEmail[senderName]
+				if isFromMe {
+					fromAddr = opts.Me
+				}
+			}
+			return &store.MessagePersistData{
+				Message:      &store.Message{SourceID: sourceID, SourceMessageID: srcMsgID, MessageType: "fbmessenger", SentAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, ReceivedAt: sql.NullTime{Time: m.SentAt, Valid: !m.SentAt.IsZero()}, SenderID: senderID, IsFromMe: isFromMe, Snippet: sql.NullString{String: snippet, Valid: snippet != ""}, SizeEstimate: int64(len(m.Body)), HasAttachments: len(m.Attachments) > 0, AttachmentCount: len(m.Attachments)},
+				Conversation: &store.ConversationPersistData{SourceConversationID: threadKey, ConversationType: thread.ConvType, Title: thread.Title, Participants: members, PreserveExistingParticipants: true},
+				BodyText:     sql.NullString{String: m.Body, Valid: m.Body != ""}, RawMIME: raw, RawFormat: rawFormat, Recipients: recipients, PreserveLabels: true, AddLabelIDs: labels, AddReactionRefs: reactions, KeyedAttachmentSnapshot: readyAttachments,
+				FTS: &store.FTSDoc{Subject: thread.Title, Body: m.Body, FromAddr: fromAddr, ToAddrs: strings.Join(nameToEmailsList(nameToEmail, opts.Me, senderName), " ")}, FTSBestEffort: true,
+			}
+		})
+		if err != nil {
+			summary.Errors++
+			summary.MessagesSkipped++
+			snapshotErrors = errors.Join(snapshotErrors, err)
+			logger.Warn("fbmessenger: persist message snapshot", "err", err)
+			continue
 		}
-		_ = st.ReplaceMessageRecipients(messageID, "to", toIDs, toNames)
+		nameToAddress = addresses
+		if !participantsCounted {
+			unique := map[string]bool{opts.Me: true}
+			for _, p := range thread.Participants {
+				unique[Address(p.Name).Email] = true
+			}
+			summary.ParticipantsResolved += len(unique)
+			participantsCounted = true
+		}
+		summary.MessagesAdded++
+		if isFromMe {
+			summary.FromMeCount++
+		}
+		summary.ReactionsAdded += len(m.Reactions)
 
-		// Labels.
-		if parentLabelID != 0 {
-			_ = st.LinkMessageLabel(messageID, parentLabelID)
+		// Silent imports retain native placeholder and acquisition-gap behavior.
+		if opts.NotifyImports {
+			summary.AttachmentsFound += len(m.Attachments)
+			summary.AttachmentsStored += preparedStored
 		}
-		if sectionLabelID != 0 {
-			_ = st.LinkMessageLabel(messageID, sectionLabelID)
-		}
-
-		// Attachments.
 		for ai := range m.Attachments {
+			if opts.NotifyImports {
+				break
+			}
 			att := m.Attachments[ai]
 			summary.AttachmentsFound++
 			storagePath, contentHash, size := handleAttachment(att, opts.AttachmentsDir)
@@ -746,35 +770,6 @@ func writeThreadToStore(
 			}
 		}
 
-		// Reactions: first-class rows and body-append already done.
-		for _, r := range m.Reactions {
-			actorAddr := Address(r.Actor)
-			m2, err := st.EnsureParticipantsBatch([]mime.Address{actorAddr})
-			if err != nil {
-				continue
-			}
-			pid := m2[actorAddr.Email]
-			if pid == 0 {
-				continue
-			}
-			if err := st.UpsertReaction(messageID, pid, "emoji", r.Reaction, m.SentAt); err == nil {
-				summary.ReactionsAdded++
-			}
-		}
-
-		// FTS indexing.
-		fromAddr := ""
-		if senderID.Valid {
-			fromAddr = nameToEmail[senderName]
-			if isFromMe {
-				fromAddr = opts.Me
-			}
-		}
-		toAddr := strings.Join(nameToEmailsList(nameToEmail, opts.Me, senderName), " ")
-		if err := st.UpsertFTS(messageID, thread.Title, m.Body, fromAddr, toAddr, ""); err != nil {
-			logger.Warn("fbmessenger: upsert fts", "err", err)
-		}
-
 		// Checkpoint every N messages within a long thread. We save
 		// the current thread index (not threadIdx+1) because this
 		// thread is still in progress; we also record the last
@@ -783,6 +778,55 @@ func writeThreadToStore(
 		if !opts.NoResume && summary.MessagesAdded > 0 && summary.MessagesAdded%int64(opts.CheckpointEvery) == 0 {
 			_ = saveFbmessengerCheckpoint(st, syncID, absRoot, threadIdx, m.Index, cp, summary)
 		}
+	}
+	if len(thread.Messages) == 0 {
+		if err := ensureEmptyThreadTrace(ctx, st, sourceID, threadKey, thread, opts, summary); err != nil {
+			return errors.Join(snapshotErrors, err)
+		}
+	}
+	return snapshotErrors
+}
+
+func ensureEmptyThreadTrace(
+	ctx context.Context,
+	st *store.Store,
+	sourceID int64,
+	threadKey string,
+	thread *Thread,
+	opts ImportOptions,
+	summary *ImportSummary,
+) error {
+	conversationID, err := st.EnsureConversationWithTypeContext(ctx, sourceID, threadKey, thread.ConvType, thread.Title)
+	if err != nil {
+		return fmt.Errorf("ensure empty Messenger conversation: %w", err)
+	}
+	addresses := make([]mime.Address, 0, len(thread.Participants)+1)
+	addresses = append(addresses, mime.Address{Email: opts.Me, Domain: Domain})
+	for _, participant := range thread.Participants {
+		addresses = append(addresses, Address(participant.Name))
+	}
+	participantIDs, err := st.EnsureParticipantsBatch(addresses)
+	if err != nil {
+		return fmt.Errorf("ensure empty Messenger participants: %w", err)
+	}
+	summary.ParticipantsResolved += len(participantIDs)
+	ownerID := participantIDs[opts.Me]
+	if ownerID == 0 {
+		return errors.New("ensure empty Messenger thread owner: participant was not returned")
+	}
+	if err := st.EnsureConversationParticipantContext(ctx, conversationID, ownerID, "member"); err != nil {
+		return fmt.Errorf("link empty Messenger thread owner: %w", err)
+	}
+	seen := map[int64]bool{ownerID: true}
+	for _, participant := range thread.Participants {
+		participantID := participantIDs[Address(participant.Name).Email]
+		if participantID == 0 || seen[participantID] {
+			continue
+		}
+		if err := st.EnsureConversationParticipantContext(ctx, conversationID, participantID, "member"); err != nil {
+			return fmt.Errorf("link empty Messenger thread participant: %w", err)
+		}
+		seen[participantID] = true
 	}
 	return nil
 }
@@ -828,6 +872,31 @@ func buildSnippet(body string) string {
 		s = string([]rune(s)[:200])
 	}
 	return s
+}
+
+// prepareMessengerAttachment performs only native file preparation. The ready
+// occurrence and any stronger stored reference are resolved in the canonical
+// transaction, before the import occurrence can become visible.
+func prepareMessengerAttachment(att Attachment, index int, dir string) store.AttachmentWrite {
+	role, roleSource := store.AttachmentRoleStandalone, store.AttachmentRoleSourceImporterSemantics
+	if att.Kind == "sticker" {
+		role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
+	}
+	write := store.AttachmentWrite{Filename: att.Filename, MIMEType: att.MimeType, SourceAttachmentID: att.URI, MediaType: att.Kind, Role: role, RoleSource: roleSource, SourcePartKey: fbAttachmentHash(att, index), State: attachmentpolicy.StateFailed, SkipReason: attachmentpolicy.SkipFetchFailure}
+	if dir == "" {
+		write.State = attachmentpolicy.StateSkipped
+		write.SkipReason = attachmentpolicy.SkipPolicyScope
+		return write
+	}
+	path, hash, size := handleAttachment(att, dir)
+	if path != "" && hash != "" {
+		write.StoragePath = path
+		write.ContentHash = hash
+		write.Size = int64(size)
+		write.State = attachmentpolicy.StateStored
+		write.SkipReason = ""
+	}
+	return write
 }
 
 // handleAttachment copies an attachment file into content-addressed

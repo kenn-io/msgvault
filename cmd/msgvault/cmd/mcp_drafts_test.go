@@ -395,7 +395,11 @@ func TestMCPDraftCapabilityGate(t *testing.T) {
 					}
 				}
 				assert.Len(drafts, want)
-				require.Equal(int64(2), healthCalls.Load(), "startup compatibility and capability probes")
+				wantHealthCalls := int64(3)
+				if delegated {
+					wantHealthCalls = 2
+				}
+				require.Equal(wantHealthCalls, healthCalls.Load(), "health probes during MCP startup")
 			})
 		}
 	}

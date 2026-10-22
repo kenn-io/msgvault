@@ -49,8 +49,8 @@ func holdsRelationLock(t *testing.T, st *store.Store, pid int, relation string) 
 	var held bool
 	require.NoError(t, st.DB().QueryRowContext(context.Background(), `
 		SELECT EXISTS (
-			SELECT 1 FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE l.pid = $1 AND c.relname = $2 AND l.granted)`, pid, relation).Scan(&held))
+			SELECT 1 FROM pg_locks l
+			WHERE l.pid = $1 AND l.relation = to_regclass($2) AND l.granted)`, pid, relation).Scan(&held))
 	return held
 }
 
@@ -233,8 +233,8 @@ func TestAccountAttributionPersistVsIMAPLabelRepairPG(t *testing.T) {
 	var repairPID int
 	require.Eventually(func() bool {
 		return st.DB().QueryRowContext(context.Background(), `
-			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
-			WHERE c.relname = 'sources' AND l.mode = 'RowExclusiveLock' AND l.granted
+			SELECT COALESCE(MIN(l.pid), 0) FROM pg_locks l
+			WHERE l.relation = 'sources'::regclass AND l.mode = 'RowExclusiveLock' AND l.granted
 			  AND l.pid <> pg_backend_pid()`).Scan(&repairPID) == nil && repairPID > 0
 	}, pgWaitBudget, 10*time.Millisecond)
 

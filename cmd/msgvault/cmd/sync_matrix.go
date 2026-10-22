@@ -88,13 +88,17 @@ func runMatrixSync(ctx context.Context, s *store.Store, cfg *config.Config, acco
 				skippedRetired = true
 				return nil
 			}
+			permission, pinErr := pinNativeMessagePermission(ctx, current.Identifier, current, s)
+			if pinErr != nil {
+				return pinErr
+			}
 			creds, loadErr := matrixsource.LoadCredentials(cfg.TokensDir(), current.Identifier)
 			if loadErr != nil {
-				return loadErr
+				return pauseNativeMessagePermission(ctx, s, permission, loadErr)
 			}
 			runtime, openErr := matrixsource.Open(creds)
 			if openErr != nil {
-				return openErr
+				return pauseNativeMessagePermission(ctx, s, permission, openErr)
 			}
 			imp := matrixsource.NewImporter(s, runtime)
 			var importErr error

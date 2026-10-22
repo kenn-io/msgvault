@@ -6,5 +6,6 @@ import type { Source } from "./source";
 
 export interface MeetingImportRequest {
   meeting: Meeting;
+  notify_imports?: boolean;
   source: Source;
 }

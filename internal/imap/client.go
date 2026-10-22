@@ -19,6 +19,7 @@ import (
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	gmailapi "go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // Option is a functional option for Client.
@@ -103,10 +104,12 @@ const Trash = "Trash"
 
 // Client implements gmail.API for IMAP servers.
 type Client struct {
-	config      *Config
-	password    string
-	tokenSource func(ctx context.Context) (string, error) // XOAUTH2 token callback
-	logger      *slog.Logger
+	nativeMailboxIndex          *nativeMailboxMembershipIndex
+	nativeSelectedMailboxEpochs map[string]uint32
+	config                      *Config
+	password                    string
+	tokenSource                 func(ctx context.Context) (string, error) // XOAUTH2 token callback
+	logger                      *slog.Logger
 
 	mu                          sync.Mutex
 	conn                        *imapclient.Client
@@ -600,6 +603,7 @@ func (c *Client) selectMailbox(mailbox string) error {
 	c.selectedMailbox = mailbox
 	c.selectedUIDValidity = data.UIDValidity
 	c.selectedNumMessages = data.NumMessages
+	c.recordNativeMailboxEpochLocked(mailbox, data.UIDValidity)
 	return nil
 }
 
@@ -1221,6 +1225,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	c.activeSourceAliases = nil
 	c.observedMailboxDeltas = nil
 	c.observedMemberships = nil
+	c.nativeMailboxIndex = nil
 
 	var allMailboxes, listMailboxes []string
 	var isGmailAllMail bool
@@ -1981,4 +1986,37 @@ func (c *Client) Close() error {
 		return fmt.Errorf("IMAP logout: %w", err)
 	}
 	return nil
+}
+
+// MessageIngestContext identifies new UIDs from a proven incremental mailbox
+// baseline. Full enumeration, epoch resets, and recovery never become live
+// merely because the generic Syncer calls this listing a full run.
+func (c *Client) MessageIngestContext(sourceMessageID string) store.IngestContext {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	observation := store.IngestContext{Mode: store.IngestBackfill, ObservedAt: time.Now().UTC()}
+	if c.forceFullEnumeration || !c.since.IsZero() || !c.before.IsZero() {
+		return observation
+	}
+	mailbox, uid, err := parseCompositeID(sourceMessageID)
+	if err != nil {
+		return observation
+	}
+	prior, ok := c.priorFolderStates[mailbox]
+	if !ok || prior.KnownUIDs == nil || uint32(uid) < prior.UIDNext {
+		return observation
+	}
+	if _, known := slices.BinarySearch(prior.KnownUIDs, uint32(uid)); known {
+		return observation
+	}
+	if epoch := c.nativeSelectedMailboxEpochs[mailbox]; epoch != 0 && epoch != prior.UIDValidity {
+		return observation
+	}
+	for _, delta := range c.observedMailboxDeltas {
+		if delta.Mailbox == mailbox && !delta.Reset && delta.State.UIDValidity == prior.UIDValidity && slices.Contains(delta.ChangedUIDs, uid) {
+			observation.Mode = store.IngestLive
+			return observation
+		}
+	}
+	return observation
 }

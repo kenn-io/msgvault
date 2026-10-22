@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/inboxcontrol"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -20,7 +21,9 @@ import (
 
 const (
 	schemaTypeArray    = "array"
+	schemaTypeObject   = "object"
 	schema202012       = "https://json-schema.org/draft/2020-12/schema"
+	toolArgSourceID    = "source_id"
 	maxJSONSafeInteger = float64(9007199254740991)
 )
 
@@ -59,6 +62,7 @@ type catalogCapabilities struct {
 	identityReview  bool
 	personCardDAV   bool
 	messageTags     bool
+	inboxTags       bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -82,7 +86,7 @@ func searchVisualAttachmentsDefinition() toolDefinition {
 				Type: schemaTypeArray, Description: "Optional union of from_person, to_person, and group; requires a person reference",
 				Items: direction,
 			},
-			"source_id":      safeIDSchema("Only attachments from this source ID"),
+			toolArgSourceID:  safeIDSchema("Only attachments from this source ID"),
 			toolArgMessageID: safeIDSchema("Only attachments owned by this message ID"),
 			"filename":       stringSchema("Case-insensitive filename substring filter"),
 			"mime_prefix":    stringSchema("Case-insensitive MIME prefix filter, such as image/"),
@@ -148,6 +152,7 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		identityReview:  opts.IdentityReview != nil,
 		personCardDAV:   opts.PersonCardDAV != nil,
 		messageTags:     opts.MessageTags != nil,
+		inboxTags:       opts.Inbox != nil && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags),
 	}
 }
 
@@ -204,6 +209,20 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 		for i := range definitions {
 			if definitions[i].name == ToolPromotePerson {
 				definitions[i] = namedPromotionDefinition()
+			}
+		}
+	}
+	if opts.Inbox != nil {
+		if opts.DelegatedOnly && slices.Contains(opts.InboxOperations, inboxcontrol.OpTags) {
+			definitions = append(definitions, messageTagDefinition(true))
+		}
+		seen := make(map[inboxcontrol.Operation]bool)
+		for _, op := range opts.InboxOperations {
+			if !seen[op] {
+				if definition, ok := stableInboxDefinitions[op]; ok {
+					definitions = append(definitions, definition)
+				}
+				seen[op] = true
 			}
 		}
 	}
@@ -294,7 +313,7 @@ func querySQLDefinition() toolDefinition {
 			"sql":   stringSchema("One read-only SQL statement"),
 			"fresh": booleanSchema("Request a background cache check including writes committed before this request"),
 		}, "sql"),
-		&jsonschema.Schema{Schema: schema202012, Type: "object", OneOf: []*jsonschema.Schema{result, accepted}},
+		&jsonschema.Schema{Schema: schema202012, Type: schemaTypeObject, OneOf: []*jsonschema.Schema{result, accepted}},
 		(*handlers).querySQL,
 	)
 	definition.availability = func(capabilities catalogCapabilities) bool { return capabilities.sqlQuery }
@@ -395,7 +414,7 @@ func toolAnnotations(readOnly bool) *sdkmcp.ToolAnnotations {
 func closedObject(properties map[string]*jsonschema.Schema, required ...string) *jsonschema.Schema {
 	return &jsonschema.Schema{
 		Schema:               schema202012,
-		Type:                 "object",
+		Type:                 schemaTypeObject,
 		Properties:           properties,
 		Required:             required,
 		AdditionalProperties: rejectAllSchema(),
@@ -481,7 +500,7 @@ func searchMessagesOutputSchema() *jsonschema.Schema {
 	semantic.Schema = ""
 	return &jsonschema.Schema{
 		Schema: schema202012,
-		Type:   "object",
+		Type:   schemaTypeObject,
 		OneOf:  []*jsonschema.Schema{metadata, semantic},
 	}
 }
@@ -660,9 +679,10 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
+			"id":            &jsonschema.Schema{AnyOf: []*jsonschema.Schema{safeIDSchema("Message ID"), {Type: "string", Pattern: "^[1-9][0-9]*$"}}, Description: "Archive message ID as a decimal string or integer"},
 			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
 			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			"event_id":      stringSchema("Retained Events occurrence authorizing this message read; unavailable receipts deny the read."),
 			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
 			"body_format":   bodyFormat,
 			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),

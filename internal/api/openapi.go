@@ -374,7 +374,10 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds owner-only MCP Events, native resource discovery, source/inbox
+// subscriptions, import notifications, and typed calendar message projections.
+// 3.25.0 adds exact Gmail Inbox control with signed previews and durable receipts.
+const APISchemaVersion = "3.25.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -400,6 +403,11 @@ func openAPIClientDocument() *huma.OpenAPI {
 func hardenOperationSchemas(doc *huma.OpenAPI) {
 	if doc == nil || doc.Components == nil || doc.Components.Schemas == nil {
 		return
+	}
+	if state := doc.Components.Schemas.Map()["InboxState"]; state != nil {
+		state.Required = slices.DeleteFunc(state.Required, func(name string) bool {
+			return name == "source" || name == "target"
+		})
 	}
 	for _, name := range []string{
 		"OperationErrorResponse",
@@ -450,6 +458,16 @@ func hardenCalendarControlSchemas(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
+	if state := schemas["InboxState"]; state != nil {
+		for _, name := range []string{"tags", "flags"} {
+			if property := state.Properties[name]; property != nil {
+				if property.Extensions == nil {
+					property.Extensions = map[string]any{}
+				}
+				property.Extensions["x-oapi-codegen-extra-tags"] = map[string]any{"json": name + ",omitzero"}
+			}
+		}
+	}
 	request := schemas["CalendarRequest"]
 	if request != nil {
 		// Availability can use calendar_ids without a positional calendar_id.
@@ -1009,6 +1027,39 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	const emailProperty = "email"
+	// Events arguments and schema documents contain arbitrary JSON values.
+	// Empty object schemas otherwise generate struct{} and discard that data.
+	for schemaName, properties := range map[string][]string{
+		"SubscribeRequest":   {"arguments"},
+		"UnsubscribeRequest": {"arguments"},
+		"Definition":         {"inputSchema", "payloadSchema"},
+	} {
+		if schema := schemas[schemaName]; schema != nil {
+			for _, name := range properties {
+				if property := schema.Properties[name]; property != nil {
+					setCodegenGoType(property, "map[string]any")
+				}
+			}
+		}
+	}
+	if envelope := schemas["Envelope"]; envelope != nil {
+		if data := envelope.Properties["data"]; data != nil {
+			setCodegenGoType(data, "jsontext.Value")
+			data.Extensions["x-go-type-import"] = map[string]any{pathKey: "encoding/json/jsontext"}
+		}
+	}
+	if calendar := schemas["CalendarProjection"]; calendar != nil {
+		for name, goType := range map[string]string{"all_day": "*bool", "sequence": "*int64"} {
+			if property := calendar.Properties[name]; property != nil {
+				setCodegenGoType(property, goType)
+			}
+		}
+		// Unknown provider fields are present as null, including zero-capable
+		// scalar fields. Keep every nullable field through parsing and encoding.
+		for _, name := range []string{statusFieldName, "sequence", "start", "end", "all_day", "time_zone", "ical_uid"} {
+			nullableSchemaProperty(calendar, name)
+		}
+	}
 	if input := schemas["GCalEventInput"]; input != nil {
 		for name, goType := range map[string]string{"attendees": "*[]GCalAttendee", "recurrence": "*[]string"} {
 			if field := input.Properties[name]; field != nil {
@@ -1229,12 +1280,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]
 		nullableSchemaProperty(schema, "occurred_at")
-		if schema == nil {
-			continue
-		}
-		// Unknown MIME is an empty string, not a missing property.
-		if mime := schema.Properties["mime_type"]; mime != nil {
-			mime.Nullable = true
+		if schema != nil {
+			if mime := schema.Properties["mime_type"]; mime != nil {
+				mime.Nullable = true
+				if mime.Extensions == nil {
+					mime.Extensions = map[string]any{}
+				}
+				mime.Extensions["x-omitempty"] = false
+			}
 		}
 	}
 	for _, name := range []string{"FileSuggestionHTTPRequest", "PersonFileSuggestionHTTPRequest", "FileSuggestionRow", "PersonFileSuggestionRow"} {

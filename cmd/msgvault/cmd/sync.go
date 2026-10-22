@@ -120,6 +120,9 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		for _, src := range activeSyncSources(allMatches) {
+			if !sourceSupportsCommand(src.SourceType, "sync") {
+				continue
+			}
 			switch src.SourceType {
 			case sourceTypeGmail:
 				gmailTargets = append(gmailTargets, syncTarget{source: src, email: src.Identifier})
@@ -149,6 +152,9 @@ func runSyncIncrementalLocal(cmd *cobra.Command, args []string) error {
 		}
 		allSources = activeSyncSources(allSources)
 		for _, src := range allSources {
+			if !sourceSupportsCommand(src.SourceType, "sync") {
+				continue
+			}
 			switch src.SourceType {
 			case sourceTypeGmail:
 				if !cfg.OAuth.HasAnyConfig() {
@@ -278,31 +284,49 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 	if !source.SyncCursor.Valid || source.SyncCursor.String == "" {
 		return errors.New("no history ID - run 'sync-full' first")
 	}
+	var observePermissionFailure func(context.Context, error) error
+	if source.SourceType == sourceTypeGmail {
+		var err error
+		observePermissionFailure, err = sync.PinNativeGmailPermissionObserver(ctx, s, source)
+		if err != nil {
+			return fmt.Errorf("pin native Gmail permission: %w", err)
+		}
+	}
+	observeAuthFailure := func(err error) error {
+		if observePermissionFailure == nil {
+			return err
+		}
+		return observePermissionFailure(ctx, err)
+	}
 
 	email := source.Identifier
 	appName := sourceOAuthApp(source)
 	var tokenSource oauth2.TokenSource
+	var readGrantedScopes func() []string
 	var tsErr error
 
 	if saKeyPath := cfg.OAuth.ServiceAccountKeyFor(appName); saKeyPath != "" {
+		granted := append([]string(nil), oauth.Scopes...)
+		readGrantedScopes = func() []string { return granted }
 		saMgr, saErr := oauth.NewServiceAccountManager(saKeyPath, oauth.Scopes)
 		if saErr != nil {
-			return fmt.Errorf("service account: %w", saErr)
+			return fmt.Errorf("service account: %w", observeAuthFailure(saErr))
 		}
 		tokenSource, tsErr = saMgr.TokenSource(ctx, email)
 		if tsErr != nil {
-			return tsErr
+			return observeAuthFailure(tsErr)
 		}
 	} else {
 		oauthMgr, oaErr := getOAuthMgr(ctx, appName)
 		if oaErr != nil {
-			return oaErr
+			return observeAuthFailure(oaErr)
 		}
+		readGrantedScopes = func() []string { return oauthMgr.GrantedScopes(ctx, email) }
 		interactive := isatty.IsTerminal(os.Stdin.Fd()) ||
 			isatty.IsCygwinTerminal(os.Stdin.Fd())
 		tokenSource, tsErr = getTokenSourceWithReauth(ctx, oauthMgr, email, interactive, gmailReauthHint)
 		if tsErr != nil {
-			return tsErr
+			return observeAuthFailure(tsErr)
 		}
 	}
 
@@ -311,6 +335,7 @@ func runIncrementalSync(ctx context.Context, s *store.Store, getOAuthMgr func(ct
 	client := gmail.NewClient(tokenSource,
 		gmail.WithLogger(logger),
 		gmail.WithRateLimiter(rateLimiter),
+		gmail.WithGrantedScopesReader(readGrantedScopes),
 	)
 	defer func() { _ = client.Close() }()
 

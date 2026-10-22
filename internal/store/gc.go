@@ -113,6 +113,13 @@ func (s *Store) ExecuteGCContext(
 
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.adoptImportIdentitiesTx(ctx, tx.Tx, "m.deleted_from_source_at IS NOT NULL AND NOT ("+strings.ReplaceAll(managedDraftRetainedMessageSQL, "messages.", "m.")+")"); err != nil {
+			return err
+		}
+
 		q := boundQuerier{ctx: ctx, q: tx}
 		actual, err := planGCWith(q)
 		if err != nil {

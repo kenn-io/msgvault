@@ -1581,6 +1581,28 @@ type GetImportJobErrorResponse = ErrorResponse
 
 type GetImportJobErrorResponseJSON = ErrorResponse
 
+type ControlInboxResponse = InboxResult
+
+type ControlInboxErrorResponse = InboxControlError
+
+type ControlInboxErrorResponseJSON = InboxControlError
+
+type ControlInboxErrorResponseJSON403 = InboxControlError
+
+type ControlInboxErrorResponseJSON409 = InboxControlError
+
+type ControlInboxErrorResponseJSON413 = InboxControlError
+
+type ControlInboxErrorResponseJSON415 = InboxControlError
+
+type ControlInboxErrorResponseJSON500 = InboxControlError
+
+type ControlInboxErrorResponseJSON501 = InboxControlError
+
+type ControlInboxErrorResponseJSON502 = InboxControlError
+
+type ControlInboxErrorResponseJSON503 = InboxControlError
+
 type GetDocbankAttachmentStatusResponse = DocbankAttachmentStatus
 
 type GetDocbankAttachmentStatusErrorResponse = APIHTTPError
@@ -1692,6 +1714,36 @@ type TestTaskIntegrationErrorResponse = ErrorResponse
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
 type GetMCPCapabilitiesErrorResponse = ErrorResponse
+
+type ListMCPCalendarSourcesResponse []CalendarSource
+
+type ListMCPCalendarSourcesErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventResponse = Envelope
+
+type GetMCPEventErrorResponse = MCPEventsErrorResponse
+
+type ListMCPEventsResponse = ListResult
+
+type ListMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventMessageResponse = CliMessageResponse
+
+type GetMCPEventMessageErrorResponse = MCPEventsErrorResponse
+
+type DiscoverMCPEventResourcesResponse = ResourcePage
+
+type DiscoverMCPEventResourcesErrorResponse = MCPEventsErrorResponse
+
+type GetMCPEventsStatusResponse []SubscriptionStatus
+
+type GetMCPEventsStatusErrorResponse = MCPEventsErrorResponse
+
+type SubscribeMCPEventsResponse = SubscribeResult
+
+type SubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
+
+type UnsubscribeMCPEventsErrorResponse = MCPEventsErrorResponse
 
 type SearchMediaResponse = MediaSearchResponse
 
@@ -1817,7 +1869,7 @@ type ListMessageRecordingsResponse = MessageRecordingsResponse
 
 type ListMessageRecordingsErrorResponse = ErrorResponse
 
-type GetMessageTagsResponse = MessageTagResult
+type GetMessageTagsResponse = MessageTagResponse
 
 type GetMessageTagsErrorResponse = MessageTagError
 
@@ -5015,6 +5067,23 @@ type GetImportJobResp struct {
 	JSON404      *GetImportJobErrorResponseJSON
 }
 
+type ControlInboxResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ControlInboxResponse
+	JSON400      *ControlInboxErrorResponse
+	JSON401      *ControlInboxErrorResponseJSON
+	JSON403      *ControlInboxErrorResponseJSON403
+	JSON409      *ControlInboxErrorResponseJSON409
+	JSON413      *ControlInboxErrorResponseJSON413
+	JSON415      *ControlInboxErrorResponseJSON415
+	JSON500      *ControlInboxErrorResponseJSON500
+	JSON501      *ControlInboxErrorResponseJSON501
+	JSON502      *ControlInboxErrorResponseJSON502
+	JSON503      *ControlInboxErrorResponseJSON503
+}
+
 type GetDocbankAttachmentStatusResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5136,6 +5205,61 @@ type GetMCPCapabilitiesResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetMCPCapabilitiesResponse
+}
+
+type ListMCPCalendarSourcesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPCalendarSourcesResponse
+}
+
+type GetMCPEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventResponse
+}
+
+type ListMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListMCPEventsResponse
+}
+
+type GetMCPEventMessageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventMessageResponse
+}
+
+type DiscoverMCPEventResourcesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *DiscoverMCPEventResourcesResponse
+}
+
+type GetMCPEventsStatusResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetMCPEventsStatusResponse
+}
+
+type SubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SubscribeMCPEventsResponse
+}
+
+type UnsubscribeMCPEventsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
 }
 
 type SearchMediaResp struct {

@@ -22,6 +22,7 @@ const defaultPageSize = 500
 // Client reads from a Google Voice Takeout export and imports messages
 // into the msgvault store.
 type Client struct {
+	notifyImports  bool
 	takeoutDir     string
 	owner          ownerPhones
 	identifier     string // GV phone number used as source identifier
@@ -43,6 +44,12 @@ type Client struct {
 
 // ClientOption configures a Client.
 type ClientOption func(*Client)
+
+// WithNotifyImports explicitly requests import notifications for this call.
+// The daemon must separately enable import notifications.
+func WithNotifyImports(notify bool) ClientOption {
+	return func(c *Client) { c.notifyImports = notify }
+}
 
 // WithAfterDate filters to messages on or after this date.
 func WithAfterDate(t time.Time) ClientOption {
@@ -130,11 +137,47 @@ func (c *Client) Close() error {
 
 // Import reads all matching messages from the Takeout export and
 // writes them into the msgvault store.
-func (c *Client) Import(
-	ctx context.Context,
-	s *store.Store,
-	sourceID int64,
-) (*ImportSummary, error) {
+func (c *Client) Import(ctx context.Context, s *store.Store, sourceID int64) (*ImportSummary, error) {
+	// Offline calls own a fresh run and never inherit another ingestion mode.
+	s = s.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
+	if err := s.ValidateNativeImportChoice(ctx, "google_voice", c.notifyImports); err != nil {
+		return nil, err
+	}
+	syncID, err := s.StartSync(sourceID, "google_voice_import")
+	if err != nil {
+		return nil, fmt.Errorf("start Google Voice import: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	run, err := scoped.BeginNativeImportAttempt(ctx, sourceID, "google_voice", c.notifyImports, syncID, 0)
+	if err != nil {
+		_ = s.FailSync(syncID, err.Error())
+		return nil, fmt.Errorf("begin Google Voice import: %w", err)
+	}
+	scoped, err = scoped.WithImportRun(ctx, run.ID)
+	if err != nil {
+		_ = s.FailSync(syncID, err.Error())
+		return &ImportSummary{ImportRunID: run.ID}, err
+	}
+	summary, err := c.importEntries(ctx, scoped, sourceID)
+	if summary == nil {
+		summary = &ImportSummary{}
+	}
+	summary.ImportRunID = run.ID
+	if err != nil {
+		_ = s.FailSync(syncID, err.Error())
+		return summary, err
+	}
+	if err = scoped.UpdateSyncCheckpoint(syncID, &store.Checkpoint{MessagesProcessed: int64(summary.MessagesImported), MessagesAdded: int64(summary.MessagesImported)}); err != nil {
+		_ = s.FailSync(syncID, err.Error())
+		return summary, fmt.Errorf("update Google Voice checkpoint: %w", err)
+	}
+	if err = s.CompleteSync(syncID, ""); err != nil {
+		return summary, fmt.Errorf("complete Google Voice import: %w", err)
+	}
+	return summary, nil
+}
+
+func (c *Client) importEntries(ctx context.Context, s *store.Store, sourceID int64) (*ImportSummary, error) {
 	if err := c.buildIndex(); err != nil {
 		return nil, fmt.Errorf("build index: %w", err)
 	}
@@ -157,15 +200,6 @@ func (c *Client) Import(
 	convCache := map[string]int64{}  // threadID → conversationID
 	imported := 0
 
-	// Resolve owner participant once for all messages
-	ownerID, err := c.resolveParticipant(
-		s, c.owner.GoogleVoice, "",
-		phoneCache, summary,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("resolve owner: %w", err)
-	}
-
 	for _, entry := range c.index {
 		if err := ctx.Err(); err != nil {
 			return summary, err
@@ -177,7 +211,7 @@ func (c *Client) Import(
 		switch entry.FileType {
 		case fileTypeText, fileTypeGroup:
 			n, err := c.importTextEntry(
-				s, sourceID, &entry, ownerID,
+				ctx, s, sourceID, &entry,
 				labelIDs, phoneCache, convCache, summary,
 			)
 			if err != nil {
@@ -193,7 +227,7 @@ func (c *Client) Import(
 
 		default:
 			if err := c.importCallEntry(
-				ctx, s, sourceID, &entry, ownerID,
+				ctx, s, sourceID, &entry,
 				labelIDs, phoneCache, convCache, summary,
 				maxMessageID,
 			); err != nil {
@@ -233,233 +267,170 @@ func (c *Client) ensureLabels(
 	return labels, nil
 }
 
+// voiceParticipantPlan prepares native phone identities without database writes.
+// Only a successful canonical transaction contributes IDs to the import caches.
+type voiceParticipantPlan struct {
+	participants []store.ParticipantPersistData
+	phones       []string
+	indices      map[string]int
+}
+
+func (p *voiceParticipantPlan) add(phone, name string) int {
+	normalized, err := textimport.NormalizePhone(phone)
+	if err != nil || normalized == "" {
+		return -1
+	}
+	if p.indices == nil {
+		p.indices = make(map[string]int)
+	}
+	if index, ok := p.indices[normalized]; ok {
+		return index
+	}
+	index := len(p.participants)
+	p.indices[normalized] = index
+	p.phones = append(p.phones, normalized)
+	p.participants = append(p.participants, store.ParticipantPersistData{PhoneNumber: normalized, IdentifierType: "google_voice", DisplayName: name})
+	return index
+}
+
+func voiceParticipantID(ids []int64, index int) int64 {
+	if index < 0 {
+		return 0
+	}
+	return ids[index]
+}
+
+func voiceRecipients(from int64, to []int64, replaceEmptyTo bool) []store.RecipientSet {
+	var result []store.RecipientSet
+	if from > 0 {
+		result = append(result, store.RecipientSet{Type: "from", ParticipantIDs: []int64{from}})
+	}
+	if len(to) > 0 || replaceEmptyTo {
+		result = append(result, store.RecipientSet{Type: "to", ParticipantIDs: to})
+	}
+	return result
+}
+
+func (p *voiceParticipantPlan) committed(ids []int64, thread string, phoneCache, convCache map[string]int64, summary *ImportSummary) {
+	for index, phone := range p.phones {
+		if _, ok := phoneCache[phone]; !ok {
+			phoneCache[phone] = ids[index]
+			summary.ParticipantsResolved++
+		}
+	}
+	if _, ok := convCache[thread]; !ok {
+		convCache[thread] = 1
+		summary.ConversationsImported++
+	}
+	summary.MessagesImported++
+}
+
+func voiceLabelIDs(entry *indexEntry, labels map[string]int64, mms bool) []int64 {
+	var result []int64
+	for _, name := range entry.Labels {
+		if id, ok := labels[name]; ok {
+			result = append(result, id)
+		}
+	}
+	if mms {
+		if id, ok := labels["mms"]; ok {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
 func (c *Client) importTextEntry(
-	s *store.Store,
-	sourceID int64,
-	entry *indexEntry,
-	ownerID int64,
-	labelIDs map[string]int64,
-	phoneCache map[string]int64,
-	convCache map[string]int64,
-	summary *ImportSummary,
+	ctx context.Context, s *store.Store, sourceID int64, entry *indexEntry,
+	labelIDs map[string]int64, phoneCache, convCache map[string]int64, summary *ImportSummary,
 ) (int, error) {
-	messages, groupParticipants, err := c.getCachedMessages(
-		entry.FilePath,
-	)
+	raw, err := os.ReadFile(entry.FilePath)
+	if err != nil {
+		return 0, fmt.Errorf("read raw text HTML: %w", err)
+	}
+	messages, groupParticipants, err := c.getCachedMessages(entry.FilePath)
 	if err != nil {
 		return 0, err
 	}
-
 	if entry.MessageIndex >= len(messages) {
-		return 0, fmt.Errorf(
-			"message index %d out of range (file has %d messages)",
-			entry.MessageIndex, len(messages),
-		)
+		return 0, fmt.Errorf("message index %d out of range (file has %d messages)", entry.MessageIndex, len(messages))
 	}
-
 	msg := messages[entry.MessageIndex]
-
-	// Resolve conversation
-	convType := "direct_chat"
-	title := ""
-	if entry.FileType == fileTypeGroup {
-		convType = "group_chat"
-		title = "Group"
-	}
-
-	convID, err := c.ensureConv(
-		s, sourceID, entry.ThreadID, convType, title,
-		convCache, summary,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("ensure conversation: %w", err)
-	}
-
-	// Resolve sender
-	senderID, err := c.resolveParticipant(
-		s, msg.SenderPhone, msg.SenderName,
-		phoneCache, summary,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("resolve sender: %w", err)
-	}
-
-	// For direct chats, resolve the other party (the non-Me participant).
-	// For outbound messages msg.SenderPhone is the owner's number, so
-	// senderID == ownerID and cannot be used as the "to" recipient.
-	contactID := senderID
+	var plan voiceParticipantPlan
+	owner := plan.add(c.owner.GoogleVoice, "")
+	sender := plan.add(msg.SenderPhone, msg.SenderName)
+	contact := sender
 	if entry.FileType == fileTypeText && msg.IsMe {
-		contactID = c.resolveContactID(
-			s, messages, phoneCache, summary,
-		)
-	}
-
-	// Ensure conversation participant
-	if senderID > 0 {
-		_ = s.EnsureConversationParticipant(convID, senderID, "member")
-	}
-
-	// Ensure the resolved contact is a conversation participant.
-	if contactID > 0 && contactID != senderID {
-		_ = s.EnsureConversationParticipant(convID, contactID, "member")
-	}
-
-	// Ensure owner as conversation participant
-	if ownerID > 0 {
-		_ = s.EnsureConversationParticipant(convID, ownerID, "member")
-	}
-
-	// Ensure group participants
-	for _, phone := range groupParticipants {
-		pid, pErr := c.resolveParticipant(
-			s, phone, "", phoneCache, summary,
-		)
-		if pErr == nil && pid > 0 {
-			_ = s.EnsureConversationParticipant(
-				convID, pid, "member",
-			)
+		contact = -1
+		for _, other := range messages {
+			if !other.IsMe && other.SenderPhone != "" {
+				if index := plan.add(other.SenderPhone, other.SenderName); index >= 0 {
+					contact = index
+					break
+				}
+			}
 		}
 	}
-
-	// Build message
-	msgType := MessageTypeForFileType(entry.FileType)
-	isFromMe := msg.IsMe
-
-	senderIDNull := sql.NullInt64{}
-	if senderID > 0 {
-		senderIDNull = sql.NullInt64{Int64: senderID, Valid: true}
+	var group []int
+	for _, phone := range groupParticipants {
+		if index := plan.add(phone, ""); index >= 0 {
+			group = append(group, index)
+		}
 	}
-
-	sentAt := sql.NullTime{}
-	if !msg.Timestamp.IsZero() {
-		sentAt = sql.NullTime{Time: msg.Timestamp, Valid: true}
+	convType, title := "direct_chat", ""
+	if entry.FileType == fileTypeGroup {
+		convType, title = "group_chat", "Group"
 	}
-
-	hasAttachments := len(msg.Attachments) > 0
-
-	msgID, err := s.UpsertMessage(&store.Message{
-		SourceID:        sourceID,
-		SourceMessageID: entry.ID,
-		ConversationID:  convID,
-		Snippet:         nullStr(snippet(msg.Body)),
-		SentAt:          sentAt,
-		MessageType:     msgType,
-		SenderID:        senderIDNull,
-		IsFromMe:        isFromMe,
-		HasAttachments:  hasAttachments,
-		SizeEstimate:    int64(len(msg.Body)),
+	var committedIDs []int64
+	_, err = s.PersistMessageWithParticipantsContext(ctx, plan.participants, func(ids []int64) *store.MessagePersistData {
+		committedIDs = append([]int64(nil), ids...)
+		var members []store.ConversationParticipantRef
+		for _, id := range ids {
+			members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
+		}
+		ownerID, senderID, contactID := voiceParticipantID(ids, owner), voiceParticipantID(ids, sender), voiceParticipantID(ids, contact)
+		from := senderID
+		var to []int64
+		if msg.IsMe {
+			from = ownerID
+			if entry.FileType == fileTypeGroup && len(groupParticipants) > 0 {
+				for _, index := range group {
+					to = append(to, ids[index])
+				}
+			} else if contactID > 0 {
+				to = []int64{contactID}
+			}
+		} else if ownerID > 0 {
+			to = []int64{ownerID}
+		}
+		return &store.MessagePersistData{
+			Message:      &store.Message{SourceID: sourceID, SourceMessageID: entry.ID, MessageType: MessageTypeForFileType(entry.FileType), SenderID: sql.NullInt64{Int64: senderID, Valid: senderID > 0}, IsFromMe: msg.IsMe, Snippet: nullStr(snippet(msg.Body)), SentAt: sql.NullTime{Time: msg.Timestamp, Valid: !msg.Timestamp.IsZero()}, HasAttachments: len(msg.Attachments) > 0, SizeEstimate: int64(len(msg.Body))},
+			Conversation: &store.ConversationPersistData{SourceConversationID: entry.ThreadID, ConversationType: convType, Title: title, Participants: members, PreserveExistingParticipants: true},
+			BodyText:     sql.NullString{String: msg.Body, Valid: msg.Body != ""}, RawMIME: raw, RawFormat: "gvoice_html",
+			Recipients: voiceRecipients(from, to, true), PreserveLabels: true, AddLabelIDs: voiceLabelIDs(entry, labelIDs, len(msg.Attachments) > 0),
+		}
 	})
 	if err != nil {
-		return 0, fmt.Errorf("upsert message: %w", err)
+		return 0, fmt.Errorf("persist text snapshot: %w", err)
 	}
-
-	// Store body
-	if err := s.UpsertMessageBody(
-		msgID,
-		sql.NullString{String: msg.Body, Valid: msg.Body != ""},
-		sql.NullString{},
-	); err != nil {
-		return 0, fmt.Errorf("upsert message body: %w", err)
-	}
-
-	// Store raw HTML
-	rawData, rErr := os.ReadFile(entry.FilePath)
-	if rErr == nil {
-		_ = s.UpsertMessageRawWithFormat(
-			msgID, rawData, "gvoice_html",
-		)
-	}
-
-	// Write message_recipients
-	if err := c.writeTextRecipients(
-		s, msgID, msg, ownerID, senderID, contactID, entry.FileType,
-		groupParticipants, phoneCache, summary,
-	); err != nil {
-		return 0, fmt.Errorf("write message recipients: %w", err)
-	}
-
-	// Link labels
-	for _, labelName := range entry.Labels {
-		if lid, ok := labelIDs[labelName]; ok {
-			_ = s.LinkMessageLabel(msgID, lid)
-		}
-	}
-	// Add mms label if has attachments
-	if hasAttachments {
-		if lid, ok := labelIDs["mms"]; ok {
-			_ = s.LinkMessageLabel(msgID, lid)
-		}
-	}
-
-	summary.MessagesImported++
+	plan.committed(committedIDs, entry.ThreadID, phoneCache, convCache, summary)
 	return 1, nil
 }
 
 func (c *Client) importCallEntry(
-	ctx context.Context,
-	s *store.Store,
-	sourceID int64,
-	entry *indexEntry,
-	ownerID int64,
-	labelIDs map[string]int64,
-	phoneCache map[string]int64,
-	convCache map[string]int64,
-	summary *ImportSummary,
-	maxMessageID int64,
+	ctx context.Context, s *store.Store, sourceID int64, entry *indexEntry,
+	labelIDs map[string]int64, phoneCache, convCache map[string]int64, summary *ImportSummary, maxMessageID int64,
 ) error {
-	f, err := os.Open(entry.FilePath)
+	raw, err := os.ReadFile(entry.FilePath)
+	if err != nil {
+		return fmt.Errorf("read raw call HTML: %w", err)
+	}
+	record, err := parseCallHTML(strings.NewReader(string(raw)))
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-
-	record, err := parseCallHTML(f)
-	if err != nil {
-		return err
-	}
-
-	// Resolve conversation
-	convID, err := c.ensureConv(
-		s, sourceID, entry.ThreadID, "direct_chat", "",
-		convCache, summary,
-	)
-	if err != nil {
-		return fmt.Errorf("ensure conversation: %w", err)
-	}
-
-	// Resolve contact
-	contactID, err := c.resolveParticipant(
-		s, record.Phone, record.Name,
-		phoneCache, summary,
-	)
-	if err != nil {
-		return fmt.Errorf("resolve contact: %w", err)
-	}
-	if contactID > 0 {
-		_ = s.EnsureConversationParticipant(
-			convID, contactID, "member",
-		)
-	}
-
-	// Ensure owner as conversation participant
-	if ownerID > 0 {
-		_ = s.EnsureConversationParticipant(
-			convID, ownerID, "member",
-		)
-	}
-
-	// Determine sender
-	var senderID int64
-	isFromMe := false
-	switch record.CallType {
-	case fileTypePlaced:
-		senderID = ownerID
-		isFromMe = true
-	default:
-		senderID = contactID
-	}
-
-	// Build body
+	var plan voiceParticipantPlan
+	owner, contact := plan.add(c.owner.GoogleVoice, ""), plan.add(record.Phone, record.Name)
 	var body strings.Builder
 	switch record.CallType {
 	case fileTypeReceived:
@@ -470,131 +441,60 @@ func (c *Client) importCallEntry(
 		fmt.Fprintf(&body, "Missed call from %s", record.Name)
 	case fileTypeVoicemail:
 		fmt.Fprintf(&body, "Voicemail from %s", record.Name)
-	default:
-		// fileTypeText / fileTypeGroup are not call records; leave body empty.
+	case fileTypeText, fileTypeGroup:
 	}
 	if record.Duration != "" {
 		fmt.Fprintf(&body, " (%s)", formatDuration(record.Duration))
 	}
-
-	msgType := MessageTypeForFileType(entry.FileType)
-
-	senderIDNull := sql.NullInt64{}
-	if senderID > 0 {
-		senderIDNull = sql.NullInt64{
-			Int64: senderID, Valid: true,
-		}
-	}
-
-	sentAt := sql.NullTime{}
-	if !record.Timestamp.IsZero() {
-		sentAt = sql.NullTime{
-			Time: record.Timestamp, Valid: true,
-		}
-	}
-
 	bodyStr := body.String()
-	msgID, err := s.UpsertMessage(&store.Message{
-		SourceID:                sourceID,
-		SourceMessageID:         entry.ID,
-		ConversationID:          convID,
-		Snippet:                 nullStr(snippet(bodyStr)),
-		SentAt:                  sentAt,
-		MessageType:             msgType,
-		SenderID:                senderIDNull,
-		IsFromMe:                isFromMe,
-		SizeEstimate:            int64(len(bodyStr)),
-		PreserveAttachmentStats: true,
+	var readyAudio *store.KeyedAttachmentSnapshot
+	if c.notifyImports && entry.FileType == fileTypeVoicemail && c.attachmentsDir != "" {
+		write := c.prepareVoicemailAudio(entry, record)
+		// A failed reacquisition may reuse the stronger canonical stored occurrence.
+		if write.State == attachmentpolicy.StateFailed {
+			write.ContentHash = ""
+		}
+		readyAudio = &store.KeyedAttachmentSnapshot{Prefix: "gvoice:voicemail:", Writes: []store.AttachmentWrite{write}, PreserveStoredOnFailure: true, InvalidateCacheOnChange: true, PreserveUnmentioned: true}
+	}
+	var committedIDs []int64
+	msgID, err := s.PersistMessageWithParticipantsContext(ctx, plan.participants, func(ids []int64) *store.MessagePersistData {
+		committedIDs = append([]int64(nil), ids...)
+		var members []store.ConversationParticipantRef
+		for _, id := range ids {
+			members = append(members, store.ConversationParticipantRef{ParticipantID: id, Role: "member"})
+		}
+		from, to := voiceParticipantID(ids, contact), voiceParticipantID(ids, owner)
+		isMe := record.CallType == fileTypePlaced
+		if isMe {
+			from, to = to, from
+		}
+		var toIDs []int64
+		if to > 0 {
+			toIDs = []int64{to}
+		}
+		return &store.MessagePersistData{
+			Message:                 &store.Message{SourceID: sourceID, SourceMessageID: entry.ID, MessageType: MessageTypeForFileType(entry.FileType), SenderID: sql.NullInt64{Int64: from, Valid: from > 0}, IsFromMe: isMe, Snippet: nullStr(snippet(bodyStr)), SentAt: sql.NullTime{Time: record.Timestamp, Valid: !record.Timestamp.IsZero()}, SizeEstimate: int64(len(bodyStr)), PreserveAttachmentStats: true},
+			Conversation:            &store.ConversationPersistData{SourceConversationID: entry.ThreadID, ConversationType: "direct_chat", Participants: members, PreserveExistingParticipants: true},
+			KeyedAttachmentSnapshot: readyAudio,
+			BodyText:                sql.NullString{String: bodyStr, Valid: bodyStr != ""}, RawMIME: raw, RawFormat: "gvoice_html", Recipients: voiceRecipients(from, toIDs, false), PreserveLabels: true, AddLabelIDs: voiceLabelIDs(entry, labelIDs, false),
+		}
 	})
 	if err != nil {
-		return fmt.Errorf("upsert message: %w", err)
+		return fmt.Errorf("persist call snapshot: %w", err)
 	}
-
-	// Store body
-	if err := s.UpsertMessageBody(
-		msgID,
-		sql.NullString{String: bodyStr, Valid: bodyStr != ""},
-		sql.NullString{},
-	); err != nil {
-		return fmt.Errorf("upsert message body: %w", err)
-	}
-
-	// Store raw HTML
-	rawData, rErr := os.ReadFile(entry.FilePath)
-	if rErr == nil {
-		_ = s.UpsertMessageRawWithFormat(
-			msgID, rawData, "gvoice_html",
-		)
-	}
-
-	// Write message_recipients
-	if err := writeCallRecipients(
-		s, msgID, ownerID, contactID, record.CallType,
-	); err != nil {
-		return fmt.Errorf("write message recipients: %w", err)
-	}
-
-	// Link labels
-	for _, labelName := range entry.Labels {
-		if lid, ok := labelIDs[labelName]; ok {
-			_ = s.LinkMessageLabel(msgID, lid)
+	if !c.notifyImports {
+		if err := c.storeVoicemailAudio(ctx, s, msgID, entry, record, msgID <= maxMessageID); err != nil {
+			c.logger.Warn("failed to associate voicemail audio", "id", entry.ID, "error", err)
 		}
 	}
-
-	// New messages' attachments are included in the incremental cache export.
-	if err := c.storeVoicemailAudio(ctx, s, msgID, entry, record, msgID <= maxMessageID); err != nil {
-		c.logger.Warn(
-			"failed to associate voicemail audio",
-			"id", entry.ID,
-			"error", err,
-		)
-	}
-
-	summary.MessagesImported++
+	plan.committed(committedIDs, entry.ThreadID, phoneCache, convCache, summary)
 	return nil
 }
 
-// storeVoicemailAudio associates the recording named by one voicemail HTML
-// record with its message, or records a typed acquisition gap.
-func (c *Client) storeVoicemailAudio(
-	ctx context.Context,
-	s *store.Store,
-	msgID int64,
-	entry *indexEntry,
-	record *callRecord,
-	invalidateCache bool,
-) error {
-	if entry.FileType != fileTypeVoicemail {
-		return nil
-	}
-	if c.attachmentsDir == "" {
-		return nil
-	}
-
+// prepareVoicemailAudio publishes only content-addressed files, without SQL
+// or authority locks. Canonical references are committed separately.
+func (c *Client) prepareVoicemailAudio(entry *indexEntry, record *callRecord) store.AttachmentWrite {
 	name := record.AudioSrc
-	var previous store.AttachmentWrite
-	err := s.DB().QueryRowContext(ctx, s.Rebind(`
-		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''),
-		       COALESCE(content_hash, ''), COALESCE(size, 0),
-		       COALESCE(source_attachment_id, ''), COALESCE(media_type, ''),
-		       COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
-		       COALESCE(CAST(attachment_metadata AS TEXT), ''),
-		       COALESCE(attachment_role, ''), COALESCE(role_source, ''),
-		       COALESCE(source_part_key, ''), COALESCE(content_id, ''),
-		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
-		FROM attachments
-		WHERE message_id = ? AND source_part_key = ?
-	`), msgID, voicemailAudioPartKey).Scan(
-		&previous.Filename, &previous.MIMEType, &previous.StoragePath, &previous.ContentHash, &previous.Size,
-		&previous.SourceAttachmentID, &previous.MediaType, &previous.Width, &previous.Height, &previous.DurationMS,
-		&previous.Metadata, &previous.Role, &previous.RoleSource, &previous.SourcePartKey, &previous.ContentID,
-		&previous.State, &previous.SkipReason,
-	)
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("check existing voicemail audio: %w", err)
-	}
-	existing := err == nil
-
 	write := store.AttachmentWrite{
 		Filename:      name,
 		MediaType:     "audio",
@@ -624,6 +524,51 @@ func (c *Client) storeVoicemailAudio(
 		}
 	}
 
+	return write
+}
+
+// storeVoicemailAudio associates the recording named by one voicemail HTML
+// record with its message, or records a typed acquisition gap.
+func (c *Client) storeVoicemailAudio(
+	ctx context.Context,
+	s *store.Store,
+	msgID int64,
+	entry *indexEntry,
+	record *callRecord,
+	invalidateCache bool,
+) error {
+	if entry.FileType != fileTypeVoicemail {
+		return nil
+	}
+	if c.attachmentsDir == "" {
+		return nil
+	}
+
+	var previous store.AttachmentWrite
+	err := s.DB().QueryRowContext(ctx, s.Rebind(`
+		SELECT COALESCE(filename, ''), COALESCE(mime_type, ''), COALESCE(storage_path, ''),
+		       COALESCE(content_hash, ''), COALESCE(size, 0),
+		       COALESCE(source_attachment_id, ''), COALESCE(media_type, ''),
+		       COALESCE(width, 0), COALESCE(height, 0), COALESCE(duration_ms, 0),
+		       COALESCE(CAST(attachment_metadata AS TEXT), ''),
+		       COALESCE(attachment_role, ''), COALESCE(role_source, ''),
+		       COALESCE(source_part_key, ''), COALESCE(content_id, ''),
+		       COALESCE(attachment_state, ''), COALESCE(attachment_skip_reason, '')
+		FROM attachments
+		WHERE message_id = ? AND source_part_key = ?
+	`), msgID, voicemailAudioPartKey).Scan(
+		&previous.Filename, &previous.MIMEType, &previous.StoragePath, &previous.ContentHash, &previous.Size,
+		&previous.SourceAttachmentID, &previous.MediaType, &previous.Width, &previous.Height, &previous.DurationMS,
+		&previous.Metadata, &previous.Role, &previous.RoleSource, &previous.SourcePartKey, &previous.ContentID,
+		&previous.State, &previous.SkipReason,
+	)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("check existing voicemail audio: %w", err)
+	}
+	existing := err == nil
+
+	write := c.prepareVoicemailAudio(entry, record)
+
 	if write.State == attachmentpolicy.StateFailed && existing &&
 		previous.State == attachmentpolicy.StateStored &&
 		previous.StoragePath != "" && previous.ContentHash != "" {
@@ -637,198 +582,6 @@ func (c *Client) storeVoicemailAudio(
 		return fmt.Errorf("write voicemail audio record: %w", err)
 	}
 	return nil
-}
-
-// writeTextRecipients writes from/to rows for a text message.
-// IsMe=true: from=owner, to=contact(s). IsMe=false: from=sender, to=owner.
-// contactID is the other party in a direct chat (may differ from senderID
-// for outbound messages where senderID == ownerID).
-func (c *Client) writeTextRecipients(
-	s *store.Store,
-	msgID int64,
-	msg textMessage,
-	ownerID, senderID, contactID int64,
-	ft fileType,
-	groupParticipants []string,
-	phoneCache map[string]int64,
-	summary *ImportSummary,
-) error {
-	if msg.IsMe {
-		// From: owner
-		if ownerID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{ownerID}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// To: group participants or the contact (not the sender, who is
-		// the owner for outbound messages).
-		// Always call Replace even with an empty slice to clear stale rows.
-		toIDs := c.collectRecipientIDs(
-			s, ft, contactID, groupParticipants,
-			phoneCache, summary,
-		)
-		if err := s.ReplaceMessageRecipients(
-			msgID, "to", toIDs, nil,
-		); err != nil {
-			return err
-		}
-	} else {
-		// From: external sender
-		if senderID > 0 {
-			if err := s.ReplaceMessageRecipients(
-				msgID, "from", []int64{senderID}, nil,
-			); err != nil {
-				return err
-			}
-		}
-		// To: owner. Always call Replace to clear stale rows on re-import.
-		var toIDs []int64
-		if ownerID > 0 {
-			toIDs = []int64{ownerID}
-		}
-		if err := s.ReplaceMessageRecipients(
-			msgID, "to", toIDs, nil,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// collectRecipientIDs returns the "to" participant IDs for an
-// outgoing text message. For group chats, all group participants
-// (excluding the owner). For direct chats, the contact sender ID.
-func (c *Client) collectRecipientIDs(
-	s *store.Store,
-	ft fileType,
-	contactID int64,
-	groupParticipants []string,
-	phoneCache map[string]int64,
-	summary *ImportSummary,
-) []int64 {
-	if ft == fileTypeGroup && len(groupParticipants) > 0 {
-		var ids []int64
-		for _, phone := range groupParticipants {
-			pid, err := c.resolveParticipant(
-				s, phone, "", phoneCache, summary,
-			)
-			if err == nil && pid > 0 {
-				ids = append(ids, pid)
-			}
-		}
-		return ids
-	}
-	if contactID > 0 {
-		return []int64{contactID}
-	}
-	return nil
-}
-
-// resolveContactID finds the non-Me participant in a direct chat's message
-// list and returns their participant ID. Returns 0 if no non-Me sender is
-// found (e.g., a file containing only outbound messages with no replies).
-func (c *Client) resolveContactID(
-	s *store.Store,
-	messages []textMessage,
-	phoneCache map[string]int64,
-	summary *ImportSummary,
-) int64 {
-	for _, m := range messages {
-		if !m.IsMe && m.SenderPhone != "" {
-			pid, err := c.resolveParticipant(
-				s, m.SenderPhone, m.SenderName,
-				phoneCache, summary,
-			)
-			if err == nil && pid > 0 {
-				return pid
-			}
-		}
-	}
-	return 0
-}
-
-// writeCallRecipients writes from/to rows for a call record.
-// Placed calls: from=owner, to=contact.
-// Received/missed/voicemail: from=contact, to=owner.
-func writeCallRecipients(
-	s *store.Store,
-	msgID, ownerID, contactID int64,
-	callType fileType,
-) error {
-	var fromID, toID int64
-	switch callType {
-	case fileTypePlaced:
-		fromID = ownerID
-		toID = contactID
-	default:
-		fromID = contactID
-		toID = ownerID
-	}
-	if fromID > 0 {
-		if err := s.ReplaceMessageRecipients(
-			msgID, "from", []int64{fromID}, nil,
-		); err != nil {
-			return err
-		}
-	}
-	if toID > 0 {
-		if err := s.ReplaceMessageRecipients(
-			msgID, "to", []int64{toID}, nil,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Client) ensureConv(
-	s *store.Store,
-	sourceID int64,
-	threadID, convType, title string,
-	cache map[string]int64,
-	summary *ImportSummary,
-) (int64, error) {
-	if id, ok := cache[threadID]; ok {
-		return id, nil
-	}
-	id, err := s.EnsureConversationWithType(
-		sourceID, threadID, convType, title,
-	)
-	if err != nil {
-		return 0, err
-	}
-	cache[threadID] = id
-	summary.ConversationsImported++
-	return id, nil
-}
-
-func (c *Client) resolveParticipant(
-	s *store.Store,
-	phone, displayName string,
-	cache map[string]int64,
-	summary *ImportSummary,
-) (int64, error) {
-	if phone == "" {
-		return 0, nil
-	}
-	normalized, err := textimport.NormalizePhone(phone)
-	if err != nil {
-		return 0, nil //nolint:nilerr // non-normalizable phones are skipped silently
-	}
-	if id, ok := cache[normalized]; ok {
-		return id, nil
-	}
-	id, err := s.EnsureParticipantByPhone(
-		normalized, displayName, "google_voice",
-	)
-	if err != nil {
-		return 0, err
-	}
-	cache[normalized] = id
-	summary.ParticipantsResolved++
-	return id, nil
 }
 
 // buildIndex walks the Calls directory, parses each HTML file, and

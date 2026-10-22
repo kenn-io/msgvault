@@ -15,12 +15,13 @@ const (
 	syncItemPhaseIngest = "ingest"
 	syncItemPhaseDelete = "delete"
 
-	syncItemKindBatchFetchError = "batch_fetch_error"
-	syncItemKindFetchError      = "fetch_error"
-	syncItemKindGmailNotFound   = "gmail_not_found"
-	syncItemKindMessageGone     = "message_gone"
-	syncItemKindIngestError     = "ingest_error"
-	syncItemKindDeleteError     = "delete_error"
+	syncItemKindMetadataRefreshError = "metadata_refresh_error"
+	syncItemKindBatchFetchError      = "batch_fetch_error"
+	syncItemKindFetchError           = "fetch_error"
+	syncItemKindGmailNotFound        = "gmail_not_found"
+	syncItemKindMessageGone          = "message_gone"
+	syncItemKindIngestError          = "ingest_error"
+	syncItemKindDeleteError          = "delete_error"
 )
 
 // isFetchReplayCandidate reports whether a durable run item names a raw fetch
@@ -44,12 +45,19 @@ type rawBatchWithIdentityValidation interface {
 
 func (s *Syncer) getMessagesRawBatchWithDiagnostics(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error) {
 	if client, ok := s.client.(rawBatchWithErrors); ok {
-		return client.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+		results, err := client.GetMessagesRawBatchWithErrors(ctx, messageIDs)
+		if err != nil {
+			return nil, s.nativeMailPermissionFailure(ctx, err)
+		}
+		for i := range results {
+			results[i].Err = s.nativeMailPermissionFailure(ctx, results[i].Err)
+		}
+		return results, nil
 	}
 
 	rawMessages, err := s.client.GetMessagesRawBatch(ctx, messageIDs)
 	if err != nil {
-		return nil, err
+		return nil, s.nativeMailPermissionFailure(ctx, err)
 	}
 
 	results := make([]gmail.RawMessageBatchResult, len(messageIDs))
@@ -97,9 +105,10 @@ func (s *Syncer) getMessagesRawBatchWithIdentityValidation(
 	results := make([]gmail.RawMessageBatchResult, len(messageIDs))
 	required, err := client.GetMessagesRawBatchWithIdentityValidation(ctx, requiredIDs)
 	if err != nil {
-		return nil, err
+		return nil, s.nativeMailPermissionFailure(ctx, err)
 	}
 	for i, result := range required {
+		result.Err = s.nativeMailPermissionFailure(ctx, result.Err)
 		results[requiredIdx[i]] = result
 	}
 	if len(ordinaryIDs) == 0 {

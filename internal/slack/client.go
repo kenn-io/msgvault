@@ -59,6 +59,15 @@ var ErrAssetTooLarge = errors.New("file exceeds size cap")
 // re-run-add-slack guidance instead of retrying.
 var ErrAuth = errors.New("slack auth error")
 
+// ErrCredentialRevoked reports account-wide token failures that invalidate
+// every native Slack read already authorized by this credential.
+var ErrCredentialRevoked = errors.New("slack credential revoked")
+
+// ErrScopeDenied reports a method-level denial that may apply only to one
+// channel or thread. Callers retire that native scope without revoking the
+// account-wide permission.
+var ErrScopeDenied = errors.New("slack scope denied")
+
 // ErrInvalidCursor reports an opaque Slack pagination cursor that can no
 // longer be used. Callers with a persisted cursor may restart its pinned
 // window from the first page.
@@ -75,18 +84,21 @@ var notFoundAPIErrors = map[string]bool{
 	"file_deleted":      true,
 }
 
-// authAPIErrors are Slack method errors that mean the token (not the
-// request) is the problem.
-var authAPIErrors = map[string]bool{
+// credentialAPIErrors mean the account credential cannot authenticate.
+var credentialAPIErrors = map[string]bool{
 	"invalid_auth":       true,
 	"not_authed":         true,
 	"account_inactive":   true,
 	"token_revoked":      true,
 	"token_expired":      true,
-	"missing_scope":      true,
-	"no_permission":      true,
-	"ekm_access_denied":  true,
 	"org_login_required": true,
+}
+
+// scopeAPIErrors may be limited to the channel or thread requested.
+var scopeAPIErrors = map[string]bool{
+	"missing_scope":     true,
+	"no_permission":     true,
+	"ekm_access_denied": true,
 }
 
 // Client is a read-only Slack Web API client: it exposes only read methods
@@ -96,7 +108,8 @@ type Client struct {
 	token   string
 	http    *http.Client
 	// scopes is refreshed from Slack's X-OAuth-Scopes response header.
-	scopes []string
+	scopes      []string
+	scopesKnown bool
 	// limiters holds one token bucket per rate tier (see methodTiers).
 	limiters map[int]*rate.Limiter
 	// mediaTransport overrides the file-download transport (tests only; the
@@ -141,6 +154,8 @@ func (c *Client) disableRateLimits() {
 // out (which must embed apiResponse via an ok/error check by the caller).
 // 429 and 5xx are retried with Retry-After / exponential back-off.
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {
+	c.scopesKnown = false
+	c.scopes = nil
 	// Strict method allowlist: reqURL is base + method, and the G704
 	// suppressions below rest on method being one of these package
 	// constants. Refusing unknown methods enforces that at runtime instead
@@ -197,12 +212,15 @@ func (c *Client) call(ctx context.Context, method string, params url.Values, out
 		if err := json.Unmarshal(data, &envelope); err != nil {
 			return fmt.Errorf("slack %s: decode envelope: %w", method, err)
 		}
+		if _, present := resp.Header[http.CanonicalHeaderKey("X-Oauth-Scopes")]; present {
+			c.scopesKnown = true
+			c.scopes = strings.FieldsFunc(resp.Header.Get("X-Oauth-Scopes"), func(r rune) bool {
+				return r == ',' || r == ' '
+			})
+		}
 		if !envelope.OK {
 			return apiError(method, &envelope)
 		}
-		c.scopes = strings.FieldsFunc(resp.Header.Get("X-Oauth-Scopes"), func(r rune) bool {
-			return r == ',' || r == ' '
-		})
 		if out != nil {
 			if err := json.Unmarshal(data, out); err != nil {
 				return fmt.Errorf("slack %s: decode response: %w", method, err)
@@ -220,13 +238,15 @@ func apiError(method string, envelope *apiResponse) error {
 		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrNotFound)
 	case envelope.Error == "invalid_cursor":
 		return fmt.Errorf("slack %s: %s: %w", method, envelope.Error, ErrInvalidCursor)
-	case authAPIErrors[envelope.Error]:
+	case credentialAPIErrors[envelope.Error]:
+		return fmt.Errorf("slack %s: %s: re-run 'msgvault add-slack' with an updated token: %w", method, envelope.Error, ErrCredentialRevoked)
+	case scopeAPIErrors[envelope.Error]:
 		detail := ""
 		if envelope.Error == "missing_scope" {
 			detail = fmt.Sprintf(" (needs scope %q, token has %q)", envelope.Needed, envelope.Provided)
 		}
 		return fmt.Errorf("slack %s: %s%s: re-run 'msgvault add-slack' with an updated token: %w",
-			method, envelope.Error, detail, ErrAuth)
+			method, envelope.Error, detail, errors.Join(ErrAuth, ErrScopeDenied))
 	default:
 		return fmt.Errorf("slack %s: %s", method, envelope.Error)
 	}

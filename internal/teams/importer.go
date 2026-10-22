@@ -32,9 +32,12 @@ type recipientRef struct {
 
 // Importer ingests Microsoft Teams messages into the msgvault store.
 type Importer struct {
-	store  *store.Store
-	client *Client
-	res    *participantResolver
+	store            *store.Store
+	client           *Client
+	res              *participantResolver
+	nativePermission *store.NativeSourcePermission
+	nativeSourceRef  string
+	nativeSelfMember *ChatMember
 }
 
 // NewImporter creates an Importer backed by the given store and Graph client.
@@ -88,6 +91,11 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 	imp = imp.scopedToSync(src.ID, syncID)
 	defer func() {
 		if err != nil {
+			if nativeTeamsDenied(err) && imp.nativePermission != nil {
+				denied := *imp.nativePermission
+				denied.Known, denied.MessageRead = true, false
+				err = errors.Join(err, imp.store.ObserveNativeSourcePermission(ctx, denied))
+			}
 			blob, _ := state.Marshal()
 			_ = imp.store.FailSyncWithCheckpoint(syncID, err.Error(), &store.Checkpoint{
 				PageToken:         blob,
@@ -97,6 +105,23 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (*ImportSum
 			})
 		}
 	}()
+
+	if err = imp.observeNativeTeamsPermission(ctx, src); err != nil {
+		return sum, err
+	}
+	if opts.Full {
+		state.ResetChatBaseline = true
+		blob, marshalErr := state.Marshal()
+		if marshalErr != nil {
+			err = marshalErr
+			return sum, err
+		}
+		// Persist the reset before any chat writes. A crash before the first
+		// completed chat must not revive the previous successful baseline.
+		if err = imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{PageToken: blob}); err != nil {
+			return sum, err
+		}
+	}
 
 	if err = imp.syncChats(ctx, src.ID, syncID, opts, state, sum); err != nil {
 		return sum, err
@@ -220,6 +245,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		sum.Errors++
 	}
 	chats = append(chats, selfChat...)
+	if observeErr := imp.observeNativeTeamsChats(ctx, sourceID, opts.Email, chats, err == nil); observeErr != nil {
+		return observeErr
+	}
 	total := len(chats)
 	for idx, ch := range chats {
 		if ctx.Err() != nil {
@@ -233,6 +261,9 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		// Member fetch failure is non-fatal; we proceed with empty toRecips
 		// rather than aborting the chat import.
 		members, merr := imp.chatMembers(ctx, ch.ID, selfMembers)
+		if nativeTeamsAuthenticationFailure(merr) {
+			return merr
+		}
 		// Only the roster's size and read outcome matter to media policy; the
 		// members are resolved below, where their display names are kept too.
 		roster := &memberRoster{memberCount: len(members), err: merr}
@@ -243,12 +274,19 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			for _, m := range members {
 				pid, rerr := imp.res.resolveMember(ctx, m)
 				if rerr != nil || pid == 0 {
+					chatComplete = false
+					sum.Errors++
 					continue
 				}
+				// Empty chats still archive their roster. Messages also carry
+				// this snapshot into their own publication transaction.
 				if cerr := imp.store.EnsureConversationParticipant(convID, pid, "member"); cerr != nil {
-					sum.Errors++
+					return fmt.Errorf("archive teams chat member: %w", cerr)
 				}
 				toRecips = append(toRecips, recipientRef{ID: pid, Name: m.DisplayName})
+			}
+			if !chatComplete {
+				toRecips = nil
 			}
 		} else {
 			chatComplete = false
@@ -260,12 +298,34 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			Type:             conversationType(ch.ChatType),
 			ParticipantCount: roster.policyCount(opts.MediaPolicy),
 		}
+		live := !opts.Full && state.ChatCovered(ch.ID)
 
 		since := state.ChatCursor(ch.ID)
+		read, err := imp.pinNativeTeamsChatRead(ctx, sourceID, opts.Email, ch.ID)
+		if err != nil {
+			return err
+		}
 		msgs, pageTruncated, err := imp.client.ListChatMessages(ctx, ch.ID, chatQuerySince(since), opts.Limit)
 		if err != nil {
+			if nativeTeamsAuthenticationFailure(err) {
+				return err
+			}
+			if errors.Is(err, msgraph.ErrForbidden) || errors.Is(err, msgraph.ErrNotFound) {
+				if retireErr := imp.retireNativeTeamsChat(ctx, read); retireErr != nil {
+					return retireErr
+				}
+			}
 			sum.Errors++
 			continue
+		}
+		for _, message := range msgs {
+			if message.ChatID != "" && message.ChatID != ch.ID {
+				return errors.New("native_chat_identity_mismatch")
+			}
+		}
+		nativeScopes, observeErr := imp.observeNativeTeamsChatRead(ctx, read)
+		if observeErr != nil {
+			return observeErr
 		}
 		var maxTime time.Time
 		if since != "" {
@@ -295,7 +355,10 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				break
 			}
 			gm := &msgs[i]
-			messageID, added, perr := imp.persistMessage(ctx, convID, sourceID, chatSourceMessageID(ch.ID, gm.ID), gm, chatOpts, sum, toRecips)
+			messageID, added, perr := imp.persistChatMessage(ctx, sourceID, gm, &chatPersistContext{
+				conversationID: convID, chat: ch, opts: chatOpts, toRecipients: toRecips, nativeScopes: nativeScopes,
+				live: live,
+			}, sum)
 			if perr != nil {
 				return perr
 			}
@@ -317,8 +380,11 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 			}
 		}
 		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
-		if chatComplete && !truncated && !maxTime.IsZero() {
-			state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
+		if chatComplete && !truncated {
+			state.CoveredChats[ch.ID] = true
+			if !maxTime.IsZero() {
+				state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
+			}
 		}
 		imp.enqueueEmbeddings(ctx, opts, sum, persistedIDs)
 		sum.ChatsProcessed++
@@ -352,6 +418,8 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 // same object ID a members read would have returned, preserving the participant
 // cache key that sender and mention resolution read. If the probe finds no
 // user, chatMembers leaves the roster unresolved so a later sync can retry it.
+// An account-verified native Events run can also identify the sole owner from
+// /me when the actual self-chat read succeeds with an empty message list.
 func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []ChatMember, error) {
 	msgs, _, err := imp.client.ListChatMessages(ctx, SelfChatID, "", 50)
 	if errors.Is(err, msgraph.ErrNotFound) {
@@ -361,6 +429,9 @@ func (imp *Importer) selfChat(ctx context.Context, email string) ([]Chat, []Chat
 		return nil, nil, err
 	}
 	if len(msgs) == 0 {
+		if imp.nativeSelfMember != nil {
+			return []Chat{{ID: SelfChatID, ChatType: "oneOnOne"}}, []ChatMember{*imp.nativeSelfMember}, nil
+		}
 		return nil, nil, nil
 	}
 	var members []ChatMember
@@ -397,6 +468,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 		}
 		channels, cerr := imp.client.ListChannels(ctx, team.ID)
 		if cerr != nil {
+			if nativeTeamsAuthenticationFailure(cerr) {
+				return cerr
+			}
 			sum.Errors++
 			continue
 		}
@@ -428,6 +502,9 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 			var roster *memberRoster
 			if channelHasOwnRoster(ch.MembershipType) {
 				roster = imp.resolveChannelRoster(ctx, team.ID, ch.ID)
+				if nativeTeamsAuthenticationFailure(roster.err) {
+					return roster.err
+				}
 				if roster.err != nil && opts.MediaPolicy.MaxParticipants > 0 {
 					sum.Errors++
 				}

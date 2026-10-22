@@ -20,6 +20,9 @@ var errSlackdumpMessageLimitReached = errors.New("slackdump message limit reache
 
 // SlackdumpImportOptions configures one offline Slackdump import.
 type SlackdumpImportOptions struct {
+	// NotifyImports requests notifications for this run; the archive must also opt in.
+	NotifyImports bool
+
 	// Me is the importing Slack user's ID or profile email.
 	Me string
 	// Limit caps messages processed per conversation (zero means unlimited).
@@ -43,6 +46,9 @@ type SlackdumpImportOptions struct {
 type SlackdumpImportSummary struct {
 	ImportSummary
 
+	// ImportRunID identifies this fresh native import without exposing its archive path.
+	ImportRunID string
+
 	AttachmentsMissing int
 }
 
@@ -58,6 +64,7 @@ func ImportSlackdump(
 	if st == nil {
 		return nil, errors.New("slackdump import requires a store")
 	}
+	st = st.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill})
 	if opts.Limit < 0 {
 		return nil, errors.New("slackdump import limit must be non-negative")
 	}
@@ -101,6 +108,9 @@ func ImportSlackdump(
 		return nil, err
 	}
 
+	if err := st.ValidateNativeImportChoice(ctx, sourceTypeSlackdump, opts.NotifyImports); err != nil {
+		return nil, err
+	}
 	source, err := st.GetOrCreateSource(sourceTypeSlackdump, me.TeamID+":"+me.ID)
 	if err != nil {
 		return nil, err
@@ -116,6 +126,18 @@ func ImportSlackdump(
 		return summary, err
 	}
 	scopedStore := st.ScopedToSync(source.ID, syncID)
+	ownershipCtx := context.WithoutCancel(ctx)
+	run, err := scopedStore.BeginNativeImportAttempt(ownershipCtx, source.ID, sourceTypeSlackdump, opts.NotifyImports, syncID, 0)
+	if err != nil {
+		_ = scopedStore.FailSync(syncID, err.Error())
+		return summary, fmt.Errorf("begin Slackdump import: %w", err)
+	}
+	summary.ImportRunID = run.ID
+	scopedStore, err = scopedStore.WithImportRun(ownershipCtx, run.ID)
+	if err != nil {
+		_ = st.FailSync(syncID, err.Error())
+		return summary, fmt.Errorf("bind Slackdump import: %w", err)
+	}
 	importer := &Importer{
 		store: scopedStore,
 		res:   newParticipantResolver(scopedStore, me.TeamID),
@@ -144,23 +166,23 @@ func ImportSlackdump(
 		}
 		conversation := &conversations[index]
 		var conversationID int64
-		conversationID, err = scopedStore.EnsureConversationWithType(
-			source.ID,
-			conversation.ID,
-			conversationType(conversation),
-			conversationTitle(conversation, importer.res.displayName),
-		)
-		if err != nil {
-			return summary, err
-		}
-
 		var toRecipients []messageRecipient
 		var participantCount int
-		toRecipients, participantCount, err = ensureSlackdumpMembership(ctx,
-			scopedStore, importer.res, conversationID, conversation, me.ID, opts.MediaPolicy,
-		)
-		if err != nil {
-			return summary, err
+		if opts.NotifyImports {
+			conversationID, err = scopedStore.ConversationIDContext(ctx, source.ID, conversation.ID)
+			if err != nil {
+				return summary, err
+			}
+			participantCount = slackdumpNativeMembershipCount(conversation, me.ID, opts.MediaPolicy)
+		} else {
+			conversationID, err = scopedStore.EnsureConversationWithType(source.ID, conversation.ID, conversationType(conversation), conversationTitle(conversation, importer.res.displayName))
+			if err != nil {
+				return summary, err
+			}
+			toRecipients, participantCount, err = ensureSlackdumpMembership(ctx, scopedStore, importer.res, conversationID, conversation, me.ID, opts.MediaPolicy)
+			if err != nil {
+				return summary, err
+			}
 		}
 
 		before := summary.MessagesProcessed
@@ -177,6 +199,29 @@ func ImportSlackdump(
 			Type:             conversationType(conversation),
 			ParticipantCount: participantCount,
 		}
+		snapshotSeen := false
+		// Silent imports still record durable provenance with their canonical
+		// snapshot. Their native attachment policy runs below after this commit.
+		cc.offlineSnapshot = func(ctx context.Context, _ int64, message *Message, mapped store.Message, text string, raw []byte) (int64, error) {
+			return importer.persistSlackdumpSnapshot(ctx, cc, conversation, message, mapped, text, raw, nil)
+		}
+		if opts.NotifyImports {
+			cc.offlineSnapshot = func(ctx context.Context, existingID int64, message *Message, mapped store.Message, text string, raw []byte) (int64, error) {
+				snapshotSeen = true
+				delta := SlackdumpImportSummary{}
+				refs, err := prepareSlackdumpAttachments(scopedStore, export, *conversation, existingID, message, cc.opts.MediaConversation, opts, &delta)
+				if err != nil {
+					return 0, err
+				}
+				messageID, err := importer.persistSlackdumpSnapshot(ctx, cc, conversation, message, mapped, text, raw, &refs)
+				if err == nil {
+					summary.AttachmentsDownloaded += delta.AttachmentsDownloaded
+					summary.AttachmentsSkipped += delta.AttachmentsSkipped
+					summary.AttachmentsMissing += delta.AttachmentsMissing
+				}
+				return messageID, err
+			}
+		}
 		err = export.walkMessages(*conversation, func(message *Message) error {
 			if err = ctx.Err(); err != nil {
 				return err
@@ -184,7 +229,7 @@ func ImportSlackdump(
 			if err = importer.processMessage(ctx, cc, message, &summary.ImportSummary); err != nil {
 				return fmt.Errorf("import Slackdump conversation %s: %w", conversation.ID, err)
 			}
-			if message.Type == "message" && message.TS != "" {
+			if !opts.NotifyImports && message.Type == "message" && message.TS != "" {
 				var messageIDs map[string]int64
 				messageIDs, err = scopedStore.MessageExistsBatch(source.ID, []string{
 					sourceMessageID(conversation.ID, message.TS),
@@ -216,6 +261,16 @@ func ImportSlackdump(
 		})
 		if err != nil && !errors.Is(err, errSlackdumpMessageLimitReached) {
 			return summary, err
+		}
+		if opts.NotifyImports && !snapshotSeen {
+			// Empty, filtered and retained tombstone-only chats still refresh their native archive trace.
+			conversationID, err = scopedStore.EnsureConversationWithType(source.ID, conversation.ID, conversationType(conversation), conversationTitle(conversation, importer.res.displayName))
+			if err != nil {
+				return summary, err
+			}
+			if _, _, err = ensureSlackdumpMembership(ctx, scopedStore, importer.res, conversationID, conversation, me.ID, opts.MediaPolicy); err != nil {
+				return summary, err
+			}
 		}
 		summary.ConversationsProcessed++
 		if opts.Progress != nil {
@@ -345,6 +400,27 @@ func slackdumpCheckpoint(summary *SlackdumpImportSummary) *store.Checkpoint {
 }
 
 func persistSlackdumpAttachments(
+	st *store.Store, dump *slackdumpExport, conversation Conversation, messageID int64,
+	message *Message, mediaConversation attachmentpolicy.Conversation,
+	opts SlackdumpImportOptions, summary *SlackdumpImportSummary,
+) error {
+	refs, err := prepareSlackdumpAttachments(st, dump, conversation, messageID, message, mediaConversation, opts, summary)
+	if err != nil {
+		return err
+	}
+	if len(message.Files) == 0 && len(refs) == 0 {
+		return nil
+	}
+	if err := st.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
+		return fmt.Errorf("replace attachment rows: %w", err)
+	}
+	if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
+		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
+}
+
+func prepareSlackdumpAttachments(
 	st *store.Store,
 	dump *slackdumpExport,
 	conversation Conversation,
@@ -353,13 +429,13 @@ func persistSlackdumpAttachments(
 	mediaConversation attachmentpolicy.Conversation,
 	opts SlackdumpImportOptions,
 	summary *SlackdumpImportSummary,
-) error {
+) ([]store.AttachmentRef, error) {
 	existing, err := st.MessageSlackAttachments(messageID)
 	if err != nil {
-		return fmt.Errorf("read existing attachments: %w", err)
+		return nil, fmt.Errorf("read existing attachments: %w", err)
 	}
 	if len(message.Files) == 0 && len(existing) == 0 {
-		return nil
+		return nil, nil
 	}
 	maxBytes := opts.MediaPolicy.MaxBytes
 	if maxBytes <= 0 {
@@ -396,6 +472,15 @@ func persistSlackdumpAttachments(
 			summary.AttachmentsSkipped++
 			continue
 		}
+		if opts.NotifyImports && opts.AttachmentsDir == "" {
+			metadata = slackdumpMetadataAttachment(file, "slackdump:skipped:"+file.ID)
+			metadata.MediaType = ""
+			metadata.State = attachmentpolicy.StateSkipped
+			metadata.SkipReason = attachmentpolicy.SkipPolicyScope
+			refs = append(refs, metadata)
+			summary.AttachmentsSkipped++
+			continue
+		}
 		content, found, readErr := dump.attachmentWithLimit(conversation, *file, maxBytes)
 		if errors.Is(readErr, ErrAssetTooLarge) {
 			metadata = slackdumpMetadataAttachment(file, "slackdump:skipped:"+file.ID)
@@ -407,7 +492,7 @@ func persistSlackdumpAttachments(
 			continue
 		}
 		if readErr != nil {
-			return readErr
+			return nil, readErr
 		}
 		if !found {
 			refs = append(refs, metadata)
@@ -427,7 +512,7 @@ func persistSlackdumpAttachments(
 		}
 		storagePath, err := attachmentexport.StoreAttachmentFileIncludingEmpty(opts.AttachmentsDir, attachment)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if storagePath == "" {
 			refs = append(refs, metadata)
@@ -459,13 +544,29 @@ func persistSlackdumpAttachments(
 	for _, sourceAttachmentID := range omitted {
 		refs = append(refs, existing[sourceAttachmentID])
 	}
-	if err := st.ReplaceMessageSlackAttachments(messageID, refs); err != nil {
-		return fmt.Errorf("replace attachment rows: %w", err)
+	if opts.NotifyImports {
+		for index := range refs {
+			ref := &refs[index]
+			if ref.ContentHash != "" && ref.StoragePath != "" {
+				// Native legacy rows can predate attachment_state.
+				ref.State = attachmentpolicy.StateStored
+			}
+			if ref.State != attachmentpolicy.StateSkipped && (ref.State != attachmentpolicy.StateStored || ref.ContentHash == "" || ref.StoragePath == "") {
+				// Omitted native metadata is still part of the retained snapshot.
+				// Apply explicit retention exclusions without weakening stored refs.
+				reason := policy.Evaluate(mediaConversation, int64(ref.Size))
+				if reason == "" && opts.AttachmentsDir == "" {
+					reason = attachmentpolicy.SkipPolicyScope
+				}
+				if reason == "" {
+					return nil, fmt.Errorf("slackdump attachment %s: %w", ref.SourceAttachmentID, store.ErrReadyAttachmentSnapshot)
+				}
+				ref.State, ref.SkipReason, ref.MediaType = attachmentpolicy.StateSkipped, reason, ""
+				summary.AttachmentsSkipped++
+			}
+		}
 	}
-	if err := st.RecomputeMessageAttachmentStats(messageID); err != nil {
-		return fmt.Errorf("recompute attachment stats: %w", err)
-	}
-	return nil
+	return refs, nil
 }
 
 func slackdumpMetadataAttachment(file *File, fallbackPath string) store.AttachmentRef {

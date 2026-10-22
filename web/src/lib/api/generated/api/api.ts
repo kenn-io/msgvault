@@ -38,6 +38,7 @@ import type {
   CacheBuildAccepted,
   CacheBuildStatus,
   CacheStats,
+  CalendarSource,
   CancelDeletionPathParameters,
   CancelDeletionResponse,
   CancelSettingsPeopleCodexLoginPathParameters,
@@ -127,6 +128,7 @@ import type {
   EmploymentsResponse,
   EndEmploymentBody,
   EndEmploymentPathParameters,
+  Envelope,
   FastSearchParams,
   FileMetadataResponse,
   FilterMessagesParams,
@@ -167,6 +169,9 @@ import type {
   GetImportJobPathParameters,
   GetKataIssueContextParams,
   GetKataIssueContextPathParameters,
+  GetMCPEventMessageParams,
+  GetMCPEventMessagePathParameters,
+  GetMCPEventParams,
   GetMessageInlinePartParams,
   GetMessageInlinePartPathParameters,
   GetMessagePathParameters,
@@ -269,12 +274,14 @@ import type {
   ListPersonRelationshipReviewsParams,
   ListPersonRelationshipsParams,
   ListPersonRelationshipsPathParameters,
+  ListResult,
   ListSourceIdentitiesPathParameters,
   ListSourceStatusParams,
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
   MCPCapabilities,
+  MCPEventsListRequest,
   Manifest,
   MediaSearchResponse,
   MediaSearchStatusResponse,
@@ -288,6 +295,7 @@ import type {
   MessageListResponse,
   MessageRecordingsResponse,
   MessageTagChange,
+  MessageTagResponse,
   MessageTagResult,
   MuesliRemoteRequest,
   MuesliRemoteResult,
@@ -395,6 +403,8 @@ import type {
   RelationshipTypesResponse,
   RemoteImageRequest,
   ResolveCardDAVConflictPathParameters,
+  ResourcePage,
+  ResourceQuery,
   ReviewAcceptIdentityMatchCandidatePathParameters,
   ReviewRejectIdentityMatchCandidatePathParameters,
   RevokeAgentTokenPathParameters,
@@ -439,6 +449,9 @@ import type {
   Status,
   StatusMessageResponse,
   StructuredPersonProfile,
+  SubscribeRequest,
+  SubscribeResult,
+  SubscriptionStatus,
   SyncCLIParams,
   SyncFullCLIParams,
   SyncResult,
@@ -461,6 +474,7 @@ import type {
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
+  UnsubscribeRequest,
   UpdateCardDAVBookRolesPathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
@@ -2173,13 +2187,132 @@ export const testTaskIntegration = (
   );
 };
 /**
- * @summary Describe supported MCP daemon operations
+ * @summary Describe admitted MCP daemon operations
  */
 export const getMCPCapabilities = (
   options?: SecondParameter<typeof orvalFetch<MCPCapabilities>>,
 ) => {
   return orvalFetch<MCPCapabilities>(
     { url: `/api/v1/mcp/capabilities`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary List subscribable archive calendars
+ */
+export const listMCPCalendarSources = (
+  options?: SecondParameter<typeof orvalFetch<CalendarSource[]>>,
+) => {
+  return orvalFetch<CalendarSource[]>(
+    { url: `/api/v1/mcp/events/calendar-sources`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Recover a retained MCP occurrence
+ */
+export const getMCPEvent = (
+  params: GetMCPEventParams,
+  options?: SecondParameter<typeof orvalFetch<Envelope>>,
+) => {
+  return orvalFetch<Envelope>(
+    { url: `/api/v1/mcp/events/event`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List scoped MCP Events
+ */
+export const listMCPEvents = (
+  mCPEventsListRequest: MCPEventsListRequest,
+  options?: SecondParameter<typeof orvalFetch<ListResult>>,
+) => {
+  return orvalFetch<ListResult>(
+    {
+      url: `/api/v1/mcp/events/list`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: mCPEventsListRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read a message authorized by a retained MCP occurrence
+ */
+export const getMCPEventMessage = (
+  { id }: GetMCPEventMessagePathParameters,
+  params: GetMCPEventMessageParams,
+  options?: SecondParameter<typeof orvalFetch<CliMessageResponse>>,
+) => {
+  return orvalFetch<CliMessageResponse>(
+    {
+      url: `/api/v1/mcp/events/messages/${encodeURIComponent(String(id))}`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Discover native source and inbox subscription resources
+ */
+export const discoverMCPEventResources = (
+  resourceQuery: ResourceQuery,
+  options?: SecondParameter<typeof orvalFetch<ResourcePage>>,
+) => {
+  return orvalFetch<ResourcePage>(
+    {
+      url: `/api/v1/mcp/events/resources`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: resourceQuery,
+    },
+    options,
+  );
+};
+/**
+ * @summary Get owner MCP Events delivery status
+ */
+export const getMCPEventsStatus = (
+  options?: SecondParameter<typeof orvalFetch<SubscriptionStatus[]>>,
+) => {
+  return orvalFetch<SubscriptionStatus[]>(
+    { url: `/api/v1/mcp/events/status`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Verify and subscribe an owner callback
+ */
+export const subscribeMCPEvents = (
+  subscribeRequest: SubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<SubscribeResult>>,
+) => {
+  return orvalFetch<SubscribeResult>(
+    {
+      url: `/api/v1/mcp/events/subscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: subscribeRequest,
+    },
+    options,
+  );
+};
+/**
+ * @summary End an owner MCP Events subscription
+ */
+export const unsubscribeMCPEvents = (
+  unsubscribeRequest: UnsubscribeRequest,
+  options?: SecondParameter<typeof orvalFetch<void>>,
+) => {
+  return orvalFetch<void>(
+    {
+      url: `/api/v1/mcp/events/unsubscribe`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: unsubscribeRequest,
+    },
     options,
   );
 };
@@ -2308,9 +2441,9 @@ export const listMessageRecordings = (
 export const getMessageTags = (
   { id }: GetMessageTagsPathParameters,
   params?: GetMessageTagsParams,
-  options?: SecondParameter<typeof orvalFetch<MessageTagResult>>,
+  options?: SecondParameter<typeof orvalFetch<MessageTagResponse>>,
 ) => {
-  return orvalFetch<MessageTagResult>(
+  return orvalFetch<MessageTagResponse>(
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/tags`,
       method: "GET",
@@ -2320,6 +2453,7 @@ export const getMessageTags = (
   );
 };
 /**
+ * Gmail accepts dry_run=true previews only; execute through inbox/control with a signed preview, expected state and idempotency key. IMAP and Microsoft retain native direct tag editing.
  * @summary Add or remove native email tags
  */
 export const updateMessageTags = (

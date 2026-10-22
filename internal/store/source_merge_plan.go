@@ -24,6 +24,7 @@ type mergeConversation struct {
 }
 type mergeMessage struct {
 	id, conversationID                                         int64
+	sourceType                                                 string
 	providerID, rfcID, listID, kind, chatID, subject, metadata sql.NullString
 	sender                                                     sql.NullInt64
 	sent, deleted, removed                                     sql.NullTime
@@ -130,7 +131,7 @@ func mergeMessageFingerprint(ctx context.Context, tx *loggedTx, m mergeMessage) 
 		Media                                           []string
 	}{
 		mergeFingerprintConversation(m), m.kind.String, m.subject.String, text.String, html.String,
-		m.metadata.String, m.sent.Time.UTC().Format(time.RFC3339Nano),
+		mergeFingerprintMetadata(m), m.sent.Time.UTC().Format(time.RFC3339Nano),
 		strings.ToLower(strings.TrimSpace(m.rfcID.String)), strings.ToLower(strings.TrimSpace(m.listID.String)),
 		m.sender.Int64, senderEvidence, recipients, media})
 	if err != nil {
@@ -138,6 +139,22 @@ func mergeMessageFingerprint(ctx context.Context, tx *loggedTx, m mergeMessage) 
 	}
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func mergeFingerprintMetadata(m mergeMessage) string {
+	if m.sourceType != sourceTypeBeeper || !m.metadata.Valid {
+		return m.metadata.String
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(m.metadata.String), &metadata); err != nil {
+		return m.metadata.String
+	}
+	delete(metadata, "beeper_account_id")
+	normalized, err := json.Marshal(metadata, json.Deterministic(true))
+	if err != nil {
+		return m.metadata.String
+	}
+	return string(normalized)
 }
 
 func mergeMessageContentMissingFromSurvivor(
@@ -310,8 +327,8 @@ func mergeReadMessages(
 	rows, err := tx.QueryContext(ctx, `SELECT m.id, m.conversation_id, m.source_message_id, m.rfc822_message_id,
  m.message_type, COALESCE((SELECT original_conversation_id FROM source_merge_conversations smc WHERE smc.conversation_id = c.id), c.source_conversation_id), m.subject, `+metadataColumn+`, m.sender_id,
  m.sent_at, m.received_at, m.internal_date, m.deleted_at, m.deleted_from_source_at, m.list_id,
- EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
- FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.source_id = ? ORDER BY m.id`, sourceID)
+ EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id), src.source_type
+ FROM messages m JOIN conversations c ON c.id = m.conversation_id JOIN sources src ON src.id = m.source_id WHERE m.source_id = ? ORDER BY m.id`, sourceID)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +336,7 @@ func mergeReadMessages(
 	for rows.Next() {
 		var m mergeMessage
 		var received, internal sql.NullTime
-		if err := rows.Scan(&m.id, &m.conversationID, &m.providerID, &m.rfcID, &m.kind, &m.chatID, &m.subject, &m.metadata, &m.sender, &m.sent, &received, &internal, &m.deleted, &m.removed, &m.listID, &m.archiveOnly); err != nil {
+		if err := rows.Scan(&m.id, &m.conversationID, &m.providerID, &m.rfcID, &m.kind, &m.chatID, &m.subject, &m.metadata, &m.sender, &m.sent, &received, &internal, &m.deleted, &m.removed, &m.listID, &m.archiveOnly, &m.sourceType); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}

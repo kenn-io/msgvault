@@ -1177,6 +1177,26 @@ func TestOpenAPIMeetingImportContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 
+	// Pinned so that anyone bumping the schema version has to come here and
+	// confirm the meeting-import contract below still holds. Meeting import
+	// shipped in 1.33.0; the feed added in 1.34.0, the attributes added in
+	// 1.35.0, source-scoped identities added in 1.36.0, and structured profiles
+	// added in 1.37.0, raw profile media added in 1.38.0, typed temporal
+	// person relationships added in 1.39.0, organizations and employments
+	// added in 1.40.0, identity match review added in 1.41.0, and dated activity
+	// routes added in 1.42.0, cache-readiness responses added in 1.43.0,
+	// document search added in 1.44.0, participant/people separation added in
+	// 2.0.0, tracking added in 2.1.0, and participant-scoped files added in
+	// 2.5.0. Person search in 2.6.0, structured filters in 2.7.0, CardDAV routes
+	// in 2.8.0, person merge/split operations in 2.9.0, and relationship
+	// calendars in 2.10.0, person fact diagnostics in 2.11.0, lexical deletion
+	// scope in 2.12.0, Directory people and deduplicate planning in 2.13.0,
+	// CardDAV status and run history plus List-ID filtering in 2.14.0, Gmail
+	// repair in 2.15.0, complete TUI search and statistics contracts plus
+	// historical import jobs in 2.16.0, collection source scopes in 2.17.0,
+	// deletion subset counts in 2.18.0, Operations in 2.19.0, person briefs
+	// in 2.20.0, and Saved View execution in 2.21.0 did not touch it.
+
 	doc := OpenAPIDocument()
 	path := doc.Paths["/api/v1/import/meeting"]
 	requirements.NotNil(path, "meeting import path")

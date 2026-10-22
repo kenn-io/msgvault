@@ -126,11 +126,21 @@ type ImportMuesliBody = MuesliRemoteRequest
 
 type CreateImportJobBody = ImportJobRequest
 
+type ControlInboxBody = InboxRequest
+
 type PrepareKataEvidenceBody = KataEvidencePrepareRequest
 
 type CreateKataIssueBody = KataIssueCreateRequest
 
 type LinkKataEvidenceBody = KataEvidenceLinkRequest
+
+type ListMCPEventsBody = MCPEventsListRequest
+
+type DiscoverMCPEventResourcesBody = ResourceQuery
+
+type SubscribeMCPEventsBody = SubscribeRequest
+
+type UnsubscribeMCPEventsBody = UnsubscribeRequest
 
 type ListMeetingActionItemsBody = MeetingActionsRequest
 

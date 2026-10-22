@@ -87,6 +87,9 @@ type waLidMapping struct {
 
 // ImportOptions configures the WhatsApp import process.
 type ImportOptions struct {
+	// NotifyImports requests notifications for this run; the archive must also opt in.
+	NotifyImports bool
+
 	// Phone is the user's own phone number in E.164 format (e.g., "+447700900000").
 	Phone string
 
@@ -133,6 +136,8 @@ func DefaultOptions() ImportOptions {
 
 // ImportSummary holds statistics from a completed import.
 type ImportSummary struct {
+	// ImportRunID identifies this fresh native import without exposing archive paths.
+	ImportRunID       string
 	Duration          time.Duration
 	SourceID          int64
 	ChatsProcessed    int64

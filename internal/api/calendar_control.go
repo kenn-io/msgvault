@@ -29,6 +29,8 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 	switch t.PkgPath() {
 	case "go.kenn.io/msgvault/internal/gcal":
 		return "GCal" + name
+	case "go.kenn.io/msgvault/internal/inboxcontrol":
+		return "Inbox" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
 	case "go.kenn.io/msgvault/internal/muesli":

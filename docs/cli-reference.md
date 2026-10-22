@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-21"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Preview and control one Gmail or IMAP Inbox item | [inbox](#inbox) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
@@ -278,6 +279,68 @@ After adding an account, sync it with `msgvault sync-full`. IMAP accounts use th
 
 ---
 
+## inbox
+
+Preview and control one exact Gmail item or IMAP mailbox copy through the selected daemon.
+Requires API schema 3.25.0. Available on `main`, unreleased. The daemon verifies
+native account/item identity and current source/action authority on every call.
+The CLI also checks the daemon's live Inbox route and admitted operation before
+sending a control request. An unavailable or incompatible descriptor fails closed.
+
+```bash
+msgvault inbox get-state --request target.json
+msgvault inbox archive --request target.json > preview.json
+msgvault inbox archive --request execute.json --apply
+msgvault inbox receipt-get --request receipt.json
+msgvault inbox reconcile --request receipt.json
+```
+
+Every subcommand takes `--request <file>` or `--request -` for standard input.
+The limit is 1 MiB. Mutation commands preview by default; `--apply` executes
+only with `expected`, a signed `preview_token`, and an `idempotency_key` already
+in the request. The subcommand selects `operation`; a different operation in
+the JSON is rejected.
+
+For Gmail, an owner obtains the exact `target` from the native tag GET route and places it
+in `target.json` as `{"target": {...}}`. Delegates use an owner-supplied target
+and an Inbox grant. IMAP requires an owner-supplied exact recorded mailbox copy;
+see [IMAP control](api-server.md#native-imap-inbox-control) for its binding fields.
+Keep the target unchanged and prepare execution from the
+preview with a caller-chosen key:
+
+```bash
+jq -n --slurpfile request target.json --slurpfile preview preview.json \
+  '{target: $request[0].target, expected: $preview[0].before,
+    preview_token: $preview[0].preview_token,
+    idempotency_key: "archive-example-1"}' > execute.json
+msgvault inbox archive --request execute.json --apply
+```
+
+Reuse that key to recover a lost acknowledgement. An identical retry returns
+the original receipt and does not write again. If stdout breaks after execution,
+the command reports an unknown outcome; keep the original request and key.
+For receipt reads or reconciliation, `receipt.json` contains
+`{"receipt_id":"<returned receipt ID>"}`. Reconciliation reads the provider and
+updates local evidence without repeating the mutation.
+
+| Subcommand | Purpose |
+|---|---|
+| `get-capabilities`, `list-folders` | Observe source support and native location catalog |
+| `get-state` | Observe exact native item state |
+| `archive`, `unarchive` | Remove/add Gmail `INBOX`, or move an IMAP copy to the archive mailbox or `INBOX` |
+| `set-read`, `set-unread` | Change native read state while preserving local archive read state |
+| `tags` | Add/remove existing Gmail user label IDs or advertised IMAP keywords |
+| `move` | Change exact Gmail labels or move an exact IMAP mailbox copy |
+| `create-folder` | Create a Gmail user label or IMAP mailbox |
+| `receipt-get`, `reconcile` | Read or independently reconcile retained evidence |
+
+[The API reference](api-server.md#native-gmail-inbox-control), including
+[IMAP control](api-server.md#native-imap-inbox-control), owns exact request
+fields, permissions, native limitations, receipt states, and error behavior.
+These commands never send a message. They do not provide candidate discovery or
+batch actions. Existing `message-tags` continues to support IMAP keywords and
+Microsoft categories.
+
 ## message-tags
 
 Read or update native tags on one email through the selected daemon. Requires
@@ -301,6 +364,11 @@ The same command selects the backend from the archived message's account:
 
 Gmail uses existing user label IDs from `available_tags`, rather than label
 names or local label IDs. System labels cannot be edited through this command.
+On API schema 3.25.0, Gmail edits use a signed Inbox preview, execute once,
+and print a durable Inbox receipt. JSON results retain `receipt_id`,
+`receipt_status`, and `idempotency_key`; inspect that evidence before retrying
+an uncertain edit. If output fails after an edit, retrieve the receipt with
+`msgvault inbox receipt-get`.
 Reads and previews use the existing read grant. Edits need `gmail.modify` or
 `mail.google.com`; a saved read-only grant is rejected without changing its token. Reauthorize it with
 `msgvault add-account <account> --force` when you want write access.
@@ -861,6 +929,11 @@ the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
 absence.
+
+If a Gmail label metadata refresh fails, the sync fails and retains its history
+cursor so the change can be retried. Repair Gmail metadata access and retry
+`msgvault sync`; the failed refresh does not replace archived labels with
+incomplete data.
 
 Source deletion updates archive metadata rather than deleting local message or
 raw MIME data. Search excludes source-deleted messages by default; use
@@ -1639,6 +1712,8 @@ msgvault import-slackdump --me U0123456789 --limit 100 /path/to/export.zip
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | required | Slack user ID or unique profile email in the export |
 | `--limit` | `0` | Max messages imported per conversation (0 = no limit) |
 | `--max-media-mb` | configured/default limit | Max exported file size in MiB (0 = configured/default limit) |
@@ -1799,6 +1874,8 @@ msgvault import-eml /path/to/mail --identifier user@example.com
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--identifier` | required | Source identifier for imported messages |
 | `--source-type` | `eml` | Source type stored for this import |
 | `--no-resume` | `false` | Start a new import rather than resume its checkpoint |
@@ -1824,6 +1901,8 @@ The export file may be a plain mbox file (any extension) or a `.zip` containing 
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `mbox` | Source type recorded in database (e.g., `hey` or `google-groups`) |
 | `--label` | — | Label(s) to apply to imported messages (repeatable, or comma-separated) |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
@@ -1868,6 +1947,8 @@ messages are still archived.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--identifier` | — | Required account identifier |
 | `--source-type` | `maildir` | Source type stored for the archive |
 | `--no-resume` | `false` | Start a fresh run instead of resuming a checkpoint |
@@ -1914,6 +1995,8 @@ added to the archive.
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `apple-mail` | Source type recorded in database |
 | `--account` | — | Filter to specific account(s) during auto-discover (repeatable) |
 | `--accounts-db` | — | Custom path to macOS `Accounts4.sqlite` |
@@ -1971,6 +2054,8 @@ The importer preserves PST folder structure as labels, imports email messages, a
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--source-type` | `pst` | Source type recorded in database |
 | `--skip-folder` | — | Folder name to skip, case-insensitive; repeat for multiple folders |
 | `--no-resume` | `false` | Start fresh, ignoring interrupted progress |
@@ -1995,6 +2080,8 @@ The `--phone` flag is required and must be in E.164 format (e.g., `+447700900000
 
 | Flag | Required | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--phone` | Yes | Your phone number in E.164 format (must start with `+`) |
 | `--contacts` | No | Path to contacts `.vcf` file for name resolution |
 | `--media-dir` | No | Path to decrypted Media folder for attachments |
@@ -2023,6 +2110,8 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
 | `--before` | — | Only messages before this date (YYYY-MM-DD) |
 | `--after` | — | Only messages after this date (YYYY-MM-DD) |
@@ -2047,6 +2136,8 @@ msgvault import-imazing-csv ~/Downloads/messages-export \
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | (required) | Your phone number or email address |
 | `--timezone` | local IANA zone (required on Windows) | Timezone used for dates that do not include an offset |
 | `--contacts` | — | vCard file used to fill empty participant names |
@@ -2079,6 +2170,8 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--before` | — | Only messages before this date (YYYY-MM-DD) |
 | `--after` | — | Only messages after this date (YYYY-MM-DD) |
 | `--limit` | `0` | Limit number of messages (for testing) |
@@ -2098,6 +2191,8 @@ msgvault import-messenger --me <you@facebook.messenger> <dyi-export-dir>
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--me` | (required) | Your synthetic Messenger identifier, e.g. `test.user@facebook.messenger` |
 | `--format` | `auto` | Export format: `auto`, `json`, `html`, or `both` |
 | `--limit` | `0` | Limit number of messages (for testing) |
@@ -2118,6 +2213,8 @@ msgvault import-synctech-sms <path> --owner-phone <your-number>
 
 | Flag | Default | Description |
 |---|---|---|
+| `--notify-imports` | `false` | Emit notifications for new archive messages; also requires the daemon import opt-in. See [import notifications](usage/chat.md#import-notifications). |
+| `--json` | `false` | Write opaque `import_run_ids` and `completed` as JSON; progress goes to stderr. |
 | `--owner-phone` | (required) | Your phone number in E.164 format |
 | `--sms` | `true` | Import SMS records |
 | `--mms` | `true` | Import MMS records |
@@ -2197,7 +2294,7 @@ msgvault backup create [flags]
 |---|---|
 | `--repo <dir>` | Backup repository directory |
 | `--include-config` | Include `config.toml` verbatim; may contain API keys |
-| `--include-tokens` | Include OAuth token files |
+| `--include-tokens` | Include OAuth token files, client secrets, and the MCP Events key |
 | `--allow-plaintext-secrets` | Allow config/tokens in an unencrypted repository |
 | `--tag <text>` | Optional label recorded on the snapshot manifest |
 | `--force-unlock` | Break a stale exclusive repository lock before creating |
@@ -4082,6 +4179,15 @@ and preserves stored keys. See [stored credentials](configuration.md#stored-prov
 for input security, runtime precedence, and sweep-provider commands.
 
 ## mcp
+
+### Inspect Events delivery
+
+On unreleased `main`, `msgvault mcp events status --json` reads the selected
+local or remote daemon's owner-only delivery state. It reports subscription
+state, stop reason, refresh deadline, settled cursor and epoch, pending attempts,
+last outcome, and dead-letter and loop-guard counts. Callback URLs, secrets,
+and encrypted secret values are omitted. A disabled daemon reports Events
+unavailable. See [MCP Events](usage/chat.md#events) for setup and protocol limits.
 
 ### Discover running HTTP listeners
 

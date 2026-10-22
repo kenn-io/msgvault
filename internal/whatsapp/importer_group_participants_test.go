@@ -163,3 +163,74 @@ func TestImportGroupChatWithPopulatedGroupParticipants(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("admin", adminRole)
 }
+
+func TestImportGroupChatAdminWhoAuthoredMessageRemainsAdmin(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	waDBPath := createGroupParticipantsImportFixture(t, func(db *sql.DB) {
+		_, err := db.Exec(`
+			CREATE TABLE group_participants (gjid TEXT, jid TEXT, admin INTEGER);
+			INSERT INTO group_participants VALUES
+				('120255501234567-987654321@g.us', '12025550125@s.whatsapp.net', 1);
+			UPDATE message SET sender_jid_row_id = 4 WHERE _id = 100;
+		`)
+		require.NoError(err)
+	})
+	st := testutil.NewTestStore(t)
+	opts := DefaultOptions()
+	opts.Phone = "+12025550123"
+	opts.DisplayName = "Example User"
+
+	summary, err := NewImporter(st, nil).Import(context.Background(), waDBPath, opts)
+	require.NoError(err)
+	assert.Equal(int64(0), summary.Errors)
+
+	var adminRole string
+	err = st.DB().QueryRow(st.Rebind(`
+		SELECT cp.role
+		FROM conversation_participants cp
+		JOIN conversations c ON c.id = cp.conversation_id
+		JOIN participants p ON p.id = cp.participant_id
+		WHERE c.source_id = ?
+		  AND c.source_conversation_id = ?
+		  AND p.phone_number = ?
+	`), summary.SourceID, "120255501234567-987654321@g.us", "+12025550125").Scan(&adminRole)
+	require.NoError(err)
+	assert.Equal("admin", adminRole)
+}
+
+func TestImportGroupChatOwnerWhoIsAdminRemainsAdmin(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	waDBPath := createGroupParticipantsImportFixture(t, func(db *sql.DB) {
+		_, err := db.Exec(`
+			CREATE TABLE group_participants (gjid TEXT, jid TEXT, admin INTEGER);
+			INSERT INTO group_participants VALUES
+				('120255501234567-987654321@g.us', '12025550123@s.whatsapp.net', 1);
+		`)
+		require.NoError(err)
+	})
+	st := testutil.NewTestStore(t)
+	opts := DefaultOptions()
+	opts.Phone = "+12025550123"
+	opts.DisplayName = "Example User"
+
+	for range 2 {
+		summary, err := NewImporter(st, nil).Import(context.Background(), waDBPath, opts)
+		require.NoError(err)
+		assert.Equal(int64(0), summary.Errors)
+
+		var ownerRole string
+		err = st.DB().QueryRow(st.Rebind(`
+			SELECT cp.role
+			FROM conversation_participants cp
+			JOIN conversations c ON c.id = cp.conversation_id
+			JOIN participants p ON p.id = cp.participant_id
+			WHERE c.source_id = ?
+			  AND c.source_conversation_id = ?
+			  AND p.phone_number = ?
+		`), summary.SourceID, "120255501234567-987654321@g.us", "+12025550123").Scan(&ownerRole)
+		require.NoError(err)
+		assert.Equal("admin", ownerRole)
+	}
+}

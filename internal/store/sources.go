@@ -243,7 +243,12 @@ func (s *Store) AcquireSourceRemovalLockContext(ctx context.Context, sourceID in
 // FTSDelete rewrites every matching tsvector, so the maintenance hatch
 // disables the pool-wide 30s statement_timeout for this tx (finding S1).
 // No-op timeout reset on SQLite.
-func (s *Store) RemoveSource(sourceID int64) error {
+func (s *Store) RemoveSource(sourceID int64) (retErr error) {
+	fence, err := s.acquireInboxRemovalFence(context.Background(), sourceID)
+	if err != nil {
+		return err
+	}
+	defer func() { _, err := fence.release(); retErr = errors.Join(retErr, err) }()
 	return s.runMaintenance(context.Background(), func(ctx context.Context, tx *loggedTx) error {
 		return s.removeSourceExec(ctx, tx, sourceID)
 	})
@@ -266,6 +271,12 @@ func (s *Store) RemoveSource(sourceID int64) error {
 func (s *Store) RemoveSourceSerialized(
 	ctx context.Context, sourceID int64,
 ) (hadActiveSync bool, packedMappingsRemoved int64, err error) {
+	fence, err := s.acquireInboxRemovalFence(ctx, sourceID)
+	if err != nil {
+		return errors.Is(err, ErrSyncAlreadyActive), 0, err
+	}
+	defer func() { _, releaseErr := fence.release(); err = errors.Join(err, releaseErr) }()
+
 	conn, err := s.db.Conn(ctx)
 	if err != nil {
 		return false, 0, fmt.Errorf("acquire connection: %w", err)
@@ -281,8 +292,18 @@ func (s *Store) RemoveSourceSerialized(
 			_, _ = conn.ExecContext(ctx, "ROLLBACK")
 		}
 	}()
-
+	if s.captureMCPEnabled() {
+		if err := s.mcpIdentityFence(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+		if _, err := s.mcpClockLock(ctx, conn); err != nil {
+			return false, 0, mcpSafeError(err)
+		}
+	}
 	if err := s.requireSourceRemovalAllowed(ctx, conn, sourceID); err != nil {
+		return false, 0, err
+	}
+	if err := s.removeMCPEventSource(ctx, conn, sourceID); err != nil {
 		return false, 0, err
 	}
 
@@ -339,6 +360,12 @@ func (s *Store) RemoveSourceSerialized(
 		return hadActiveSync, 0, err
 	}
 
+	if err := s.retireInboxReceiptsContext(ctx, conn.ExecContext, sourceID); err != nil {
+		return hadActiveSync, 0, err
+	}
+	if err := s.retainSourceIDHighWaterContext(ctx, conn); err != nil {
+		return hadActiveSync, 0, err
+	}
 	res, err := conn.ExecContext(
 		ctx, s.dialect.Rebind(`DELETE FROM sources WHERE id = ?`), sourceID,
 	)
@@ -432,6 +459,16 @@ func (s *Store) removeSourceExec(
 	if err := s.requireSourceRemovalAllowed(ctx, tx, sourceID); err != nil {
 		return err
 	}
+	if s.captureMCPEnabled() {
+		if _, err := s.mcpClockLock(ctx, tx.Tx); err != nil {
+			return mcpSafeError(err)
+		}
+	}
+	// Retained data is removed within the existing source transaction even
+	// after capture is disabled, without taking an Events clock lock then.
+	if err := s.removeMCPEventSource(ctx, tx.Tx, sourceID); err != nil {
+		return err
+	}
 	if err := s.lockProfileIdentityKeyTxContext(
 		ctx, tx, "source-contact-observation", sourceID,
 	); err != nil {
@@ -445,6 +482,12 @@ func (s *Store) removeSourceExec(
 	if err := s.deleteSourceObservationIdentityCandidatesContext(
 		ctx, tx, sourceID,
 	); err != nil {
+		return err
+	}
+	if err := s.retireInboxReceiptsContext(ctx, tx.ExecContext, sourceID); err != nil {
+		return err
+	}
+	if err := s.retainSourceIDHighWaterContext(ctx, tx); err != nil {
 		return err
 	}
 	res, err := tx.Exec(`DELETE FROM sources WHERE id = ?`, sourceID)

@@ -775,7 +775,13 @@ func (s *Store) DeleteDedupedBatchesContext(
 	// (finding S1). No-op timeout reset on SQLite.
 	var deleted int64
 	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
 		for _, batchID := range batchIDs {
+			if err := s.adoptImportIdentitiesTx(ctx, tx.Tx, "m.delete_batch_id=? AND m.deleted_at IS NOT NULL", batchID); err != nil {
+				return err
+			}
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
 				WHERE delete_batch_id = ? AND deleted_at IS NOT NULL
@@ -877,6 +883,12 @@ func (s *Store) DeleteAllDedupedContext(
 	// delete share the tx so they observe the same snapshot, as before.
 	// No-op timeout reset on SQLite.
 	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.adoptImportIdentitiesTx(ctx, tx.Tx, "m.deleted_at IS NOT NULL"); err != nil {
+			return err
+		}
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(DISTINCT delete_batch_id)
 			FROM messages

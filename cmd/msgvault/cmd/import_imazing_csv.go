@@ -84,6 +84,7 @@ there.`,
 	command.Flags().StringVar(&opts.Timezone, "timezone", "",
 		"IANA timezone for dates without an offset (required on Windows)")
 	_ = command.MarkFlagRequired("me")
+	addImportNotificationFlag(command)
 	return command
 }
 
@@ -106,8 +107,10 @@ func runImportIMazingCSV(cmd *cobra.Command, exportDir string, opts imazingcsv.O
 		return err
 	}
 	defer cleanup()
+	opts.NotifyImports = importNotificationsRequested(cmd)
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 	summary, err := imazingcsv.NewImporter(st, opts).ImportPath(cmd.Context(), exportDir)
+	recordImportRun(cmd, summary.ImportRunID)
 	if err != nil {
 		// Messages commit one by one; committed rows must still reach the
 		// analytics cache even though the import as a whole failed.

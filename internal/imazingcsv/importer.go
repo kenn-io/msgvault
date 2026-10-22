@@ -8,10 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/imazingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -24,6 +24,8 @@ const (
 
 // Options configures one iMazing CSV import.
 type Options struct {
+	// NotifyImports also requires the daemon global import opt-in.
+	NotifyImports      bool
 	Owner              string
 	Timezone           string
 	ContactsPath       string
@@ -33,6 +35,8 @@ type Options struct {
 
 // Summary reports imported physical records and derived relationships.
 type Summary struct {
+	// ImportRunID identifies this non-resumable logical native import.
+	ImportRunID        string `json:"import_run_id,omitempty"`
 	Files              int
 	Conversations      int
 	Messages           int
@@ -91,11 +95,17 @@ type chatPlan struct {
 }
 
 type plannedMessage struct {
-	row             Row
-	chat            *chatPlan
-	sender          participantIdentity
-	sourceMessageID string
-	messageID       int64
+	row                Row
+	chat               *chatPlan
+	sender             participantIdentity
+	sourceMessageID    string
+	occurrence         int
+	occurrenceBase     string
+	messageID          int64
+	attachmentSnapshot *store.KeyedAttachmentSnapshot
+	attachmentError    error
+	replyParent        *plannedMessage
+	replaceReply       bool
 }
 
 type sourceConfig struct {
@@ -109,11 +119,16 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	if importer == nil || importer.store == nil {
 		return Summary{}, errors.New("iMazing CSV importer requires a store")
 	}
+	// Offline imports cannot inherit a caller's live-capture authority.
+	importer = &Importer{store: importer.store.WithIngestContext(store.IngestContext{Mode: store.IngestBackfill}), opts: importer.opts}
 	owner, err := normalizeIdentity(importer.opts.Owner, "")
 	if err != nil {
 		return Summary{}, fmt.Errorf("normalize owner: %w", err)
 	}
 	if err := validateTimezone(importer.opts.Timezone); err != nil {
+		return Summary{}, err
+	}
+	if err := importer.store.ValidateNativeImportChoice(ctx, SourceType, importer.opts.NotifyImports); err != nil {
 		return Summary{}, err
 	}
 	layout, err := Discover(path)
@@ -138,15 +153,25 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		}
 	}()
 
-	if err := importer.checkAndStoreTimezone(source.ID); err != nil {
+	syncStore := importer.store.ScopedToSync(source.ID, syncID)
+	// iMazing is non-resumable: each native invocation gets a fresh logical
+	// operation, even after a failed attempt. Silent runs still retain policy.
+	logicalRun, err := syncStore.BeginNativeImportAttempt(ctx, source.ID, SourceType, importer.opts.NotifyImports, syncID, 0)
+	if err != nil {
+		return Summary{}, fmt.Errorf("begin iMazing CSV import: %w", err)
+	}
+	syncStore, err = syncStore.WithImportRun(ctx, logicalRun.ID)
+	if err != nil {
+		return Summary{}, fmt.Errorf("validate iMazing CSV import: %w", err)
+	}
+	if err := (&Importer{store: syncStore, opts: importer.opts}).checkAndStoreTimezone(source.ID); err != nil {
 		return Summary{}, err
 	}
 	rows, err := ParseFiles(ctx, layout, importer.opts.Timezone)
 	if err != nil {
 		return Summary{}, err
 	}
-	syncStore := importer.store.ScopedToSync(source.ID, syncID)
-	plans, chats, participantCount, err := planMessages(ctx, syncStore, owner, source.Identifier, rows)
+	plans, chats, err := planMessages(ctx, owner, source.Identifier, rows)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -155,9 +180,24 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		return Summary{}, err
 	}
 	retainedConversations := retainedArchivedConversations(plans, existingMessages)
+	repliesLinked, repliesUnresolved := 0, 0
+	if importer.opts.NotifyImports {
+		repliesLinked, repliesUnresolved, err = prepareNotificationReplies(ctx, syncStore, source.ID, source.Identifier, importer.opts.Timezone, owner, plans, existingMessages, len(retainedConversations) > 0)
+		if err != nil {
+			return Summary{}, err
+		}
+	}
+
+	attachmentsStored, attachmentsMissing, attachmentsSkipped := 0, 0, 0
+	if importer.opts.NotifyImports {
+		attachmentsStored, attachmentsMissing, attachmentsSkipped, err = prepareNotificationAttachments(ctx, layout, importer.opts, plans)
+		if err != nil {
+			return Summary{}, err
+		}
+	}
 	messagesAdded, messagesUpdated, err := persistMessages(
 		ctx, syncStore, source.ID, plans, existingMessages,
-		retainedConversations,
+		retainedConversations, importer.opts.NotifyImports,
 	)
 	if err != nil {
 		if statsErr := syncStore.RecomputeConversationStats(source.ID); statsErr != nil {
@@ -173,18 +213,20 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	if err := syncStore.RecomputeConversationStats(source.ID); err != nil {
 		return Summary{}, fmt.Errorf("recompute iMazing CSV conversation statistics: %w", err)
 	}
-	repliesLinked, repliesUnresolved, err := resolveReplies(
-		ctx, syncStore, source.ID, source.Identifier, importer.opts.Timezone, owner,
-		plans, len(retainedConversations) > 0,
-	)
-	if err != nil {
-		return Summary{}, err
+	if !importer.opts.NotifyImports {
+		repliesLinked, repliesUnresolved, err = resolveReplies(
+			ctx, syncStore, source.ID, source.Identifier, importer.opts.Timezone, owner,
+			plans, len(retainedConversations) > 0,
+		)
+		if err != nil {
+			return Summary{}, err
+		}
 	}
-	attachmentsStored, attachmentsMissing, attachmentsSkipped, err := importAttachments(
-		ctx, syncStore, layout, importer.opts, plans,
-	)
-	if err != nil {
-		return Summary{}, err
+	if !importer.opts.NotifyImports {
+		attachmentsStored, attachmentsMissing, attachmentsSkipped, err = importAttachments(ctx, syncStore, layout, importer.opts, plans)
+		if err != nil {
+			return Summary{}, err
+		}
 	}
 	contactsMatched, contactsTotal := 0, 0
 	if importer.opts.ContactsPath != "" {
@@ -207,10 +249,11 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	}
 
 	return Summary{
+		ImportRunID:        logicalRun.ID,
 		Files:              len(layout.CSVFiles),
 		Conversations:      len(chats),
 		Messages:           len(plans),
-		Participants:       participantCount,
+		Participants:       countChatParticipants(chats),
 		AttachmentsStored:  attachmentsStored,
 		AttachmentsMissing: attachmentsMissing,
 		AttachmentsSkipped: attachmentsSkipped,
@@ -250,12 +293,12 @@ func (importer *Importer) checkAndStoreTimezone(sourceID int64) error {
 	return nil
 }
 
-func planMessages(ctx context.Context, st *store.Store, owner participantIdentity, sourceIdentifier string, rows []Row) ([]*plannedMessage, map[string]*chatPlan, int, error) {
+func planMessages(ctx context.Context, owner participantIdentity, sourceIdentifier string, rows []Row) ([]*plannedMessage, map[string]*chatPlan, error) {
 	chats := make(map[string]*chatPlan)
 	plans := make([]*plannedMessage, 0, len(rows))
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 		chatKey := conversationKey(row.ChatSession)
 		chat := chats[chatKey]
@@ -276,10 +319,10 @@ func planMessages(ctx context.Context, st *store.Store, owner participantIdentit
 			} else if row.SenderName != "" {
 				sender = syntheticIdentity(sourceIdentifier, chatKey, "sender", row.SenderName)
 			} else {
-				return nil, nil, 0, fmt.Errorf("%s record %d: incoming sender ID or name is required", row.File, row.Record)
+				return nil, nil, fmt.Errorf("%s record %d: incoming sender ID or name is required", row.File, row.Record)
 			}
 			if err != nil {
-				return nil, nil, 0, fmt.Errorf("%s record %d: normalize incoming sender: %w", row.File, row.Record, err)
+				return nil, nil, fmt.Errorf("%s record %d: normalize incoming sender: %w", row.File, row.Record, err)
 			}
 			addChatParticipant(chat, sender)
 		}
@@ -291,39 +334,20 @@ func planMessages(ctx context.Context, st *store.Store, owner participantIdentit
 		chatKeys = append(chatKeys, key)
 	}
 	slices.Sort(chatKeys)
-	uniqueIDs := make(map[int64]struct{})
 	for _, key := range chatKeys {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 		chat := chats[key]
 		addTitleParticipants(chat, sourceIdentifier)
-		participantKeys := make([]string, 0, len(chat.participants))
-		for participantKey := range chat.participants {
-			participantKeys = append(participantKeys, participantKey)
-		}
-		slices.Sort(participantKeys)
-		for _, participantKey := range participantKeys {
-			if err := ctx.Err(); err != nil {
-				return nil, nil, 0, err
-			}
-			identity := chat.participants[participantKey]
-			id, err := ensureIdentity(st, identity)
-			if err != nil {
-				return nil, nil, 0, fmt.Errorf("ensure iMazing CSV participant %q: %w", identity.Value, err)
-			}
-			chat.participantIDs[participantKey] = id
-			uniqueIDs[id] = struct{}{}
-		}
-		if len(chat.participantIDs) > 2 {
+		if len(chat.participants) > 2 {
 			chat.typeName = "group_chat"
 		} else {
 			chat.typeName = "direct_chat"
 		}
 	}
-	return plans, chats, len(uniqueIDs), nil
+	return plans, chats, nil
 }
-
 func addChatParticipant(chat *chatPlan, identity participantIdentity) {
 	key := identity.key()
 	existing, ok := chat.participants[key]
@@ -411,14 +435,22 @@ func assignMessageIDs(
 	if err != nil {
 		return nil, fmt.Errorf("load existing iMazing CSV messages: %w", err)
 	}
+	allocations, err := st.ImportOccurrenceAllocations(ctx, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("load durable iMazing occurrences: %w", err)
+	}
+	byBase := make(map[string][]store.ImportOccurrenceAllocation)
+	for _, allocation := range allocations {
+		byBase[allocation.Base] = append(byBase[allocation.Base], allocation)
+	}
 	for _, base := range groupOrder {
-		reconcileDuplicateOccurrences(groups[base].base, groups[base].plans, existing)
+		reconcileDuplicateOccurrences(groups[base].base, groups[base].plans, existing, byBase[base]...)
 	}
 	return existing, nil
 }
 
 func duplicateOccurrenceID(base string, occurrence int) string {
-	return "imazing_csv:" + stableHash(base, strconv.Itoa(occurrence))
+	return imazingidentity.OccurrenceID(base, occurrence)
 }
 
 // rowEvidenceFingerprint carries the exported fields that messages within one
@@ -504,6 +536,7 @@ func reconcileDuplicateOccurrences(
 	base string,
 	plans []*plannedMessage,
 	existing map[string]store.MessageMetadataRecord,
+	allocations ...store.ImportOccurrenceAllocation,
 ) {
 	occurrenceNumbers := archivedOccurrenceNumbers(base, existing)
 	fingerprints := make([]rowEvidenceFingerprint, len(occurrenceNumbers))
@@ -511,11 +544,69 @@ func reconcileDuplicateOccurrences(
 		fingerprints[index] = storedEvidenceFingerprint(existing[duplicateOccurrenceID(base, number)].Metadata)
 	}
 
+	nativeIDByNumber := make(map[int]string, len(allocations))
+	for _, allocation := range allocations {
+		nativeIDByNumber[allocation.Number] = allocation.SourceMessageID
+	}
+	hashed := len(allocations) > 0
+	if hashed {
+		// A contracted first export may have adopted only some archive rows.
+		// Retained live records and durable tombstones both participate in matching.
+		byNumber := make(map[int]rowEvidenceFingerprint, len(occurrenceNumbers)+len(allocations))
+		for i, number := range occurrenceNumbers {
+			byNumber[number] = hashedOccurrenceFingerprint(fingerprints[i])
+		}
+		for _, allocation := range allocations {
+			e := allocation.Evidence
+			byNumber[allocation.Number] = rowEvidenceFingerprint{status: e[0], delivered: e[1], read: e[2], replyingTo: e[3], subject: e[4], text: e[5], attachment: e[6]}
+		}
+		occurrenceNumbers = make([]int, 0, len(byNumber))
+		for number := range byNumber {
+			occurrenceNumbers = append(occurrenceNumbers, number)
+		}
+		// Prefer an archived occurrence when identical evidence also matches a
+		// tombstone. A contracted export must not recreate a deleted twin while
+		// leaving its indistinguishable live sibling untouched.
+		live := func(number int) bool {
+			key := duplicateOccurrenceID(base, number)
+			if canonical, ok := nativeIDByNumber[number]; ok {
+				key = canonical
+			}
+			_, archived := existing[key]
+			return archived
+		}
+		slices.SortFunc(occurrenceNumbers, func(a, b int) int {
+			if live(a) != live(b) {
+				if live(a) {
+					return -1
+				}
+				return 1
+			}
+			if a < b {
+				return -1
+			}
+			if a > b {
+				return 1
+			}
+			return 0
+		})
+		fingerprints = make([]rowEvidenceFingerprint, len(occurrenceNumbers))
+		for i, number := range occurrenceNumbers {
+			fingerprints[i] = byNumber[number]
+		}
+	}
+	reserved := make(map[int]bool, len(occurrenceNumbers))
+	for _, number := range occurrenceNumbers {
+		reserved[number] = true
+	}
 	rowAssigned := make([]bool, len(plans))
 	occurrenceRow := make([]int, len(occurrenceNumbers))
 	currentFingerprints := make([]rowEvidenceFingerprint, len(plans))
 	for rowIndex, plan := range plans {
 		currentFingerprints[rowIndex] = rowEvidenceFingerprintOf(plan.row)
+		if hashed {
+			currentFingerprints[rowIndex] = hashedOccurrenceFingerprint(currentFingerprints[rowIndex])
+		}
 	}
 	for index := range occurrenceRow {
 		occurrenceRow[index] = -1
@@ -597,6 +688,10 @@ func reconcileDuplicateOccurrences(
 			continue
 		}
 		for {
+			if reserved[nextOccurrence] {
+				nextOccurrence++
+				continue
+			}
 			if _, taken := claimed[nextOccurrence]; taken {
 				nextOccurrence++
 				continue
@@ -612,38 +707,52 @@ func reconcileDuplicateOccurrences(
 	}
 	for rowIndex, plan := range plans {
 		plan.sourceMessageID = duplicateOccurrenceID(base, rowOccurrence[rowIndex])
+		if canonical, exists := nativeIDByNumber[rowOccurrence[rowIndex]]; exists {
+			plan.sourceMessageID = canonical
+		}
+		plan.occurrence = rowOccurrence[rowIndex]
+		plan.occurrenceBase = base
 	}
 }
 
-func persistMessages(
-	ctx context.Context,
-	st *store.Store,
-	sourceID int64,
-	plans []*plannedMessage,
-	existing map[string]store.MessageMetadataRecord,
-	retainedConversations map[string]struct{},
-) (added, updated int, err error) {
-	for _, plan := range plans {
-		if _, ok := existing[plan.sourceMessageID]; ok {
-			updated++
-		} else {
-			added++
+type preparedMessagePersistence struct {
+	plan           *plannedMessage
+	participantIDs map[string]int64
+	snapshot       store.ParticipantMessageSnapshot
+}
+
+func prepareMessagePersistence(sourceID int64, plan *plannedMessage, existing map[string]store.MessageMetadataRecord, retainedConversations map[string]struct{}) (*preparedMessagePersistence, error) {
+	metadata, err := messageMetadata(plan.row, existing[plan.sourceMessageID].Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("%s record %d: %w", plan.row.File, plan.row.Record, err)
+	}
+	raw, err := json.Marshal(plan.row.Raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s record %d: marshal raw row: %w", plan.row.File, plan.row.Record, err)
+	}
+	fingerprint := hashedOccurrenceFingerprint(rowEvidenceFingerprintOf(plan.row))
+	allocation := store.ImportOccurrenceAllocation{Base: plan.occurrenceBase, Number: plan.occurrence, SourceMessageID: plan.sourceMessageID, Evidence: [7]string{fingerprint.status, fingerprint.delivered, fingerprint.read, fingerprint.replyingTo, fingerprint.subject, fingerprint.text, fingerprint.attachment}}
+	keys := make([]string, 0, len(plan.chat.participants))
+	for key := range plan.chat.participants {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	participants := make([]store.ParticipantPersistData, len(keys))
+	for i, key := range keys {
+		participants[i] = participantPersistence(plan.chat.participants[key])
+	}
+	prepared := &preparedMessagePersistence{plan: plan}
+	snapshot := store.ParticipantMessageSnapshot{SourceMessageID: plan.sourceMessageID, Participants: participants, Build: func(ids []int64) *store.MessagePersistData {
+		chat := *plan.chat
+		chat.participantIDs = make(map[string]int64, len(keys))
+		for i, key := range keys {
+			chat.participantIDs[key] = ids[i]
 		}
-		if err := ctx.Err(); err != nil {
-			return added, updated, err
-		}
-		metadata, err := messageMetadata(plan.row, existing[plan.sourceMessageID].Metadata)
-		if err != nil {
-			return added, updated, fmt.Errorf("%s record %d: %w", plan.row.File, plan.row.Record, err)
-		}
-		raw, err := json.Marshal(plan.row.Raw)
-		if err != nil {
-			return added, updated, fmt.Errorf("%s record %d: marshal raw row: %w", plan.row.File, plan.row.Record, err)
-		}
-		senderID := plan.chat.participantIDs[plan.sender.key()]
-		conversationParticipants := conversationParticipantRefs(plan.chat)
+		prepared.participantIDs = chat.participantIDs
+		senderID := chat.participantIDs[plan.sender.key()]
+		conversationParticipants := conversationParticipantRefs(&chat)
 		_, preserveHistoricalConversation := retainedConversations[plan.chat.key]
-		recipients, toValues := messageRecipients(plan.chat, plan.sender)
+		recipients, toValues := messageRecipients(&chat, plan.sender)
 		delivery := store.MessageDeliveryEvidence{}
 		if plan.row.DeliveredAt != nil {
 			delivery.DeliveredAt = sql.NullTime{Time: *plan.row.DeliveredAt, Valid: true}
@@ -652,7 +761,11 @@ func persistMessages(
 			strings.EqualFold(plan.row.Status, "delivered") || strings.EqualFold(plan.row.Status, "read") {
 			delivery.IsDelivered = sql.NullBool{Bool: true, Valid: true}
 		}
-		messageID, err := st.PersistMessageContext(ctx, &store.MessagePersistData{
+		return &store.MessagePersistData{
+			ImportOccurrence:        &allocation,
+			ReplaceReply:            plan.replaceReply,
+			ReplyToSourceMessageID:  notificationParentKey(plan),
+			KeyedAttachmentSnapshot: plan.attachmentSnapshot,
 			Message: &store.Message{
 				SourceID: sourceID, SourceMessageID: plan.sourceMessageID,
 				MessageType:    plan.row.Service,
@@ -682,17 +795,97 @@ func persistMessages(
 			// The CSV rows carry no label IDs; user-applied labels must
 			// survive reruns instead of being replaced with an empty set.
 			PreserveLabels: true,
+			FTSBestEffort:  true,
 			FTS: &store.FTSDoc{
 				Subject: plan.row.Subject, Body: plan.row.Text,
 				FromAddr: plan.sender.Value, ToAddrs: strings.Join(toValues, " "),
 			},
-		})
-		if err != nil {
-			return added, updated, fmt.Errorf("%s record %d: persist message: %w", plan.row.File, plan.row.Record, err)
 		}
-		plan.messageID = messageID
+	}}
+	prepared.snapshot = snapshot
+	return prepared, nil
+}
+
+func notificationParentKey(plan *plannedMessage) string {
+	if plan.replyParent != nil {
+		return plan.replyParent.sourceMessageID
 	}
-	return added, updated, nil
+	return ""
+}
+
+func persistMessages(ctx context.Context, st *store.Store, sourceID int64, plans []*plannedMessage, existing map[string]store.MessageMetadataRecord, retainedConversations map[string]struct{}, notify bool) (added, updated int, err error) {
+	groups := make([][]*plannedMessage, 0, len(plans))
+	if notify {
+		groups = notificationMessageGroups(plans)
+	} else {
+		for _, plan := range plans {
+			groups = append(groups, []*plannedMessage{plan})
+		}
+	}
+	var rowErrors []error
+	failed := make(map[string]bool)
+	failGroup := func(group []*plannedMessage, err error) {
+		rowErrors = append(rowErrors, err)
+		for _, plan := range group {
+			failed[plan.sourceMessageID] = true
+		}
+	}
+	for _, group := range groups {
+		if err := ctx.Err(); err != nil {
+			return added, updated, errors.Join(append(rowErrors, err)...)
+		}
+		if notify {
+			var unavailable []error
+			for _, plan := range group {
+				if plan.attachmentError != nil {
+					unavailable = append(unavailable, plan.attachmentError)
+				}
+				if parent := plan.replyParent; parent != nil && failed[parent.sourceMessageID] {
+					unavailable = append(unavailable, fmt.Errorf("%s record %d: required reply parent did not complete", plan.row.File, plan.row.Record))
+				}
+			}
+			if len(unavailable) > 0 {
+				failGroup(group, errors.Join(unavailable...))
+				continue
+			}
+		}
+		prepared := make([]*preparedMessagePersistence, 0, len(group))
+		snapshots := make([]store.ParticipantMessageSnapshot, 0, len(group))
+		for _, plan := range group {
+			item, err := prepareMessagePersistence(sourceID, plan, existing, retainedConversations)
+			if err != nil {
+				return added, updated, err
+			}
+			prepared = append(prepared, item)
+			snapshots = append(snapshots, item.snapshot)
+		}
+		var ids []int64
+		if len(group) > 1 {
+			ids, err = st.PersistImportMessageSnapshotsContext(ctx, sourceID, snapshots)
+		} else {
+			var id int64
+			id, err = st.PersistMessageWithParticipantsContext(ctx, snapshots[0].Participants, snapshots[0].Build)
+			ids = []int64{id}
+		}
+		if err != nil {
+			rowErr := fmt.Errorf("%s record %d: persist message: %w", group[0].row.File, group[0].row.Record, err)
+			if notify && errors.Is(err, store.ErrReadyAttachmentSnapshot) {
+				failGroup(group, rowErr)
+				continue
+			}
+			return added, updated, errors.Join(append(rowErrors, rowErr)...)
+		}
+		for i, item := range prepared {
+			item.plan.chat.participantIDs = item.participantIDs
+			item.plan.messageID = ids[i]
+			if _, ok := existing[item.plan.sourceMessageID]; ok {
+				updated++
+			} else {
+				added++
+			}
+		}
+	}
+	return added, updated, errors.Join(rowErrors...)
 }
 
 func retainedArchivedConversations(
@@ -792,4 +985,20 @@ func boolInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+// Field-specific domain-separated hashes retain compatibility without content.
+func hashedOccurrenceFingerprint(f rowEvidenceFingerprint) rowEvidenceFingerprint {
+	values := imazingidentity.EvidenceHashes([7]string{f.status, f.delivered, f.read, f.replyingTo, f.subject, f.text, f.attachment})
+	return rowEvidenceFingerprint{status: values[0], delivered: values[1], read: values[2], replyingTo: values[3], subject: values[4], text: values[5], attachment: values[6]}
+}
+
+func countChatParticipants(chats map[string]*chatPlan) int {
+	ids := make(map[int64]struct{})
+	for _, chat := range chats {
+		for _, id := range chat.participantIDs {
+			ids[id] = struct{}{}
+		}
+	}
+	return len(ids)
 }

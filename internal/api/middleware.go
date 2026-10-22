@@ -346,8 +346,8 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 // requestGateEligible reports whether the request should participate in the
 // operation gate. Owner, session, and loopback requests register as waiters or
 // holders on any gated route. Delegated callers reach this predicate on
-// /api/v1/cli/run and /api/v1/calendar/control. CLI requests use
-// cliRunGateDecision; calendar control acquires the gate only for actual writes. Other
+// /api/v1/cli/run, /api/v1/calendar/control and /api/v1/inbox/control. CLI requests use
+// cliRunGateDecision; calendar and Inbox controls acquire the gate for actual writes. Other
 // delegated reads use a SQL snapshot during scoped route admission.
 // Remote clients reach the gate only for collection writes they are granted.
 // Unauthenticated requests (AuthModeRequired) pass straight through so they
@@ -355,7 +355,7 @@ func (s *Server) apiRequestAuthorized(r *http.Request) bool {
 func (s *Server) requestGateEligible(r *http.Request) bool {
 	auth := s.requestAuthentication(r)
 	if auth.Mode == AuthModeDelegated {
-		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control"
+		return r.URL.Path == "/api/v1/cli/run" || r.URL.Path == "/api/v1/calendar/control" || r.URL.Path == "/api/v1/inbox/control"
 	}
 	if auth.Mode == AuthModeRemoteClient {
 		return auth.RemoteClient.CollectionsWrite && strings.HasPrefix(r.URL.Path, "/api/v1/cli/collections")

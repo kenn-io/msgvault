@@ -649,6 +649,7 @@ func (d *PostgreSQLDialect) FTSRebuildSchema(ctx context.Context, q contextQueri
 //	TEXT → TEXT, DATETIME → TIMESTAMPTZ, JSON → JSONB.
 func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 	return []ColumnMigration{
+		{`ALTER TABLE mcp_event_subscriptions ADD COLUMN IF NOT EXISTS scope_reference_id BIGINT NOT NULL DEFAULT 0`, "mcp_event_subscriptions.scope_reference_id"},
 		{`ALTER TABLE carddav_resources ADD COLUMN IF NOT EXISTS owns_display_name BOOLEAN NOT NULL DEFAULT FALSE`, "carddav_resources.owns_display_name"},
 		{`ALTER TABLE person_match_judgment_cursor ADD COLUMN IF NOT EXISTS started_at_zero BOOLEAN NOT NULL DEFAULT FALSE`, "person_match_judgment_cursor.started_at_zero"},
 		{`ALTER TABLE carddav_publications ADD COLUMN IF NOT EXISTS outgoing_envelope_metadata BYTEA`, "carddav_publications.outgoing_envelope_metadata"},
@@ -2371,7 +2372,9 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
+	// Resource lifetimes, native scopes, and import runs cascade with their source.
+	"mcp_source_resources", "mcp_conversation_resources", "native_message_scopes", "native_source_permissions", "import_runs",
+	"sync_runs", "sources", "source_messaging_route_failures", "mcp_event_source_refs", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
@@ -2391,6 +2394,7 @@ var exclusiveLockTables = []string{
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
 	"sync_operations",
+	"inbox_source_revisions", "inbox_provider_states", "inbox_operation_receipts",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
 }

@@ -174,11 +174,12 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.True(gotServeOpts.AllowCalendarWrites)
 	assert.Equal(mcpserver.HTTPOptions{
-		Addr:               "0.0.0.0:8081",
-		DiscoveryDirectory: filepath.Join(home, "mcp"),
-		BackendURL:         daemon.URL,
-		APIKey:             "mcp-http-key",
-		AllowWrites:        true,
+		Addr:                  "0.0.0.0:8081",
+		DiscoveryDirectory:    filepath.Join(home, "mcp"),
+		BackendURL:            daemon.URL,
+		APIKey:                "mcp-http-key",
+		AllowWrites:           true,
+		IndependentCredential: true,
 	}, gotHTTPOpts)
 }
 
@@ -357,10 +358,32 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 			})
 			return
 		}
+		if r.URL.Path == "/api/v1/mcp/events/resources" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"resources":[]}`))
+			return
+		}
+		if r.URL.Path == "/api/v1/mcp/capabilities" {
+			_, _ = w.Write([]byte(`{"version":1,"delegated":false,"routes":[],"inbox_operations":[]}`))
+			return
+		}
 		http.Error(w, `{"error":"vector_initializing","message":"Vector search is initializing"}`, http.StatusServiceUnavailable)
 	})
 
 	opts := daemonMCPServeOptions(testCtx, client, invocationFromContext(testCtx))
+	require.NotNil(opts.HybridSearcher)
+	path := <-requests
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
+	path = <-requests
+	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
+	path = <-requests
+	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
+	path = <-requests
+	assert.Equal("/api/v1/mcp/events/resources", path, "startup proves the owner-only resource route")
+	assert.NotNil(opts.EventResources)
+	path = <-requests
+	assert.Equal("/api/v1/mcp/capabilities", path, "startup discovers admitted Inbox operations")
+	assert.Empty(requests, "startup must not perform vector retrieval")
 	_, err := opts.HybridSearcher.SearchHybrid(testCtx, mcpserver.HybridSearchRequest{
 		Query: "term",
 		Mode:  "hybrid",
@@ -368,12 +391,7 @@ func TestDaemonMCPVectorReadinessIsCheckedAtRequestTime(t *testing.T) {
 	var coded interface{ APIErrorCode() string }
 	require.ErrorAs(err, &coded)
 	assert.Equal("vector_initializing", coded.APIErrorCode())
-	path := <-requests
-	assert.Equal("/api/v1/mcp/capabilities", path, "startup probes optional operations")
-	path = <-requests
-	assert.Equal("/api/v1/health", path, "startup reads the daemon schema")
-	path = <-requests
-	assert.Equal("/api/v1/media/search/status", path, "capability detection checks Docbank separately")
+	require.Len(requests, 1, "vector readiness requires one request-time search")
 	path = <-requests
 	assert.Equal("/api/v1/search", path, "vector readiness belongs to the request")
 }

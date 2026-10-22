@@ -6,6 +6,109 @@ CREATE TABLE IF NOT EXISTS archive_metadata (
     value TEXT NOT NULL
 );
 
+-- Native MCP Events use one transaction-owned clock for commit ordering.
+-- Store writes these timestamps as fixed-width UTC text on both backends.
+CREATE TABLE IF NOT EXISTS mcp_event_clock (
+    singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
+    head_seq BIGINT NOT NULL DEFAULT 0 CHECK (head_seq >= 0),
+    pruned_through_seq BIGINT NOT NULL DEFAULT 0 CHECK (pruned_through_seq >= 0),
+    capture_epoch BIGINT NOT NULL DEFAULT 0 CHECK (capture_epoch >= 0),
+    epoch_started_at TEXT NOT NULL DEFAULT '',
+    coverage_fingerprint TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT FALSE
+);
+INSERT INTO mcp_event_clock (singleton) VALUES (1)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- Retained occurrences deliberately have no archive foreign keys: deletion
+-- of a message or draft does not destroy a subscriber's receipt.
+CREATE TABLE IF NOT EXISTS mcp_event_log (
+    seq BIGINT PRIMARY KEY CHECK (seq > 0),
+    epoch BIGINT NOT NULL,
+    family TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    item_key TEXT NOT NULL,
+    message_id BIGINT,
+    message_reference_seq BIGINT,
+    conversation_id BIGINT NOT NULL,
+    source_id BIGINT NOT NULL,
+    attachment_id BIGINT,
+    from_me BOOLEAN NOT NULL,
+    occurred_at TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    data TEXT NOT NULL CHECK (jsonb_typeof(data::jsonb) = 'object')
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_scope
+    ON mcp_event_log(epoch, family, scope_kind, scope_id, seq);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_source ON mcp_event_log(source_id);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_retention ON mcp_event_log(recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_event_log_occurrence
+    ON mcp_event_log(family, scope_kind, scope_id, item_key)
+    WHERE family IN (
+        'msgvault.draft_changed', 'msgvault.kata_issue_filed',
+        'msgvault.attachment_processed');
+
+CREATE TABLE IF NOT EXISTS mcp_event_subscriptions (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    arguments TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id BIGINT NOT NULL,
+    source_id BIGINT,
+    scope_reference_id BIGINT NOT NULL DEFAULT 0,
+    callback_url TEXT NOT NULL,
+    secret_enc BYTEA NOT NULL,
+    previous_secret_enc BYTEA,
+    previous_secret_until TEXT,
+    secret_revision BIGINT NOT NULL CHECK (secret_revision > 0),
+    verified_revision BIGINT NOT NULL,
+    verified_at TEXT NOT NULL,
+    generation BIGINT NOT NULL CHECK (generation > 0),
+    state TEXT NOT NULL CHECK (state IN ('active', 'expired', 'unsubscribed', 'gone', 'stopped')),
+    stop_reason TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL,
+    cursor_epoch BIGINT NOT NULL,
+    cursor_seq BIGINT NOT NULL CHECK (cursor_seq >= 0),
+    pending_seq BIGINT,
+    pending_envelope BYTEA,
+    pending_generation BIGINT,
+    attempt_count BIGINT NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 12),
+    next_attempt_at TEXT,
+    from_me_window_start TEXT,
+    from_me_window_count BIGINT NOT NULL DEFAULT 0 CHECK (from_me_window_count >= 0),
+    loop_guard_skips BIGINT NOT NULL DEFAULT 0 CHECK (loop_guard_skips >= 0),
+    dead_letter_count BIGINT NOT NULL DEFAULT 0 CHECK (dead_letter_count >= 0),
+    last_outcome TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    CONSTRAINT mcp_event_subscriptions_scope_identity CHECK ((name='msgvault.import_message_archived' AND scope_kind='archive' AND scope_id=0 AND source_id IS NULL)
+        OR (scope_kind<>'archive' AND scope_id>0 AND source_id>0 AND source_id IS NOT NULL)),
+    CHECK ((pending_seq IS NULL AND pending_envelope IS NULL AND pending_generation IS NULL)
+        OR (pending_seq IS NOT NULL AND pending_seq > 0
+            AND pending_envelope IS NOT NULL
+            AND pending_generation IS NOT NULL AND pending_generation > 0))
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_scope
+    ON mcp_event_subscriptions(scope_kind, scope_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_due
+    ON mcp_event_subscriptions(state, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_subscriptions_principal
+    ON mcp_event_subscriptions(principal_id, state);
+
+CREATE TABLE IF NOT EXISTS mcp_event_dead_letters (
+    subscription_id TEXT NOT NULL,
+    seq BIGINT NOT NULL,
+    attempts BIGINT NOT NULL CHECK (attempts BETWEEN 1 AND 12),
+    last_status_class TEXT NOT NULL,
+    failed_at TEXT NOT NULL,
+    PRIMARY KEY (subscription_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_event_dead_letters_cleanup
+    ON mcp_event_dead_letters(failed_at);
+
 -- Open catalog of communication services. Seeded slugs are presentation and
 -- normalization metadata, NOT a database enum and not a compatibility
 -- ceiling: an unknown bridge type or a custom service is registered as a new
@@ -4226,3 +4329,203 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
  ON docbank_attachment_deliveries(destination_key, state);
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
+
+-- Live references disappear on physical deletion; retained receipts keep
+-- their original reference sequence independently of archive row ID reuse.
+CREATE TABLE IF NOT EXISTS mcp_event_message_refs (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    reference_seq BIGINT NOT NULL UNIQUE CHECK (reference_seq > 0)
+);
+
+-- Resource lifetimes are independent of retained subscription and occurrence
+-- bindings. Removing a live lifetime must never rewrite retained authority.
+CREATE TABLE IF NOT EXISTS mcp_source_resources (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+CREATE TABLE IF NOT EXISTS mcp_conversation_resources (
+    conversation_id BIGINT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_conversation_resources_source
+    ON mcp_conversation_resources(source_id);
+CREATE TABLE IF NOT EXISTS mcp_subscription_resource_bindings (
+    subscription_id TEXT PRIMARY KEY REFERENCES mcp_event_subscriptions(id) ON DELETE CASCADE,
+    source_generation TEXT NOT NULL,
+    scope_generation TEXT NOT NULL,
+    valid BOOLEAN NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_event_resource_bindings (
+    seq BIGINT PRIMARY KEY REFERENCES mcp_event_log(seq) ON DELETE CASCADE,
+    source_generation TEXT NOT NULL,
+    scope_generation TEXT NOT NULL,
+    valid BOOLEAN NOT NULL,
+    message_valid BOOLEAN NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS import_runs (
+ id TEXT PRIMARY KEY,
+ principal TEXT NOT NULL,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ import_format TEXT NOT NULL,
+ notify_imports BOOLEAN NOT NULL,
+ completed BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_import_runs_source ON import_runs(source_id);
+CREATE TABLE IF NOT EXISTS import_run_attempts (
+ sync_run_id BIGINT PRIMARY KEY REFERENCES sync_runs(id) ON DELETE CASCADE,
+ import_run_id TEXT NOT NULL REFERENCES import_runs(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_import_run_attempts_run ON import_run_attempts(import_run_id);
+
+-- Durable first-import decisions survive journal and message retention.
+-- Native source identity is retained without bodies or parser metadata.
+CREATE TABLE IF NOT EXISTS import_message_decisions (
+    source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+    source_message_id TEXT NOT NULL,
+    source_id BIGINT NOT NULL,
+    import_run_id TEXT,
+    archived_at TEXT,
+    notified BOOLEAN NOT NULL,
+    PRIMARY KEY (source_generation, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_import_decisions_source ON import_message_decisions(source_id);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_event_log_archive ON mcp_event_log(epoch,family,seq);
+
+-- Hashed native duplicate allocation evidence survives message deletion.
+CREATE TABLE IF NOT EXISTS import_occurrence_allocations (
+ source_generation TEXT NOT NULL CHECK(length(source_generation)=64),
+ source_id BIGINT NOT NULL,
+ import_format TEXT NOT NULL CHECK(import_format='imazing_csv'),
+ base_hash TEXT NOT NULL CHECK(length(base_hash)=64),
+ occurrence INTEGER NOT NULL CHECK(occurrence>=0),
+ source_message_id TEXT NOT NULL,
+ evidence_hashes TEXT NOT NULL,
+ PRIMARY KEY(source_generation,import_format,base_hash,occurrence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_occurrence_source_key ON import_occurrence_allocations(source_generation,import_format,source_message_id);
+
+-- Opaque logical identities retain native import replay decisions across
+-- participant-ID-dependent archive keys, including physical message deletion.
+CREATE TABLE IF NOT EXISTS import_message_identities (
+ source_generation TEXT NOT NULL CHECK(length(source_generation)=64),
+ import_format TEXT NOT NULL CHECK(import_format='synctech_sms'),
+ identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
+ source_id BIGINT NOT NULL,
+ source_message_id TEXT NOT NULL,
+ PRIMARY KEY(source_generation,import_format,identity_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_import_message_identity_native_key ON import_message_identities(source_generation,import_format,source_message_id);
+
+-- A source occurrence pins its originating conversation while the encompassing
+-- source subscription remains usable for unrelated conversations. No archive
+-- foreign key can erase this retained authorization evidence.
+CREATE TABLE IF NOT EXISTS mcp_event_origin_bindings (
+ seq BIGINT PRIMARY KEY REFERENCES mcp_event_log(seq) ON DELETE CASCADE,
+ generation TEXT NOT NULL CHECK (length(generation)=64)
+);
+
+-- Native permission evidence is independent of archive presence and binds one
+-- source lifetime. No credential or delegated-agent grant is stored here.
+CREATE TABLE IF NOT EXISTS native_source_permissions (
+ source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ permission_known BOOLEAN NOT NULL,
+ message_read BOOLEAN NOT NULL,
+ CHECK (NOT message_read OR permission_known)
+);
+
+-- Native scope presence is independent of mutable archival label associations.
+-- Retired rows remain tombstones; restoring a native identity rotates its key.
+CREATE TABLE IF NOT EXISTS native_message_scopes (
+ id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ scope_kind TEXT NOT NULL,
+ provider_id TEXT NOT NULL,
+ parent_provider_id TEXT NOT NULL DEFAULT '',
+ native_epoch TEXT NOT NULL DEFAULT '',
+ permission_domain TEXT NOT NULL DEFAULT '',
+ display_name TEXT NOT NULL,
+ generation TEXT NOT NULL CHECK (length(generation)=64),
+ present BOOLEAN NOT NULL,
+ UNIQUE (source_id,scope_kind,provider_id)
+);
+CREATE INDEX IF NOT EXISTS idx_native_message_scopes_present ON native_message_scopes(source_id,scope_kind,parent_provider_id,present,id);
+
+-- Current native membership is written with the complete message snapshot.
+-- Journal resource bindings separately retain each occurrence's capture lifetime.
+CREATE TABLE IF NOT EXISTS native_message_scope_memberships (
+ message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ scope_id BIGINT NOT NULL REFERENCES native_message_scopes(id) ON DELETE CASCADE,
+ source_generation TEXT NOT NULL CHECK (length(source_generation)=64),
+ scope_generation TEXT NOT NULL CHECK (length(scope_generation)=64),
+ PRIMARY KEY (message_id,scope_id)
+);
+
+-- Scope references survive in subscriptions, but cascade from live conversations.
+CREATE TABLE IF NOT EXISTS mcp_event_conversation_refs (
+    reference_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    conversation_id BIGINT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+-- Calendar scopes bind the same way to their source lifetime.
+CREATE TABLE IF NOT EXISTS mcp_event_source_refs (
+    reference_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_id BIGINT NOT NULL UNIQUE REFERENCES sources(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS mcp_live_admissions (
+    message_id BIGINT PRIMARY KEY,
+    source_id BIGINT NOT NULL,
+    message_reference_seq BIGINT NOT NULL CHECK (message_reference_seq > 0),
+    epoch BIGINT NOT NULL,
+    admitted_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_live_admissions_source ON mcp_live_admissions(source_id);
+-- Native Inbox observations retire with sources; operation receipts retain
+-- dispatch evidence after source removal.
+CREATE TABLE IF NOT EXISTS inbox_source_revisions (
+    source_id BIGINT PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+    revision BIGINT NOT NULL CHECK (revision > 0)
+);
+CREATE TABLE IF NOT EXISTS inbox_provider_states (
+    target_key TEXT PRIMARY KEY,
+    source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL CHECK (scope IN ('message', 'chat')),
+    item_id BIGINT NOT NULL,
+    provider_id TEXT NOT NULL,
+    mailbox TEXT NOT NULL DEFAULT '',
+    uidvalidity BIGINT NOT NULL DEFAULT 0,
+    uid BIGINT NOT NULL DEFAULT 0,
+    is_inbox BOOLEAN,
+    provider_read BOOLEAN,
+    marked_unread BOOLEAN,
+    semantic_hash TEXT NOT NULL,
+    state_json TEXT NOT NULL,
+    observed_at BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_provider_states_identity
+    ON inbox_provider_states(source_id, scope, item_id, provider_id);
+CREATE TABLE IF NOT EXISTS inbox_operation_receipts (
+    id TEXT PRIMARY KEY,
+    principal_id TEXT NOT NULL,
+    source_id BIGINT NOT NULL,
+    idempotency_key_hash TEXT NOT NULL,
+    intent_hash TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'dispatching', 'verified', 'partial', 'unknown', 'reconcile-only', 'failed')),
+    created_at BIGINT NOT NULL,
+    source_removed_at BIGINT,
+    dispatched_at BIGINT,
+    finished_at BIGINT,
+    after_json TEXT,
+    failure_code TEXT NOT NULL DEFAULT '',
+    UNIQUE (principal_id, source_id, idempotency_key_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_receipts_source_status
+    ON inbox_operation_receipts(source_id, status);

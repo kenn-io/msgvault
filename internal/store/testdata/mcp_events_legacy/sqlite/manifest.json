@@ -1,0 +1,13 @@
+{
+  "conversation_id": 1,
+  "delivered_event_id": "evt1.sub_cfd4ec5f91b01e412327617559a8ed74f1c695cc8ffc99a1caff83cf8f96975f.1.XemwHuqO7jzb_7W43xRGIQ",
+  "delivered_message_id": 1,
+  "pending_envelope_sha256": "1e367ac6f6f9e310b29fbda8d86a9368c4200875acbdcec3866331a8ed8ad69a",
+  "pending_event_id": "evt1.sub_cfd4ec5f91b01e412327617559a8ed74f1c695cc8ffc99a1caff83cf8f96975f.2.LBDvdCf0p1BWf82pMYQqKg",
+  "pending_generation": 1,
+  "pending_message_id": 3,
+  "pending_seq": 2,
+  "secret_revision": 1,
+  "source_id": 1,
+  "subscription_id": "sub_cfd4ec5f91b01e412327617559a8ed74f1c695cc8ffc99a1caff83cf8f96975f"
+}

@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/googleaccount"
+
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -951,39 +953,7 @@ func missingScopes(required, granted []string) []string {
 // For Google Workspace domains we cannot verify aliases without an
 // admin API call, so we fall back to exact-match only.
 func SameGoogleAccount(expected, canonical string) bool {
-	if strings.EqualFold(expected, canonical) {
-		return true
-	}
-
-	// Normalize gmail.com / googlemail.com addresses for comparison
-	expectedNorm := normalizeGmailAddress(expected)
-	canonicalNorm := normalizeGmailAddress(canonical)
-
-	return expectedNorm != "" && expectedNorm == canonicalNorm
-}
-
-// normalizeGmailAddress returns a canonical form of a gmail.com or
-// googlemail.com address by lowercasing, stripping +suffixes and dots
-// from the local part, and mapping googlemail.com → gmail.com.
-// Returns "" for non-Gmail addresses.
-func normalizeGmailAddress(email string) string {
-	local, domain, ok := strings.CutLast(email, "@")
-	if !ok {
-		return ""
-	}
-	local = strings.ToLower(local)
-	domain = strings.ToLower(domain)
-
-	if domain != "gmail.com" && domain != "googlemail.com" {
-		return ""
-	}
-
-	// Gmail ignores dots and +suffixes in the local part
-	if plus := strings.Index(local, "+"); plus >= 0 {
-		local = local[:plus]
-	}
-	local = strings.ReplaceAll(local, ".", "")
-	return local + "@gmail.com"
+	return googleaccount.Same(expected, canonical)
 }
 
 // tokenFile wraps an OAuth2 token with metadata about the scopes and
