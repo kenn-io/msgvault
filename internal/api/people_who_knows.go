@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -91,13 +92,13 @@ func (s *Server) handleWhoKnows(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := service.Find(r.Context(), request)
 	if err != nil {
-		s.writeWhoKnowsError(w, err)
+		s.writeWhoKnowsError(r.Context(), w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) writeWhoKnowsError(w http.ResponseWriter, err error) {
+func (s *Server) writeWhoKnowsError(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, whoknows.ErrMissingFreeText):
 		writeError(w, http.StatusBadRequest, "missing_free_text", err.Error())
@@ -111,5 +112,5 @@ func (s *Server) writeWhoKnowsError(w http.ResponseWriter, err error) {
 	if !errors.Is(err, vector.ErrEmbeddingTimeout) && s.writeIfContextError(w, err) {
 		return
 	}
-	s.writeVectorSearchError(w, err, "who-knows")
+	s.writeVectorSearchError(ctx, w, err, "who-knows")
 }
