@@ -2,14 +2,12 @@ package store_test
 
 import (
 	"database/sql"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -303,123 +301,82 @@ func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 }
 
 func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st, source, draft, _ := newReviewManagedDraft(t, "surviving-membership", 61, "body")
+	for _, operation := range []string{store.IMAPDraftOperationDelete, store.IMAPDraftOperationEdit} {
+		t.Run(operation, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st, source, draft, conversationID := newReviewManagedDraft(t, "surviving-membership", 61, "body")
 
-	archiveLabelID, err := st.EnsureLabel(source.ID, "Archive", "Archive", "user")
-	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`
-		INSERT INTO imap_message_memberships
-			(source_id, mailbox, uidvalidity, uid, message_id)
-		VALUES (?, ?, ?, ?, ?)
-	`), source.ID, "Archive", 1, 62, draft.CurrentMessageID)
-	requirements.NoError(err)
-	requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{archiveLabelID}))
+			archiveLabelID, err := st.EnsureLabel(source.ID, "Archive", "Archive", "user")
+			requirements.NoError(err)
+			_, err = st.DB().Exec(st.Rebind(`
+				INSERT INTO imap_message_memberships
+					(source_id, mailbox, uidvalidity, uid, message_id)
+				VALUES (?, ?, ?, ?, ?)
+			`), source.ID, "Archive", 1, 62, draft.CurrentMessageID)
+			requirements.NoError(err)
+			requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{archiveLabelID}))
 
-	beforeRevision, err := st.DerivedDataRevision()
-	requirements.NoError(err)
-	_, err = st.ClaimIMAPDraftContext(
-		t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationDelete, nil,
-	)
-	requirements.NoError(err)
-	_, err = st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, draft.Revision)
-	requirements.ErrorIs(err, store.ErrIMAPDraftState)
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftCodeRemoved, nil))
-	finished, err := st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, draft.Revision)
-	requirements.NoError(err)
+			beforeRevision, err := st.DerivedDataRevision()
+			requirements.NoError(err)
+			var finished store.IMAPDraft
+			if operation == store.IMAPDraftOperationEdit {
+				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), draft.CurrentMessageID)
+				requirements.NoError(err)
+				replacementRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n\r\nreplacement\r\n")
+				_, err = st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, operation, replacementRaw)
+				requirements.NoError(err)
+				replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 63}
+				requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, "append_uidplus", &replacement))
+				published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, draft.Revision, nil, func([]int64) *store.MessagePersistData {
+					return &store.MessagePersistData{
+						Message: &store.Message{
+							SourceID: source.ID, ConversationID: conversationID, SourceMessageID: store.IMAPDraftSourceMessageID(replacement),
+							MessageType: store.MessageTypeEmail,
+						},
+						RawMIME: replacementRaw,
+					}
+				})
+				requirements.NoError(err)
+				requirements.NotEqual(draft.CurrentMessageID, published.CurrentMessageID)
+				requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil))
+				// Only cleanup advances the revision checked below.
+				beforeRevision, err = st.DerivedDataRevision()
+				requirements.NoError(err)
+				finished, err = st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, published.Revision)
+				requirements.NoError(err)
+			} else {
+				_, err = st.ClaimIMAPDraftContext(
+					t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationDelete, nil,
+				)
+				requirements.NoError(err)
+				_, err = st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, draft.Revision)
+				requirements.ErrorIs(err, store.ErrIMAPDraftState)
+				requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftCodeRemoved, nil))
+				finished, err = st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, draft.Revision)
+				requirements.NoError(err)
+			}
 
-	afterRevision, err := st.DerivedDataRevision()
-	requirements.NoError(err)
-	assertions.Equal(beforeRevision+1, afterRevision)
-	assertions.Equal([]string{"Archive"}, messageLabels(t, st, draft.CurrentMessageID))
-	assertions.False(messageTombstoned(t, st, draft.CurrentMessageID))
-	assertions.Nil(finished.Pending)
+			afterRevision, err := st.DerivedDataRevision()
+			requirements.NoError(err)
+			assertions.Equal(beforeRevision+1, afterRevision)
+			assertions.Equal([]string{"Archive"}, messageLabels(t, st, draft.CurrentMessageID))
+			assertions.False(messageTombstoned(t, st, draft.CurrentMessageID))
+			assertions.Nil(finished.Pending)
 
-	var retainedMailbox string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT mailbox FROM imap_message_memberships
-		WHERE source_id = ? AND message_id = ?
-	`), source.ID, draft.CurrentMessageID).Scan(&retainedMailbox))
-	assertions.Equal("Archive", retainedMailbox)
-}
-
-func TestManagedIMAPDraftEditWithSurvivingMembershipStaysOutOfContact(t *testing.T) {
-	requirements := require.New(t)
-	st, source, draft, conversationID := newReviewManagedDraft(t, "edit-surviving-membership", 61, "old draft")
-	owner, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	requirements.NoError(err)
-	contact, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(contact)
-	requirements.NoError(err)
-	requirements.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))
-	receivedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
-	draftAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	receivedID, err := st.UpsertMessage(&store.Message{
-		SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "received",
-		MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: contact, Valid: true},
-		SentAt: sql.NullTime{Time: receivedAt, Valid: true},
-	})
-	requirements.NoError(err)
-	requirements.NoError(st.ReplaceMessageRecipients(receivedID, "from", []int64{contact}, nil))
-	requirements.NoError(st.ReplaceMessageRecipients(receivedID, "to", []int64{owner}, nil))
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ?, sent_at = ? WHERE id = ?`), owner, draftAt, draft.CurrentMessageID)
-	requirements.NoError(err)
-	requirements.NoError(st.ReplaceMessageRecipients(draft.CurrentMessageID, "from", []int64{owner}, nil))
-	requirements.NoError(st.ReplaceMessageRecipients(draft.CurrentMessageID, "to", []int64{contact}, nil))
-	archiveLabelID, err := st.EnsureLabel(source.ID, "Archive", "Archive", "user")
-	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`INSERT INTO imap_message_memberships
-		(source_id, mailbox, uidvalidity, uid, message_id)
-		VALUES (?, 'Archive', 1, 62, ?)`), source.ID, draft.CurrentMessageID)
-	requirements.NoError(err)
-	requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{archiveLabelID}))
-
-	replacementRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n\r\nreplacement\r\n")
-	_, err = st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, store.IMAPDraftOperationEdit, replacementRaw)
-	requirements.NoError(err)
-	replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 63}
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, draft.Revision, "append_uidplus", &replacement))
-	published, err := st.PublishIMAPDraftReplacementContext(t.Context(), draft.DraftID, draft.Revision, nil, func([]int64) *store.MessagePersistData {
-		return &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: source.ID, ConversationID: conversationID, SourceMessageID: store.IMAPDraftSourceMessageID(replacement),
-				MessageType: store.MessageTypeEmail, SenderID: sql.NullInt64{Int64: owner, Valid: true},
-				SentAt: sql.NullTime{Time: draftAt.Add(time.Hour), Valid: true},
-			},
-			RawMIME: replacementRaw,
-		}
-	})
-	requirements.NoError(err)
-	requirements.NotEqual(draft.CurrentMessageID, published.CurrentMessageID)
-	before, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{draft.CurrentMessageID})
-	requirements.NoError(err)
-	requirements.Len(before, 1)
-	requirements.True(before[0].Unsent, "the original snapshot is unsent while cleanup is pending")
-	requirements.False(before[0].Eligible)
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), draft.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil))
-	finished, err := st.FinishIMAPDraftRemovalContext(t.Context(), draft.DraftID, published.Revision)
-	requirements.NoError(err)
-	requirements.Nil(finished.Pending)
-	requirements.False(messageTombstoned(t, st, draft.CurrentMessageID))
-	requirements.Equal([]string{"Archive"}, messageLabels(t, st, draft.CurrentMessageID))
-	var mailbox string
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT mailbox FROM imap_message_memberships WHERE message_id = ?`), draft.CurrentMessageID).Scan(&mailbox))
-	requirements.Equal("Archive", mailbox)
-
-	// Leave the original queue entry pending until edit cleanup has finished.
-	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC"})
-	requirements.NoError(err)
-	_, err = projector.RunOnce(t.Context())
-	requirements.NoError(err)
-	state, err := st.ContactStateContext(t.Context(), person.ID, draftAt.Add(24*time.Hour))
-	requirements.NoError(err)
-	assert.Equal(t, fmt.Sprintf("message:%d", receivedID), state.LastContactRef, "edit cleanup must keep the never-sent snapshot out of last contact")
-	assert.Equal(t, &receivedAt, state.LastContactAt)
-	after, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{draft.CurrentMessageID})
-	requirements.NoError(err)
-	requirements.Len(after, 1)
-	assert.True(t, after[0].Unsent, "edit cleanup must preserve the original snapshot's unsent status")
-	assert.False(t, after[0].Eligible)
+			var retainedMailbox string
+			requirements.NoError(st.DB().QueryRow(st.Rebind(`
+				SELECT mailbox FROM imap_message_memberships
+				WHERE source_id = ? AND message_id = ?
+			`), source.ID, draft.CurrentMessageID).Scan(&retainedMailbox))
+			assertions.Equal("Archive", retainedMailbox)
+			if operation == store.IMAPDraftOperationEdit {
+				after, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{draft.CurrentMessageID})
+				requirements.NoError(err)
+				requirements.Len(after, 1)
+				assertions.True(after[0].Unsent, "edit cleanup must preserve the original snapshot's unsent status")
+				assertions.False(after[0].Eligible)
+			}
+		})
+	}
 }

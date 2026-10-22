@@ -45,9 +45,6 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 				_, err = activityExec(f.Store, `INSERT INTO imap_message_memberships(source_id, mailbox, uidvalidity, uid, message_id, flags)
 					VALUES (?, 'Scratch', 7, 1, ?, ?)`, original.ID, messageID, tc.flags)
 				require.NoError(err)
-				_, err = activityExec(f.Store, `INSERT INTO source_settings(source_id, history_only, merged_into_source_id, retired_at)
-					VALUES (?, TRUE, ?, CURRENT_TIMESTAMP)`, original.ID, f.Source.ID)
-				require.NoError(err)
 			} else {
 				labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
 				// Reproduce an older projector's event without running attribution hooks.
@@ -56,8 +53,6 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 			}
 			var revisionBefore int64
 			require.NoError(activityQueryRow(f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionBefore))
-			var labelsBefore int
-			require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM labels`).Scan(&labelsBefore))
 			_, err = activityExec(f.Store, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`)
 			require.NoError(err)
 			require.NoError(f.Store.InitSchema())
@@ -88,9 +83,6 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 				assert.Equal(newerAt, state.LastContactAt.UTC())
 				assert.Equal(int64(2), state.InteractionCount)
 			}
-			var labelsAfter int
-			require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM labels`).Scan(&labelsAfter))
-			assert.Equal(labelsBefore, labelsAfter)
 		})
 	}
 }

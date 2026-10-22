@@ -49,63 +49,33 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 }
 
 func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
-	for _, tc := range []struct {
-		name, sourceType, labelType string
-		unsent, merged              bool
-	}{
-		{name: "gmail", sourceType: "gmail", labelType: "system", unsent: true},
-		{name: "maildir_flag", sourceType: "maildir", labelType: "system", unsent: true},
-		{name: "maildir_folder", sourceType: "maildir", labelType: "user"},
-		{name: "merged_maildir_flag", sourceType: "maildir", labelType: "system", unsent: true, merged: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			source, err := f.Store.GetOrCreateSource(tc.sourceType, "archive@example.com")
-			require.NoError(err)
-			f.Source = source
-			f.ConvID, err = f.Store.EnsureConversation(source.ID, "mail-thread", "Mail Thread")
-			require.NoError(err)
-			f, receivedID, personID := seedProjectorFixture(t, f, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC), false)
-			owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-			counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
-			messageID := f.NewMessage().WithSentAt(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(tc.unsent).Create(t, f.Store)
-			from, to := counterpart, owner
-			if tc.unsent {
-				from, to = owner, counterpart
-			}
-			require.NoError(f.Store.ReplaceMessageRecipients(messageID, "from", []int64{from}, nil))
-			require.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{to}, nil))
-			labels := f.EnsureLabels(map[string]string{"DRAFT": "DRAFT"}, tc.labelType)
-			require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
-			if tc.merged {
-				into, err := f.Store.GetOrCreateSource("maildir", "destination@example.com")
-				require.NoError(err)
-				_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
-				require.NoError(err)
-			}
-			candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
-			require.NoError(err)
-			require.Len(candidates, 1)
-			assert.Equal(tc.unsent, candidates[0].Unsent)
-			assert.Equal(!tc.unsent, candidates[0].Eligible)
-			projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
-			require.NoError(err)
-			_, err = projector.RunOnce(t.Context())
-			require.NoError(err)
-			state, err := f.Store.ContactStateContext(t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
-			require.NoError(err)
-			lastID := receivedID
-			refs := []string{"message:" + formatProjectorID(receivedID)}
-			if !tc.unsent {
-				lastID = messageID
-				refs = append(refs, "message:"+formatProjectorID(messageID))
-			}
-			assert.Equal("message:"+formatProjectorID(lastID), state.LastContactRef)
-			assert.ElementsMatch(refs, projectedActivityRefs(t, f.Store))
-		})
-	}
+	require := require.New(t)
+	assert := assert.New(t)
+	f, receivedID, personID := projectorFixture(t, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC), false)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
+	messageID := f.NewMessage().WithSentAt(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Create(t, f.Store)
+	require.NoError(f.Store.ReplaceMessageRecipients(messageID, "from", []int64{owner}, nil))
+	require.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{counterpart}, nil))
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "DRAFT"}, "system")
+	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
+	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
+	require.NoError(err)
+	require.Len(candidates, 1)
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
+	require.NoError(err)
+	projections, err := projector.projections(candidates, time.UTC, projector.maxDirectCounterparts)
+	require.NoError(err)
+	require.Len(projections, 1)
+	assert.True(projections[0].Token.Unsent)
+	assert.Nil(projections[0].Event)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
+	require.NoError(err)
+	assert.Equal("message:"+formatProjectorID(receivedID), state.LastContactRef)
+	assert.Equal(int64(1), state.InteractionCount)
+	assert.Equal([]string{"message:" + formatProjectorID(receivedID)}, projectedActivityRefs(t, f.Store))
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {

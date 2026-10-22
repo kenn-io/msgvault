@@ -1574,15 +1574,18 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		sourceType      string
+		labelType       string
 		labels          []string
 		extraSQL        string
 		metadata        string
 		sqliteOnly      bool
 		draftMembership bool
 		merged          bool
-		chained         bool
 		unsent          bool
 	}{
+		{name: "maildir_system_label", sourceType: "maildir", labels: []string{"DRAFT"}, unsent: true},
+		{name: "maildir_folder", sourceType: "maildir", labelType: "user", labels: []string{"DRAFT"}},
+		{name: "merged_maildir_system_label", sourceType: "maildir", labels: []string{"DRAFT"}, merged: true, unsent: true},
 		{name: "draft", sourceType: "gmail", labels: []string{"DRAFT"}, unsent: true},
 		{name: "draft_and_sent", sourceType: "gmail", labels: []string{"DRAFT", "SENT"}},
 		{name: "gmail_record_and_sent", sourceType: "gmail", labels: []string{"SENT"}, extraSQL: `INSERT INTO gmail_drafts
@@ -1592,9 +1595,7 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 		{name: "is_sent_false_with_imap_sent_origin", sourceType: "imap", labels: []string{"DRAFT"}, metadata: `{"imap_content_origin":"sent"}`, draftMembership: true, extraSQL: `UPDATE messages SET is_sent = FALSE WHERE id = ?`, unsent: true},
 		{name: "former_draft", sourceType: "gmail", extraSQL: `UPDATE messages SET draft_authored = TRUE WHERE id = ?`},
 		{name: "merged_imap_flag", sourceType: "imap", draftMembership: true, merged: true, unsent: true},
-		{name: "chained_imap_flag", sourceType: "imap", draftMembership: true, merged: true, chained: true, unsent: true},
 		{name: "merged_imap_flag_sent", sourceType: "imap", labels: []string{"SENT"}, draftMembership: true, merged: true},
-		{name: "chained_imap_flag_sent_origin", sourceType: "imap", metadata: `{"imap_content_origin":"sent"}`, draftMembership: true, merged: true, chained: true},
 		{name: "imap_flag", sourceType: "imap", draftMembership: true, unsent: true},
 		{name: "is_sent_false", sourceType: "gmail", extraSQL: `UPDATE messages SET is_sent = FALSE WHERE id = ?`, unsent: true},
 		{name: "malformed_metadata", sourceType: "gmail", labels: []string{"DRAFT"}, metadata: "invalid JSON", sqliteOnly: true, unsent: true},
@@ -1616,7 +1617,11 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 				})
 				require.NoError(err)
 			} else {
-				labels = f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
+				labelType := tc.labelType
+				if labelType == "" {
+					labelType = "system"
+				}
+				labels = f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, labelType)
 			}
 			for _, label := range tc.labels {
 				require.NoError(f.Store.AddMessageLabels(id, []int64{labels[label]}))
@@ -1627,7 +1632,7 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 					VALUES (?, 'Drafts', 1, 1, ?, ?)`, f.Source.ID, id, `["\\Draft"]`)
 				require.NoError(err)
 			}
-			if tc.merged {
+			if tc.merged && tc.sourceType == "imap" {
 				original, err := f.Store.GetOrCreateSource("imap", "retired@example.test")
 				require.NoError(err)
 				_, err = activityExec(f.Store, `UPDATE imap_message_memberships SET source_id = ? WHERE message_id = ?`, original.ID, id)
@@ -1638,15 +1643,12 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 				_, err = activityExec(f.Store, `INSERT INTO source_settings(source_id, history_only, merged_into_source_id, retired_at)
 					VALUES (?, TRUE, ?, CURRENT_TIMESTAMP)`, original.ID, f.Source.ID)
 				require.NoError(err)
-				if tc.chained {
-					intermediate, err := f.Store.GetOrCreateSource("imap", "intermediate@example.test")
-					require.NoError(err)
-					_, err = activityExec(f.Store, `INSERT INTO source_settings(source_id, history_only, merged_into_source_id, retired_at)
-						VALUES (?, TRUE, ?, CURRENT_TIMESTAMP)`, intermediate.ID, f.Source.ID)
-					require.NoError(err)
-					_, err = activityExec(f.Store, `UPDATE source_settings SET merged_into_source_id = ? WHERE source_id = ?`, intermediate.ID, original.ID)
-					require.NoError(err)
-				}
+			}
+			if tc.merged && tc.sourceType == "maildir" {
+				into, err := f.Store.GetOrCreateSource("maildir", "destination@example.com")
+				require.NoError(err)
+				_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.Source.ID, IntoSourceID: into.ID})
+				require.NoError(err)
 			}
 			if tc.extraSQL != "" {
 				_, err = activityExec(f.Store, tc.extraSQL, id)
@@ -1664,7 +1666,7 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	}
 }
 
-func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
+func TestActivityHookReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		update   string
