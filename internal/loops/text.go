@@ -18,8 +18,9 @@ var (
 )
 
 // ownText removes loop-specific quotations while preserving replies above and below them.
+// A leading newline lets signature stripping recognize a delimiter at the start.
 func ownText(body string) string {
-	text, _ := preprocess.Preprocess("", preprocess.StripReplyQuotes(body), 0, preprocess.Config{StripSignatures: true})
+	text, _ := preprocess.Preprocess("", "\n"+preprocess.StripReplyQuotes(body), 0, preprocess.Config{StripSignatures: true})
 	return text
 }
 

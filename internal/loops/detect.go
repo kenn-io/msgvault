@@ -220,17 +220,7 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if evidence.Empty {
-			if !m.MayHaveFileAttachment {
-				return true, nil
-			}
-		} else if !evidence.Acknowledgement {
-			return false, nil
-		}
-		if m.MayHaveFileAttachment && evidence.Attachment {
-			return false, nil
-		}
-		return true, nil
+		return (evidence.Empty || evidence.Acknowledgement) && !evidence.Attachment, nil
 	}
 	return false, nil
 }

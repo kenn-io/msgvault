@@ -36,8 +36,8 @@ type Result struct {
 // MaxListEvidenceComputations bounds uncached message classifications per request.
 const MaxListEvidenceComputations = 1000
 
-// loopEvidenceRuleVersion changes when ownText or classify changes.
-const loopEvidenceRuleVersion = 1
+// loopEvidenceRuleVersion changes when detection or body classification changes.
+const loopEvidenceRuleVersion = 2
 
 // evidenceVersion packs detector, text preprocessing, and MIME producer
 // versions into separate 10-bit fields. Keep each value below 1024.

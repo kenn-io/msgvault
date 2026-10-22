@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
 const (
@@ -72,18 +73,58 @@ func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T
 	assert.Equal(id, result.Loops[0].Anchor.ID)
 }
 
+func TestListSignatureOnlyReplyKeepsQuestionOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name, body  string
+		oldEvidence bool
+	}{
+		{name: "signature", body: "-- \nAlex Example"},
+		{name: "signature after quote removal", body: "On Monday, Alex wrote:\n> Can you send the contract?\n-- \nAlex Example"},
+		{name: "cached signature", body: "-- \nAlex Example", oldEvidence: true},
+	} {
+		for _, outbound := range []bool{false, true} {
+			t.Run(tc.name+"/outbound="+strconv.FormatBool(outbound), func(t *testing.T) {
+				require := require.New(t)
+				f := storetest.New(t)
+				from, to := me, alex
+				if outbound {
+					from, to = alex, me
+				}
+				question := f.PersistEmail(storetest.EmailSpec{Thread: "signature-only", From: from, To: []string{to}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+				reply := f.PersistEmail(storetest.EmailSpec{Thread: "signature-only", From: to, To: []string{from}, Body: tc.body, SentAt: ago(4 * day)})
+
+				// Version 1 treated the signature as substantive text. A list must
+				// replace those retained facts when the detector rules change.
+				if tc.oldEvidence {
+					const previousVersion = 1<<20 | preprocess.LoopEvidenceTextVersion<<10 | mime.AutomationEvidenceVersion
+					_, token, _, err := f.Store.LoopMessageEvidenceContext(t.Context(), reply, previousVersion)
+					require.NoError(err)
+					require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), reply, previousVersion, token, store.LoopMessageEvidence{}))
+				}
+
+				result := list(t, f, loops.Options{})
+				require.Len(result.Loops, 1)
+				assert.Equal(t, question, result.Loops[0].Anchor.ID)
+			})
+		}
+	}
+}
+
 func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *testing.T) {
+	const pdfOriginal = "MIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/mixed; boundary=proof\r\n\r\n" +
+		"--proof\r\nContent-Type: application/pdf; name=contract.pdf\r\n" +
+		"Content-Disposition: attachment; filename=contract.pdf\r\n" +
+		"Content-Transfer-Encoding: base64\r\n\r\ncGRm\r\n--proof--\r\n"
 	for _, tc := range []struct {
 		name, body, raw string
 		unknownRole     bool
+		flagMissing     bool
 		settles         bool
 	}{
-		{name: "PDF without attachment rows", settles: true,
-			raw: "MIME-Version: 1.0\r\n" +
-				"Content-Type: multipart/mixed; boundary=proof\r\n\r\n" +
-				"--proof\r\nContent-Type: application/pdf; name=contract.pdf\r\n" +
-				"Content-Disposition: attachment; filename=contract.pdf\r\n" +
-				"Content-Transfer-Encoding: base64\r\n\r\ncGRm\r\n--proof--\r\n"},
+		{name: "PDF without attachment rows", settles: true, raw: pdfOriginal},
+		{name: "PDF without attachment flag", settles: true, flagMissing: true, raw: pdfOriginal},
+		{name: "acknowledgement with PDF without attachment flag", body: "Thanks!", settles: true, flagMissing: true, raw: pdfOriginal},
 		{name: "inline logo with unknown attachment role", body: "Thanks!", unknownRole: true,
 			raw: "From: " + alex + "\r\nTo: " + me + "\r\nSubject: Re: Contract\r\n" +
 				"MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=signature\r\n\r\n" +
@@ -120,7 +161,7 @@ func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *test
 				require.Zero(rows, "the imported message has no exported attachment rows")
 			}
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
-				`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`), reply)
+				`UPDATE messages SET has_attachments = ?, attachment_count = 0 WHERE id = ?`), !tc.flagMissing, reply)
 			require.NoError(err)
 			result := list(t, f, loops.Options{})
 			if tc.settles {
