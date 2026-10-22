@@ -4518,6 +4518,22 @@ BEGIN
 END;
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
+-- Call claims are message-backed observations, never inferred attendance.
+CREATE TABLE IF NOT EXISTS call_details (
+    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    canonical_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    owner_participation TEXT NOT NULL,
+    occurred_at DATETIME NOT NULL,
+    duration_seconds REAL,
+    withdrawn BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_call_details_identity ON call_details(canonical_key, message_id);
+CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
+
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     projection_version INTEGER NOT NULL,
