@@ -638,7 +638,10 @@ func TestSnoozeReplacesDoneOnceAFollowUpReopens(t *testing.T) {
 	assert.True(until.Equal(*decision.SnoozedUntil))
 	var state string
 	var storedUntil, through sql.NullTime
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT state, snoozed_until, through_at FROM loop_decisions WHERE anchor_message_id = ?`), question).Scan(&state, &storedUntil, &through))
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
+		SELECT state, snoozed_until, through_at FROM loop_conversation_decisions
+		WHERE conversation_id = (SELECT conversation_id FROM messages WHERE id = ?)
+	`), question).Scan(&state, &storedUntil, &through))
 	assert.Equal(store.LoopStateSnoozed, state)
 	require.True(storedUntil.Valid)
 	require.True(through.Valid)
