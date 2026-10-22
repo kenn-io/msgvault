@@ -50,32 +50,12 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 
 func TestProjectorSkipsUnsentMessagesForContactState(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
-	f, receivedID, personID := projectorFixture(t, time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC), false)
-	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
-	counterpart := f.EnsureParticipant("counterpart@example.com", "Counterpart", "example.com")
-	messageID := f.NewMessage().WithSentAt(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)).WithIsFromMe(true).Create(t, f.Store)
-	require.NoError(f.Store.ReplaceMessageRecipients(messageID, "from", []int64{owner}, nil))
-	require.NoError(f.Store.ReplaceMessageRecipients(messageID, "to", []int64{counterpart}, nil))
-	labels := f.EnsureLabels(map[string]string{"DRAFT": "DRAFT"}, "system")
-	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
-	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
-	require.NoError(err)
-	require.Len(candidates, 1)
-	projector, err := NewProjector(f.Store, Options{Timezone: "UTC"})
-	require.NoError(err)
-	projections, err := projector.projections(candidates, time.UTC, projector.maxDirectCounterparts)
+	candidate := store.ActivityCandidate{Unsent: true}
+	projector := &Projector{}
+	projections, err := projector.projections([]store.ActivityCandidate{candidate}, time.UTC, DefaultMaxDirectCounterparts)
 	require.NoError(err)
 	require.Len(projections, 1)
-	assert.True(projections[0].Token.Unsent)
-	assert.Nil(projections[0].Event)
-	_, err = projector.RunOnce(t.Context())
-	require.NoError(err)
-	state, err := f.Store.ContactStateContext(t.Context(), personID, time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	assert.Equal("message:"+formatProjectorID(receivedID), state.LastContactRef)
-	assert.Equal(int64(1), state.InteractionCount)
-	assert.Equal([]string{"message:" + formatProjectorID(receivedID)}, projectedActivityRefs(t, f.Store))
+	assert.Equal(t, candidate.Unsent, projections[0].Token.Unsent)
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {

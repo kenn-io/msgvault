@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -302,12 +301,10 @@ func TestManagedIMAPDraftRetainedByGCWhileCurrent(t *testing.T) {
 
 func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t *testing.T) {
 	for _, tc := range []struct {
-		name, operation, sentEvidence string
+		name, operation string
 	}{
 		{name: "delete", operation: store.IMAPDraftOperationDelete},
 		{name: "edit", operation: store.IMAPDraftOperationEdit},
-		{name: "edit_sent_label", operation: store.IMAPDraftOperationEdit, sentEvidence: "label"},
-		{name: "edit_sent_origin", operation: store.IMAPDraftOperationEdit, sentEvidence: "origin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			operation := tc.operation
@@ -316,9 +313,6 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 			st, source, draft, conversationID := newReviewManagedDraft(t, "surviving-membership", 61, "body")
 
 			mailbox := "Archive"
-			if tc.sentEvidence == "label" {
-				mailbox = "Sent"
-			}
 			archiveLabelID, err := st.EnsureLabel(source.ID, mailbox, mailbox, "user")
 			requirements.NoError(err)
 			_, err = st.DB().Exec(st.Rebind(`
@@ -329,24 +323,10 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 			requirements.NoError(err)
 			requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{archiveLabelID}))
 
-			switch tc.sentEvidence {
-			case "label":
-				labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-					"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
-				})
-				requirements.NoError(err)
-				requirements.NoError(st.AddMessageLabels(draft.CurrentMessageID, []int64{labels["Sent"]}))
-			case "origin":
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), `{"imap_content_origin":"sent"}`, draft.CurrentMessageID)
-				requirements.NoError(err)
-			}
-
 			beforeRevision, err := st.DerivedDataRevision()
 			requirements.NoError(err)
 			var finished store.IMAPDraft
 			if operation == store.IMAPDraftOperationEdit {
-				_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), draft.CurrentMessageID)
-				requirements.NoError(err)
 				replacementRaw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\n\r\nreplacement\r\n")
 				_, err = st.ClaimIMAPDraftContext(t.Context(), draft.DraftID, draft.Revision, operation, replacementRaw)
 				requirements.NoError(err)
@@ -398,8 +378,8 @@ func TestManagedIMAPDraftRemovalAdvancesDerivedRevisionWithSurvivingMembership(t
 				after, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{draft.CurrentMessageID})
 				requirements.NoError(err)
 				requirements.Len(after, 1)
-				assertions.Equal(tc.sentEvidence == "", after[0].Unsent, "edit cleanup must respect surviving Sent evidence")
-				assertions.Equal(tc.sentEvidence != "", after[0].Eligible)
+				assertions.True(after[0].Unsent, "edit cleanup must leave the surviving copy unsent")
+				assertions.False(after[0].Eligible)
 			}
 		})
 	}

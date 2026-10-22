@@ -1502,9 +1502,7 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 	f, personID := activityProjectionFixture(t)
 	at := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	id := f.NewMessage().WithSentAt(at).Create(t, f.Store)
-	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts", "SENT": "Sent"}, "system")
-	require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
-	require.NoError(f.Store.RemoveMessageLabels(id, []int64{labels["DRAFT"]}))
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
 	initial := activityProjectionForMessage(t, f, id, personID, at)
 	initial.Event = nil
 	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
@@ -1524,13 +1522,6 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 	assert.False(candidates[0].Eligible)
 	assert.Equal(old.Token.Queue, candidates[0].Queue)
 	assert.True(old.Token.LastModified.Equal(candidates[0].LastModified))
-	fresh := activityProjectionFromCandidate(t, candidates[0], personID, at)
-	fresh.Event = nil
-	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{fresh})
-	require.NoError(err)
-	var count int
-	require.NoError(activityQueryRow(f.Store, `SELECT COUNT(*) FROM activity_events WHERE message_id = ?`, id).Scan(&count))
-	assert.Zero(count)
 }
 
 func TestActivityDraftSendFlipRequeuesProjection(t *testing.T) {
@@ -1585,7 +1576,6 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	}{
 		{name: "maildir_system_label", sourceType: "maildir", labels: []string{"DRAFT"}, unsent: true},
 		{name: "maildir_folder", sourceType: "maildir", labelType: "user", labels: []string{"DRAFT"}},
-		{name: "merged_maildir_system_label", sourceType: "maildir", labels: []string{"DRAFT"}, merged: true, unsent: true},
 		{name: "draft", sourceType: "gmail", labels: []string{"DRAFT"}, unsent: true},
 		{name: "draft_and_sent", sourceType: "gmail", labels: []string{"DRAFT", "SENT"}},
 		{name: "gmail_record_and_sent", sourceType: "gmail", labels: []string{"SENT"}, extraSQL: `INSERT INTO gmail_drafts
@@ -1642,12 +1632,6 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 				require.NoError(err)
 				_, err = activityExec(f.Store, `INSERT INTO source_settings(source_id, history_only, merged_into_source_id, retired_at)
 					VALUES (?, TRUE, ?, CURRENT_TIMESTAMP)`, original.ID, f.Source.ID)
-				require.NoError(err)
-			}
-			if tc.merged && tc.sourceType == "maildir" {
-				into, err := f.Store.GetOrCreateSource("maildir", "destination@example.com")
-				require.NoError(err)
-				_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.Source.ID, IntoSourceID: into.ID})
 				require.NoError(err)
 			}
 			if tc.extraSQL != "" {

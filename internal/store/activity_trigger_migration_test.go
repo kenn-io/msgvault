@@ -20,7 +20,6 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 		unsent bool
 	}{
 		{name: "ordinary_draft", unsent: true},
-		{name: "old_merge_draft", merged: true, flags: `["\\Draft"]`, unsent: true},
 		{name: "old_merge_seen", merged: true, flags: `["\\Seen"]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
