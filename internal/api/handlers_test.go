@@ -5516,6 +5516,68 @@ func TestHandleGmailIDsByFilterResolvesSearchAndFilterTogether(t *testing.T) {
 	assertions.Equal("deep", resp.SearchMode)
 }
 
+func TestHandleGmailIDsByFilterUsesBoundedSearchResolver(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var calls int
+	engine := &querytest.MockEngine{
+		GetDeletionTargetsBySearchBoundedFunc: func(_ context.Context, _ *search.Query, _ query.MessageFilter, _ query.DeletionSearchMode, maxResults int) ([]query.DeletionTarget, int, error) {
+			calls++
+			assertions.Equal(query.MaxDeletionTargetSearchResults, maxResults)
+			return []query.DeletionTarget{{
+				MessageID: 1, SourceID: 7, SourceType: "gmail",
+				SourceIdentifier: "reader@example.test", SourceMessageID: "gmail-one",
+			}}, 2, nil
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/messages/gmail-ids?sender=alice@example.test&q=bodyneedle&search_mode=fast&max_results=100001", nil)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	requirements.Equal(http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	var resp GmailIDsResponse
+	requirements.NoError(json.NewDecoder(w.Body).Decode(&resp))
+	assertions.Equal(new(int64(2)), resp.MatchedCount)
+	assertions.Equal(1, calls)
+}
+
+func TestHandleGmailIDsByFilterRejectsInvalidMaxResults(t *testing.T) {
+	for _, tc := range []struct {
+		name, parameters string
+	}{
+		{"empty", "q=subject:newsletter&search_mode=fast&max_results="},
+		{"zero", "q=subject:newsletter&search_mode=fast&max_results=0"},
+		{"over limit", "q=subject:newsletter&search_mode=fast&max_results=100002"},
+		{"aggregate", "q=subject:newsletter&search_mode=aggregate&max_results=10"},
+		{"without query", "max_results=10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			calls := 0
+			engine := &querytest.MockEngine{
+				GetDeletionTargetsBySearchBoundedFunc: func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode, int) ([]query.DeletionTarget, int, error) {
+					calls++
+					return nil, 0, nil
+				},
+			}
+			srv := newTestServerWithEngine(t, engine)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?"+tc.parameters, nil)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			require.Equal(http.StatusBadRequest, w.Code)
+			var resp struct {
+				Error string `json:"error"`
+			}
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+			assert.Equal("invalid_max_results", resp.Error)
+			assert.Zero(calls)
+		})
+	}
+}
+
 func TestHandleGmailIDsByFilterResolvesDisplayedAggregateSearch(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

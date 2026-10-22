@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,8 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 3.24.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -1093,16 +1095,17 @@ use for message-type filtering when you do not need full-text ranking.
 }
 ```
 
-The companion `GET /api/v1/messages/gmail-ids` endpoint returns matching Gmail
-and Microsoft Graph mail (`msmail`) source message IDs in its `gmail_ids` field
-for email workflows such as deletion staging. The route and field names stay
-the same for both providers. It honors a subset of these parameters:
-`sender` / `sender_name`, `recipient` /
-`recipient_name`, `domain`, `label`, `source_id`, `after` / `before`, and
-`limit`. Results are restricted to Gmail and Microsoft Graph mail sources,
-exclude deleted messages, and are ordered newest-first; the remaining `/messages/filter`
-parameters (`message_type`, `conversation_id`, `attachments_only`,
-`hide_deleted`, `offset`, `sort`, `direction`) are ignored.
+The companion `GET /api/v1/messages/gmail-ids` endpoint returns source message IDs in `gmail_ids` and source metadata in `targets` for deletion staging. Without `max_results`, it selects Gmail and Microsoft Graph mail (`msmail`). The route and field names are shared by all supported providers.
+
+| Parameter | Behavior |
+| --- | --- |
+| `q` | Search expression. Combine it with structured filters to narrow the selection. |
+| `search_mode` | Required with `q`: `fast` searches metadata, `deep` includes bodies, and `aggregate` selects an aggregate row using `view_type` and `aggregate_key`. |
+| `max_results` | Integer from 1 through 100001. Requires `q` and `search_mode=fast` or `deep`. Caps search matches before resolving deletion targets. Empty or invalid values return `invalid_max_results`. |
+
+Bounded responses include `matched_count` before target lookup, so request one extra match to detect overflow; see [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources and skipped matches.
+
+The endpoint also accepts `sender` / `sender_name`, `recipient` / `recipient_name`, `domain`, `label`, `message_type`, `conversation_id`, `attachments_only`, `source_id`, `source_ids`, and `after` / `before`, and applies them as `/messages/filter` does. Structured selections honor `limit`. Search selections use `max_results` for their bound. Results always exclude deleted messages and are ordered newest-first, so `hide_deleted`, `offset`, `sort`, and `direction` have no effect.
 
 ---
 

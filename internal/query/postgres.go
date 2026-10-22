@@ -35,6 +35,7 @@ type pgEngine struct {
 
 var _ MessageBodySearcher = (*pgEngine)(nil)
 var _ DeletionTargetSearchResolver = (*pgEngine)(nil)
+var _ BoundedDeletionTargetSearchResolver = (*pgEngine)(nil)
 var _ DeletionTargetAggregateSearchResolver = (*pgEngine)(nil)
 
 type deletionTargetsByMessageIDsResolver interface {
@@ -60,6 +61,20 @@ func (e *pgEngine) GetDeletionTargetsBySearch(
 		return nil, ErrNotImplemented
 	}
 	return resolver.GetDeletionTargetsBySearch(ctx, searchQuery, filter, mode)
+}
+
+func (e *pgEngine) GetDeletionTargetsBySearchBounded(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter MessageFilter,
+	mode DeletionSearchMode,
+	maxResults int,
+) ([]DeletionTarget, int, error) {
+	resolver, ok := e.Engine.(BoundedDeletionTargetSearchResolver)
+	if !ok {
+		return nil, 0, ErrNotImplemented
+	}
+	return resolver.GetDeletionTargetsBySearchBounded(ctx, searchQuery, filter, mode, maxResults)
 }
 
 func (e *pgEngine) GetDeletionTargetsByAggregateSearch(

@@ -1764,6 +1764,28 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 	return collectDeletionTargets(rows)
 }
 
+// GetDeletionTargetsBySearchBounded preserves the search backend's result
+// semantics while resolving a capped set of exact, eligible deletion targets.
+// Search results are hydrated by message ID using the executable source types.
+func (e *SQLiteEngine) GetDeletionTargetsBySearchBounded(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter MessageFilter,
+	mode DeletionSearchMode,
+	maxResults int,
+) ([]DeletionTarget, int, error) {
+	return resolveBoundedDeletionTargets(
+		ctx, searchQuery, filter, mode, maxResults,
+		e.SearchFast, e.SearchDeep, e,
+	)
+}
+
+func (e *SQLiteEngine) executableDeletionTargetsByMessageIDs(ctx context.Context, ids []int64) ([]DeletionTarget, error) {
+	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+		return e.deletionTargetsForMessageIDChunk(ctx, ids, executableDeletionSourceTypesSQL)
+	})
+}
+
 // GetDeletionTargetsByAggregateSearch resolves the message set that produced
 // one aggregate row, including the aggregate view's own search semantics.
 func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
@@ -1838,10 +1860,12 @@ func (e *SQLiteEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids [
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	return deletionTargetsByMessageIDsChunked(ctx, ids, e.deletionTargetsForMessageIDChunk)
+	return deletionTargetsByMessageIDsChunked(ctx, ids, func(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+		return e.deletionTargetsForMessageIDChunk(ctx, ids, deletableSourceTypesSQL)
+	})
 }
 
-func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64) ([]deletionTargetRow, error) {
+func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids []int64, sourceTypesSQL string) ([]deletionTargetRow, error) {
 	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
@@ -1852,7 +1876,7 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id, m.sent_at
 		FROM messages m
-		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+deletableSourceTypesSQL+`
+		JOIN sources s_gmail ON s_gmail.id = m.source_id AND s_gmail.source_type IN `+sourceTypesSQL+`
 			WHERE %s AND %s AND `+archiveOnlyDeletionTargetGuard+` AND COALESCE(m.source_message_id, '') <> '' AND m.id IN (%s)
 	`, store.LiveMessagesWhere("m", true), emailOnlyFilterM, strings.Join(placeholders, ","))
 	rows, err := e.queryContext(ctx, q, args...)
@@ -1862,10 +1886,10 @@ func (e *SQLiteEngine) deletionTargetsForMessageIDChunk(ctx context.Context, ids
 	return collectDeletionTargetRows(rows)
 }
 
-// inListChunkSize bounds the IN-list size per deletion-staging lookup.
-// Explicit selections can exceed the SQLite bind-parameter limit
-// (SQLITE_MAX_VARIABLE_NUMBER, 32766 by default). 500 stays well under
-// every backend's limit.
+// inListChunkSize bounds message-ID queries used by deletion staging and
+// search-result enrichment. Explicit selections can exceed SQLite's
+// bind-parameter limit (32766 by default); 500 stays under every backend's
+// limit.
 const inListChunkSize = 500
 
 // SearchByDomains returns messages where any participant (from, to, cc, or bcc)

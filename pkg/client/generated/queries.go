@@ -743,6 +743,9 @@ type GetGmailIDsByFilterQuery struct {
 	// SearchMode Search mode: fast, deep, or aggregate; required with q
 	SearchMode *string `json:"search_mode,omitempty"`
 
+	// MaxResults Maximum results for bounded search-aware deletion resolution (max 100001)
+	MaxResults *int64 `json:"max_results,omitempty"`
+
 	// ViewType Aggregate view type; required for aggregate search
 	ViewType *string `json:"view_type,omitempty"`
 

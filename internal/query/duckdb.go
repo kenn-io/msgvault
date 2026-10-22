@@ -2591,6 +2591,25 @@ func (e *DuckDBEngine) GetDeletionTargetsBySearch(
 	return e.sqliteEngine.GetDeletionTargetsBySearch(ctx, searchQuery, filter, mode)
 }
 
+// GetDeletionTargetsBySearchBounded uses DuckDB's metadata search so MCP
+// staging matches the visible Parquet result set, then hydrates those IDs from
+// authoritative SQLite deletion state. Deep searches already require SQLite.
+func (e *DuckDBEngine) GetDeletionTargetsBySearchBounded(
+	ctx context.Context,
+	searchQuery *search.Query,
+	filter MessageFilter,
+	mode DeletionSearchMode,
+	maxResults int,
+) ([]DeletionTarget, int, error) {
+	if e.sqliteEngine == nil {
+		return nil, 0, errors.New("bounded deletion search requires authoritative SQLite state")
+	}
+	return resolveBoundedDeletionTargets(
+		ctx, searchQuery, filter, mode, maxResults,
+		e.SearchFast, e.SearchDeep, e.sqliteEngine,
+	)
+}
+
 // GetDeletionTargetsByAggregateSearch resolves the complete aggregate scope
 // against authoritative SQLite state.
 func (e *DuckDBEngine) GetDeletionTargetsByAggregateSearch(

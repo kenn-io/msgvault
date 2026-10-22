@@ -104,6 +104,10 @@ export type GetGmailIDsByFilterParams = {
    */
   search_mode?: string;
   /**
+   * Maximum results for bounded search-aware deletion resolution (max 100001)
+   */
+  max_results?: number;
+  /**
    * Aggregate view type; required for aggregate search
    */
   view_type?: string;

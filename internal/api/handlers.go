@@ -276,6 +276,7 @@ type GmailIDsResponse struct {
 	Targets          []query.DeletionTarget `json:"targets,omitempty"`
 	SearchQuery      string                 `json:"search_query,omitempty"`
 	SearchMode       string                 `json:"search_mode,omitempty"`
+	MatchedCount     *int64                 `json:"matched_count,omitempty"`
 	AppliedSourceIDs []int64                `json:"applied_source_ids,omitempty"`
 }
 
@@ -3354,7 +3355,28 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 	}
 	searchQuery := strings.TrimSpace(r.URL.Query().Get("q"))
 	searchMode := strings.TrimSpace(r.URL.Query().Get("search_mode"))
+	var maxResults *int64
+	if r.URL.Query().Has("max_results") && r.URL.Query().Get("max_results") == "" {
+		writeError(w, http.StatusBadRequest, "invalid_max_results", "max_results must be an integer")
+		return
+	}
+	if value, provided, err := queryInt64(r, "max_results"); err != nil {
+		s.rejectBadParam(w, err)
+		return
+	} else if provided {
+		if value < 1 || value > query.MaxDeletionTargetSearchResults {
+			writeError(w, http.StatusBadRequest, "invalid_max_results",
+				fmt.Sprintf("max_results must be between 1 and %d", query.MaxDeletionTargetSearchResults))
+			return
+		}
+		maxResults = &value
+	}
+	if maxResults != nil && (searchQuery == "" || searchMode == string(query.DeletionSearchAggregate)) {
+		writeError(w, http.StatusBadRequest, "invalid_max_results", "max_results requires q and a fast or deep search mode")
+		return
+	}
 	var targets []query.DeletionTarget
+	var matched int
 	if searchQuery == "" {
 		if searchMode != "" {
 			writeError(w, http.StatusBadRequest, "invalid_search", "search_mode requires q")
@@ -3369,6 +3391,17 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 		}
 		switch searchMode {
 		case string(query.DeletionSearchFast), string(query.DeletionSearchDeep):
+			if maxResults != nil {
+				resolver, ok := engine.(query.BoundedDeletionTargetSearchResolver)
+				if !ok {
+					writeError(w, http.StatusServiceUnavailable, "search_unavailable", "Bounded search-aware deletion resolution is not available")
+					return
+				}
+				targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(
+					r.Context(), parsed, filter, query.DeletionSearchMode(searchMode), int(*maxResults),
+				)
+				break
+			}
 			resolver, ok := engine.(query.DeletionTargetSearchResolver)
 			if !ok {
 				writeError(w, http.StatusServiceUnavailable, "search_unavailable", "Search-aware deletion resolution is not available")
@@ -3411,7 +3444,12 @@ func (s *Server) handleGmailIDsByFilter(w http.ResponseWriter, r *http.Request) 
 	if targets == nil {
 		targets = []query.DeletionTarget{}
 	}
+	var matchedCount *int64
+	if maxResults != nil {
+		matchedCount = new(int64(matched))
+	}
 	writeJSON(w, http.StatusOK, GmailIDsResponse{
+		MatchedCount:     matchedCount,
 		GmailIDs:         deletion.SourceMessageIDs(targets),
 		Targets:          targets,
 		SearchQuery:      searchQuery,

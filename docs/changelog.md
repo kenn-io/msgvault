@@ -10,6 +10,7 @@ All notable changes to msgvault, grouped by release.
 
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
+- MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.
 - On Windows, private folders such as token, export and spool folders are created owner-only from the start. If Windows rejects those permissions, the folder is restricted right after creation, with a warning logged if that also fails. If creating one fails, the error names the folder's absolute path.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.

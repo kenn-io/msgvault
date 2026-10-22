@@ -2340,7 +2340,7 @@ func stringArrayArg(args map[string]any, key string) ([]string, error) {
 }
 
 // maxStageDeletionResults limits how many messages can be staged in one call.
-const maxStageDeletionResults = 100000
+const maxStageDeletionResults = query.MaxDeletionTargetSearchResults - 1
 
 func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolResult, error) {
 	args := req.GetArguments()
@@ -2383,18 +2383,10 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		return toolErrorResult("must provide either 'query' or at least one filter (from, domain, label, after, before, has_attachment)"), nil
 	}
 
-	accounts, err := h.engine.ListAccounts(ctx)
-	if err != nil {
-		return dependencyError("list deletion sources", err)
-	}
-	accountsByID := make(map[int64]query.AccountInfo, len(accounts))
-	for _, info := range accounts {
-		accountsByID[info.ID] = info
-	}
-
 	var targets []query.DeletionTarget
 	var description string
 	var searchNote string
+	var skipped int
 
 	if hasQuery {
 		// Query-based search
@@ -2405,42 +2397,38 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		if q.IsEmpty() {
 			return toolErrorResult("query must contain at least one search term or filter"), nil
 		}
-		// The selection travels in the query so the FTS fallback keeps it.
+		// Query scopes survive FTS fallback; SourceID also crosses the daemon boundary.
 		if err := selection.applyToQuery(q); err != nil {
 			return toolErrorResult(err.Error()), nil
 		}
-
-		var results []query.MessageSummary
+		mode := query.DeletionSearchFast
 		if q.HasOR() && q.HasTextTerms() {
-			results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
+			mode = query.DeletionSearchDeep
 			searchNote = "Full-text OR search includes body matches. "
-		} else {
-			filter := query.MessageFilter{SourceID: sourceID}
-			results, err = h.engine.SearchFast(ctx, q, filter, maxStageDeletionResults, 0)
-			if err == nil && len(results) == 0 && q.HasTextTerms() {
-				results, err = h.engine.Search(ctx, q, maxStageDeletionResults, 0)
-			}
+		}
+		resolver, ok := h.engine.(query.BoundedDeletionTargetSearchResolver)
+		if !ok {
+			return dependencyError("search messages for deletion", errors.New("query engine requires bounded deletion search support"))
+		}
+		filter := query.MessageFilter{SourceID: sourceID}
+		var matched int
+		targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, mode, maxStageDeletionResults+1)
+		if err == nil && mode == query.DeletionSearchFast && matched == 0 && q.HasTextTerms() {
+			targets, matched, err = resolver.GetDeletionTargetsBySearchBounded(ctx, q, filter, query.DeletionSearchDeep, maxStageDeletionResults+1)
+		}
+		if errors.Is(err, daemonclient.ErrBoundedDeletionSearchUnsupported) {
+			return toolErrorResult(err.Error()), nil
 		}
 		if err != nil {
-			return nil, newInternalError("search messages for deletion", err)
+			return dependencyError("search messages for deletion", err)
 		}
-
-		for _, msg := range results {
-			if msg.SourceID <= 0 {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-			}
-			info, ok := accountsByID[msg.SourceID]
-			if !ok {
-				return toolErrorResult(fmt.Sprintf("selected message %d has no source metadata", msg.ID)), nil
-			}
-			if strings.TrimSpace(info.SourceType) == "" || strings.TrimSpace(info.Identifier) == "" {
-				return toolErrorResult(fmt.Sprintf("selected message %d has incomplete source metadata", msg.ID)), nil
-			}
-			targets = append(targets, query.DeletionTarget{
-				MessageID: msg.ID, SourceID: msg.SourceID, SourceType: info.SourceType,
-				SourceIdentifier: info.Identifier, SourceMessageID: msg.SourceMessageID,
-			})
+		if matched > maxStageDeletionResults {
+			return toolErrorResult(fmt.Sprintf("more than %d Gmail, Microsoft Graph, or IMAP messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
 		}
+		if matched > 0 && len(targets) == 0 {
+			return toolErrorResult(fmt.Sprintf("%d messages match, but none can be deleted from their source", matched)), nil
+		}
+		skipped = matched - len(targets)
 		description = "query: " + queryStr
 		if len(description) > 50 {
 			description = description[:50]
@@ -2456,7 +2444,7 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 			After:               afterDate,
 			Before:              beforeDate,
 			Pagination: query.Pagination{
-				Limit: maxStageDeletionResults,
+				Limit: maxStageDeletionResults + 1,
 			},
 		}
 		selection.applyToFilter(&filter)
@@ -2465,6 +2453,10 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 		targets, err = h.engine.GetDeletionTargetsByFilter(ctx, filter)
 		if err != nil {
 			return nil, newInternalError("filter messages for deletion", err)
+		}
+
+		if len(targets) > maxStageDeletionResults {
+			return toolErrorResult(fmt.Sprintf("more than %d messages match; stage_deletion stages at most %d per call. Narrow the selection with before:/after: or account and stage each part", maxStageDeletionResults, maxStageDeletionResults)), nil
 		}
 
 		// Build description from filters
@@ -2535,11 +2527,15 @@ func (h *handlers) stageDeletion(ctx context.Context, req toolRequest) (*toolRes
 
 	resp := stageDeletionResponse{
 		BatchID:      manifest.ID,
+		SkippedCount: skipped,
 		MessageCount: len(gmailIDs),
 		Status:       string(manifest.Status),
 		NextStep:     searchNote + "In the invoking CLI's config.toml, set '[deletion] remote_enabled = true' for durable consent and run 'msgvault delete-staged'; for one command instead, run 'MSGVAULT_ENABLE_REMOTE_DELETE=1 msgvault delete-staged'. Run 'msgvault cancel-deletion " + manifest.ID + "' to cancel",
 	}
 
+	if skipped > 0 {
+		resp.NextStep = fmt.Sprintf("%d of %d matching item(s) were skipped because they are no longer in the archive or cannot be deleted from their source. ", skipped, skipped+len(targets)) + resp.NextStep
+	}
 	return jsonResult(resp)
 }
 

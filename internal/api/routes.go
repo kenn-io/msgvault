@@ -1018,6 +1018,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		return append(messageFilterParams(),
 			queryStringParam("q", "Structured search query", false),
 			queryStringParam("search_mode", "Search mode: fast, deep, or aggregate; required with q", false),
+			queryIntegerParam("max_results", "Maximum results for bounded search-aware deletion resolution (max 100001)"),
 			queryStringParam("view_type", "Aggregate view type; required for aggregate search", false),
 			queryStringParam("aggregate_key", "Displayed aggregate row key; required for aggregate search", false),
 		)

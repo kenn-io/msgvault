@@ -15,6 +15,11 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+// ExecutableDeletionSourceTypes returns source types with a delete-staged client.
+func ExecutableDeletionSourceTypes() []string {
+	return []string{"gmail", "imap", "msmail"}
+}
+
 // Store is the source catalog used by the resolvers.
 type Store interface {
 	GetSourceByID(sourceID int64) (*store.Source, error)

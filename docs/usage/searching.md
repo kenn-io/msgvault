@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-12"
+last_edited: "2026-10-19"
 title: Searching
 description: Find archived messages by words, meaning, account, conversation, or message type.
 ---
@@ -181,7 +181,7 @@ Quote a literal pipe as `"a | b"`, `'a | b'`, `subject:"a|b"` or `label:"a|b"`. 
 
 Pipe OR works with CLI `--mode=fts`, Web Explore full-text search, TUI fast and deep search, MCP `search_metadata`, HTTP message search and aggregates, and search-based deletion staging. Texts, including TUI Texts mode and the `/api/v1/text/*` endpoints, keep pipes as literal text. Vector, hybrid, semantic and exact body-only search read pipes as text.
 
-MCP `stage_deletion` searches an OR query with text terms through full-text search once, so body and metadata matches share date ordering and one limit. Other queries try metadata first and use full-text search when metadata finds nothing and the query has text terms. Local MCP staging accepts up to 100,000 matches. Daemon-backed MCP staging is capped at 500 metadata matches or 100 full-text matches per call. CLI `stage-delete` refuses candidate sets above 10,000 messages.
+See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for search modes, supported sources, skipped matches, and selection limits.
 
 Message aggregates and general statistics default each alternative to email unless that alternative sets `message_type:` or `account:`. For example, `invoice | message_type:sms subject:receipt` counts email invoices and SMS receipts. Explicit message-type or account scopes apply to every alternative; search-result statistics use the search's message-type scope.
 
