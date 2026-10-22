@@ -960,28 +960,12 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
-	hasConversationDecisions, err := sourceTableExists(tx, "loop_conversation_decisions")
-	if err != nil {
-		return nil, fmt.Errorf("inspect conversation loop decisions: %w", err)
-	}
-	if hasConversationDecisions {
-		if _, err := copyByName(tx, "loop_conversation_decisions",
-			`conversation_id IN (SELECT DISTINCT conversation_id FROM messages)`); err != nil {
-			return nil, fmt.Errorf("copy conversation loop decisions: %w", err)
-		}
-		if _, err := copyByName(tx, "loop_question_states",
-			`conversation_id IN (SELECT DISTINCT conversation_id FROM messages)`); err != nil {
-			return nil, fmt.Errorf("copy loop question states: %w", err)
-		}
-	}
-	if _, err := tx.Exec(`UPDATE loop_conversation_decisions
-		SET through_message_id = 0
-		WHERE through_message_id > 0
-		  AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.id = loop_conversation_decisions.through_message_id)`); err != nil {
-		return nil, fmt.Errorf("clear omitted subset loop cutoff identities: %w", err)
-	}
-	if err := advanceSubsetLoopMessageOrder(tx); err != nil {
+	if present, err := sourceTableExists(tx, "loop_decisions"); err != nil {
 		return nil, err
+	} else if present {
+		if _, err := copyByName(tx, "loop_decisions", `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop decisions: %w", err)
+		}
 	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
@@ -2548,40 +2532,7 @@ func copyMessages(tx *sql.Tx) error {
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
 	}
-	hasOrder, err := sourceTableExists(tx, "loop_message_order")
-	if err != nil {
-		return fmt.Errorf("inspect loop message ordering schema: %w", err)
-	}
-	if hasOrder {
-		if _, err := copyByName(tx, "loop_message_order",
-			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
-			return fmt.Errorf("copy loop message ordering: %w", err)
-		}
-	} else if _, err := tx.Exec(`INSERT OR IGNORE INTO loop_message_order (id, message_id)
-		SELECT id, id FROM messages WHERE id IN (SELECT id FROM selected_messages) ORDER BY id`); err != nil {
-		return fmt.Errorf("initialize copied loop message ordering: %w", err)
-	}
-	// A source can have the table but still lack rows written before the token
-	// allocator was installed. Keep its existing tokens and allocate only for
-	// those selected messages that have none.
-	if _, err := tx.Exec(`INSERT OR IGNORE INTO loop_message_order (message_id)
-		SELECT m.id FROM messages m LEFT JOIN loop_message_order lmo ON lmo.message_id = m.id
-		WHERE m.id IN (SELECT id FROM selected_messages) AND lmo.message_id IS NULL ORDER BY m.id`); err != nil {
-		return fmt.Errorf("complete copied loop message ordering: %w", err)
-	}
 	return nil
-}
-
-func advanceSubsetLoopMessageOrder(tx *sql.Tx) error {
-	var ceiling int64
-	if err := tx.QueryRow(`SELECT MAX(value) FROM (
-		SELECT COALESCE(MAX(id), 0) AS value FROM loop_message_order
-		UNION ALL SELECT COALESCE(MAX(through_order_id), 0) FROM loop_conversation_decisions
-		UNION ALL SELECT COALESCE(MAX(order_id), 0) FROM loop_question_states
-	)`).Scan(&ceiling); err != nil {
-		return fmt.Errorf("read copied loop ordering token ceiling: %w", err)
-	}
-	return advanceSubsetSQLiteSequence(tx, "loop_message_order", ceiling)
 }
 
 // copyByName copies the rows of src.<table> satisfying the where clause into

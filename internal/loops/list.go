@@ -31,12 +31,12 @@ type Result struct {
 // implements it.
 type Store interface {
 	LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error]
-	LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopCutoff, error)
+	LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopMark, error)
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
-	MarkLoopDoneContext(ctx context.Context, anchorID int64, through store.LoopMessage) (store.LoopDecision, error)
-	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, through store.LoopMessage) (store.LoopDecision, error)
+	MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error)
+	SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error)
 }
 
 type storeReader struct {
@@ -54,7 +54,7 @@ func (r storeReader) Original(id int64) (mime.AutomationSignals, bool, bool, err
 // first, and passes each loop that lists at now to found. Before it reads a
 // conversation it asks done with that conversation's first message time, and
 // it stops when done says so. It returns how many originals it could not read.
-func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, done func(first time.Time) bool, found func(Loop) error) (int, error) {
+func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, done func(first time.Time) bool, found func(Loop) error) (int, error) {
 	reader := storeReader{ctx: ctx, st: st}
 	var unparsed int
 	for conv, err := range st.LoopConversationsContext(ctx, q) {
@@ -69,9 +69,11 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, done 
 			return 0, err
 		}
 		unparsed += detection.Unparsed
-		if detection.Open && listsAt(detection.Loop, now) {
-			if err := found(detection.Loop); err != nil {
-				return 0, err
+		for _, loop := range detection.Loops {
+			if loop, ok := openQuestions(loop, marks, now); ok && listsAt(loop, now) {
+				if err := found(loop); err != nil {
+					return 0, err
+				}
 			}
 		}
 	}
@@ -88,19 +90,9 @@ func listsAt(l Loop, now time.Time) bool {
 	return !now.Before(l.OwedSince.Add(after))
 }
 
-// List returns the open loops of conversations with a message in the last 30
-// days, oldest first, without those you marked done or snoozed. A mark covers
-// its conversation's questions up to the newest one when you made it, even
-// once an older import moves the anchor; a newer question, or another one
-// sent the same instant, lists the loop again, still dated by its anchor. A reply you
-// owe lists after 24 hours, and a reply you await after 72. It reads the
-// archive as it is now.
-//
-// Conversations come oldest first message first, and no loop starts before its
-// conversation's first message. So List stops reading once it holds one more
-// loop than the limit and the limit-th oldest is older than the next
-// conversation's first message. A long list costs the loops it returns, not
-// every conversation of the last 30 days.
+// List returns unanswered requester turns in recently active conversations.
+// Snoozed questions remain eligible after the activity window. Exact decisions
+// apply only to the questions the owner marked.
 func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, error) {
 	if opts.Limit <= 0 {
 		opts.Limit = DefaultLimit
@@ -110,18 +102,13 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), PersonID: opts.PersonID}, now,
+	unparsed, err := find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), PersonID: opts.PersonID}, now, marks,
 		func(first time.Time) bool {
 			return len(kept) > opts.Limit && kept[opts.Limit-1].OwedSince.Before(first)
 		},
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
 				return nil
-			}
-			if cutoff, ok := marks[l.ConversationID]; ok {
-				if !slices.ContainsFunc(l.Questions, func(ask store.LoopMessage) bool { return !store.LoopCutoffCovers(cutoff, ask) }) {
-					return nil
-				}
 			}
 			at, _ := slices.BinarySearchFunc(kept, l, func(a, b Loop) int {
 				if c := a.OwedSince.Compare(b.OwedSince); c != 0 {
@@ -143,32 +130,46 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	return result, nil
 }
 
+// openQuestions applies exact decisions before choosing the visible anchor.
+// List and actions use the same selection, including the new anchor's age.
+func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Loop, bool) {
+	loop.Questions = slices.DeleteFunc(loop.Questions, func(question store.LoopMessage) bool {
+		mark := marks[question.ID]
+		return mark.State == store.LoopStateDone || (mark.SnoozedUntil != nil && now.Before(*mark.SnoozedUntil))
+	})
+	if len(loop.Questions) == 0 {
+		return Loop{}, false
+	}
+	loop.Anchor = loop.Questions[0]
+	loop.Summary, loop.OwedSince = summary(loop.Anchor), loop.Anchor.OccurredAt
+	return loop, true
+}
+
 // ErrNotOpen reports a message that does not anchor an open loop.
 var ErrNotOpen = errors.New("message does not anchor an open loop")
 
-// Done marks the loop anchored at messageID done, through its newest question.
+// Done marks the visible questions in the loop anchored at messageID done.
 func Done(ctx context.Context, st Store, messageID int64, now time.Time) (store.LoopDecision, error) {
 	loop, err := requireAnchor(ctx, st, messageID, now)
 	if err != nil {
 		return store.LoopDecision{}, err
 	}
-	return st.MarkLoopDoneContext(ctx, messageID, loop.LastAsk)
+	return st.MarkLoopDoneContext(ctx, messageID, loop.Questions)
 }
 
-// Snooze hides the loop anchored at messageID until the given time, through
-// its newest question. A done mark that covers that question stays.
+// Snooze hides the visible questions until the given time.
 func Snooze(ctx context.Context, st Store, messageID int64, until, now time.Time) (store.LoopDecision, error) {
 	loop, err := requireAnchor(ctx, st, messageID, now)
 	if err != nil {
 		return store.LoopDecision{}, err
 	}
-	return st.SnoozeLoopContext(ctx, messageID, until, loop.LastAsk)
+	return st.SnoozeLoopContext(ctx, messageID, until, loop.Questions)
 }
 
 // requireAnchor returns the loop List would show anchored at the message: inside
 // the lookback and past the grace period, read as it is now. A reply that
 // arrived since the list was read makes the action fail instead of hiding a
-// closed loop. Loops already marked done or snoozed still anchor.
+// closed loop. Covered questions cannot anchor an action.
 func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time) (Loop, error) {
 	ref, err := st.MessageConversationContext(ctx, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -177,8 +178,12 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time
 	if err != nil {
 		return Loop{}, err
 	}
+	marks, err := st.LoopMarksContext(ctx, now)
+	if err != nil {
+		return Loop{}, err
+	}
 	var anchored Loop
-	_, err = find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), ConversationID: ref.ConversationID}, now,
+	_, err = find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), ConversationID: ref.ConversationID}, now, marks,
 		func(time.Time) bool { return false },
 		func(l Loop) error {
 			if l.Anchor.ID == messageID {

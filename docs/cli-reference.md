@@ -44,8 +44,8 @@ msgvault loops snooze 4521 --until 48h
 | Command | Flags and behavior |
 |---|---|
 | `list` | `--limit` 1..200 (default 50), `--json` |
-| `done` | One message ID; marks that loop done. A newer question in the loop lists it again |
-| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A newer question lists the loop before the time passes. A done mark that still covers the loop stays |
+| `done` | One message ID; marks that loop done. A distinct question can list it again |
+| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions |
 
 `list` prints a "Waiting on you" section and a "Waiting on them" section,
 oldest first, with the age, person, subject, and message ID of each loop. A

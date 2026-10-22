@@ -1634,9 +1634,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			lastModifiedColumnAdded = true
 		}
 	}
-	if err := s.runOnceMigration(ctx, migrationLoopMessageOrdering, 1, false, s.migrateLoopMessageOrdering); err != nil {
-		return fmt.Errorf("migrate loop message ordering: %w", err)
-	}
 	if err := s.runOnceMigration(ctx, migrationSynctechUnsentMessages, 1, false, s.migrateSynctechUnsentMessages); err != nil {
 		return fmt.Errorf("migrate Synctech unsent messages: %w", err)
 	}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -103,11 +106,8 @@ func TestLoopDoneAndSnoozeHideItem(t *testing.T) {
 	assert.Len(l.list(t, "").Items, 1, "only the snoozed loop is hidden")
 
 	w = l.do(t, http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/done", l.owed), "")
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	var done LoopDecisionResponse
-	require.NoError(json.Unmarshal(w.Body.Bytes(), &done))
-	assert.Equal("done", done.State)
-	assert.Nil(done.SnoozedUntil)
+	require.Equal(http.StatusNotFound, w.Code, w.Body.String())
+	assert.Contains(w.Body.String(), "loop_not_found")
 }
 
 func TestLoopActionsRejectNonAnchorsAndBadInput(t *testing.T) {
@@ -138,4 +138,49 @@ func TestLoopRoutesUnavailableWithoutStoreCapability(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil))
 	assert.Equal(http.StatusServiceUnavailable, w.Code)
+}
+
+func TestDelegatedLoopRoutesRequireOwner(t *testing.T) {
+	l := newLoopFixture(t)
+	cfg := config.NewDefaultConfig()
+	cfg.HomeDir = t.TempDir()
+	cfg.Server.APIKey = "test-owner-key"
+	cfg.Server.AgentAccess = true
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: l.f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+	t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue("test-reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: l.f.Source.ID, Type: l.f.Source.SourceType, Identifier: l.f.Source.Identifier}}, time.Time{})
+	require.NoError(t, err)
+	router := srv.Router()
+	for _, tc := range []struct {
+		method, path, body string
+		status             int
+	}{
+		{http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", l.owed), "", http.StatusOK},
+		{http.MethodGet, "/api/v1/loops", "", http.StatusUnauthorized},
+		{http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/done", l.owed), "", http.StatusUnauthorized},
+		{http.MethodPost, fmt.Sprintf("/api/v1/loops/%d/snooze", l.owed), fmt.Sprintf(`{"until":%q}`, time.Now().Add(48*time.Hour).Format(time.RFC3339)), http.StatusUnauthorized},
+	} {
+		t.Run(tc.method+tc.path, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			req := httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body))
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(tc.status, w.Code, w.Body.String())
+			if tc.status == http.StatusUnauthorized {
+				var denied struct {
+					Error string `json:"error"`
+				}
+				require.NoError(json.Unmarshal(w.Body.Bytes(), &denied))
+				assert.Equal("unauthorized", denied.Error)
+			}
+			if tc.status == http.StatusOK {
+				var message map[string]any
+				require.NoError(json.Unmarshal(w.Body.Bytes(), &message))
+				assert.NotEmpty(message)
+			}
+		})
+	}
 }

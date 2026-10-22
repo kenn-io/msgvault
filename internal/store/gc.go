@@ -164,17 +164,6 @@ func (s *Store) ExecuteGCContext(
 		`); err != nil {
 			return fmt.Errorf("clear replies to source-deleted messages: %w", err)
 		}
-		if _, err := q.Exec(`
-			UPDATE loop_conversation_decisions
-			SET through_message_id = 0
-			WHERE through_message_id IN (
-				SELECT id FROM messages
-				WHERE deleted_from_source_at IS NOT NULL
-				  AND NOT (` + managedDraftRetainedMessageSQL + `)
-			)
-		`); err != nil {
-			return fmt.Errorf("retire loop cutoff identities for source-deleted messages: %w", err)
-		}
 
 		result, err := q.Exec(`
 		DELETE FROM messages

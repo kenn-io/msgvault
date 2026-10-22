@@ -6,6 +6,8 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/synctechstate"
 )
 
 const (
@@ -91,10 +93,7 @@ func synctechRawRecordIsUnsent(messageType string, raw []byte) bool {
 		if json.Unmarshal(raw, &record) != nil {
 			return false
 		}
-		switch record.Type {
-		case 3, 4, 5, 6: // draft, outbox, failed, queued
-			return true
-		}
+		return !synctechstate.SMSWasSent(record.Type)
 	case "mms":
 		var record struct {
 			MessageBox int `json:"MessageBox"`
@@ -102,7 +101,7 @@ func synctechRawRecordIsUnsent(messageType string, raw []byte) bool {
 		if json.Unmarshal(raw, &record) != nil {
 			return false
 		}
-		return record.MessageBox == 3 || record.MessageBox == 4 // draft, outbox
+		return !synctechstate.MMSWasSent(record.MessageBox)
 	}
 	return false
 }

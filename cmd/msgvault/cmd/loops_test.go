@@ -93,13 +93,15 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.NoError(err)
 	assert.Regexp(fmt.Sprintf(`^Snoozed %d until \w{3} \w{3} \d{1,2} \d{1,2}:\d{2} [AP]M \S+\.\n$`, anchor), output)
 
+	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
+	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor))
+
+	ctx, anchor = loopsDaemon(t)
 	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
 	require.NoError(err)
 	assert.Equal(fmt.Sprintf("Marked %d done.\n", anchor), output)
-
-	output, err = runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "48h")
-	require.NoError(err)
-	assert.Equal(fmt.Sprintf("%d is done and stays done.\n", anchor), output)
+	_, err = runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "48h")
+	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor))
 
 	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor+1000, 10))
 	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor+1000))

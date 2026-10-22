@@ -1,249 +1,88 @@
 package loops
 
 import (
-	"iter"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// Detection is what Detect found in one conversation.
+// Detection contains each current counterparty's unanswered turn.
 type Detection struct {
-	Loop Loop
-	// Open is true when the conversation has an open loop.
-	Open bool
-	// Unparsed counts the originals the walk passed over because they fail
-	// MIME parsing, so the caller can say how much it could not read.
+	Loops    []Loop
 	Unparsed int
 }
 
-// Detect finds the loop open in a conversation. It walks the conversation
-// newest first and stops at the last message from the other side that counts,
-// reading past the newest page only as far as that takes. It reads through r
-// only for messages it examines.
-//
-// A message is neutral, and neither opens nor settles a turn, when it is not
-// between you and someone else (observed, or from an address linked to you),
-// comes from an automated sender or list, is an email that doesn't have you
-// in To, is an automatic reply or calendar item, has no text of its own and
-// no file, or is a bare acknowledgement with no file attached. Detect walks back across neutral
-// messages to the run of same-side messages that ends the conversation. The
-// oldest message in that run that asks something starts the clock, however
-// old it is. Your message settles only the people it went to, so a question
-// to you stays open behind a forward to someone else and their answer.
-//
-// The stored original is the costly read, so Detect parses it only when it
-// can change the answer. It checks possible file attachments when a missing
-// attachment row would make an empty or acknowledgement-only message neutral.
-// It also checks automation evidence for the exchange boundaries and questions
-// it may use to settle or anchor a loop. When text alone shows there is no loop,
-// and no message from the other side could expose an older one, it parses
-// nothing.
+// Detect walks newest first, sharing text and MIME evidence across requesters.
+// Each person's newer exchange settles only that person's older questions.
 func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 	if conv.GroupChat || (conv.ConversationType != "email_thread" && conv.ConversationType != "direct_chat") {
 		return Detection{}, nil
 	}
 	w := walker{email: conv.ConversationType == "email_thread", r: r, texts: map[int64]string{}, vouch: map[int64]bool{}}
-	next, stop := iter.Pull2(conv.Walk())
-	defer stop()
-	var counted []store.LoopMessage
-	exhausted := false
-	// at returns the i-th message that is not neutral by its columns and text.
-	at := func(i int) (store.LoopMessage, bool, error) {
-		for len(counted) <= i && !exhausted {
-			m, err, ok := next()
-			if !ok {
-				exhausted = true
-				break
-			}
-			if err != nil {
-				return store.LoopMessage{}, false, err
-			}
-			if w.isSettledParticipantMessage(m) {
-				continue
-			}
-			if neutral, err := w.neutral(m); err != nil {
-				return store.LoopMessage{}, false, err
-			} else if !neutral {
-				counted = append(counted, m)
-			}
-		}
-		if i >= len(counted) {
-			return store.LoopMessage{}, false, nil
-		}
-		return counted[i], true, nil
-	}
-
-	first, ok, err := at(0)
-	if err != nil || !ok {
-		return Detection{}, err
-	}
-	// With no original read, the run is the newest messages from one side.
-	// If none of them asks and nothing from the other side follows, no
-	// original can create a loop: setting messages aside only shortens the run.
-	asked, other := false, false
-	for i := 0; ; i++ {
-		m, ok, err := at(i)
+	turns := map[loopParticipantIdentity]Loop{}
+	latest := map[loopParticipantIdentity]time.Time{}
+	for m, err := range conv.Walk() {
 		if err != nil {
 			return Detection{}, err
 		}
-		if !ok {
-			break
+		if w.isSettledParticipantMessage(m) {
+			continue
 		}
-		if m.Direction != first.Direction {
-			other = true
-			break
-		}
-		text, err := w.text(m.ID)
+		neutral, err := w.neutral(m)
 		if err != nil {
 			return Detection{}, err
 		}
-		asked = asked || asks(text)
-	}
-	if !asked && !other {
-		return Detection{}, nil
-	}
-
-	run, settled := []store.LoopMessage(nil), false
-	for i := 0; ; i++ {
-		m, ok, err := at(i)
-		if err != nil {
-			return Detection{}, err
-		}
-		if !ok {
-			break
+		if neutral {
+			continue
 		}
 		if err := w.settle(m); err != nil {
 			return Detection{}, err
 		}
-		if len(run) > 0 && m.Direction == run[0].Direction {
-			run = append(run, m)
-			if m.Direction == store.DirectionOutbound && !w.answered[m.ID] {
-				settled = false
-			}
-			continue
+		cp := m.Sender
+		if m.Direction == store.DirectionOutbound {
+			cp, _ = w.awaitedParticipant(m)
 		}
-		// m starts the run or would end it. Your messages to no one m came from,
-		// and a forward that never reached who asks, leave the turn open. A run
-		// from the other side that asks nothing only settles your message m, which
-		// restarts the run as settled. m's original is read only if one could join.
-		var ask store.LoopMessage
-		inbound := len(run) > 0 && run[0].Direction == store.DirectionInbound
-		if len(run) > 0 {
-			if ask, err = w.lastAsk(run); err != nil {
-				return Detection{}, err
-			}
+		key := participantIdentity(cp)
+		if latest[key].IsZero() {
+			latest[key] = m.OccurredAt
 		}
-		quiet := inbound && ask.ID == 0 && w.answered[m.ID]
-		foreign := inbound && (!w.answered[m.ID] || quiet)
-		if len(run) > 0 && !inbound {
-			answered, err := w.answers(run, m.Sender)
-			if err != nil {
-				return Detection{}, err
-			}
-			foreign = !answered
-			if answered && (settled || ask.ID == 0) {
-				// This exchange settles only its sender. Keep walking for
-				// questions from people your messages haven't answered.
-				if !settled {
-					settled, err = w.vouched(m)
-					if err != nil {
-						return Detection{}, err
-					}
-				}
-				if settled && !w.email {
-					// The other side's substantive message settles this direct-chat
-					// run. Older exchanges cannot change its result.
-					break
-				}
-				continue
-			}
-		}
-		olderAsks := false
-		if len(run) > 0 && (!foreign || quiet) {
-			sides := []store.ActivityDirection{run[0].Direction}
-			if quiet {
-				sides = append(sides, store.DirectionOutbound)
-			}
-			if olderAsks, err = w.olderRunAsks(conv, m, sides...); err != nil {
-				return Detection{}, err
-			} else if !olderAsks {
-				break
-			}
-		}
-		if vouched, err := w.vouched(m); err != nil {
-			return Detection{}, err
-		} else if !vouched {
-			continue
-		}
-		if len(run) > 0 && (!foreign || (inbound && ask.ID != 0)) {
-			boundary := ask.Sender
-			if ask.Direction == store.DirectionOutbound {
-				var ok bool
-				boundary, ok = w.awaitedParticipant(ask)
-				if !ok {
-					continue
-				}
-			}
-			if reaches, err := w.answers([]store.LoopMessage{m}, boundary); err != nil {
-				return Detection{}, err
-			} else if reaches && !olderAsks {
-				break
-			}
-			// When an older request could still join this run, keep walking.
-			// The request selected from run may belong to someone else than the
-			// older one, so settle each older request against its own recipient.
-			continue
-		}
-		if len(run) > 0 && !inbound && foreign && ask.ID != 0 {
-			// An unrelated older statement cannot displace an unanswered ask.
-			if _, _, eligible, err := w.opens(m); err != nil {
-				return Detection{}, err
-			} else if !eligible {
-				continue
-			}
-		}
-		run, settled = append(run[:0], m), quiet
-	}
-	if len(run) == 0 || settled {
-		return Detection{Unparsed: w.unparsed}, nil
-	}
-	newest := run[0]
-	slices.Reverse(run)
-
-	var loop Loop
-	anchorAt := 0
-	for i, m := range run {
-		kind, counterparty, ok, err := w.opens(m)
+		kind, cp, ok, err := w.opens(m)
 		if err != nil {
 			return Detection{}, err
 		}
 		if ok {
-			loop.Kind, loop.Counterparty, loop.Anchor, anchorAt = kind, counterparty, m, i
+			key = participantIdentity(cp)
+			loop := turns[key]
+			loop.Kind, loop.Counterparty, loop.Anchor = kind, cp, m
+			loop.ConversationID, loop.SourceID = conv.ConversationID, conv.SourceID
+			loop.Channel = store.ChannelEmail
+			if !w.email {
+				loop.Channel = store.ChannelChat
+			}
+			loop.Summary, loop.OwedSince, loop.LastActivity = summary(m), m.OccurredAt, latest[key]
+			loop.Questions = append(loop.Questions, m)
+			turns[key] = loop
+		}
+		if !w.email && w.answered[m.ID] {
 			break
 		}
 	}
-	if loop.Kind == "" {
-		return Detection{Unparsed: w.unparsed}, nil
+	result := Detection{Unparsed: w.unparsed}
+	for _, loop := range turns {
+		slices.Reverse(loop.Questions)
+		result.Loops = append(result.Loops, loop)
 	}
-	for _, m := range run[anchorAt:] {
-		if _, _, ok, err := w.opens(m); err != nil {
-			return Detection{}, err
-		} else if ok {
-			loop.Questions = append(loop.Questions, m)
-			loop.LastAsk = m
+	slices.SortFunc(result.Loops, func(a, b Loop) int {
+		if c := a.OwedSince.Compare(b.OwedSince); c != 0 {
+			return c
 		}
-	}
-	loop.LastAsk.Questions = loop.Questions
-	loop.ConversationID, loop.SourceID, loop.Channel = conv.ConversationID, conv.SourceID, store.ChannelEmail
-	if !w.email {
-		loop.Channel = store.ChannelChat
-	}
-	loop.Summary, loop.OwedSince, loop.LastActivity = summary(loop.Anchor), loop.Anchor.OccurredAt, newest.OccurredAt
-	return Detection{Loop: loop, Open: true, Unparsed: w.unparsed}, nil
+		return int(a.Anchor.ID - b.Anchor.ID)
+	})
+	return result, nil
 }
 
 type walker struct {
@@ -365,9 +204,6 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 		return true, nil
 	case inbound && w.email && mime.IsNoReplyAddress(m.Sender.Address):
 		return true, nil
-	case inbound && !w.addressedToOwner(m):
-		// Cc and Bcc mail is for your information.
-		return true, nil
 	case !inbound && len(m.Recipients) > 0 &&
 		!slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool { return !r.IsOwner }):
 		// Mail to yourself answers no one and asks no one.
@@ -429,7 +265,7 @@ func (w *walker) vouched(m store.LoopMessage) (bool, error) {
 // something, its original leaves it in play, and you can name who it waits on.
 // Anchor choice and lastAsk share it, so both count the same questions.
 func (w *walker) opens(m store.LoopMessage) (kind string, counterparty store.LoopParticipant, ok bool, err error) {
-	if w.answered[m.ID] {
+	if w.answered[m.ID] || (m.Direction == store.DirectionInbound && !w.addressedToOwner(m)) {
 		return "", store.LoopParticipant{}, false, nil
 	}
 	text, err := w.text(m.ID)
@@ -444,19 +280,6 @@ func (w *walker) opens(m store.LoopMessage) (kind string, counterparty store.Loo
 	}
 	counterparty, ok = w.awaitedParticipant(m)
 	return AwaitingReply, counterparty, ok, nil
-}
-
-// lastAsk is the newest message in run that can anchor a loop, or none. The
-// run is oldest first when the answer is used for more than its presence.
-func (w *walker) lastAsk(run []store.LoopMessage) (store.LoopMessage, error) {
-	for _, m := range slices.Backward(run) {
-		if _, _, ok, err := w.opens(m); err != nil {
-			return store.LoopMessage{}, err
-		} else if ok {
-			return m, nil
-		}
-	}
-	return store.LoopMessage{}, nil
 }
 
 // answers reports whether a message in run answers the sender: an inbound
@@ -561,60 +384,6 @@ func (w *walker) answeredByNewerOutbound(sender store.LoopParticipant) (bool, er
 		}
 	}
 	return false, nil
-}
-
-// olderRunAsks reports whether an older request on one of the run's sides
-// could remain unanswered after m. It checks each known request against m's
-// recipient so a boundary to one person cannot hide another person's request.
-// In email, messages beyond the loaded ones are unknown, so they count as a
-// yes. A direct chat has one counterparty, so a substantive opposite-side
-// message is a boundary for every older request in that conversation.
-func (w *walker) olderRunAsks(conv store.LoopConversation, m store.LoopMessage, sides ...store.ActivityDirection) (bool, error) {
-	if conv.ConversationType == "direct_chat" {
-		return false, nil
-	}
-	at := slices.IndexFunc(conv.Messages, func(x store.LoopMessage) bool { return x.ID == m.ID })
-	if at < 0 {
-		return conv.HasEarlier(), nil
-	}
-	for _, older := range conv.Messages[at+1:] {
-		if !slices.Contains(sides, older.Direction) {
-			continue
-		}
-		if w.isSettledParticipantMessage(older) {
-			continue
-		}
-		if neutral, err := w.neutral(older); err != nil {
-			return false, err
-		} else if neutral {
-			continue
-		}
-		text, err := w.text(older.ID)
-		if err != nil {
-			return false, err
-		}
-		if asks(text) {
-			if w.answered[older.ID] {
-				continue
-			}
-			counterparty := older.Sender
-			if older.Direction == store.DirectionOutbound {
-				var ok bool
-				counterparty, ok = w.awaitedParticipant(older)
-				if !ok {
-					continue
-				}
-			}
-			answered, err := w.answers([]store.LoopMessage{m}, counterparty)
-			if err != nil {
-				return false, err
-			}
-			if !answered {
-				return true, nil
-			}
-		}
-	}
-	return conv.HasEarlier(), nil
 }
 
 // addressedToOwner is true for an email with you in To, and for any message

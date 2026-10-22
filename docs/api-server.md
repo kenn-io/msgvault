@@ -1736,7 +1736,7 @@ Attachment metadata and message details include an optional `docbank` array of r
 
 `GET /api/v1/loops` lists conversations that wait on a reply, oldest first.
 Query parameters are `person_id` and `limit` (1 to 200, default 50). It lists conversations with a message in
-the last 30 days, read from the archive when you ask. It returns `items` and `truncated`. Each
+the last 30 days, plus conversations containing snooze decisions, read from the archive when you ask. It returns `items` and `truncated`. Each
 item has `kind`, `anchor_message_id`,
 `conversation_id`, `source_id`, `channel` (`email` or `chat`), `counterparty`
 (`participant_id`, optional `person_id`, `display_name`, `address`), `summary`,
@@ -1747,13 +1747,13 @@ have settled a loop that still lists. A bad parameter returns 400.
 
 `POST /api/v1/loops/{message_id}/done` and
 `POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`
-record your decision against the loop's anchor message, covering the questions
-asked so far; a newer question lists the loop again with its original age. A
-snooze leaves a done mark that still covers the loop in place. They return
+record your decision on this person's currently open questions. A distinct
+question imported later can reopen the loop, whatever its message date. Its
+oldest open question supplies the anchor and age. They return
 `anchor_message_id`, `state` (`done` or `snoozed`), and `snoozed_until`. They
 re-read the conversation first and return 404 `loop_not_found` when the
 message is not a loop that list would show now: it anchors no current loop,
-the conversation is outside the 30 days, or the loop has not waited out its
+the conversation is outside the 30 days and has no snooze decisions, or the loop has not waited out its
 24 or 72 hours. A snooze time in the past returns 400. Responses are
 not cacheable. These routes are owner-only: delegated agent tokens receive 401.
 See [Open loops](usage/open-loops.md) for the rules.

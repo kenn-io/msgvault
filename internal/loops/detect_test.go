@@ -102,7 +102,10 @@ func (s script) conversation() (store.LoopConversation, *fakeReader) {
 func detect(s script) (Loop, bool, error) {
 	conv, reader := s.conversation()
 	detection, err := Detect(conv, reader)
-	return detection.Loop, detection.Open, err
+	if len(detection.Loops) == 0 {
+		return Loop{}, false, err
+	}
+	return detection.Loops[0], true, err
 }
 
 type fakeReader struct {
@@ -264,11 +267,7 @@ func TestDetect(t *testing.T) {
 		{"group chats are skipped", script{group: true, chat: true, msgs: []msg{{ago: 2 * day, body: "Can you send it?"}}}, "", 0, 0},
 		{"direct chat question you owe", script{chat: true, msgs: []msg{{ago: 2 * day, body: "are you coming?"}}}, ReplyOwed, 1, 0},
 		{"direct chat question you asked", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "are you coming?"}}}, AwaitingReply, 1, 0},
-		{"no loop opened before an unanswered forward", script{msgs: []msg{
-			{ago: 6 * day, body: "Here is the contract."},
-			{out: true, ago: 4 * day, body: "Can you take a look?", to: []store.LoopParticipant{sam}},
-			{ago: 3 * day, body: "Any update?"},
-		}}, ReplyOwed, 3, 3},
+
 		{"stale anchor across an unanswered forward", script{msgs: []msg{
 			{ago: 6 * day, body: "Can you send the contract?"},
 			{out: true, ago: 4 * day, body: "Can you take a look?", to: []store.LoopParticipant{sam}},
@@ -289,8 +288,8 @@ func TestDetect(t *testing.T) {
 			assert.Equal(tt.wantAnchor, loop.Anchor.ID)
 			assert.True(loop.OwedSince.Equal(loop.Anchor.OccurredAt))
 			if tt.wantLastAsk != 0 {
-				assert.Equal(tt.wantLastAsk, loop.LastAsk.ID)
-				assert.True(now.Add(-3 * day).Equal(loop.LastAsk.OccurredAt))
+				assert.Equal(tt.wantLastAsk, loop.Questions[len(loop.Questions)-1].ID)
+				assert.True(now.Add(-3 * day).Equal(loop.Questions[len(loop.Questions)-1].OccurredAt))
 				assert.Equal(alex.Address, loop.Counterparty.Address)
 			}
 		})
@@ -328,8 +327,8 @@ func TestDetectStopsAtAnsweredInboundBoundaryBeforeScanningOlderExchanges(t *tes
 
 	detection, err := Detect(conv, reader)
 	require.NoError(err)
-	require.True(detection.Open)
-	assert.Equal(int64(len(messages)), detection.Loop.Anchor.ID)
+	require.NotEmpty(detection.Loops)
+	assert.Equal(int64(len(messages)), detection.Loops[0].Anchor.ID)
 	assert.LessOrEqual(reader.parses, 8, "an older inbound answer ends the scan before prior exchanges")
 }
 
@@ -346,7 +345,7 @@ func TestDetectKeepsOriginalRequestAgeAcrossAnUnrelatedExchangeBeforeNudge(t *te
 	require.True(open)
 	assert.Equal(AwaitingReply, loop.Kind)
 	assert.Equal(int64(1), loop.Anchor.ID)
-	assert.Equal(int64(4), loop.LastAsk.ID)
+	assert.Equal(int64(4), loop.Questions[len(loop.Questions)-1].ID)
 	assert.Equal(sam, loop.Counterparty)
 	assert.True(now.Add(-8 * day).Equal(loop.OwedSince))
 }
@@ -364,7 +363,7 @@ func TestDetectKeepsUnansweredRequesterAcrossDifferentCounterpartyBoundary(t *te
 	require.True(open)
 	assert.Equal(ReplyOwed, loop.Kind)
 	assert.Equal(int64(1), loop.Anchor.ID)
-	assert.Equal(int64(4), loop.LastAsk.ID)
+	assert.Equal(int64(4), loop.Questions[len(loop.Questions)-1].ID)
 	assert.Equal(alex, loop.Counterparty)
 	assert.True(now.Add(-8 * day).Equal(loop.OwedSince))
 }
@@ -382,7 +381,7 @@ func TestDetectLoopFields(t *testing.T) {
 	require.True(ok)
 	assert.Equal(ReplyOwed, loop.Kind)
 	assert.Equal(int64(1), loop.Anchor.ID)
-	assert.Equal(int64(4), loop.LastAsk.ID)
+	assert.Equal(int64(4), loop.Questions[len(loop.Questions)-1].ID)
 	assert.Equal(alex, loop.Counterparty)
 	assert.True(loop.OwedSince.Equal(now.Add(-6 * day)))
 	assert.True(loop.LastActivity.Equal(now.Add(-3 * day)))
@@ -400,7 +399,7 @@ func TestDetectLastAskSkipsQuestionsThatCannotAnchor(t *testing.T) {
 	require.NoError(err)
 	require.True(ok)
 	assert.Equal(int64(1), loop.Anchor.ID)
-	assert.True(loop.LastAsk.OccurredAt.Equal(now.Add(-6*day)), "a question to two people is group handling, so it is not the newest question, got %s", loop.LastAsk.OccurredAt)
+	assert.True(loop.Questions[len(loop.Questions)-1].OccurredAt.Equal(now.Add(-6*day)), "a question to two people is group handling, so it is not the newest question, got %s", loop.Questions[len(loop.Questions)-1].OccurredAt)
 }
 
 func TestDetectPropagatesReadErrors(t *testing.T) {
@@ -410,7 +409,7 @@ func TestDetectPropagatesReadErrors(t *testing.T) {
 	reader.err = errors.New("read failed")
 	detection, err := Detect(conv, reader)
 	require.ErrorContains(err, "read failed")
-	assert.False(detection.Open)
+	assert.Empty(detection.Loops)
 }
 
 func TestDetectCollapsesLinkedAddressesToOnePerson(t *testing.T) {
@@ -471,10 +470,10 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			reader.reads = map[int64]int{}
 			detection, err := Detect(conv, reader)
 			require.NoError(t, err)
-			assert.Equal(tt.open, detection.Open)
+			assert.Equal(tt.open, len(detection.Loops) > 0)
 			assert.Equal(tt.parses, reader.parses, "originals parsed")
 			if tt.name == "25 nudges after the question" {
-				assert.Len(detection.Loop.Questions, 26, "each eligible question can keep the loop open after a partial mark")
+				assert.Len(detection.Loops[0].Questions, 26, "each eligible question can keep the loop open after a partial mark")
 			}
 			for id, n := range reader.reads {
 				assert.Equal(1, n, "message %d body read count", id)
@@ -490,7 +489,7 @@ func TestDetectCountsAnOriginalThatFailsToParse(t *testing.T) {
 	}}.conversation()
 	detection, err := Detect(conv, reader)
 	require.NoError(t, err)
-	assert.True(t, detection.Open, "the unreadable reply settles nothing")
+	assert.NotEmpty(t, detection.Loops, "the unreadable reply settles nothing")
 	assert.Equal(t, 1, detection.Unparsed)
 }
 
@@ -513,7 +512,7 @@ func TestDetectReplySettlesOnlyItsSender(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(AwaitingReply, loop.Kind)
 			assert.Equal(waiting, loop.Anchor.ID)
-			assert.Equal(waiting, loop.LastAsk.ID)
+			assert.Equal(waiting, loop.Questions[len(loop.Questions)-1].ID)
 			assert.Equal("sam@example.test", loop.Counterparty.Address)
 		})
 	}

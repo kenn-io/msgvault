@@ -30,14 +30,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	}
 	for _, m := range plan.messages {
 		if m.survivor != 0 {
-			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor, false); err != nil {
+			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
 				return err
 			}
-		}
-	}
-	for _, c := range plan.conversations {
-		if err := s.mergeLoopConversationsTx(ctx, tx, c.id, c.destination); err != nil {
-			return err
 		}
 	}
 	// Batch the ordinary row transfer and provenance writes. The values table

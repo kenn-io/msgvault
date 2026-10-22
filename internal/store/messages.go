@@ -1205,7 +1205,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
-				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID, true); err != nil {
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
 					return fmt.Errorf("transfer legacy loop decision: %w", err)
 				}
 			}
@@ -1525,10 +1525,6 @@ func upsertMessageWith(q querier, d Dialect, msg *Message) (int64, error) {
 		).Scan(&id); err != nil {
 			return 0, err
 		}
-	}
-	if _, err := q.Exec(d.InsertOrIgnore(
-		`INSERT OR IGNORE INTO loop_message_order (message_id) VALUES (?)`), id); err != nil {
-		return 0, fmt.Errorf("allocate loop message ordering token: %w", err)
 	}
 	if journalCandidate && needsBodylessMessageJournal(prior, msg) {
 		if err := appendBodylessMessageChange(q, d, id, prior, msg); err != nil {

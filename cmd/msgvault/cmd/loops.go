@@ -28,12 +28,11 @@ func newLoopsCommand() *cobra.Command {
 		Short: "Show conversations waiting on a reply, and clear them",
 		Long: `Show who is waiting on a reply from you and who you are waiting on.
 
-A loop starts at the oldest unanswered message that asks a question or makes a
-request, and stays until someone answers it. A reply you owe lists after 24
-hours, and a reply you are waiting on lists after 72 hours. Each list reads
-the archive as it is, so a reply that just synced clears its loop. Only
-conversations with a message in the last 30 days list. The wording rules read
-English only.`,
+Each person gets a separate loop anchored on their oldest open question or
+request. A reply you owe lists after 24 hours, and a reply you are waiting on
+lists after 72 hours. Each list reads the archive as it is. Quiet conversations
+leave the list after 30 days; snooze reminders remain eligible after expiry.
+The wording rules read English only.`,
 	}
 	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand())
 	return group
@@ -74,7 +73,8 @@ func newLoopsDoneCommand() *cobra.Command {
 		Use:   "done <message-id>",
 		Short: "Mark a loop done",
 		Long: `Mark a loop done. The message ID is the last column of 'msgvault loops list'.
-The loop lists again, with its original age, when a newer question arrives in it.`,
+A distinct question can reopen the loop, whatever its message date. The oldest
+open question supplies the message ID and age.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := positivePersonCLIArg(cmd, args[0], "message")
@@ -100,8 +100,8 @@ func newLoopsSnoozeCommand() *cobra.Command {
 		Use:   "snooze <message-id> --until <when>",
 		Short: "Hide a loop until a later time",
 		Long: `Hide a loop until a later time. The loop returns once the time passes, or
-sooner when a newer question arrives in it, unless you replied, in which case
-it is gone for good. A loop marked done stays done until a newer question arrives.`,
+sooner when a distinct question arrives. Decisions apply to this person's
+currently open questions. Use the current message ID from loops list.`,
 		Example: `  msgvault loops snooze 4521 --until 48h
   msgvault loops snooze 4521 --until 2026-10-25`,
 		Args: cobra.ExactArgs(1),

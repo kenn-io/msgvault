@@ -18,7 +18,7 @@ func (a *storeAPIAdapter) LoopConversationsContext(ctx context.Context, q store.
 	return a.store.LoopConversationsContext(ctx, q)
 }
 
-func (a *storeAPIAdapter) LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopCutoff, error) {
+func (a *storeAPIAdapter) LoopMarksContext(ctx context.Context, now time.Time) (map[int64]store.LoopMark, error) {
 	return a.store.LoopMarksContext(ctx, now)
 }
 
@@ -34,10 +34,10 @@ func (a *storeAPIAdapter) MessageConversationContext(ctx context.Context, messag
 	return a.store.MessageConversationContext(ctx, messageID)
 }
 
-func (a *storeAPIAdapter) MarkLoopDoneContext(ctx context.Context, anchorID int64, through store.LoopMessage) (store.LoopDecision, error) {
-	return a.store.MarkLoopDoneContext(ctx, anchorID, through)
+func (a *storeAPIAdapter) MarkLoopDoneContext(ctx context.Context, anchorID int64, questions []store.LoopMessage) (store.LoopDecision, error) {
+	return a.store.MarkLoopDoneContext(ctx, anchorID, questions)
 }
 
-func (a *storeAPIAdapter) SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, through store.LoopMessage) (store.LoopDecision, error) {
-	return a.store.SnoozeLoopContext(ctx, anchorID, until, through)
+func (a *storeAPIAdapter) SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, questions []store.LoopMessage) (store.LoopDecision, error) {
+	return a.store.SnoozeLoopContext(ctx, anchorID, until, questions)
 }

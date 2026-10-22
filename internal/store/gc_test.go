@@ -214,7 +214,7 @@ func TestExecuteGCPreservesDecisionWhenItsAnchorIsPurged(t *testing.T) {
 		Thread: "loop-anchor-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "And can you send the budget?", SentAt: throughAt,
 	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), anchor, store.LoopMessage{ID: covered, OccurredAt: throughAt})
+	_, err := f.Store.MarkLoopDoneContext(t.Context(), anchor, []store.LoopMessage{{ID: anchor}, {ID: covered}})
 	require.NoError(err)
 	sourceMessageID, err := f.Store.GetMessageSourceID(anchor)
 	require.NoError(err)
@@ -227,11 +227,11 @@ func TestExecuteGCPreservesDecisionWhenItsAnchorIsPurged(t *testing.T) {
 	assert.Empty(listLoops(t, f, now), "the surviving question remains covered after the original anchor is purged")
 	var decisionCount int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT COUNT(*) FROM loop_conversation_decisions WHERE conversation_id = ?`), conversationOf(t, f, covered)).Scan(&decisionCount))
+		`SELECT COUNT(*) FROM loop_decisions WHERE message_id = ?`), covered).Scan(&decisionCount))
 	assert.Equal(1, decisionCount)
 }
 
-func TestExecuteGCCannotLetReusedMessageIDInheritLoopCutoff(t *testing.T) {
+func TestExecuteGCCannotLetReusedMessageIDInheritDecision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -267,9 +267,7 @@ func TestExecuteGCCannotLetReusedMessageIDInheritLoopCutoff(t *testing.T) {
 	assert.Less(retiredBeforeCutoff, cutoff)
 	assert.Less(cutoff, retiredAfterCutoffA)
 	assert.Less(retiredAfterCutoffA, retiredAfterCutoffB)
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, store.LoopMessage{
-		ID: cutoff, OccurredAt: cutoffAt,
-	})
+	_, err := loops.Done(t.Context(), f.Store, first, now)
 	require.NoError(err)
 	for _, id := range []int64{retiredBeforeCutoff, cutoff, retiredAfterCutoffA, retiredAfterCutoffB} {
 		sourceMessageID, err := f.Store.GetMessageSourceID(id)
@@ -283,30 +281,23 @@ func TestExecuteGCCannotLetReusedMessageIDInheritLoopCutoff(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(4), deleted)
 	assert.Empty(listLoops(t, f, now), "the older same-time question remains covered after its cutoff message is purged")
-	var retiredState string
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT state FROM loop_question_states WHERE conversation_id = ? AND order_id = ?`), conversationOf(t, f, first), cutoff).Scan(&retiredState))
-	assert.Equal(store.LoopStateDone, retiredState, "purging the message preserves its exact question snapshot")
+	var retiredCount int
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM loop_decisions WHERE message_id = ?`), cutoff).Scan(&retiredCount))
+	assert.Zero(retiredCount, "purging a question cascades its exact decision")
 
 	replacement := f.PersistEmail(storetest.EmailSpec{
 		Thread: "loop-cutoff-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "Can you send a revised budget?", SentAt: cutoffAt,
 	})
 	assert.Less(replacement, cutoff, "GC of several high IDs lets SQLite reuse an ID below the old cutoff")
-	var cutoffOrderID, replacementOrderID int64
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT through_order_id FROM loop_conversation_decisions WHERE conversation_id = ?`), conversationOf(t, f, first)).Scan(&cutoffOrderID))
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT id FROM loop_message_order WHERE message_id = ?`), replacement).Scan(&replacementOrderID))
-	assert.Greater(replacementOrderID, cutoffOrderID, "order tokens do not reuse deleted message identity")
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(err)
 	require.Len(result.Loops, 1, "a new question reusing the cutoff ID must not inherit its done mark")
-	assert.Equal(first, result.Loops[0].Anchor.ID)
-	assert.Equal(replacement, result.Loops[0].LastAsk.ID)
+	assert.Equal(replacement, result.Loops[0].Anchor.ID)
+	assert.Equal(replacement, result.Loops[0].Questions[len(result.Loops[0].Questions)-1].ID)
 
 	until := now.Add(2 * 24 * time.Hour)
-	decision, err := loops.Snooze(t.Context(), f.Store, first, until, now)
+	decision, err := loops.Snooze(t.Context(), f.Store, replacement, until, now)
 	require.NoError(err)
 	assert.Equal(store.LoopStateSnoozed, decision.State, "the retired done mark does not make a new question look done")
 	require.NotNil(decision.SnoozedUntil)
@@ -315,7 +306,7 @@ func TestExecuteGCCannotLetReusedMessageIDInheritLoopCutoff(t *testing.T) {
 	assert.Len(listLoops(t, f, until), 1, "the question returns when its snooze expires")
 }
 
-func TestMergedCutoffIdentityDoesNotHideReusedMessageID(t *testing.T) {
+func TestMergedQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
@@ -338,9 +329,7 @@ func TestMergedCutoffIdentityDoesNotHideReusedMessageID(t *testing.T) {
 		Thread: "loop-cutoff-merge-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "Can you send the invoice?", SentAt: cutoffAt,
 	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, store.LoopMessage{
-		ID: cutoff, OccurredAt: cutoffAt,
-	})
+	_, err := loops.Done(t.Context(), f.Store, first, now)
 	require.NoError(err)
 	_, err = f.Store.MergeDuplicates(survivor, []int64{cutoff}, "loop-cutoff-remap-gc")
 	require.NoError(err)
@@ -363,8 +352,8 @@ func TestMergedCutoffIdentityDoesNotHideReusedMessageID(t *testing.T) {
 	require.Equal(cutoff, replacement, "SQLite reused the purged duplicate ID")
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(err)
-	require.Len(result.Loops, 1, "a later order token remains visible after the cutoff identity was remapped")
-	assert.Equal(replacement, result.Loops[0].LastAsk.ID)
+	require.Len(result.Loops, 1, "a distinct question remains visible after the duplicate identity was remapped")
+	assert.Equal(replacement, result.Loops[0].Questions[len(result.Loops[0].Questions)-1].ID)
 }
 
 func newSQLiteGCFixture(t *testing.T) *storetest.Fixture {

@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json/v2"
 	"errors"
 	"math/rand/v2"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,7 +169,7 @@ func TestLoopAutomationSignalsReadStoredRaw(t *testing.T) {
 		{"no stored original", noRaw, false, false},
 		{"invalid compressed original", corrupt, true, false},
 	} {
-		signals, unreadable, err := f.Store.LoopAutomationSignalsContext(t.Context(), tt.id)
+		signals, _, unreadable, err := f.Store.LoopOriginalEvidenceContext(t.Context(), tt.id)
 		require.NoError(err, tt.name)
 		assert.Equal(tt.unreadable, unreadable, tt.name)
 		assert.Equal(tt.auto, signals.AutoSubmitted, tt.name)
@@ -579,17 +581,17 @@ func TestMergeDuplicatesPreservesSourceConversationLoopDecision(t *testing.T) {
 	firstAt, secondAt := loopAgo(5*loopDay), loopAgo(3*loopDay)
 	historyFirst := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-1", "Can you send the contract?", firstAt)
 	historySecond := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-2", "Can you send the budget?", secondAt)
-	persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-older", "Can you send the invoice?", loopAgo(7*loopDay))
+	older := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-older", "Can you send the invoice?", loopAgo(7*loopDay))
 	liveFirst := persistLoopBeeperMessage(t, f.Store, into.ID, liveConversation, alex, "loop-question-1", "Can you send the contract?", firstAt)
 
-	_, err = f.Store.MarkLoopDoneContext(t.Context(), historyFirst, store.LoopMessage{ID: historySecond, OccurredAt: secondAt})
+	_, err = f.Store.MarkLoopDoneContext(t.Context(), historyFirst, []store.LoopMessage{{ID: historyFirst}, {ID: historySecond}, {ID: older}})
 	require.NoError(err)
 	_, err = f.Store.MergeDuplicates(liveFirst, []int64{historyFirst}, "loop-source-decision")
 	require.NoError(err)
 	assert.Empty(listLoops(t, f, loopNow), "the source's remaining covered questions and the duplicate stay cleared")
 	var state string
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT state FROM loop_conversation_decisions WHERE conversation_id = ?`), historyConversation).Scan(&state))
+		`SELECT state FROM loop_decisions WHERE message_id = ?`), historySecond).Scan(&state))
 	assert.Equal(store.LoopStateDone, state, "the mark remains attached to the source conversation with other messages")
 }
 
@@ -606,7 +608,7 @@ func TestDoneDecisionKeepsCoveredQuestionsAfterTimestampReordering(t *testing.T)
 		Thread: "timestamp-reordered", From: loopAlex, To: []string{loopOwner},
 		Body: "Can you send the budget?", SentAt: secondAt,
 	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, store.LoopMessage{ID: second, OccurredAt: secondAt})
+	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: second, OccurredAt: secondAt}})
 	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
 		`UPDATE messages SET sent_at = ? WHERE id = ?`), loopAgo(2*loopDay), first)
@@ -614,7 +616,7 @@ func TestDoneDecisionKeepsCoveredQuestionsAfterTimestampReordering(t *testing.T)
 	assert.Empty(listLoops(t, f, loopNow), "the first question stays covered after it moves past the saved timestamp boundary")
 }
 
-func TestMergingCutoffIntoLaterTokenKeepsDuplicateCovered(t *testing.T) {
+func TestMarkedQuestionsFollowDuplicateSurvivors(t *testing.T) {
 	for _, kind := range []string{"duplicates", "sources"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
@@ -647,7 +649,7 @@ func TestMergingCutoffIntoLaterTokenKeepsDuplicateCovered(t *testing.T) {
 	}
 }
 
-func TestMergeCutoffIntoLowerIDPreservesSameTimestampCoverage(t *testing.T) {
+func TestDuplicateDecisionLeavesSameTimeQuestionOpen(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -669,9 +671,7 @@ func TestMergeCutoffIntoLowerIDPreservesSameTimestampCoverage(t *testing.T) {
 	})
 	assert.Less(keptCutoff, coveredAfterSurvivor)
 	assert.Less(coveredAfterSurvivor, duplicateCutoff)
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, store.LoopMessage{
-		ID: duplicateCutoff, OccurredAt: loopAgo(3 * loopDay),
-	})
+	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: duplicateCutoff}})
 	require.NoError(err)
 
 	_, err = f.Store.MergeDuplicates(keptCutoff, []int64{duplicateCutoff}, "loop-cutoff-order")
@@ -679,61 +679,20 @@ func TestMergeCutoffIntoLowerIDPreservesSameTimestampCoverage(t *testing.T) {
 
 	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
 	require.NoError(err)
-	cutoff, ok := marks[f.ConvID]
+	mark, ok := marks[keptCutoff]
 	require.True(ok)
-	assert.Equal(keptCutoff, cutoff.MessageID, "the exact identity follows the surviving copy")
-	assert.Equal(duplicateCutoff, cutoff.OrderID, "the original same-time ordering boundary stays unchanged")
-	assert.Empty(listLoops(t, f, loopNow), "the question between the survivor and original cutoff IDs remains covered")
-}
-
-func TestLoopMessageOrderingMigrationSeedsTokensAboveRetiredCutoffs(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	throughAt := loopNow.Add(-5 * loopDay)
-	messageID := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-order-migration", From: loopAlex, To: []string{loopOwner},
-		Body: "Can you send the contract?", SentAt: throughAt,
-	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), messageID, store.LoopMessage{
-		ID: messageID, OccurredAt: throughAt,
-	})
-	require.NoError(err)
-	conversationID := conversationOf(t, f, messageID)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE loop_conversation_decisions
-		SET through_message_id = 0, through_order_id = 900 WHERE conversation_id = ?`), conversationID)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(`DELETE FROM loop_message_order`)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "loop_message_ordering_v1")
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`)
-	require.NoError(err)
-
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	var migratedOrder, retiredCutoff int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
-		`SELECT id FROM loop_message_order WHERE message_id = ?`), messageID).Scan(&migratedOrder))
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
-		`SELECT through_order_id FROM loop_conversation_decisions WHERE conversation_id = ?`), conversationID).Scan(&retiredCutoff))
-	assert.Equal(messageID, migratedOrder, "existing messages retain their old ID order boundary")
-	assert.Equal(int64(900), retiredCutoff, "migration preserves a cutoff whose exact message was purged")
-
-	newID := f.PersistEmail(storetest.EmailSpec{
-		Thread: "loop-order-migration", From: loopAlex, To: []string{loopOwner},
-		Body: "And the invoice?", SentAt: throughAt,
-	})
-	var newOrder int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
-		`SELECT id FROM loop_message_order WHERE message_id = ?`), newID).Scan(&newOrder))
-	assert.Greater(newOrder, retiredCutoff, "new order tokens cannot be confused with retired message IDs")
+	assert.Equal(store.LoopStateDone, mark.State)
+	assert.Equal(store.LoopStateDone, marks[duplicateCutoff].State)
+	listed := listLoops(t, f, loopNow)
+	require.Len(listed, 1)
+	assert.Equal(coveredAfterSurvivor, listed[0].Anchor.ID, "the distinct same-time question stays open")
 }
 
 func loopDecisionState(t *testing.T, f *storetest.Fixture, anchorID int64) string {
 	t.Helper()
 	var state string
 	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT state FROM loop_conversation_decisions WHERE conversation_id = ?`), conversationOf(t, f, anchorID)).Scan(&state)
+		`SELECT state FROM loop_decisions WHERE message_id = ?`), anchorID).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ""
 	}
@@ -741,29 +700,25 @@ func loopDecisionState(t *testing.T, f *storetest.Fixture, anchorID int64) strin
 	return state
 }
 
-// loopMark is a stored decision: done, or snoozed until Until, through the
-// question sent at Through.
+// loopMark is one question's stored decision.
 type loopMark struct {
-	State   string
-	Until   time.Time
-	Through time.Time
+	State string
+	Until time.Time
 }
 
-func doneThrough(through time.Time) loopMark {
-	return loopMark{State: store.LoopStateDone, Through: through}
-}
+func doneMark() loopMark { return loopMark{State: store.LoopStateDone} }
 
-func snoozedUntil(until, through time.Time) loopMark {
-	return loopMark{State: store.LoopStateSnoozed, Until: until, Through: through}
+func snoozedUntil(until time.Time) loopMark {
+	return loopMark{State: store.LoopStateSnoozed, Until: until}
 }
 
 func putLoopMark(t *testing.T, st *store.Store, id int64, m loopMark) {
 	t.Helper()
 	var err error
 	if m.State == store.LoopStateDone {
-		_, err = st.MarkLoopDoneContext(t.Context(), id, store.LoopMessage{ID: id, OccurredAt: m.Through})
+		_, err = st.MarkLoopDoneContext(t.Context(), id, []store.LoopMessage{{ID: id}})
 	} else {
-		_, err = st.SnoozeLoopContext(t.Context(), id, m.Until, store.LoopMessage{ID: id, OccurredAt: m.Through})
+		_, err = st.SnoozeLoopContext(t.Context(), id, m.Until, []store.LoopMessage{{ID: id}})
 	}
 	require.NoError(t, err)
 }
@@ -771,13 +726,10 @@ func putLoopMark(t *testing.T, st *store.Store, id int64, m loopMark) {
 func storedLoopMark(t *testing.T, st *store.Store, id int64) loopMark {
 	t.Helper()
 	var m loopMark
-	var until, through sql.NullTime
-	var conversationID int64
+	var until sql.NullTime
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
-		`SELECT conversation_id FROM messages WHERE id = ?`), id).Scan(&conversationID))
-	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
-		`SELECT qs.state, qs.snoozed_until, msg.sent_at FROM loop_question_states qs JOIN loop_message_order lmo ON lmo.id = qs.order_id JOIN messages msg ON msg.id = lmo.message_id WHERE qs.conversation_id = ? AND msg.id = ?`), conversationID, id).Scan(&m.State, &until, &through))
-	m.Until, m.Through = until.Time.UTC(), through.Time.UTC()
+		`SELECT state, snoozed_until FROM loop_decisions WHERE message_id = ?`), id).Scan(&m.State, &until))
+	m.Until = until.Time.UTC()
 	return m
 }
 
@@ -789,15 +741,12 @@ type mergedMark struct {
 }
 
 func mergedMarkCases() []mergedMark {
-	first, second := loopAgo(5*loopDay), loopAgo(2*loopDay)
 	soon, later := loopNow.Add(2*loopDay), loopNow.Add(5*loopDay)
 	return []mergedMark{
-		{"done beats the survivor's snooze", doneThrough(first), snoozedUntil(soon, first), doneThrough(first)},
-		{"done beats the duplicate's snooze", snoozedUntil(soon, first), doneThrough(first), doneThrough(first)},
-		{"the duplicate's later snooze wins", snoozedUntil(later, first), snoozedUntil(soon, first), snoozedUntil(later, first)},
-		{"the survivor's later snooze stays", snoozedUntil(soon, first), snoozedUntil(later, first), snoozedUntil(later, first)},
-		{"the duplicate's later cut-off wins", doneThrough(second), doneThrough(first), doneThrough(second)},
-		{"the survivor's later cut-off stays", doneThrough(first), doneThrough(second), doneThrough(second)},
+		{"done beats the survivor's snooze", doneMark(), snoozedUntil(soon), doneMark()},
+		{"done beats the duplicate's snooze", snoozedUntil(soon), doneMark(), doneMark()},
+		{"the duplicate's later snooze wins", snoozedUntil(later), snoozedUntil(soon), snoozedUntil(later)},
+		{"the survivor's later snooze stays", snoozedUntil(soon), snoozedUntil(later), snoozedUntil(later)},
 	}
 }
 
@@ -953,21 +902,101 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 				} else {
 					assert.Zero(result.DuplicatesHidden)
 				}
-				ref, err := f.Store.MessageConversationContext(t.Context(), open)
-				require.NoError(err)
 				for _, at := range []time.Time{loopNow, until} {
 					marks, err := f.Store.LoopMarksContext(t.Context(), at)
 					require.NoError(err)
-					mark := marks[ref.ConversationID]
-					assert.True(store.LoopCutoffCovers(mark, store.LoopMessage{ID: done, OrderID: done, OccurredAt: loopAgo(2 * loopDay)}))
-					assert.Equal(at.Before(until), store.LoopCutoffCovers(mark, store.LoopMessage{ID: snoozed, OrderID: snoozed, OccurredAt: loopAgo(5 * loopDay)}))
-					assert.False(store.LoopCutoffCovers(mark, store.LoopMessage{ID: open, OrderID: open, OccurredAt: loopAgo(4 * loopDay)}))
-					if shared != 0 && !reverse {
-						assert.True(store.LoopCutoffCovers(mark, store.LoopMessage{ID: shared, OrderID: shared, OccurredAt: loopAgo(2 * loopDay)}))
+					assert.Equal(store.LoopStateDone, marks[done].State)
+					require.NotNil(marks[snoozed].SnoozedUntil)
+					assert.Equal(at.Before(until), at.Before(*marks[snoozed].SnoozedUntil))
+					assert.NotContains(marks, open)
+					if duplicate && !reverse {
+						assert.Equal(store.LoopStateDone, marks[shared].State)
 					}
 					assert.Len(listLoops(t, f, at), 1)
 				}
 			})
 		}
 	}
+}
+
+func TestDuplicateUndoKeepsBothQuestionDecisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	duplicate := f.PersistEmail(storetest.EmailSpec{Thread: "duplicate", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
+	survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
+	_, err := loops.Done(t.Context(), f.Store, duplicate, loopNow)
+	require.NoError(err)
+	_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "loop-undo")
+	require.NoError(err)
+	assert.Empty(listLoops(t, f, loopNow))
+	restored, err := f.Store.UndoDedup("loop-undo")
+	require.NoError(err)
+	assert.Equal(int64(1), restored)
+	assert.Empty(listLoops(t, f, loopNow), "both restored and surviving questions keep their decisions")
+	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
+	require.NoError(err)
+	assert.Equal(store.LoopStateDone, marks[duplicate].State)
+	assert.Equal(store.LoopStateDone, marks[survivor].State)
+}
+
+func TestUnmarkedSourceMergeCreatesNoLoopDecisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	firstSource := f.Source
+	f.PersistEmail(storetest.EmailSpec{Thread: "unmarked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
+	other, err := f.Store.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	f.Source = other
+	f.PersistEmail(storetest.EmailSpec{Thread: "unmarked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the report?", SentAt: loopAgo(4 * loopDay)})
+	_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: other.ID, IntoSourceID: firstSource.ID})
+	require.NoError(err)
+	marks, err := f.Store.LoopMarksContext(t.Context(), loopNow)
+	require.NoError(err)
+	assert.Empty(marks)
+}
+
+func TestLoopGroupMembershipUsesOneMetadataQuery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	messages := make([]loopChatMessage, 60)
+	for i := range messages {
+		messages[i].body = "Can you send the contract?"
+	}
+	for _, room := range []string{"group-one", "group-two"} {
+		ids := persistLoopDirectChat(t, f, room, messages)
+		ref, err := f.Store.MessageConversationContext(t.Context(), ids[0])
+		require.NoError(err)
+		extra := f.EnsureParticipant("sam@example.test", "", "example.test")
+		require.NoError(f.Store.EnsureConversationParticipant(ref.ConversationID, extra, "member"))
+	}
+	logs := captureAttachmentQueryLogs(t)
+	var groups int
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		require.NoError(err)
+		if conv.ConversationType == "direct_chat" {
+			assert.True(conv.GroupChat)
+			groups++
+		}
+	}
+	assert.Equal(2, groups)
+	var memberships, details int
+	for line := range strings.SplitSeq(strings.TrimSpace(logs.String()), "\n") {
+		var event struct {
+			Stmt  string `json:"stmt"`
+			Nargs int    `json:"nargs"`
+		}
+		require.NoError(json.Unmarshal([]byte(line), &event))
+		if strings.Contains(event.Stmt, "FROM conversation_participants cp LEFT JOIN person_participants") {
+			memberships++
+		}
+		if strings.Contains(event.Stmt, "SELECT m.id, COALESCE(m.sender_id") {
+			details++
+			assert.LessOrEqual(event.Nargs, 8, "only four newest messages per conversation are hydrated")
+		}
+	}
+	assert.Equal(1, memberships)
+	assert.Equal(1, details)
 }

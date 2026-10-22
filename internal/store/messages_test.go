@@ -1769,16 +1769,16 @@ func TestMigrateSourceMessageIDTransfersLoopDecisionBeforeDeletingLegacyTeamsCha
 	legacyID := insertStoreTestMessage(t, st, source.ID, convID, "m1")
 	scopedID := insertStoreTestMessage(t, st, source.ID, convID, "chat:19:x@thread.v2:m1")
 	throughAt := time.Date(2026, time.October, 15, 10, 0, 0, 0, time.UTC)
-	_, err = st.MarkLoopDoneContext(t.Context(), legacyID, store.LoopMessage{
+	_, err = st.MarkLoopDoneContext(t.Context(), legacyID, []store.LoopMessage{{
 		ID: legacyID, OccurredAt: throughAt,
-	})
+	}})
 	require.NoError(err)
 
 	require.NoError(st.MigrateSourceMessageID(source.ID, convID, "m1", "chat:19:x@thread.v2:m1"))
 	var state string
 	var throughID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT state, through_message_id
-		FROM loop_conversation_decisions WHERE conversation_id = ?`), convID).Scan(&state, &throughID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT state, message_id
+		FROM loop_decisions WHERE message_id = ?`), scopedID).Scan(&state, &throughID))
 	assert.Equal(store.LoopStateDone, state)
 	assert.Equal(scopedID, throughID)
 }

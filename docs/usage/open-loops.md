@@ -1,5 +1,5 @@
 ---
-last_edited: 2026-10-20
+last_edited: 2026-10-21
 title: Open loops
 description: See which conversations still wait on your reply, and which replies you are waiting on.
 ---
@@ -24,13 +24,13 @@ loops card.
 
 ## What counts as a loop
 
-A loop starts at the oldest message in the latest run of one side's messages
-that asks a question or makes a request.
+Each person gets a separate loop, starting at their oldest unanswered, unmarked
+question or request. Addresses linked to one person count together.
 
 - **Waiting on you** (`reply_owed`): an email addressed to you in To asks
   something, and 24 hours have passed. In a direct chat, a message to you that
   asks a question or makes a request counts. An email that only copies you in
-  Cc or Bcc never counts, and neither does one between two other people.
+  Cc or Bcc opens no obligation, and neither does one between two other people.
 - **Waiting on them** (`awaiting_reply`): your message asks something of the
   one person in To, or of the other person in a direct chat, and 72 hours have
   passed. An email to several people is group handling, which loops don't cover
@@ -43,8 +43,8 @@ account addresses. A question sent only to an old address you linked in the
 Directory waits on you, mail from your other mailbox opens nothing, and a
 question sent only to it waits on nobody.
 
-A loop stays open until someone answers, however old it gets and however many
-follow-ups pile on. It keeps the age of the message that started it. For
+An unanswered loop keeps the age of its oldest open question while the
+conversation remains eligible for the list. For
 example, Alex asks "Can you send the contract?" on Aug 20 and nudges on Oct 18.
 On Oct 20 the loop lists with Aug 20 as its start and 61 days as its age.
 Your message answers only the people it went to. If Alex asks you, you forward
@@ -62,8 +62,10 @@ one person count together.
 
 ## What settles a loop
 
-A real answer from the other side settles it, including a reply from a
-`support@` or `info@` address. These messages neither open nor settle a loop:
+A real answer from the awaited person settles it, including a reply from a
+`support@` or `info@` address. Their reply also counts when you appear only on
+Cc or Bcc. A reply from someone else leaves that wait open. These messages
+neither open nor settle a loop:
 
 - A bare acknowledgement, unless it has a file attached. Its own text is at
   most 60 characters with no question mark, and is only the words thanks,
@@ -79,8 +81,7 @@ A real answer from the other side settles it, including a reply from a
   not a silent gap. A body that merely starts with the words "MIME parsing
   failed" is read like any other.
   An email with no stored original is judged by its sender, list ID, and text.
-- An email where you are only on Cc or Bcc, mail between other people, and
-  drafts.
+- Mail between other people and drafts.
 - Your message that goes to someone other than the person who asked, such as
   a forward to a colleague. It leaves their request waiting on you. Your
   reply settles it when that person is on To or Cc.
@@ -100,34 +101,31 @@ msgvault loops snooze 4521 --until 48h
 msgvault loops snooze 4521 --until 2026-10-25
 ```
 
-`done` hides the loop, and `snooze` hides it until the time passes. A mark
-covers the questions asked so far. When a newer question arrives in the same
-stretch, the loop lists again with its original age and message ID. A message
-that asks nothing leaves it hidden. For example, Alex asks "Can you send the
-contract?" on Monday and you mark it done. "And the invoice?" on Wednesday
-lists the loop again, dated Monday. "Just following up." does not. Marking it
-again covers Wednesday's question. A new stretch that starts with a different
-message shows again too. The mark belongs to the conversation, so an older
-question imported later stays hidden even though the loop now starts there. A
-different question sent at the same instant as the last one you marked lists
-the loop again.
+`done` hides this person's open questions. `snooze` hides them until the time
+passes. Done and snooze cover this person's questions already present when
+you act. A distinct question imported later can reopen the loop, whatever its
+message date. For example, Alex asks for the contract on Monday and you mark
+it done. "And the invoice?" on Wednesday starts a new visible wait dated
+Wednesday. An invoice question from Sunday imported afterward also appears.
+A message that asks nothing leaves the loop hidden.
 
-Each known question keeps its own done, snoozed, or open result when dates
-change or accounts merge. A loop lists if any unanswered question is open,
-even when its newest question is done or snoozed. Distinct questions keep
-their own snooze deadlines through a merge, and each reopens when its deadline
-passes. An older question first imported after a mark still uses that mark's
-original date cutoff.
+Each question keeps its own decision when dates change or accounts merge.
+The list shows the oldest question that is neither done nor actively snoozed,
+and uses that question's age and message ID. Distinct questions keep their
+own snooze deadlines through a merge, and each reopens when its deadline
+passes. A new question must wait its own 24 or 72 hours before it lists.
 
-Your latest mark covers the questions asked so far. Snoozing keeps a done
-result only when every unanswered question is already done. Both commands
-take the message ID from `loops list` and survive duplicate removal and
-account merges. A confirmed duplicate keeps its state whichever copy survives.
-For the same question, done wins over snooze, and overlapping snoozes keep the
-later deadline. Both re-read the conversation first and accept only what `loops list`
-would show now, so they report that the message is not an open loop when a
-reply is already archived, when the conversation is older than 30 days, or
-when the loop is still inside its 24 or 72 hours.
+Both commands take the current message ID from `loops list` and re-read the
+conversation before acting. A covered anchor, an archived answer, or a
+question still inside its grace period makes the action fail with the
+existing not-open error. An ordinary conversation outside the 30-day activity
+window also fails; conversations containing snooze decisions remain eligible.
+
+A confirmed duplicate inherits the original question's decision. Hiding a
+duplicate preserves its own decision so undo restores it too. Done wins over
+snooze when duplicate decisions meet, and two snoozes retain the later
+deadline. A deliberate new snooze can replace an earlier deadline on an open
+question. Deleting a question removes only that question's decision.
 
 ## Limits
 
@@ -136,7 +134,7 @@ when the loop is still inside its 24 or 72 hours.
   that account's conversation, and the loop stays until you run
   `msgvault loops done`.
 - The list reads conversations that are not mailing-list mail and have a
-  message in the last 30 days, oldest first. It stops once it holds more loops
+  message in the last 30 days or a snooze decision, oldest first. It stops once it holds more loops
   than you asked for, so a list with few or no loops reads every one of those
   conversations. It opens a stored original only for a message that could
   change the answer, such as the one that starts a wait. Automated mail among
@@ -146,9 +144,10 @@ when the loop is still inside its 24 or 72 hours.
   stopped at 50 loops took 0.25 seconds, and a list with no loops took 1 second
   for plain-text messages and 12 seconds when each message carried a 96 KiB
   attachment. Each person-card view runs the same list for that person's conversations.
-- The list covers conversations with a message in the last 30 days. A question
-  that nobody has written about for longer leaves the default list, and
-  returns, with its original age, when anyone writes again.
+- An ordinary quiet conversation leaves the list after 30 days without a
+  message, even when a question remains unanswered. It can return when new
+  activity arrives. Conversations containing snooze decisions remain eligible
+  past day 30, including after expiry, so their reminders can return.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something
   opens a loop, and `msgvault loops done` clears it.

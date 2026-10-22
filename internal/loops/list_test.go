@@ -147,14 +147,14 @@ func TestListFollowUpAcrossUnansweredForward(t *testing.T) {
 	followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(3 * day)})
 
 	result := list(t, f, loops.Options{})
-	require.Len(result.Loops, 1)
-	loop := result.Loops[0]
+	require.Len(result.Loops, 2)
+	loop := result.Loops[1]
 	assert.Equal(loops.ReplyOwed, loop.Kind)
 	assert.Equal(alex, loop.Counterparty.Address)
-	assert.Equal(first, loop.Anchor.ID)
-	assert.True(ago(6*day).Equal(loop.OwedSince), "the oldest unanswered question starts the clock")
-	assert.Equal(followUp, loop.LastAsk.ID)
-	assert.True(ago(3*day).Equal(loop.LastAsk.OccurredAt), "the follow-up remains the newest question")
+	assert.Equal(followUp, loop.Anchor.ID)
+	assert.True(ago(3*day).Equal(loop.OwedSince), "the oldest unanswered question starts the clock")
+	assert.Equal(followUp, loop.Questions[len(loop.Questions)-1].ID)
+	assert.True(ago(3*day).Equal(loop.Questions[len(loop.Questions)-1].OccurredAt), "the follow-up remains the newest question")
 }
 
 func TestListPersonFilterRetainsUnansweredQuestionAfterAnotherPersonIsAnswered(t *testing.T) {
@@ -238,15 +238,17 @@ func TestListKeepsUnansweredRequesterAcrossDifferentCounterpartyBoundary(t *test
 	require.NoError(err)
 
 	all := list(t, f, loops.Options{})
-	require.Len(all.Loops, 1)
+	require.Len(all.Loops, 2)
 	assert.Equal(first, all.Loops[0].Anchor.ID)
-	assert.Equal(followUp, all.Loops[0].LastAsk.ID)
+	assert.Equal(followUp, all.Loops[0].Questions[len(all.Loops[0].Questions)-1].ID)
 	assert.Equal(alexPerson.ID, all.Loops[0].Counterparty.PersonID)
 
 	alexOnly := list(t, f, loops.Options{PersonID: alexPerson.ID})
 	require.Len(alexOnly.Loops, 1)
 	assert.Equal(first, alexOnly.Loops[0].Anchor.ID)
-	assert.Empty(list(t, f, loops.Options{PersonID: samPerson.ID}).Loops)
+	samOnly := list(t, f, loops.Options{PersonID: samPerson.ID})
+	require.Len(samOnly.Loops, 1)
+	assert.Equal(samPerson.ID, samOnly.Loops[0].Counterparty.PersonID)
 }
 
 func TestListReplyFromLinkedAddressSettles(t *testing.T) {
@@ -270,9 +272,11 @@ func TestListReplyFromLinkedAddressSettles(t *testing.T) {
 	assert.Empty(list(t, f, loops.Options{}).Loops)
 
 	f.PersistEmail(storetest.EmailSpec{Thread: "question", From: "alex@home.example.test", To: []string{me}, Body: "Can you send the contract?", SentAt: ago(3 * day)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "question", From: alex, To: []string{me}, Body: "Can you also send the report?", SentAt: ago(2 * day)})
 	result := list(t, f, loops.Options{})
 	require.Len(result.Loops, 1)
 	assert.Equal(loops.ReplyOwed, result.Loops[0].Kind)
+	assert.Len(result.Loops[0].Questions, 2, "linked senders share one current-person turn")
 	assert.Equal(home, result.Loops[0].Counterparty.ParticipantID)
 	assert.Equal(person.ID, result.Loops[0].Counterparty.PersonID)
 	assert.Len(list(t, f, loops.Options{PersonID: person.ID}).Loops, 1)
@@ -350,22 +354,18 @@ func TestDuplicateStateFollowsLaterSurvivorAndLeavesDistinctQuestionOpen(t *test
 		Thread: "remapped-cutoff", From: alex, To: []string{me},
 		Body: "Can you send the budget?", SentAt: ago(3 * day),
 	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, store.LoopMessage{
-		ID: cutoff, OccurredAt: ago(3 * day),
-	})
+	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: cutoff}})
 	require.NoError(err)
 	_, err = f.Store.MergeDuplicates(survivor, []int64{cutoff}, "loop-cutoff-remap")
 	require.NoError(err)
 
 	marks, err := f.Store.LoopMarksContext(t.Context(), now)
 	require.NoError(err)
-	require.Len(marks, 1)
-	conversation, err := f.Store.MessageConversationContext(t.Context(), first)
-	require.NoError(err)
-	mark, ok := marks[conversation.ConversationID]
+	require.Len(marks, 3)
+	mark, ok := marks[survivor]
 	require.True(ok)
-	assert.Equal(survivor, mark.MessageID, "the exact identity follows the surviving copy")
-	assert.Equal(cutoff, mark.OrderID, "the original ordering boundary stays in place")
+	assert.Equal(store.LoopStateDone, mark.State)
+	assert.Equal(store.LoopStateDone, marks[cutoff].State)
 
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), ago(2*day), survivor)
 	require.NoError(err)
@@ -373,8 +373,8 @@ func TestDuplicateStateFollowsLaterSurvivorAndLeavesDistinctQuestionOpen(t *test
 	newQuestion := f.PersistEmail(storetest.EmailSpec{Thread: "remapped-cutoff", From: alex, To: []string{me}, Body: "Can you send the invoice?", SentAt: ago(3 * day)})
 	result := list(t, f, loops.Options{})
 	require.Len(result.Loops, 1, "a distinct question at the same instant stays open")
-	assert.Equal(survivor, result.Loops[0].LastAsk.ID, "the corrected newest question stays covered while the distinct older question keeps the loop visible")
-	assert.False(store.LoopCutoffCovers(mark, store.LoopMessage{ID: newQuestion, OrderID: newQuestion, OccurredAt: ago(3 * day)}))
+	assert.Equal(newQuestion, result.Loops[0].Anchor.ID, "the distinct question anchors while the corrected question stays covered")
+	assert.NotContains(marks, newQuestion)
 }
 
 func TestSnoozeAfterOlderImportReportsConversationDecision(t *testing.T) {
@@ -395,21 +395,16 @@ func TestSnoozeAfterOlderImportReportsConversationDecision(t *testing.T) {
 			until := now.Add(day)
 			decision, err := loops.Snooze(t.Context(), f.Store, older, until, now)
 			require.NoError(err)
-			if state == store.LoopStateDone {
-				assert.Equal(store.LoopStateDone, decision.State)
-				assert.Nil(decision.SnoozedUntil)
-			} else {
-				assert.Equal(store.LoopStateSnoozed, decision.State)
-				require.NotNil(decision.SnoozedUntil)
-				assert.True(until.Equal(*decision.SnoozedUntil))
-			}
+			assert.Equal(store.LoopStateSnoozed, decision.State)
+			require.NotNil(decision.SnoozedUntil)
+			assert.True(until.Equal(*decision.SnoozedUntil))
 			later, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
 			require.NoError(err)
-			if state == store.LoopStateDone {
-				assert.Empty(later.Loops)
-			} else {
-				assert.Len(later.Loops, 1, "the replacement snooze expires at its new deadline")
-			}
+			require.Len(later.Loops, 1, "the imported question reopens at its own deadline")
+			assert.Equal(older, later.Loops[0].Anchor.ID)
+			marks, err := f.Store.LoopMarksContext(t.Context(), now)
+			require.NoError(err)
+			assert.Equal(state, marks[question].State, "the earlier decision stays intact")
 		})
 	}
 }
@@ -418,12 +413,11 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
 		first, second time.Duration
-		reopens       bool
 	}{
 		{name: "older import changes the anchor", first: -3 * day, second: -5 * day},
-		{name: "identical sent time", first: -3 * day, second: -3 * day, reopens: true},
-		{name: "milliseconds", first: -5*day + 100*time.Millisecond, second: -5*day + 600*time.Millisecond, reopens: true},
-		{name: "below a millisecond", first: -5*day + 100100*time.Microsecond, second: -5*day + 100900*time.Microsecond, reopens: true},
+		{name: "identical sent time", first: -3 * day, second: -3 * day},
+		{name: "milliseconds", first: -5*day + 100*time.Millisecond, second: -5*day + 600*time.Millisecond},
+		{name: "below a millisecond", first: -5*day + 100100*time.Microsecond, second: -5*day + 100900*time.Microsecond},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -433,14 +427,10 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 			_, err := loops.Done(t.Context(), f.Store, question, now)
 			require.NoError(err)
 			require.Empty(list(t, f, loops.Options{}).Loops, "the question you marked stays hidden")
-			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: now.Add(tt.second)})
+			imported := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: now.Add(tt.second)})
 			result := list(t, f, loops.Options{})
-			if !tt.reopens {
-				assert.Empty(result.Loops, "the done mark still covers the turn after importing an older question")
-				return
-			}
 			require.Len(result.Loops, 1, "an unseen question brings the loop back")
-			assert.Equal(question, result.Loops[0].Anchor.ID)
+			assert.Equal(imported, result.Loops[0].Anchor.ID)
 		})
 	}
 	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
@@ -468,12 +458,12 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 			}
 			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Just following up.", SentAt: ago(4 * day)})
 			assert.Empty(list(t, f, loops.Options{}).Loops, "a follow-up that asks nothing leaves it hidden")
-			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(3 * day)})
+			followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(3 * day)})
 			result := list(t, f, loops.Options{})
 			require.Len(result.Loops, 1, "an unseen question brings the loop back")
-			assert.Equal(question, result.Loops[0].Anchor.ID)
-			assert.True(result.Loops[0].OwedSince.Equal(ago(5*day)), "dated by the original question, got %s", result.Loops[0].OwedSince)
-			mark(question)
+			assert.Equal(followUp, result.Loops[0].Anchor.ID)
+			assert.True(result.Loops[0].OwedSince.Equal(ago(3 * day)))
+			mark(followUp)
 			assert.Empty(list(t, f, loops.Options{}).Loops, "marking it again covers the newer question")
 			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you also send the deck?", SentAt: ago(day)})
 			assert.Len(list(t, f, loops.Options{}).Loops, 1, "the next question brings it back again")
@@ -634,24 +624,21 @@ func TestSnoozeReplacesDoneOnceAFollowUpReopens(t *testing.T) {
 	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
 	_, err := loops.Done(t.Context(), f.Store, question, now)
 	require.NoError(err)
-	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(2 * day)})
+	followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(2 * day)})
 	until := now.Add(day)
-	decision, err := loops.Snooze(t.Context(), f.Store, question, until, now)
+	decision, err := loops.Snooze(t.Context(), f.Store, followUp, until, now)
 	require.NoError(err)
 	require.NotNil(decision.SnoozedUntil)
 	assert.Equal(store.LoopStateSnoozed, decision.State)
 	assert.True(until.Equal(*decision.SnoozedUntil))
 	var state string
-	var storedUntil, through sql.NullTime
+	var storedUntil sql.NullTime
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`
-		SELECT state, snoozed_until, through_at FROM loop_conversation_decisions
-		WHERE conversation_id = (SELECT conversation_id FROM messages WHERE id = ?)
-	`), question).Scan(&state, &storedUntil, &through))
-	assert.Equal(store.LoopStateSnoozed, state)
-	require.True(storedUntil.Valid)
-	require.True(through.Valid)
-	assert.True(until.Equal(storedUntil.Time))
-	assert.True(ago(2 * day).Equal(through.Time))
+		SELECT state, snoozed_until FROM loop_decisions
+		WHERE message_id = ?
+	`), question).Scan(&state, &storedUntil))
+	assert.Equal(store.LoopStateDone, state)
+	assert.False(storedUntil.Valid)
 }
 
 func TestKnownOpenQuestionSurvivesCoveredDateReordering(t *testing.T) {
@@ -709,9 +696,9 @@ func TestDistinctSnoozeDeadlinesSurviveSourceMerge(t *testing.T) {
 			require.Equal(firstRef.ConversationID, secondRef.ConversationID, "both questions now belong to the same chat")
 			marks, err := f.Store.LoopMarksContext(t.Context(), now.Add(2*day))
 			require.NoError(err)
-			ref, err := f.Store.MessageConversationContext(t.Context(), second)
-			require.NoError(err)
-			assert.True(store.LoopCutoffCovers(marks[ref.ConversationID], store.LoopMessage{ID: second, OrderID: second, OccurredAt: ago(4 * day)}), "the second question retains its longer snooze")
+			require.NotNil(marks[second].SnoozedUntil)
+			assert.True(now.Add(3*day).Equal(*marks[second].SnoozedUntil), "the second question retains its longer snooze")
+
 			result, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
 			require.NoError(err)
 			assert.Len(result.Loops, 1, "the first question reopens at its own deadline")
@@ -719,7 +706,7 @@ func TestDistinctSnoozeDeadlinesSurviveSourceMerge(t *testing.T) {
 	}
 }
 
-func TestDuplicateTransferKeepsFallbackForLaterHistoricalImport(t *testing.T) {
+func TestDuplicateTransferLeavesDistinctHistoricalImportOpen(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -729,6 +716,98 @@ func TestDuplicateTransferKeepsFallbackForLaterHistoricalImport(t *testing.T) {
 	survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
 	_, err = f.Store.MergeDuplicates(survivor, []int64{marked}, "late-import-cutoff")
 	require.NoError(err)
-	f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Can you send the earlier draft?", SentAt: ago(7 * day)})
-	assert.Empty(list(t, f, loops.Options{}).Loops, "the copied fallback still covers a late historical question")
+	older := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Can you send the earlier draft?", SentAt: ago(7 * day)})
+	result := list(t, f, loops.Options{})
+	require.Len(result.Loops, 1)
+	assert.Equal(older, result.Loops[0].Anchor.ID)
+}
+
+func TestRequesterDecisionsStayIndependent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	first := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(8 * day)})
+	second := f.PersistEmail(storetest.EmailSpec{From: "sam@example.test", To: []string{me}, Body: "Could you send the report?", SentAt: ago(5 * day)})
+	result := list(t, f, loops.Options{})
+	require.Len(result.Loops, 2)
+	assert.Equal(first, result.Loops[0].Anchor.ID)
+	assert.Equal(second, result.Loops[1].Anchor.ID)
+	_, err := loops.Done(t.Context(), f.Store, first, now)
+	require.NoError(err)
+	result = list(t, f, loops.Options{})
+	require.Len(result.Loops, 1)
+	assert.Equal(second, result.Loops[0].Anchor.ID)
+	older := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you check the older draft?", SentAt: ago(10 * day)})
+	result = list(t, f, loops.Options{})
+	require.Len(result.Loops, 2)
+	assert.Equal(older, result.Loops[0].Anchor.ID)
+	assert.Equal(second, result.Loops[1].Anchor.ID)
+}
+
+func TestAwaitedReplyOnCcSettles(t *testing.T) {
+	for _, tc := range []struct {
+		name, sender, body, recipientType string
+		wantOpen                          bool
+	}{
+		{"awaited on To", alex, "Here is the contract.", "to", false},
+		{"awaited on Bcc", alex, "Here is the contract.", "bcc", false},
+		{"awaited on Cc", alex, "Here is the contract.", "cc", false},
+		{"unrelated", "sam@example.test", "Here is the contract.", "cc", true},
+		{"quoted", alex, "> Can you send the contract?", "cc", true},
+		{"new question", "sam@example.test", "Could you send the report?", "cc", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			question := f.PersistEmail(storetest.EmailSpec{From: me, To: []string{alex}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+			reply := f.PersistEmail(storetest.EmailSpec{From: tc.sender, To: []string{me}, Body: tc.body, SentAt: ago(3 * day)})
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_recipients SET recipient_type = ? WHERE message_id = ?`), tc.recipientType, reply)
+			require.NoError(err)
+			result := list(t, f, loops.Options{})
+			if tc.wantOpen {
+				require.Len(result.Loops, 1)
+				assert.Equal(question, result.Loops[0].Anchor.ID)
+			} else {
+				assert.Empty(result.Loops)
+			}
+		})
+	}
+}
+
+func TestSnoozedLoopReturnsBeyondLookback(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(20 * day)})
+	_, err := loops.Snooze(t.Context(), f.Store, question, now.Add(20*day), now)
+	require.NoError(err)
+	before, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(15*day))
+	require.NoError(err)
+	assert.Empty(before.Loops)
+	after, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(21*day))
+	require.NoError(err)
+	require.Len(after.Loops, 1)
+	assert.Equal(question, after.Loops[0].Anchor.ID)
+	_, err = loops.Done(t.Context(), f.Store, question, now.Add(21*day))
+	require.NoError(err)
+}
+
+func TestNewQuestionUsesItsOwnGracePeriodAndAnchor(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	old := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(8 * day)})
+	_, err := loops.Done(t.Context(), f.Store, old, now)
+	require.NoError(err)
+	fresh := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the report?", SentAt: ago(time.Hour)})
+	assert.Empty(list(t, f, loops.Options{}).Loops)
+	_, err = loops.Done(t.Context(), f.Store, old, now.Add(day))
+	require.ErrorIs(err, loops.ErrNotOpen)
+	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(day))
+	require.NoError(err)
+	require.Len(result.Loops, 1)
+	assert.Equal(fresh, result.Loops[0].Anchor.ID)
+	_, err = loops.Done(t.Context(), f.Store, fresh, now.Add(day))
+	require.NoError(err)
 }

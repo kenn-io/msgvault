@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -172,7 +173,7 @@ func (i *Importer) importSMS(sourceID int64, sms SMS) (int64, error) {
 	}
 	msgID := stableID("sms", sms.Address, sms.Timestamp.String(), fmt.Sprint(sms.Type), sms.Body)
 	return i.upsertTextMessage(sourceID, convID, msgID, "sms", senderID, recipientIDs, fromMe,
-		smsWasSent(sms.Type), sms.Timestamp, sms.Body, sms.Body, 0, sms)
+		synctechstate.SMSWasSent(int(sms.Type)), sms.Timestamp, sms.Body, sms.Body, 0, sms)
 }
 
 func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
@@ -203,7 +204,7 @@ func (i *Importer) importMMS(sourceID int64, mms MMS) (int64, int, error) {
 	msgID := stableID("mms", srcIDPart, mms.Timestamp.String(), sortedKey(participantIDs))
 	attachmentCount := countImportableAttachments(mms, i.opts.IncludeAttachments)
 	messageID, err := i.upsertTextMessage(sourceID, convID, msgID, "mms", senderID, recipientIDs, fromMe,
-		mmsWasSent(mms.MessageBox), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
+		synctechstate.MMSWasSent(int(mms.MessageBox)), mms.Timestamp, body, mms.Subject.String, attachmentCount, mms)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -293,19 +294,6 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 			"error", err)
 	}
 	return msgID, nil
-}
-
-func smsWasSent(kind SMSType) bool {
-	switch kind {
-	case SMSTypeDraft, SMSTypeOutbox, SMSTypeFailed, SMSTypeQueued:
-		return false
-	default:
-		return true
-	}
-}
-
-func mmsWasSent(box MMSBox) bool {
-	return box != MMSBoxDraft && box != MMSBoxOutbox
 }
 
 func (i *Importer) participantID(address, displayName string) (int64, error) {
