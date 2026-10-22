@@ -1008,29 +1008,11 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 			require := require.New(t)
 			f := newMediaSearchFixture(t)
 			server := f.server(false)
-			server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-			mid := f.message(t, "documents")
-			firstPageMessage := f.message(t, "first-page")
+			mid, firstPageMessage := f.documentChunks(t, server)
 			if scenario == "both fail later" {
 				f.match(t, "audio")
 				f.remoteStatus = 503
 			}
-			tx, err := f.f.Store.DB().Begin()
-			require.NoError(err)
-			defer func() { _ = tx.Rollback() }()
-			for i := range docbankmedia.MaxSearchVersions + 1 {
-				hash := fmt.Sprintf("%064x", i)
-				messageID := mid
-				if i == 0 {
-					messageID = firstPageMessage
-				}
-				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), messageID, hash, hash[:2]+"/"+hash)
-				require.NoError(err)
-				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
-				require.NoError(err)
-			}
-			require.NoError(tx.Commit())
-			f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{}}
 			f.duringDocumentSearch = func() {
 				if (scenario == "later failure" || scenario == "both fail later") && len(f.documentRequests) == 2 {
 					f.documentStatus = 503
@@ -1067,6 +1049,96 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 			assert.Equal(scenario == "later failure" || scenario == "both fail later", response.Attachments.Error != nil)
 		})
 	}
+}
+
+// documentChunks delivers one attachment version more than a search chunk
+// holds. The first chunk's version 0 belongs to firstPage; the rest to mid.
+func (f *mediaSearchFixture) documentChunks(t *testing.T, server *Server) (mid, firstPage int64) {
+	t.Helper()
+	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
+	mid, firstPage = f.message(t, "documents"), f.message(t, "first-page")
+	tx, err := f.f.Store.DB().Begin()
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	for i := range docbankmedia.MaxSearchVersions + 1 {
+		hash := fmt.Sprintf("%064x", i)
+		messageID := mid
+		if i == 0 {
+			messageID = firstPage
+		}
+		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), messageID, hash, hash[:2]+"/"+hash)
+		require.NoError(t, err)
+		_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{}}
+	return mid, firstPage
+}
+
+// documentHit makes Docbank's next attachment report match one version.
+func (f *mediaSearchFixture) documentHit(version string) {
+	f.documentReport.Results = []docbankmedia.SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: version, Rank: 1, Excerpt: "quartz", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}
+}
+
+func TestMediaSearchDocumentsRecheckEarlierChunks(t *testing.T) {
+	for _, scenario := range []string{"hidden during later chunk", "budget spent during later chunk"} {
+		t.Run(scenario, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newMediaSearchFixture(t)
+			server := f.server(false)
+			mid, firstPage := f.documentChunks(t, server)
+			want := []int64{mid}
+			release := make(chan struct{})
+			t.Cleanup(func() { close(release) })
+			if scenario == "budget spent during later chunk" {
+				previous := messageRecordingDocbankBudget
+				t.Cleanup(func() { messageRecordingDocbankBudget = previous })
+				messageRecordingDocbankBudget = time.Second
+				want = []int64{firstPage}
+			}
+			f.duringDocumentSearch = func() {
+				if len(f.documentRequests) == 1 {
+					f.documentHit("00000000-0000-4000-8000-000000000000")
+					return
+				}
+				if scenario == "budget spent during later chunk" {
+					<-release
+					return
+				}
+				_, err := f.f.Store.DB().Exec(f.f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), time.Now().UTC(), firstPage)
+				require.NoError(err)
+				f.documentHit("00000000-0000-4000-8000-000000001000")
+			}
+			code, response, raw := searchMediaFor(t, server, "q=quartz")
+			require.Equal(http.StatusOK, code, raw)
+			require.NotNil(response.Attachments)
+			assert.Nil(response.Attachments.Error)
+			assert.Len(f.documentRequests, 2)
+			got := []int64{}
+			for _, hit := range response.Attachments.Results {
+				got = append(got, hit.MessageID)
+			}
+			assert.Equal(want, got)
+			assert.Equal(scenario == "budget spent during later chunk", response.Attachments.Truncated)
+		})
+	}
+}
+
+func TestMediaSearchDocumentsRejectedQuery(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newMediaSearchFixture(t)
+	server := f.server(false)
+	f.document(t, server)
+	f.documentStatus = http.StatusBadRequest
+	code, response, raw := searchMediaFor(t, server, "q=quartz")
+	require.Equal(http.StatusOK, code, raw)
+	require.NotNil(response.Attachments)
+	require.NotNil(response.Attachments.Error)
+	assert.Equal("invalid_media_search", response.Attachments.Error.Error)
+	assert.Empty(response.Attachments.Results)
 }
 
 func TestMediaSearchRecordingTimeoutKeepsDocuments(t *testing.T) {

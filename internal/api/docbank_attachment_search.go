@@ -33,9 +33,14 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
 	defer cancel()
 	var after *store.DocumentSearchVersion
+	var hits []docbankmedia.SearchHit
 	fail := func(err error) (MediaAttachmentSearch, error) {
-		response.Error = &ErrorResponse{Error: docbankmedia.ErrorCode(err), Message: "Attachment search is unavailable."}
-		response.Truncated = response.Truncated || after != nil || len(response.Results) > 0
+		response.Truncated = response.Truncated || after != nil || len(hits) > 0
+		// A budget spent after the first chunk keeps the hits so far as a truncated result.
+		if _, recheck := reader.visible(ctx, &response, hits, limit, resolve); recheck == nil && after != nil && remoteCtx.Err() != nil && ctx.Err() == nil {
+			return response, nil
+		}
+		response.Error = attachmentSearchError(err)
 		return response, err
 	}
 	for {
@@ -62,31 +67,11 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 		if err != nil {
 			return fail(err)
 		}
-		ids := make([]string, 0, len(report.Results))
-		for _, hit := range report.Results {
-			ids = append(ids, hit.ContentVersionID)
-		}
-		scope, err = resolve()
-		if err != nil {
-			return response, &mediaSearchScopeError{err}
-		}
-		occurrences, err := reader.Store.DocumentSearchOccurrences(remoteCtx, reader.Destination, scope, ids)
-		if err != nil {
-			return fail(err)
-		}
-		byVersion := make(map[string][]store.DocumentSearchOccurrence)
-		for _, o := range occurrences {
-			byVersion[o.VersionID] = append(byVersion[o.VersionID], o)
-		}
+		hits = append(hits, report.Results...)
 		response.Truncated = response.Truncated || report.Truncated
-		for _, hit := range report.Results {
-			for _, o := range byVersion[hit.ContentVersionID] {
-				if len(response.Results) == limit {
-					response.Truncated = true
-					return response, nil
-				}
-				response.Results = append(response.Results, MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt, Excerpt: hit.Excerpt})
-			}
+		// Remap every chunk's hits so messages hidden during this call drop out.
+		if scope, err = reader.visible(remoteCtx, &response, hits, limit, resolve); err != nil {
+			return fail(err)
 		}
 		after = &versions[len(versions)-1]
 		if len(response.Results) == limit {
@@ -103,4 +88,45 @@ func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, qu
 			return response, nil
 		}
 	}
+}
+
+// visible replaces response.Results with the hits' attachments in the current
+// scope, in Docbank's rank order, and returns that scope.
+func (reader *DocbankAttachmentReader) visible(ctx context.Context, response *MediaAttachmentSearch, hits []docbankmedia.SearchHit, limit int, resolve func() (*personscope.Scope, error)) (*personscope.Scope, error) {
+	response.Results = []MediaAttachmentResult{}
+	scope, err := resolve()
+	if err != nil {
+		return nil, &mediaSearchScopeError{err}
+	}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ContentVersionID)
+	}
+	occurrences, err := reader.Store.DocumentSearchOccurrences(ctx, reader.Destination, scope, ids)
+	if err != nil {
+		return nil, err
+	}
+	byVersion := make(map[string][]store.DocumentSearchOccurrence)
+	for _, o := range occurrences {
+		byVersion[o.VersionID] = append(byVersion[o.VersionID], o)
+	}
+	for _, hit := range hits {
+		for _, o := range byVersion[hit.ContentVersionID] {
+			if len(response.Results) == limit {
+				response.Truncated = true
+				return scope, nil
+			}
+			response.Results = append(response.Results, MediaAttachmentResult{MessageID: o.MessageID, ConversationID: o.ConversationID, AttachmentID: o.AttachmentID, Filename: o.Filename, ContainingTitle: o.ContainingTitle, OccurredAt: o.OccurredAt, Excerpt: hit.Excerpt})
+		}
+	}
+	return scope, nil
+}
+
+// attachmentSearchError keeps Docbank's code, except that a rejected query
+// reads as invalid_media_search, as it does for recordings.
+func attachmentSearchError(err error) *ErrorResponse {
+	if _, failure := mediaSearchFailure(err); failure.Error == "invalid_media_search" {
+		return &ErrorResponse{Error: failure.Error, Message: "Attachment search rejected this query."}
+	}
+	return &ErrorResponse{Error: docbankmedia.ErrorCode(err), Message: "Attachment search is unavailable."}
 }
