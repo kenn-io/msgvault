@@ -69,10 +69,6 @@ type LoopMessage struct {
 	Snippet        string
 	// HasFileAttachment is true only when the archive confirms a non-inline file.
 	HasFileAttachment bool
-	// MayHaveFileAttachment means messages.has_attachments is true but no
-	// attachment row confirms a file. Detection checks stored MIME lazily when
-	// an otherwise empty or acknowledgement-only body needs it.
-	MayHaveFileAttachment bool
 }
 
 // LoopConversation is an email thread or direct chat with its newest messages.
@@ -551,19 +547,15 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
 		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
 			EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id
-				AND a.attachment_role = 'standalone'),
-			COALESCE(m.has_attachments, FALSE), COALESCE(m.message_type, '')
+				AND a.attachment_role = 'standalone')
 		FROM messages m WHERE m.id IN (%s)`,
 		func(rows *loggedRows) error {
 			var id int64
 			var m LoopMessage
-			var hasAttachments bool
-			var messageType string
 			if err := rows.Scan(&id, &m.Sender.ParticipantID, &m.Subject, &m.Snippet, &m.ListID,
-				&m.HasFileAttachment, &hasAttachments, &messageType); err != nil {
+				&m.HasFileAttachment); err != nil {
 				return err
 			}
-			m.MayHaveFileAttachment = IsEmailMessageType(messageType) && hasAttachments && !m.HasFileAttachment
 			out[id] = m
 			return nil
 		})
@@ -725,7 +717,8 @@ type LoopMessageEvidence struct {
 	Unreadable      bool `json:"unreadable"`
 }
 
-// LoopMessageEvidenceContext returns cached facts only for the current body and rules.
+// LoopMessageEvidenceContext returns cached facts only for the requested rules.
+// A version mismatch replaces derived evidence so every reader can make progress.
 func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, string, bool, error) {
 	var e LoopMessageEvidence
 	var token string
@@ -744,22 +737,17 @@ func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, versio
  SELECT id, ?, ?, NULL FROM messages WHERE id = ?
  ON CONFLICT(message_id) DO UPDATE SET
   rule_version = excluded.rule_version,
-  token = CASE WHEN loop_message_evidence.rule_version < excluded.rule_version THEN excluded.token ELSE loop_message_evidence.token END,
-  facts = CASE WHEN loop_message_evidence.rule_version < excluded.rule_version THEN NULL ELSE loop_message_evidence.facts END
- WHERE loop_message_evidence.rule_version <= excluded.rule_version`, version, token, id)
+  token = CASE WHEN loop_message_evidence.rule_version <> excluded.rule_version THEN excluded.token ELSE loop_message_evidence.token END,
+  facts = CASE WHEN loop_message_evidence.rule_version <> excluded.rule_version THEN NULL ELSE loop_message_evidence.facts END`, version, token, id)
 	if err != nil {
 		return e, "", false, err
 	}
-	var currentVersion int
-	err = s.db.QueryRowContext(ctx, `SELECT rule_version, token, facts FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&currentVersion, &token, &facts)
+	err = s.db.QueryRowContext(ctx, `SELECT token, facts FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&token, &facts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, "", false, nil
 	}
 	if err != nil {
 		return e, "", false, err
-	}
-	if currentVersion > version {
-		return e, "", false, nil
 	}
 	if facts.Valid {
 		err = json.Unmarshal([]byte(facts.String), &e)

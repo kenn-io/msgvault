@@ -5590,6 +5590,7 @@ type ImportMuesliRecordingResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ImportMuesliRecordingResponse
+	JSONDefault  *ImportMuesliRecordingErrorResponse
 }
 
 type CreateImportJobResp struct {

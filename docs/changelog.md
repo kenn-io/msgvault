@@ -20,7 +20,7 @@ All notable changes to msgvault, grouped by release.
   for up to 1,000 uncached messages; repeated requests continue using retained
   evidence. Synctech SMS/MMS imports and upgrades preserve unsent state so
   drafts, outbox, failed, and queued sends do not settle loops. They need
-  archive schema version 11 and HTTP API schema 3.25.0.
+  archive schema version 12 and HTTP API schema 3.25.0.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
