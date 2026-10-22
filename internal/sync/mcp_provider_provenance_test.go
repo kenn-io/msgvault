@@ -238,7 +238,7 @@ func TestMCPProviderGmailMetadataBatchFailuresRevokeMessageReadPermission(t *tes
 			}
 			assert.Equal(1, api.labelBatchCalls)
 			if tc.syncKind == "incremental" {
-				assert.Error(err, "failed history metadata refresh retains the source cursor")
+				require.Error(err, "failed history metadata refresh retains the source cursor")
 			}
 			allowed, permissionErr := env.Store.NativeSourceMessagePermission(t.Context(), source.ID)
 			require.NoError(permissionErr)

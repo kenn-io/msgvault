@@ -1027,18 +1027,16 @@ INSERT INTO ZWACHATSESSION VALUES(10,'15550000002@s.whatsapp.net','Synthetic Con
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.import_message_archived'`).Scan(&importOccurrences))
 	require.Equal(1, importOccurrences, "a complete explicitly opted-in native parser must append its import occurrence")
 
-	if format != "meeting_import" {
-		// File parsers run under the scheduled-work lease. Meeting imports
-		// instead take their own real HTTP request lease before publication.
-		require.Eventually(gate.HasRequestWaiters, 30*time.Second, 10*time.Millisecond, "delivery should tell a scheduled sync to yield")
-	}
-	releaseScheduledSync()
 	var delivered delivery
 	select {
 	case delivered = <-received:
 	case <-time.After(30 * time.Second):
 		require.FailNow("committed native import occurrence was not delivered")
 	}
+	if format != "meeting_import" {
+		require.False(gate.HasRequestWaiters(), "MCP delivery must bypass the archive operation gate")
+	}
+	releaseScheduledSync()
 	envelope := delivered.envelope
 	require.NotEmpty(envelope.EventID)
 	assert.Equal(subscriptionID, delivered.headers.Get("X-Mcp-Subscription-Id"))
@@ -1142,5 +1140,4 @@ INSERT INTO ZWACHATSESSION VALUES(10,'15550000002@s.whatsapp.net','Synthetic Con
 	if len(body) >= 16 {
 		assert.NotContains(rec.Body.String(), body[8:16])
 	}
-
 }

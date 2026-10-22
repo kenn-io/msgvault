@@ -478,6 +478,17 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 	return s.st.RecomputeMessageAttachmentStats(msgID)
 }
 
+// attachmentsStored checks only nonempty parts, since storage skips empty files.
+func (s *syncer) attachmentsStored(ctx context.Context, messageID int64, atts []mime.Attachment) (bool, error) {
+	parts := make([]store.AttachmentRef, 0, len(atts))
+	for _, attachment := range atts {
+		if len(attachment.Content) > 0 {
+			parts = append(parts, store.AttachmentRef{SourcePartKey: attachment.PartKey, ContentHash: attachment.ContentHash})
+		}
+	}
+	return s.st.AttachmentPartsStoredContext(ctx, messageID, parts)
+}
+
 // Versioned live retry evidence is distinct from legacy folder-only markers.
 // Unknown or malformed evidence stays historical rather than gaining delivery.
 type retryProvenance struct {

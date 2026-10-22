@@ -659,7 +659,7 @@ func mboxMessageIngester(images *remoteimage.Fetcher, groupFallback string, cohe
 		return ingestRawMessageMode(
 			ctx, st, sourceID, identifier, attachmentsDir,
 			labelIDs, sourceMsgID, rawHash,
-			msg.Raw, fallbackDate, log, images, threadID, coherent,
+			msg.Raw, fallbackDate, log, images, threadID, false, coherent,
 		)
 	}
 }

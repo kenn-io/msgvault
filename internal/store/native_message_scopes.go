@@ -159,7 +159,7 @@ func (s *Store) ObserveNativeMessageScopes(ctx context.Context, observation Nati
 // additionally requires a verified mailbox epoch; other providers introduce
 // their native identity rules with their first working consumer.
 func nativeMessageScopeKind(sourceType, kind string) bool {
-	return sourceType == "beeper" && kind == "beeper_member" || sourceType == sourceTypeMatrix && (kind == "matrix_room" || kind == "matrix_thread") || sourceType == sourceTypeDiscord && (kind == "discord_channel" || kind == "discord_thread") || sourceType == "teams" && kind == "teams_chat" || sourceType == "gmail" && kind == "gmail_label" || sourceType == "msmail" && kind == "msmail_folder" || sourceType == sourceTypeIMAP && kind == "imap_mailbox" || sourceType == sourceTypeSlack && (kind == "slack_channel" || kind == "slack_thread")
+	return sourceType == sourceTypeBeeper && kind == "beeper_member" || sourceType == sourceTypeMatrix && (kind == "matrix_room" || kind == "matrix_thread") || sourceType == sourceTypeDiscord && (kind == "discord_channel" || kind == "discord_thread") || sourceType == "teams" && kind == "teams_chat" || sourceType == "gmail" && kind == "gmail_label" || sourceType == "msmail" && kind == "msmail_folder" || sourceType == sourceTypeIMAP && kind == "imap_mailbox" || sourceType == sourceTypeSlack && (kind == "slack_channel" || kind == "slack_thread")
 }
 
 func nativeScopeEpoch(sourceType, epoch string) bool {

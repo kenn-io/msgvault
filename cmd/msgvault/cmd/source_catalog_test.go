@@ -35,7 +35,7 @@ func TestNativeSourceInventory(t *testing.T) {
 		_, err := f.Store.GetOrCreateSource(sourceType, "owner@example.test")
 		require.NoError(err)
 	}
-	targets, err := findScheduledSyncSources(f.Store, "owner@example.test")
+	targets, _, err := findScheduledSyncSources(f.Store, "owner@example.test")
 	require.NoError(err)
 	var routed []string
 	for _, target := range targets {

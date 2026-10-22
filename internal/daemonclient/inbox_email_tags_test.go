@@ -29,7 +29,7 @@ func TestInboxMessageTagsLegacyGmailPreservesReceipt(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/health":
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.25.0"}`))
 		case "/api/v1/mcp/capabilities":
 			_, _ = w.Write([]byte(syntheticInboxDescriptor))
 		case "/api/v1/messages/7/tags":

@@ -73,7 +73,7 @@ func (s *Store) appendDraftEventTx(ctx context.Context, tx *loggedTx, draftKind,
 	}
 	snapshot, err := s.draftEventSnapshotTx(ctx, tx, draftKind, draftID)
 	// Beeper drafts may refer to a chat that has never been archived.
-	if errors.Is(err, sql.ErrNoRows) && draftKind == "beeper" {
+	if errors.Is(err, sql.ErrNoRows) && draftKind == sourceTypeBeeper {
 		return nil
 	}
 	if err != nil {

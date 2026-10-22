@@ -183,7 +183,11 @@ func TestWebhookDeliveryRotationSignsBothAndBoundsResponses(t *testing.T) {
 		if !Assert.NoError(t, err) {
 			return
 		}
-		rw.(http.Flusher).Flush()
+		flusher, ok := rw.(http.Flusher)
+		if !Assert.True(t, ok, "webhook writer must support flushing") {
+			return
+		}
+		flusher.Flush()
 		close(flushed)
 		<-release
 	})

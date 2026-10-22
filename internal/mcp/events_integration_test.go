@@ -219,14 +219,14 @@ func testEventsNativeDaemonBridgeAndReceiptPagination(t *testing.T, withReferenc
 	t.Cleanup(releaseScheduledSync)
 	messageID, err := live.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().Build(), BodyText: sql.NullString{String: body, Valid: true}})
 	require.NoError(err)
-	require.Eventually(gate.HasRequestWaiters, 30*time.Second, 10*time.Millisecond, "delivery should tell a scheduled sync to yield")
-	releaseScheduledSync()
 	var delivered delivery
 	select {
 	case delivered = <-received:
 	case <-time.After(30 * time.Second):
 		require.FailNow("committed live occurrence was not delivered")
 	}
+	require.False(gate.HasRequestWaiters(), "MCP delivery must bypass the archive operation gate")
+	releaseScheduledSync()
 	envelope := delivered.envelope
 	require.NotEmpty(envelope.EventID)
 	assert.Equal(subscriptionID, delivered.headers.Get("X-Mcp-Subscription-Id"))

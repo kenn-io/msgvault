@@ -231,7 +231,8 @@ func (s *Store) acquireBackendSourceExecutionLock(ctx context.Context, sourceID 
 		}
 		conn, err := db.Conn(ctx)
 		if err != nil {
-			return nil, errors.Join(fmt.Errorf("acquire PostgreSQL %s lock connection: %w", namespace, err), db.Close(), closePostgresConfig(cleanup))
+			cleanup()
+			return nil, errors.Join(fmt.Errorf("acquire PostgreSQL %s lock connection: %w", namespace, err), db.Close())
 		}
 		lock := &postgresSourceExecutionLock{conn: conn, db: db, cleanup: cleanup, sourceID: sourceID, namespace: namespace, rebind: s.Rebind}
 		var acquired bool
@@ -251,7 +252,7 @@ func (s *Store) acquireBackendSourceExecutionLock(ctx context.Context, sourceID 
 			if err != nil {
 				lock.discard = true // The server may have acquired the key before the response was lost.
 			}
-			lockErr := error(ErrSyncAlreadyActive)
+			lockErr := ErrSyncAlreadyActive
 			if err != nil {
 				lockErr = fmt.Errorf("acquire PostgreSQL %s lock: %w", namespace, err)
 			}
@@ -653,11 +654,6 @@ func (l *postgresSourceExecutionLock) release() (bool, error) {
 		l.cleanup()
 	}
 	return l.released, errors.Join(unlockErr, closeErr, rawErr)
-}
-
-func closePostgresConfig(cleanup func()) error {
-	cleanup()
-	return nil
 }
 
 type syncExecutionLockGroup struct {

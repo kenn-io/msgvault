@@ -254,7 +254,7 @@ func TestInboxGmailControlReconcilesCrossRenamedCatalog(t *testing.T) {
 	labelNames := map[string]string{}
 	rows, err := archive.Store.DB().QueryContext(t.Context(), archive.Store.Rebind("SELECT source_label_id, name FROM labels WHERE source_id = ? AND source_label_id IN ('LabelA', 'LabelB')"), source.SourceID)
 	requirements.NoError(err)
-	defer rows.Close()
+	t.Cleanup(func() { requirements.NoError(rows.Close()) })
 	for rows.Next() {
 		var id, name string
 		requirements.NoError(rows.Scan(&id, &name))
@@ -607,7 +607,7 @@ func TestGetMessageLabelsBatchPropagatesCancellation(t *testing.T) {
 	cancel()
 	select {
 	case result := <-done:
-		assert.ErrorIs(t, result.err, context.Canceled)
+		requirements.ErrorIs(result.err, context.Canceled)
 		assert.Nil(t, result.results)
 	case <-time.After(5 * time.Second):
 		requirements.FailNow("metadata batch did not return after cancellation")

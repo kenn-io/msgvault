@@ -154,6 +154,8 @@ func (c *Client) disableRateLimits() {
 // out (which must embed apiResponse via an ok/error check by the caller).
 // 429 and 5xx are retried with Retry-After / exponential back-off.
 func (c *Client) call(ctx context.Context, method string, params url.Values, out any) error {
+	c.scopesKnown = false
+	c.scopes = nil
 	// Strict method allowlist: reqURL is base + method, and the G704
 	// suppressions below rest on method being one of these package
 	// constants. Refusing unknown methods enforces that at runtime instead

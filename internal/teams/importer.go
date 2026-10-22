@@ -242,9 +242,6 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 		return ctx.Err()
 	}
 	if err != nil {
-		if nativeTeamsAuthenticationFailure(err) {
-			return err
-		}
 		sum.Errors++
 	}
 	chats = append(chats, selfChat...)

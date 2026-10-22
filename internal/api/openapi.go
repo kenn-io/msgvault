@@ -1280,12 +1280,14 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	for _, name := range []string{"FileSuggestionRow", "PersonFileSuggestionRow"} {
 		schema := schemas[name]
 		nullableSchemaProperty(schema, "occurred_at")
-		if schema == nil {
-			continue
-		}
-		// Unknown MIME is an empty string, not a missing property.
-		if mime := schema.Properties["mime_type"]; mime != nil {
-			mime.Nullable = true
+		if schema != nil {
+			if mime := schema.Properties["mime_type"]; mime != nil {
+				mime.Nullable = true
+				if mime.Extensions == nil {
+					mime.Extensions = map[string]any{}
+				}
+				mime.Extensions["x-omitempty"] = false
+			}
 		}
 	}
 	for _, name := range []string{"FileSuggestionHTTPRequest", "PersonFileSuggestionHTTPRequest", "FileSuggestionRow", "PersonFileSuggestionRow"} {

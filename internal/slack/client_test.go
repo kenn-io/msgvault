@@ -36,7 +36,7 @@ func TestClientErrorMapping(t *testing.T) {
 		want     error
 	}{
 		{"not found", "channel_not_found", ErrNotFound},
-		{"auth", "invalid_auth", ErrAuth},
+		{"credential revoked", "invalid_auth", ErrCredentialRevoked},
 		{"missing scope", "missing_scope", ErrAuth},
 		{"invalid cursor", "invalid_cursor", ErrInvalidCursor},
 	}

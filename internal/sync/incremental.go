@@ -476,11 +476,11 @@ func (s *Syncer) replayFetchFailures(
 // existingMap maps source_message_id -> internal message_id for known messages.
 func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.HistoryRecord, existingMap map[string]int64) (map[string]gmail.MessageLabelsBatchResult, error) {
 	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
-		return nil, nil
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
 	}
 	reader, ok := s.client.(messageLabelBatchReader)
 	if !ok {
-		return nil, nil
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
 	}
 
 	messageIDs := make([]string, 0)
@@ -504,7 +504,7 @@ func (s *Syncer) readHistoryLabelMetadata(ctx context.Context, records []gmail.H
 		}
 	}
 	if len(messageIDs) == 0 {
-		return nil, nil
+		return map[string]gmail.MessageLabelsBatchResult{}, nil
 	}
 
 	results, err := reader.GetMessageLabelsBatch(ctx, messageIDs)

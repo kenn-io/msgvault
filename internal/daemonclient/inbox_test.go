@@ -50,7 +50,7 @@ func TestInboxClientPreservesSignedRequestAndUnknownReceipt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "synthetic-agent-token", r.Header.Get("X-Msgvault-Agent-Token"))
 		if r.URL.Path == "/api/v1/health" {
-			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+			_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.25.0"}`))
 			return
 		}
 		if r.URL.Path == "/api/v1/mcp/capabilities" {
@@ -93,7 +93,7 @@ func TestInboxClientNeverRetriesUncertainMutationOrFollowsRedirect(t *testing.T)
 			defer destination.Close()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/api/v1/health" {
-					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.15.0"}`))
+					_, _ = w.Write([]byte(`{"status":"ok","api_schema_version":"3.25.0"}`))
 					return
 				}
 				if r.URL.Path == "/api/v1/mcp/capabilities" {
