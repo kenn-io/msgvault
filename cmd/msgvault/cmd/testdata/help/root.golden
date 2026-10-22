@@ -24,6 +24,7 @@ Usage:
   msgvault [command]
 
 Search and read:
+  family        Inspect related email copies
   list-accounts List archive accounts with type, message count, last sync
   list-domains  List top sender domains by message count
   list-labels   List all labels with message counts
@@ -42,7 +43,7 @@ Export:
   export-attachment  Export an attachment by content hash
   export-attachments Export all attachments from a message as individual files
   export-discord     Export bounded Discord history from the local archive
-  export-eml         Export a message as .eml file
+  export-eml         Export archived MIME originals or a family ZIP
   export-messages    Export messages in a time window as provider-neutral JSONL
 
 People, organizations, and identity:

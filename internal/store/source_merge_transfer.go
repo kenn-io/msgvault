@@ -71,6 +71,11 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			return err
 		}
 	}
+	if len(plan.messages) > 0 {
+		if err := invalidateEmailLinkageRepairProgressTx(ctx, tx, into); err != nil {
+			return err
+		}
+	}
 	// Gmail's canonical IDs also carry trusted roles. Preserve that evidence
 	// before archive labels lose provider IDs; Drafts takes precedence.
 	if _, err := tx.ExecContext(ctx, `UPDATE labels SET system_role = CASE
@@ -148,6 +153,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	for _, m := range plan.messages {
 		if m.survivor == 0 {
 			continue
+		}
+		if err := s.retargetEmailFamilyDecisions(ctx, tx, m.survivor, m.id); err != nil {
+			return err
 		}
 		if err := copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
 			return err

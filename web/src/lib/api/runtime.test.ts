@@ -1,8 +1,11 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   getAttachmentContent,
+  getEmailFamily,
+  getEmailFamilyDecision,
   getDocumentIndexStatus,
   getFileContent,
+  listEmailFamilyDecisions,
   runCLI,
   syncCLI
 } from './generated/api/api';
@@ -10,6 +13,82 @@ import { deleteCLICollection } from './generated/cli/cli';
 import { searchVisualAttachments } from './generated/exploration/exploration';
 
 describe('generated request serialization', () => {
+  it('preserves empty and undefined email-family source selections', async () => {
+    let emptyQuery!: URLSearchParams;
+    let undefinedQuery!: URLSearchParams;
+    let emptyDecisionQuery!: URLSearchParams;
+    let undefinedDecisionQuery!: URLSearchParams;
+    let emptyHistoryQuery!: URLSearchParams;
+    let undefinedHistoryQuery!: URLSearchParams;
+    await getEmailFamily(
+      { id: 1 },
+      { source_id: [] },
+      {
+        fetch: async (url) => {
+          emptyQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    await getEmailFamily(
+      { id: 1 },
+      { source_id: undefined },
+      {
+        fetch: async (url) => {
+          undefinedQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    await getEmailFamilyDecision(
+      { id: 1 },
+      { source_id: [] },
+      {
+        fetch: async (url) => {
+          emptyDecisionQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    await getEmailFamilyDecision(
+      { id: 1 },
+      { source_id: undefined },
+      {
+        fetch: async (url) => {
+          undefinedDecisionQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json({});
+        }
+      }
+    );
+    await listEmailFamilyDecisions(
+      { message_id: 1, source_id: [] },
+      {
+        fetch: async (url) => {
+          emptyHistoryQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json([]);
+        }
+      }
+    );
+    await listEmailFamilyDecisions(
+      { message_id: 1, source_id: undefined },
+      {
+        fetch: async (url) => {
+          undefinedHistoryQuery = new URL(String(url), 'https://example.invalid').searchParams;
+          return Response.json([]);
+        }
+      }
+    );
+    expect(emptyQuery.has('source_id')).toBe(true);
+    expect(emptyQuery.get('source_id')).toBe('');
+    expect(undefinedQuery.has('source_id')).toBe(false);
+    expect(emptyDecisionQuery.has('source_id')).toBe(true);
+    expect(emptyDecisionQuery.get('source_id')).toBe('');
+    expect(undefinedDecisionQuery.has('source_id')).toBe(false);
+    expect(emptyHistoryQuery.has('source_id')).toBe(true);
+    expect(emptyHistoryQuery.get('source_id')).toBe('');
+    expect(undefinedHistoryQuery.has('source_id')).toBe(false);
+  });
+
   it('sends each document media type as a separate query value', async () => {
     let query!: URLSearchParams;
     await getDocumentIndexStatus(

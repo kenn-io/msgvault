@@ -224,7 +224,8 @@ describe('MessageCard', () => {
   });
 
   it('requests recordings once for an expanded card with attachments', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ message_id: 42, recordings: [] }));
+    const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/family')
+      ? Response.json(singletonFamily()) : Response.json({ message_id: 42, recordings: [] }));
     const attachments = [{ id: 5, filename: 'voice.wav', mimeType: 'audio/wav', sizeBytes: 44 }];
     render(MessageCard, {
       props: { message: detail({ attachments }), expanded: true, client: createAPIClient(fetchFn) }
@@ -234,8 +235,8 @@ describe('MessageCard', () => {
       props: { message: detail({ attachments }), expanded: false, client: createAPIClient(fetchFn) }
     });
 
-    await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(1));
-    const request = fetchFn.mock.calls[0][0] as Request;
+    await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/recordings'))).toHaveLength(1));
+    const request = fetchFn.mock.calls.map(([input]) => input as Request).find(input => new URL(input.url).pathname.endsWith('/recordings'))!;
     expect(new URL(request.url).pathname).toBe('/api/v1/messages/42/recordings');
   });
 });
@@ -244,16 +245,18 @@ it.each([
   { state: 'ready', shown: true },
   { state: 'unavailable', shown: false },
 ])('shows the Kata action only when the integration is $state, asking once per page', async ({ state, shown }) => {
-  const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ state, project: 'example', message: 'Kata is unavailable' }));
+  const fetchFn = vi.fn<typeof fetch>(async input => new URL((input as Request).url).pathname.endsWith('/family') ? Response.json(singletonFamily()) : Response.json({ state, project: 'example', message: 'Kata is unavailable' }));
   const { createAPIClient } = await import('../../api/client');
   const { KataReadiness, kataReadinessKey } = await import('../../kata/kata-ready.svelte');
   const client = createAPIClient(fetchFn);
   const context = new Map([[kataReadinessKey, new KataReadiness(client)]]);
   render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
   render(MessageCard, { props: { message: detail(), expanded: true, client }, context });
-  await waitFor(() => expect(fetchFn).toHaveBeenCalledOnce());
+  await waitFor(() => expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/kata/status'))).toHaveLength(1));
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(screen.queryAllByRole('button', { name: 'Create Kata issue' })).toHaveLength(shown ? 2 : 0);
   expect(screen.queryByText('Kata is unavailable')).toBeNull();
-  expect(fetchFn).toHaveBeenCalledOnce();
+  expect(fetchFn.mock.calls.filter(([input]) => new URL((input as Request).url).pathname.endsWith('/kata/status'))).toHaveLength(1);
 });
+
+function singletonFamily() { return { anchor_message_id: 42, members: [{ message_id: 42, linkage: { outcome: 'complete' } }], handling: { state: 'unknown', reasons: [] }, revision: 'one', truncated: false, decisions: [] }; }

@@ -5890,6 +5890,264 @@ func (o *ListChangedMessagesRequestOptions) GetHeader() (map[string]string, erro
 	return nil, nil
 }
 
+// ListEmailFamilyDecisionsRequestOptions is the options needed to make a request to ListEmailFamilyDecisions.
+type ListEmailFamilyDecisionsRequestOptions struct {
+	Query *ListEmailFamilyDecisionsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListEmailFamilyDecisionsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListEmailFamilyDecisionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListEmailFamilyDecisionsRequestOptions) GetQuery() (map[string]any, error) {
+	params, err := runtime.AsMap[any](o.Query)
+	if err != nil {
+		return nil, err
+	}
+	if o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {
+		if params == nil {
+			params = make(map[string]any, 1)
+		}
+		params["source_id"] = ""
+	}
+	return params, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListEmailFamilyDecisionsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListEmailFamilyDecisionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ApplyEmailFamilyDecisionRequestOptions is the options needed to make a request to ApplyEmailFamilyDecision.
+type ApplyEmailFamilyDecisionRequestOptions struct {
+	Body *ApplyEmailFamilyDecisionBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ApplyEmailFamilyDecisionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ApplyEmailFamilyDecisionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ApplyEmailFamilyDecisionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ApplyEmailFamilyDecisionRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ApplyEmailFamilyDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// PreviewEmailFamilyDecisionRequestOptions is the options needed to make a request to PreviewEmailFamilyDecision.
+type PreviewEmailFamilyDecisionRequestOptions struct {
+	Body *PreviewEmailFamilyDecisionBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *PreviewEmailFamilyDecisionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *PreviewEmailFamilyDecisionRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *PreviewEmailFamilyDecisionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *PreviewEmailFamilyDecisionRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *PreviewEmailFamilyDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetEmailFamilyDecisionRequestOptions is the options needed to make a request to GetEmailFamilyDecision.
+type GetEmailFamilyDecisionRequestOptions struct {
+	PathParams *GetEmailFamilyDecisionPath
+	Query      *GetEmailFamilyDecisionQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetEmailFamilyDecisionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailFamilyDecisionRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailFamilyDecisionRequestOptions) GetQuery() (map[string]any, error) {
+	params, err := runtime.AsMap[any](o.Query)
+	if err != nil {
+		return nil, err
+	}
+	if o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {
+		if params == nil {
+			params = make(map[string]any, 1)
+		}
+		params["source_id"] = ""
+	}
+	return params, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailFamilyDecisionRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailFamilyDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// UndoEmailFamilyDecisionRequestOptions is the options needed to make a request to UndoEmailFamilyDecision.
+type UndoEmailFamilyDecisionRequestOptions struct {
+	PathParams *UndoEmailFamilyDecisionPath
+	Body       *UndoEmailFamilyDecisionBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *UndoEmailFamilyDecisionRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *UndoEmailFamilyDecisionRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *UndoEmailFamilyDecisionRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *UndoEmailFamilyDecisionRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *UndoEmailFamilyDecisionRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // FilterMessagesRequestOptions is the options needed to make a request to FilterMessages.
 type FilterMessagesRequestOptions struct {
 	Query *FilterMessagesQuery
@@ -6019,6 +6277,122 @@ func (o *GetMessageRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetMessageRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetEmailFamilyRequestOptions is the options needed to make a request to GetEmailFamily.
+type GetEmailFamilyRequestOptions struct {
+	PathParams *GetEmailFamilyPath
+	Query      *GetEmailFamilyQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetEmailFamilyRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetEmailFamilyRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	params, err := runtime.AsMap[any](o.Query)
+	if err != nil {
+		return nil, err
+	}
+	if o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {
+		if params == nil {
+			params = make(map[string]any, 1)
+		}
+		params["source_id"] = ""
+	}
+	return params, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetEmailFamilyRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetEmailFamilyRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ExportEmailFamilyRequestOptions is the options needed to make a request to ExportEmailFamily.
+type ExportEmailFamilyRequestOptions struct {
+	PathParams *ExportEmailFamilyPath
+	Body       *ExportEmailFamilyBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ExportEmailFamilyRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExportEmailFamilyRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExportEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExportEmailFamilyRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExportEmailFamilyRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

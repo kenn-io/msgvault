@@ -32,7 +32,7 @@ derived leaves already-archived rows stale. This command recomputes them from
 the verbatim payload stored alongside every message, for source types with a
 re-derivation pass. For every source it also derives account attribution (the
 address searched by account: and received:) for email and calendar rows still
-waiting for it.
+waiting for it. It also derives explicit email linkage from archived MIME.
 
 Syncing already heals an archive on its own — each source re-derives once, on its
 next sync, and every sync or import derives pending account attribution — so
@@ -128,6 +128,16 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 	if sum.Scanned > 0 {
 		_, _ = fmt.Fprint(out, formatAccountAttributionSummary(label, sum))
 	}
+	linkage, err := s.RepairEmailLinkageContext(ctx, src.ID, func(sum store.EmailLinkageRepairSummary) {
+		progress(fmt.Sprintf("email linkage: %d messages", sum.Scanned))
+	})
+	if err != nil {
+		return err
+	}
+	if linkage.Scanned > 0 {
+		_, _ = fmt.Fprintf(out, "%s: email linkage derived for %d messages (%d incomplete)\n", label, linkage.Scanned, linkage.Incomplete)
+	}
+
 	return nil
 }
 

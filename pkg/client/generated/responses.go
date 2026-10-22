@@ -1785,6 +1785,72 @@ type ListChangedMessagesErrorResponseJSON500 = ErrorResponse
 
 type ListChangedMessagesErrorResponseJSON503 = ErrorResponse
 
+type ListEmailFamilyDecisionsResponse []EmailFamilyDecision
+
+type ListEmailFamilyDecisionsErrorResponse = ErrorResponse
+
+type ListEmailFamilyDecisionsErrorResponseJSON = ErrorResponse
+
+type ListEmailFamilyDecisionsErrorResponseJSON403 = ErrorResponse
+
+type ListEmailFamilyDecisionsErrorResponseJSON404 = ErrorResponse
+
+type ListEmailFamilyDecisionsErrorResponseJSON503 = ErrorResponse
+
+type ApplyEmailFamilyDecisionResponse = EmailFamilyDecisionResult
+
+type ApplyEmailFamilyDecisionErrorResponse = ErrorResponse
+
+type ApplyEmailFamilyDecisionErrorResponseJSON = ErrorResponse
+
+type ApplyEmailFamilyDecisionErrorResponseJSON403 = ErrorResponse
+
+type ApplyEmailFamilyDecisionErrorResponseJSON404 = ErrorResponse
+
+type ApplyEmailFamilyDecisionErrorResponseJSON409 = ErrorResponse
+
+type ApplyEmailFamilyDecisionErrorResponseJSON503 = ErrorResponse
+
+type PreviewEmailFamilyDecisionResponse = EmailFamilyDecisionPreview
+
+type PreviewEmailFamilyDecisionErrorResponse = ErrorResponse
+
+type PreviewEmailFamilyDecisionErrorResponseJSON = ErrorResponse
+
+type PreviewEmailFamilyDecisionErrorResponseJSON403 = ErrorResponse
+
+type PreviewEmailFamilyDecisionErrorResponseJSON404 = ErrorResponse
+
+type PreviewEmailFamilyDecisionErrorResponseJSON409 = ErrorResponse
+
+type PreviewEmailFamilyDecisionErrorResponseJSON503 = ErrorResponse
+
+type GetEmailFamilyDecisionResponse = EmailFamilyDecisionResult
+
+type GetEmailFamilyDecisionErrorResponse = ErrorResponse
+
+type GetEmailFamilyDecisionErrorResponseJSON = ErrorResponse
+
+type GetEmailFamilyDecisionErrorResponseJSON403 = ErrorResponse
+
+type GetEmailFamilyDecisionErrorResponseJSON404 = ErrorResponse
+
+type GetEmailFamilyDecisionErrorResponseJSON503 = ErrorResponse
+
+type UndoEmailFamilyDecisionResponse = EmailFamilyDecisionResult
+
+type UndoEmailFamilyDecisionErrorResponse = ErrorResponse
+
+type UndoEmailFamilyDecisionErrorResponseJSON = ErrorResponse
+
+type UndoEmailFamilyDecisionErrorResponseJSON403 = ErrorResponse
+
+type UndoEmailFamilyDecisionErrorResponseJSON404 = ErrorResponse
+
+type UndoEmailFamilyDecisionErrorResponseJSON409 = ErrorResponse
+
+type UndoEmailFamilyDecisionErrorResponseJSON503 = ErrorResponse
+
 type FilterMessagesResponse = FilteredMessagesResponse
 
 type FilterMessagesErrorResponse = ErrorResponse
@@ -1796,6 +1862,32 @@ type GetGmailIDsByFilterErrorResponse = ErrorResponse
 type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
+
+type GetEmailFamilyResponse = EmailFamily
+
+type GetEmailFamilyErrorResponse = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON403 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON404 = ErrorResponse
+
+type GetEmailFamilyErrorResponseJSON503 = ErrorResponse
+
+type ExportEmailFamilyResponse = []byte
+
+type ExportEmailFamilyErrorResponse = ErrorResponse
+
+type ExportEmailFamilyErrorResponseJSON = ErrorResponse
+
+type ExportEmailFamilyErrorResponseJSON403 = ErrorResponse
+
+type ExportEmailFamilyErrorResponseJSON404 = ErrorResponse
+
+type ExportEmailFamilyErrorResponseJSON409 = ErrorResponse
+
+type ExportEmailFamilyErrorResponseJSON503 = ErrorResponse
 
 type GetMessageInlinePartResponse = runtime.File
 
@@ -5224,6 +5316,69 @@ type ListChangedMessagesResp struct {
 	JSON503      *ListChangedMessagesErrorResponseJSON503
 }
 
+type ListEmailFamilyDecisionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListEmailFamilyDecisionsResponse
+	JSON400      *ListEmailFamilyDecisionsErrorResponse
+	JSON401      *ListEmailFamilyDecisionsErrorResponseJSON
+	JSON403      *ListEmailFamilyDecisionsErrorResponseJSON403
+	JSON404      *ListEmailFamilyDecisionsErrorResponseJSON404
+	JSON503      *ListEmailFamilyDecisionsErrorResponseJSON503
+}
+
+type ApplyEmailFamilyDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ApplyEmailFamilyDecisionResponse
+	JSON400      *ApplyEmailFamilyDecisionErrorResponse
+	JSON401      *ApplyEmailFamilyDecisionErrorResponseJSON
+	JSON403      *ApplyEmailFamilyDecisionErrorResponseJSON403
+	JSON404      *ApplyEmailFamilyDecisionErrorResponseJSON404
+	JSON409      *ApplyEmailFamilyDecisionErrorResponseJSON409
+	JSON503      *ApplyEmailFamilyDecisionErrorResponseJSON503
+}
+
+type PreviewEmailFamilyDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PreviewEmailFamilyDecisionResponse
+	JSON400      *PreviewEmailFamilyDecisionErrorResponse
+	JSON401      *PreviewEmailFamilyDecisionErrorResponseJSON
+	JSON403      *PreviewEmailFamilyDecisionErrorResponseJSON403
+	JSON404      *PreviewEmailFamilyDecisionErrorResponseJSON404
+	JSON409      *PreviewEmailFamilyDecisionErrorResponseJSON409
+	JSON503      *PreviewEmailFamilyDecisionErrorResponseJSON503
+}
+
+type GetEmailFamilyDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmailFamilyDecisionResponse
+	JSON400      *GetEmailFamilyDecisionErrorResponse
+	JSON401      *GetEmailFamilyDecisionErrorResponseJSON
+	JSON403      *GetEmailFamilyDecisionErrorResponseJSON403
+	JSON404      *GetEmailFamilyDecisionErrorResponseJSON404
+	JSON503      *GetEmailFamilyDecisionErrorResponseJSON503
+}
+
+type UndoEmailFamilyDecisionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UndoEmailFamilyDecisionResponse
+	JSON400      *UndoEmailFamilyDecisionErrorResponse
+	JSON401      *UndoEmailFamilyDecisionErrorResponseJSON
+	JSON403      *UndoEmailFamilyDecisionErrorResponseJSON403
+	JSON404      *UndoEmailFamilyDecisionErrorResponseJSON404
+	JSON409      *UndoEmailFamilyDecisionErrorResponseJSON409
+	JSON503      *UndoEmailFamilyDecisionErrorResponseJSON503
+}
+
 type FilterMessagesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5243,6 +5398,30 @@ type GetMessageResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *GetMessageResponse
+}
+
+type GetEmailFamilyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetEmailFamilyResponse
+	JSON400      *GetEmailFamilyErrorResponse
+	JSON401      *GetEmailFamilyErrorResponseJSON
+	JSON403      *GetEmailFamilyErrorResponseJSON403
+	JSON404      *GetEmailFamilyErrorResponseJSON404
+	JSON503      *GetEmailFamilyErrorResponseJSON503
+}
+
+type ExportEmailFamilyResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON400      *ExportEmailFamilyErrorResponse
+	JSON401      *ExportEmailFamilyErrorResponseJSON
+	JSON403      *ExportEmailFamilyErrorResponseJSON403
+	JSON404      *ExportEmailFamilyErrorResponseJSON404
+	JSON409      *ExportEmailFamilyErrorResponseJSON409
+	JSON503      *ExportEmailFamilyErrorResponseJSON503
 }
 
 type GetMessageInlinePartResp struct {

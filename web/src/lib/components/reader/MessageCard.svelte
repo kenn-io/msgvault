@@ -6,6 +6,7 @@
   import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import ContentFrame from './ContentFrame.svelte';
   import MessageRecordings from './MessageRecordings.svelte';
+  import RelatedCopies from '../emailfamily/RelatedCopies.svelte';
   import KataIssueAction from '../kata/KataIssueAction.svelte';
   import { EVIDENCE_WINDOW } from '../../kata/evidence';
 
@@ -105,6 +106,8 @@
       </a>
     {/if}
     {#if client}<KataIssueAction {client} selector={{ kind: 'message', message_id: message.id, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={message.subject || 'Follow up on this message'} />{/if}
+
+    {#if client && (!message.messageType || message.messageType === 'email')}<RelatedCopies {client} messageID={message.id} />{/if}
 
     {#if sanitizationFailed}
       <p class="sanitize-notice" role="alert">Could not render HTML formatting. Showing plain text.</p>

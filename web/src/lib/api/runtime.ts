@@ -73,7 +73,15 @@ async function request<T>(
 }
 
 export function orvalFetch<T>(config: GeneratedRequest, options: GeneratedRequestOptions = {}) {
+  const params = config.params as Record<string, unknown> | undefined;
+  if (Array.isArray(params?.source_id) && params.source_id.length === 0) {
+    config = { ...config, params: { ...params, source_id: '' } };
+  }
   return request<T>(config, options, config.responseType);
+}
+
+export function orvalEmailFamily<T>(config: GeneratedRequest, options: GeneratedRequestOptions = {}) {
+  return orvalFetch<T>(config, options);
 }
 
 // Preview limits apply to the unread byte stream before buffering. Orval infers

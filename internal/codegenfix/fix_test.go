@@ -51,6 +51,38 @@ func firstDifference(left, right []byte) int {
 	return min(len(left), len(right))
 }
 
+func TestRewriteSourceSelectionJSONTagsPreservesExplicitEmptySlices(t *testing.T) {
+	assert := assert.New(t)
+	fixture := []byte("type Input struct { SourceIds []int64 `json:\"source_ids,omitempty\"` }\n" +
+		"type Query struct { SourceID []int64 `json:\"source_id,omitempty\"` }\n" +
+		"type Other struct { IDs []int64 `json:\"ids,omitempty\"` }\n")
+	got, err := RewriteSourceSelectionJSONTags(fixture)
+	require.NoError(t, err)
+	assert.Contains(string(got), `json:"source_ids,omitzero"`)
+	assert.Contains(string(got), `json:"source_id,omitzero"`)
+	assert.Contains(string(got), `json:"ids,omitempty"`)
+	again, err := RewriteSourceSelectionJSONTags(got)
+	require.NoError(t, err)
+	assert.Equal(got, again)
+}
+
+func TestRewriteEmailFamilySourceSelectionQueriesEncodesExplicitEmptySlices(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	fixture := []byte("package generated\n" +
+		"func (o *GetEmailFamilyRequestOptions) GetQuery() (map[string]any, error) {\n\treturn runtime.AsMap[any](o.Query)\n}\n" +
+		"func (o *GetEmailFamilyDecisionRequestOptions) GetQuery() (map[string]any, error) {\n\treturn runtime.AsMap[any](o.Query)\n}\n" +
+		"func (o *ListEmailFamilyDecisionsRequestOptions) GetQuery() (map[string]any, error) {\n\treturn runtime.AsMap[any](o.Query)\n}\n")
+	got, err := RewriteEmailFamilySourceSelectionQueries(fixture)
+	require.NoError(err)
+	assert.Equal(3, strings.Count(string(got), `params["source_id"] = ""`))
+	assert.Equal(3, strings.Count(string(got), "if params == nil"))
+	assert.Contains(string(got), "params = make(map[string]any, 1)")
+	again, err := RewriteEmailFamilySourceSelectionQueries(got)
+	require.NoError(err)
+	assert.Equal(got, again)
+}
+
 func TestRewriteGeneratedValidatorsAllowsEmptyContactRouteStrings(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
