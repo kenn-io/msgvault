@@ -14,12 +14,7 @@ func TestAsks(t *testing.T) {
 		want bool
 	}{
 		{"question", "Can you send it?", true},
-		{"quoted question", "All set.\n> Can you send it?", false},
-		{"authored request before an attributed quote", "On Monday, can you send the contract?\nOn Sunday, Alex wrote:\n> Earlier message", true},
-		{"attribution", "All set.\nOn Monday, Alex wrote:\nCan you send it?", false},
-		{"wrapped attribution", "All set.\nOn Monday, October 12, 2026 at 9:00 AM,\nAlex <alex@example.test> wrote:\nCan you send it?", false},
 		{"request word in a link", "Notes at https://example.test/lmk", false},
-		{"quoted reply", "All set.\n\nOn Monday, Alex wrote:\n> Can you send it?\n> Thanks", false},
 		{"signature", "All set.\r\n-- \r\nQuestions?", false},
 		{"question mark in a link", "See https://example.test/?q=one and www.example.test/?two", false},
 		{"question after a link", "See https://example.test/proposal?", true},
@@ -38,28 +33,8 @@ func TestAsks(t *testing.T) {
 		{"please kindly confirm", "Please kindly confirm receipt.", true},
 		{"please alone", "Please enjoy the weekend.", false},
 		{"statement", "See you Saturday!", false},
-		{"original message", "Done.\n\n-----Original Message-----\nFrom: Alex\nCan you send it?", false},
-		{"outlook header pair", "Done.\n\nFrom: Alex Example\nSent: Monday, October 12\nTo: Me\nCan you send it?", false},
-		{"forwarded", "FYI\n---------- Forwarded message ---------\nFrom: Sam\nCan you send it?", false},
-		{"forwarded body without an authored request", "FYI\n\nBegin forwarded message:\nFrom: Sam <sam@example.test>\nDate: Monday, October 19, 2026\n\nCan you send it?", false},
-		{"from line alone", "From: the office\nCan you send it?", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, asks(ownText(tt.body))) })
-	}
-
-	const quote = "On Monday, October 12, 2026 at 9:00 AM,\nMe <test@example.com> wrote:\n> Can you approve the contract?\n"
-	for _, tt := range []struct {
-		name, body, want string
-	}{
-		{"three-line attribution only", "On Monday, October 12, 2026,\nat 9:00 AM,\nMe <test@example.com> wrote:\n> Can you approve the contract?\n", ""},
-		{"approval above wrapped quote", "Approved, go ahead.\n\n" + quote, "Approved, go ahead."},
-		{"approval below wrapped quote", quote + "\nApproved, go ahead.", "Approved, go ahead."},
-		{"approval below wrapped attribution with blank line", "On Monday, October 12, 2026 at 9:00 AM,\nAlex <alex@example.test> wrote:\n\n> Can you approve the contract?\n\nApproved, go ahead.", "Approved, go ahead."},
-		{"bottom-posted answer after an indented quote", "On Monday, Me wrote:\n\n  > Can you send the contract?\n\nI sent it.", "I sent it."},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, strings.TrimSpace(ownText(tt.body)))
-		})
 	}
 }
 

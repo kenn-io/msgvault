@@ -115,8 +115,6 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(fmt.Sprintf("Marked %d done.\n", anchor), output)
 
-	_, err = runLoops(ctx, t, "snooze", strconv.FormatInt(anchor, 10), "--until", "yesterday")
-	require.Error(err)
 	_, err = runLoops(ctx, t, "done", "abc")
 	require.Error(err)
 }

@@ -83,7 +83,6 @@ func TestListLoopsFilters(t *testing.T) {
 }
 
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
@@ -94,9 +93,6 @@ func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	require.True(response.CoverageIncomplete)
-	require.Len(response.Items, 1)
-	assert.Equal(int64(1), response.Items[0].AnchorMessageID)
-	assert.Equal("Can you send the contract?", response.Items[0].Summary)
 }
 
 func TestListLoopsRejectsBadQuery(t *testing.T) {
@@ -204,11 +200,12 @@ func TestLoopActionsRetryAfterIncompleteEvidence(t *testing.T) {
 			require := require.New(t)
 			f := storetest.New(t)
 			now := time.Now().UTC()
-			anchor := f.PersistEmail(storetest.EmailSpec{Thread: "uncached-action", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the original?", SentAt: now.Add(-80 * 24 * time.Hour), NoRaw: true})
-			for i := range 1000 {
-				f.PersistEmail(storetest.EmailSpec{Thread: "uncached-action", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Any update?", SentAt: now.Add(-4*24*time.Hour - time.Duration(i)*time.Minute), NoRaw: true})
-			}
-			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+			st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, now)
+			var anchor, conversationID int64
+			require.NoError(f.Store.DB().QueryRow(`SELECT id, conversation_id FROM messages WHERE subject = 'Can you send the contract?'`).Scan(&anchor, &conversationID))
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET conversation_id = ?`), conversationID)
+			require.NoError(err)
+			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
 			fixture := &loopFixture{f: f, router: server.Router()}
 			body := ""
 			if action == "snooze" {

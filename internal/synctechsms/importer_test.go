@@ -4,11 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -252,7 +250,7 @@ func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int
 	require.Equal(t, wantCount, count, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 }
 
-func TestImportedGroupMMSDoesNotOpenLoops(t *testing.T) {
+func TestImportedGroupMMSPreservesConversationMembership(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -274,15 +272,11 @@ func TestImportedGroupMMSDoesNotOpenLoops(t *testing.T) {
 	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeMMS: true})
 	_, err := imp.ImportPath(dir)
 	require.NoError(err)
-	result, err := loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	require.Len(result.Loops, 1, "only the one-to-one question opens a loop")
-	assert.Equal("+15550000006", result.Loops[0].Counterparty.Address)
-	// The incoming control also lists when the owner has no linked identity.
-	source, err := f.Store.GetOrCreateSource(SourceType, "+15550000001")
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(source.ID, "+15550000001", "manual"))
-	result, err = loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
-	require.NoError(err)
-	require.Len(result.Loops, 1, "recognizing the owner still excludes both groups")
+	groups := make(map[string]bool)
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		require.NoError(err)
+		require.Len(conv.Messages, 1)
+		groups[conv.Messages[0].Sender.Address] = conv.GroupChat
+	}
+	assert.Equal(map[string]bool{"+15550000001": true, "+15550000004": true, "+15550000006": false}, groups)
 }

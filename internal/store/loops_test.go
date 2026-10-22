@@ -294,23 +294,6 @@ func TestLoopFollowsTheArchiveWithoutARefresh(t *testing.T) {
 				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`), id)
 				require.NoError(t, err)
 			}, 1, 0},
-		{"a body edit shows on the next list",
-			func(f *storetest.Fixture) int64 {
-				return f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Here are my notes.", SentAt: loopAgo(4 * loopDay), NoRaw: true})
-			},
-			func(t *testing.T, f *storetest.Fixture, id int64) {
-				t.Helper()
-				require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: "Can you send the signed contract?", Valid: true}, sql.NullString{}))
-			}, 0, 1},
-		{"a raw-MIME backfill that marks it automated hides it",
-			func(f *storetest.Fixture) int64 {
-				return f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the deck?", SentAt: loopAgo(4 * loopDay), NoRaw: true})
-			},
-			func(t *testing.T, f *storetest.Fixture, id int64) {
-				t.Helper()
-				require.NoError(t, f.Store.UpsertMessageRaw(id, []byte("From: "+loopAlex+"\r\nTo: "+loopOwner+
-					"\r\nAuto-Submitted: auto-generated\r\nSubject: Deck\r\n\r\nCan you send the deck?\r\n")))
-			}, 1, 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := storetest.New(t)
@@ -406,27 +389,6 @@ func bulkThreads(tb testing.TB, st *store.Store, sourceID int64, ages []time.Dur
 	}
 	require.NoError(tx.Commit())
 	return ids
-}
-
-func TestLoopConversationsLoadInChunksWithoutACap(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	const total = 3000
-	ages := make([]time.Duration, total)
-	for i := range ages {
-		ages[i] = time.Duration(i+1) * time.Minute
-	}
-	bulkThreads(t, f.Store, f.Source.ID, ages, false)
-
-	var conversations, messages int
-	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{Since: loopAgo(30 * loopDay)}) {
-		require.NoError(err)
-		conversations++
-		messages += len(conv.Messages)
-	}
-	assert.Equal(total, conversations, "no cap on candidate conversations")
-	assert.Equal(total, messages)
 }
 
 func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) {

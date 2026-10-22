@@ -295,7 +295,7 @@ func TestDetect(t *testing.T) {
 		{"group chats are skipped", script{group: true, chat: true, msgs: []msg{{ago: 2 * day, body: "Can you send it?"}}}, "", 0, 0, store.LoopParticipant{}, 0, ""},
 		{"direct chat question you owe", script{chat: true, msgs: []msg{{ago: 2 * day, body: "are you coming?"}}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"direct chat question you asked", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "are you coming?"}}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
-		{"direct chat question waits on the recipient, not a mentioned person", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "Can you review this?", to: []store.LoopParticipant{{ParticipantID: 10, PersonID: 100, DisplayName: "Alex", Address: "alex@example.test"}}, mentions: []store.LoopParticipant{{ParticipantID: 2, PersonID: 20, DisplayName: "Sam", Address: "sam@example.test"}}}}}, AwaitingReply, 1, 0, store.LoopParticipant{ParticipantID: 10, PersonID: 100, DisplayName: "Alex", Address: "alex@example.test"}, 0, ""},
+		{"direct chat question waits on the recipient, not a mentioned person", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "Can you review this?", to: []store.LoopParticipant{alex}, mentions: []store.LoopParticipant{sam}}}}, AwaitingReply, 1, 0, alex, 0, ""},
 
 		{"stale anchor across an unanswered forward", script{msgs: []msg{
 			{ago: 6 * day, subject: "Contract draft", body: "Can you send the contract?"},

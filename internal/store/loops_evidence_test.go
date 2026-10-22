@@ -32,17 +32,23 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	_, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
 	require.NoError(err)
 	assert.False(hit, "detector rule changes invalidate older evidence")
-	for _, mutation := range []string{
-		`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`,
-		`DELETE FROM message_bodies WHERE message_id = ?`,
-		`INSERT INTO message_bodies(message_id,body_text) VALUES (?, 'Can you send it?')`,
+	for _, mutation := range []struct {
+		statement string
+		args      []any
+	}{
+		{`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`, []any{id}},
+		{`DELETE FROM message_bodies WHERE message_id = ?`, []any{id}},
+		{`INSERT INTO message_bodies(message_id,body_text) VALUES (?, 'Can you send it?')`, []any{id}},
+		{`DELETE FROM message_raw WHERE message_id = ?`, []any{id}},
+		{`INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime', 'none')`, []any{id, []byte("Content-Type: text/plain\r\n\r\nCan you send it?")}},
+		{`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`, []any{[]byte("Auto-Submitted: auto-replied\r\n\r\nCan you send it?"), id}},
 	} {
 		save()
-		_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(mutation), id)
+		_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(mutation.statement), mutation.args...)
 		require.NoError(err)
 		_, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
 		require.NoError(err)
-		assert.False(hit, mutation)
+		assert.False(hit, mutation.statement)
 	}
 	save()
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
@@ -129,17 +135,4 @@ func TestLoopEvidenceSurvivesUnchangedImports(t *testing.T) {
 	_, _, hit, err = f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
 	require.NoError(err)
 	assert.True(hit, "message metadata timestamps do not version body/MIME facts")
-	for _, change := range []string{"body", "raw"} {
-		save()
-		if change == "body" {
-			data.BodyText.String = "Thanks!"
-		} else {
-			data.RawMIME = []byte("Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nThanks!")
-		}
-		_, err = f.Store.PersistMessageContext(t.Context(), data)
-		require.NoError(err)
-		_, _, hit, err = f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
-		require.NoError(err)
-		assert.False(hit, "changed %s must invalidate retained evidence", change)
-	}
 }

@@ -157,17 +157,22 @@ describe("PersonOpenLoops", () => {
     expect(
       await screen.findByText("Nothing open with this person."),
     ).toBeDefined();
-    resolveOld(
-      Response.json({
-        items: [loop()],
-        truncated: false,
-        skipped_unparseable: 0,
-        coverage_incomplete: false,
-      }),
-    );
-    await old;
-    // Let HTTP decoding finish before checking for a late DOM update.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const response = Response.json({
+      items: [loop()],
+      truncated: false,
+      skipped_unparseable: 0,
+      coverage_incomplete: false,
+    });
+    const readText = response.text.bind(response);
+    const consumed = new Promise<void>((resolve) => {
+      vi.spyOn(response, "text").mockImplementation(() => {
+        const reading = readText();
+        void reading.then(() => resolve());
+        return reading;
+      });
+    });
+    resolveOld(response);
+    await consumed;
     await tick();
     expect(screen.queryByText("Review the draft?")).toBeNull();
   });
