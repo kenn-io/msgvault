@@ -20,7 +20,10 @@ All notable changes to msgvault, grouped by release.
   for up to 1,000 uncached messages; repeated requests continue using retained
   evidence. Synctech SMS/MMS imports and upgrades preserve unsent state so
   drafts, outbox, failed, and queued sends do not settle loops. They need
-  archive schema version 12 and HTTP API schema 3.25.0. Owner-connected MCP assistants can list loops and make per-call approved done, snooze, and reopen decisions with `--allow-loop-writes`; HTTP also needs `--http-allow-writes` and protocol `2026-07-28` or newer. MCP snooze accepts RFC3339 or local dates.
+  archive schema version 12 and HTTP API schema 3.25.0. Owner-connected MCP
+  assistants can list loops and make per-call approved done, snooze, and reopen
+  decisions with `--allow-loop-writes`; HTTP also needs `--http-allow-writes`
+  and protocol `2026-07-28` or newer. MCP snooze accepts RFC3339 or local dates.
 - Invalid PDF diagnostics now report `PDF structure could not be validated`.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.

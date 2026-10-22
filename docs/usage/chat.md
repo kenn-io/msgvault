@@ -694,7 +694,10 @@ and may require a daemon restart; inspect `pending_restart` in the response.
 
 ## Open loops
 
-On unreleased `main`, owner-connected assistants can list unanswered questions and make approved decisions through the daemon. Each tool requires discovery of its exact daemon route and required fields; API schema 3.25.0 alone does not enable it. Delegated sessions expose none of these tools.
+On unreleased `main`, owner-connected assistants can list unanswered questions
+and make approved decisions through the daemon. Each tool requires discovery of
+its exact daemon route and required fields; API schema 3.25.0 alone does not
+enable it. Delegated sessions expose none of these tools.
 
 | Tool | Effect | Parameters |
 |---|---|---|
@@ -703,9 +706,15 @@ On unreleased `main`, owner-connected assistants can list unanswered questions a
 | `snooze_open_loop` | Snooze the currently eligible questions in the anchor's conversation. | Required `message_id` and `until` |
 | `reopen_open_loop` | Clear the saved decision on one exact question. | Required `message_id` from an earlier list or decision receipt |
 
-Use `anchor_message_id` as `message_id`. Done and snooze recheck the conversation before saving. The tools return the daemon's list or decision response. See [Open loops](open-loops.md#use-an-assistant) for evidence warnings, deadlines, and retry behavior.
+Use `anchor_message_id` as `message_id`. Done and snooze recheck the
+conversation before saving. The tools return the daemon's list or decision
+response. See [Open loops](open-loops.md#use-an-assistant) for evidence
+warnings, deadlines, and retry behavior.
 
-Every decision requires `--allow-loop-writes` and per-call approval identifying the action and anchor ID. Snooze approval includes its resolved deadline and offset. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer; older HTTP clients retain the list.
+Every decision requires `--allow-loop-writes` and per-call approval identifying
+the action and anchor ID. Snooze approval includes its resolved deadline and
+offset. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or
+newer; older HTTP clients retain the list.
 
 ## Write controls
 

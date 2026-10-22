@@ -84,6 +84,17 @@ func loopToolOutput[T any](t *testing.T, result *sdkmcp.CallToolResult) T {
 	return value
 }
 
+func loopToolFailure(t *testing.T, result *sdkmcp.CallToolResult) map[string]any {
+	t.Helper()
+	require.True(t, result.IsError)
+	require.Len(t, result.Content, 1)
+	content, ok := result.Content[0].(*sdkmcp.TextContent)
+	require.True(t, ok)
+	var value map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content.Text), &value))
+	return value
+}
+
 func assertLoopRefusal(t *testing.T, result *mcpserver.OperationResult, code string, uncertain bool) {
 	t.Helper()
 	require.True(t, result.IsError)
@@ -130,6 +141,10 @@ func TestMCPLoopsSDKDecisionsAndList(t *testing.T) {
 	filtered := loopToolOutput[generated.LoopListResponse](t, call("list_open_loops", map[string]any{"person_id": person.ID}))
 	requirements.Len(filtered.Items, 1)
 	assertions.Equal(anchor, filtered.Items[0].AnchorMessageID)
+	disclosureCount := len(disclosures)
+	invalidSnooze := call("snooze_open_loop", map[string]any{"message_id": anchor, "until": "24h"})
+	assertions.Equal("invalid_arguments", loopToolFailure(t, invalidSnooze)["error"])
+	assertions.Len(disclosures, disclosureCount)
 	args := map[string]any{"message_id": anchor}
 	approved = false
 	assertions.True(call("close_open_loop", args).IsError)
@@ -229,6 +244,8 @@ func TestMCPLoopDeadlineCrossesApproval(t *testing.T) {
 				requirements.NoError(err)
 			}
 			assertions.True(result.IsError)
+			refusal := loopToolFailure(t, result)
+			assertions.Equal("invalid_arguments", refusal["error"])
 			var count int
 			requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM loop_decisions").Scan(&count))
 			assertions.Zero(count)
@@ -316,18 +333,61 @@ func TestMCPLoopIncompleteScanNeedsFreshApproval(t *testing.T) {
 	pending := call("")
 	requirements.NotEmpty(pending.RequestState)
 	refused := call(pending.RequestState)
-	assertions.True(refused.IsError)
-	data, err := json.Marshal(refused.StructuredContent)
-	requirements.NoError(err)
-	assertions.Contains(string(data), "loop_scan_incomplete")
+	refusal := loopToolFailure(t, refused)
+	assertions.Equal("loop_scan_incomplete", refusal["error"])
+	assertions.Equal(false, refusal["operation_may_have_completed"])
 	var count int
 	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM loop_decisions").Scan(&count))
 	assertions.Zero(count)
-	assertions.True(call(pending.RequestState).IsError)
+	listResult, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
+	requirements.NoError(err)
+	listed := loopToolOutput[generated.LoopListResponse](t, listResult)
+	requirements.False(listed.CoverageIncomplete)
+	assertions.True(slices.ContainsFunc(listed.Items, func(item generated.LoopItem) bool { return item.AnchorMessageID == anchor }))
+	stale := call(pending.RequestState)
+	assertions.True(stale.IsError)
+	requirements.NoError(f.Store.DB().QueryRow("SELECT COUNT(*) FROM loop_decisions").Scan(&count))
+	assertions.Zero(count)
 	fresh := call("")
 	requirements.NotEmpty(fresh.RequestState)
 	receipt := loopToolOutput[generated.LoopDecisionResponse](t, call(fresh.RequestState))
 	assertions.Equal("done", string(receipt.State))
+}
+
+func TestMCPLoopListExposesIncompleteCoverage(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}))
+	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
+	requirements.NoError(err)
+	list := loopToolOutput[generated.LoopListResponse](t, result)
+	requirements.True(list.CoverageIncomplete)
+	continued, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
+	requirements.NoError(err)
+	complete := loopToolOutput[generated.LoopListResponse](t, continued)
+	requirements.False(complete.CoverageIncomplete)
+	assertions.True(slices.ContainsFunc(complete.Items, func(item generated.LoopItem) bool {
+		return item.Summary == "Can you send the contract?"
+	}))
+}
+
+func TestMCPLoopListExposesSkippedUnparseable(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	now := time.Now().UTC()
+	anchor := f.PersistEmail(storetest.EmailSpec{From: storetest.OwnerAddress, To: []string{"alex@example.test"}, Body: "Can you send the contract?", SentAt: now.Add(-5 * 24 * time.Hour)})
+	f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "[MIME parsing failed: expected slash after first token]", SentAt: now.Add(-4 * 24 * time.Hour), Raw: "From: alex@example.test\r\nTo: " + storetest.OwnerAddress + "\r\nSubject: Re: Contract\r\nMIME-Version: 1.0\r\nContent-Type: multipart mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: text/plain\r\n\r\nI sent it\r\n--outer--\r\n"})
+	backend := sourceOperationFixture(t, api.NewServerWithOptions(api.ServerOptions{Config: config.NewDefaultConfig(), Store: &storeAPIAdapter{store: f.Store}, Logger: slog.New(slog.DiscardHandler)}))
+	session := loopOperationMCPSession(t, backend, nil, &sdkmcp.ClientOptions{})
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "list_open_loops", Arguments: map[string]any{}})
+	requirements.NoError(err)
+	list := loopToolOutput[generated.LoopListResponse](t, result)
+	assertions.Equal(int64(1), list.SkippedUnparseable)
+	assertions.True(slices.ContainsFunc(list.Items, func(item generated.LoopItem) bool { return item.AnchorMessageID == anchor }))
 }
 
 func TestMCPLoopDiscoveryRequiresEveryDescriptorDetail(t *testing.T) {
