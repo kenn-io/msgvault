@@ -847,6 +847,9 @@ func syncPersonMergeRowPersonRefsTx(
 		return fmt.Errorf("clear %s merge person references: %w", table, err)
 	}
 	for _, reference := range spec.PersonReferences {
+		if reference.Kind == personMergeReferenceHistorical {
+			continue
+		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personSplitSnapshotRowText(row, reference.KindColumn) != reference.KindValue {
 			continue
@@ -889,6 +892,12 @@ func (s *Store) moveCorePersonProfileTx(
 	}
 	if err := s.reconcilePersonBriefEnrollmentTx(
 		ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
+	if err := s.reconcilePersonTierOptOutsTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
+	if err := s.reconcilePersonTierAuthorityTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
 	}
 	projectionPersonIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT person_id
@@ -940,70 +949,378 @@ func (s *Store) moveCorePersonProfileTx(
 func (s *Store) reconcilePersonTrackingTx(
 	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
 ) error {
+	return s.reconcilePersonOptInGrantTx(
+		ctx, tx, mergeID, "person_tracking", "tracked_at", survivorID, absorbedID,
+	)
+}
+
+// reconcilePersonOptInGrantTx moves profile grants to the survivor. Manual
+// provenance wins a duplicate grant so automatic tier reconciliation cannot
+// later revoke an operator's choice; the row snapshot journal captures any
+// survivor update for exact split restoration.
+func (s *Store) reconcilePersonOptInGrantTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID int64,
+	table, timestampColumn string,
+	survivorID, absorbedID int64,
+) error {
+	if (table != "person_tracking" || timestampColumn != "tracked_at") &&
+		(table != "person_brief_enrollments" || timestampColumn != "enabled_at") {
+		return fmt.Errorf("%w: unregistered person opt-in grant table %q",
+			ErrPersonMergeInvalid, table)
+	}
 	var survivorTracked, absorbedTracked bool
 	if err := tx.QueryRowContext(ctx, `SELECT
-		EXISTS (SELECT 1 FROM person_tracking WHERE person_id = ?),
-		EXISTS (SELECT 1 FROM person_tracking WHERE person_id = ?)`,
+		EXISTS (SELECT 1 FROM `+table+` WHERE person_id = ?),
+		EXISTS (SELECT 1 FROM `+table+` WHERE person_id = ?)`,
 		survivorID, absorbedID,
 	).Scan(&survivorTracked, &absorbedTracked); err != nil {
-		return fmt.Errorf("inspect person tracking before merge: %w", err)
+		return fmt.Errorf("inspect %s before person merge: %w", table, err)
 	}
 	if !absorbedTracked {
 		return nil
 	}
 	if survivorTracked {
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM person_tracking WHERE person_id = ?`, absorbedID); err != nil {
-			return fmt.Errorf("deduplicate absorbed person tracking: %w", err)
+		var survivorProvenance, absorbedProvenance string
+		if err := tx.QueryRowContext(ctx, `SELECT provenance FROM `+table+` WHERE person_id = ?`,
+			survivorID).Scan(&survivorProvenance); err != nil {
+			return fmt.Errorf("read survivor %s provenance: %w", table, err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT provenance FROM `+table+` WHERE person_id = ?`,
+			absorbedID).Scan(&absorbedProvenance); err != nil {
+			return fmt.Errorf("read absorbed %s provenance: %w", table, err)
+		}
+		if survivorProvenance == "auto" && absorbedProvenance == "manual" {
+			query := fmt.Sprintf(`UPDATE %s SET %s = (
+				SELECT %s FROM %s WHERE person_id = ?
+			), provenance = 'manual', actor = (
+				SELECT actor FROM %s WHERE person_id = ?
+			) WHERE person_id = ?`, table, timestampColumn, timestampColumn, table, table)
+			result, err := tx.ExecContext(ctx, query, absorbedID, absorbedID, survivorID)
+			if err != nil {
+				return fmt.Errorf("preserve absorbed manual %s grant on survivor: %w", table, err)
+			}
+			if err := requirePersonMergeRowsAffected(result, "promote survivor grant provenance", survivorID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE person_id = ?`, absorbedID); err != nil {
+			return fmt.Errorf("deduplicate absorbed %s grant: %w", table, err)
 		}
 		return s.setPersonMergeRowDispositionTx(
-			ctx, tx, mergeID, "person_tracking", absorbedID, personMergeActionDeduplicated, &survivorID,
+			ctx, tx, mergeID, table, absorbedID, personMergeActionDeduplicated, &survivorID,
 		)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE person_tracking
+	if _, err := tx.ExecContext(ctx, `UPDATE `+table+`
 		SET person_id = ? WHERE person_id = ?`, survivorID, absorbedID); err != nil {
-		return fmt.Errorf("move absorbed person tracking: %w", err)
+		return fmt.Errorf("move absorbed %s grant: %w", table, err)
 	}
 	return s.setPersonMergeRowDispositionTx(
-		ctx, tx, mergeID, "person_tracking", absorbedID, "moved", &survivorID,
+		ctx, tx, mergeID, table, absorbedID, "moved", &survivorID,
 	)
 }
 
 // reconcilePersonBriefEnrollmentTx moves the absorbed person's brief
-// enrollment to the survivor when the survivor has none, and deduplicates it
-// otherwise. It runs after tracking reconciliation, so the tracking row the
-// enrollment depends on has already moved with it.
+// enrollment to the survivor when the survivor has none, and preserves manual
+// provenance when reconciling duplicate enrollments. It runs after tracking
+// reconciliation, so the tracking row the enrollment depends on has already
+// moved with it.
 func (s *Store) reconcilePersonBriefEnrollmentTx(
 	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
 ) error {
-	var survivorEnrolled, absorbedEnrolled bool
-	if err := tx.QueryRowContext(ctx, `SELECT
-		EXISTS (SELECT 1 FROM person_brief_enrollments WHERE person_id = ?),
-		EXISTS (SELECT 1 FROM person_brief_enrollments WHERE person_id = ?)`,
-		survivorID, absorbedID,
-	).Scan(&survivorEnrolled, &absorbedEnrolled); err != nil {
-		return fmt.Errorf("inspect person brief enrollment before merge: %w", err)
+	return s.reconcilePersonOptInGrantTx(
+		ctx, tx, mergeID, "person_brief_enrollments", "enabled_at", survivorID, absorbedID,
+	)
+}
+
+func (s *Store) reconcilePersonTierOptOutsTx(
+	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, lane FROM person_tier_opt_outs
+		WHERE person_id = ? ORDER BY id`, absorbedID)
+	if err != nil {
+		return fmt.Errorf("load absorbed person tier opt-outs: %w", err)
 	}
-	if !absorbedEnrolled {
+	type optOut struct {
+		id   int64
+		lane string
+	}
+	optOuts := []optOut{}
+	for rows.Next() {
+		var row optOut
+		if err := rows.Scan(&row.id, &row.lane); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan absorbed person tier opt-out: %w", err)
+		}
+		optOuts = append(optOuts, row)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate absorbed person tier opt-outs: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close absorbed person tier opt-outs: %w", err)
+	}
+
+	for _, row := range optOuts {
+		var survivorOptOutID int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM person_tier_opt_outs
+			WHERE person_id = ? AND lane = ?`, survivorID, row.lane).Scan(&survivorOptOutID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("find survivor person tier opt-out for lane %q: %w", row.lane, err)
+		}
+
+		currentRowID := row.id
+		action := "moved"
+		if errors.Is(err, sql.ErrNoRows) {
+			if _, err := tx.ExecContext(ctx, `UPDATE person_tier_opt_outs
+				SET person_id = ? WHERE id = ?`, survivorID, row.id); err != nil {
+				return fmt.Errorf("move absorbed person tier opt-out for lane %q: %w", row.lane, err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM person_tier_opt_outs WHERE id = ?`, row.id); err != nil {
+				return fmt.Errorf("deduplicate absorbed person tier opt-out for lane %q: %w", row.lane, err)
+			}
+			currentRowID = survivorOptOutID
+			action = personMergeActionDeduplicated
+		}
+		if err := s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, personTierOptOutsTableName, row.id, action, &currentRowID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// reconcilePersonTierAuthorityTx keeps one current tier state and observation
+// on the surviving profile, moves event history, and journals each absorbed
+// row so an exact split can restore the original authority and history.
+func (s *Store) reconcilePersonTierAuthorityTx(
+	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
+) error {
+	for _, table := range []string{personTierStateTableName, personTierObservationsTableName} {
+		if err := s.reconcilePersonTierSingletonTx(
+			ctx, tx, mergeID, table, survivorID, absorbedID,
+		); err != nil {
+			return err
+		}
+	}
+	return s.reconcilePersonTierEventsTx(ctx, tx, mergeID, survivorID, absorbedID)
+}
+
+func (s *Store) reconcilePersonTierSingletonTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID int64,
+	table string,
+	survivorID, absorbedID int64,
+) error {
+	if table != personTierStateTableName && table != personTierObservationsTableName {
+		return fmt.Errorf("%w: unregistered tier singleton table %q", ErrPersonMergeInvalid, table)
+	}
+	var survivorHasRow, absorbedHasRow bool
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT
+		EXISTS (SELECT 1 FROM %s WHERE %s = ?),
+		EXISTS (SELECT 1 FROM %s WHERE %s = ?)`,
+		table, personMergePersonIDColumn, table, personMergePersonIDColumn),
+		survivorID, absorbedID,
+	).Scan(&survivorHasRow, &absorbedHasRow); err != nil {
+		return fmt.Errorf("inspect %s before person merge: %w", table, err)
+	}
+	if !absorbedHasRow {
 		return nil
 	}
-	if survivorEnrolled {
+
+	action := "moved"
+	currentRowID := survivorID
+	if survivorHasRow {
 		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM person_brief_enrollments WHERE person_id = ?`, absorbedID); err != nil {
-			return fmt.Errorf("deduplicate absorbed person brief enrollment: %w", err)
+			`DELETE FROM `+table+` WHERE `+personMergePersonIDColumn+` = ?`, absorbedID); err != nil {
+			return fmt.Errorf("deduplicate absorbed %s: %w", table, err)
 		}
-		return s.setPersonMergeRowDispositionTx(
-			ctx, tx, mergeID, "person_brief_enrollments", absorbedID,
-			personMergeActionDeduplicated, &survivorID,
-		)
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE person_brief_enrollments
-		SET person_id = ? WHERE person_id = ?`, survivorID, absorbedID); err != nil {
-		return fmt.Errorf("move absorbed person brief enrollment: %w", err)
+		action = personMergeActionDeduplicated
+	} else if _, err := tx.ExecContext(ctx,
+		`UPDATE `+table+` SET `+personMergePersonIDColumn+` = ? WHERE `+
+			personMergePersonIDColumn+` = ?`, survivorID, absorbedID,
+	); err != nil {
+		return fmt.Errorf("move absorbed %s: %w", table, err)
 	}
 	return s.setPersonMergeRowDispositionTx(
-		ctx, tx, mergeID, "person_brief_enrollments", absorbedID, "moved", &survivorID,
+		ctx, tx, mergeID, table, absorbedID, action, &currentRowID,
 	)
+}
+
+func (s *Store) reconcilePersonTierEventsTx(
+	ctx context.Context, tx *loggedTx, mergeID, survivorID, absorbedID int64,
+) error {
+	absorbedEventIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM `+
+		personTierEventsTableName+` WHERE `+personMergePersonIDColumn+` = ? ORDER BY id`, absorbedID)
+	if err != nil {
+		return fmt.Errorf("load absorbed person tier events: %w", err)
+	}
+	inboundEventIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT id FROM `+
+		personTierEventsTableName+` WHERE merged_from_person_id = ? AND `+
+		personMergePersonIDColumn+` <> ? ORDER BY id`, absorbedID, absorbedID)
+	if err != nil {
+		return fmt.Errorf("load person tier event references: %w", err)
+	}
+
+	for _, eventID := range absorbedEventIDs {
+		result, err := tx.ExecContext(ctx, `UPDATE `+personTierEventsTableName+`
+			SET `+personMergePersonIDColumn+` = ?, merged_from_person_id = ?
+			WHERE id = ? AND `+personMergePersonIDColumn+` = ?`,
+			survivorID, absorbedID, eventID, absorbedID)
+		if err != nil {
+			return fmt.Errorf("move absorbed person tier event %d: %w", eventID, err)
+		}
+		if err := requirePersonMergeRowsAffected(result, "move tier event", eventID); err != nil {
+			return err
+		}
+		if err := s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, personTierEventsTableName, eventID, "moved", &eventID,
+		); err != nil {
+			return err
+		}
+	}
+	for _, eventID := range inboundEventIDs {
+		result, err := tx.ExecContext(ctx, `UPDATE `+personTierEventsTableName+`
+			SET merged_from_person_id = ? WHERE id = ? AND merged_from_person_id = ?`,
+			survivorID, eventID, absorbedID)
+		if err != nil {
+			return fmt.Errorf("repoint person tier event %d: %w", eventID, err)
+		}
+		if err := requirePersonMergeRowsAffected(result, "repoint tier event", eventID); err != nil {
+			return err
+		}
+		if err := s.setPersonMergeRowDispositionTx(
+			ctx, tx, mergeID, personTierEventsTableName, eventID, "repointed", &eventID,
+		); err != nil {
+			return err
+		}
+	}
+	touchedEventIDs := append(slices.Clone(absorbedEventIDs), inboundEventIDs...)
+	return s.rebasePriorPersonTierEventOriginsTx(ctx, tx, mergeID, touchedEventIDs)
+}
+
+// rebasePriorPersonTierEventOriginsTx updates older event journals after a
+// merge or split changes an event's immediate merged-from identity. The origin
+// is historical metadata, so it is deliberately not treated as a live person
+// reference by the generic journal rebasing path.
+func (s *Store) rebasePriorPersonTierEventOriginsTx(
+	ctx context.Context, tx *loggedTx, mergeID int64, eventIDs []int64,
+) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	spec := personMergeTableRegistry[personTierEventsTableName]
+	for _, eventID := range eventIDs {
+		currentRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
+			`SELECT * FROM `+personTierEventsTableName+` WHERE id = ?`, []any{eventID}, 0)
+		if err != nil {
+			return err
+		}
+		if len(currentRows) == 0 {
+			continue
+		}
+		if len(currentRows) != 1 {
+			return fmt.Errorf("%w: current person tier event %d is missing",
+				ErrPersonMergeInvalid, eventID)
+		}
+		currentColumns := make(map[string]personMergeSnapshotValue, len(currentRows[0].Columns))
+		for _, column := range currentRows[0].Columns {
+			currentColumns[column.Name] = column.Value
+		}
+		currentOrigin, ok := currentColumns["merged_from_person_id"]
+		if !ok {
+			return fmt.Errorf("%w: person tier event %d has no merged-from column",
+				ErrPersonMergeSnapshotCorrupt, eventID)
+		}
+
+		prior, err := loadPriorPersonTierEventJournalRows(ctx, tx, mergeID, eventID)
+		if err != nil {
+			return err
+		}
+		for _, row := range prior {
+			var post personMergeSnapshotRow
+			if err := json.Unmarshal([]byte(row.postMergeJSON), &post); err != nil {
+				return fmt.Errorf("%w: decode prior person tier event journal: %w",
+					ErrPersonMergeSnapshotCorrupt, err)
+			}
+			foundOrigin := false
+			for index := range post.Columns {
+				if post.Columns[index].Name == "merged_from_person_id" {
+					post.Columns[index].Value = currentOrigin
+					foundOrigin = true
+					break
+				}
+			}
+			if !foundOrigin {
+				return fmt.Errorf("%w: prior person tier event journal lacks merged-from column",
+					ErrPersonMergeSnapshotCorrupt)
+			}
+			encoded, err := json.Marshal(post, json.Deterministic(true))
+			if err != nil {
+				return fmt.Errorf("encode rebased person tier event journal: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE person_merge_rows
+				SET post_merge_row_json = ?
+				WHERE merge_id = ? AND table_name = ? AND original_row_key = ?
+				  AND split_id IS NULL`, string(encoded), row.mergeID,
+				personTierEventsTableName, row.originalRowKey); err != nil {
+				return fmt.Errorf("rebase prior person tier event origin: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+type priorPersonTierEventJournalRow struct {
+	mergeID        int64
+	originalRowKey string
+	postMergeJSON  string
+}
+
+func loadPriorPersonTierEventJournalRows(
+	ctx context.Context, tx *loggedTx, mergeID, eventID int64,
+) ([]priorPersonTierEventJournalRow, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT merge_id, original_row_key, post_merge_row_json
+		FROM person_merge_rows
+		WHERE merge_id <> ? AND table_name = ? AND current_row_id = ?
+		  AND split_id IS NULL AND post_merge_row_json IS NOT NULL
+		ORDER BY merge_id, original_row_key`, mergeID, personTierEventsTableName, eventID)
+	if err != nil {
+		return nil, fmt.Errorf("load prior person tier event journals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	prior := []priorPersonTierEventJournalRow{}
+	for rows.Next() {
+		var row priorPersonTierEventJournalRow
+		if err := rows.Scan(&row.mergeID, &row.originalRowKey, &row.postMergeJSON); err != nil {
+			return nil, fmt.Errorf("scan prior person tier event journal: %w", err)
+		}
+		prior = append(prior, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate prior person tier event journals: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close prior person tier event journals: %w", err)
+	}
+	return prior, nil
+}
+
+func requirePersonMergeRowsAffected(result sql.Result, operation string, rowID int64) error {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("count %s for row %d: %w", operation, rowID, err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("%w: %s for row %d affected %d rows",
+			ErrPersonMergeInvalid, operation, rowID, affected)
+	}
+	return nil
 }
 
 func (s *Store) moveStructuredPersonRowsTx(
@@ -1477,6 +1794,13 @@ func (s *Store) rebasePriorPersonMergeReferenceBaselinesTx(
 			return err
 		}
 		if !changed {
+			if personMergeTableHasHistoricalReference(spec) {
+				if err := syncPersonMergeRowPersonRefsTx(
+					ctx, tx, row.mergeID, row.table, row.originalKey, current[0], spec,
+				); err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE person_merge_rows
@@ -1492,6 +1816,15 @@ func (s *Store) rebasePriorPersonMergeReferenceBaselinesTx(
 		}
 	}
 	return nil
+}
+
+func personMergeTableHasHistoricalReference(spec personMergeTableSpec) bool {
+	for _, reference := range spec.PersonReferences {
+		if reference.Kind == personMergeReferenceHistorical {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) setPersonMergeRowDispositionTx(
@@ -2108,13 +2441,13 @@ func (s *Store) reconcilePersonDailyNotesTx(
 	}
 	for _, entryID := range entryIDs {
 		originalKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, absorbedID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, absorbedID,
 		)
 		if err != nil {
 			return err
 		}
 		currentKey, err := personMergeIntegerRowKey(
-			[]string{"entry_id", "person_id"}, entryID, survivorID,
+			[]string{"entry_id", personMergePersonIDColumn}, entryID, survivorID,
 		)
 		if err != nil {
 			return err

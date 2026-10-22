@@ -593,6 +593,10 @@ func (s *Store) CompleteRun(
 		failureClass = string(completion.Failure.Class)
 		safeMessage = safeFailureMessage(completion.Failure.Message)
 	}
+	manualMask, err := personEnrichmentTriggerMask(personenrichment.TriggerManual)
+	if err != nil {
+		return err
+	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.personEnrichmentRunBarrier != nil {
 			s.personEnrichmentRunBarrier("complete_before_run_lock")
@@ -609,8 +613,14 @@ func (s *Store) CompleteRun(
 		if err := tx.QueryRowContext(ctx, `
 			SELECT (SELECT COUNT(*) FROM person_enrichment_work WHERE run_id = ?) +
 			       (SELECT COUNT(*) FROM person_enrichment_attempts
-			        WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait'))`,
-			runID, runID).Scan(&nonterminal); err != nil {
+			        WHERE run_id = ? AND state IN ('queued','starting','pending','retry_wait')) +
+			       (SELECT COUNT(*) FROM person_enrichment_manual_run_targets target
+			        JOIN person_enrichment_work work
+			          ON work.person_id = target.person_id
+			         AND work.profile_fingerprint = target.profile_fingerprint
+		        WHERE target.run_id = ? AND (work.run_id IS NULL OR work.run_id <> ?)
+		          AND (work.trigger_mask & ?) <> 0)`,
+			runID, runID, runID, runID, manualMask).Scan(&nonterminal); err != nil {
 			return fmt.Errorf("check person enrichment run terminal state: %w", err)
 		}
 		if nonterminal != 0 {

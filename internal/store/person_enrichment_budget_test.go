@@ -61,6 +61,8 @@ func newBudgetClaims(t *testing.T, profile personenrichment.ProviderProfile) (*s
 		participantID := fixture.EnsureParticipant(email, "Budget Person", "example.com")
 		person, _, createErr := fixture.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
 		require.NoError(t, createErr)
+		_, trackErr := fixture.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+		require.NoError(t, trackErr)
 		generation := "budget:" + string(rune('a'+i))
 		require.NoError(t, fixture.Store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
 			PersonID: person.ID, ProfileFingerprint: profile.Fingerprint,

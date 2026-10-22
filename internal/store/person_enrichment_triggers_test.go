@@ -901,6 +901,48 @@ func TestPersonEnrichmentCatchUpIgnoresHistoricalExpiredProviderClaim(t *testing
 	assert.Equal("attempt:fresh-refresh", rows[0].TriggerGeneration)
 }
 
+func TestPersonEnrichmentCatchUpStopsAtDeferredManualExpiry(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	run, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profiles[0].Fingerprint, "deferred-expiry", f.now,
+	)
+	require.NoError(err)
+	require.True(created)
+	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+		RunID: run.ID, Owner: "deferred-expiry-worker", ProviderName: f.profiles[0].Name,
+		ProfileFingerprint: f.profiles[0].Fingerprint, Now: f.now, LeaseDuration: time.Minute,
+	})
+	require.NoError(err)
+	require.NotNil(lease)
+	nextAction := f.now.Add(time.Hour)
+	require.NoError(f.store.ReleaseWork(t.Context(), lease.Token, personenrichment.WorkRelease{
+		Outcome: "defer", NextActionAt: &nextAction,
+	}))
+	insertProviderClaim(t, f.store, f.person.ID, f.profiles[0].Fingerprint,
+		"expired-deferred-manual", f.now.Add(-time.Minute))
+
+	count, err := f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 1, []string{f.profiles[0].Fingerprint},
+	)
+	require.NoError(err)
+	assert.Equal(1, count, "catch-up records the expiry once")
+	work := f.work(t, 0)
+	require.Len(work, 1)
+	assert.Equal(nextAction, work[0].DueAt, "the manual deferral keeps its due time")
+	assert.Equal(int64(21), work[0].TriggerMask)
+
+	count, err = f.store.EnqueueDuePersonEnrichmentContext(
+		t.Context(), f.now, 1, []string{f.profiles[0].Fingerprint},
+	)
+	require.NoError(err)
+	assert.Zero(count, "the same deferred expiry cannot fill every catch-up batch")
+}
+
 func TestPersonEnrichmentTriggerConsentGrantAndRevocationCancelPendingWork(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1191,6 +1233,52 @@ func TestOrganizationIdentityChangesInvalidateEnrichment(t *testing.T) {
 	work = f.work(t, 0)
 	require.Len(work, 1)
 	assert.Equal(int64(2), work[0].TriggerMask)
+}
+
+func TestPersonEnrichmentIdentityChangeRequeuesOptedOutManualTarget(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newEnrichmentTriggerFixture(t, 1)
+	f.grant(t, 0)
+	_, err := f.store.SetPersonTrackingContext(t.Context(), f.person.ID, true)
+	require.NoError(err)
+	organization, err := f.store.CreateOrganizationContext(t.Context(), store.OrganizationInput{
+		Name: "Initial Employer", Kind: store.OrganizationKindCompany,
+	})
+	require.NoError(err)
+	_, err = f.store.AddEmploymentContext(t.Context(), store.EmploymentInput{
+		PersonID: f.person.ID, OrganizationID: organization.ID,
+		Title: new("Engineer"), Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	require.NoError(clearEnrichmentWork(t, f.store, f.person.ID))
+	run, created, err := f.store.StartManualPersonEnrichmentRunContext(
+		t.Context(), f.person.ID, f.profiles[0].Fingerprint, "identity-after-opt-out", f.now,
+	)
+	require.NoError(err)
+	require.True(created)
+	require.NoError(f.store.SetPersonTierOptOutContext(
+		t.Context(), f.person.ID, store.PersonTierLaneEnrichment, true, "owner", "explicit preference",
+	))
+
+	_, err = f.store.ReplaceOrganizationContext(t.Context(), organization.ID, organization.Revision,
+		store.OrganizationInput{Name: "Renamed Employer", Kind: store.OrganizationKindCompany}, false)
+	require.NoError(err)
+	work := f.work(t, 0)
+	require.Len(work, 1, "identity invalidation keeps an exact open manual target executable")
+	require.NotNil(work[0].RunID)
+	assert.Equal(run.ID, *work[0].RunID)
+
+	lease, err := f.store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
+		RunID: run.ID, Owner: "identity-after-opt-out-worker", ProviderName: f.profiles[0].Name,
+		ProfileFingerprint: f.profiles[0].Fingerprint, Now: f.now, LeaseDuration: time.Minute,
+	})
+	require.NoError(err)
+	require.NotNil(lease)
+	input, err := f.store.LoadRequestInput(t.Context(), *lease)
+	require.NoError(err)
+	require.Len(input.CurrentCompanies, 1)
+	assert.Equal("Renamed Employer", input.CurrentCompanies[0].Value)
 }
 
 func TestCardDAVProjectionRetirementInvalidatesEnrichment(t *testing.T) {
