@@ -120,6 +120,8 @@ type RunPersonMatchScoringBody = PersonMatchScoringRequest
 
 type UnlinkIdentityParticipantsBody = IdentityLinkRequest
 
+type ImportCallObservationBody = CallImportRequest
+
 type ImportMeetingBody = MeetingImportRequest
 
 type ImportMuesliBody = MuesliRemoteRequest

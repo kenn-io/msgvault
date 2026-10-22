@@ -374,7 +374,8 @@ import (
 // owner source-maintenance requests. Existing source identifiers and account
 // requests remain valid.
 // 3.23.0 adds the Docbank attachment mirror routes, receipts and status states.
-const APISchemaVersion = "3.23.0"
+// 3.24.0 adds owner-only call evidence import, inspection and person summaries.
+const APISchemaVersion = "3.24.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1081,6 +1082,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	nullableSchemaProperty(schemas["Metrics"], "first_meeting_at")
 	nullableSchemaProperty(schemas["Metrics"], "last_meeting_at")
+	if observation := schemas["CallObservationView"]; observation != nil {
+		if duration := observation.Properties["duration_seconds"]; duration != nil {
+			setCodegenGoType(duration, "*float64")
+		}
+		nullableSchemaProperty(observation, "duration_seconds")
+	}
 	for schemaName, property := range map[string]string{
 		"MeetingPerson": emailProperty,
 		"Source":        "account_email",
