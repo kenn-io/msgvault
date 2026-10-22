@@ -1095,7 +1095,7 @@ func TestAttachmentMirrorProcessingMissingJobContinues(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal([]string{"a", "b"}, r.processing.Jobs)
 	assert.Equal([]string{"job-a", "job-b"}, r.processing.Polls)
-	assert.Equal(map[string]int64{"processing_job_not_found": 1}, r.processingCounts().Outcomes)
+	assert.Equal(map[string]int64{"not_found": 1}, r.processingCounts().Outcomes)
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
@@ -1251,7 +1251,7 @@ func TestAttachmentMirrorProcessingTwoRetriesStop(t *testing.T) {
 	require.Error(r.runBatch(t.Context()))
 	assert.Equal([]string{"a", "b"}, r.processing.Plans)
 	assert.Equal(int64(3), r.processingCounts().Waiting)
-	due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", 20)
+	due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", "profile-one", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	require.Len(due, 1)
 	assert.Equal("c", due[0].ContentHash)
@@ -1299,4 +1299,49 @@ func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
 		assert.True(answer.retry)
 		assert.False(answer.blocked)
 	}
+}
+
+func TestAttachmentMirrorProcessingPollRetryKeepsJob(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processingDue()
+	r.processing.PollFaults["job-a"] = http.StatusServiceUnavailable
+	require.Error(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Zero(r.processingCounts().Waiting)
+	var jobID string
+	var next time.Time
+	require.NoError(r.f.Store.DB().QueryRow(`SELECT job_id, next_action_at FROM docbank_attachment_processing`).Scan(&jobID, &next))
+	assert.Equal("job-a", jobID)
+	assert.True(next.After(time.Now().Add(4 * time.Minute)))
+	r.processingDue()
+	delete(r.processing.PollFaults, "job-a")
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a"}, r.processing.Jobs)
+	assert.Equal([]string{"job-a", "job-a"}, r.processing.Polls)
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+}
+
+func TestAttachmentMirrorProcessingErrorKeepsReplayBacklog(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	require.NoError(r.runBatch(t.Context()))
+	r.delivered("a")
+	r.processing.JobFaults["a"] = http.StatusPreconditionRequired
+	r.processing.Reasons["a"] = "processing_consent_required"
+	mid := r.f.CreateMessage("journal backlog")
+	for i := range 501 {
+		require.NoError(r.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{Filename: "metadata", SourcePartKey: fmt.Sprintf("backlog:%d", i)}))
+	}
+	more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+	require.ErrorContains(err, "document_profile")
+	assert.True(more)
+	remaining, err := r.f.Store.ListAttachmentChanges(t.Context(), store.DocbankAttachmentConsumerKey("dest"), 500)
+	require.NoError(err)
+	assert.Len(remaining, 1)
 }
