@@ -47,7 +47,6 @@ const (
 	SourceMeetingText       SourceClass = "meeting_text"
 	SourceAttachmentCaption SourceClass = "attachment_caption"
 	SourceAttachmentOCR     SourceClass = "attachment_ocr"
-	SourceDocumentText      SourceClass = "document_text"
 )
 
 var disclosedPacketFieldsV1 = []string{
@@ -920,7 +919,9 @@ func validateSources(sources []SourceClass) error {
 	seen := make(map[SourceClass]struct{}, len(sources))
 	for _, source := range sources {
 		switch source {
-		case SourceConversationText, SourceMeetingText, SourceDocumentText:
+		case SourceConversationText, SourceMeetingText:
+		case "document_text":
+			return errors.New("document_text was removed; drop it from allowed_sources")
 		case SourceAttachmentCaption, SourceAttachmentOCR:
 			return fmt.Errorf("[people.sweep.provider] allowed_sources %q is not yet supported", source)
 		default:

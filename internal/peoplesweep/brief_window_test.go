@@ -31,7 +31,6 @@ type briefFakeArchive struct {
 	candidateCalls []HistoricalCandidateRequest
 	searchCalls    []ContextRequest
 	hydrateCalls   []int64
-	documentCalls  int
 }
 
 // visibleAt mirrors the store's journal bound: a positive sequence hides a
@@ -112,13 +111,6 @@ func (a *briefFakeArchive) SearchPersonSweepMessages(
 		}
 	}
 	return out, nil
-}
-
-func (a *briefFakeArchive) SearchPersonSweepDocuments(
-	_ context.Context, _ DocumentContextRequest,
-) ([]EvidenceItem, error) {
-	a.documentCalls++
-	return []EvidenceItem{}, nil
 }
 
 func (a *briefFakeArchive) HydratePersonSweepMessages(
@@ -244,7 +236,6 @@ func TestBuildBriefWindowTakesNewestItemsWithinCaps(t *testing.T) {
 	assert.Equal([]string{"conversation_text"}, window.Boundary.Lanes)
 	assert.Equal(len(window.Batch.Request.InputText), window.Boundary.InputBytes)
 	assert.Equal(window.Batch.InputHash, window.Boundary.PacketSHA256)
-	assert.Zero(archive.documentCalls, "the document lane has no event-time listing path")
 }
 
 // TestBuildBriefWindowReachesPersonMessagesBehindOwnerHeavyTraffic pins the
@@ -564,7 +555,7 @@ func TestBuildBriefWindowRejectsInvalidRequests(t *testing.T) {
 		"no bytes":      func(r *BriefWindowRequest) { r.MaxBytes = 0 },
 		"bad overlap":   func(r *BriefWindowRequest) { r.OverlapItems = -1 },
 		"bad sequence":  func(r *BriefWindowRequest) { r.ThroughSequence = -1 },
-		"no brief lane": func(r *BriefWindowRequest) { r.Profile.AllowedSources = []SourceClass{SourceDocumentText} },
+		"no brief lane": func(r *BriefWindowRequest) { r.Profile.AllowedSources = []SourceClass{SourceMeetingText} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			request := briefWindowRequest(t)
@@ -626,7 +617,7 @@ func TestBuildBriefWindowExcludesMeetingTranscriptsUntilSpeakerAttribution(t *te
 	require.Error(err)
 	assert.Contains(err.Error(), "no allowed source lane",
 		"a meeting-only profile has no supported brief lane")
-	assert.Empty(briefWindowLanes([]SourceClass{SourceMeetingText, SourceDocumentText}))
+	assert.Empty(briefWindowLanes([]SourceClass{SourceMeetingText}))
 }
 
 func TestBriefBoundaryJSONIsTheFrozenShape(t *testing.T) {

@@ -31,9 +31,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 		request.Mode != peoplesweep.GenerationCursorBackstop {
 		return peoplesweep.PersonWindow{}, errors.New("load person sweep window: invalid cursor mode")
 	}
-	if request.DocumentAfter != "" && request.Lane != peoplesweep.SourceDocumentText {
-		return peoplesweep.PersonWindow{}, errors.New("load person sweep window: document continuation requires document text")
-	}
+
 	limit := request.Limit
 	if limit <= 0 || limit > maxPersonSweepEvidenceRows {
 		limit = maxPersonSweepEvidenceRows
@@ -88,9 +86,7 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 			continue
 		}
 		window.Changes = append(window.Changes, change)
-		if request.Lane == peoplesweep.SourceDocumentText {
-			break
-		}
+
 		window.NextSequence = change.Sequence
 		if _, ok := seen[change.MessageID]; !ok && change.MessageID > 0 {
 			seen[change.MessageID] = struct{}{}
@@ -122,45 +118,20 @@ func (s *Store) LoadPersonSweepWindow(ctx context.Context, request peoplesweep.W
 				}
 			}
 		}
-	case peoplesweep.SourceDocumentText:
-		if len(window.Changes) > 0 {
-			items, nextDocumentKey, done, hydrateErr := s.hydratePersonSweepDocumentChange(
-				ctx, request.PersonID, window.Changes[0], request.DocumentAfter, limit)
-			if hydrateErr != nil {
-				return window, hydrateErr
-			}
-			window.Seeds = append(window.Seeds, items...)
-			window.NextDocumentKey = nextDocumentKey
-			if done {
-				window.NextSequence = window.Changes[0].Sequence
-			}
-		}
+
 	case peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
 		return window, peoplesweep.ErrSourceTextUnavailable
 	}
 	if loadReconciliation && request.ReconcileUpper != "" && len(window.Changes) == 0 &&
 		request.ReconcileAfter != request.ReconcileUpper && len(window.Seeds) < limit {
 		reconcileLimit := limit - len(window.Seeds)
-		if request.Lane == peoplesweep.SourceDocumentText {
-			reconcileLimit = 1
-		}
+
 		reconcileChanges, next, done, scanErr := s.personSweepReconcileChanges(ctx, request, reconcileLimit)
 		if scanErr != nil {
 			return window, scanErr
 		}
 		var reconcile []peoplesweep.EvidenceItem
-		if request.Lane == peoplesweep.SourceDocumentText {
-			if len(reconcileChanges) > 0 {
-				var documentDone bool
-				reconcile, window.NextDocumentKey, documentDone, err = s.hydratePersonSweepDocumentChange(
-					ctx, request.PersonID, reconcileChanges[0], request.DocumentAfter, limit-len(window.Seeds))
-				if !documentDone {
-					next, done = request.ReconcileAfter, false
-				}
-			} else {
-				window.NextDocumentKey = ""
-			}
-		} else {
+		{
 			ids := make([]int64, 0, len(reconcileChanges))
 			for _, change := range reconcileChanges {
 				ids = append(ids, change.MessageID)
@@ -222,8 +193,7 @@ func (s *Store) personSweepTombstones(ctx context.Context, personID int64, chang
 
 func personSweepEvidenceLane(lane peoplesweep.SourceClass) bool {
 	switch lane {
-	case peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText,
-		peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR, peoplesweep.SourceDocumentText:
+	case peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText, peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
 		return true
 	default:
 		return false
@@ -276,48 +246,7 @@ func (s *Store) personSweepReconcileChanges(ctx context.Context, request peoples
 		return nil, request.ReconcileAfter, false, err
 	}
 	predicate, scopeArgs := personscope.MessagePredicate(resolution, "m", "c")
-	if request.Lane == peoplesweep.SourceDocumentText || request.Lane == peoplesweep.SourceAttachmentCaption || request.Lane == peoplesweep.SourceAttachmentOCR {
-		args := []any{after, upper}
-		args = append(args, scopeArgs...)
-		args = append(args, limit)
-		join := "JOIN attachments a ON a.message_id=m.id"
-		selectCoords := "m.source_id,m.id,a.id,''"
-		laneFilter := "TRUE"
-		if request.Lane == peoplesweep.SourceDocumentText {
-			join += " JOIN document_occurrences o ON o.attachment_id=a.id"
-			selectCoords = "o.source_id,o.message_id,o.attachment_id,o.occurrence_key"
-			laneFilter = "LOWER(COALESCE(a.media_type,''))='document'"
-		}
-		rows, queryErr := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`SELECT %s FROM messages m JOIN conversations c ON c.id=m.conversation_id %s WHERE %s AND a.id>? AND a.id<=? AND %s AND (%s) ORDER BY a.id LIMIT ?`, selectCoords, join, LiveMessagesWhere("m", true), laneFilter, predicate)), args...)
-		if queryErr != nil {
-			return nil, request.ReconcileAfter, false, fmt.Errorf("scan person sweep attachment reconciliation: %w", queryErr)
-		}
-		defer func() { _ = rows.Close() }()
-		changes := make([]peoplesweep.ArchiveChange, 0, limit)
-		var last int64
-		for rows.Next() {
-			var change peoplesweep.ArchiveChange
-			change.PersonID = request.PersonID
-			change.SourceLane = request.Lane
-			if err := rows.Scan(&change.SourceID, &change.MessageID, &change.AttachmentID, &change.OccurrenceKey); err != nil {
-				return nil, "", false, err
-			}
-			last = change.AttachmentID
-			changes = append(changes, change)
-		}
-		if err := rows.Err(); err != nil {
-			return nil, "", false, err
-		}
-		next := request.ReconcileUpper
-		if last > 0 {
-			next = fmt.Sprintf("%020d", last)
-		}
-		done := len(changes) < limit || last >= upper
-		if done {
-			next = request.ReconcileUpper
-		}
-		return changes, next, done, nil
-	}
+
 	lane := "m.message_type <> 'meeting_transcript'"
 	if request.Lane == peoplesweep.SourceMeetingText {
 		lane = "m.message_type = 'meeting_transcript'"
@@ -525,158 +454,6 @@ func (s *Store) hydratePersonSweepMessageSet(
 	return items, found, nil
 }
 
-func (s *Store) hydratePersonSweepDocumentChange(
-	ctx context.Context,
-	personID int64,
-	change peoplesweep.ArchiveChange,
-	after string,
-	limit int,
-) ([]peoplesweep.EvidenceItem, string, bool, error) {
-	if change.SourceLane != peoplesweep.SourceDocumentText || change.AttachmentID <= 0 || limit <= 0 {
-		return []peoplesweep.EvidenceItem{}, "", true, nil
-	}
-	kind, position, tombstoneAfter, err := parsePersonSweepDocumentContinuation(after)
-	if err != nil {
-		return nil, "", false, err
-	}
-	if kind == "tombstone" {
-		return s.pagePersonSweepDocumentTombstones(ctx, personID, change, tombstoneAfter, limit)
-	}
-	resolution, err := resolvePersonSweepScope(ctx, s, personID)
-	if err != nil {
-		return nil, "", false, err
-	}
-	predicate, scopeArgs := personscope.MessagePredicate(resolution, "m", "cv")
-	items := make([]peoplesweep.EvidenceItem, 0)
-	conditions := "a.id=?"
-	args := []any{change.AttachmentID}
-	if change.MessageID > 0 {
-		conditions += " AND m.id=?"
-		args = append(args, change.MessageID)
-	}
-	if change.SourceID > 0 {
-		conditions += " AND o.source_id=?"
-		args = append(args, change.SourceID)
-	}
-	if change.OccurrenceKey != "" {
-		conditions += " AND o.occurrence_key=?"
-		args = append(args, change.OccurrenceKey)
-	}
-	args = append(args, scopeArgs...)
-	args = append(args, position, limit+1)
-	rows, queryErr := s.db.QueryContext(ctx, s.Rebind(fmt.Sprintf(`
-			SELECT o.source_id,o.message_id,o.attachment_id,COALESCE(m.source_message_id,''),s.source_type,
-			       o.occurrence_key,dc.chunk_key,dc.text,dc.checksum,h.extraction_id,
-			       COALESCE(m.sent_at,m.received_at,m.internal_date,h.switched_at),h.switched_at,dc.ordinal
-			FROM document_extraction_heads h
-			JOIN document_extraction_profiles p ON p.id=h.profile_id
-			JOIN document_provider_consents consent ON consent.profile_id=p.id
-			JOIN document_chunks dc ON dc.extraction_id=h.extraction_id
-			JOIN document_occurrences o ON o.canonical_blob_hash=h.canonical_blob_hash
-			JOIN attachments a ON a.id=o.attachment_id
-			JOIN messages m ON m.id=o.message_id
-			JOIN sources s ON s.id=o.source_id
-			JOIN conversations cv ON cv.id=m.conversation_id
-			CROSS JOIN document_index_state ds
-			WHERE %s AND %s AND (%s) AND %s AND dc.ordinal >= ?
-			ORDER BY dc.ordinal LIMIT ?`, documentSearchValidityForConsent("consent"), conditions, predicate, LiveMessagesWhere("m", true))), args...)
-	if queryErr != nil {
-		return nil, "", false, fmt.Errorf("read person sweep document changes: %w", queryErr)
-	}
-	defer func() { _ = rows.Close() }()
-	nextPosition := position
-	more := false
-	scanned := 0
-	for rows.Next() {
-		if scanned == limit {
-			more = true
-			break
-		}
-		scanned++
-		var ref peoplesweep.EvidenceRef
-		ref.SourceLane = peoplesweep.SourceDocumentText
-		var sourceType, text, checksum, extractionID string
-		var event, recorded requiredTimestamp
-		var ordinal int
-		if scanErr := rows.Scan(&ref.SourceID, &ref.MessageID, &ref.AttachmentID,
-			&ref.SourceMessageID, &sourceType, &ref.OccurrenceKey, &ref.ChunkKey, &text,
-			&checksum, &extractionID, &event, &recorded, &ordinal); scanErr != nil {
-			return nil, "", false, scanErr
-		}
-		nextPosition = ordinal + 1
-		excerpt := truncateSweepRunes(text, personfacts.MaxEvidenceExcerptRunes)
-		ref.SpanEnd = utf8.RuneCountInString(excerpt)
-		provMap, provErr := s.PersonProvenanceForMessages(ctx, []int64{ref.MessageID}, resolution)
-		if provErr != nil {
-			return nil, "", false, provErr
-		}
-		prov := provMap[ref.MessageID]
-		if prov == nil {
-			continue
-		}
-		subject, direct := personSweepAuthorship(personID, prov, false,
-			personSweepSourceAuthenticatesSender(sourceType))
-		items = append(items, peoplesweep.EvidenceItem{Ref: ref, PersonID: personID, SubjectPersonID: subject, SourceClass: peoplesweep.SourceDocumentText, SourceVersion: "document/v1:" + extractionID + ":" + checksum, ContentSHA256: sweepSHA256(text), EventTime: event.Time.UTC(), RecordedTime: recorded.Time.UTC(), Excerpt: excerpt, Highlight: peoplesweep.TextSpan{End: ref.SpanEnd}, Provenance: *prov, IdentityBasisPoints: 1000, Directness: direct, Authority: personfacts.AuthorityOrdinary})
-	}
-	if rowErr := rows.Err(); rowErr != nil {
-		return nil, "", false, rowErr
-	}
-	if more {
-		return items, fmt.Sprintf("live:%020d", nextPosition), false, nil
-	}
-	if scanned > 0 || kind == "live" {
-		return items, "", true, nil
-	}
-	return s.pagePersonSweepDocumentTombstones(ctx, personID, change, "", limit)
-}
-
-func parsePersonSweepDocumentContinuation(value string) (string, int, string, error) {
-	if value == "" {
-		return "", 0, "", nil
-	}
-	if after, ok := strings.CutPrefix(value, "tombstone:"); ok {
-		key := after
-		if key == "" {
-			return "", 0, "", errors.New("load person sweep window: invalid tombstone document continuation")
-		}
-		return "tombstone", 0, key, nil
-	}
-	if !strings.HasPrefix(value, "live:") {
-		return "", 0, "", errors.New("load person sweep window: invalid document continuation")
-	}
-	position, err := strconv.Atoi(strings.TrimPrefix(value, "live:"))
-	if err != nil || position <= 0 {
-		return "", 0, "", errors.New("load person sweep window: invalid live document continuation")
-	}
-	return "live", position, "", nil
-}
-
-func (s *Store) pagePersonSweepDocumentTombstones(
-	ctx context.Context,
-	personID int64,
-	change peoplesweep.ArchiveChange,
-	afterKey string,
-	limit int,
-) ([]peoplesweep.EvidenceItem, string, bool, error) {
-	tombstones, err := s.personSweepTombstones(ctx, personID, change)
-	if err != nil {
-		return nil, "", false, err
-	}
-	sort.Slice(tombstones, func(i, j int) bool { return tombstones[i].EvidenceKey < tombstones[j].EvidenceKey })
-	// Tombstone continuations retain the full evidence key because stored
-	// document versions for one chunk can have distinct evidence identities.
-	// The prefix distinguishes this stable key page from a live chunk ordinal.
-	start := sort.Search(len(tombstones), func(index int) bool {
-		return tombstones[index].EvidenceKey > afterKey
-	})
-	tombstones = tombstones[start:]
-	if len(tombstones) <= limit {
-		return tombstones, "", true, nil
-	}
-	page := tombstones[:limit]
-	return page, "tombstone:" + page[len(page)-1].EvidenceKey, false, nil
-}
-
 func canonicalSweepMessageText(subject, body, snippet string) string {
 	subject, body, snippet = strings.TrimSpace(subject), strings.TrimSpace(body), strings.TrimSpace(snippet)
 	if subject != "" && body != "" {
@@ -798,18 +575,7 @@ func personSweepHistoricalLanePredicate(classes []peoplesweep.SourceClass) strin
 	if sweepSourceAllowed(classes, peoplesweep.SourceMeetingText) {
 		clauses = append(clauses, "m.message_type = 'meeting_transcript'")
 	}
-	if sweepSourceAllowed(classes, peoplesweep.SourceDocumentText) {
-		clauses = append(clauses, `EXISTS (
-			SELECT 1 FROM document_occurrences o
-			JOIN document_extraction_heads h ON h.canonical_blob_hash = o.canonical_blob_hash
-			JOIN document_extraction_profiles p ON p.id = h.profile_id
-			JOIN document_provider_consents consent ON consent.profile_id = p.id
-			JOIN document_chunks dc ON dc.extraction_id = h.extraction_id
-			JOIN attachments a ON a.id = o.attachment_id
-			CROSS JOIN document_index_state ds
-			WHERE o.message_id = m.id AND `+documentSearchValidityForConsent("consent")+`
-		)`)
-	}
+
 	if len(clauses) == 0 {
 		return "FALSE"
 	}
@@ -961,66 +727,6 @@ func sweepDateBounds(since, until string) (*time.Time, *time.Time, error) {
 	return after, before, nil
 }
 
-func (s *Store) SearchPersonSweepDocuments(ctx context.Context, request peoplesweep.DocumentContextRequest) ([]peoplesweep.EvidenceItem, error) {
-	resolution, err := resolvePersonSweepScope(ctx, s, request.PersonID)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(request.Query) == "" {
-		return []peoplesweep.EvidenceItem{}, nil
-	}
-	limit := request.Limit
-	if limit <= 0 {
-		limit = 20
-	}
-	response, err := s.SearchDocuments(ctx, DocumentSearchRequest{
-		Query: request.Query, MessageIDs: request.CandidateMessageIDs,
-		PageSize: min(limit, 100), After: request.After, Before: request.Before,
-		PersonID: request.PersonID, Person: &resolution,
-	})
-	if err != nil {
-		return nil, err
-	}
-	items := make([]peoplesweep.EvidenceItem, 0, len(response.Results))
-	sourceAuthentication := make(map[int64]bool)
-	for _, result := range response.Results {
-		text, checksum, recorded, loadErr := s.loadCurrentDocumentChunk(ctx, result.ExtractionID, result.ChunkKey)
-		if loadErr != nil {
-			return nil, loadErr
-		}
-		event := recorded
-		if result.OccurredAt != nil {
-			event = result.OccurredAt.UTC()
-		}
-		prov := personscope.Provenance{}
-		if result.PersonProvenance != nil {
-			prov = *result.PersonProvenance
-		}
-		authenticated, loaded := sourceAuthentication[result.SourceID]
-		if !loaded {
-			source, sourceErr := s.GetSourceByIDContext(ctx, result.SourceID)
-			if sourceErr != nil {
-				return nil, sourceErr
-			}
-			authenticated = personSweepSourceAuthenticatesSender(source.SourceType)
-			sourceAuthentication[result.SourceID] = authenticated
-		}
-		subject, direct := personSweepAuthorship(request.PersonID, &prov, false, authenticated)
-		items = append(items, peoplesweep.EvidenceItem{Ref: peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: result.SourceID, MessageID: result.MessageID, AttachmentID: result.AttachmentID, SourceMessageID: result.SourceMessageID, OccurrenceKey: result.OccurrenceKey, ChunkKey: result.ChunkKey, SpanStart: result.HighlightStart, SpanEnd: result.HighlightEnd}, PersonID: request.PersonID, SubjectPersonID: subject, SourceClass: peoplesweep.SourceDocumentText, SourceVersion: "document/v1:" + result.ExtractionID + ":" + checksum, ContentSHA256: sweepSHA256(text), EventTime: event, RecordedTime: recorded, Excerpt: result.Excerpt, Highlight: peoplesweep.TextSpan{Start: result.HighlightStart, End: result.HighlightEnd}, Provenance: prov, IdentityBasisPoints: 1000, Directness: direct, Authority: personfacts.AuthorityOrdinary})
-	}
-	return items, nil
-}
-
-func (s *Store) loadCurrentDocumentChunk(ctx context.Context, extractionID, chunkKey string) (string, string, time.Time, error) {
-	var text, checksum string
-	var recorded requiredTimestamp
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT dc.text,dc.checksum,h.switched_at FROM document_chunks dc JOIN document_extraction_heads h ON h.extraction_id=dc.extraction_id WHERE dc.extraction_id=? AND dc.chunk_key=?`), extractionID, chunkKey).Scan(&text, &checksum, &recorded)
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("load person sweep document chunk: %w", err)
-	}
-	return text, checksum, recorded.Time.UTC(), nil
-}
-
 type PersonSweepEvidenceAligner struct{ Store *Store }
 
 func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts.EvidenceInput) (personfacts.AlignmentResult, error) {
@@ -1042,9 +748,7 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 	}
 	var err error
 	var current peoplesweep.EvidenceItem
-	if ref.SourceLane == peoplesweep.SourceDocumentText {
-		current, err = a.Store.alignDocumentItem(ctx, input.PersonID, ref, input.Excerpt)
-	} else {
+	{
 		items, _, loadErr := a.Store.hydratePersonSweepMessageSet(ctx, input.PersonID, ref.SourceLane, []int64{ref.MessageID}, 0)
 		err = loadErr
 		if err == nil && len(items) == 1 {
@@ -1070,51 +774,6 @@ func (a PersonSweepEvidenceAligner) Align(ctx context.Context, input personfacts
 		return reject(personfacts.ReasonUnalignedEvidence, "person sweep evidence no longer aligns"), nil
 	}
 	return personfacts.AlignmentResult{Accepted: true, SourceVersion: current.SourceVersion, ContentSHA256: current.ContentSHA256}, nil
-}
-
-func (s *Store) alignDocumentItem(ctx context.Context, personID int64, ref peoplesweep.EvidenceRef, excerpt string) (peoplesweep.EvidenceItem, error) {
-	resolution, err := resolvePersonSweepScope(ctx, s, personID)
-	if err != nil {
-		return peoplesweep.EvidenceItem{}, err
-	}
-	predicate, args := personscope.MessagePredicate(resolution, "m", "c")
-	args = append([]any{ref.AttachmentID, ref.MessageID, ref.SourceID, ref.OccurrenceKey, ref.ChunkKey}, args...)
-	var text, checksum, extractionID, sourceMessageID, sourceType string
-	var event, recorded requiredTimestamp
-	err = s.db.QueryRowContext(ctx, s.Rebind(fmt.Sprintf(`
-		SELECT dc.text,dc.checksum,h.extraction_id,COALESCE(m.source_message_id,''),s.source_type,
-		       COALESCE(m.sent_at,m.received_at,m.internal_date,h.switched_at),h.switched_at
-		FROM document_chunks dc
-		JOIN document_extraction_heads h ON h.extraction_id=dc.extraction_id
-		JOIN document_extraction_profiles p ON p.id=h.profile_id
-		JOIN document_provider_consents consent ON consent.profile_id=p.id
-		JOIN document_occurrences o ON o.canonical_blob_hash=h.canonical_blob_hash
-		JOIN attachments a ON a.id=o.attachment_id
-		JOIN messages m ON m.id=o.message_id
-		JOIN sources s ON s.id=m.source_id
-		JOIN conversations c ON c.id=m.conversation_id
-		CROSS JOIN document_index_state ds
-		WHERE a.id=? AND m.id=? AND m.source_id=? AND o.occurrence_key=? AND dc.chunk_key=?
-		  AND %s AND (%s)`, documentSearchValidityForConsent("consent"), predicate)), args...).Scan(&text, &checksum, &extractionID, &sourceMessageID, &sourceType, &event, &recorded)
-	if err != nil {
-		return peoplesweep.EvidenceItem{}, err
-	}
-	if !strings.Contains(text, excerpt) || ref.SpanEnd > utf8.RuneCountInString(excerpt) {
-		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
-	}
-	provMap, err := s.PersonProvenanceForMessages(ctx, []int64{ref.MessageID}, resolution)
-	if err != nil {
-		return peoplesweep.EvidenceItem{}, err
-	}
-	prov := provMap[ref.MessageID]
-	if prov == nil {
-		return peoplesweep.EvidenceItem{}, sql.ErrNoRows
-	}
-	subject, direct := personSweepAuthorship(personID, prov, false,
-		personSweepSourceAuthenticatesSender(sourceType))
-	actualRef := ref
-	actualRef.SourceMessageID = sourceMessageID
-	return peoplesweep.EvidenceItem{Ref: actualRef, PersonID: personID, SubjectPersonID: subject, SourceClass: peoplesweep.SourceDocumentText, SourceVersion: "document/v1:" + extractionID + ":" + checksum, ContentSHA256: sweepSHA256(text), EventTime: event.Time.UTC(), RecordedTime: recorded.Time.UTC(), Excerpt: excerpt, Highlight: peoplesweep.TextSpan{Start: ref.SpanStart, End: ref.SpanEnd}, Provenance: *prov, IdentityBasisPoints: 1000, Directness: direct, Authority: personfacts.AuthorityOrdinary}, nil
 }
 
 func personSweepAuthorship(
@@ -1237,9 +896,6 @@ func personSweepChangeMatchesRef(personID int64, change peoplesweep.ArchiveChang
 		return false
 	}
 	switch ref.SourceLane {
-	case peoplesweep.SourceDocumentText:
-		return change.AttachmentID == ref.AttachmentID &&
-			change.OccurrenceKey == ref.OccurrenceKey
 	case peoplesweep.SourceAttachmentCaption, peoplesweep.SourceAttachmentOCR:
 		return change.AttachmentID == ref.AttachmentID
 	default:

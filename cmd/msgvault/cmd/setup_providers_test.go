@@ -19,7 +19,6 @@ import (
 	"go.kenn.io/docbank/document/voyage"
 	"go.kenn.io/docbank/document/voyage/voyagetest"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
@@ -302,65 +301,6 @@ func TestSetupProvidersCompletesEnabledVisualManifestPath(t *testing.T) {
 	}
 }
 
-func TestSetupDocumentConsentMatchesCompletePolicy(t *testing.T) {
-	require := require.New(t)
-	c := config.NewDefaultConfig()
-	c.HomeDir = t.TempDir()
-	c.Attachments.Documents.Enabled = true
-	c.Attachments.Documents.RetentionPosture = documentindex.RetentionZDR
-	c.Attachments.Documents.TrainingPosture = documentindex.TrainingOptedOut
-	_, profile, err := documentProfileForConfig(&c.Attachments.Documents, commandCapabilityManifest(t, c.Attachments.Documents.MaxPagesPerDocument))
-	require.NoError(err)
-	manifest, err := os.ReadFile(writeCommandCapabilityManifest(t, c.Attachments.Documents.MaxPagesPerDocument))
-	require.NoError(err)
-	require.NoError(os.WriteFile(setupMistralManifestPath(c), manifest, 0o600))
-	st := testutil.NewSQLiteTestStore(t)
-	_, err = st.EnsureDocumentExtractionProfile(t.Context(), profile)
-	require.NoError(err)
-	assert.False(t, setupConsentFromStore(t.Context(), c, st).Documents)
-	require.NoError(st.RecordDocumentProviderConsent(t.Context(), store.DocumentProviderConsent{
-		ProfileID: profile.ID, ProfileFingerprint: profile.Fingerprint,
-		RetentionPosture: profile.RetentionPosture, TrainingPosture: profile.TrainingPosture,
-	}))
-	assert.True(t, setupConsentFromStore(t.Context(), c, st).Documents)
-	for _, field := range []string{"provider", "model", "region", "retention", "training", "spool limit", "scope", "normalization", "missing manifest"} {
-		t.Run(field, func(t *testing.T) {
-			assert := assert.New(t)
-
-			changed := *c
-			documents := &changed.Attachments.Documents
-			switch field {
-			case "provider":
-				documents.Provider = "other"
-			case "model":
-				documents.Model = "other-model"
-			case "region":
-				documents.Region = "other-region"
-			case "retention":
-				documents.RetentionPosture = documentindex.RetentionStandard
-			case "training":
-				documents.TrainingPosture = documentindex.TrainingDefaultOptOut
-			case "spool limit":
-				documents.MaxSpoolBytes++
-			case "scope":
-				documents.Scope.MessageTypes = []string{"email"}
-			case "normalization":
-				documents.MaxNormalizedChars--
-			case "missing manifest":
-				changed.HomeDir = t.TempDir()
-			}
-			consent := setupConsentFromStore(t.Context(), &changed, st)
-			assert.False(consent.Documents)
-			lane := documentsLane(&changed, setupEnvironment{consent: consent, lookupEnv: func(string) (string, bool) { return setupProvidersTestKey, true }})
-			assert.Equal(laneStatePending, lane.State)
-			assert.Equal(consentMissing, lane.Consent)
-		})
-	}
-	_, err = st.RetireDocumentExtractionProfile(t.Context(), profile.ID)
-	require.NoError(err)
-	assert.False(t, setupConsentFromStore(t.Context(), c, st).Documents)
-}
-
 func (f *setupProvidersFixture) personProviderDeps(t *testing.T) personProviderCommandDeps {
 	t.Helper()
 	assert := assert.New(t)
@@ -463,114 +403,6 @@ const setupProvidersMinimalConfig = `# operator comment survives setup
 data_dir = "{{DIR}}/data"
 `
 
-func TestSetupProvidersPreservesPosturesUnlessFlagsOverride(t *testing.T) {
-	for name, override := range map[string]bool{"preserve": false, "override": true} {
-		t.Run(name, func(t *testing.T) {
-			require := require.New(t)
-
-			assert := assert.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+`
-[vector.people]
-retention_posture = "zero_data_retention"
-training_posture = "no_training"
-[attachments.documents]
-retention_posture = "zdr"
-training_posture = "opted-out"
-`)
-			fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-			args := []string{"providers", "--yes"}
-			peopleRetention, documentTraining := "zero_data_retention", "opted-out"
-			if override {
-				args = append(args, "--retention-posture", setupPostureDeclared, "--document-training", documentindex.TrainingDefaultOptOut)
-				peopleRetention, documentTraining = setupPostureDeclared, documentindex.TrainingDefaultOptOut
-			}
-			output, err := fixture.run(t, args...)
-			require.NoError(err, output)
-			loaded := fixture.load(t)
-			assert.Equal(peopleRetention, loaded.Vector.People.RetentionPosture)
-			assert.Equal("no_training", loaded.Vector.People.TrainingPosture)
-			assert.Equal("zdr", loaded.Attachments.Documents.RetentionPosture)
-			assert.Equal(documentTraining, loaded.Attachments.Documents.TrainingPosture)
-			assert.Contains(output, "retention=zdr, training="+documentTraining)
-		})
-	}
-}
-
-func TestSetupProvidersResolvesUnknownDocumentPostures(t *testing.T) {
-	cfg := testConfigValue()
-
-	for _, enabled := range []bool{false, true} {
-		for _, explicit := range []bool{false, true} {
-			t.Run(fmt.Sprintf("enabled=%t/explicit=%t", enabled, explicit), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				savedTraining, wantTraining := documentindex.TrainingUnknown, documentindex.TrainingDefaultOptOut
-				if explicit {
-					savedTraining, wantTraining = documentindex.TrainingOptedOut, documentindex.TrainingOptedOut
-				}
-				fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
-[attachments.documents]
-enabled = %t
-retention_posture = "unknown"
-training_posture = %q
-`, enabled, savedTraining))
-				fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-				args := []string{"providers", "--yes"}
-				wantRetention := documentindex.RetentionStandard
-				if explicit {
-					args = append(args, "--document-retention", documentindex.RetentionZDR)
-					wantRetention = documentindex.RetentionZDR
-				}
-				output, err := fixture.run(t, args...)
-				require.NoError(err, output)
-				loaded := fixture.load(t)
-				assert.True(loaded.Attachments.Documents.Enabled)
-				assert.Equal(wantRetention, loaded.Attachments.Documents.RetentionPosture)
-				assert.Equal(wantTraining, loaded.Attachments.Documents.TrainingPosture)
-				assert.Contains(output, "retention="+wantRetention+", training="+wantTraining)
-				if explicit {
-					previous := cfg
-					cfg = loaded
-					t.Cleanup(func() { cfg = previous })
-					testCtx := testInvocationContext(t.Context(), loaded, invocationOptions{})
-					_, _, _, _, err := configuredDocumentProfile(writeCommandCapabilityManifest(t, loaded.Attachments.Documents.MaxPagesPerDocument), invocationFromContext(testCtx))
-					require.NoError(err)
-				}
-			})
-		}
-	}
-}
-
-func TestSetupProvidersCustomHostedEndpointNeedsExplicitConfiguration(t *testing.T) {
-	for _, endpoint := range []string{"https://api.openai.com.example.test/v1", "https://localhost.example.test/v1", "https://embeddings.example.test/v1"} {
-		t.Run(endpoint, func(t *testing.T) {
-			require := require.New(t)
-
-			assert := assert.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
-[vector]
-enabled = true
-[vector.embeddings]
-endpoint = %q
-model = "embedding-test"
-dimension = 768
-[attachments.documents]
-enabled = true
-retention_posture = "zdr"
-training_posture = "opted-out"
-`, endpoint))
-			before := fixture.readConfig(t)
-			output, err := fixture.run(t, "providers", "--yes")
-			require.NoError(err, output)
-			assert.Equal(before, fixture.readConfig(t))
-			assert.False(fixture.load(t).Vector.People.Enabled)
-			assert.False(fixture.load(t).Attachments.Documents.Index.Embeddings.Enabled)
-			assert.Contains(output, "custom hosted provider")
-		})
-	}
-}
-
 func TestEmbeddingProviderNameUsesURLHost(t *testing.T) {
 	for endpoint, want := range map[string]string{
 		setupOpenAIEndpoint: "openai", setupVoyageEndpoint: "voyage",
@@ -617,43 +449,6 @@ func TestSetupProvidersPostgresRequiresCompiledBackend(t *testing.T) {
 	}
 }
 
-func TestSetupStatusConfiguredVectorLanesRequireCompiledBackend(t *testing.T) {
-	cfg := testConfigValue()
-	require := require.New(t)
-
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
-	output, err := fixture.run(t, "providers", "--yes")
-	require.NoError(err, output)
-	loaded := fixture.load(t)
-	previous := cfg
-	cfg = loaded
-	t.Cleanup(func() { cfg = previous })
-	for _, dsn := range []string{"", "postgres://localhost/setup_test"} {
-		t.Run(dsn, func(t *testing.T) {
-			assert := assert.New(t)
-			loaded.Data.DatabaseURL = dsn
-			report := buildLaneReport(loaded, setupEnvironment{
-				lookupEnv: fixture.lookupEnv, fileExists: func(path string) bool { return fixture.files[path] },
-				consent: &setupConsentState{Documents: true, Visual: true, PersonSemantic: true, DocumentEmbedding: true, QueryEmbedding: true},
-			})
-			startupErr := precheckVectorFeatures(loaded.DatabaseDSN(), loaded)
-			for _, name := range []string{laneTextSearch, lanePersonSearch, laneVisualSearch, laneDocumentVectors} {
-				lane := findLane(t, report, name)
-				if startupErr != nil {
-					assert.Equal(laneStatePending, lane.State, name)
-					assert.Contains(lane.Reason, "not compiled in", name)
-					assert.Contains(lane.Reason, "rebuild", name)
-				} else {
-					assert.Equal(laneStateOn, lane.State, name)
-				}
-			}
-		})
-	}
-}
-
 func TestSetupProvidersRequiresExplicitSensitiveDecision(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -675,121 +470,6 @@ func TestSetupProvidersRequiresExplicitSensitiveDecision(t *testing.T) {
 	require.NoError(err)
 	assert.True(consented)
 	assert.True(profile.AllowSensitive)
-}
-
-func TestSetupStatusReportsMissingHostedCredentials(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
-		fixture.env[key] = setupProvidersTestKey
-	}
-	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
-	_, err := fixture.run(t, append([]string{"providers", "--yes", "--allow-sensitive"}, explicitOpenAISetupFlags()...)...)
-	require.NoError(err)
-	for lane, key := range map[string]string{
-		laneTextSearch: setupVoyageKeyEnv, lanePersonSearch: setupVoyageKeyEnv, laneDocumentVectors: setupVoyageKeyEnv,
-		laneVisualSearch: setupVoyageKeyEnv, laneDocuments: "MISTRAL_API_KEY", lanePeopleInference: setupOpenAIKeyEnv,
-	} {
-		fixture.env[key] = "  "
-		output, err := fixture.run(t, "status", "--json")
-		require.NoError(err, output)
-		var report laneReport
-		require.NoError(json.Unmarshal([]byte(output), &report))
-		status := findLane(t, report, lane)
-		assert.Equal(laneStatePending, status.State)
-		assert.Contains(status.Reason, key)
-		assert.Contains(status.Reason, "not set")
-		fixture.env[key] = setupProvidersTestKey
-		output, err = fixture.run(t, "status", "--json")
-		require.NoError(err, output)
-		require.NoError(json.Unmarshal([]byte(output), &report))
-		restored := findLane(t, report, lane)
-		assert.NotContains(restored.Reason, "not set")
-		wantState := laneStateOn
-		if restored.Consent == consentMissing || restored.Consent == consentUnknown {
-			wantState = laneStatePending
-		}
-		assert.Equal(wantState, restored.State)
-	}
-}
-
-func TestSetupReportsResolveStoredVectorCredentials(t *testing.T) {
-	for _, test := range []struct {
-		name, stored, environment, want string
-	}{
-		{name: "missing", want: laneStatePending},
-		{name: "environment", environment: setupProvidersTestKey, want: laneStateOn},
-		{name: "stored", stored: "matching", want: laneStateOn},
-		{name: "other provider", stored: "other provider", want: laneStatePending},
-		{name: "other endpoint", stored: "other endpoint", environment: setupProvidersTestKey, want: laneStatePending},
-		{name: "unreadable store", stored: "malformed", environment: setupProvidersTestKey, want: laneStatePending},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-			fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
-			output, err := fixture.run(t, "providers", "--yes")
-			require.NoError(err, output)
-			loaded := fixture.load(t)
-			loaded.Vector.People.Enabled = true
-			loaded.Attachments.Documents.Enabled = true
-			loaded.Attachments.Documents.Index.Embeddings.Enabled = true
-			t.Setenv(setupVoyageKeyEnv, test.environment)
-			fixture.env[setupVoyageKeyEnv] = test.environment
-			snapshot, err := providercredentials.Read(loaded.TokensDir())
-			require.NoError(err)
-			if test.stored != "" {
-				for id, endpoint := range map[string]string{
-					providercredentials.VectorEmbeddingsID: loaded.Vector.Embeddings.Endpoint,
-					providercredentials.VectorMultimodalID: loaded.Vector.Multimodal.Endpoint,
-				} {
-					if test.stored == "other provider" {
-						id = providercredentials.PersonEnrichmentID("other-provider")
-					}
-					if test.stored == "other endpoint" {
-						endpoint = "https://other.example.com/v1"
-					}
-					snapshot, err = providercredentials.Put(loaded.TokensDir(), snapshot.ETag, id, endpoint, "synthetic-stored-key")
-					require.NoError(err)
-				}
-				if test.stored == "malformed" {
-					require.NoError(os.WriteFile(filepath.Join(loaded.TokensDir(), providercredentials.Filename), []byte("invalid JSON"), 0o600))
-				}
-			}
-			consent := &setupConsentState{Visual: true, PersonSemantic: true, DocumentEmbedding: true, QueryEmbedding: true}
-			deps := defaultSetupStatusDeps()
-			deps.config = func() *config.Config { return loaded }
-			readEnvironment := deps.environment
-			deps.environment = func(command *cobra.Command, c *config.Config) setupEnvironment {
-				env := readEnvironment(command, c)
-				env.consent = consent
-				return env
-			}
-			command := newSetupStatusCommand(deps)
-			command.SetArgs([]string{"--json"})
-			var out bytes.Buffer
-			command.SetOut(&out)
-			require.NoError(command.ExecuteContext(t.Context()))
-			var status laneReport
-			require.NoError(json.Unmarshal(out.Bytes(), &status))
-			assert.NotContains(out.String(), "synthetic-stored-key")
-			out.Reset()
-			providerDeps := fixture.deps(t)
-			providerDeps.consentState = func(context.Context, *config.Config) *setupConsentState { return consent }
-			require.NoError(writeSetupProvidersResult(command, providerDeps, loaded, &setupProvidersPlan{}, setupProvidersOptions{jsonOutput: true}, false, nil))
-			var result setupProvidersOutput
-			require.NoError(json.Unmarshal(out.Bytes(), &result))
-			assert.NotContains(out.String(), "synthetic-stored-key")
-			for _, report := range []laneReport{status, result.Report} {
-				for _, name := range []string{laneTextSearch, laneVisualSearch, lanePersonSearch, laneDocumentVectors} {
-					assert.Equal(test.want, findLane(t, report, name).State, name)
-				}
-			}
-		})
-	}
 }
 
 func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
@@ -855,47 +535,6 @@ func TestSetupReportsCheckStoredPeopleCredential(t *testing.T) {
 	}
 }
 
-func TestSetupStatusConsentGatedLanesRequireActiveConsent(t *testing.T) {
-	require := require.New(t)
-
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	for _, key := range []string{setupVoyageKeyEnv, "MISTRAL_API_KEY", setupOpenAIKeyEnv} {
-		fixture.env[key] = setupProvidersTestKey
-	}
-	fixture.writeVisualManifest(t, filepath.Join(fixture.dir, setupVoyageManifestName), voyage.CapabilityQueryText)
-	output, err := fixture.run(t, append([]string{"providers", "--yes", "--allow-sensitive"}, explicitOpenAISetupFlags()...)...)
-	require.NoError(err, output)
-	loaded := fixture.load(t)
-	for _, test := range []struct {
-		consent                *setupConsentState
-		wantConsent, wantState string
-	}{
-		{wantConsent: consentUnknown, wantState: laneStatePending},
-		{consent: &setupConsentState{}, wantConsent: consentMissing, wantState: laneStatePending},
-		{consent: &setupConsentState{
-			Documents: true, Visual: true, PersonInference: true, PersonSemantic: true,
-			DocumentEmbedding: true, QueryEmbedding: true,
-		}, wantConsent: consentActive, wantState: laneStateOn},
-	} {
-		t.Run(test.wantConsent, func(t *testing.T) {
-			assert := assert.New(t)
-			report := buildLaneReport(loaded, setupEnvironment{
-				lookupEnv: fixture.lookupEnv, fileExists: func(path string) bool { return fixture.files[path] },
-				consent: test.consent,
-			})
-			for _, name := range []string{lanePersonSearch, laneVisualSearch, laneDocuments, laneDocumentVectors, lanePeopleInference} {
-				lane := findLane(t, report, name)
-				assert.Equal(test.wantConsent, lane.Consent, name)
-				assert.Equal(test.wantState, lane.State, name)
-				if test.wantState == laneStatePending {
-					assert.NotEmpty(lane.Next, name)
-				}
-			}
-			assert.Equal(laneStateOn, findLane(t, report, laneTextSearch).State)
-		})
-	}
-}
-
 func TestSetupProvidersPreservesExplicitSchedules(t *testing.T) {
 	for _, manifest := range []bool{false, true} {
 		for _, schedule := range []struct {
@@ -932,50 +571,6 @@ func TestSetupProvidersPreservesExplicitSchedules(t *testing.T) {
 	}
 }
 
-func TestSetupProvidersVoyageWritesRecommendedDefaults(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-
-	output, err := fixture.run(t, "providers", "--yes")
-	require.NoError(err, output)
-
-	loaded := fixture.load(t)
-	assert.True(loaded.Vector.Enabled)
-	assert.Equal("sqlite-vec", loaded.Vector.Backend)
-	assert.Equal(vector.APIFormatVoyageContextual, loaded.Vector.Embeddings.EffectiveAPIFormat())
-	assert.Equal(setupVoyageTextModel, loaded.Vector.Embeddings.Model)
-	assert.Equal(setupVoyageTextDim, loaded.Vector.Embeddings.Dimension)
-	assert.Equal(setupVoyageEndpoint, loaded.Vector.Embeddings.Endpoint)
-	assert.Equal(setupVoyageKeyEnv, loaded.Vector.Embeddings.APIKeyEnv)
-	assert.True(loaded.Vector.Embed.Schedule.RunAfterSync)
-	assert.Equal(setupEmbedCron, loaded.Vector.Embed.Schedule.Cron)
-	assert.True(loaded.Vector.People.Enabled)
-	assert.Equal(setupPostureDeclared, loaded.Vector.People.RetentionPosture)
-	assert.Equal(setupPostureDeclared, loaded.Vector.People.TrainingPosture)
-	// The visual lane stays off until the probe manifest exists: enabling it
-	// without one makes the daemon refuse every vector lane.
-	assert.False(loaded.Vector.Multimodal.Enabled)
-	assert.True(loaded.Vector.Multimodal.Schedule.RunAfterSync)
-	assert.False(loaded.Attachments.Documents.Enabled)
-	assert.False(loaded.People.Sweep.Enabled)
-
-	assert.Contains(fixture.readConfig(t), "# operator comment survives setup")
-	assert.Contains(output, "Configuration written to")
-	assert.Contains(output, "multimodal probe --seeds <private-seed-dir> --out "+setupVoyageManifestPath(loaded))
-	assert.Contains(output, "msgvault embeddings build --yes")
-	assert.Contains(output, "person provider consent --semantic-embeddings --yes")
-	assert.NotContains(output, setupProvidersTestKey)
-
-	// Re-running leaves a configured archive alone.
-	before := fixture.readConfig(t)
-	output, err = fixture.run(t, "providers", "--yes")
-	require.NoError(err, output)
-	assert.Equal(before, fixture.readConfig(t))
-	assert.Contains(output, "already configured")
-}
-
 func TestSetupProvidersCreatesMissingConfigFile(t *testing.T) {
 	require := require.New(t)
 	fixture := newSetupProvidersFixture(t, "")
@@ -1005,39 +600,6 @@ func TestSetupProvidersEnablesVisualLaneWhenManifestExists(t *testing.T) {
 	assert.True(loaded.Vector.Multimodal.Schedule.RunAfterSync)
 	assert.Equal(setupEmbedCron, loaded.Vector.Multimodal.Schedule.Cron)
 	assert.Contains(output, "msgvault multimodal build --yes")
-}
-
-func TestSetupProvidersMistralEnablesDocumentsAndVectors(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-
-	output, err := fixture.run(t, "providers", "--yes",
-		"--document-retention", documentindex.RetentionZDR, "--document-training", documentindex.TrainingOptedOut)
-	require.NoError(err, output)
-
-	loaded := fixture.load(t)
-	documents := loaded.Attachments.Documents
-	assert.True(documents.Enabled)
-	assert.Equal(documentindex.RetentionZDR, documents.RetentionPosture)
-	assert.Equal(documentindex.TrainingOptedOut, documents.TrainingPosture)
-	assert.Equal(documentindex.ModelMistralOCR, documents.Model)
-	assert.True(documents.Index.Embeddings.Enabled)
-	manifest := setupMistralManifestPath(loaded)
-	assert.Contains(output, "documents probe-mistral --fixtures <private-fixture-dir> > "+manifest)
-	assert.Contains(output, "documents consent-mistral --capabilities "+manifest+" --yes")
-	assert.Contains(output, "msgvault documents vectors consent --yes")
-	assert.Contains(output, "retention=zdr, training=opted-out")
-	// The follow-ups must include actual indexing after both consent steps.
-	build := strings.LastIndex(output, "msgvault documents vectors build")
-	require.NotEqual(-1, build)
-	for _, consent := range []string{"msgvault documents vectors consent --yes", "msgvault documents vectors consent --purpose queries --yes"} {
-		position := strings.LastIndex(output, consent)
-		require.NotEqual(-1, position)
-		assert.Less(position, build)
-	}
 }
 
 func TestSetupProvidersRejectsUnknownDocumentPostures(t *testing.T) {
@@ -1242,25 +804,6 @@ func TestSetupProvidersNamedPresetRequiresModel(t *testing.T) {
 	assert.Contains(findLane(t, report, lanePeopleInference).Reason, "--provider")
 }
 
-func TestSetupProvidersRejectsKeySourceWithoutProviderChoice(t *testing.T) {
-	require := require.New(t)
-
-	base := setupProvidersOptions{
-		documentRetention: documentindex.RetentionStandard,
-		documentTraining:  documentindex.TrainingDefaultOptOut,
-		retentionPosture:  setupPostureDeclared, trainingPosture: setupPostureDeclared,
-	}
-	for _, change := range []func(*setupProvidersOptions){
-		func(o *setupProvidersOptions) { o.model = "explicit/model" },
-		func(o *setupProvidersOptions) { o.credentialEnv = "EXACT_KEY" },
-		func(o *setupProvidersOptions) { o.apiKeyStdin = true },
-	} {
-		options := base
-		change(&options)
-		require.ErrorContains(validateSetupProvidersOptions(options), "--provider")
-	}
-}
-
 func TestSetupProvidersExplicitFalseSensitiveDecision(t *testing.T) {
 	for _, preset := range []string{"openai", "venice"} {
 		t.Run(preset, func(t *testing.T) {
@@ -1378,44 +921,8 @@ func TestSetupProvidersDisclosureListsInferenceSources(t *testing.T) {
 
 	output, err := fixture.run(t, append([]string{"providers", "--dry-run", "--allow-sensitive"}, explicitOpenAISetupFlags()...)...)
 	require.NoError(err, output)
-	assert.Contains(output, "bounded evidence packets of conversation_text, meeting_text, document_text for tracked people")
+	assert.Contains(output, "bounded evidence packets of conversation_text, meeting_text for tracked people")
 	assert.Contains(output, "--allow-sensitive authorizes sending sensitive archive excerpts to OpenAI")
-}
-
-func TestSetupProvidersDeclinedDocumentsUpdateDependentLanes(t *testing.T) {
-	for _, local := range []bool{false, true} {
-		t.Run(fmt.Sprint("local=", local), func(t *testing.T) {
-			require := require.New(t)
-
-			assert := assert.New(t)
-			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-			fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-			fixture.tty = true
-			profileName := "openai"
-			if local {
-				fixture.ollama = ollamaProbeResult{Reachable: true, Models: []string{"nomic-embed-text:latest", "gpt-oss-128k:latest"}}
-				fixture.input = strings.NewReader("n\n")
-				profileName = setupOllamaProfile
-			} else {
-				fixture.env[setupOpenAIKeyEnv] = setupProvidersTestKey
-				fixture.input = strings.NewReader("n\ny\n")
-			}
-
-			args := []string{"providers", "--allow-sensitive"}
-			if !local {
-				args = append(args, explicitOpenAISetupFlags()...)
-			}
-			output, err := fixture.run(t, args...)
-			require.NoError(err, output)
-			loaded := fixture.load(t)
-			assert.False(loaded.Attachments.Documents.Enabled)
-			assert.False(loaded.Attachments.Documents.Index.Embeddings.Enabled)
-			assert.ElementsMatch([]peoplesweep.SourceClass{peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText},
-				loaded.People.Sweep.Providers[profileName].AllowedSources)
-			assert.NotContains(output, "bounded evidence packets of conversation_text, meeting_text, document_text")
-			assert.NotContains(output, "msgvault documents vectors consent --yes")
-		})
-	}
 }
 
 func TestSetupProvidersFailureRestoresConfig(t *testing.T) {
@@ -1560,30 +1067,6 @@ func TestSetupProvidersRequiresConsentWithoutTerminal(t *testing.T) {
 	assert.Equal(before, fixture.readConfig(t))
 }
 
-func TestSetupProvidersDeclinedProviderWritesNothingForIt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-	fixture.env["MISTRAL_API_KEY"] = setupProvidersTestKey
-	fixture.tty = true
-	// Decline Voyage, accept Mistral.
-	fixture.input = strings.NewReader("n\ny\n")
-
-	output, err := fixture.run(t, "providers")
-	require.NoError(err, output)
-
-	loaded := fixture.load(t)
-	assert.False(loaded.Vector.Enabled)
-	assert.False(loaded.Vector.People.Enabled)
-	assert.True(loaded.Attachments.Documents.Enabled)
-	// Document vectors need the declined text lane, so they were not enabled
-	// even though the Mistral gate was accepted.
-	assert.False(loaded.Attachments.Documents.Index.Embeddings.Enabled)
-	assert.Contains(output, "Enable the voyage lanes? [y/N]:")
-	assert.Contains(output, "Enable the mistral lanes? [y/N]:")
-}
-
 func TestSetupProvidersKeepsConfiguredTextLane(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -1630,39 +1113,6 @@ func TestSetupProvidersRefusesConfiguredRemote(t *testing.T) {
 	err := root.ExecuteContext(t.Context())
 	require.ErrorContains(err, "remote daemon")
 	assert.Equal(strings.ReplaceAll(setupProvidersMinimalConfig, "{{DIR}}", filepath.ToSlash(fixture.dir)), fixture.readConfig(t))
-}
-
-func TestSetupStatusReportsPendingLanesForPresentKeys(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
-	fixture.env[setupVoyageKeyEnv] = setupProvidersTestKey
-
-	output, err := fixture.run(t, "status", "--json")
-	require.NoError(err, output)
-	var report laneReport
-	require.NoError(json.Unmarshal([]byte(output), &report))
-
-	text := findLane(t, report, laneTextSearch)
-	assert.Equal(laneStatePending, text.State)
-	assert.Equal([]string{"msgvault setup providers"}, text.Next)
-	visual := findLane(t, report, laneVisualSearch)
-	assert.Equal(laneStatePending, visual.State)
-	documents := findLane(t, report, laneDocuments)
-	assert.Equal(laneStateOff, documents.State)
-	assert.Contains(documents.Reason, "MISTRAL_API_KEY")
-	activity := findLane(t, report, laneActivity)
-	assert.Equal(laneStateOn, activity.State)
-	assert.Equal("cron 17 * * * *", activity.Schedule)
-	media := findLane(t, report, laneMediaPolicy)
-	assert.Contains(media.Reason, "beeper scope all")
-	assert.Equal([]string{"search_people", "get_person_notes", "get_person_relationship", "search_person_files"}, report.MCPTools)
-
-	human, err := fixture.run(t, "status")
-	require.NoError(err, human)
-	assert.Contains(human, "LANE")
-	assert.Contains(human, "Text search (messages, chats, meetings)")
-	assert.Contains(human, "MCP tools live with this configuration")
 }
 
 func findLane(t *testing.T, report laneReport, lane string) laneStatus {

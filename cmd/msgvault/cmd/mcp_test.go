@@ -156,7 +156,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	}, gotHTTPOpts)
 }
 
-func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
+func TestMCPDelegatedModeServesDraftsWithCurrentAPI(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	previousHTTPAddr := mcpHTTPAddr
@@ -168,7 +168,7 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 	serveMCPStdioWithOptions = func(_ context.Context, options mcpserver.ServeOptions) error {
 		serveCalled = true
 		assertions.True(options.DelegatedOnly)
-		assertions.Nil(options.Calendar)
+		assertions.NotNil(options.Calendar)
 		assertions.NotEmpty(options.DraftCommands)
 		return errors.New("stop after capture")
 	}
@@ -184,7 +184,10 @@ func TestMCPDelegatedModeServesDraftsWithoutCalendarAPI(t *testing.T) {
 		case "/api/v1/health":
 			healthRequests.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": "3.0.0"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "api_schema_version": api.APISchemaVersion})
+		case "/api/v1/agent-tokens/self":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"permissions": []string{"draft.create"}})
 		case "/api/session":
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"auth_mode": "delegated"})

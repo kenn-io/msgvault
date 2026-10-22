@@ -16,22 +16,19 @@ import (
 	"go.kenn.io/msgvault/internal/personscope"
 	personresolver "go.kenn.io/msgvault/internal/personscope/resolver"
 	"go.kenn.io/msgvault/internal/query"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const (
-	personFilesLaneMetadata  = "metadata"
-	personFilesLaneDocuments = "documents"
-	personFilesLaneVisual    = "visual"
-	personFilesLaneAll       = "all"
+	personFilesLaneMetadata = "metadata"
+	personFilesLaneVisual   = "visual"
+	personFilesLaneAll      = "all"
 )
 
 type personFilesClient interface {
 	SearchPersonFiles(ctx context.Context, options daemonclient.PersonFileSearchOptions) (generated.PersonFileSearchHTTPResponse, error)
 	SuggestPersonFiles(ctx context.Context, options daemonclient.PersonFileSuggestionOptions) (generated.PersonFileSuggestionHTTPResponse, error)
-	SearchDocuments(ctx context.Context, request store.DocumentSearchRequest) (store.DocumentSearchResponse, error)
 	SearchVisualAttachmentsFiltered(ctx context.Context, options daemonclient.VisualSearchOptions) (*visual.SearchResponse, error)
 }
 
@@ -49,7 +46,6 @@ type personFilesOutput struct {
 	RequestedLane string                                  `json:"requested_lane"`
 	Availability  map[string]personFilesLaneStatus        `json:"availability"`
 	Metadata      *generated.PersonFileSearchHTTPResponse `json:"metadata,omitzero"`
-	Documents     *store.DocumentSearchResponse           `json:"documents,omitzero"`
 	Visual        *visual.SearchResponse                  `json:"visual,omitzero"`
 }
 
@@ -79,9 +75,9 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 			}
 			lane = strings.ToLower(strings.TrimSpace(lane))
 			switch lane {
-			case personFilesLaneMetadata, personFilesLaneDocuments, personFilesLaneVisual, personFilesLaneAll:
+			case personFilesLaneMetadata, personFilesLaneVisual, personFilesLaneAll:
 			default:
-				return usageErr(command, errors.New("--lane must be metadata, documents, visual, or all"))
+				return usageErr(command, errors.New("--lane must be metadata, visual, or all"))
 			}
 			if fuzzyFilename {
 				if lane != personFilesLaneMetadata {
@@ -106,10 +102,10 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 			queryText = strings.TrimSpace(queryText)
 			filename = strings.TrimSpace(filename)
 			if lane != personFilesLaneMetadata && queryText == "" {
-				return usageErr(command, errors.New("--query is required for documents, visual, and all lanes"))
+				return usageErr(command, errors.New("--query is required for visual and all lanes"))
 			}
 			if lane == personFilesLaneMetadata && queryText != "" {
-				return usageErr(command, errors.New("--query requires the documents, visual, or all lane"))
+				return usageErr(command, errors.New("--query requires the visual or all lane"))
 			}
 			if lane == personFilesLaneAll && cursor != "" {
 				return usageErr(command, errors.New("--cursor requires one lane because lane cursors are independent"))
@@ -184,33 +180,6 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 				output.Availability[personFilesLaneMetadata] = status
 			}
 
-			documentUnsupported := ""
-			if filename != "" || len(mimeFamilies) > 0 {
-				documentUnsupported = "document lane cannot apply exact filename or MIME-family filters"
-			}
-			if lane == personFilesLaneDocuments || lane == personFilesLaneAll {
-				if documentUnsupported != "" {
-					if lane == personFilesLaneDocuments {
-						return usageErr(command, errors.New(documentUnsupported))
-					}
-					output.Availability[personFilesLaneDocuments] = personFilesLaneStatus{Reason: documentUnsupported}
-				} else {
-					documents, documentErr := client.SearchDocuments(command.Context(), store.DocumentSearchRequest{
-						Query: queryText, PersonID: personID, Directions: directions,
-						After: after, Before: before, PageSize: limit, Cursor: cursor,
-					})
-					if documentErr != nil {
-						if lane == personFilesLaneDocuments {
-							return documentErr
-						}
-						output.Availability[personFilesLaneDocuments] = personFilesLaneStatus{Reason: documentErr.Error()}
-					} else {
-						output.Documents = &documents
-						output.Availability[personFilesLaneDocuments] = personFilesLaneStatus{Available: true}
-					}
-				}
-			}
-
 			if lane == personFilesLaneVisual || lane == personFilesLaneAll {
 				mimePrefix, mimeErr := personFilesVisualMIMEPrefix(mimeFamilies)
 				if mimeErr != nil {
@@ -247,8 +216,8 @@ func newPersonFilesCommand(deps personFilesCommandDeps) *cobra.Command {
 	command.Flags().StringSliceVar(&rawMIMEFamilies, "mime-family", nil, "Stable MIME family (repeatable)")
 	command.Flags().StringVar(&filename, "filename", "", "Case-insensitive filename substring")
 	command.Flags().BoolVar(&fuzzyFilename, "fuzzy-filename", false, "Suggest typo-tolerant filenames in the metadata lane (default limit 20)")
-	command.Flags().StringVar(&lane, "lane", personFilesLaneMetadata, "Retrieval lane: metadata, documents, visual, or all")
-	command.Flags().StringVar(&queryText, "query", "", "Semantic query required by documents, visual, and all lanes")
+	command.Flags().StringVar(&lane, "lane", personFilesLaneMetadata, "Retrieval lane: metadata, visual, or all")
+	command.Flags().StringVar(&queryText, "query", "", "Semantic query required by visual and all lanes")
 	command.Flags().IntVarP(&limit, "limit", "n", 100, "Maximum results per lane")
 	command.Flags().StringVar(&cursor, "cursor", "", "Opaque cursor for one selected lane")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output structured grouped JSON")
@@ -315,7 +284,7 @@ func personFilesVisualMIMEPrefix(families []query.FileMIMEFamily) (string, error
 
 func writePersonFilesOutput(command *cobra.Command, output personFilesOutput) error {
 	w := tabwriter.NewWriter(command.OutOrStdout(), 0, 0, 2, ' ', 0)
-	for _, lane := range []string{personFilesLaneMetadata, personFilesLaneDocuments, personFilesLaneVisual} {
+	for _, lane := range []string{personFilesLaneMetadata, personFilesLaneVisual} {
 		status, selected := output.Availability[lane]
 		if !selected {
 			continue
@@ -338,15 +307,7 @@ func writePersonFilesOutput(command *cobra.Command, output personFilesOutput) er
 				result.PersonProvenance.Directions)
 		}
 	}
-	if output.Documents != nil {
-		for _, result := range output.Documents.Results {
-			participants, roles, directions := personProvenanceColumns(result.PersonProvenance)
-			_, _ = fmt.Fprintf(w, "documents\t%d\t%d\t%d\t%d\t%d\t-\t%s\t%s\t%s\t%v\t%v\t%v\t%s\n",
-				result.Rank, result.AttachmentID, result.MessageID, result.ConversationID, result.SourceID,
-				result.SourceMessageID, personFilesTimestamp(result.OccurredAt), result.Filename,
-				participants, roles, directions, strings.Join(strings.Fields(result.Excerpt), " "))
-		}
-	}
+
 	if output.Visual != nil {
 		for _, result := range output.Visual.Results {
 			participants, roles, directions := personProvenanceColumns(result.PersonProvenance)

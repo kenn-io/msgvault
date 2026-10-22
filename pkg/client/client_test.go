@@ -76,20 +76,6 @@ func TestGeneratedCalendarEnumsRetainExistingExportedConstants(t *testing.T) {
 	assertions.Equal(generated.CalendarRequestScopeSingle, generated.CalendarRequestScope("single"))
 }
 
-func generatedSettingGroupForCompatibility(group generated.SettingGroup0) generated.SettingGroup0 {
-	return group
-}
-
-func TestGeneratedDocumentStatusRetainsSourceCompatibleQueryAndSettingsConstant(t *testing.T) {
-	query := generated.GetDocumentIndexStatusQuery{
-		ProfileID: "profile", InputKey: "original", MediaType: []string{"application/pdf"},
-	}
-	settingsGroup := generatedSettingGroupForCompatibility(generated.Attachments)
-
-	assert.Equal(t, "profile", query.ProfileID)
-	assert.Equal(t, generated.SettingGroup0("attachments"), settingsGroup)
-}
-
 func TestGeneratedPersonFileGalleryContract(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -66,8 +66,6 @@ function visualAttachmentStatusResponse() {
 }
 
 function operationAuthorityResponse(path: string): Response | undefined {
-  if (path.endsWith('/documents/status/current')) return Response.json(documentIndexStatusResponse());
-  if (path.endsWith('/documents/vectors/status')) return Response.json(documentVectorStatusResponse());
   if (path.endsWith('/multimodal/status')) return Response.json(visualAttachmentStatusResponse());
   return undefined;
 }
@@ -1049,7 +1047,7 @@ describe('AppShell', () => {
     });
 
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'operations', operationLane: 'documents', operationKind: 'document_extraction',
+      workspace: 'operations', operationLane: 'visual_attachments', operationKind: 'visual_embedding',
       operationState: 'failed', operationRunID: null
     }))}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
@@ -1058,7 +1056,7 @@ describe('AppShell', () => {
     )).toHaveLength(2));
     const restored = requests.filter((request) => new URL(request.url).pathname === '/api/v1/operations/runs')[1]!;
     expect(Object.fromEntries(new URL(restored.url).searchParams)).toMatchObject({
-      lane: 'documents', kind: 'document_extraction', state: 'failed'
+      lane: 'visual_attachments', kind: 'visual_embedding', state: 'failed'
     });
     expect(state.current.operationRunID).toBeNull();
 
@@ -1103,10 +1101,8 @@ describe('AppShell', () => {
   });
 
   it.each([
-    ['document_extraction', 'documents', 'Open Document index status', 'getDocumentIndexStatus',
-      'Document index status', '4 of 5 owners ready', '/api/v1/documents/status/current'],
-    ['document_embedding', 'documents', 'Open Document vector status', 'getDocumentVectorStatus',
-      'Document vector status', '7 of 9 chunks ready', '/api/v1/documents/vectors/status'],
+
+
     ['visual_embedding', 'visual_attachments', 'Open Visual attachment status', 'getVisualAttachmentStatus',
       'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
   ] as const)('routes %s to its live status authority across Back and Forward', async (
@@ -1301,16 +1297,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: [
-        {
-          kind: 'document_extraction', lane: 'documents', configured: true,
-          history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
-        },
-        {
-          kind: 'document_embedding', lane: 'documents', configured: true,
-          history_availability: 'available', related_status: 'getDocumentVectorStatus', supported_actions: []
-        }
-      ] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{ kind: 'visual_embedding', lane: 'visual_attachments', configured: true, history_availability: 'available', related_status: 'getVisualAttachmentStatus', supported_actions: [] }] });
       if (path.endsWith('/operations/runs')) return Response.json({
         runs: [], unavailable_kinds: [], membership_revision: 1
       });
@@ -1321,31 +1308,20 @@ describe('AppShell', () => {
     let state = new ExploreState(window);
     let rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document index status' }));
-    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Back to operations' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document vector status' }));
-    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
-
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Visual attachment status' }));
+    expect(await screen.findByText('8 of 10 attachments current')).toBeDefined();
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('button', { name: 'Open Document vector status' })).toBeDefined();
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
-
+    expect(await screen.findByRole('button', { name: 'Open Visual attachment status' })).toBeDefined();
     window.history.forward();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByRole('button', { name: 'Open Document vector status' })).toBeDefined();
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
+    expect(await screen.findByText('8 of 10 attachments current')).toBeDefined();
 
     rendered.unmount();
     state.destroy();
     state = new ExploreState(window);
     rendered = render(AppShell, { client: createAPIClient(fetchFn), state, enabled: false });
-    expect(await screen.findByText('7 of 9 chunks ready')).toBeDefined();
+    expect(await screen.findByText('8 of 10 attachments current')).toBeDefined();
 
     const restoredNav = screen.getByRole('navigation', { name: 'Primary' });
     await fireEvent.click(within(restoredNav).getByRole('button', { name: 'Everything' }));
@@ -1364,10 +1340,7 @@ describe('AppShell', () => {
     }));
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
-      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{
-        kind: 'document_extraction', lane: 'documents', configured: true,
-        history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
-      }] });
+      if (path.endsWith('/operations/status')) return Response.json({ lanes: [{ kind: 'visual_embedding', lane: 'visual_attachments', configured: true, history_availability: 'available', related_status: 'getVisualAttachmentStatus', supported_actions: [] }] });
       if (path.endsWith('/operations/runs')) return Response.json({
         runs: [], unavailable_kinds: [], membership_revision: 1
       });
@@ -1386,9 +1359,9 @@ describe('AppShell', () => {
       client: createAPIClient(fetchFn), state, settings: settings as never
     });
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open Document index status' }));
-    expect(await screen.findByText('4 of 5 owners ready')).toBeDefined();
-    expect(state.current.operationStatus).toBe('getDocumentIndexStatus');
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open Visual attachment status' }));
+    expect(await screen.findByText('8 of 10 attachments current')).toBeDefined();
+    expect(state.current.operationStatus).toBe('getVisualAttachmentStatus');
     const nav = screen.getByRole('navigation', { name: 'Primary' });
     await fireEvent.click(within(nav).getByRole('button', { name: 'Everything' }));
     const row = (await screen.findByText('Synthetic subject 1')).closest('[role="row"]');

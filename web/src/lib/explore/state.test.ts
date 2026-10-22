@@ -190,32 +190,32 @@ describe('Explore URL state', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
       workspace: 'operations',
-      operationLane: 'documents',
-      operationKind: 'document_extraction',
+      operationLane: 'visual_attachments',
+      operationKind: 'visual_embedding',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
       operationRunID,
-      operationStatus: 'getDocumentIndexStatus',
+      operationStatus: 'getVisualAttachmentStatus',
       operationCursor: 'must-not-survive'
     } as ExploreURLState));
 
     expect(restored).toMatchObject({
       workspace: 'operations',
-      operationLane: 'documents',
-      operationKind: 'document_extraction',
+      operationLane: 'visual_attachments',
+      operationKind: 'visual_embedding',
       operationState: 'partial',
       operationStartedFrom: '2026-08-01T00:00:00Z',
       operationStartedBefore: '2026-09-01T00:00:00.1Z',
       operationRunID
     });
-    expect(restored.operationStatus).toBe('getDocumentIndexStatus');
+    expect(restored.operationStatus).toBe('getVisualAttachmentStatus');
     expect(restored).not.toHaveProperty('operationCursor');
   });
 
-  it('round-trips only the three live Operations status authorities', () => {
+  it('round-trips the live Operations status authorities', () => {
     for (const operationStatus of [
-      'getDocumentIndexStatus', 'getDocumentVectorStatus', 'getVisualAttachmentStatus'
+      'getVisualAttachmentStatus'
     ] as const) {
       const restored = parseExploreURLState(serializeExploreURLState({
         ...defaultExploreURLState, workspace: 'operations', operationStatus
@@ -333,7 +333,7 @@ describe('Explore URL state', () => {
       ...defaultExploreURLState,
       workspace: 'operations',
       operationLane: 'contacts',
-      operationKind: 'document_embedding',
+      operationKind: 'visual_embedding',
       operationState: 'future_state',
       operationStartedFrom: '2026-08-01',
       operationStartedBefore: '2026-09-01T02:00:00+02:00',

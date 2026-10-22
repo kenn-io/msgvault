@@ -12,6 +12,12 @@ All notable changes to msgvault, grouped by release.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
 - Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 16 and HTTP API schema 3.28.0.
+- Document text search now uses the Docbank mirror and Docbank processing. Search with `media search`, `GET /api/v1/media/search`, MCP `search_media`, or Web Everything. Use `media search --person <id> --direction from_person` in place of `person files --lane documents`.
+
+  The `documents` commands, `/api/v1/documents/*`, MCP `search_document_attachments`, document operation lanes, Mistral probe and consent, and file-based Kata issue actions are removed. Remove `[attachments.documents]` and drop `document_text` from `allowed_sources`. The API schema is 4.0.0.
+
+  Set `[integrations.docbank] document_profile`, review `docbank processing plan`, and grant consent with `docbank processing build --consent`. Setup deletes local extracted text, chunks, vectors, and consent rows. Docbank processes the mirrored files again, and Mistral users pay for OCR again. Older backups retain their text and remain marked by `backup list`. Stored Kata document citations retain their saved quote and resolve as unavailable.
+
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.
@@ -230,7 +236,7 @@ adds reviewed identity tools for agents and reduces repeated sync and search wor
   that scope; the former `upload_consent` no longer permits uploads. Document
   extraction with `include_inline = true` also needs fresh consent. See
   [audio processing](usage/beeper.md#send-audio-to-docbank) and
-  [document indexing](usage/document-indexing.md).
+  [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased).
 - **Allow one full analytics rebuild.** Existing caches need a full rebuild
   before later refreshes can reuse retained data. Existing message embeddings
   remain compatible. Build the optional SQLite search accelerator with

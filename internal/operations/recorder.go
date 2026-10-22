@@ -110,11 +110,7 @@ func (c InvocationCounters) Validate(kind Kind) error {
 		if c.Skipped != 0 || c.Requested != 0 || c.Started != 0 || c.Suppressed != 0 || c.IdentityRejected != 0 {
 			return fmt.Errorf("operation kind %q has counters outside its allowlist", kind)
 		}
-	case KindDocumentExtraction, KindDocumentEmbedding:
-		if c.Truncated != 0 || c.Skipped != 0 || c.Requested != 0 || c.Started != 0 ||
-			c.Suppressed != 0 || c.IdentityRejected != 0 {
-			return fmt.Errorf("operation kind %q has counters outside its allowlist", kind)
-		}
+
 	case KindVisualEmbedding:
 		if c.Truncated != 0 || c.Requested != 0 || c.Started != 0 || c.Suppressed != 0 || c.IdentityRejected != 0 {
 			return fmt.Errorf("operation kind %q has counters outside its allowlist", kind)
@@ -153,7 +149,7 @@ func (c InvocationCounters) ValidateFinal(kind Kind) error {
 		return err
 	}
 	switch kind {
-	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction, KindDocumentEmbedding:
+	case KindMessageEmbedding, KindPersonEmbedding:
 		if c.Attempted != c.Succeeded+c.Failed {
 			return errors.New("final attempted counter must equal succeeded plus failed")
 		}
@@ -262,8 +258,7 @@ func DeriveInvocationState(kind Kind, counters InvocationCounters, publicError *
 
 func isRecordedInvocationKind(kind Kind) bool {
 	switch kind {
-	case KindMessageEmbedding, KindPersonEmbedding, KindDocumentExtraction,
-		KindDocumentEmbedding, KindVisualEmbedding:
+	case KindMessageEmbedding, KindPersonEmbedding, KindVisualEmbedding:
 		return true
 	default:
 		return false
@@ -276,10 +271,7 @@ func invocationCounterUnit(kind Kind) CounterUnit {
 		return CounterUnitMessages
 	case KindPersonEmbedding, KindPersonEnrichment:
 		return CounterUnitPeople
-	case KindDocumentExtraction:
-		return CounterUnitDocuments
-	case KindDocumentEmbedding:
-		return CounterUnitChunks
+
 	case KindVisualEmbedding:
 		return CounterUnitAttachments
 	default:

@@ -80,16 +80,6 @@ function snapshot(overrides: Partial<OperationsSnapshot> = {}): OperationsSnapsh
         history_availability: 'available', related_status: 'getCardDAVStatus',
         supported_actions: ['carddav_sync']
       }] },
-      { lane: 'documents', kinds: [
-        {
-          lane: 'documents', kind: 'document_extraction', configured: true,
-          history_availability: 'available', related_status: 'getDocumentIndexStatus', supported_actions: []
-        },
-        {
-          lane: 'documents', kind: 'document_embedding', configured: true,
-          history_availability: 'available', related_status: 'getDocumentVectorStatus', supported_actions: []
-        }
-      ] },
       { lane: 'visual_attachments', kinds: [{
         lane: 'visual_attachments', kind: 'visual_embedding', configured: true,
         history_availability: 'available', related_status: 'getVisualAttachmentStatus',
@@ -140,7 +130,7 @@ const off = (kind: OperationKind, lane: OperationLane, related?: string) => ({
 });
 
 function renderKinds(kinds: Array<ReturnType<typeof off>>, props: Record<string, unknown> = {}) {
-  const lanes = ['messages', 'person_facts', 'contacts', 'documents', 'visual_attachments'] as const;
+  const lanes = ['messages', 'person_facts', 'contacts', 'visual_attachments'] as const;
   const statusLanes = lanes.map((lane) => ({ lane, kinds: kinds.filter((kind) => kind.lane === lane) }));
   return render(OperationsWorkspace, {
     controller: controller(snapshot({ statusLanes: statusLanes as never })) as never,
@@ -156,7 +146,7 @@ describe('OperationsWorkspace', () => {
     render(OperationsWorkspace, { controller: controller() as never, state: urlState() });
     const region = screen.getByRole('region', { name: 'Operation lanes' });
     expect(within(region).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent))
-      .toEqual(['Messages', 'Facts', 'Contacts', 'Documents', 'Attachments']);
+      .toEqual(['Messages', 'Person facts', 'Contacts', 'Attachments']);
     expect(within(screen.getByRole('list', { name: 'Messages' })).getAllByRole('listitem')).toHaveLength(2);
     const embedding = screen.getByRole('listitem', { name: 'Message embedding' });
     expect(within(embedding).getByText('Running')).toBeDefined();
@@ -186,7 +176,7 @@ describe('OperationsWorkspace', () => {
 
   it('shows Status unavailable for a lane without kinds', () => {
     renderKinds([]);
-    expect(screen.getAllByText('Status unavailable')).toHaveLength(5);
+    expect(screen.getAllByText('Status unavailable')).toHaveLength(4);
   });
 
   it.each([
@@ -204,22 +194,7 @@ describe('OperationsWorkspace', () => {
     expect(onSetUp).toHaveBeenCalledWith(target);
   });
 
-  it.each([
-    ['document_extraction', 'Configured in config.toml on the daemon host.', 'Document indexing setup',
-      'https://msgvault.io/docs/usage/document-indexing/#configure-the-policy'],
-    ['document_embedding', 'Configured in config.toml on the daemon host. Also needs semantic search.',
-      'Document search setup',
-      'https://msgvault.io/docs/usage/document-indexing/#semantic-and-hybrid-document-search']
-  ] as const)('explains host configuration for an Off %s row', (kind, text, linkName, href) => {
-    renderKinds([off(kind, 'documents')]);
-    const row = screen.getByRole('listitem', { name: OPERATION_KIND_LABELS[kind] });
-    expect(within(row).queryByRole('button', { name: /^Set up/ })).toBeNull();
-    expect(within(row).getByText(text, { exact: false })).toBeDefined();
-    const link = within(row).getByRole('link', { name: linkName });
-    expect(link.getAttribute('href')).toBe(href);
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toBe('noreferrer');
-  });
+
 
   it('keeps the related-status button and no Set up for Off CardDAV and source rows', () => {
     renderKinds([
@@ -292,29 +267,7 @@ describe('OperationsWorkspace', () => {
     expect(within(lanes).queryByRole('button', { name: 'Build visual index' })).toBeNull();
   });
 
-  it('explains host configuration in the unconfigured document panel without a request', async () => {
-    const fetchFn = vi.fn<typeof fetch>();
-    const statusLanes = snapshot().statusLanes.map((lane) => ({
-      ...lane,
-      kinds: lane.kinds.map((kind) => kind.kind === 'document_extraction'
-        ? { ...kind, configured: false }
-        : kind)
-    }));
-    render(OperationsWorkspace, {
-      controller: controller(snapshot({ statusLanes })) as never,
-      client: createAPIClient(fetchFn),
-      state: urlState({ operationStatus: 'getDocumentIndexStatus' })
-    });
 
-    const panel = await screen.findByRole('region', { name: 'Document index status' });
-    expect(within(panel).getByText('Off')).toBeDefined();
-    expect(within(panel).getByText('Configured in config.toml on the daemon host.', { exact: false })).toBeDefined();
-    const link = within(panel).getByRole('link', { name: 'Document indexing setup' });
-    expect(link.getAttribute('target')).toBe('_blank');
-    expect(link.getAttribute('rel')).toBe('noreferrer');
-    expect(within(panel).queryByRole('button', { name: 'Open document index settings' })).toBeNull();
-    expect(fetchFn).not.toHaveBeenCalled();
-  });
 
   it('emits canonical URL patches from filters and keeps available history visible when one kind degrades', async () => {
     const onStateChange = vi.fn();
@@ -324,9 +277,9 @@ describe('OperationsWorkspace', () => {
       onStateChange
     });
 
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Lane:/ }), 'Documents');
+    await chooseSelectOption(screen.getByRole('combobox', { name: /^Lane:/ }), 'Attachments');
     expect(onStateChange).toHaveBeenLastCalledWith({
-      operationLane: 'documents', operationRunID: null, operationStatus: ''
+      operationLane: 'visual_attachments', operationRunID: null, operationStatus: ''
     });
     await chooseSelectOption(screen.getByRole('combobox', { name: /^State:/ }), 'Partial');
     expect(onStateChange).toHaveBeenLastCalledWith({
@@ -345,7 +298,7 @@ describe('OperationsWorkspace', () => {
       id: RUN_ONE, started_at: '2026-08-30T09:00:00Z', finished_at: '2026-08-30T09:01:05Z'
     });
     const newer = run({
-      id: RUN_TWO, kind: 'document_extraction', lane: 'documents', trigger: 'scheduled',
+      id: RUN_TWO, kind: 'visual_embedding', lane: 'visual_attachments', trigger: 'scheduled',
       state: 'partial', started_at: '2026-08-30T11:00:00Z', finished_at: '2026-08-30T11:00:02Z',
       counters: [{ name: 'failed', unit: 'writes', value: 2 }]
     });
@@ -357,13 +310,13 @@ describe('OperationsWorkspace', () => {
 
     const table = screen.getByRole('table', { name: 'Operation history' });
     const rows = within(table).getAllByRole('row').slice(1);
-    expect(rows[0]!.textContent).toContain('Document extraction');
+    expect(rows[0]!.textContent).toContain('Visual embedding');
     expect(rows[0]!.textContent).toContain('2 seconds');
     expect(rows[0]!.textContent).toContain('2 writes failed');
     expect(rows[1]!.textContent).toContain('Source sync');
     expect(rows[1]!.textContent).toContain('1 minute 5 seconds');
 
-    await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Open Document extraction run' }));
+    await fireEvent.click(within(rows[0]!).getByRole('button', { name: 'Open Visual embedding run' }));
     expect(onStateChange).toHaveBeenCalledWith({ operationRunID: RUN_TWO });
   });
 

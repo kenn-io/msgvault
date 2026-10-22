@@ -2538,3 +2538,10 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 	assert.Empty(cfg.Sync.TrustedIMAPSentMailboxes,
 		"unconfigured archives carry no explicit Sent-folder trust")
 }
+
+func TestRemovedDocumentConfigGuidesMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[attachments.documents]\nenabled = true\n"), 0o600))
+	_, err := Load(path, "")
+	require.ErrorContains(t, err, "[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile")
+}

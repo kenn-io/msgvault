@@ -431,7 +431,7 @@ and status polling continues while the tab is visible.
 ## Operations
 
 Operations answers two different questions: what is configured and ready now,
-and what happened during a particular run. Its overview groups work into five
+and what happened during a particular run. Its overview groups work into four
 lanes:
 
 | Lane | Work shown |
@@ -439,7 +439,6 @@ lanes:
 | Messages | Source sync and message embeddings |
 | Facts | People sweeps, person embeddings, and external enrichment |
 | Contacts | CardDAV sync |
-| Documents | Document extraction and document embeddings |
 | Attachments | Visual embeddings |
 
 Each lane lists its kinds of work. A row shows the kind's name, a status chip,
@@ -460,19 +459,12 @@ work has ever run.
 An Off row offers **Set up** when Settings can turn the work on. Message
 embeddings, person embeddings, and visual embeddings open Settings on Search
 and focus their setting. Person enrichment opens Person enrichment, and person
-sweeps open People sweep. Document extraction and document embeddings are
-configured in `config.toml` on the daemon host, so their rows say so and link to
-[Document indexing setup](/docs/usage/document-indexing/#configure-the-policy)
-and [Document search setup](/docs/usage/document-indexing/#semantic-and-hybrid-document-search).
-Document embeddings also need semantic search.
+sweeps open People sweep.
 
-Rows link to source status, CardDAV settings, or detailed document and visual
-index status. The latter show coverage and the current prerequisites for
+Rows link to source status, CardDAV settings, or visual index status. The latter show coverage and the current prerequisites for
 processing. The workspace offers **Start CardDAV sync**, **Build visual
 index**, or **Resume visual index** only when the daemon advertises that
-action. Source **Sync now** remains in Sources. Document extraction still
-requires the explicit CLI upload workflow in
-[Document Indexing](/docs/usage/document-indexing/).
+action. Source **Sync now** remains in Sources.
 
 **Refresh operation status** in the page header reloads the status lists every
 five minutes and whenever you select it, and it shows how long ago they were

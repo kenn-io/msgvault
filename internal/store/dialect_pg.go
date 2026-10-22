@@ -739,20 +739,6 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS content_id TEXT`, "attachments.content_id"},
-		{`ALTER TABLE document_extraction_profiles ADD COLUMN IF NOT EXISTS include_inline BOOLEAN NOT NULL DEFAULT FALSE`, "document_extraction_profiles.include_inline"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS failure_reason TEXT`, "document_extractions.failure_reason"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS failure_detail TEXT`, "document_extractions.failure_detail"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS rebuild_id TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL`, "document_extractions.rebuild_id"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS provider_latency_ms BIGINT NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS normalization_version INTEGER`, "document_extractions.normalization_version"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS document_family TEXT`, "document_extractions.document_family"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS unit_kind TEXT`, "document_extractions.unit_kind"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS normalized_truncated BOOLEAN NOT NULL DEFAULT FALSE`, "document_extractions.normalized_truncated"},
-		{`ALTER TABLE document_extractions ADD COLUMN IF NOT EXISTS source_media_type TEXT`, "document_extractions.source_media_type"},
-		{`ALTER TABLE document_units ADD COLUMN IF NOT EXISTS heading_marks JSONB NOT NULL DEFAULT '[]'::jsonb`, "document_units.heading_marks"},
-		{`ALTER TABLE document_index_state ADD COLUMN IF NOT EXISTS target_profile_id TEXT`, "document_index_state.target_profile_id"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_state TEXT`, "attachments.attachment_state"},
 		{`ALTER TABLE attachments ADD COLUMN IF NOT EXISTS attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
 		// vcard_projection_revision: the lock and change token native vCard
@@ -1669,37 +1655,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		     END IF;
 		 END;
 		 $$ LANGUAGE plpgsql`,
-		`CREATE OR REPLACE FUNCTION msgvault_append_person_sweep_document_changes(
-		     _person_id BIGINT, _source_id BIGINT, _message_id BIGINT,
-		     _change_kind TEXT, _evidence_effect TEXT)
-		 RETURNS VOID AS $$
-		 DECLARE occurrence RECORD;
-		 DECLARE next_sequence BIGINT;
-		 BEGIN
-		     FOR occurrence IN
-		         SELECT source_id, attachment_id, occurrence_key
-		           FROM document_occurrences
-		          WHERE message_id = _message_id
-		          ORDER BY attachment_id, occurrence_key
-		     LOOP
-		         next_sequence := NULL;
-		         UPDATE person_sweep_change_clock
-		            SET sequence = sequence + 1
-		          WHERE singleton = TRUE AND enabled = TRUE
-		          RETURNING sequence INTO next_sequence;
-		         IF next_sequence IS NOT NULL THEN
-		             INSERT INTO person_sweep_changes
-		                 (sequence, person_id, source_lane, change_kind,
-		                  evidence_effect, source_id, message_id, attachment_id,
-		                  occurrence_key, recorded_at)
-		             VALUES (next_sequence, _person_id, 'document_text', _change_kind,
-		                     _evidence_effect, occurrence.source_id, _message_id,
-		                     occurrence.attachment_id, occurrence.occurrence_key,
-		                     CURRENT_TIMESTAMP);
-		         END IF;
-		     END LOOP;
-		 END;
-		 $$ LANGUAGE plpgsql`,
 		`DROP FUNCTION IF EXISTS msgvault_person_sweep_message_scope(BIGINT, BIGINT, BIGINT, TEXT, BIGINT)`,
 		fmt.Sprintf(`CREATE OR REPLACE FUNCTION msgvault_person_sweep_message_scope(
 		     _message_id BIGINT, _conversation_id BIGINT, _sender_id BIGINT,
@@ -1813,9 +1768,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 			         PERFORM msgvault_append_person_sweep_change(
 			             affected.person_id, affected.source_lane, 'delete', 'source-deleted',
 			             affected.source_id, affected.message_id);
-			         PERFORM msgvault_append_person_sweep_document_changes(
-			             affected.person_id, affected.source_id, affected.message_id,
-			             'delete', 'source-deleted');
 		             END LOOP;
 		         END IF;
 		     ELSE
@@ -1850,14 +1802,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 			     PERFORM msgvault_append_person_sweep_change(
 			         affected.person_id, affected.source_lane, kind, effect,
 			         affected.source_id, affected.message_id);
-			     IF OLD.sender_id IS DISTINCT FROM NEW.sender_id
-			        OR OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
-			        OR OLD.deleted_at IS DISTINCT FROM NEW.deleted_at
-			        OR OLD.deleted_from_source_at IS DISTINCT FROM NEW.deleted_from_source_at THEN
-			         PERFORM msgvault_append_person_sweep_document_changes(
-			             affected.person_id, affected.source_id, affected.message_id,
-			             kind, effect);
-			     END IF;
 		         END LOOP;
 		     END IF;
 		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -1901,16 +1845,12 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		             NEW.message_id, NEW.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
 		         END LOOP;
 		     ELSIF TG_OP = 'DELETE' AND %s THEN
 		         FOR affected IN SELECT * FROM msgvault_person_sweep_participant_message_scope(
 		             OLD.message_id, OLD.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
 		         END LOOP;
 		     ELSIF TG_OP = 'UPDATE' AND (
 		        OLD.message_id IS DISTINCT FROM NEW.message_id
@@ -1925,8 +1865,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'identity-reassigned',
 			         affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'identity-reassigned');
 		         END LOOP;
 		     ELSIF TG_OP = 'UPDATE' AND OLD.recipient_type IS DISTINCT FROM NEW.recipient_type THEN
 		         FOR affected IN
@@ -1938,15 +1876,12 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		         LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, %s, %s, affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, %s, %s);
 		         END LOOP;
 		     END IF;
 		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 		 END;
 		 $$ LANGUAGE plpgsql`, newRecipientRole, oldRecipientRole,
 			oldRecipientRole, newRecipientRole, oldRecipientRole, newRecipientRole,
-			recipientRoleChangeKind, recipientRoleChangeEffect,
 			recipientRoleChangeKind, recipientRoleChangeEffect),
 		`CREATE OR REPLACE FUNCTION msgvault_person_sweep_changes_roster() RETURNS trigger AS $$
 		 DECLARE affected RECORD;
@@ -1959,16 +1894,12 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		             NEW.conversation_id, NEW.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
 		         END LOOP;
 		     ELSIF TG_OP = 'DELETE' THEN
 		         FOR affected IN SELECT * FROM msgvault_person_sweep_roster_scope(
 		             OLD.conversation_id, OLD.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
 		         END LOOP;
 		     ELSIF OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
 		        OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
@@ -1988,14 +1919,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		                            OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
 		                      THEN 'identity-reassigned' ELSE 'source-edited' END,
 			         affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id,
-			         CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
-			                    OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
-			              THEN 'scope' ELSE 'upsert' END,
-			         CASE WHEN OLD.conversation_id IS DISTINCT FROM NEW.conversation_id
-			                    OR OLD.participant_id IS DISTINCT FROM NEW.participant_id
-			              THEN 'identity-reassigned' ELSE 'source-edited' END);
 		         END LOOP;
 		     END IF;
 		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -2012,16 +1935,12 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		             NEW.person_id, NEW.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-relinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-relinked');
 		         END LOOP;
 		     ELSIF TG_OP = 'DELETE' THEN
 		         FOR affected IN SELECT * FROM msgvault_person_sweep_binding_scope(
 		             OLD.person_id, OLD.participant_id) LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'scope-unlinked', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'scope-unlinked');
 		         END LOOP;
 		     ELSIF OLD.person_id IS DISTINCT FROM NEW.person_id
 		        OR OLD.participant_id IS DISTINCT FROM NEW.participant_id THEN
@@ -2032,8 +1951,6 @@ func personSweepPostgreSQLTriggerStatements() []string {
 		         LOOP
 			     PERFORM msgvault_append_person_sweep_change(affected.person_id,
 			         affected.source_lane, 'scope', 'identity-reassigned', affected.source_id, affected.message_id);
-			     PERFORM msgvault_append_person_sweep_document_changes(affected.person_id,
-			         affected.source_id, affected.message_id, 'scope', 'identity-reassigned');
 		         END LOOP;
 		     END IF;
 		     IF TG_OP = 'DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
@@ -2371,7 +2288,7 @@ var exclusiveLockTables = []string{
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
-	"attachments", "document_occurrences", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
+	"attachments", "labels", "participants", "participant_identifiers", "reactions", "reaction_source_events",
 	"participant_contact_observations", identityMatchCandidatesTableName, identityMatchCandidateSourcesTableName,
 	identityMatchEvidenceTableName, identityMatchEvidenceSourcesTableName,
 	// persons and person_participants: MergeParticipants (reached from the

@@ -176,7 +176,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	// and Beeper media endpoint records remain on the retired source for audit.
 	for _, statement := range []string{
 		`INSERT INTO collection_sources(collection_id, source_id) SELECT collection_id, ? FROM collection_sources WHERE source_id = ? ON CONFLICT (collection_id, source_id) DO NOTHING`,
-		`UPDATE document_occurrences SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET source_id = ? WHERE source_id = ?`,
 		`UPDATE activity_events SET owner_source_id = ? WHERE owner_source_id = ?`,
 		`UPDATE person_contact_state SET last_contact_source_id = ? WHERE last_contact_source_id = ?`,
@@ -226,9 +225,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE document_index_state SET revision = revision + 1, updated_at = `+s.dialect.Now()+` WHERE singleton = 1`); err != nil {
-		return err
-	}
+
 	if _, err := s.bumpIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}

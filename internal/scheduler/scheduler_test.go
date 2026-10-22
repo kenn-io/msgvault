@@ -1874,55 +1874,6 @@ func TestEmbedJob_Run_NilSafe(t *testing.T) {
 
 // ---------- SetEmbedJob tests ----------
 
-func TestSchedulerDocumentVectorJobRunsOnlyAfterSuccessfulSync(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		syncErr  error
-		wantRuns int64
-	}{
-		{name: "successful sync", wantRuns: 1},
-		{name: "failed sync", syncErr: errors.New("sync failed")},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-				syncDone := make(chan struct{})
-				s := New(func(context.Context, string) error {
-					close(syncDone)
-					return test.syncErr
-				})
-				var runs atomic.Int64
-				documentDone := make(chan struct{}, 1)
-				requirements.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-					runs.Add(1)
-					documentDone <- struct{}{}
-					return nil
-				}, "", true))
-				requirements.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
-				s.Start()
-				defer func() { <-s.Stop().Done() }()
-				requirements.NoError(s.TriggerSync("test@example.test", false))
-				select {
-				case <-syncDone:
-				case <-time.After(time.Second):
-					requirements.Fail("sync did not complete")
-				}
-				if test.wantRuns == 1 {
-					select {
-					case <-documentDone:
-					case <-time.After(time.Second):
-						requirements.Fail("document vector job did not run")
-					}
-				} else {
-					synctest.Wait()
-				}
-				assertions.Equal(test.wantRuns, runs.Load())
-			})
-		})
-	}
-}
-
 func TestScheduler_SetEmbedJob_AddsCronEntry(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -3445,33 +3396,6 @@ func TestStartJobDroppedFollowUpIsLogged(t *testing.T) {
 	})
 }
 
-func TestSchedulerRunsEmbedThenDocumentVectorAfterSync(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		s := New(func(context.Context, string) error { return nil })
-		order := make(chan string, 8)
-		runner := &fakeRunner{onRunOnce: func(vector.GenerationID) { order <- "embed" }}
-		job := &EmbedJob{Worker: runner, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
-		require.NoError(s.SetEmbedJob(job, "", true))
-		require.NoError(s.SetDocumentVectorJob(func(context.Context) error {
-			order <- "document vector"
-			return nil
-		}, "", true))
-		require.NoError(s.AddAccount("test@example.test", "0 0 1 1 *"))
-		s.Start()
-		defer func() { <-s.Stop().Done() }()
-
-		require.NoError(s.TriggerSync("test@example.test", false))
-		synctest.Wait()
-		got := make([]string, 0, 2)
-		for len(order) > 0 {
-			got = append(got, <-order)
-		}
-		assert.Equal([]string{"embed", "document vector"}, got)
-	})
-}
-
 type labelRecordingTracker struct {
 	mu     sync.Mutex
 	labels []string
@@ -3498,11 +3422,9 @@ func TestScheduledVectorJobsHoldGateUnderOwnLabel(t *testing.T) {
 		defer func() { <-s.Stop().Done() }()
 		job := &EmbedJob{Worker: &fakeRunner{}, Backend: &fakeBackend{active: vector.Generation{ID: 1}}}
 		require.NoError(s.SetEmbedJob(job, "0 0 1 1 *", false))
-		require.NoError(s.SetDocumentVectorJob(func(context.Context) error { return nil }, "0 0 1 1 *", false))
 		s.cron.Entry(s.embed.entry).Job.Run()
-		s.cron.Entry(s.documentVector.entry).Job.Run()
 		synctest.Wait()
-		assert.Equal(t, []string{"scheduled embedding", "scheduled document indexing"}, tracker.labels)
+		assert.Equal(t, []string{"scheduled embedding"}, tracker.labels)
 	})
 }
 

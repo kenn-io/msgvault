@@ -50,8 +50,6 @@ func TestNativeOperationRecoveryRunsBeforeDaemonServices(t *testing.T) {
 	}{
 		{operations.KindMessageEmbedding, "message_embedding_runs"},
 		{operations.KindPersonEmbedding, "person_embedding_runs"},
-		{operations.KindDocumentExtraction, "document_extraction_runs"},
-		{operations.KindDocumentEmbedding, "document_embedding_runs"},
 		{operations.KindVisualEmbedding, "visual_embedding_runs"},
 	}
 	for index, ledger := range ledgers {
@@ -68,8 +66,8 @@ func TestNativeOperationRecoveryRunsBeforeDaemonServices(t *testing.T) {
 		t.Context(), st, slog.New(slog.DiscardHandler)), "startup recovery must be idempotent")
 
 	for _, table := range append([]string{"sync_runs", "carddav_sync_runs"},
-		[]string{"message_embedding_runs", "person_embedding_runs", "document_extraction_runs",
-			"document_embedding_runs", "visual_embedding_runs"}...) {
+		[]string{"message_embedding_runs", "person_embedding_runs",
+			"visual_embedding_runs"}...) {
 		stateColumn := "state"
 		running := "running"
 		if table == "sync_runs" {

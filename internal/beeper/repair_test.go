@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -156,19 +155,6 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 	_, err = st.DB().Exec(st.Rebind(`UPDATE attachments SET attachment_metadata = ? WHERE source_attachment_id = ?`),
 		`{"source_transcript":{"provider":"beeper","text":"stale"}}`, "beeper:stale")
 	require.NoError(err)
-	reconciler, err := documentindex.NewReconciler(st, documentindex.ReconcilerConfig{
-		AttachmentPageSize: 10, ChangePageSize: 10,
-	})
-	require.NoError(err)
-	_, err = reconciler.Reconcile(t.Context())
-	require.NoError(err)
-	var staleOccurrenceKey string
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT o.occurrence_key
-		FROM document_occurrences o
-		JOIN attachments a ON a.id = o.attachment_id
-		WHERE a.source_attachment_id = ?`), "beeper:stale").Scan(&staleOccurrenceKey))
-
 	// Simulate rows written by an older build: raw HTML in the body and no
 	// share classification on the attachments.
 	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = ?, body_html = NULL
@@ -225,14 +211,6 @@ func TestRepairArchiveRewritesStaleDerivedRows(t *testing.T) {
 		FROM attachments WHERE source_attachment_id = ?`), "beeper:mxc://x/sticker1").Scan(&stickerRole, &stickerSource))
 	assert.Equal("sticker", stickerRole)
 	assert.Equal("provider_explicit", stickerSource)
-	result, err := reconciler.Reconcile(t.Context())
-	require.NoError(err)
-	assert.Positive(result.ChangesConsumed)
-	var occurrenceCount int
-	require.NoError(st.DB().QueryRow(st.Rebind(`
-		SELECT COUNT(*) FROM document_occurrences WHERE occurrence_key = ?`), staleOccurrenceKey).Scan(&occurrenceCount))
-	assert.Zero(occurrenceCount, "the existing reconciler removes the now-ineligible occurrence")
-
 	// Re-running must be a no-op: nothing left differing from the archive.
 	again, err := imp.RepairSource(context.Background(), beeperSourceID(t, st), nil)
 	require.NoError(err)

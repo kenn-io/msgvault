@@ -12,12 +12,9 @@ func TestPersonSweepEvidenceRefCarriesValidatedLane(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	message := EvidenceRef{SourceLane: SourceConversationText, SourceID: 7, MessageID: 11, SpanEnd: 4}
-	document := EvidenceRef{SourceLane: SourceDocumentText, SourceID: 7, MessageID: 11,
-		AttachmentID: 13, OccurrenceKey: "occ", ChunkKey: "chunk", SpanStart: 1, SpanEnd: 4}
 	for _, ref := range []EvidenceRef{
 		message,
 		{SourceLane: SourceMeetingText, SourceID: 7, MessageID: 11, SpanEnd: 4},
-		document,
 		{SourceLane: SourceAttachmentCaption, SourceID: 7, MessageID: 11, AttachmentID: 13, SpanEnd: 4},
 		{SourceLane: SourceAttachmentOCR, SourceID: 7, MessageID: 11, AttachmentID: 13, SpanEnd: 4},
 	} {

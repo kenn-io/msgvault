@@ -312,7 +312,6 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSavedViewRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
-	s.registerDocumentSearchRoute(apiV1)
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchStatusResponse](apiV1, "getMediaSearchStatus", http.MethodGet, "/media/search/status", "Get recording transcript search configuration status", s.handleMediaSearchStatus)
 	registerAPIV1RawHumaJSONRouteWithErrors[MediaSearchResponse](apiV1, "searchMedia", http.MethodGet, "/media/search", "Search recordings and attachments as visible messages", s.documentSearchGuard("media search", s.handleMediaSearch), http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusServiceUnavailable)
 	s.registerTelemetryRoutes(apiV1)
@@ -846,38 +845,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 			queryRefArrayParam("direction", "Person relation: from_person, to_person, or group"),
 			queryIntegerParam(limitParam, "Maximum occurrences to return, default 20, max 100"),
 		}
-	case "searchDocuments":
-		return []*huma.Param{
-			queryStringParam("q", "Extracted document content or filename query", true),
-			queryIntegerArrayParam("source_id", "Source IDs to include; repeat or comma-separate values"),
-			queryRefArrayParam("message_type", "Message types to include; repeat or comma-separate values"),
-			queryIntegerParam("attachment_id", "Exact attachment occurrence ID"),
-			queryIntegerParam("message_id", "Exact containing message ID"),
-			queryIntegerParam("person_id", "Durable person ID"),
-			queryIntegerParam("participant_id", "Observed participant ID; translated through its durable person when bound"),
-			queryRefArrayParam("direction", "Person relation; repeat or comma-separate from_person, to_person, or group"),
-			queryStringParam("after", "Only messages on or after an RFC3339 or YYYY-MM-DD date", false),
-			queryStringParam("before", "Only messages before an RFC3339 or YYYY-MM-DD date", false),
-			queryIntegerParam(limitParam, "Maximum results to return (default 20, max 100)"),
-			queryStringParam("cursor", "Opaque cursor from the previous document search page", false),
-			queryStringParam("mode", "Search mode: lexical (default and auto); semantic/hybrid send the query to the embedding provider", false),
-			queryIntegerParam("candidate_limit", "Maximum candidates (default/max: lexical 10000; semantic/hybrid 100/1000)"),
-		}
-	case "getDocumentIndexStatus":
-		mediaTypes := queryRefArrayParam("media_type", "Allowed document media types")
-		mediaTypes.Required = true
-		return []*huma.Param{
-			queryStringParam("profile_id", "Exact document extraction profile ID", true),
-			queryStringParam("input_key", "Exact extraction input key", true),
-			mediaTypes,
-			queryRefArrayParam("message_type", "Allowed message types"),
-		}
-	case "getDocumentVectorStatus":
-		return []*huma.Param{
-			queryIntegerParam("generation_id", "Generation whose bounded failures to inspect"),
-			queryStringParam("after_token", "Stable failure cursor token", false),
-			queryIntegerParam("limit", "Maximum failure diagnostics (default 20, max 1000)"),
-		}
+
 	case "getCLIMessage", "getCLIMessageRaw":
 		return []*huma.Param{queryStringParam("id", "Message numeric ID or source message ID", true)}
 	case "getCLIMessageOriginal":

@@ -52,7 +52,7 @@ func TestShowThreadDelegatedThroughRoot(t *testing.T) {
 		{name: "message read", permission: "message.read", sourceID: src.ID},
 		{name: "missing permission", permission: "search.read", sourceID: src.ID, wantCode: "permission_denied", wantStatus: http.StatusForbidden},
 		{name: "outside source grant", permission: "message.read", sourceID: other.ID, wantCause: store.ErrMessageNotFound},
-		{name: "old schema", permission: "message.read", sourceID: src.ID, oldSchema: true, wantError: "agent archive reads require daemon API schema"},
+		{name: "old schema", permission: "message.read", sourceID: src.ID, oldSchema: true, wantError: "is incompatible with client API schema"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)

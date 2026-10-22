@@ -23,7 +23,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/cronexpr"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/fileutil"
 	"go.kenn.io/msgvault/internal/identityops"
@@ -598,7 +597,6 @@ type Config struct {
 	Twenty             []TwentySource                  `toml:"twenty"`
 	Backup             BackupConfig                    `toml:"backup"`
 	Discord            DiscordConfig                   `toml:"discord"`
-	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
 	Activity           ActivityConfig                  `toml:"activity"`
 	People             PeopleConfig                    `toml:"people"`
 	Teams              TeamsConfig                     `toml:"teams"`
@@ -921,7 +919,6 @@ func NewDefaultConfig() *Config {
 		Discord: DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:   TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
-	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
 	cfg.resolveCredentialPaths()
 	cfg.Server.ApplyDefaults()
@@ -1092,6 +1089,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) >= 2 && key[0] == "attachments" && key[1] == "documents" {
+			return nil, errors.New("[attachments.documents] was removed; delete it and set [integrations.docbank] document_profile, see the Docbank section of docs/configuration.md")
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1167,16 +1167,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	cfg.Vector.ApplyDefaults()
-	cfg.Attachments.Documents.ApplyConfiguredProviderDefaults(func(field string) bool {
-		return metadata.IsDefined("attachments", "documents", field)
-	})
-	cfg.Attachments.Documents.ApplyDefaults()
-	if err := cfg.Attachments.Documents.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.Attachments.Documents.Index.Embeddings.Enabled && !cfg.Vector.Enabled {
-		return nil, errors.New("attachments.documents.index.embeddings.enabled: requires [vector] enabled = true")
-	}
 	if cfg.Vector.AnyLaneEnabled() {
 		if err := cfg.Vector.Validate(); err != nil {
 			return nil, fmt.Errorf("vector config: %w", err)

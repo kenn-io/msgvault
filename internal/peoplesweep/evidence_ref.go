@@ -74,10 +74,7 @@ func validateEvidenceRef(ref EvidenceRef) error {
 		if ref.AttachmentID != 0 || ref.OccurrenceKey != "" || ref.ChunkKey != "" {
 			return errors.New("message evidence ref has document coordinates")
 		}
-	case SourceDocumentText:
-		if ref.AttachmentID <= 0 || strings.TrimSpace(ref.OccurrenceKey) == "" || strings.TrimSpace(ref.ChunkKey) == "" {
-			return errors.New("document evidence ref requires attachment, occurrence, and chunk")
-		}
+
 	case SourceAttachmentCaption, SourceAttachmentOCR:
 		if ref.AttachmentID <= 0 || ref.OccurrenceKey != "" || ref.ChunkKey != "" {
 			return errors.New("attachment evidence ref has invalid coordinates")

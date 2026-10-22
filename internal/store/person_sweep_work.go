@@ -19,7 +19,6 @@ var personSweepSourceLanes = map[peoplesweep.SourceClass]struct{}{
 	peoplesweep.SourceMeetingText:       {},
 	peoplesweep.SourceAttachmentCaption: {},
 	peoplesweep.SourceAttachmentOCR:     {},
-	peoplesweep.SourceDocumentText:      {},
 }
 
 // ClaimPersonSweep atomically transfers one available work row to a worker.
@@ -418,11 +417,7 @@ func (s *Store) personSweepSourceUpperKeyTx(
 		query = `SELECT COALESCE(MAX(a.id), 0) FROM attachments a
 			WHERE EXISTS (SELECT 1 FROM messages m WHERE m.id = a.message_id
 			  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
-	case peoplesweep.SourceDocumentText:
-		query = `SELECT COALESCE(MAX(a.id), 0) FROM attachments a
-			WHERE LOWER(COALESCE(a.media_type, '')) = 'document'
-			  AND EXISTS (SELECT 1 FROM messages m WHERE m.id = a.message_id
-			  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL)`
+
 	default:
 		return "", fmt.Errorf("capture source upper key: unknown lane %q", lane)
 	}

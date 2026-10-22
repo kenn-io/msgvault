@@ -204,10 +204,7 @@ func selectorRange(sel Selector) (int, int, error) {
 		if sel.AttachmentID != 0 || sel.ExtractionID != "" || sel.ChunkKey != "" {
 			return 0, 0, ErrInvalidReference
 		}
-	case "document_chunk":
-		if sel.AttachmentID < 1 || !validIdentity(sel.ExtractionID) || !validIdentity(sel.ChunkKey) {
-			return 0, 0, ErrInvalidReference
-		}
+
 	default:
 		return 0, 0, ErrInvalidReference
 	}
@@ -250,10 +247,7 @@ func setRange(ref Reference, start, end int) Reference {
 		p := *ref.Message
 		p.StartRune, p.EndRune = start, end
 		ref.Message = &p
-	case ref.Kind == "document_chunk" && ref.DocumentChunk != nil:
-		p := *ref.DocumentChunk
-		p.StartRune, p.EndRune = start, end
-		ref.DocumentChunk = &p
+
 	case ref.Kind == "docbank_rendition" && ref.DocbankRendition != nil:
 		p := *ref.DocbankRendition
 		p.StartRune, p.EndRune = start, end

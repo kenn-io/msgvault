@@ -1573,7 +1573,7 @@ func personSweepSQLiteTriggerStatements() []string {
 	}
 
 	appendTrigger := func(
-		name, timing, action, table, when, scope, mode, kind, effect string,
+		name, timing, action, table, when, scope, kind, effect string,
 	) []string {
 		whenClause := " WHEN EXISTS (SELECT 1 FROM person_tracking)"
 		if when != "" {
@@ -1582,18 +1582,7 @@ func personSweepSQLiteTriggerStatements() []string {
 		messageRows := `SELECT affected.person_id,affected.source_lane,
 			affected.source_id,affected.message_id,0 AS attachment_id,'' AS occurrence_key
 			FROM (` + scope + `) affected`
-		documentRows := `SELECT affected.person_id,'document_text' AS source_lane,
-			o.source_id,o.message_id,o.attachment_id,o.occurrence_key
-			FROM (` + scope + `) affected
-			JOIN document_occurrences o ON o.message_id=affected.message_id`
-		switch mode {
-		case "both":
-			scope = messageRows + " UNION " + documentRows
-		case "document":
-			scope = documentRows
-		default:
-			scope = messageRows
-		}
+		scope = messageRows
 		return []string{
 			"DROP TRIGGER IF EXISTS " + name,
 			fmt.Sprintf(`CREATE TRIGGER %s
@@ -1636,7 +1625,7 @@ func personSweepSQLiteTriggerStatements() []string {
 		 UNION
 		 SELECT * FROM (`+messageScope("NEW")+`)
 		 WHERE NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL`,
-		"message", `CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
+		`CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
 		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
 		       THEN 'delete'
 		       WHEN OLD.sender_id IS NOT NEW.sender_id
@@ -1653,49 +1642,26 @@ func personSweepSQLiteTriggerStatements() []string {
 		       ELSE 'source-edited' END`))
 	add(appendTrigger("trg_person_sweep_messages_delete", "BEFORE", "DELETE", "messages",
 		"OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL",
-		messageScope("OLD"), "both", "'delete'", "'source-deleted'"))
-	add(appendTrigger("trg_person_sweep_documents_message_update", "AFTER",
-		"UPDATE OF sender_id, conversation_id, deleted_at, deleted_from_source_at", "messages",
-		`OLD.sender_id IS NOT NEW.sender_id
-		 OR OLD.conversation_id IS NOT NEW.conversation_id
-		 OR OLD.deleted_at IS NOT NEW.deleted_at
-		 OR OLD.deleted_from_source_at IS NOT NEW.deleted_from_source_at`,
-		`SELECT * FROM (`+messageScope("OLD")+`)
-		 WHERE OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
-		 UNION
-		 SELECT * FROM (`+messageScope("NEW")+`)
-		 WHERE NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL`,
-		"document",
-		`CASE WHEN (OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL)
-		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
-		       THEN 'delete' ELSE 'scope' END`,
-		`CASE WHEN OLD.deleted_at IS NULL AND OLD.deleted_from_source_at IS NULL
-		            AND (NEW.deleted_at IS NOT NULL OR NEW.deleted_from_source_at IS NOT NULL)
-		       THEN 'source-deleted'
-		       WHEN (OLD.deleted_at IS NOT NULL OR OLD.deleted_from_source_at IS NOT NULL)
-		            AND NEW.deleted_at IS NULL AND NEW.deleted_from_source_at IS NULL
-		       THEN 'source-reimported'
-		       ELSE 'identity-reassigned' END`))
+		messageScope("OLD"), "'delete'", "'source-deleted'"))
 
 	add(appendTrigger("trg_person_sweep_bodies_insert", "AFTER", "INSERT", "message_bodies", "",
 		currentMessageScope("NEW.message_id"),
-		"message", "'upsert'", "''"))
+		"'upsert'", "''"))
 	add(appendTrigger("trg_person_sweep_bodies_update", "AFTER", "UPDATE", "message_bodies",
 		"OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html",
 		currentMessageScope("NEW.message_id"),
-		"message", "'upsert'", "'source-edited'"))
+		"'upsert'", "'source-edited'"))
 	add(appendTrigger("trg_person_sweep_bodies_delete", "BEFORE", "DELETE", "message_bodies", "",
 		currentMessageScope("OLD.message_id"),
-		"message", "'upsert'", "'source-edited'"))
+		"'upsert'", "'source-edited'"))
 
 	add(appendTrigger("trg_person_sweep_recipients_insert", "AFTER", "INSERT", "message_recipients", "",
 		currentMessageForParticipant("NEW.message_id", "NEW.participant_id", "NEW.recipient_type"),
-		"both", "'scope'", "'scope-relinked'"))
+		"'scope'", "'scope-relinked'"))
 	add(appendTrigger("trg_person_sweep_recipients_update", "AFTER", "UPDATE", "message_recipients",
 		"OLD.message_id IS NOT NEW.message_id OR OLD.participant_id IS NOT NEW.participant_id OR OLD.recipient_type IS NOT NEW.recipient_type",
 		currentMessageForParticipant("OLD.message_id", "OLD.participant_id", "OLD.recipient_type")+" UNION "+
 			currentMessageForParticipant("NEW.message_id", "NEW.participant_id", "NEW.recipient_type"),
-		"both",
 		`CASE WHEN OLD.message_id IS NOT NEW.message_id
 		            OR OLD.participant_id IS NOT NEW.participant_id
 		       THEN 'scope' ELSE `+personSweepRecipientRoleChangeKindSQL(
@@ -1706,16 +1672,15 @@ func personSweepSQLiteTriggerStatements() []string {
 			"OLD.recipient_type", "NEW.recipient_type")+` END`))
 	add(appendTrigger("trg_person_sweep_recipients_delete", "BEFORE", "DELETE", "message_recipients", "",
 		currentMessageForParticipant("OLD.message_id", "OLD.participant_id", "OLD.recipient_type"),
-		"both", "'scope'", "'scope-unlinked'"))
+		"'scope'", "'scope-unlinked'"))
 
 	add(appendTrigger("trg_person_sweep_roster_insert", "AFTER", "INSERT", "conversation_participants", "",
 		currentConversationForParticipant("NEW.conversation_id", "NEW.participant_id"),
-		"both", "'scope'", "'scope-relinked'"))
+		"'scope'", "'scope-relinked'"))
 	add(appendTrigger("trg_person_sweep_roster_update", "AFTER", "UPDATE", "conversation_participants",
 		"OLD.conversation_id IS NOT NEW.conversation_id OR OLD.participant_id IS NOT NEW.participant_id OR OLD.role IS NOT NEW.role OR OLD.joined_at IS NOT NEW.joined_at OR OLD.left_at IS NOT NEW.left_at",
 		currentConversationForParticipant("OLD.conversation_id", "OLD.participant_id")+" UNION "+
 			currentConversationForParticipant("NEW.conversation_id", "NEW.participant_id"),
-		"both",
 		`CASE WHEN OLD.conversation_id IS NOT NEW.conversation_id
 		            OR OLD.participant_id IS NOT NEW.participant_id
 		       THEN 'scope' ELSE 'upsert' END`,
@@ -1724,19 +1689,19 @@ func personSweepSQLiteTriggerStatements() []string {
 		       THEN 'identity-reassigned' ELSE 'source-edited' END`))
 	add(appendTrigger("trg_person_sweep_roster_delete", "BEFORE", "DELETE", "conversation_participants", "",
 		currentConversationForParticipant("OLD.conversation_id", "OLD.participant_id"),
-		"both", "'scope'", "'scope-unlinked'"))
+		"'scope'", "'scope-unlinked'"))
 
 	add(appendTrigger("trg_person_sweep_bindings_insert", "AFTER", "INSERT", "person_participants", "",
 		currentMessagesForBinding("NEW.person_id", "NEW.participant_id"),
-		"both", "'scope'", "'scope-relinked'"))
+		"'scope'", "'scope-relinked'"))
 	add(appendTrigger("trg_person_sweep_bindings_update", "AFTER", "UPDATE", "person_participants",
 		"OLD.person_id IS NOT NEW.person_id OR OLD.participant_id IS NOT NEW.participant_id",
 		currentMessagesForBinding("OLD.person_id", "OLD.participant_id")+" UNION "+
 			currentMessagesForBinding("NEW.person_id", "NEW.participant_id"),
-		"both", "'scope'", "'identity-reassigned'"))
+		"'scope'", "'identity-reassigned'"))
 	add(appendTrigger("trg_person_sweep_bindings_delete", "BEFORE", "DELETE", "person_participants", "",
 		currentMessagesForBinding("OLD.person_id", "OLD.participant_id"),
-		"both", "'scope'", "'scope-unlinked'"))
+		"'scope'", "'scope-unlinked'"))
 	return stmts
 }
 
@@ -2056,20 +2021,6 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE attachments ADD COLUMN role_source TEXT NOT NULL DEFAULT 'unknown' CHECK (role_source IN ('mime_disposition', 'provider_explicit', 'importer_semantics', 'legacy_api', 'raw_mime_repair', 'unknown'))`, "attachments.role_source"},
 		{`ALTER TABLE attachments ADD COLUMN source_part_key TEXT CHECK (source_part_key IS NULL OR source_part_key != '')`, "attachments.source_part_key"},
 		{`ALTER TABLE attachments ADD COLUMN content_id TEXT`, "attachments.content_id"},
-		{`ALTER TABLE document_extraction_profiles ADD COLUMN include_inline BOOLEAN NOT NULL DEFAULT FALSE`, "document_extraction_profiles.include_inline"},
-		{`ALTER TABLE document_extractions ADD COLUMN failure_reason TEXT`, "document_extractions.failure_reason"},
-		{`ALTER TABLE document_extractions ADD COLUMN failure_detail TEXT`, "document_extractions.failure_detail"},
-		{`ALTER TABLE document_extractions ADD COLUMN rebuild_id TEXT REFERENCES document_extraction_rebuilds(id) ON DELETE SET NULL`, "document_extractions.rebuild_id"},
-		{`ALTER TABLE document_extractions ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0)`, "document_extractions.request_count"},
-		{`ALTER TABLE document_extractions ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count)`, "document_extractions.retry_count"},
-		{`ALTER TABLE document_extractions ADD COLUMN provider_latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0)`, "document_extractions.provider_latency_ms"},
-		{`ALTER TABLE document_extractions ADD COLUMN normalization_version INTEGER`, "document_extractions.normalization_version"},
-		{`ALTER TABLE document_extractions ADD COLUMN document_family TEXT`, "document_extractions.document_family"},
-		{`ALTER TABLE document_extractions ADD COLUMN unit_kind TEXT`, "document_extractions.unit_kind"},
-		{`ALTER TABLE document_extractions ADD COLUMN normalized_truncated BOOLEAN NOT NULL DEFAULT FALSE`, "document_extractions.normalized_truncated"},
-		{`ALTER TABLE document_extractions ADD COLUMN source_media_type TEXT`, "document_extractions.source_media_type"},
-		{`ALTER TABLE document_units ADD COLUMN heading_marks JSON NOT NULL DEFAULT '[]'`, "document_units.heading_marks"},
-		{`ALTER TABLE document_index_state ADD COLUMN target_profile_id TEXT`, "document_index_state.target_profile_id"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_state TEXT`, "attachments.attachment_state"},
 		{`ALTER TABLE attachments ADD COLUMN attachment_skip_reason TEXT`, "attachments.attachment_skip_reason"},
 		// vcard_projection_revision: the lock and change token native vCard

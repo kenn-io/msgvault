@@ -1,7 +1,6 @@
 package personfacts
 
 import (
-	"encoding/base64"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -701,35 +700,9 @@ func resolverIndependentSource(input EvidenceInput) string {
 	case EvidencePublic:
 		identity = canonicalResolverURL(input.SourceURL)
 	case EvidenceArchive:
-		identity = resolverArchiveOccurrenceIdentity(identity)
 	case EvidenceSystem, EvidenceProviderAssertion:
 	}
 	return string(input.SourceClass) + "\x00" + identity
-}
-
-func resolverArchiveOccurrenceIdentity(sourceRef string) string {
-	const prefix = "person-sweep/v1:"
-	if !strings.HasPrefix(sourceRef, prefix) {
-		return sourceRef
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(sourceRef, prefix))
-	if err != nil {
-		return sourceRef
-	}
-	var ref struct {
-		SourceLane    string `json:"source_lane"`
-		SourceID      int64  `json:"source_id"`
-		MessageID     int64  `json:"message_id"`
-		AttachmentID  int64  `json:"attachment_id"`
-		OccurrenceKey string `json:"occurrence_key"`
-	}
-	if err := json.Unmarshal(payload, &ref); err != nil || ref.SourceLane != "document_text" ||
-		ref.SourceID <= 0 || ref.MessageID <= 0 || ref.AttachmentID <= 0 ||
-		strings.TrimSpace(ref.OccurrenceKey) == "" {
-		return sourceRef
-	}
-	return fmt.Sprintf("person-sweep/v1:document-occurrence:%d:%d:%d:%s",
-		ref.SourceID, ref.MessageID, ref.AttachmentID, ref.OccurrenceKey)
 }
 
 func canonicalResolverURL(raw string) string {

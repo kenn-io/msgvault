@@ -37,7 +37,7 @@ var (
 
 type OperationPublicCounter struct {
 	Name  operations.CounterName `json:"name" enum:"added,attempted,books,created,failed,identity_rejected,item_errors,processed,projected_writes,removed,requested,skipped,started,succeeded,suppressed,truncated,updated"`
-	Unit  operations.CounterUnit `json:"unit" enum:"attachments,books,chunks,contacts,documents,messages,people,writes"`
+	Unit  operations.CounterUnit `json:"unit" enum:"attachments,books,contacts,messages,people,writes"`
 	Value int64                  `json:"value"`
 }
 
@@ -56,8 +56,8 @@ type OperationRunSummary struct {
 	AccountID  int64                    `json:"account_id,omitzero"`
 	Connection string                   `json:"connection,omitempty"`
 	ID         string                   `json:"id"`
-	Kind       operations.Kind          `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
-	Lane       operations.Lane          `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
+	Kind       operations.Kind          `json:"kind" enum:"carddav_sync,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
+	Lane       operations.Lane          `json:"lane" enum:"contacts,messages,person_facts,visual_attachments"`
 	State      operations.State         `json:"state" enum:"cancelled,failed,partial,paused,queued,running,succeeded"`
 	Trigger    *operations.Trigger      `json:"trigger,omitzero" nullable:"false" enum:"manual,scheduled"`
 	StartedAt  time.Time                `json:"started_at"`
@@ -69,13 +69,13 @@ type OperationRunSummary struct {
 type OperationRunDetail struct {
 	OperationRunSummary
 
-	RelatedStatus    *operations.RelatedStatusID `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
+	RelatedStatus    *operations.RelatedStatusID `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getVisualAttachmentStatus,getCardDAVStatus"`
 	SupportedActions []operations.ActionID       `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume" nullable:"false"`
 }
 
 type OperationUnavailableKind struct {
-	Kind            operations.Kind `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
-	Lane            operations.Lane `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
+	Kind            operations.Kind `json:"kind" enum:"carddav_sync,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
+	Lane            operations.Lane `json:"lane" enum:"contacts,messages,person_facts,visual_attachments"`
 	UnavailableCode string          `json:"unavailable_code"`
 }
 
@@ -87,15 +87,15 @@ type OperationRunsResponse struct {
 }
 
 type OperationLaneStatus struct {
-	Kind                operations.Kind                `json:"kind" enum:"carddav_sync,document_embedding,document_extraction,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
-	Lane                operations.Lane                `json:"lane" enum:"contacts,documents,messages,person_facts,visual_attachments"`
+	Kind                operations.Kind                `json:"kind" enum:"carddav_sync,message_embedding,person_embedding,person_enrichment,person_sweep,source_sync,visual_embedding"`
+	Lane                operations.Lane                `json:"lane" enum:"contacts,messages,person_facts,visual_attachments"`
 	Configured          bool                           `json:"configured"`
 	HistoryAvailability operations.HistoryAvailability `json:"history_availability" enum:"available,unavailable"`
 	UnavailableCode     string                         `json:"unavailable_code,omitempty"`
 	Active              *OperationRunSummary           `json:"active,omitzero" nullable:"false"`
 	Latest              *OperationRunSummary           `json:"latest,omitzero" nullable:"false"`
 	LatestSuccessful    *OperationRunSummary           `json:"latest_successful,omitzero" nullable:"false"`
-	RelatedStatus       *operations.RelatedStatusID    `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getDocumentIndexStatus,getDocumentVectorStatus,getVisualAttachmentStatus,getCardDAVStatus"`
+	RelatedStatus       *operations.RelatedStatusID    `json:"related_status,omitzero" nullable:"false" enum:"listSourceStatus,getVisualAttachmentStatus,getCardDAVStatus"`
 	SupportedActions    []operations.ActionID          `json:"supported_actions" enum:"carddav_sync,visual_build,visual_resume"`
 }
 
@@ -554,7 +554,6 @@ func operationLaneValues() []string {
 		string(operations.LaneMessages),
 		string(operations.LanePersonFacts),
 		string(operations.LaneContacts),
-		string(operations.LaneDocuments),
 		string(operations.LaneVisualAttachments),
 	}
 	slices.Sort(values)
@@ -823,14 +822,7 @@ func (s *Server) operationLaneConfigured(
 			status := connection.Status
 			return status.Enabled && status.Configured && status.Available && status.CredentialConfigured
 		})
-	case operations.KindDocumentEmbedding:
-		return s.cfg.Vector.Enabled && s.cfg.Attachments.Documents.Index.Embeddings.Enabled
-	case operations.KindDocumentExtraction:
-		if !s.cfg.Attachments.Documents.Enabled {
-			return false
-		}
-		_, err := s.currentDocumentIndexStatusRequest(ctx)
-		return !errors.Is(err, store.ErrDocumentIndexStatusScopeUnavailable)
+
 	case operations.KindMessageEmbedding:
 		return s.cfg.Vector.Enabled
 	case operations.KindPersonEmbedding:
@@ -895,10 +887,7 @@ func operationRelatedStatus(kind operations.Kind) *operations.RelatedStatusID {
 	switch kind {
 	case operations.KindCardDAVSync:
 		related = operations.RelatedStatusCardDAV
-	case operations.KindDocumentEmbedding:
-		related = operations.RelatedStatusDocumentVector
-	case operations.KindDocumentExtraction:
-		related = operations.RelatedStatusDocumentIndex
+
 	case operations.KindSourceSync:
 		related = operations.RelatedStatusSource
 	case operations.KindVisualEmbedding:

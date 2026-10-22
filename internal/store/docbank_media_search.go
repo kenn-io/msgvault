@@ -199,3 +199,5 @@ func (s *Store) DocumentSearchOccurrences(ctx context.Context, destination strin
 	}
 	return result, rows.Err()
 }
+
+const containingTitleMCVSQL = "COALESCE(NULLIF(m.subject, ''), NULLIF(cv.title, ''), '')"
