@@ -118,7 +118,7 @@ func classify(body string, signals mime.AutomationSignals, attachment, unreadabl
 	text := ownText(body)
 	return store.LoopMessageEvidence{
 		Empty: strings.TrimSpace(text) == "", Acknowledgement: isAcknowledgementOnly(text), Asks: asks(text),
-		Automated:  signals.AutoSubmitted || signals.CalendarPart || signals.ReplyToNoReply || signals.PrecedenceBulk || signals.ListUnsubscribe,
+		Automated:  signals.AutoSubmitted || signals.CalendarPart || signals.ReplyToNoReply || signals.PrecedenceBulk || signals.ListID || signals.ListUnsubscribe,
 		Attachment: attachment, Unreadable: unreadable,
 	}
 }

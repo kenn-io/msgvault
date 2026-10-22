@@ -29,6 +29,8 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		corrupt     bool
 	}{
 		{messageType: "sms", raw: `{"Type":2}`, wantSent: true, corrupt: true},
+		{messageType: "sms", wantSent: true},
+		{messageType: "mms", raw: `broken JSON`, wantSent: true},
 		{messageType: "sms", raw: `{"Type":2}`, wantSent: true},
 		{messageType: "sms", raw: `{"Type":3}`, wantSent: false},
 		{messageType: "sms", raw: `{"Type":4}`, wantSent: false},
@@ -38,8 +40,11 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		{messageType: "mms", raw: `{"MessageBox":3}`, wantSent: false},
 		{messageType: "mms", raw: `{"MessageBox":4}`, wantSent: false},
 	}
-	ids := make([]int64, len(tests))
-	for i, tt := range tests {
+	// Cross the migration's 500-record page boundary with both sent and unsent
+	// rows, including originals that cannot be classified.
+	ids := make([]int64, 510)
+	for i := range ids {
+		tt := tests[i%len(tests)]
 		messageID, err := f.Store.UpsertMessage(&store.Message{
 			ConversationID:  conversationID,
 			SourceID:        source.ID,
@@ -50,7 +55,9 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 		})
 		require.NoError(err)
 		ids[i] = messageID
-		require.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), synctechstate.RawFormat))
+		if tt.raw != "" {
+			require.NoError(f.Store.UpsertMessageRawWithFormat(messageID, []byte(tt.raw), synctechstate.RawFormat))
+		}
 		if tt.corrupt {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE message_raw SET raw_data = ?, compression = ? WHERE message_id = ?`), []byte("broken compressed block"), "zlib", messageID)
 			require.NoError(err)
@@ -67,9 +74,10 @@ func TestMigrationMarksExistingSynctechDraftsAndUnsentMessages(t *testing.T) {
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 
 	for i, id := range ids {
+		tt := tests[i%len(tests)]
 		var got bool
 		require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
 			`SELECT is_sent FROM messages WHERE id = ?`), id).Scan(&got))
-		assert.Equal(tests[i].wantSent, got, "message %d: %s %s", i, tests[i].messageType, tests[i].raw)
+		assert.Equal(tt.wantSent, got, "message %d: %s %s", i, tt.messageType, tt.raw)
 	}
 }
