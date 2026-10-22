@@ -1632,6 +1632,59 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	}
 }
 
+func TestActivityMergedSentCopyKeepsGmailDraftEligible(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	at := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	message := f.NewMessage().WithSentAt(at).Build()
+	message.SenderID = sql.NullInt64{Int64: owner, Valid: true}
+	message.RFC822MessageID = sql.NullString{String: "<shared@example.com>", Valid: true}
+	gmailID, err := f.Store.UpsertMessage(message)
+	require.NoError(err)
+	draftLabels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+	require.NoError(f.Store.AddMessageLabels(gmailID, []int64{draftLabels["DRAFT"]}))
+	var authored bool
+	require.NoError(activityQueryRow(f.Store, `SELECT draft_authored FROM messages WHERE id = ?`, gmailID).Scan(&authored))
+	require.True(authored)
+
+	imapSource, err := f.Store.GetOrCreateSource("imap", "imap://owner@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(imapSource.ID, "owner@example.com", "manual"))
+	convID, err := f.Store.EnsureConversation(imapSource.ID, "sent-thread", "Sent")
+	require.NoError(err)
+	sentMessage := storetest.NewMessage(imapSource.ID, convID).WithSentAt(at).Build()
+	sentMessage.SenderID = message.SenderID
+	sentMessage.RFC822MessageID = message.RFC822MessageID
+	imapID, err := f.Store.UpsertMessage(sentMessage)
+	require.NoError(err)
+	sentLabels, err := f.Store.EnsureLabelsBatch(imapSource.ID, map[string]store.LabelInfo{
+		"Sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	require.NoError(err)
+	require.NoError(f.Store.AddMessageLabels(imapID, []int64{sentLabels["Sent"]}))
+	_, err = activityExec(f.Store, `UPDATE activity_projection_queue SET processed_revision = revision`)
+	require.NoError(err)
+	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	require.Empty(queued)
+
+	_, err = f.Store.MergeDuplicates(gmailID, []int64{imapID}, "draft-sent-merge")
+	require.NoError(err)
+	queued, err = f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	require.NoError(err)
+	assert.True(slices.ContainsFunc(queued, func(item store.ActivityProjectionQueueItem) bool {
+		return item.MessageID == gmailID
+	}))
+	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{gmailID})
+	require.NoError(err)
+	require.Len(candidates, 1)
+	assert.True(candidates[0].Eligible)
+	assert.False(candidates[0].Unsent)
+}
+
 func TestActivityHookReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
