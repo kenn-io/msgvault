@@ -205,7 +205,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 				assert.NotContains(stdout.String(), "Warning:")
 			}
 			if tc.hidden && !tc.json {
-				assert.Equal("Warning: this message's HTML hides text from readers.\n", stderr.String())
+				assert.Equal("Warning: this message's HTML may hide text.\n", stderr.String())
 			} else {
 				assert.Empty(stderr.String())
 			}

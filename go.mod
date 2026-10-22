@@ -29,7 +29,6 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/google/uuid v1.6.0
 	github.com/icholy/digest v1.2.0
-	github.com/inbucket/html2text v1.0.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jhillyerd/enmime/v2 v2.5.0
 	github.com/mattn/go-isatty v0.0.24
@@ -119,6 +118,7 @@ require (
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hhrutter/tiff v1.0.6 // indirect
+	github.com/inbucket/html2text v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
