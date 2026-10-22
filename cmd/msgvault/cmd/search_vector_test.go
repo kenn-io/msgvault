@@ -87,6 +87,24 @@ func TestWriteHybridResultsTableExplainKeepsScores(t *testing.T) {
 	assert.Contains(buf.String(), "0.7500")
 }
 
+func TestOutputHybridResultsJSONHiddenTextPresent(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	done := captureStdout(t)
+	err := outputHybridResultsJSON(&daemonclient.CLIHybridSearch{Results: []daemonclient.CLIHybridSearchResult{
+		{ID: 1, Message: query.MessageSummary{HiddenTextPresent: true}},
+		{ID: 2, Message: query.MessageSummary{HiddenTextPresent: false}},
+	}}, false)
+	out := done()
+	require.NoError(err)
+	var result struct {
+		Results []map[string]any `json:"results"`
+	}
+	require.NoError(json.Unmarshal([]byte(out), &result))
+	require.Len(result.Results, 2)
+	assert.Equal(true, result.Results[0]["hidden_text_present"])
+	assert.Equal(false, result.Results[1]["hidden_text_present"])
+}
+
 func TestSearchHybridFullTextInPipe(t *testing.T) {
 	from := strings.Repeat("sender", 10) + "@example.com"
 	text := strings.Repeat("complete text ", 10) + "final words"

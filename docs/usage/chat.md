@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-11"
+last_edited: "2026-10-22"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -419,7 +419,9 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 being returned in a single response.
 
 On newer `main` builds, `get_message` and `search_in_message` include
-`hidden_text_present`. The CLI readers `show-message` and `show-thread` return
+the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
+readable text. False does not guarantee that text is visible.
+The CLI readers `show-message` and `show-thread` return
 the same flag in JSON and warn on stderr for text output. The check uses a set
 of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
 HTML that may hide letters or digits, including for mail with a plain-text

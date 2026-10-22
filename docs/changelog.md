@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-20"
+last_edited: "2026-10-22"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- CLI search JSON, MCP `search_message_bodies`, message details, MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json` report `hidden_text_present` when inline-style heuristics, `hidden`, or legacy color attributes flag HTML that may hide readable text. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Archive schema 11 flags older mail during a one-time backfill; new HTML writes refresh the stored flag. API schema 3.24.0 includes the flag in message details and search rows. Message bodies stay unchanged. The check excludes stylesheets and browser layout.
+- CLI search JSON, MCP `search_message_bodies`, message details, MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json` report the best-effort flag `hidden_text_present`. True means the stored HTML likely hides readable text. False does not guarantee that text is visible. The check uses inline-style heuristics, `hidden`, and legacy color attributes. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Archive schema 11 flags older mail during a one-time backfill; new HTML writes refresh the stored flag. API schema 3.24.0 includes the flag in message details and search rows. Daemons older than API schema 3.24.0 report false. Message bodies stay unchanged. The check excludes stylesheets and browser layout.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.
