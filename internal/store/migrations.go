@@ -97,9 +97,7 @@ const (
 	migrationPersonSweepAttemptBriefFailure = "person_sweep_attempt_brief_failure_v1"
 	migrationCardDAVMultipleAccounts        = "carddav_multiple_accounts_v1"
 	migrationCardDAVInferenceExportState    = "carddav_inference_export_state_v1"
-	migrationLoopDecisionOrdering           = "loop_decision_ordering_v1"
 	migrationLoopMessageOrdering            = "loop_message_ordering_v1"
-	migrationLoopConversationDecisions      = "loop_conversation_decisions_v1"
 	// v14 repairs provider-native Synctech drafts and unsent messages so live
 	// message readers can distinguish them from sent replies.
 	migrationSynctechUnsentMessages = "synctech_unsent_messages_v1"

@@ -463,7 +463,7 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			{ago: 3 * day, body: "Can you send the contract?"},
 			{ago: 2 * day, body: "And the deck?"},
 		}}, 2, true},
-		{"25 nudges after the question", script{msgs: nudges}, 2, true},
+		{"25 nudges after the question", script{msgs: nudges}, 26, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -473,6 +473,9 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(tt.open, detection.Open)
 			assert.Equal(tt.parses, reader.parses, "originals parsed")
+			if tt.name == "25 nudges after the question" {
+				assert.Len(detection.Loop.Questions, 26, "each eligible question can keep the loop open after a partial mark")
+			}
 			for id, n := range reader.reads {
 				assert.Equal(1, n, "message %d body read count", id)
 			}

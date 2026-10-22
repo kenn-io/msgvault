@@ -119,7 +119,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 				return nil
 			}
 			if cutoff, ok := marks[l.ConversationID]; ok {
-				if store.LoopCutoffCovers(cutoff, l.LastAsk) {
+				if !slices.ContainsFunc(l.Questions, func(ask store.LoopMessage) bool { return !store.LoopCutoffCovers(cutoff, ask) }) {
 					return nil
 				}
 			}

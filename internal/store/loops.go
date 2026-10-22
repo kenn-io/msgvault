@@ -57,6 +57,7 @@ type LoopRecipient struct {
 // LoopMessage is one live, non-draft email or chat message with its
 // owner-relative direction.
 type LoopMessage struct {
+	Questions      []LoopMessage
 	ID             int64
 	OrderID        int64
 	ConversationID int64
@@ -80,6 +81,7 @@ type LoopConversation struct {
 	ConversationID   int64
 	SourceID         int64
 	ConversationType string
+	GroupChat        bool
 	// FirstAt is the time of the conversation's oldest live message. No loop
 	// in it can start earlier.
 	FirstAt time.Time
@@ -120,14 +122,14 @@ type LoopDecision struct {
 	SnoozedUntil    *time.Time
 }
 
-// LoopCutoff is the covered question boundary for a conversation. MessageID
-// and OrderID identify the latest question; CoveredOrderIDs preserve the
-// timestamp/ID coverage snapshot if an older question's date later changes.
+// LoopCutoff resolves exact question states and historical fallback boundaries.
 type LoopCutoff struct {
-	MessageID       int64
-	OccurredAt      time.Time
-	OrderID         int64
-	CoveredOrderIDs []int64
+	MessageID  int64
+	OccurredAt time.Time
+	OrderID    int64
+	now        time.Time
+	fallbacks  []loopFallback
+	questions  map[int64]loopQuestionState
 }
 
 // loopMessageFilterSQL keeps what the archive still holds. A message deleted
@@ -302,6 +304,63 @@ func (s *Store) loopChunk(ctx context.Context, chunk []LoopConversation, owners 
 	byConversation := map[int64][]LoopMessage{}
 	for _, m := range messages {
 		byConversation[m.ConversationID] = append(byConversation[m.ConversationID], m)
+	}
+	// Importers can label group MMS as direct_chat. Read membership from all
+	// message senders and recipients, including older pages.
+	for i := range chunk {
+		if chunk[i].ConversationType != "direct_chat" {
+			continue
+		}
+		rows, err := s.db.QueryContext(ctx, `SELECT id FROM messages WHERE conversation_id = ?`, chunk[i].ConversationID)
+		if err != nil {
+			return nil, err
+		}
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+		members, err := s.loopMessages(ctx, ids, owners)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		ownerKnown := false
+		for _, m := range members {
+			people := []LoopParticipant{m.Sender}
+			for _, r := range m.Recipients {
+				people = append(people, r.LoopParticipant)
+			}
+			for _, p := range people {
+				ownerKnown = ownerKnown || p.IsOwner
+				if p.ParticipantID == 0 {
+					continue
+				}
+				key := "participant:" + strconv.FormatInt(p.ParticipantID, 10)
+				if p.PersonID != 0 {
+					key = "person:" + strconv.FormatInt(p.PersonID, 10)
+				}
+				seen[key] = seen[key] || p.IsOwner
+			}
+		}
+		limit := 2
+		if ownerKnown {
+			limit = 1
+		}
+		external := 0
+		for _, owner := range seen {
+			if !owner {
+				external++
+			}
+		}
+		chunk[i].GroupChat = external > limit
 	}
 	out := chunk[:0:0]
 	for _, c := range chunk {
@@ -617,68 +676,120 @@ func (s *Store) LoopAutomationSignalsContext(ctx context.Context, messageID int6
 	return signals, unreadable, err
 }
 
-// LoopMarksContext returns the decisions in force at now: done marks and
-// snoozes that have not lapsed. Each decision keeps its question coverage
-// attached to the conversation as message identities and timestamps change.
+// LoopMarksContext loads exact question states, including expired snoozes.
+// A known open question must never inherit a different question's fallback.
 func (s *Store) LoopMarksContext(ctx context.Context, now time.Time) (map[int64]LoopCutoff, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT d.conversation_id, d.through_at, d.through_message_id, d.through_order_id FROM loop_conversation_decisions d
-		WHERE d.state = ? OR d.snoozed_until > ? ORDER BY d.through_at, d.through_order_id`, LoopStateDone, s.dialect.TimestampParam(now))
+	marks, err := loadLoopMarks(ctx, s.db)
+	for id, mark := range marks {
+		mark.now = now
+		marks[id] = mark
+	}
+	return marks, err
+}
+
+type loopQuestionState struct {
+	State string
+	Until *time.Time
+}
+
+type loopFallback struct {
+	Cutoff LoopCutoff
+	Result loopQuestionState
+}
+
+func loadLoopMarks(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*loggedRows, error)
+}) (map[int64]LoopCutoff, error) {
+	marks := map[int64]LoopCutoff{}
+	rows, err := q.QueryContext(ctx, `SELECT conversation_id, through_at, through_message_id, through_order_id, state, snoozed_until
+		FROM loop_conversation_decisions ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("load loop marks: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	marks := map[int64]LoopCutoff{}
 	for rows.Next() {
-		var id, messageID, orderID int64
-		var through nullableTimestamp
-		if err := rows.Scan(&id, &through, &messageID, &orderID); err != nil {
+		var id int64
+		var cutoff LoopCutoff
+		var at, until nullableTimestamp
+		var state string
+		if err := rows.Scan(&id, &at, &cutoff.MessageID, &cutoff.OrderID, &state, &until); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
-		marks[id] = LoopCutoff{MessageID: messageID, OccurredAt: through.Time, OrderID: orderID}
+		cutoff.OccurredAt = at.Time
+		result := loopQuestionState{State: state}
+		if until.Valid {
+			result.Until = &until.Time
+		}
+		mark := marks[id]
+		mark.MessageID, mark.OrderID, mark.OccurredAt = cutoff.MessageID, cutoff.OrderID, cutoff.OccurredAt
+		mark.fallbacks = append(mark.fallbacks, loopFallback{Cutoff: cutoff, Result: result})
+		marks[id] = mark
 	}
-	if err := rows.Err(); err != nil {
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return nil, err
 	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	coveredRows, err := s.db.QueryContext(ctx, `SELECT c.conversation_id, c.order_id
-		FROM loop_decision_covered_orders c JOIN loop_conversation_decisions d ON d.conversation_id = c.conversation_id
-		WHERE d.state = ? OR d.snoozed_until > ? ORDER BY c.conversation_id, c.order_id`, LoopStateDone, s.dialect.TimestampParam(now))
+	rows, err = q.QueryContext(ctx, `SELECT conversation_id, order_id, state, snoozed_until FROM loop_question_states`)
 	if err != nil {
-		return nil, fmt.Errorf("load covered loop questions: %w", err)
+		return nil, fmt.Errorf("load loop question states: %w", err)
 	}
-	defer func() { _ = coveredRows.Close() }()
-	for coveredRows.Next() {
-		var conversationID, orderID int64
-		if err := coveredRows.Scan(&conversationID, &orderID); err != nil {
+	for rows.Next() {
+		var id, order int64
+		var state loopQuestionState
+		var until nullableTimestamp
+		if err := rows.Scan(&id, &order, &state.State, &until); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
-		cutoff := marks[conversationID]
-		cutoff.CoveredOrderIDs = append(cutoff.CoveredOrderIDs, orderID)
-		marks[conversationID] = cutoff
+		if until.Valid {
+			state.Until = &until.Time
+		}
+		mark := marks[id]
+		if mark.questions == nil {
+			mark.questions = map[int64]loopQuestionState{}
+		}
+		mark.questions[order] = state
+		marks[id] = mark
 	}
-	return marks, coveredRows.Err()
+	return marks, errors.Join(rows.Err(), rows.Close())
 }
 
-// MarkLoopDoneContext records that the owner finished the loop anchored at
-// the message, through the question through. It replaces any earlier mark.
+func loopStateFor(mark LoopCutoff, ask LoopMessage) loopQuestionState {
+	if state, ok := mark.questions[ask.OrderID]; ok {
+		return state
+	}
+	state := loopQuestionState{State: "open"}
+	for _, fallback := range mark.fallbacks {
+		if loopBoundaryCovers(fallback.Cutoff, ask) {
+			state = strongerLoopState(state, fallback.Result)
+		}
+	}
+	return state
+}
+
+func strongerLoopState(a, b loopQuestionState) loopQuestionState {
+	if a.State == LoopStateDone {
+		return a
+	}
+	if b.State == LoopStateDone {
+		return b
+	}
+	if b.State == LoopStateSnoozed && (a.State != LoopStateSnoozed || b.Until.After(*a.Until)) {
+		return b
+	}
+	return a
+}
+
 func (s *Store) MarkLoopDoneContext(ctx context.Context, anchorID int64, through LoopMessage) (LoopDecision, error) {
 	return s.putLoopDecision(ctx, LoopDecision{AnchorMessageID: anchorID, State: LoopStateDone}, through)
 }
 
-// SnoozeLoopContext hides the loop anchored at the message until the instant,
-// through the question through. A done mark that covers that question stays,
-// and the result reports it.
 func (s *Store) SnoozeLoopContext(ctx context.Context, anchorID int64, until time.Time, through LoopMessage) (LoopDecision, error) {
 	until = until.UTC()
 	return s.putLoopDecision(ctx, LoopDecision{AnchorMessageID: anchorID, State: LoopStateSnoozed, SnoozedUntil: &until}, through)
 }
 
 func (s *Store) putLoopDecision(ctx context.Context, d LoopDecision, through LoopMessage) (LoopDecision, error) {
-	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.putLoopDecisionTx(ctx, tx, &d, through)
-	})
+	err := s.withTxContext(ctx, func(tx *loggedTx) error { return s.putLoopDecisionTx(ctx, tx, &d, through) })
 	if err != nil {
 		return LoopDecision{}, fmt.Errorf("store loop decision: %w", err)
 	}
@@ -688,192 +799,183 @@ func (s *Store) putLoopDecision(ctx context.Context, d LoopDecision, through Loo
 func (s *Store) putLoopDecisionTx(ctx context.Context, tx *loggedTx, d *LoopDecision, through LoopMessage) error {
 	var conversationID int64
 	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages WHERE id = ?`, d.AnchorMessageID).Scan(&conversationID); err != nil {
-		return fmt.Errorf("find loop decision conversation: %w", err)
+		return err
 	}
-	if through.OrderID == 0 {
-		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(
-			`INSERT OR IGNORE INTO loop_message_order (message_id) VALUES (?)`), through.ID); err != nil {
-			return fmt.Errorf("allocate loop message ordering token: %w", err)
-		}
-		if err := tx.QueryRowContext(ctx, `SELECT id FROM loop_message_order WHERE message_id = ?`, through.ID).Scan(&through.OrderID); err != nil {
-			return fmt.Errorf("read loop message ordering token: %w", err)
-		}
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM loop_message_order WHERE message_id = ?`, through.ID).Scan(&through.OrderID); err != nil {
+		return err
 	}
-	throughOrderID := through.OrderID
+	marks, err := loadLoopMarks(ctx, tx)
+	if err != nil {
+		return err
+	}
+	mark := marks[conversationID]
 	if d.State == LoopStateSnoozed {
-		var covered nullableTimestamp
-		var throughID, orderID int64
-		if err := tx.QueryRowContext(ctx, `SELECT through_at, through_message_id, through_order_id FROM loop_conversation_decisions
-			WHERE conversation_id = ? AND state = ?`, conversationID, LoopStateDone).
-			Scan(&covered, &throughID, &orderID); err == nil {
-			cutoff := LoopCutoff{MessageID: throughID, OccurredAt: covered.Time, OrderID: orderID}
-			coverageRows, err := tx.QueryContext(ctx, `SELECT order_id FROM loop_decision_covered_orders WHERE conversation_id = ?`, conversationID)
-			if err != nil {
-				return fmt.Errorf("read done loop coverage: %w", err)
+		asks := through.Questions
+		if len(asks) == 0 {
+			asks = []LoopMessage{through}
+		}
+		allDone := true
+		for _, ask := range asks {
+			allDone = allDone && loopStateFor(mark, ask).State == LoopStateDone
+		}
+		if allDone {
+			d.State, d.SnoozedUntil = LoopStateDone, nil
+			return nil
+		}
+	}
+	if err := s.snapshotLoopQuestionsTx(ctx, tx, conversationID, mark); err != nil {
+		return err
+	}
+	cutoff := LoopCutoff{MessageID: through.ID, OrderID: through.OrderID, OccurredAt: through.OccurredAt}
+	questions, err := loopKnownMessages(ctx, tx, conversationID)
+	if err != nil {
+		return err
+	}
+	for _, ask := range questions {
+		if loopBoundaryCovers(cutoff, ask) {
+			if err := s.writeLoopQuestionTx(ctx, tx, conversationID, ask.OrderID, loopQuestionState{State: d.State, Until: d.SnoozedUntil}); err != nil {
+				return err
 			}
-			for coverageRows.Next() {
-				var coveredOrderID int64
-				if err := coverageRows.Scan(&coveredOrderID); err != nil {
-					_ = coverageRows.Close()
-					return fmt.Errorf("scan done loop coverage: %w", err)
-				}
-				cutoff.CoveredOrderIDs = append(cutoff.CoveredOrderIDs, coveredOrderID)
-			}
-			if err := coverageRows.Err(); err != nil {
-				_ = coverageRows.Close()
-				return fmt.Errorf("iterate done loop coverage: %w", err)
-			}
-			if err := coverageRows.Close(); err != nil {
-				return fmt.Errorf("close done loop coverage: %w", err)
-			}
-			if LoopCutoffCovers(cutoff, through) {
-				d.State, d.SnoozedUntil = LoopStateDone, nil
-				return nil
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read done loop mark: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM loop_conversation_decisions WHERE conversation_id = ?`, conversationID); err != nil {
-		return fmt.Errorf("replace loop decision: %w", err)
+		return err
 	}
 	var until any
 	if d.SnoozedUntil != nil {
 		until = s.dialect.TimestampParam(*d.SnoozedUntil)
 	}
-	var stored sql.NullTime
-	err := tx.QueryRowContext(ctx, `INSERT INTO loop_conversation_decisions
-		(conversation_id, state, snoozed_until, through_at, through_message_id, through_order_id)
-		VALUES (?, ?, ?, ?, ?, ?) RETURNING state, snoozed_until`,
-		conversationID, d.State, until, s.operationTimestampParam(through.OccurredAt), through.ID, throughOrderID).Scan(&d.State, &stored)
-	d.SnoozedUntil = utcNullTimePointer(stored)
+	_, err = tx.ExecContext(ctx, `INSERT INTO loop_conversation_decisions
+		(conversation_id, state, snoozed_until, through_at, through_message_id, through_order_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		conversationID, d.State, until, s.operationTimestampParam(through.OccurredAt), through.ID, through.OrderID)
+	return err
+}
+
+func loopKnownMessages(ctx context.Context, tx *loggedTx, conversationID int64) ([]LoopMessage, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT m.id, lmo.id, m.sent_at FROM messages m
+		JOIN loop_message_order lmo ON lmo.message_id = m.id WHERE m.conversation_id = ?`, conversationID)
+	if err != nil {
+		return nil, err
+	}
+	var messages []LoopMessage
+	for rows.Next() {
+		var m LoopMessage
+		var at nullableTimestamp
+		if err := rows.Scan(&m.ID, &m.OrderID, &at); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		m.OccurredAt = at.Time
+		messages = append(messages, m)
+	}
+	return messages, errors.Join(rows.Err(), rows.Close())
+}
+
+func (s *Store) writeLoopQuestionTx(ctx context.Context, tx *loggedTx, conversationID, orderID int64, state loopQuestionState) error {
+	var until any
+	if state.Until != nil {
+		until = s.dialect.TimestampParam(*state.Until)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO loop_question_states (conversation_id, order_id, state, snoozed_until)
+		VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id, order_id) DO UPDATE SET state = excluded.state, snoozed_until = excluded.snoozed_until`,
+		conversationID, orderID, state.State, until)
+	return err
+}
+
+func (s *Store) snapshotLoopQuestionsTx(ctx context.Context, tx *loggedTx, conversationID int64, mark LoopCutoff) error {
+	messages, err := loopKnownMessages(ctx, tx, conversationID)
 	if err != nil {
 		return err
 	}
-	cutoffAt := s.loopTimeParam(through.OccurredAt)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO loop_decision_covered_orders (conversation_id, order_id)
-		SELECT ?, lmo.id FROM messages m JOIN loop_message_order lmo ON lmo.message_id = m.id
-		WHERE m.conversation_id = ? AND (`+s.loopTimeKey("m.sent_at")+` < ?
-			OR (`+s.loopTimeKey("m.sent_at")+` = ? AND lmo.id <= ?) OR m.id = ?)`,
-		conversationID, conversationID, cutoffAt, cutoffAt, throughOrderID, through.ID); err != nil {
-		return fmt.Errorf("store covered loop question order tokens: %w", err)
+	for _, ask := range messages {
+		if err := s.writeLoopQuestionTx(ctx, tx, conversationID, ask.OrderID, loopStateFor(mark, ask)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// LoopCutoffCovers reports whether a stored decision covers ask. The snapshot
-// keeps questions covered if timestamps change; the original time/order cutoff
-// still covers late-arriving historical messages and lets newer questions list.
+// LoopCutoffCovers uses exact state for known questions and fallbacks for late imports.
 func LoopCutoffCovers(cutoff LoopCutoff, ask LoopMessage) bool {
-	if ask.OrderID > 0 && slices.Contains(cutoff.CoveredOrderIDs, ask.OrderID) {
-		return true
-	}
-	// A merge can remap identity to an earlier-token survivor, but a later-token
-	// survivor is a new question beyond the original boundary. GC and subset
-	// export clear MessageID when that exact row is absent.
-	sameIdentity := cutoff.MessageID != 0 && cutoff.MessageID == ask.ID &&
-		cutoff.OrderID > 0 && ask.OrderID > 0 && ask.OrderID <= cutoff.OrderID
-	byOrder := ask.OccurredAt.Before(cutoff.OccurredAt) ||
-		(ask.OccurredAt.Equal(cutoff.OccurredAt) && ask.OrderID <= cutoff.OrderID)
-	return sameIdentity || byOrder
+	state := loopStateFor(cutoff, ask)
+	return state.State == LoopStateDone || (state.State == LoopStateSnoozed && cutoff.now.Before(*state.Until))
 }
 
-// copyLoopDecisionTx brings a source conversation's decision into the
-// survivor's conversation when a duplicate crosses conversation boundaries.
-// The source mark stays with its original conversation while the destination
-// resolves conflicts: done beats snooze, two dones keep the later question,
-// and two snoozes keep the later deadline.
-func copyLoopDecisionTx(ctx context.Context, tx *loggedTx, from, into int64) error {
+func loopBoundaryCovers(cutoff LoopCutoff, ask LoopMessage) bool {
+	return ask.OccurredAt.Before(cutoff.OccurredAt) ||
+		(ask.OccurredAt.Equal(cutoff.OccurredAt) && ask.OrderID <= cutoff.OrderID)
+}
+
+// copyLoopDecisionTx follows a confirmed duplicate to whichever copy survives.
+// Whole-conversation merges move fallbacks separately; other callers copy them.
+func (s *Store) copyLoopDecisionTx(ctx context.Context, tx *loggedTx, from, into int64, copyFallbacks bool) error {
 	if from == into {
 		return nil
 	}
-	var fromConversation, intoConversation int64
-	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages WHERE id = ?`, from).Scan(&fromConversation); err != nil {
+	var fromConversation, intoConversation, fromOrder, intoOrder int64
+	for _, row := range []struct {
+		id                  int64
+		conversation, order *int64
+	}{{from, &fromConversation, &fromOrder}, {into, &intoConversation, &intoOrder}} {
+		err := tx.QueryRowContext(ctx, `SELECT m.conversation_id, lmo.id FROM messages m JOIN loop_message_order lmo ON lmo.message_id = m.id WHERE m.id = ?`, row.id).Scan(row.conversation, row.order)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
-		return fmt.Errorf("find source loop decision conversation: %w", err)
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM messages WHERE id = ?`, into).Scan(&intoConversation); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("find survivor loop decision conversation: %w", err)
 	}
-	if fromConversation == intoConversation {
-		if _, err := tx.ExecContext(ctx, `UPDATE loop_conversation_decisions SET through_message_id = ?
-			WHERE conversation_id = ? AND through_message_id = ?`, into, fromConversation, from); err != nil {
-			return fmt.Errorf("remap loop decision question from %d to %d: %w", from, into, err)
-		}
-		return nil
-	}
-	source, err := loadLoopDecision(ctx, tx, fromConversation)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
+	marks, err := loadLoopMarks(ctx, tx)
 	if err != nil {
-		return fmt.Errorf("read loop decision from conversation %d: %w", fromConversation, err)
+		return err
 	}
-	if source.ThroughMessageID == from {
-		source.ThroughMessageID = into
-	}
-	target, err := loadLoopDecision(ctx, tx, intoConversation)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("read loop decision from survivor conversation %d: %w", intoConversation, err)
-	}
-	if errors.Is(err, sql.ErrNoRows) || loopDecisionReplaces(target, source) {
-		var until any
-		if source.SnoozedUntil != nil {
-			until = source.SnoozedUntil
+	for _, id := range []int64{fromConversation, intoConversation} {
+		if err := s.snapshotLoopQuestionsTx(ctx, tx, id, marks[id]); err != nil {
+			return err
 		}
+	}
+	marks, err = loadLoopMarks(ctx, tx)
+	if err != nil {
+		return err
+	}
+	state := strongerLoopState(marks[fromConversation].questions[fromOrder], marks[intoConversation].questions[intoOrder])
+	if err := s.writeLoopQuestionTx(ctx, tx, intoConversation, intoOrder, state); err != nil {
+		return err
+	}
+	if copyFallbacks && fromConversation != intoConversation {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO loop_conversation_decisions
 			(conversation_id, state, snoozed_until, through_at, through_message_id, through_order_id)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT (conversation_id) DO UPDATE SET state = excluded.state, snoozed_until = excluded.snoozed_until,
-				through_at = excluded.through_at, through_message_id = excluded.through_message_id, through_order_id = excluded.through_order_id`,
-			intoConversation, source.State, until, source.ThroughAt, source.ThroughMessageID, source.ThroughOrderID); err != nil {
-			return fmt.Errorf("copy loop decision from conversation %d to %d: %w", fromConversation, intoConversation, err)
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM loop_decision_covered_orders WHERE conversation_id = ?`, intoConversation); err != nil {
-			return fmt.Errorf("replace survivor loop coverage: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO loop_decision_covered_orders (conversation_id, order_id)
-			SELECT ?, order_id FROM loop_decision_covered_orders WHERE conversation_id = ?`, intoConversation, fromConversation); err != nil {
-			return fmt.Errorf("copy loop decision coverage from %d to %d: %w", fromConversation, intoConversation, err)
+			SELECT ?, d.state, d.snoozed_until, d.through_at, d.through_message_id, d.through_order_id
+			FROM loop_conversation_decisions d WHERE d.conversation_id = ?
+			AND NOT EXISTS (SELECT 1 FROM loop_conversation_decisions target
+				WHERE target.conversation_id = ? AND target.state = d.state
+				AND target.through_order_id = d.through_order_id AND target.through_at = d.through_at
+				AND (target.snoozed_until = d.snoozed_until OR (target.snoozed_until IS NULL AND d.snoozed_until IS NULL)))`,
+			intoConversation, fromConversation, intoConversation); err != nil {
+			return err
 		}
 	}
-	return nil
+	_, err = tx.ExecContext(ctx, `UPDATE loop_conversation_decisions SET through_message_id = ? WHERE through_message_id = ?`, into, from)
+	return err
 }
 
-type loopDecisionRecord struct {
-	State            string
-	SnoozedUntil     *time.Time
-	ThroughAt        time.Time
-	ThroughMessageID int64
-	ThroughOrderID   int64
-}
-
-func loadLoopDecision(ctx context.Context, q contextRowQuerier, conversationID int64) (loopDecisionRecord, error) {
-	var d loopDecisionRecord
-	var until sql.NullTime
-	var through nullableTimestamp
-	err := q.QueryRowContext(ctx, `SELECT state, snoozed_until, through_at, through_message_id, through_order_id
-		FROM loop_conversation_decisions WHERE conversation_id = ?`, conversationID).
-		Scan(&d.State, &until, &through, &d.ThroughMessageID, &d.ThroughOrderID)
+// mergeLoopConversationsTx snapshots both sides before messages change conversations.
+func (s *Store) mergeLoopConversationsTx(ctx context.Context, tx *loggedTx, from, into int64) error {
+	if from == into {
+		return nil
+	}
+	marks, err := loadLoopMarks(ctx, tx)
 	if err != nil {
-		return loopDecisionRecord{}, err
+		return err
 	}
-	d.SnoozedUntil, d.ThroughAt = utcNullTimePointer(until), through.Time
-	return d, nil
-}
-
-func loopDecisionReplaces(existing, candidate loopDecisionRecord) bool {
-	if candidate.State == LoopStateDone {
-		if existing.State != LoopStateDone {
-			return true
+	for _, id := range []int64{from, into} {
+		if err := s.snapshotLoopQuestionsTx(ctx, tx, id, marks[id]); err != nil {
+			return err
 		}
-		return candidate.ThroughAt.After(existing.ThroughAt) ||
-			(candidate.ThroughAt.Equal(existing.ThroughAt) && candidate.ThroughOrderID > existing.ThroughOrderID)
 	}
-	return existing.State == LoopStateSnoozed && candidate.SnoozedUntil.After(*existing.SnoozedUntil)
+	if _, err := tx.ExecContext(ctx, `UPDATE loop_question_states SET conversation_id = ? WHERE conversation_id = ?`, into, from); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE loop_conversation_decisions SET conversation_id = ? WHERE conversation_id = ?`, into, from)
+	return err
 }

@@ -283,6 +283,10 @@ func TestExecuteGCCannotLetReusedMessageIDInheritLoopCutoff(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(int64(4), deleted)
 	assert.Empty(listLoops(t, f, now), "the older same-time question remains covered after its cutoff message is purged")
+	var retiredState string
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT state FROM loop_question_states WHERE conversation_id = ? AND order_id = ?`), conversationOf(t, f, first), cutoff).Scan(&retiredState))
+	assert.Equal(store.LoopStateDone, retiredState, "purging the message preserves its exact question snapshot")
 
 	replacement := f.PersistEmail(storetest.EmailSpec{
 		Thread: "loop-cutoff-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},

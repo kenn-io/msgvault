@@ -6,10 +6,8 @@ import (
 )
 
 // migrateLoopMessageOrdering seeds a non-reused ordering token for every
-// existing message. Before this migration, loop_decisions.through_order_id
-// stored the message ID, so seeding tokens from those same IDs preserves the
-// existing sent-time/ID boundary. The sequence then starts above both live
-// messages and retired cutoff tokens.
+// existing message. The sequence starts above live messages and retired
+// cutoff tokens so a new question cannot inherit an old question's state.
 func (s *Store) migrateLoopMessageOrdering(ctx context.Context) error {
 	return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 		if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`
@@ -23,9 +21,8 @@ func (s *Store) migrateLoopMessageOrdering(ctx context.Context) error {
 		if err := tx.QueryRowContext(ctx, `SELECT MAX(value) FROM (
 			SELECT COALESCE(MAX(id), 0) AS value FROM messages
 			UNION ALL SELECT COALESCE(MAX(id), 0) FROM loop_message_order
-			UNION ALL SELECT COALESCE(MAX(through_order_id), 0) FROM loop_decisions
 			UNION ALL SELECT COALESCE(MAX(through_order_id), 0) FROM loop_conversation_decisions
-			UNION ALL SELECT COALESCE(MAX(order_id), 0) FROM loop_decision_covered_orders
+			UNION ALL SELECT COALESCE(MAX(order_id), 0) FROM loop_question_states
 		)`).Scan(&ceiling); err != nil {
 			return fmt.Errorf("read loop ordering token ceiling: %w", err)
 		}

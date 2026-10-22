@@ -1205,7 +1205,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
-				if err := copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID, true); err != nil {
 					return fmt.Errorf("transfer legacy loop decision: %w", err)
 				}
 			}

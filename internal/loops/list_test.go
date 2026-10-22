@@ -334,7 +334,7 @@ func TestMergedDecisionCoversQuestionAfterDateCorrection(t *testing.T) {
 	}
 }
 
-func TestListDoesNotHideUnseenQuestionAtRemappedCutoffIdentity(t *testing.T) {
+func TestDuplicateStateFollowsLaterSurvivorAndLeavesDistinctQuestionOpen(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -367,9 +367,14 @@ func TestListDoesNotHideUnseenQuestionAtRemappedCutoffIdentity(t *testing.T) {
 	assert.Equal(survivor, mark.MessageID, "the exact identity follows the surviving copy")
 	assert.Equal(cutoff, mark.OrderID, "the original ordering boundary stays in place")
 
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), ago(2*day), survivor)
+	require.NoError(err)
+	assert.Empty(list(t, f, loops.Options{}).Loops, "a confirmed duplicate keeps the question done even with a later token")
+	newQuestion := f.PersistEmail(storetest.EmailSpec{Thread: "remapped-cutoff", From: alex, To: []string{me}, Body: "Can you send the invoice?", SentAt: ago(3 * day)})
 	result := list(t, f, loops.Options{})
-	require.Len(result.Loops, 1, "a remapped identity with a later order token must not hide the loop")
-	assert.Equal(survivor, result.Loops[0].LastAsk.ID)
+	require.Len(result.Loops, 1, "a distinct question at the same instant stays open")
+	assert.Equal(survivor, result.Loops[0].LastAsk.ID, "the corrected newest question stays covered while the distinct older question keeps the loop visible")
+	assert.False(store.LoopCutoffCovers(mark, store.LoopMessage{ID: newQuestion, OrderID: newQuestion, OccurredAt: ago(3 * day)}))
 }
 
 func TestSnoozeAfterOlderImportReportsConversationDecision(t *testing.T) {
@@ -647,4 +652,83 @@ func TestSnoozeReplacesDoneOnceAFollowUpReopens(t *testing.T) {
 	require.True(through.Valid)
 	assert.True(until.Equal(storedUntil.Time))
 	assert.True(ago(2 * day).Equal(through.Time))
+}
+
+func TestKnownOpenQuestionSurvivesCoveredDateReordering(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	first := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(6 * day)})
+	_, err := loops.Done(t.Context(), f.Store, first, now)
+	require.NoError(err)
+	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the budget?", SentAt: ago(4 * day)})
+	// Snapshot the open follow-up during a duplicate transfer before dates change.
+	copyID := f.PersistEmail(storetest.EmailSpec{Thread: "copy", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(6 * day)})
+	_, err = f.Store.MergeDuplicates(first, []int64{copyID}, "snapshot-known-questions")
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), ago(2*day), first)
+	require.NoError(err)
+	require.Len(list(t, f, loops.Options{}).Loops, 1, "the distinct unanswered follow-up stays open")
+	decision, err := loops.Snooze(t.Context(), f.Store, list(t, f, loops.Options{}).Loops[0].Anchor.ID, now.Add(day), now)
+	require.NoError(err)
+	assert.Equal(store.LoopStateSnoozed, decision.State, "a done newest question cannot override an open older question")
+}
+
+func TestDistinctSnoozeDeadlinesSurviveSourceMerge(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(strconv.FormatBool(reverse), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			first := f.PersistEmail(storetest.EmailSpec{Thread: "merge-deadlines", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(6 * day)})
+			second := f.PersistEmail(storetest.EmailSpec{Thread: "merge-deadlines", From: alex, To: []string{me}, Body: "Can you send the budget?", SentAt: ago(4 * day)})
+			other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+			require.NoError(err)
+			conv, err := f.Store.EnsureConversation(other.ID, "merge-deadlines", "email_thread")
+			require.NoError(err)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_id = ?, conversation_id = ? WHERE id = ?`), other.ID, conv, second)
+			require.NoError(err)
+			_, err = loops.Snooze(t.Context(), f.Store, first, now.Add(day), now)
+			require.NoError(err)
+			_, err = loops.Snooze(t.Context(), f.Store, second, now.Add(3*day), now)
+			require.NoError(err)
+			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE sources SET source_type = 'beeper'`)
+			require.NoError(err)
+			_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE conversations SET conversation_type = 'direct_chat', source_conversation_id = '!loop:example.test' WHERE source_conversation_id = 'merge-deadlines'`)
+			require.NoError(err)
+			from, into := other.ID, f.Source.ID
+			if reverse {
+				from, into = into, from
+			}
+			_, err = f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from, IntoSourceID: into})
+			require.NoError(err)
+			firstRef, err := f.Store.MessageConversationContext(t.Context(), first)
+			require.NoError(err)
+			secondRef, err := f.Store.MessageConversationContext(t.Context(), second)
+			require.NoError(err)
+			require.Equal(firstRef.ConversationID, secondRef.ConversationID, "both questions now belong to the same chat")
+			marks, err := f.Store.LoopMarksContext(t.Context(), now.Add(2*day))
+			require.NoError(err)
+			ref, err := f.Store.MessageConversationContext(t.Context(), second)
+			require.NoError(err)
+			assert.True(store.LoopCutoffCovers(marks[ref.ConversationID], store.LoopMessage{ID: second, OrderID: second, OccurredAt: ago(4 * day)}), "the second question retains its longer snooze")
+			result, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
+			require.NoError(err)
+			assert.Len(result.Loops, 1, "the first question reopens at its own deadline")
+		})
+	}
+}
+
+func TestDuplicateTransferKeepsFallbackForLaterHistoricalImport(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	marked := f.PersistEmail(storetest.EmailSpec{Thread: "marked", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+	_, err := loops.Done(t.Context(), f.Store, marked, now)
+	require.NoError(err)
+	survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+	_, err = f.Store.MergeDuplicates(survivor, []int64{marked}, "late-import-cutoff")
+	require.NoError(err)
+	f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: alex, To: []string{me}, Body: "Can you send the earlier draft?", SentAt: ago(7 * day)})
+	assert.Empty(list(t, f, loops.Options{}).Loops, "the copied fallback still covers a late historical question")
 }

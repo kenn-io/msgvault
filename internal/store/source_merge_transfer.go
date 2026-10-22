@@ -28,6 +28,18 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 	}
+	for _, m := range plan.messages {
+		if m.survivor != 0 {
+			if err := s.copyLoopDecisionTx(ctx, tx, m.id, m.survivor, false); err != nil {
+				return err
+			}
+		}
+	}
+	for _, c := range plan.conversations {
+		if err := s.mergeLoopConversationsTx(ctx, tx, c.id, c.destination); err != nil {
+			return err
+		}
+	}
 	// Batch the ordinary row transfer and provenance writes. The values table
 	// keeps provider IDs and hidden-survivor decisions in the same transaction.
 	for start := 0; start < len(plan.messages); start += 100 {
@@ -150,9 +162,6 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			continue
 		}
 		if err := copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
-			return err
-		}
-		if err := copyLoopDecisionTx(ctx, tx, m.id, m.survivor); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ? WHERE reply_to_message_id = ?`, m.survivor, m.id); err != nil {

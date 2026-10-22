@@ -569,7 +569,7 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		for _, dupID := range duplicateIDs {
-			if err := copyLoopDecisionTx(ctx, tx, dupID, survivorID); err != nil {
+			if err := s.copyLoopDecisionTx(ctx, tx, dupID, survivorID, true); err != nil {
 				return err
 			}
 		}

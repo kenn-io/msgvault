@@ -34,8 +34,9 @@ type Loop struct {
 	OwedSince      time.Time
 	LastActivity   time.Time
 	// LastAsk is the newest question in the loop's run. A done or snooze mark
-	// covers the questions up to it, ordered by sent time and then ID.
-	LastAsk store.LoopMessage
+	// covers questions up to it, ordered by sent time and a stable order token.
+	LastAsk   store.LoopMessage
+	Questions []store.LoopMessage
 }
 
 // Reader supplies what Detect cannot read from the loaded messages. Each read

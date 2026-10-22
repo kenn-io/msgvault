@@ -308,3 +308,49 @@ func assertMMSHasAttachmentMetadata(t *testing.T, st *store.Store, wantCount int
 	require.True(t, hasAttachments, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 	require.Equal(t, wantCount, count, "mms metadata: has_attachments=%v count=%d, want true/%d", hasAttachments, count, wantCount)
 }
+
+func TestImportedGroupMMSDoesNotOpenLoops(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="3">
+  <mms date="1717214460000" msg_box="2" m_id="group-sent">
+    <parts><part seq="0" ct="text/plain" text="Can you review the draft?" /></parts>
+    <addrs><addr address="+15550000001" type="137" /><addr address="+15550000002" type="151" /><addr address="+15550000003" type="151" /></addrs>
+  </mms>
+  <mms date="1717214460000" msg_box="1" m_id="group-received">
+    <parts><part seq="0" ct="text/plain" text="Can you send the budget?" /></parts>
+    <addrs><addr address="+15550000004" type="137" /><addr address="+15550000001" type="151" /><addr address="+15550000005" type="151" /></addrs>
+  </mms>
+  <mms date="1717214460000" msg_box="1" m_id="direct-received">
+    <parts><part seq="0" ct="text/plain" text="Can you send the contract?" /></parts>
+    <addrs><addr address="+15550000006" type="137" /><addr address="+15550000001" type="151" /></addrs>
+  </mms>
+</smses>`)
+	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeMMS: true})
+	_, err := imp.ImportPath(dir)
+	require.NoError(err)
+	result, err := loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
+	require.NoError(err)
+	require.Len(result.Loops, 1, "only the one-to-one question opens a loop")
+	assert.Equal("+15550000006", result.Loops[0].Counterparty.Address)
+	// The incoming control also lists when the owner has no linked identity.
+	source, err := f.Store.GetOrCreateSource(SourceType, "+15550000001")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(source.ID, "+15550000001", "manual"))
+	result, err = loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
+	require.NoError(err)
+	require.Len(result.Loops, 1, "recognizing the owner still excludes both groups")
+	first, err := f.Store.EnsureParticipantByPhone("+15550000002", "", "phone")
+	require.NoError(err)
+	second, err := f.Store.EnsureParticipantByPhone("+15550000003", "", "phone")
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(first, second)
+	require.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(first)
+	require.NoError(err)
+	result, err = loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
+	require.NoError(err)
+	assert.Len(result.Loops, 2, "two addresses linked to one person form a direct chat")
+}

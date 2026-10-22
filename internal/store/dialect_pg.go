@@ -785,7 +785,6 @@ func (d *PostgreSQLDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS provider_started_at TIMESTAMPTZ`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN IF NOT EXISTS dispatch_authorized_at TIMESTAMPTZ`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN IF NOT EXISTS has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
-		{`ALTER TABLE loop_decisions ADD COLUMN IF NOT EXISTS through_order_id BIGINT NOT NULL DEFAULT 0`, "loop_decisions.through_order_id"},
 	}
 }
 
@@ -2395,7 +2394,7 @@ var exclusiveLockTables = []string{
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
-	"loop_decisions", "loop_conversation_decisions", "loop_decision_covered_orders",
+	"loop_conversation_decisions", "loop_question_states",
 }
 
 // BeginExclusive opens a transaction on conn and locks every table the

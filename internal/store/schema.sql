@@ -4674,28 +4674,14 @@ CREATE INDEX IF NOT EXISTS idx_docbank_attachments_ready
 CREATE INDEX IF NOT EXISTS idx_docbank_attachment_receipts
  ON docbank_attachment_deliveries(content_hash, state);
 
--- Legacy message-keyed owner decisions retained for upgrades and old subset
--- sources. InitSchema migrates these into loop_conversation_decisions, then
--- clears the rows.
 CREATE TABLE IF NOT EXISTS loop_message_order (
  id INTEGER PRIMARY KEY AUTOINCREMENT,
  message_id INTEGER NOT NULL UNIQUE REFERENCES messages(id) ON UPDATE CASCADE ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS loop_decisions (
- anchor_message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
- state TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
- snoozed_until DATETIME,
- through_at DATETIME NOT NULL,
- through_message_id INTEGER NOT NULL,
- through_order_id INTEGER NOT NULL DEFAULT 0,
- CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
-);
--- Active loop decisions belong to a conversation so removing or remapping one
--- message cannot remove the decision for the other covered questions there.
--- through_message_id is only an exact-identity hint; covered order tokens
--- preserve questions across timestamp edits, message merges, GC, and subsets.
+-- Fallback marks cover historical questions first imported after an owner action.
 CREATE TABLE IF NOT EXISTS loop_conversation_decisions (
- conversation_id INTEGER PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
  state TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
  snoozed_until DATETIME,
  through_at DATETIME NOT NULL,
@@ -4703,8 +4689,11 @@ CREATE TABLE IF NOT EXISTS loop_conversation_decisions (
  through_order_id INTEGER NOT NULL DEFAULT 0,
  CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
 );
-CREATE TABLE IF NOT EXISTS loop_decision_covered_orders (
- conversation_id INTEGER NOT NULL REFERENCES loop_conversation_decisions(conversation_id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS loop_question_states (
+ conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
  order_id INTEGER NOT NULL,
- PRIMARY KEY (conversation_id, order_id)
+ state TEXT NOT NULL CHECK (state IN ('done', 'snoozed', 'open')),
+ snoozed_until DATETIME,
+ PRIMARY KEY (conversation_id, order_id),
+ CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
 );

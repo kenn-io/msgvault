@@ -614,7 +614,7 @@ func TestDoneDecisionKeepsCoveredQuestionsAfterTimestampReordering(t *testing.T)
 	assert.Empty(listLoops(t, f, loopNow), "the first question stays covered after it moves past the saved timestamp boundary")
 }
 
-func TestMergingCutoffIntoLaterTokenReopensLoop(t *testing.T) {
+func TestMergingCutoffIntoLaterTokenKeepsDuplicateCovered(t *testing.T) {
 	for _, kind := range []string{"duplicates", "sources"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
@@ -642,8 +642,7 @@ func TestMergingCutoffIntoLaterTokenReopensLoop(t *testing.T) {
 				require.NoError(err)
 			}
 			result := listLoops(t, f, loopNow)
-			require.Len(result, 1, "the later-token duplicate stays beyond the original cutoff")
-			assert.Equal(keepThrough, result[0].LastAsk.ID)
+			assert.Empty(result, "the same marked questions stay covered whichever duplicate copy survives")
 		})
 	}
 }
@@ -687,39 +686,6 @@ func TestMergeCutoffIntoLowerIDPreservesSameTimestampCoverage(t *testing.T) {
 	assert.Empty(listLoops(t, f, loopNow), "the question between the survivor and original cutoff IDs remains covered")
 }
 
-func TestLoopDecisionOrderingMigrationBackfillsExistingCutoffs(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	through := f.PersistEmail(storetest.EmailSpec{
-		Thread: "default-thread", From: loopAlex, To: []string{loopOwner},
-		Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay),
-	})
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO loop_decisions
-		(anchor_message_id, state, through_at, through_message_id, through_order_id)
-		VALUES (?, ?, ?, ?, 0)`), through, store.LoopStateDone, loopAgo(5*loopDay), through)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(`ALTER TABLE loop_decisions DROP COLUMN through_order_id`)
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
-		`DELETE FROM applied_migrations WHERE name = ?`), "loop_decision_ordering_v1")
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(f.Store.Rebind(
-		`DELETE FROM applied_migrations WHERE name = ?`), "loop_conversation_decisions_v1")
-	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE archive_metadata SET value = '11' WHERE key = 'schema_version'`)
-	require.NoError(err)
-
-	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	var orderID int64
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
-		`SELECT through_order_id FROM loop_conversation_decisions WHERE conversation_id = ?`), f.ConvID).Scan(&orderID))
-	assert.Equal(through, orderID)
-	version, err := f.Store.SchemaVersionContext(t.Context())
-	require.NoError(err)
-	assert.Equal(store.SchemaVersion, version)
-}
-
 func TestLoopMessageOrderingMigrationSeedsTokensAboveRetiredCutoffs(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -741,7 +707,7 @@ func TestLoopMessageOrderingMigrationSeedsTokensAboveRetiredCutoffs(t *testing.T
 	require.NoError(err)
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "loop_message_ordering_v1")
 	require.NoError(err)
-	_, err = f.Store.DB().Exec(`UPDATE archive_metadata SET value = '12' WHERE key = 'schema_version'`)
+	_, err = f.Store.DB().Exec(`UPDATE archive_metadata SET value = '10' WHERE key = 'schema_version'`)
 	require.NoError(err)
 
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
@@ -810,7 +776,7 @@ func storedLoopMark(t *testing.T, st *store.Store, id int64) loopMark {
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
 		`SELECT conversation_id FROM messages WHERE id = ?`), id).Scan(&conversationID))
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(
-		`SELECT state, snoozed_until, through_at FROM loop_conversation_decisions WHERE conversation_id = ?`), conversationID).Scan(&m.State, &until, &through))
+		`SELECT qs.state, qs.snoozed_until, msg.sent_at FROM loop_question_states qs JOIN loop_message_order lmo ON lmo.id = qs.order_id JOIN messages msg ON msg.id = lmo.message_id WHERE qs.conversation_id = ? AND msg.id = ?`), conversationID, id).Scan(&m.State, &until, &through))
 	m.Until, m.Through = until.Time.UTC(), through.Time.UTC()
 	return m
 }
@@ -846,7 +812,9 @@ func TestMergeDuplicatesKeepsTheStrongestLoopMark(t *testing.T) {
 
 			_, err := f.Store.MergeDuplicates(keep, []int64{drop}, "batch-loop-marks")
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, storedLoopMark(t, f.Store, keep))
+			got := storedLoopMark(t, f.Store, keep)
+			assert.Equal(t, tt.want.State, got.State)
+			assert.Equal(t, tt.want.Until, got.Until)
 		})
 	}
 }
@@ -945,4 +913,61 @@ func TestLoopMultiFromUsesStoredSender(t *testing.T) {
 	assert.Equal(question, messages[0].ID)
 	assert.Equal(alexID, messages[0].Sender.ParticipantID)
 	assert.Equal(loopAlex, messages[0].Sender.Address)
+}
+
+func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		for _, duplicate := range []bool{false, true} {
+			t.Run(strconv.FormatBool(reverse)+"/duplicate="+strconv.FormatBool(duplicate), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := storetest.New(t)
+				from, err := f.Store.GetOrCreateSource("beeper", "history@example.test")
+				require.NoError(err)
+				into, err := f.Store.GetOrCreateSource("beeper", "live@example.test")
+				require.NoError(err)
+				sender := f.EnsureParticipant(loopAlex, "", "example.test")
+				left, err := f.Store.EnsureConversationWithType(from.ID, "!questions:example.test", "direct_chat", "Questions")
+				require.NoError(err)
+				right, err := f.Store.EnsureConversationWithType(into.ID, "!questions:example.test", "direct_chat", "Questions")
+				require.NoError(err)
+				done := persistLoopBeeperMessage(t, f.Store, from.ID, left, sender, "done", "Can you send the contract?", loopAgo(2*loopDay))
+				_, err = loops.Done(t.Context(), f.Store, done, loopNow)
+				require.NoError(err)
+				snoozed := persistLoopBeeperMessage(t, f.Store, into.ID, right, sender, "snoozed", "Can you send the budget?", loopAgo(5*loopDay))
+				until := loopNow.Add(loopDay)
+				_, err = loops.Snooze(t.Context(), f.Store, snoozed, until, loopNow)
+				require.NoError(err)
+				open := persistLoopBeeperMessage(t, f.Store, into.ID, right, sender, "open", "Can you send the invoice?", loopAgo(4*loopDay))
+				var shared int64
+				if duplicate {
+					shared = persistLoopBeeperMessage(t, f.Store, into.ID, right, sender, "done", "Can you send the contract?", loopAgo(2*loopDay))
+				}
+				if reverse {
+					from, into = into, from
+				}
+				result, err := f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+				require.NoError(err)
+				if duplicate {
+					assert.Equal(int64(1), result.DuplicatesHidden)
+				} else {
+					assert.Zero(result.DuplicatesHidden)
+				}
+				ref, err := f.Store.MessageConversationContext(t.Context(), open)
+				require.NoError(err)
+				for _, at := range []time.Time{loopNow, until} {
+					marks, err := f.Store.LoopMarksContext(t.Context(), at)
+					require.NoError(err)
+					mark := marks[ref.ConversationID]
+					assert.True(store.LoopCutoffCovers(mark, store.LoopMessage{ID: done, OrderID: done, OccurredAt: loopAgo(2 * loopDay)}))
+					assert.Equal(at.Before(until), store.LoopCutoffCovers(mark, store.LoopMessage{ID: snoozed, OrderID: snoozed, OccurredAt: loopAgo(5 * loopDay)}))
+					assert.False(store.LoopCutoffCovers(mark, store.LoopMessage{ID: open, OrderID: open, OccurredAt: loopAgo(4 * loopDay)}))
+					if shared != 0 && !reverse {
+						assert.True(store.LoopCutoffCovers(mark, store.LoopMessage{ID: shared, OrderID: shared, OccurredAt: loopAgo(2 * loopDay)}))
+					}
+					assert.Len(listLoops(t, f, at), 1)
+				}
+			})
+		}
+	}
 }

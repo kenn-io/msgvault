@@ -43,7 +43,7 @@ type Detection struct {
 // and no message from the other side could expose an older one, it parses
 // nothing.
 func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
-	if conv.ConversationType != "email_thread" && conv.ConversationType != "direct_chat" {
+	if conv.GroupChat || (conv.ConversationType != "email_thread" && conv.ConversationType != "direct_chat") {
 		return Detection{}, nil
 	}
 	w := walker{email: conv.ConversationType == "email_thread", r: r, texts: map[int64]string{}, vouch: map[int64]bool{}}
@@ -229,9 +229,15 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 	if loop.Kind == "" {
 		return Detection{Unparsed: w.unparsed}, nil
 	}
-	if loop.LastAsk, err = w.lastAsk(run[anchorAt:]); err != nil {
-		return Detection{}, err
+	for _, m := range run[anchorAt:] {
+		if _, _, ok, err := w.opens(m); err != nil {
+			return Detection{}, err
+		} else if ok {
+			loop.Questions = append(loop.Questions, m)
+			loop.LastAsk = m
+		}
 	}
+	loop.LastAsk.Questions = loop.Questions
 	loop.ConversationID, loop.SourceID, loop.Channel = conv.ConversationID, conv.SourceID, store.ChannelEmail
 	if !w.email {
 		loop.Channel = store.ChannelChat

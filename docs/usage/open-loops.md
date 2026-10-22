@@ -112,12 +112,19 @@ question imported later stays hidden even though the loop now starts there. A
 different question sent at the same instant as the last one you marked lists
 the loop again.
 
-Your latest mark on a loop replaces the earlier one. The one exception is
-`snooze` on a loop marked done that no newer question has reopened: the loop
-stays done, and the command says so. Both commands take the message ID from
-`loops list`, and both survive duplicate removal and account merges. When two
-copies of a message carry different marks, done wins over a snooze, two dones
-keep the later question, and two snoozes keep the later deadline. Both re-read the conversation first and accept only what `loops list`
+Each known question keeps its own done, snoozed, or open result when dates
+change or accounts merge. A loop lists if any unanswered question is open,
+even when its newest question is done or snoozed. Distinct questions keep
+their own snooze deadlines through a merge, and each reopens when its deadline
+passes. An older question first imported after a mark still uses that mark's
+original date cutoff.
+
+Your latest mark covers the questions asked so far. Snoozing keeps a done
+result only when every unanswered question is already done. Both commands
+take the message ID from `loops list` and survive duplicate removal and
+account merges. A confirmed duplicate keeps its state whichever copy survives.
+For the same question, done wins over snooze, and overlapping snoozes keep the
+later deadline. Both re-read the conversation first and accept only what `loops list`
 would show now, so they report that the message is not an open loop when a
 reply is already archived, when the conversation is older than 30 days, or
 when the loop is still inside its 24 or 72 hours.

@@ -969,68 +969,10 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			`conversation_id IN (SELECT DISTINCT conversation_id FROM messages)`); err != nil {
 			return nil, fmt.Errorf("copy conversation loop decisions: %w", err)
 		}
-		hasCoverage, err := sourceTableExists(tx, "loop_decision_covered_orders")
-		if err != nil {
-			return nil, fmt.Errorf("inspect covered loop question orders: %w", err)
+		if _, err := copyByName(tx, "loop_question_states",
+			`conversation_id IN (SELECT DISTINCT conversation_id FROM messages)`); err != nil {
+			return nil, fmt.Errorf("copy loop question states: %w", err)
 		}
-		if hasCoverage {
-			if _, err := copyByName(tx, "loop_decision_covered_orders",
-				`conversation_id IN (SELECT conversation_id FROM loop_conversation_decisions)`); err != nil {
-				return nil, fmt.Errorf("copy covered loop question orders: %w", err)
-			}
-		}
-	} else if hasLegacy, err := sourceTableExists(tx, "loop_decisions"); err != nil {
-		return nil, fmt.Errorf("inspect legacy loop decisions: %w", err)
-	} else if hasLegacy {
-		hasThroughOrderID, err := sourceColumnExists(tx, "loop_decisions", "through_order_id")
-		if err != nil {
-			return nil, fmt.Errorf("inspect legacy loop decision ordering: %w", err)
-		}
-		cutoffMessageID := `CASE WHEN d.through_message_id > 0 THEN d.through_message_id ELSE d.anchor_message_id END`
-		cutoffOrderID := cutoffMessageID
-		if hasThroughOrderID {
-			cutoffOrderID = `CASE WHEN d.through_order_id = 0 THEN ` + cutoffMessageID + ` ELSE d.through_order_id END`
-		}
-		if _, err := tx.Exec(`WITH legacy AS (
-			SELECT m.conversation_id, d.state, d.snoozed_until, d.through_at,
-				` + cutoffMessageID + ` AS through_message_id, ` + cutoffOrderID + ` AS through_order_id
-			FROM src.loop_decisions d JOIN src.messages m ON m.id = d.anchor_message_id
-			WHERE m.conversation_id IN (SELECT DISTINCT conversation_id FROM messages)
-		), ranked AS (
-			SELECT legacy.*,
-				ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY
-					CASE WHEN state = 'done' THEN 0 ELSE 1 END,
-					CASE WHEN state = 'done' THEN through_at END DESC,
-					CASE WHEN state = 'done' THEN through_order_id END DESC,
-					CASE WHEN state = 'snoozed' THEN snoozed_until END DESC) AS decision_rank
-			FROM legacy
-		)
-		INSERT INTO loop_conversation_decisions
-			(conversation_id, state, snoozed_until, through_at, through_message_id, through_order_id)
-		SELECT conversation_id, state, snoozed_until, through_at, through_message_id, through_order_id
-		FROM ranked WHERE decision_rank = 1`); err != nil {
-			return nil, fmt.Errorf("copy legacy loop decisions by conversation: %w", err)
-		}
-		// A legacy cutoff covers selected rows currently at or before its
-		// timestamp/ID boundary. Preserve their order tokens so later timestamp
-		// edits cannot reopen questions the old cutoff already covered.
-		destinationAt := sqliteutil.TimestampKeyFunction + `(m.sent_at)`
-		cutoffAt := sqliteutil.TimestampKeyFunction + `(d.through_at)`
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO loop_decision_covered_orders (conversation_id, order_id)
-			SELECT d.conversation_id, lmo.id
-			FROM loop_conversation_decisions d
-			JOIN messages m ON m.conversation_id = d.conversation_id
-			JOIN loop_message_order lmo ON lmo.message_id = m.id
-			WHERE ` + destinationAt + ` < ` + cutoffAt + `
-				OR (` + destinationAt + ` = ` + cutoffAt + ` AND lmo.id <= d.through_order_id)
-				OR m.id = d.through_message_id`); err != nil {
-			return nil, fmt.Errorf("copy legacy loop decision coverage: %w", err)
-		}
-	}
-	if _, err := tx.Exec(`UPDATE loop_conversation_decisions
-		SET through_order_id = through_message_id
-		WHERE through_order_id = 0 AND through_message_id > 0`); err != nil {
-		return nil, fmt.Errorf("backfill subset loop decision ordering boundaries: %w", err)
 	}
 	if _, err := tx.Exec(`UPDATE loop_conversation_decisions
 		SET through_message_id = 0
@@ -2635,7 +2577,7 @@ func advanceSubsetLoopMessageOrder(tx *sql.Tx) error {
 	if err := tx.QueryRow(`SELECT MAX(value) FROM (
 		SELECT COALESCE(MAX(id), 0) AS value FROM loop_message_order
 		UNION ALL SELECT COALESCE(MAX(through_order_id), 0) FROM loop_conversation_decisions
-		UNION ALL SELECT COALESCE(MAX(order_id), 0) FROM loop_decision_covered_orders
+		UNION ALL SELECT COALESCE(MAX(order_id), 0) FROM loop_question_states
 	)`).Scan(&ceiling); err != nil {
 		return fmt.Errorf("read copied loop ordering token ceiling: %w", err)
 	}

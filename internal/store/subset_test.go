@@ -5503,7 +5503,7 @@ func TestSubsetCopiesLoopDecisions(t *testing.T) {
 		(conversation_id, state, through_at, through_message_id, through_order_id)
 		VALUES (1, 'done', CURRENT_TIMESTAMP, 4, 1004)`)
 	require.NoError(err)
-	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_decision_covered_orders (conversation_id, order_id) VALUES (1, 1002)`)
+	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_question_states (conversation_id, order_id, state) VALUES (1, 1002, 'done')`)
 	require.NoError(err)
 	require.NoError(source.Close())
 
@@ -5519,50 +5519,11 @@ func TestSubsetCopiesLoopDecisions(t *testing.T) {
 		`SELECT state, through_message_id, through_order_id
 		 FROM loop_conversation_decisions WHERE conversation_id = 1`).Scan(&state, &messageID, &orderID))
 	require.NoError(destination.DB().QueryRowContext(ctx,
-		`SELECT order_id FROM loop_decision_covered_orders WHERE conversation_id = 1`).Scan(&coveredOrder))
+		`SELECT order_id FROM loop_question_states WHERE conversation_id = 1`).Scan(&coveredOrder))
 	require.Equal(LoopStateDone, state)
 	require.Zero(messageID, "a cutoff message outside the subset cannot remain an identity match")
 	require.Equal(int64(1004), orderID, "the subset retains the original timestamp/order coverage boundary")
 	require.Equal(int64(1002), coveredOrder, "coverage tokens survive when their message identity is omitted")
-}
-
-func TestSubsetMigratesLegacyLoopDecisionWhenItsAnchorIsOmitted(t *testing.T) {
-	require := require.New(t)
-	ctx := context.Background()
-	sourcePath := createTestSourceDB(t, t.TempDir(), 4)
-	source, err := Open(sourcePath)
-	require.NoError(err)
-	require.NoError(source.MarkMessageDeleted(1, "msg_4"))
-	_, err = source.DB().ExecContext(ctx, `DROP TABLE loop_decision_covered_orders`)
-	require.NoError(err)
-	_, err = source.DB().ExecContext(ctx, `DROP TABLE loop_conversation_decisions`)
-	require.NoError(err)
-	_, err = source.DB().ExecContext(ctx, `ALTER TABLE loop_decisions DROP COLUMN through_order_id`)
-	require.NoError(err)
-	_, err = source.DB().ExecContext(ctx, `INSERT INTO loop_decisions
-		(anchor_message_id, state, through_at, through_message_id)
-		VALUES (4, 'done', CURRENT_TIMESTAMP, 4)`)
-	require.NoError(err)
-	require.NoError(source.Close())
-
-	destinationDir := filepath.Join(t.TempDir(), "subset")
-	_, err = CopySubset(sourcePath, destinationDir, 3, false)
-	require.NoError(err)
-	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
-	require.NoError(err)
-	t.Cleanup(func() { require.NoError(destination.Close()) })
-	var state string
-	var messageID, orderID int64
-	require.NoError(destination.DB().QueryRowContext(ctx,
-		`SELECT state, through_message_id, through_order_id FROM loop_conversation_decisions WHERE conversation_id = 2`).
-		Scan(&state, &messageID, &orderID))
-	require.Equal(LoopStateDone, state)
-	require.Zero(messageID, "the omitted anchor identity is cleared")
-	require.Equal(int64(4), orderID, "the legacy order cutoff survives anchor omission")
-	var covered int
-	require.NoError(destination.DB().QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM loop_decision_covered_orders WHERE conversation_id = 2`).Scan(&covered))
-	require.Positive(covered, "selected questions from the retained conversation stay covered")
 }
 
 func TestCopySubsetRepairsCopiedSynctechSendState(t *testing.T) {
