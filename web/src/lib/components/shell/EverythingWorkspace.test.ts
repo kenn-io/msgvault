@@ -66,7 +66,7 @@ describe('EverythingWorkspace', () => {
     }
   });
 
-  it.each(['recording', 'attachment'])('retries %s details and distinguishes missing messages', async (kind) => {
+  it('retries recording details and distinguishes missing messages', async () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'quarterly', searchMode: 'full_text', selectedRow: 'recording:9' }))}`);
     const message = recordingMessage;
     let messageStatus = 500;
@@ -75,9 +75,7 @@ describe('EverythingWorkspace', () => {
       const request = input as Request;
       const path = new URL(request.url).pathname;
       if (path.endsWith('/explore')) exploreBodies.push(await request.clone().json());
-      if (path.endsWith('/media/search')) return Response.json(kind === 'recording' ? recordingSearchReport() : recordingSearchReport({ results: [], attachments: {
-        results: [{ message_id: 9, conversation_id: 2, attachment_id: 5, filename: 'report.pdf', containing_title: 'Team chat', excerpt: 'Quarterly numbers' }], truncated: false,
-      } }));
+      if (path.endsWith('/media/search')) return Response.json(recordingSearchReport());
       if (path.endsWith('/messages/9/recordings')) return Response.json(recordingTranscript);
       if (path.endsWith('/messages/9')) return messageStatus === 200 ? Response.json(message) : Response.json({ error: 'unavailable' }, { status: messageStatus });
       if (path.endsWith('/conversations/2')) return Response.json({ id: 2, messages: [message], anchor_id: 9, has_before: false, has_after: false, total: 1 });

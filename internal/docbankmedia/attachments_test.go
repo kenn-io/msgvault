@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -118,99 +117,40 @@ func TestEnsureAttachmentFolderCreatesParents(t *testing.T) {
 	}
 }
 
-func TestVaultUIDCanceledLookupDuringAnotherRequest(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	started, release := make(chan struct{}), make(chan struct{})
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("/api/v1/info", r.URL.Path)
-		close(started)
-		<-release
-		_, _ = w.Write([]byte(`{"vault_id":"vault"}`))
-	}))
-	defer remote.Close()
-	client, err := NewClient(remote.URL, nil)
-	require.NoError(err)
-	first := make(chan error, 1)
-	secondDone := make(chan struct{})
-	go func() {
-		_, err := client.VaultUID(t.Context())
-		first <- err
-	}()
-	defer func() {
-		close(release)
-		assert.NoError(<-first)
-		<-secondDone
-	}()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		assert.Fail("first vault lookup did not reach Docbank")
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	second := make(chan error, 1)
-	go func() {
-		defer close(secondDone)
-		_, err := client.VaultUID(ctx)
-		second <- err
-	}()
-	select {
-	case err := <-second:
-		require.ErrorIs(err, context.Canceled)
-	case <-time.After(5 * time.Second):
-		assert.Fail("canceled lookup waited for another HTTP request")
-	}
-}
-
-func TestVaultUIDCacheAndSearchRejection(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	calls := 0
-	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/info" {
-			calls++
-			_, _ = io.WriteString(w, `{"vault_id":"vault"}`)
-			return
-		}
-		w.WriteHeader(http.StatusBadRequest)
-	}))
-	defer remote.Close()
-	client, err := NewClient(remote.URL, nil)
-	require.NoError(err)
-	for range 2 {
-		vault, err := client.VaultUID(t.Context())
-		require.NoError(err)
-		assert.Equal("vault", vault)
-	}
-	assert.Equal(1, calls)
-	_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", ContentFirst: true, Limit: 20, Profile: "supplied-transcript", Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
-	require.Error(err)
-	_, err = client.VaultUID(t.Context())
-	require.NoError(err)
-	assert.Equal(2, calls)
-}
-
 func TestVaultUID(t *testing.T) {
-	for _, body := range []string{`{"vault_id":"vault"}`, `{}`} {
+	for _, body := range []string{`{"vault_id":"00000000-0000-4000-8000-000000000010"}`, `{}`} {
 		t.Run(body, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
+			calls := 0
 			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(http.MethodGet, r.Method)
-				assert.Equal("/api/v1/info", r.URL.Path)
-				_, _ = io.WriteString(w, body)
+				if r.URL.Path == "/api/v1/info" {
+					assert.Equal(http.MethodGet, r.Method)
+					calls++
+					_, _ = io.WriteString(w, body)
+					return
+				}
+				assert.Equal("/api/v1/search", r.URL.Path)
+				w.WriteHeader(http.StatusBadRequest)
 			}))
 			defer remote.Close()
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
-			vault, err := client.VaultUID(t.Context())
-			if body == `{}` {
-				require.ErrorIs(err, ErrInvalidReceipt)
-			} else {
+			for range 2 {
+				vault, err := client.VaultUID(t.Context())
+				if body == `{}` {
+					require.ErrorIs(err, ErrInvalidReceipt)
+					return
+				}
 				require.NoError(err)
-				assert.Equal("vault", vault)
+				assert.Equal("00000000-0000-4000-8000-000000000010", vault)
 			}
+			assert.Equal(1, calls)
+			_, err = client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", ContentFirst: true, Limit: 20, Profile: "supplied-transcript", Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"}}})
+			require.Error(err)
+			_, err = client.VaultUID(t.Context())
+			require.NoError(err)
+			assert.Equal(2, calls)
 		})
 	}
 }

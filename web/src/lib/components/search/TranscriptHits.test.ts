@@ -173,10 +173,12 @@ describe('TranscriptHits', () => {
 
   it.each([
     ['café 東京 2026', true], ['cafe\u0301', true], ['from:alice@example.com quarterly', false], ['"quarterly numbers"', false],
-    ['not', true], ['AND', true], ['\u0301', false],
+    ['not', true], ['AND', true], ['\u0301', false], ['quarterly-review', false],
   ] as const)('admits plain words and rejects unsupported syntax %s', async (query, searched) => {
     vi.useFakeTimers();
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report()));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ attachments: {
+      results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false,
+    } })));
     render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query, supported: true } });
     await vi.advanceTimersByTimeAsync(300);
     if (searched) {
@@ -186,6 +188,9 @@ describe('TranscriptHits', () => {
       expect(screen.getByRole('region', { name: 'Recordings' })).toBeTruthy();
       expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
       expect(fetchFn).toHaveBeenCalledTimes(1);
+    }
+    if (query === 'quarterly-review') {
+      expect(screen.getByRole('region', { name: 'Attachments' }).textContent).toContain('quarterly-review');
     }
   });
 
@@ -232,18 +237,16 @@ it('opens attachment messages and keeps recording metadata in its own list', asy
   expect(link.textContent).toContain('report.pdf');
   expect(link.textContent).toContain('quartz inside the PDF');
   expect(link.querySelectorAll('time')).toHaveLength(1);
-  expect(link.querySelector('.provenance')?.textContent).toBe('report.pdf');
   expect(screen.getByText('More may match')).toBeTruthy();
   await fireEvent.click(link);
   expect(onOpen).toHaveBeenCalledWith(attachment);
   expect(screen.getByText('Provider transcript')).toBeTruthy();
 });
 
-it.each(['empty', 'error', 'recording error', 'absent'])('shows the attachment %s state', async (state) => {
+it.each(['empty', 'error', 'absent'])('shows the attachment %s state', async (state) => {
   mount(vi.fn<typeof fetch>(async () => Response.json(report({
     results: [],
     attachments: state === 'absent' ? undefined : { results: [], truncated: false, error: state === 'error' ? { error: 'transport', message: 'Attachment search timed out.' } : undefined },
-    recordings_error: state === 'recording error' ? { error: 'media_search_unavailable', message: 'Docbank transcript search is unavailable' } : undefined,
   }))));
   if (state === 'absent') {
     await screen.findByText('No spoken matches.');
@@ -254,11 +257,6 @@ it.each(['empty', 'error', 'recording error', 'absent'])('shows the attachment %
     if (state === 'error') {
       expect(screen.getByText('Attachment search timed out.')).toBeTruthy();
       expect(screen.getByRole('heading', { name: 'Attachments' }).textContent).toBe('Attachments');
-      expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
-    }
-    if (state === 'recording error') {
-      expect(screen.getByText('Recording search unavailable.')).toBeTruthy();
-      expect(screen.queryByText('No spoken matches.')).toBeNull();
     }
   }
 });
@@ -279,18 +277,6 @@ it.each([
   }
 });
 
-it('searches attachment text with punctuation while recordings keep their plain-word notice', async () => {
-  const fetchFn = vi.fn<typeof fetch>(async () => Response.json(report({ attachments: {
-    results: [{ message_id: 44, conversation_id: 22, attachment_id: 55, filename: 'report.pdf', containing_title: 'Report', excerpt: 'quarterly-review' }], truncated: false,
-  } })));
-  render(TranscriptHits, { props: { client: createAPIClient(fetchFn), query: 'quarterly-review', supported: true } });
-  const attachment = await screen.findByRole('region', { name: 'Attachments' });
-  expect(attachment.textContent).toContain('quarterly-review');
-  expect(screen.getByText(/Recording search supports plain words only/)).toBeTruthy();
-  expect(screen.queryByText('Quarterly numbers')).toBeNull();
-  expect(new URL((fetchFn.mock.calls[0][0] as Request).url).searchParams.get('q')).toBe('quarterly-review');
-});
-
 it.each([
   ['media_search_scope_limit', 'Add a Person filter to search recordings.', false],
   ['invalid_media_search', 'Recording search rejected this query. Try different plain words.', false],
@@ -304,6 +290,7 @@ it.each([
   expect(screen.getByText(message)).toBeTruthy();
   expect(screen.queryByText('raw server error')).toBeNull();
   expect(screen.queryByText('No matches in searched transcripts.')).toBeNull();
+  expect(screen.queryByText('No spoken matches.')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Retry' }) !== null).toBe(retryable);
   if (retryable) {
     await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));

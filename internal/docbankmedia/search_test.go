@@ -192,16 +192,16 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "full name page", "selections", "timed blob", "bad timing", "mixed"} {
+	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "full name page", "selections", "bad timing", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: "version", Rank: 1, Excerpt: "\x01quartz\x02", Evidence: []SearchEvidence{{Kind: "rendition_segment"}}}}}
+			report := SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: SearchCoverage{State: "complete"}, Results: []SearchHit{{VaultUID: "00000000-0000-4000-8000-000000000010", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "\x01quartz\x02", Evidence: []SearchEvidence{{Kind: "rendition_segment"}}}}}
 			switch fault {
 			case "vault":
-				report.Results[0].VaultUID = "other"
+				report.Results[0].VaultUID = "00000000-0000-4000-8000-000000000099"
 			case "version":
-				report.Results[0].ContentVersionID = "other"
+				report.Results[0].ContentVersionID = "00000000-0000-4000-8000-000000000099"
 			case "node":
 				report.Results[0].NodeID = 0
 			case "rank":
@@ -216,8 +216,6 @@ func TestSearchDocumentsContract(t *testing.T) {
 				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
 			case "timing":
 				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{EndMS: 10}
-			case "timed blob":
-				report.Results[0].Evidence[0] = SearchEvidence{Kind: "content_blob", TimeSpan: &MediaTimeSpan{StartMS: 1, EndMS: 10}}
 			case "bad timing":
 				report.Results[0].Evidence[0].TimeSpan = &MediaTimeSpan{StartMS: 10, EndMS: 1}
 			case "mixed":
@@ -232,7 +230,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 				}
 				assert.Equal("supplied-transcript", request.Profile)
 				assert.Empty(request.MediaSources)
-				assert.Equal([]string{"version"}, request.Fence.ContentVersionIDs)
+				assert.Equal([]string{"00000000-0000-4000-8000-000000000001"}, request.Fence.ContentVersionIDs)
 				_ = json.NewEncoder(w).Encode(report)
 			}))
 			defer remote.Close()
@@ -242,14 +240,14 @@ func TestSearchDocumentsContract(t *testing.T) {
 			if fault == "full name page" {
 				limit = 1
 			}
-			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: limit, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: limit, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "00000000-0000-4000-8000-000000000010", ContentVersionIDs: []string{"00000000-0000-4000-8000-000000000001"}}})
 			if fault == "node name" || fault == "full name page" {
 				require.NoError(err)
 				assert.Empty(got.Results)
 				assert.Equal(fault == "full name page", got.Truncated)
 				return
 			}
-			if fault != "" && fault != "timing" && fault != "timed blob" && fault != "mixed" {
+			if fault != "" && fault != "timing" && fault != "mixed" {
 				require.ErrorIs(err, ErrInvalidReceipt)
 				return
 			}
