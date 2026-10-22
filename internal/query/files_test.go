@@ -736,20 +736,6 @@ func TestGroupFilesLabelsRosterOnlyParticipants(t *testing.T) {
 	assertions.Equal(int64(1), result.Rows[1].Count)
 }
 
-func TestGroupFilesDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
-	engine, canonical := draftOnlyClusterLabelFixture(t, "")
-	groups, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
-	require.NoError(t, err)
-	var label string
-	for _, row := range groups.Rows {
-		if row.Key == strconv.FormatInt(canonical, 10) {
-			label = row.Label
-			assert.Equal(t, int64(1), row.Count)
-		}
-	}
-	assert.Equal(t, "Alice Alias", label)
-}
-
 // linkedParticipantFilesFixture builds an attachment archive where alice and
 // her work alias are one linked identity cluster (canonical = alice, the
 // smallest member ID): one file's message lists BOTH aliases, one file's

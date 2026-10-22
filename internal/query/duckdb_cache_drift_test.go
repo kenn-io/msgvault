@@ -319,8 +319,8 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 		"relationship reads must report the newly committed revision")
 }
 
-func TestDuckDBEngine_ReloadsUnsentIDsAfterCommittedPublication(t *testing.T) {
-	for _, outcome := range []string{"sent publication", "transient unreadable activity"} {
+func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t *testing.T) {
+	for _, outcome := range []string{"reloads after sent publication", "retries after unreadable activity is restored"} {
 		t.Run(outcome, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -343,7 +343,7 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterCommittedPublication(t *testing.T) {
 
 			wantCount := int64(2)
 			wantLast := time.Date(2024, 1, 16, 10, 0, 0, 0, time.UTC)
-			if outcome == "sent publication" {
+			if outcome == "reloads after sent publication" {
 				_, err = identityindex.Build(t.Context(), engine.db, identityindex.BuildOptions{
 					Mode: identityindex.ModeFull, StagedBaseRoot: root, OutputRoot: root,
 				})

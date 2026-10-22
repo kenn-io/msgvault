@@ -316,43 +316,54 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 	}, result.Rows)
 }
 
-func draftOnlyClusterLabelFixture(t *testing.T, curated string) (*DuckDBEngine, int64) {
-	t.Helper()
-	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("owner@example.test", "gmail")
-	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-	b.AddOwnerParticipant(source, owner)
-	canonical := b.AddParticipant("alice@example.test", "example.test", "")
-	alias := b.AddParticipant("alias@example.test", "example.test", "Alice Alias")
-	b.LinkCluster(canonical, alias)
-	if curated != "" {
-		addPersonOverride(b, alias, 10, &curated)
-	}
-	draft := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
-	b.AddFrom(draft, owner, "Owner")
-	b.AddTo(draft, alias, "Alice Alias")
-	b.unsentMessages = "(SELECT " + strconv.FormatInt(draft, 10) + "::BIGINT AS message_id)"
-	b.AddAttachmentWithMIME(401, draft, 55, "draft.pdf", "application/pdf")
-	return b.BuildEngine(), canonical
-}
-
 func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name, curated, want string
+		files               bool
 	}{
-		{"named_alias", "", "Alice Alias"},
-		{"curated_name", "Alice Curated", "Alice Curated"},
+		{name: "named_alias", want: "Alice Alias"},
+		{name: "curated_name", curated: "Alice Curated", want: "Alice Curated"},
+		{name: "files_named_alias", want: "Alice Alias", files: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
-			engine, canonical := draftOnlyClusterLabelFixture(t, tc.curated)
+			assert := assert.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("owner@example.test", "gmail")
+			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+			b.AddOwnerParticipant(source, owner)
+			canonical := b.AddParticipant("alice@example.test", "example.test", "")
+			alias := b.AddParticipant("alias@example.test", "example.test", "Alice Alias")
+			b.LinkCluster(canonical, alias)
+			if tc.curated != "" {
+				addPersonOverride(b, alias, 10, &tc.curated)
+			}
+			draft := b.AddMessage(MessageOpt{SourceID: source, IsFromMe: true})
+			b.AddFrom(draft, owner, "Owner")
+			b.AddTo(draft, alias, "Alice Alias")
+			b.unsentMessages = "(SELECT " + strconv.FormatInt(draft, 10) + "::BIGINT AS message_id)"
+			b.AddAttachmentWithMIME(401, draft, 55, "draft.pdf", "application/pdf")
+			engine := b.BuildEngine()
+			if tc.files {
+				groups, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+				require.NoError(err)
+				var label string
+				for _, row := range groups.Rows {
+					if row.Key == strconv.FormatInt(canonical, 10) {
+						label = row.Label
+						assert.Equal(int64(1), row.Count)
+					}
+				}
+				assert.Equal(tc.want, label)
+				return
+			}
 			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
 				Dimension: "participant", GroupKey: strconv.FormatInt(canonical, 10),
 			})
 			require.NoError(err)
 			require.Len(groups.Rows, 1)
-			assert.Equal(t, tc.want, groups.Rows[0].Label)
-			assert.Equal(t, int64(1), groups.Rows[0].Count)
+			assert.Equal(tc.want, groups.Rows[0].Label)
+			assert.Equal(int64(1), groups.Rows[0].Count)
 		})
 	}
 }
