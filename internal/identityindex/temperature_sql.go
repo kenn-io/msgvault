@@ -13,11 +13,11 @@ const temperatureBuildRelation = "relationship_build_temperature_daily"
 // stays in the daily datasets.
 const relationshipTemperatureFirstYear = 1970
 
-// RelationshipTemperatureFactsSQL selects one qualifying row per stored
-// message and canonical person. activity is a trusted DuckDB relation rendered
-// by the cache/query packages; it is not user input. The shared SQL keeps cache
-// scores and local-year calendars on one attribution contract.
-func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time) string {
+// RelationshipTemperatureFactsSQL selects qualifying interactions per person,
+// counting linked meetings once per occurrence. activity is a trusted DuckDB
+// relation rendered by the cache/query packages; it is not user input. The
+// shared SQL keeps cache scores and local-year calendars on one contract.
+func RelationshipTemperatureFactsSQL(activity string, effectiveAt time.Time, meetingKeys string) string {
 	cutoff := effectiveAt.UTC().Format("2006-01-02 15:04:05.999999999")
 	return fmt.Sprintf(`
 WITH message_owner AS (
@@ -90,13 +90,14 @@ SELECT message_id, canonical_id, occurred_at,
 	   (NOT is_meeting AND is_chat) AS chat,
 	   is_meeting AS meeting,
 	   modality_mask
-FROM qualifying
+FROM (%[6]s)
 `,
 		activity,
 		cutoff,
 		ModalityMeeting,
 		ModalityChat,
 		ModalityEmail,
+		DeduplicateMeetingSQL("qualifying", meetingKeys, "message_id"),
 	)
 }
 
@@ -104,10 +105,10 @@ FROM qualifying
 // canonical-person UTC day. It deliberately does not reuse
 // relationship_daily: that dataset is logical-entry grain and collapses a
 // chat conversation to its newest event.
-func buildRelationshipTemperatureDailySQL(activity string, effectiveAt time.Time) string {
+func buildRelationshipTemperatureDailySQL(activity string, effectiveAt time.Time, meetingKeys string) string {
 	return `
 WITH relationship_facts AS (
-` + RelationshipTemperatureFactsSQL(activity, effectiveAt) + `
+` + RelationshipTemperatureFactsSQL(activity, effectiveAt, meetingKeys) + `
 )
 SELECT canonical_id,
 	   occurred_at::DATE AS event_date,

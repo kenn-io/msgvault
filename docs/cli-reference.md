@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-18"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -39,6 +39,24 @@ msgvault meetings context --id 42 --id 43 --format markdown --output context.md
 msgvault meetings actions --status pending --assignee alex@example.com --json
 msgvault meetings metrics --domain example.com --after 2026-01-01 --json
 ```
+
+### meetings link, unlink, links, and suggest
+
+See which calendar events belong to a meeting note, and correct missing or wrong links. These commands are unreleased and require owner access and daemon API schema 3.26.0 or newer.
+
+```bash
+msgvault meetings suggest msg:42
+msgvault meetings suggest evt:81@20270314T100000Z --json
+msgvault meetings link 42 --event evt:81@20270314T100000Z
+msgvault meetings links 42
+msgvault meetings unlink 42 --event evt:81@20270314T100000Z
+```
+
+`link` and `unlink` take one meeting note's message ID and a required `--event` reference. Copy the event reference from `meetings suggest` or the `ref` field in `calendar events --json`. A series occurrence uses the series master's ID and its original occurrence key, even when an edited copy moved to another time.
+
+`suggest` accepts `msg:<id>` for a note or `evt:<id>[@occurrence key]` for an event. It returns up to ten overlapping candidates, ranked by overlap minutes, shared attendees, and shared title words. Plain output warns on stderr when calendar entries could not be fully expanded, while still listing readable candidates. `--json` includes those entries in an `unexpandable` array with their `message_id` and `reason`. Check this array before treating an empty or partial result as complete. Suggestions leave links unchanged.
+
+`links <note-id>` shows each linked occurrence once, with its reference, title, start, and end. `--json` returns the same fields. Exact shared IDs can link a note automatically. After `link`, this list shows the chosen occurrence instead of automatic matches. `unlink` applies to all calendar copies of that occurrence and survives source removal and reimport when the event has an iCalendar UID.
 
 ### meetings context
 
@@ -1735,8 +1753,16 @@ msgvault sync-calendar <name|email> [flags]
 
 ## calendar
 
-Control live Google Calendar events through the daemon. This is unreleased
-functionality. Follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
+List archived calendar events or control live Google Calendar events through the daemon. These commands are unreleased.
+
+```bash
+msgvault calendar events --from 2027-03-01 --to 2027-04-01
+msgvault calendar events --from 2027-03-01 --to 2027-04-01 --json
+```
+
+`calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id` and an event `ref` for `meetings link` and `meetings unlink`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.24.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
+
+For live Google Calendar changes, follow [Calendar event setup](usage/calendar.md#control-events-unreleased)
 for consent and source permissions. Calendar IDs can be `primary`, a calendar
 ID, or an alias from `config.toml`.
 
@@ -1762,9 +1788,9 @@ msgvault calendar conflicts <calendar-id> --account <name|email> --from <start> 
 
 | Flag | Applies to | Contract |
 |---|---|---|
-| `--account` | All | Required OAuth account or configured source name, separate from the target calendar |
-| `--dry-run` | All | Verify live access and return the proposed writes without applying them; availability still reads Google |
-| `--read-only` | All | Reject all mutations |
+| `--account` | Live commands | Required OAuth account or configured source name, separate from the target calendar |
+| `--dry-run` | Live commands | Verify live access and return the proposed writes without applying them; availability still reads Google |
+| `--read-only` | Live commands | Reject all mutations |
 | `--json` | All | Print complete results and archive receipts; dry runs and availability always print JSON |
 | `--send-updates` | Writes | `none` (default), `all`, or `externalOnly` |
 | `--summary`, `--description`, `--location` | Create/update | Omitted update fields are preserved; explicit empty clears |

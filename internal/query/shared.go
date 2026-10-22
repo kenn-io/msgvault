@@ -28,6 +28,7 @@ const (
 	datasetOwnerParticipants        = "owner_participants"
 	datasetPersonDisplayNames       = "person_display_names"
 	datasetParticipantClusters      = "participant_clusters"
+	datasetMeetingKeys              = "meeting_keys"
 	messageTypeDimension            = "message_type"
 	messageTypeEmail                = "email"
 	messageTypeCalendar             = "calendar_event"

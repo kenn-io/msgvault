@@ -86,7 +86,13 @@ type Action struct {
 	Locator       string `json:"locator"`
 }
 
+type LinkEvidence struct {
+	GoogleEventID, CalendarID, ICalUID string
+	ScheduledAt                        *time.Time
+}
+
 type Content struct {
+	LinkEvidence       LinkEvidence  `json:"-"`
 	Summary            Section       `json:"summary"`
 	Notes              Section       `json:"notes"`
 	Transcript         Transcript    `json:"transcript"`

@@ -138,6 +138,15 @@ type ListAttributeDefinitionsQuery struct {
 	IncludeHidden *bool `json:"include_hidden,omitempty"`
 }
 
+type ListCalendarEventsQuery struct {
+	From time.Time `json:"from" validate:"required"`
+	To   time.Time `json:"to" validate:"required"`
+}
+
+func (l ListCalendarEventsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListCardDAVBooksQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`
@@ -577,6 +586,22 @@ type SearchMediaQuery struct {
 }
 
 func (s SearchMediaQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type GetMeetingLinksQuery struct {
+	MessageID int64 `json:"message_id" validate:"gte=1,lte=9007199254740991"`
+}
+
+func (g GetMeetingLinksQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
+type SuggestMeetingLinksQuery struct {
+	Ref string `json:"ref" validate:"required"`
+}
+
+func (s SuggestMeetingLinksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
