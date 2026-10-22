@@ -121,6 +121,12 @@ import type {
   DocumentSearchResponse,
   DocumentVectorOperationsResponse,
   DomainSummary,
+  EmailFamily,
+  EmailFamilyDecision,
+  EmailFamilyDecisionInput,
+  EmailFamilyDecisionPreview,
+  EmailFamilyDecisionResult,
+  EmailFamilyDecisionUndo,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -158,6 +164,10 @@ import type {
   GetDocumentIndexStatusParams,
   GetDocumentVectorStatusParams,
   GetDomainPathParameters,
+  GetEmailFamilyDecisionParams,
+  GetEmailFamilyDecisionPathParameters,
+  GetEmailFamilyParams,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -232,6 +242,7 @@ import type {
   ListDeletionsParams,
   ListDeletionsResponse,
   ListDirectoryPeopleParams,
+  ListEmailFamilyDecisionsParams,
   ListIdentityMatchCandidatesParams,
   ListMessageRecordingsPathParameters,
   ListMessageTasksPathParameters,
@@ -458,6 +469,7 @@ import type {
   TriggerSyncParams,
   TriggerSyncPathParameters,
   TriggerSyncResponse,
+  UndoEmailFamilyDecisionPathParameters,
   UnlinkMessageTaskPathParameters,
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
@@ -473,6 +485,7 @@ import type {
 import { orvalFetch } from "../../runtime";
 import { orvalText } from "../../runtime";
 import { orvalStream } from "../../runtime";
+import { orvalEmailFamily } from "../../runtime";
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
 
@@ -2231,6 +2244,87 @@ export const listChangedMessages = (
   );
 };
 /**
+ * @summary Read the latest 20 local decisions for one live copy
+ */
+export const listEmailFamilyDecisions = (
+  params?: ListEmailFamilyDecisionsParams,
+  options?: SecondParameter<typeof orvalFetch<EmailFamilyDecision[]>>,
+) => {
+  return orvalFetch<EmailFamilyDecision[]>(
+    { url: `/api/v1/messages/family/decisions`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Apply a reversible local email family decision
+ */
+export const applyEmailFamilyDecision = (
+  emailFamilyDecisionInput: EmailFamilyDecisionInput,
+  options?: SecondParameter<typeof orvalFetch<EmailFamilyDecisionResult>>,
+) => {
+  return orvalFetch<EmailFamilyDecisionResult>(
+    {
+      url: `/api/v1/messages/family/decisions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: emailFamilyDecisionInput,
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview local links or exact-copy handling without saving
+ */
+export const previewEmailFamilyDecision = (
+  emailFamilyDecisionInput: EmailFamilyDecisionInput,
+  options?: SecondParameter<typeof orvalFetch<EmailFamilyDecisionPreview>>,
+) => {
+  return orvalFetch<EmailFamilyDecisionPreview>(
+    {
+      url: `/api/v1/messages/family/decisions/preview`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: emailFamilyDecisionInput,
+    },
+    options,
+  );
+};
+/**
+ * @summary Read a local decision and its current surviving copy union
+ */
+export const getEmailFamilyDecision = (
+  { id }: GetEmailFamilyDecisionPathParameters,
+  params?: GetEmailFamilyDecisionParams,
+  options?: SecondParameter<typeof orvalFetch<EmailFamilyDecisionResult>>,
+) => {
+  return orvalFetch<EmailFamilyDecisionResult>(
+    {
+      url: `/api/v1/messages/family/decisions/${encodeURIComponent(String(id))}`,
+      method: "GET",
+      params,
+    },
+    options,
+  );
+};
+/**
+ * @summary Undo one local family decision with revision checks
+ */
+export const undoEmailFamilyDecision = (
+  { id }: UndoEmailFamilyDecisionPathParameters,
+  emailFamilyDecisionUndo: EmailFamilyDecisionUndo,
+  options?: SecondParameter<typeof orvalFetch<EmailFamilyDecisionResult>>,
+) => {
+  return orvalFetch<EmailFamilyDecisionResult>(
+    {
+      url: `/api/v1/messages/family/decisions/${encodeURIComponent(String(id))}/undo`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: emailFamilyDecisionUndo,
+    },
+    options,
+  );
+};
+/**
  * @summary List filtered messages
  */
 export const filterMessages = (
@@ -2265,6 +2359,23 @@ export const getMessage = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read related archived email copies and explicit handling evidence
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  params?: GetEmailFamilyParams,
+  options?: SecondParameter<typeof orvalEmailFamily<EmailFamily>>,
+) => {
+  return orvalEmailFamily<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
+      method: "GET",
+      params,
     },
     options,
   );

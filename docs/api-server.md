@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.25.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -176,6 +176,9 @@ report anonymous usage events through the daemon. See
 Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
 owner source-maintenance requests. Existing source identifiers and account
 requests remain valid.
+
+Schema 3.24.0 adds owner-only [email family lookup](#email-families).
+Schema 3.25.0 adds reversible local family links and handling decisions.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
@@ -2727,6 +2730,59 @@ readiness response when the cache is unavailable. Semantic and hybrid views
 never fall back to full-text search.
 
 ---
+
+### Email families {#email-families}
+
+`GET /api/v1/messages/{id}/family` returns the live archived email copies
+connected by explicit MIME identifiers or source-local Gmail threads. Optional
+`source_id` values narrow the source set; repeat the parameter or comma-separate
+IDs. An explicitly empty value selects no sources. Missing, hidden, non-email
+and inaccessible seeds return `404 not_found`.
+
+The response preserves every copy with source, account, conversation, envelope,
+linkage, labels and dates. `handling` reports outstanding received events,
+positive outbound evidence and reasons for uncertainty. `revision` identifies
+those facts in one consistent archive snapshot. Reads never call a provider or
+scan raw mail. The population is capped at 500 members and 5,000 identifier
+lookups. Reaching a bound sets `truncated: true` and handling to `unknown`.
+
+Local decisions never change provider state. These owner-only routes share the
+normal daemon mutation gate for apply and undo:
+
+| Method and path | Behavior |
+| --- | --- |
+| `POST /api/v1/messages/family/decisions/preview` | Project a `link` or `handled` decision without saving it. |
+| `POST /api/v1/messages/family/decisions` | Save the decision if the union of target families still matches `expected_family_revision`. |
+| `GET /api/v1/messages/family/decisions?message_id=42` | Read the latest 20 decisions for one live copy. |
+| `GET /api/v1/messages/family/decisions/{id}` | Read a decision and its current surviving copy union, including an empty union after deletion. Use its family revision for undo. |
+| `POST /api/v1/messages/family/decisions/{id}/undo` | Undo with `expected_revision` and `expected_family_revision`. |
+
+Preview and apply take `request_key` (32 lowercase hexadecimal characters),
+`kind`, `message_ids`, optional `source_ids`, `actor_kind` and `actor_ref`.
+Link selects 2–100 unique live emails; handled selects 1–100 exact copies.
+Use preview's `before_revision` for apply. Revision mismatches return
+`409 family_changed`; truncated populations return `409 family_truncated`.
+The same 500-copy and 5,000-key limits apply to the union, with at most 2,000
+decision membership edges. A truncated preview can be displayed but not applied.
+
+Reusing a request key with the same kind and original target set returns the
+saved decision, including after undo, deduplication or endpoint deletion.
+Different content returns `409 request_conflict`. Source authorization is checked
+before replay disclosure. A new decision requires a fresh family revision.
+Repeated undo is a no-op after authorization. Undo increments the decision's
+revision once and removes its effect; provider evidence stays intact.
+
+The archive records decisions in `email_family_decisions` and memberships in
+`email_family_decision_members`. The immutable request digest preserves retry
+identity. Expected membership counts prevent partially deleted links from
+connecting their surviving endpoints. Deduplication retargets memberships onto
+the survivor and preserves existing deficits. Undoing deduplication does not
+move decisions back. Subset copies omit decisions with incomplete endpoints.
+A handled batch covers each selected copy independently; a duplicate copy
+remains outstanding until it has reply evidence or its own local confirmation.
+
+See [`family`](cli-reference.md#family) for evidence and handling rules.
+These routes require the owner credential and are unavailable to delegated grants.
 
 ### Stage messages for deletion {#post-apiv1deletions}
 

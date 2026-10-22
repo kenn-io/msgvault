@@ -56,6 +56,48 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
+var optionalSourceSliceJSONTag = regexp.MustCompile("(\\[\\]int64\\s+`json:\"source_ids?),omitempty(\")")
+
+// RewriteSourceSelectionJSONTags keeps nil source filters omitted while
+// preserving a non-nil empty slice as an explicit empty selection.
+func RewriteSourceSelectionJSONTags(source []byte) ([]byte, error) {
+	return optionalSourceSliceJSONTag.ReplaceAll(source, []byte("${1},omitzero${2}")), nil
+}
+
+// RewriteEmailFamilySourceSelectionQueries preserves an explicitly empty
+// source selection in the generated query transport. The runtime's form-array
+// encoder emits one parameter per value, so an empty slice would otherwise be
+// omitted and interpreted as an unrestricted request.
+func RewriteEmailFamilySourceSelectionQueries(source []byte) ([]byte, error) {
+	for _, name := range []string{
+		"GetEmailFamilyRequestOptions",
+		"GetEmailFamilyDecisionRequestOptions",
+		"ListEmailFamilyDecisionsRequestOptions",
+	} {
+		original := []byte(fmt.Sprintf("func (o *%s) GetQuery() (map[string]any, error) {\n\treturn runtime.AsMap[any](o.Query)\n}", name))
+		replacement := []byte(fmt.Sprintf(`func (o *%s) GetQuery() (map[string]any, error) {
+	params, err := runtime.AsMap[any](o.Query)
+	if err != nil {
+		return nil, err
+	}
+	if o.Query != nil && o.Query.SourceID != nil && len(o.Query.SourceID) == 0 {
+		if params == nil {
+			params = make(map[string]any, 1)
+		}
+		params["source_id"] = ""
+	}
+	return params, nil
+}`, name))
+		if bytes.Contains(source, replacement) {
+			continue
+		}
+		if !bytes.Contains(source, original) {
+			return nil, fmt.Errorf("generated %s GetQuery shape changed", name)
+		}
+		source = bytes.Replace(source, original, replacement, 1)
+	}
+	return source, nil
+}
 
 var requiredPointerValidators = [][3]string{
 	{"CliAccountResponse", "Alias", "c"},
@@ -206,5 +248,5 @@ func RewriteGeneratedValidators(source []byte) ([]byte, error) {
 		return nil, errors.New("generated AttributeValue.JSON shape changed")
 	}
 	result = optionalValueJSONTag.ReplaceAll(result, []byte("${1},omitzero${2}"))
-	return result, nil
+	return RewriteSourceSelectionJSONTags(result)
 }

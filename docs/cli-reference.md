@@ -17,7 +17,7 @@ appear in full under Inherited Flags.
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
 | Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
-| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
+| Search and browse | [search](#search), [tui](#tui), [show-message](#show-message), [family](#family), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
@@ -2625,6 +2625,7 @@ stored MIME before they are read; other read or write errors stop the command.
 Hidden duplicate copies are excluded. The last-sync time describes account
 freshness, not conversation completeness.
 
+
 ---
 
 ## export-attachment
@@ -4340,6 +4341,74 @@ msgvault docbank attachments backfill
 uploads. It requires attachment upload consent and a running attachment mirror
 job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased).
 
+## family
+
+Show the archived email copies connected to one message by explicit MIME
+identifiers or a Gmail thread within the same source. Every visible copy stays
+separate. The command reads through the daemon and never changes provider state.
+
+```bash
+msgvault family show 42
+msgvault family show 42 --source-id 1,3 --json
+```
+
+`--source-id` narrows the sources included in the family. JSON includes each
+copy's account, identifiers, dates, labels, extraction outcome and handling
+facts, plus a revision for the current evidence.
+
+Automatic handling is `handled` only with positive Sent evidence from a confirmed sender
+to an external recipient and later direct reply or attached-original evidence.
+`actionable` means received items remain outstanding. `unknown` preserves missing
+or incomplete evidence. Shared subjects, quoted text and References alone never
+prove that an email was answered. Families stop at 500 copies or 5,000 identifier
+lookups; a truncated family remains `unknown`.
+
+Local decisions let you connect copies without MIME links or confirm that
+specific copies need no further action. Preview is the default:
+
+```bash
+msgvault family link 42 78 --request-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+msgvault family link 42 78 --apply --request-key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --family-revision <before_revision>
+msgvault family mark-handled 42 --apply
+msgvault family history 42
+msgvault family undo 7 --preview
+msgvault family undo 7 --revision 1 --family-revision <current_family_revision>
+```
+
+`--apply` saves a local decision and prints its request key to stderr. Keep the
+key and original target IDs for retries. `--family-revision` applies the exact
+preview you reviewed; without it, the command obtains a fresh preview before
+saving. The apply response includes the saved decision and current family.
+Use `family undo <decision-id> --preview` to read the current decision and surviving
+family revisions, even after copies are deleted. It does not undo the decision.
+A stale family or decision revision fails and requires a new preview.
+A retry with the same key and original targets returns the saved decision,
+even after undo. Reuse the original revision for such retries when selected
+original copies have since been deduplicated or removed.
+
+Links select 2–100 live copies. Handled decisions select 1–100 exact copies;
+they do not mark unselected duplicates. No decision changes a provider or
+synthesizes reply evidence. Truncated families cannot be changed. History lists
+the latest 20 decisions for one live copy. Deduplication retargets decisions to
+the survivor; undoing deduplication does not move them back.
+
+The owner-only MCP read tools `get_email_family` and
+`get_email_family_decision` accept `message_id` and `decision_id`, respectively,
+plus optional `source_ids`. The decision lookup returns the current surviving
+copy union even when all original targets are deleted, so clients can refresh
+the revisions needed to undo. These reads are available without write opt-in;
+restricted agent grants do not expose them.
+
+The MCP decision tools `preview_email_family_decision`,
+`apply_email_family_decision`, `list_email_family_decisions` and
+`undo_email_family_decision` require writes to be enabled. Apply and undo also
+require explicit client confirmation. Untrusted archived text cannot authorize
+these actions.
+
+Older archives derive identifiers during sync, import or
+[`repair-derived`](#repair-derived). Family reads do not fetch or repair raw mail.
+An explicit empty MCP source list excludes all sources.
+
 ## show-message
 
 Show full message details. On newer `main` builds, `show` is an alias.
@@ -4764,8 +4833,10 @@ type that has no re-derivation pass and no source in the archive is an error.
 Source types with a re-derivation pass (`beeper`, `discord`) recompute their
 derived text and metadata. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
-them. Source syncs and imports run the same work first, so use this command
-for on-demand repair, file imports you will not run again, or retrying an
+them. It also indexes explicit email identifiers from retained MIME to support
+related-copy lookups. Missing or unreadable payloads are recorded as incomplete;
+they do not block later messages. Source syncs and imports run the same work
+first, so use this command for on-demand repair, file imports you will not run again, or retrying an
 interrupted pass.
 
 ## gc

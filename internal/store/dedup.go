@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -503,8 +504,8 @@ func (s *Store) MergeDuplicates(
 	unionLabelsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels (message_id, label_id)
 			SELECT ?, label_id FROM message_labels WHERE message_id = ?`)
 	backfillRawSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_raw
-			  (message_id, raw_data, raw_format, compression)
-			SELECT ?, raw_data, raw_format, compression
+			  (message_id, raw_data, raw_format, compression, encryption_version)
+			SELECT ?, raw_data, raw_format, compression, encryption_version
 			FROM message_raw WHERE message_id = ?`)
 	softDeleteSQL := fmt.Sprintf(`UPDATE messages
 			SET deleted_at = %s, delete_batch_id = ?
@@ -522,6 +523,15 @@ func (s *Store) MergeDuplicates(
 		}
 	}
 	err := s.withAttributionTxContext(ctx, lock, func(tx *loggedTx) error {
+		// Use the same message-before-raw order as ingestion and repair.
+		lockedIDs := append([]int64{survivorID}, duplicateIDs...)
+		slices.Sort(lockedIDs)
+		for _, id := range slices.Compact(lockedIDs) {
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+
 		preserved, err := duplicateMergePreservesHistory(ctx, tx, survivorID, duplicateIDs)
 		if err != nil {
 			return err
@@ -530,6 +540,9 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
+			if err := s.retargetEmailFamilyDecisions(ctx, tx, survivorID, dupID); err != nil {
+				return err
+			}
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {
 				return fmt.Errorf("union labels from %d: %w", dupID, err)
@@ -569,6 +582,10 @@ func (s *Store) MergeDuplicates(
 			}
 		}
 		if result.RawMIMEBackfilled > 0 {
+			if _, err := s.refreshEmailLinkageTx(ctx, tx, survivorID); err != nil {
+				return err
+			}
+
 			_, err := s.refreshAccountAttributionTx(ctx, tx, survivorID, deliveryInput{reloadMIME: true})
 			return err
 		}
@@ -723,15 +740,17 @@ func (s *Store) StreamMessageRawContext(ctx context.Context, messageIDs []int64,
 // reversed — those changes are additive enrichment that leaves
 // survivors strictly better off.
 func (s *Store) UndoDedup(batchID string) (int64, error) {
-	result, err := s.db.Exec(`
-		UPDATE messages
-		SET deleted_at = NULL, delete_batch_id = NULL
-		WHERE delete_batch_id = ?
-	`, batchID)
-	if err != nil {
-		return 0, fmt.Errorf("undo dedup: %w", err)
-	}
-	return result.RowsAffected()
+	ctx := context.Background()
+	var count int64
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		result, err := tx.ExecContext(ctx, `UPDATE messages SET deleted_at=NULL,delete_batch_id=NULL WHERE delete_batch_id=?`, batchID)
+		if err != nil {
+			return fmt.Errorf("undo dedup: %w", err)
+		}
+		count, err = result.RowsAffected()
+		return err
+	})
+	return count, err
 }
 
 // DeleteDedupedBatch permanently deletes all hidden rows associated with a
@@ -774,7 +793,12 @@ func (s *Store) DeleteDedupedBatchesContext(
 	// tx: the cascade DELETE is unbounded and exceeds 30s on a large archive
 	// (finding S1). No-op timeout reset on SQLite.
 	var deleted int64
-	err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+	err := s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+			if _, err := tx.ExecContext(ctx, reset); err != nil {
+				return err
+			}
+		}
 		for _, batchID := range batchIDs {
 			result, err := tx.ExecContext(ctx, `
 				DELETE FROM messages
@@ -876,7 +900,12 @@ func (s *Store) DeleteAllDedupedContext(
 	// DELETE exceeds 30s on a large archive (finding S1). The count and the
 	// delete share the tx so they observe the same snapshot, as before.
 	// No-op timeout reset on SQLite.
-	err = s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+	err = s.withAttributionTxContext(ctx, attributionLock{Exclusive: true}, func(tx *loggedTx) error {
+		if reset := s.dialect.MaintenanceTimeoutResetSQL(); reset != "" {
+			if _, err := tx.ExecContext(ctx, reset); err != nil {
+				return err
+			}
+		}
 		if err := tx.QueryRowContext(ctx, `
 			SELECT COUNT(DISTINCT delete_batch_id)
 			FROM messages

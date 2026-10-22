@@ -864,6 +864,30 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		return nil, fmt.Errorf("copy message_raw: %w", err)
 	}
 
+	for _, table := range []string{"email_link_key_state", "email_link_keys"} {
+		present, err := sourceTableExists(tx, table)
+		if err != nil {
+			return nil, fmt.Errorf("check %s: %w", table, err)
+		}
+		if present {
+			if _, err := copyByName(tx, table, `message_id IN (SELECT id FROM selected_messages)`); err != nil {
+				return nil, fmt.Errorf("copy %s: %w", table, err)
+			}
+		}
+	}
+
+	if present, err := sourceTableExists(tx, "email_family_decisions"); err != nil {
+		return nil, err
+	} else if present {
+		complete := `id IN (SELECT d.id FROM src.email_family_decisions d WHERE d.expected_member_count = (SELECT COUNT(*) FROM src.email_family_decision_members dm WHERE dm.decision_id=d.id) AND NOT EXISTS(SELECT 1 FROM src.email_family_decision_members dm WHERE dm.decision_id=d.id AND dm.message_id NOT IN (SELECT id FROM selected_messages)))`
+		if _, err := copyByName(tx, "email_family_decisions", complete); err != nil {
+			return nil, fmt.Errorf("copy family decisions: %w", err)
+		}
+		if _, err := copyByName(tx, "email_family_decision_members", `decision_id IN (SELECT id FROM email_family_decisions)`); err != nil {
+			return nil, fmt.Errorf("copy family decision members: %w", err)
+		}
+	}
+
 	if _, err := copyByName(tx, "message_recipients",
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)

@@ -350,6 +350,71 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	assert.Equal(result.MessagesMoved, again.MessagesMoved)
 }
 
+func TestMergeSourcesRetargetsEmailFamilyDecisions(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "family-history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "family-live@example.test")
+	require.NoError(err)
+	survivor := emailMergeFixtureMessage(t, st, into.ID, "live-copy", []string{"client@example.test"}, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "history-copy", []string{"client@example.test"}, true)
+	related := emailMergeFixtureMessage(t, st, into.ID, "related-copy", []string{"other@example.test"}, true)
+
+	handledInput := store.EmailFamilyDecisionInput{
+		RequestKey: strings.Repeat("1", 32), Kind: "handled", MessageIDs: []int64{duplicate}, ActorKind: "owner",
+	}
+	handledPreview, err := st.PreviewEmailFamilyDecisionContext(t.Context(), handledInput)
+	require.NoError(err)
+	handledInput.ExpectedFamilyRevision = handledPreview.BeforeRevision
+	handled, err := st.ApplyEmailFamilyDecisionContext(t.Context(), handledInput)
+	require.NoError(err)
+
+	linkInput := store.EmailFamilyDecisionInput{
+		RequestKey: strings.Repeat("2", 32), Kind: "link", MessageIDs: []int64{duplicate, survivor, related}, ActorKind: "owner",
+	}
+	linkPreview, err := st.PreviewEmailFamilyDecisionContext(t.Context(), linkInput)
+	require.NoError(err)
+	linkInput.ExpectedFamilyRevision = linkPreview.BeforeRevision
+	linked, err := st.ApplyEmailFamilyDecisionContext(t.Context(), linkInput)
+	require.NoError(err)
+
+	merged, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	assert.Equal(int64(1), merged.DuplicatesHidden)
+
+	family, err := st.EmailFamilyContext(t.Context(), survivor, store.EmailFamilyOptions{})
+	require.NoError(err)
+	assert.Equal([]int64{survivor, related}, memberIDs(family.Members))
+	var liveMember *store.EmailFamilyMember
+	for i := range family.Members {
+		if family.Members[i].MessageID == survivor {
+			liveMember = &family.Members[i]
+		}
+	}
+	require.NotNil(liveMember)
+	assert.True(liveMember.LocalHandled)
+
+	var savedHandled, savedLink *store.EmailFamilyDecision
+	for i := range family.Decisions {
+		decision := &family.Decisions[i]
+		switch decision.ID {
+		case handled.Decision.ID:
+			savedHandled = decision
+		case linked.Decision.ID:
+			savedLink = decision
+		}
+	}
+	require.NotNil(savedHandled)
+	require.NotNil(savedLink)
+	assert.Equal([]int64{survivor}, savedHandled.MessageIDs)
+	assert.Equal(handled.Decision.Revision+1, savedHandled.Revision)
+	assert.Equal([]int64{survivor, related}, savedLink.MessageIDs)
+	assert.Equal(2, savedLink.ExpectedMemberCount)
+	assert.Equal(linked.Decision.Revision+1, savedLink.Revision)
+}
+
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

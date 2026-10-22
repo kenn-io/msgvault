@@ -1171,7 +1171,7 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	return s.withTx(func(tx *loggedTx) error {
+	return s.withAttributionTxContext(context.Background(), attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
 		var newID int64
 		err := tx.QueryRow(
 			`SELECT id FROM messages WHERE source_id = ? AND source_message_id = ?`,
@@ -1198,6 +1198,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				return fmt.Errorf("find legacy message id: %w", legacyErr)
 			}
 			if legacyErr == nil {
+				if err := s.retargetEmailFamilyDecisions(context.Background(), tx, newID, legacyID); err != nil {
+					return err
+				}
 				if _, err = tx.Exec(
 					`UPDATE messages SET reply_to_message_id = ?
 					 WHERE reply_to_message_id = ?`,
@@ -2413,6 +2416,10 @@ func (s *Store) persistMessageWith(
 		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
 		}
+	}
+
+	if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID); err != nil {
+		return 0, fmt.Errorf("refresh email linkage: %w", err)
 	}
 
 	for _, rs := range data.Recipients {
@@ -6140,6 +6147,10 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 		if err := upsertMessageRawWithFormat(boundQuerier{ctx: ctx, q: tx}, messageID, rawData, format); err != nil {
 			return err
 		}
+		if _, err := s.refreshEmailLinkageTx(ctx, tx, messageID); err != nil {
+			return err
+		}
+
 		if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 			return err
 		}

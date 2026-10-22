@@ -138,6 +138,12 @@ type GetMeetingContextBody = MeetingContextRequest
 
 type GetMeetingMetricsBody = MeetingMetricsRequest
 
+type ApplyEmailFamilyDecisionBody = EmailFamilyDecisionInput
+
+type PreviewEmailFamilyDecisionBody = EmailFamilyDecisionInput
+
+type UndoEmailFamilyDecisionBody = EmailFamilyDecisionUndo
+
 type UpdateMessageTagsBody = MessageTagChange
 
 type CreateOrLinkMessageTaskBody = TaskLinkMutationRequest
