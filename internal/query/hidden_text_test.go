@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -55,6 +57,40 @@ func TestSearchRowsHiddenTextPresent(t *testing.T) {
 				}
 				assert.True(found, "search must return the body hit")
 			}
+		})
+	}
+}
+
+func TestSQLiteTextHiddenTextRows(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite timeline snapshots and FTS5 text search")
+	f := storetest.New(t)
+	id := f.CreateMessage("hidden")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET message_type = 'teams', snippet = 'hiddenneedle' WHERE id = ?`), id)
+	require.NoError(t, err)
+	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: "hiddenneedle", Valid: true}, sql.NullString{String: `<div hidden>hiddenneedle</div>`, Valid: true}))
+	_, err = f.Store.BackfillFTS(nil)
+	require.NoError(t, err)
+	engine := query.NewSQLiteEngine(f.Store.DB())
+	for _, tc := range []struct {
+		name string
+		read func(context.Context) ([]query.MessageSummary, error)
+	}{
+		{"timeline", func(ctx context.Context) ([]query.MessageSummary, error) {
+			return engine.ListConversationMessages(ctx, f.ConvID, query.TextFilter{})
+		}},
+		{"snapshot", func(ctx context.Context) ([]query.MessageSummary, error) {
+			rows, _, err := engine.ListConversationMessagesSnapshot(ctx, f.ConvID, query.TextFilter{})
+			return rows, err
+		}},
+		{"text search", func(ctx context.Context) ([]query.MessageSummary, error) {
+			return engine.TextSearch(ctx, "hiddenneedle", nil, 10, 0)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := tc.read(t.Context())
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			assert.True(t, rows[0].HiddenTextPresent)
 		})
 	}
 }

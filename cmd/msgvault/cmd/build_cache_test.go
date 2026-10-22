@@ -108,6 +108,7 @@ func setupTestSQLite(t *testing.T) string {
 			received_at TIMESTAMP,
 			size_estimate INTEGER,
 			has_attachments BOOLEAN DEFAULT FALSE,
+			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
 			attachment_count INTEGER DEFAULT 0,
 			deleted_from_source_at TIMESTAMP,
 			list_id TEXT,

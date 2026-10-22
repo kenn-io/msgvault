@@ -2629,7 +2629,8 @@ attachments of the message. JSON includes `snippet` (the stored preview) and `co
 The `filename:` operator requires daemon API schema 3.14.0 or newer.
 FTS adds `match_snippet` when SQLite can supply a query-specific excerpt. FTS keeps
 its array output; vector/hybrid keep their object containing `results`.
-On newer `main` builds, every JSON result includes `hidden_text_present`.
+On newer `main` builds, every JSON result includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. False does not guarantee that text is visible.
 See `show-message` below for the detector and one-time backfill.
 
 Use hybrid for natural-language intent with lexical clues, and vector for
@@ -4630,13 +4631,14 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
-On newer `main` builds, JSON also includes `hidden_text_present`, which reports
-whether the stored HTML may hide readable text. The check uses a set of
+On newer `main` builds, JSON includes the best-effort flag `hidden_text_present`.
+True means the stored HTML likely hides readable text. The check uses a set of
 inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
 HTML that fails to parse also sets the flag. Text output writes
 `Warning: this message's HTML may hide text.` to stderr when flagged, including
 with `--body-only`. Message bodies stay unchanged. The check excludes
-stylesheets and browser layout. MCP `get_message` and `search_in_message`
+stylesheets and browser layout. False does not guarantee that text is visible.
+MCP `get_message` and `search_in_message`
 return the same stored flag. CLI `search --json` and MCP `search_message_bodies`
 also include it on every result row. Archive schema 15 flags older mail during
 a one-time backfill at archive initialization; new HTML writes refresh the flag.

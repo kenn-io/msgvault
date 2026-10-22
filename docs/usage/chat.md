@@ -436,7 +436,9 @@ is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
 
 On newer `main` builds, `get_message` and `search_in_message` include
-`hidden_text_present`. The CLI readers `show-message` and `show-thread` return
+the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
+readable text. False does not guarantee that text is visible.
+The CLI readers `show-message` and `show-thread` return
 the same flag in JSON and warn on stderr for text output. The check uses a set
 of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
 HTML that may hide letters or digits, including for mail with a plain-text
