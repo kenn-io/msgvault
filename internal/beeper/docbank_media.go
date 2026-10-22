@@ -1144,6 +1144,7 @@ func (w *MediaSubmitter) status(ctx, actionCtx context.Context, operation store.
 	}
 	if job.State == "operator_required" {
 		// Docbank quarantines these jobs; a daemon restart can resume observation after operator repair.
+		// Document attachments instead record a final code and require backfill after repair.
 		return w.finishOperation(ctx, operation, store.BeeperMediaResult{
 			OperationState: job.State, ErrorCode: "operator_required",
 		})

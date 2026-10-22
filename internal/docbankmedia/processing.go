@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -60,7 +61,12 @@ func (c *Client) StartProcessing(ctx context.Context, selector ProcessingSelecto
 		} `json:"job"`
 	}
 	if err := json.UnmarshalDecode(jsontext.NewDecoder(io.LimitReader(response.Body, maxMetadataBytes)), &event); err != nil {
-		return "", ErrInvalidReceipt
+		_, syntaxError := errors.AsType[*jsontext.SyntacticError](err)
+		_, semanticError := errors.AsType[*json.SemanticError](err)
+		if syntaxError || semanticError || errors.Is(err, io.EOF) {
+			return "", ErrInvalidReceipt
+		}
+		return "", transportError(err)
 	}
 	if event.Type != "job" || event.Job == nil || event.Job.ID == "" {
 		return "", ErrInvalidReceipt

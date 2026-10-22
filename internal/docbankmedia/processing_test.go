@@ -78,3 +78,21 @@ func TestProcessingInvalidReceipts(t *testing.T) {
 		})
 	}
 }
+
+func TestStartProcessingStreamReadFailureRetries(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		_, err := io.WriteString(w, `{"type":"job"`)
+		assert.NoError(err)
+	}))
+	defer server.Close()
+	client, err := docbankmedia.NewClient(server.URL, nil)
+	require.NoError(err)
+	_, err = client.StartProcessing(t.Context(), docbankmedia.ProcessingSelector{NodeID: 7}, "plan")
+	require.Error(err)
+	require.NotErrorIs(err, docbankmedia.ErrInvalidReceipt)
+	require.ErrorIs(err, io.ErrUnexpectedEOF)
+	assert.True(docbankmedia.Retryable(err))
+}

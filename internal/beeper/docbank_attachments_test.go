@@ -1009,7 +1009,7 @@ func (r *mirrorRig) processingDue() {
 
 func (r *mirrorRig) processingCounts() store.DocbankAttachmentProcessingSummary {
 	r.t.Helper()
-	counts, err := r.f.Store.DocbankAttachmentProcessingCounts(r.t.Context(), "dest")
+	counts, err := r.f.Store.DocbankAttachmentProcessingCounts(r.t.Context(), "dest", r.worker.options.DocumentProfile)
 	require.NoError(r.t, err)
 	return counts
 }
@@ -1055,7 +1055,6 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"failed", "rendition", "provider_timeout", "provider_timeout"},
 		{"failed", "rendition", "", "failed"},
 		{"abandoned", "rendition", "", "abandoned"},
-		{"unknown", "rendition", "", "unknown"},
 	} {
 		t.Run(tc.state+"_"+tc.phase+"_"+tc.code, func(t *testing.T) {
 			require := require.New(t)
@@ -1140,7 +1139,11 @@ func TestAttachmentMirrorProcessingBlockedKeepsUploading(t *testing.T) {
 				r.processing.JobFaults[hash], r.processing.Reasons[hash] = tc.status, tc.reason
 			}
 			r.add("new.pdf", "application/pdf", []byte("new file"))
-			require.ErrorContains(r.runBatch(t.Context()), "document_profile \"documents\": check the profile and grant consent in Docbank")
+			err := r.runBatch(t.Context())
+			require.ErrorContains(err, "document_profile \"documents\": check the profile and grant consent in Docbank")
+			if tc.reason != "" {
+				assert.Contains(err.Error(), tc.reason)
+			}
 			assert.Len(r.processing.Jobs, 1)
 			assert.Equal(int64(26), r.status().Delivered)
 			assert.Equal(int64(26), r.processingCounts().Waiting)
@@ -1344,4 +1347,66 @@ func TestAttachmentMirrorProcessingErrorKeepsReplayBacklog(t *testing.T) {
 	remaining, err := r.f.Store.ListAttachmentChanges(t.Context(), store.DocbankAttachmentConsumerKey("dest"), 500)
 	require.NoError(err)
 	assert.Len(remaining, 1)
+}
+
+func TestAttachmentMirrorProcessingUnknownStateKeepsPolling(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	r.processing.States["job-a"] = [3]string{"new_state", "rendition", "provider_code"}
+	r.processingDue()
+	require.ErrorContains(r.runBatch(t.Context()), "new_state")
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	assert.Empty(r.processingCounts().Outcomes)
+	r.processingDue()
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"job-a", "job-a"}, r.processing.Polls)
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+}
+
+func TestAttachmentMirrorProcessingProfileServiceFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client, err := docbankmedia.NewClient(server.URL, nil)
+	require.NoError(err)
+	r.worker.client = client
+	_, err = r.worker.processDocuments(t.Context(), time.Now().Add(time.Minute))
+	require.Error(err)
+	assert.Contains(err.Error(), "document_profile")
+	assert.Contains(err.Error(), "server_error")
+	assert.NotContains(err.Error(), "consent")
+}
+
+func TestAttachmentMirrorProcessingGateKeepsFailure(t *testing.T) {
+	r := newMirrorRig(t)
+	r.delivered("a", "b")
+	r.processing.Faults["a"] = http.StatusServiceUnavailable
+	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+		// The first plan fails, then backup freezes writes before its retry is saved.
+		return func() {}, len(r.processing.Plans) == 0
+	})
+	_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+	require.ErrorContains(t, err, "server_error")
+	assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
+}
+
+func TestAttachmentMirrorUploadGateKeepsFailure(t *testing.T) {
+	r := newMirrorRig(t)
+	hash := r.add("report.pdf", "application/pdf", []byte("document"))
+	r.UploadFaults.Store(hash, http.StatusServiceUnavailable)
+	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+		return func() {}, r.Uploads.Load() == 0
+	})
+	_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+	require.ErrorContains(t, err, "server_error")
+	assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
 }

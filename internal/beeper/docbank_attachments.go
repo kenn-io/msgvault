@@ -99,10 +99,7 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	}
 	processMore, processErr := w.processDocuments(ctx, queueDeadline)
 	uploadMore, err := w.drain(ctx, deadline)
-	if errors.Is(err, errBeeperMediaGateBusy) {
-		return false, endMediaPass(processErr)
-	}
-	return discoverMore || replayMore || processMore || uploadMore, errors.Join(endMediaPass(processErr), err)
+	return discoverMore || replayMore || processMore || uploadMore, errors.Join(processErr, err)
 }
 
 // gated runs one Store step under the operation gate so backup freeze sees no writer.
@@ -150,7 +147,7 @@ func (w *AttachmentMirror) drain(ctx context.Context, deadline time.Time) (bool,
 	}
 	u := &attachmentUploader{mirror: w, packed: packed, handled: make(map[string]bool)}
 	more, err := u.drain(ctx, deadline)
-	return more, errors.Join(err, u.reported, u.streak, attachmentSourceError(packed.Close()))
+	return more, errors.Join(endMediaPass(err), u.reported, u.streak, attachmentSourceError(packed.Close()))
 }
 
 // attachmentUploader holds one pass of uploads and its destination failure streak.
@@ -239,6 +236,10 @@ func (u *attachmentUploader) retryLater(ctx context.Context, d store.DocbankAtta
 	err := w.gated(ctx, func() error {
 		return w.store.RecordDocbankAttachmentRetry(ctx, w.destination, d, docbankmedia.ErrorCode(uploadErr))
 	})
+	if errors.Is(err, errBeeperMediaGateBusy) {
+		u.reported = errors.Join(u.reported, uploadErr)
+		return err
+	}
 	if !isDestinationFault(uploadErr) {
 		u.endStreak()
 		return err
@@ -531,12 +532,15 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 		err = errors.New("profile has no rendition stage")
 	}
 	if err != nil {
-		return false, w.processingBlocked(err)
+		if processingAnswer(docbankmedia.JobStatus{}, err).blocked {
+			return false, w.processingBlocked(err)
+		}
+		return false, fmt.Errorf("document_profile %q: %w", w.options.DocumentProfile, err)
 	}
 	if err := w.gated(ctx, func() error {
-		return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, profile.Fingerprint)
+		return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, w.options.DocumentProfile, profile.Fingerprint)
 	}); err != nil {
-		return false, err
+		return false, endMediaPass(err)
 	}
 	var failures attachmentRetryStreak
 	var cursor store.DocbankAttachmentProcessingCursor
@@ -547,7 +551,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			return err
 		})
 		if err != nil {
-			return false, errors.Join(failures.reported, failures.streak, err)
+			return false, errors.Join(failures.reported, failures.streak, endMediaPass(err))
 		}
 		if len(files) == 0 {
 			return false, errors.Join(failures.reported, failures.streak)
@@ -578,6 +582,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return false, ctx.Err()
 			}
 			answer := processingAnswer(job, err)
+			failures.reported = errors.Join(failures.reported, answer.err)
 			if answer.blocked {
 				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
@@ -592,7 +597,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 			if saveErr := w.gated(ctx, func() error {
 				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
 			}); saveErr != nil {
-				return false, errors.Join(failures.reported, failures.streak, err, saveErr)
+				return false, errors.Join(failures.reported, failures.streak, err, endMediaPass(saveErr))
 			}
 			if answer.retry {
 				if stopErr := failures.retry(err); stopErr != nil {
@@ -606,6 +611,9 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 }
 
 func (w *AttachmentMirror) processingBlocked(err error) error {
+	if httpErr, ok := errors.AsType[*docbankmedia.HTTPError](err); ok && httpErr.Reason != "" {
+		err = fmt.Errorf("%s: %w", httpErr.Reason, err)
+	}
 	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w", w.options.DocumentProfile, err)
 }
 
@@ -614,13 +622,14 @@ type documentProcessingAnswer struct {
 	delay   time.Duration
 	retry   bool
 	blocked bool
+	err     error
 }
 
 // processingAnswer is the single classification of Docbank answers into saved steps.
 func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingAnswer {
 	if err == nil {
-		outcome := processingJobOutcome(job)
-		answer := documentProcessingAnswer{outcome: outcome}
+		outcome, stateErr := processingJobOutcome(job)
+		answer := documentProcessingAnswer{outcome: outcome, err: stateErr}
 		if outcome == "requested" {
 			answer.delay = store.BeeperMediaPollDelay
 		}
@@ -644,19 +653,23 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 	return documentProcessingAnswer{outcome: code}
 }
 
-func processingJobOutcome(job docbankmedia.JobStatus) string {
+func processingJobOutcome(job docbankmedia.JobStatus) (string, error) {
 	switch {
 	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
-		return "extracted"
+		// Docbank publishes rendition text before starting embeddings, even if embeddings fail.
+		return "extracted", nil
 	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
-		return "requested"
+		return "requested", nil
 	case job.State == "operator_required":
-		return "operator_required"
-	case job.FailureCode != "":
-		return job.FailureCode
+		return "operator_required", nil
+	case job.State == "failed" || job.State == "abandoned":
+		if job.FailureCode != "" {
+			return job.FailureCode, nil
+		}
+		return job.State, nil
 	case job.State != "":
-		return job.State
+		return "requested", fmt.Errorf("unrecognized Docbank processing job state %q", job.State)
 	default:
-		return "invalid_receipt"
+		return "invalid_receipt", nil
 	}
 }
