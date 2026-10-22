@@ -62,6 +62,7 @@ type LoopMessage struct {
 	ConversationID int64
 	OccurredAt     time.Time
 	Direction      ActivityDirection
+	FromAddress    string
 	Sender         LoopParticipant
 	Recipients     []LoopRecipient
 	ListID         string
@@ -546,6 +547,8 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 	out := make(map[int64]LoopMessage, len(messageIDs))
 	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
 		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
+			(SELECT COALESCE(MIN(NULLIF(TRIM(mr.email_address), '')), '')
+			 FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from'),
 			EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id
 				AND a.attachment_role = 'standalone')
 		FROM messages m WHERE m.id IN (%s)`,
@@ -553,7 +556,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 			var id int64
 			var m LoopMessage
 			if err := rows.Scan(&id, &m.Sender.ParticipantID, &m.Subject, &m.Snippet, &m.ListID,
-				&m.HasFileAttachment); err != nil {
+				&m.FromAddress, &m.HasFileAttachment); err != nil {
 				return err
 			}
 			out[id] = m

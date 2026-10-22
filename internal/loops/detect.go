@@ -205,10 +205,14 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 		return true, nil
 	}
 	inbound := m.Direction == store.DirectionInbound
+	senderAddress := m.FromAddress
+	if senderAddress == "" {
+		senderAddress = m.Sender.Address
+	}
 	switch {
 	case m.ListID != "":
 		return true, nil
-	case inbound && w.email && mime.IsNoReplyAddress(m.Sender.Address):
+	case inbound && w.email && mime.IsNoReplyAddress(senderAddress):
 		return true, nil
 	case !inbound && len(m.Recipients) > 0 &&
 		!slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool { return !r.IsOwner }):

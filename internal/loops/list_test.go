@@ -270,6 +270,38 @@ func TestListReplyFromLinkedAddressSettles(t *testing.T) {
 	assert.Equal(person.ID, result.Loops[0].Counterparty.PersonID)
 }
 
+func TestListUsesArchivedFromAddressAfterParticipantMerge(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		from     string
+		survivor string
+		wantLoop bool
+	}{
+		{name: "no-reply address absorbed by human address", from: "no-reply@example.test", survivor: alex},
+		{name: "human address absorbed by no-reply address", from: alex, survivor: "no-reply@example.test", wantLoop: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			sender := f.EnsureParticipant(tc.from, "", "example.test")
+			survivor := f.EnsureParticipant(tc.survivor, "", "example.test")
+			question := f.PersistEmail(storetest.EmailSpec{
+				From: tc.from, To: []string{me}, Body: "Can you send the report?", SentAt: ago(3 * day),
+			})
+			require.NoError(f.Store.MergeParticipants(sender, survivor))
+
+			result := list(t, f, loops.Options{})
+			if tc.wantLoop {
+				require.Len(result.Loops, 1)
+				assert.Equal(question, result.Loops[0].Anchor.ID)
+			} else {
+				assert.Empty(result.Loops)
+			}
+		})
+	}
+}
+
 func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
 		t.Run(state, func(t *testing.T) {
