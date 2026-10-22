@@ -569,6 +569,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 			"has_attachments":    true,
 			"size_bytes":         2048,
 			"body":               "Hello, generated world!",
+			"body_html":          `<p>Hello, generated world!</p><div style="display:none">Hidden text</div>`,
 			"attachments": []map[string]any{{
 				"id":           52,
 				"filename":     "doc.pdf",
@@ -589,6 +590,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	assert.Equal("Team chat", msg.ConversationTitle, "ConversationTitle")
 	assert.Equal(store.baseURL+"/messages/42", msg.WebURL)
 	assert.Equal("sms", msg.MessageType, "MessageType")
+	assert.Equal(`<p>Hello, generated world!</p><div style="display:none">Hidden text</div>`, msg.BodyHTML)
 	require.NotNil(msg.DeletedAt, "DeletedAt")
 	assert.Equal(deletedAt, msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 	assert.True(msg.HasAttachments, "HasAttachments")
