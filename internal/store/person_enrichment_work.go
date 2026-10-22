@@ -361,7 +361,8 @@ func (s *Store) claimWorkOnce(
 			FROM person_enrichment_work w
 			JOIN person_enrichment_profiles p ON p.fingerprint = w.profile_fingerprint
 			WHERE p.provider_name = ? AND w.profile_fingerprint = ?
-			  AND (w.run_id = ? OR w.run_id IS NULL)
+			  AND (w.run_id = ? OR (w.run_id IS NULL AND ` +
+			personEnrichmentScheduledAuthoritySQL("w.person_id") + `))
 			  AND w.due_at <= ?
 			  AND (w.lease_owner IS NULL OR w.lease_until <= ?)
 			ORDER BY CASE WHEN w.run_id = ? THEN 0 ELSE 1 END, w.due_at, w.person_id
@@ -510,7 +511,8 @@ func (s *Store) ReleaseWork(
 				}
 			}
 			return updateEnrichmentWorkLeaseTx(ctx, tx, token,
-				`due_at = ?, run_id = NULL, lease_owner = NULL, lease_until = NULL`,
+				`due_at = ?, run_id = CASE WHEN `+personEnrichmentExactManualTargetSQL("person_enrichment_work")+
+					` THEN run_id ELSE NULL END, lease_owner = NULL, lease_until = NULL`,
 				release.NextActionAt.UTC())
 		case "retry":
 			if release.NextActionAt == nil || !release.NextActionAt.After(s.personEnrichmentTime()) {
@@ -738,11 +740,16 @@ func (s *Store) BeginAttempt(
 			return nil
 		}
 		if work.HasFreshTrigger || currentRevision != start.PersonRevision {
-			result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work
-				SET run_id = NULL, lease_owner = NULL, lease_until = NULL,
+			manualTarget := personEnrichmentExactManualTargetSQL("w")
+			result, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work AS w
+				SET trigger_mask = CASE WHEN `+manualTarget+` THEN 16 ELSE w.trigger_mask END,
+				    trigger_generation = CASE WHEN `+manualTarget+` THEN `+
+				personEnrichmentManualTriggerGenerationSQL("w")+` ELSE w.trigger_generation END,
+				    run_id = CASE WHEN `+manualTarget+` THEN w.run_id ELSE NULL END,
+				    lease_owner = NULL, lease_until = NULL,
 				    active_attempt_id = NULL, has_fresh_trigger = FALSE
-				WHERE person_id = ? AND profile_fingerprint = ? AND run_id = ?
-				  AND lease_owner = ? AND lease_fence = ? AND active_attempt_id IS NULL`,
+				WHERE w.person_id = ? AND w.profile_fingerprint = ? AND w.run_id = ?
+				  AND w.lease_owner = ? AND w.lease_fence = ? AND w.active_attempt_id IS NULL`,
 				token.WorkPersonID, token.ProfileFingerprint, token.RunID, token.Owner, token.Fence)
 			if err != nil {
 				return fmt.Errorf("detach stale person enrichment publication: %w", err)
@@ -1046,8 +1053,12 @@ func (s *Store) AuthorizeAttemptPoll(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			JOIN person_enrichment_work w ON w.person_id = tracked.person_id
+			  AND w.profile_fingerprint = consent.fingerprint
+			WHERE tracked.person_id = ? AND w.run_id = ?
+			  AND (`+personEnrichmentExactManualTargetSQL("w")+` OR `+
+			personEnrichmentScheduledAuthoritySQL("tracked.person_id")+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment poll authority: %w", err)
 		}
 		if !active {
@@ -1113,8 +1124,12 @@ func (s *Store) AuthorizeAttemptDispatch(
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 			SELECT 1 FROM person_tracking tracked
 			JOIN `+activeConsentsSQL(ConsentPersonEnrichment)+` consent ON consent.fingerprint = ?
-			WHERE tracked.person_id = ?)`, token.ProfileFingerprint,
-			token.WorkPersonID).Scan(&active); err != nil {
+			JOIN person_enrichment_work w ON w.person_id = tracked.person_id
+			  AND w.profile_fingerprint = consent.fingerprint
+			WHERE tracked.person_id = ? AND w.run_id = ?
+			  AND (`+personEnrichmentExactManualTargetSQL("w")+` OR `+
+			personEnrichmentScheduledAuthoritySQL("tracked.person_id")+`))`, token.ProfileFingerprint,
+			token.WorkPersonID, token.RunID).Scan(&active); err != nil {
 			return fmt.Errorf("check person enrichment dispatch authority: %w", err)
 		}
 		if !active {

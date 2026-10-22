@@ -446,8 +446,22 @@ func (s *Store) RecoverPersonEnrichmentRunsContext(ctx context.Context, recovere
 					  AND a.profile_fingerprint = w.profile_fingerprint)`, runID).Scan(&unaccountedWork); err != nil {
 				return fmt.Errorf("validate person enrichment work recovery: %w", err)
 			}
-			invalid += unaccountedWork
-			if resumable > 0 && invalid == 0 {
+			// A manual request is durable authority for its exact target. Budget
+			// deferral intentionally leaves that target bound to the run without
+			// creating an attempt, so keep it queued across restart instead of
+			// treating it as ambiguous work.
+			var recoverableManualWork int64
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM person_enrichment_work w
+				WHERE w.run_id = ? AND w.active_attempt_id IS NULL
+				  AND `+personEnrichmentExactManualTargetSQL("w")+`
+				  AND NOT EXISTS (
+					SELECT 1 FROM person_enrichment_attempts a
+					WHERE a.run_id = w.run_id AND a.person_id = w.person_id
+					  AND a.profile_fingerprint = w.profile_fingerprint)`, runID).Scan(&recoverableManualWork); err != nil {
+				return fmt.Errorf("validate manual person enrichment recovery target: %w", err)
+			}
+			invalid += unaccountedWork - recoverableManualWork
+			if (resumable > 0 || recoverableManualWork > 0) && invalid == 0 {
 				if _, err := tx.ExecContext(ctx, `UPDATE person_enrichment_work
 					SET lease_owner = NULL, lease_until = NULL WHERE run_id = ?`, runID); err != nil {
 					return fmt.Errorf("release resumable person enrichment work: %w", err)

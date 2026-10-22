@@ -53,7 +53,7 @@ func newBudgetClaims(t *testing.T, profile personenrichment.ProviderProfile) (*s
 	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
 	store.SetPersonEnrichmentClockForTest(fixture.Store, func() time.Time { return now })
 	run, _, err := fixture.Store.StartRun(t.Context(), personenrichment.RunStart{
-		Kind: "manual", RequestedBy: "budget-run", RequestedAt: now,
+		Kind: "scheduled", RequestedBy: "budget-run", RequestedAt: now,
 	})
 	require.NoError(t, err)
 	claims := make([]budgetClaim, 0, 2)
@@ -61,10 +61,15 @@ func newBudgetClaims(t *testing.T, profile personenrichment.ProviderProfile) (*s
 		participantID := fixture.EnsureParticipant(email, "Budget Person", "example.com")
 		person, _, createErr := fixture.Store.CreatePersonFromParticipantContext(t.Context(), participantID)
 		require.NoError(t, createErr)
+		_, createErr = fixture.Store.SetPersonTrackingContext(t.Context(), person.ID, true)
+		require.NoError(t, createErr)
+		_, createErr = fixture.Store.DB().ExecContext(t.Context(), fixture.Store.Rebind(
+			`DELETE FROM person_enrichment_work WHERE person_id = ?`), person.ID)
+		require.NoError(t, createErr)
 		generation := "budget:" + string(rune('a'+i))
 		require.NoError(t, fixture.Store.PutPersonEnrichmentWorkContext(t.Context(), store.PersonEnrichmentWorkInput{
 			PersonID: person.ID, ProfileFingerprint: profile.Fingerprint,
-			Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerManual, Generation: generation}, DueAt: now,
+			Trigger: personenrichment.Trigger{Kind: personenrichment.TriggerTracked, Generation: generation}, DueAt: now,
 		}))
 		lease, claimErr := fixture.Store.ClaimWork(t.Context(), personenrichment.ClaimOptions{
 			RunID: run.ID, Owner: "worker-" + generation, ProviderName: profile.Name, ProfileFingerprint: profile.Fingerprint,

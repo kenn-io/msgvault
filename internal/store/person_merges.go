@@ -290,6 +290,9 @@ func (s *Store) mergePersonsOnce(
 		if s.personOperationBeforeIdentityLockHook != nil {
 			s.personOperationBeforeIdentityLockHook()
 		}
+		if err := s.lockPersonEnrichmentAuthorityMutationTx(ctx, tx); err != nil {
+			return err
+		}
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
@@ -569,6 +572,15 @@ func (s *Store) personMergeByIdempotencyKeyTx(
 func (s *Store) lockMergePeopleTx(
 	ctx context.Context, tx *loggedTx, survivorID, absorbedID int64,
 ) error {
+	// Tracking reconciliation takes the same generation gate as untracking.
+	// Take it before person rows, matching fact writers and manual transitions.
+	personIDs := []int64{survivorID, absorbedID}
+	slices.Sort(personIDs)
+	for _, personID := range personIDs {
+		if err := s.lockProfileIdentityKeyTxContext(ctx, tx, "person-fact-generation", personID); err != nil {
+			return err
+		}
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM persons
 		WHERE id IN (?, ?) ORDER BY id`+s.dialect.SelectForUpdate(), survivorID, absorbedID)
 	if err != nil {
@@ -891,6 +903,9 @@ func (s *Store) moveCorePersonProfileTx(
 		ctx, tx, mergeID, survivorID, absorbedID); err != nil {
 		return err
 	}
+	if err := s.reconcilePersonTierMergeTx(ctx, tx, mergeID, survivorID, absorbedID); err != nil {
+		return err
+	}
 	projectionPersonIDs, err := personMergeRowIDsTx(ctx, tx, `SELECT person_id
 		FROM person_attribute_values
 		WHERE value_record_type = 'person' AND value_record_id = ?
@@ -952,6 +967,9 @@ func (s *Store) reconcilePersonTrackingTx(
 		return nil
 	}
 	if survivorTracked {
+		if err := s.mergePersonTierGrantProvenanceTx(ctx, tx, "person_tracking", survivorID, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM person_tracking WHERE person_id = ?`, absorbedID); err != nil {
 			return fmt.Errorf("deduplicate absorbed person tracking: %w", err)
@@ -988,6 +1006,9 @@ func (s *Store) reconcilePersonBriefEnrollmentTx(
 		return nil
 	}
 	if survivorEnrolled {
+		if err := s.mergePersonTierGrantProvenanceTx(ctx, tx, "person_brief_enrollments", survivorID, absorbedID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM person_brief_enrollments WHERE person_id = ?`, absorbedID); err != nil {
 			return fmt.Errorf("deduplicate absorbed person brief enrollment: %w", err)
