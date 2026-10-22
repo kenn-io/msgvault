@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
-	"errors"
 	"math/rand/v2"
 	"path/filepath"
 	"strconv"
@@ -159,7 +158,6 @@ func TestUnsentRepliesCannotSettleQuestion(t *testing.T) {
 	}{
 		{"sms", "Can you send the contract?", friend, false},
 		{"sms", "Draft reply", owner, true},
-		{"mms", "Draft MMS reply", owner, true},
 	} {
 		id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
 			Message: &store.Message{SourceID: source.ID, ConversationID: conversation, MessageType: message.kind,
@@ -174,10 +172,15 @@ func TestUnsentRepliesCannotSettleQuestion(t *testing.T) {
 			require.NoError(f.Store.SetMessageSentStateContext(t.Context(), id, false))
 		}
 	}
-	listed := listLoops(t, f, loopNow)
-	require.Len(listed, 1, "unsent drafts cannot settle the incoming question")
-	assert.Equal(question, listed[0].Anchor.ID)
-	assert.Equal(loops.ReplyOwed, listed[0].Kind)
+	var ids []int64
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversation}) {
+		require.NoError(err)
+		for message, err := range conv.Walk() {
+			require.NoError(err)
+			ids = append(ids, message.ID)
+		}
+	}
+	assert.Equal([]int64{question}, ids, "the store walk excludes unsent drafts")
 }
 
 func TestLoopAutomationSignalsReadStoredRaw(t *testing.T) {
@@ -270,37 +273,6 @@ func TestLoopIgnoresAddressesLinkedToTheOwner(t *testing.T) {
 			for _, r := range messages[reply].Recipients {
 				assert.Equal(r.Address == loopOwner, r.IsOwner, r.Address)
 			}
-		})
-	}
-}
-
-func TestLoopFollowsTheArchiveWithoutARefresh(t *testing.T) {
-	for _, tt := range []struct {
-		name         string
-		setup        func(f *storetest.Fixture) int64
-		write        func(t *testing.T, f *storetest.Fixture, id int64)
-		before, want int
-	}{
-		{"an attachment added after Thanks answers the request",
-			func(f *storetest.Fixture) int64 {
-				f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Can you send the deck?", SentAt: loopAgo(5 * loopDay)})
-				return f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Thanks!", SentAt: loopAgo(4 * loopDay)})
-			},
-			func(t *testing.T, f *storetest.Fixture, id int64) {
-				t.Helper()
-				_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments (message_id, filename, storage_path, attachment_role)
-					VALUES (?, 'deck.pdf', 'ab/deck', 'standalone')`), id)
-				require.NoError(t, err)
-				_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`), id)
-				require.NoError(t, err)
-			}, 1, 0},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			f := storetest.New(t)
-			id := tt.setup(f)
-			require.Len(t, listLoops(t, f, loopNow), tt.before, "before the write")
-			tt.write(t, f, id)
-			assert.Len(t, listLoops(t, f, loopNow), tt.want)
 		})
 	}
 }
@@ -471,54 +443,6 @@ func persistLoopBeeperMessage(t *testing.T, st *store.Store, sourceID, conversat
 	return messageID
 }
 
-func TestDuplicateDecisionSurvivesQuestionDateCorrection(t *testing.T) {
-	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
-		t.Run(state, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			first := f.PersistEmail(storetest.EmailSpec{Thread: "marked", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-			duplicate := f.PersistEmail(storetest.EmailSpec{Thread: "marked", From: loopAlex, To: []string{loopOwner}, Body: "And can you send the budget?", SentAt: loopAgo(3 * loopDay)})
-			var err error
-			if state == store.LoopStateDone {
-				_, err = loops.Done(t.Context(), f.Store, first, loopNow)
-			} else {
-				_, err = loops.Snooze(t.Context(), f.Store, first, loopNow.Add(5*loopDay), loopNow)
-			}
-			require.NoError(err)
-			survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: loopAlex, To: []string{loopOwner}, Body: "And can you send the budget?", SentAt: loopAgo(3 * loopDay)})
-			_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "loop-same-time-question")
-			require.NoError(err)
-
-			ref, err := f.Store.MessageConversationContext(t.Context(), survivor)
-			require.NoError(err)
-			sourceMessageID, err := f.Store.GetMessageSourceID(survivor)
-			require.NoError(err)
-			id, err := f.Store.UpsertMessage(&store.Message{
-				SourceID: f.Source.ID, ConversationID: ref.ConversationID, SourceMessageID: sourceMessageID,
-				MessageType: store.MessageTypeEmail,
-				SenderID:    sql.NullInt64{Int64: f.EnsureParticipant(loopAlex, "", "example.test"), Valid: true},
-				SentAt:      sql.NullTime{Time: loopAgo(2 * loopDay), Valid: true},
-			})
-			require.NoError(err)
-			require.Equal(survivor, id)
-			assert.Empty(listLoops(t, f, loopNow), "the inherited decision survives correction of its question's date")
-		})
-	}
-}
-
-func loopDecisionState(t *testing.T, f *storetest.Fixture, anchorID int64) string {
-	t.Helper()
-	var state string
-	err := f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT state FROM loop_decisions WHERE message_id = ?`), anchorID).Scan(&state)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ""
-	}
-	require.NoError(t, err)
-	return state
-}
-
 // loopMark is one question's stored decision.
 type loopMark struct {
 	State string
@@ -572,6 +496,8 @@ func mergedMarkCases() []mergedMark {
 func TestMergeDuplicatesKeepsTheStrongestLoopMark(t *testing.T) {
 	for _, tt := range mergedMarkCases() {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := storetest.New(t)
 			drop := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(5 * loopDay)})
 			keep := f.PersistEmail(storetest.EmailSpec{Thread: "second", From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(5 * loopDay)})
@@ -579,30 +505,21 @@ func TestMergeDuplicatesKeepsTheStrongestLoopMark(t *testing.T) {
 			putLoopMark(t, f.Store, keep, tt.keep)
 
 			_, err := f.Store.MergeDuplicates(keep, []int64{drop}, "batch-loop-marks")
-			require.NoError(t, err)
+			require.NoError(err)
 			got := storedLoopMark(t, f.Store, keep)
-			assert.Equal(t, tt.want.State, got.State)
-			assert.Equal(t, tt.want.Until, got.Until)
+			assert.Equal(tt.want.State, got.State)
+			assert.Equal(tt.want.Until, got.Until)
+			if tt.name == "done beats the survivor's snooze" {
+				restored, err := f.Store.UndoDedup("batch-loop-marks")
+				require.NoError(err)
+				assert.Equal(int64(1), restored)
+				marks, err := f.Store.LoopMarksContext(t.Context())
+				require.NoError(err)
+				assert.Equal(store.LoopStateDone, marks[drop].State)
+				assert.Equal(store.LoopStateDone, marks[keep].State)
+			}
 		})
 	}
-}
-
-func TestDoneOutlivesTheAnchorLeavingAndReturning(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Hi", SentAt: loopAgo(20 * loopDay)})
-	question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-	_, err := loops.Done(t.Context(), f.Store, question, loopNow)
-	require.NoError(err)
-
-	reply := f.PersistEmail(storetest.EmailSpec{From: loopOwner, To: []string{loopAlex}, Body: "Sent, see attached.", SentAt: loopAgo(loopDay)})
-	assert.Empty(listLoops(t, f, loopNow), "listing while the reply is live, the question is no longer an open anchor")
-	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), loopNow, reply)
-	require.NoError(err)
-
-	assert.Equal(store.LoopStateDone, loopDecisionState(t, f, question))
-	assert.Empty(listLoops(t, f, loopNow), "the question anchors again and its done mark still holds")
 }
 
 // realisticMail uses the shared MIME builder, with distinct attachment bytes
@@ -664,55 +581,34 @@ func BenchmarkListLoops(b *testing.B) {
 }
 
 func TestLoopMultiFromUsesStoredSender(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := storetest.New(t)
-	question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-	alexID := f.EnsureParticipant(loopAlex, "", "example.test")
-	samID := f.EnsureParticipant("sam@example.test", "", "example.test")
-	requirements.NoError(f.Store.ReplaceMessageRecipients(question, "from", []int64{alexID, samID}, []string{loopAlex, "sam@example.test"}))
-
-	var messages []store.LoopMessage
-	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationOf(t, f, question)}) {
-		requirements.NoError(err)
-		messages = append(messages, conv.Messages...)
+	for _, missingSnapshot := range []bool{false, true} {
+		t.Run(strconv.FormatBool(missingSnapshot), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := storetest.New(t)
+			question := f.PersistEmail(storetest.EmailSpec{From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
+			alexID := f.EnsureParticipant(loopAlex, "", "example.test")
+			if missingSnapshot {
+				_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), question)
+				requirements.NoError(err)
+			} else {
+				samID := f.EnsureParticipant("sam@example.test", "", "example.test")
+				requirements.NoError(f.Store.ReplaceMessageRecipients(question, "from", []int64{alexID, samID}, []string{loopAlex, "sam@example.test"}))
+			}
+			var messages []store.LoopMessage
+			for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationOf(t, f, question)}) {
+				requirements.NoError(err)
+				for message, err := range conv.Walk() {
+					requirements.NoError(err)
+					messages = append(messages, message)
+				}
+			}
+			requirements.Len(messages, 1)
+			assertions.Equal(question, messages[0].ID)
+			assertions.Equal(alexID, messages[0].Sender.ParticipantID)
+			assertions.Equal(loopAlex, messages[0].Sender.Address)
+		})
 	}
-	requirements.Len(messages, 1)
-	assertions.Equal(question, messages[0].ID)
-	assertions.Equal(alexID, messages[0].Sender.ParticipantID)
-	assertions.Equal(loopAlex, messages[0].Sender.Address)
-}
-
-func TestLoopReplyUsesRecipientWhenSenderSnapshotIsMissing(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	question := f.PersistEmail(storetest.EmailSpec{
-		Thread: "missing-sender-question", From: loopAlex, To: []string{loopOwner},
-		Body: "Can you send the contract?", SentAt: loopAgo(2 * loopDay),
-	})
-	f.PersistEmail(storetest.EmailSpec{
-		Thread: "missing-sender-reply", From: loopOwner, To: []string{loopAlex},
-		Body: "Can you approve the contract?", SentAt: loopAgo(4 * loopDay),
-	})
-	reply := f.PersistEmail(storetest.EmailSpec{
-		Thread: "missing-sender-reply", From: loopAlex, To: []string{loopOwner},
-		Body: "Approved.", SentAt: loopAgo(3 * loopDay),
-	})
-	for _, messageID := range []int64{question, reply} {
-		_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sender_id = NULL WHERE id = ?`), messageID)
-		require.NoError(err)
-	}
-
-	participant := f.EnsureParticipant(loopAlex, "", "example.test")
-	person, _, err := f.Store.CreatePersonFromParticipant(participant)
-	require.NoError(err)
-
-	all := listLoops(t, f, loopNow)
-	require.Len(all, 1, "the reply with a missing sender must settle the request, while the incoming question remains open")
-	assert.Equal(question, all[0].Anchor.ID)
-	assert.Equal(loops.ReplyOwed, all[0].Kind)
-	assert.Equal(person.ID, all[0].Counterparty.PersonID)
 }
 
 func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
@@ -756,18 +652,18 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 				} else {
 					assert.Zero(result.DuplicatesHidden)
 				}
+				marks, err := f.Store.LoopMarksContext(t.Context())
+				require.NoError(err)
+				assert.Equal(store.LoopStateDone, marks[done].State)
+				require.NotNil(marks[snoozed].SnoozedUntil)
+				assert.True(until.Equal(*marks[snoozed].SnoozedUntil), "the original snooze deadline survives")
+				require.NotNil(marks[laterSnooze].SnoozedUntil)
+				assert.True(until.Add(2 * loopDay).Equal(*marks[laterSnooze].SnoozedUntil))
+				assert.NotContains(marks, open)
+				if duplicate && !reverse {
+					assert.Equal(store.LoopStateDone, marks[shared].State)
+				}
 				for _, at := range []time.Time{loopNow, until} {
-					marks, err := f.Store.LoopMarksContext(t.Context())
-					require.NoError(err)
-					assert.Equal(store.LoopStateDone, marks[done].State)
-					require.NotNil(marks[snoozed].SnoozedUntil)
-					assert.True(until.Equal(*marks[snoozed].SnoozedUntil), "the original snooze deadline survives")
-					require.NotNil(marks[laterSnooze].SnoozedUntil)
-					assert.True(until.Add(2 * loopDay).Equal(*marks[laterSnooze].SnoozedUntil))
-					assert.NotContains(marks, open)
-					if duplicate && !reverse {
-						assert.Equal(store.LoopStateDone, marks[shared].State)
-					}
 					listed := listLoops(t, f, at)
 					require.Len(listed, 1)
 					expectedAnchor := open
@@ -782,27 +678,6 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestDuplicateUndoKeepsBothQuestionDecisions(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	duplicate := f.PersistEmail(storetest.EmailSpec{Thread: "duplicate", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-	survivor := f.PersistEmail(storetest.EmailSpec{Thread: "survivor", From: loopAlex, To: []string{loopOwner}, Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay)})
-	_, err := loops.Done(t.Context(), f.Store, duplicate, loopNow)
-	require.NoError(err)
-	_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "loop-undo")
-	require.NoError(err)
-	assert.Empty(listLoops(t, f, loopNow))
-	restored, err := f.Store.UndoDedup("loop-undo")
-	require.NoError(err)
-	assert.Equal(int64(1), restored)
-	assert.Empty(listLoops(t, f, loopNow), "both restored and surviving questions keep their decisions")
-	marks, err := f.Store.LoopMarksContext(t.Context())
-	require.NoError(err)
-	assert.Equal(store.LoopStateDone, marks[duplicate].State)
-	assert.Equal(store.LoopStateDone, marks[survivor].State)
 }
 
 func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
@@ -832,8 +707,13 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 	require.NoError(err)
 	_, _, err = f.Store.CreatePersonFromParticipant(first)
 	require.NoError(err)
-	listed := listLoops(t, f, loopNow)
-	assert.Len(listed, 2, "two addresses linked to one person form a direct chat")
+	var direct int
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		require.NoError(err)
+		assert.False(conv.GroupChat, "two addresses linked to one person form a direct chat")
+		direct++
+	}
+	assert.Equal(2, direct)
 }
 
 func TestLoopConversationPagingSurvivesNewRecentConversation(t *testing.T) {

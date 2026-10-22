@@ -85,8 +85,8 @@ func TestListLoopsFilters(t *testing.T) {
 func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
-	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
 	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
@@ -200,12 +200,12 @@ func TestLoopActionsRetryAfterIncompleteEvidence(t *testing.T) {
 			require := require.New(t)
 			f := storetest.New(t)
 			now := time.Now().UTC()
-			st := storetest.NewLoopOriginalReadStore(f, loops.MaxListEvidenceComputations+1, now)
+			storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
 			var anchor, conversationID int64
 			require.NoError(f.Store.DB().QueryRow(`SELECT id, conversation_id FROM messages WHERE subject = 'Can you send the contract?'`).Scan(&anchor, &conversationID))
 			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET conversation_id = ?`), conversationID)
 			require.NoError(err)
-			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: st, Scheduler: newMockScheduler(), Logger: testLogger()})
+			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 			fixture := &loopFixture{f: f, router: server.Router()}
 			body := ""
 			if action == "snooze" {

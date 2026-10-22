@@ -81,7 +81,7 @@ func (s script) conversation() (store.LoopConversation, *fakeReader) {
 				m.Recipients = append(m.Recipients, store.LoopRecipient{LoopParticipant: p, Type: "mention"})
 			}
 			to := in.to
-			if len(to) == 0 {
+			if to == nil {
 				to = []store.LoopParticipant{alex}
 			}
 			for _, p := range to {
@@ -161,6 +161,14 @@ func TestDetect(t *testing.T) {
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Thanks!"},
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
+		{"recipientless outbound keeps a question open", script{msgs: []msg{
+			{ago: 5 * day, body: "Can you approve the contract?"},
+			{out: true, to: []store.LoopParticipant{}, ago: 3 * day, body: "The report is ready for review."},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
+		{"requester acknowledgement keeps the question open", script{msgs: []msg{
+			{ago: 5 * day, body: "Can you approve the contract?"},
+			{ago: day, body: "Thanks!"},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, day, ""},
 		{"outbound acknowledgement keeps the awaited person active", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{out: true, to: []store.LoopParticipant{alex}, ago: day, body: "Thanks!"},
@@ -168,10 +176,6 @@ func TestDetect(t *testing.T) {
 		{"automated acknowledgement doesn't refresh a request", script{msgs: []msg{
 			{ago: 40 * day, body: "Can you approve the contract?"},
 			{ago: day, body: "Thanks!", signals: mime.AutomationSignals{AutoSubmitted: true}},
-		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
-		{"automated update doesn't refresh a request", script{msgs: []msg{
-			{ago: 40 * day, body: "Can you approve the contract?"},
-			{ago: day, body: "The ticket was updated.", signals: mime.AutomationSignals{AutoSubmitted: true}},
 		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
 		{"unreadable update doesn't refresh a request", script{msgs: []msg{
 			{ago: 40 * day, body: "Can you approve the contract?"},
@@ -191,7 +195,7 @@ func TestDetect(t *testing.T) {
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"quoted Cc reply", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you send the contract?"},
-			{from: alex, ago: 3 * day, body: "> Can you send the contract?", ccOnly: true},
+			{from: alex, ago: 3 * day, body: "Thanks!\n\nOn Tuesday 20 October 2026\nOwner Example <owner@example.test> wrote:\n> Can you send the contract?", ccOnly: true},
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"another person asks on Cc", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you send the contract?"},

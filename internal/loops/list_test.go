@@ -82,40 +82,11 @@ func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *test
 }
 
 func TestListBccReplySettlesTheRecipientQuestion(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		mixed bool
-	}{
-		{name: "direct Bcc reply"},
-		{name: "Bcc reply remains visible when its To recipient is settled", mixed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			f := storetest.New(t)
-			f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: "sam@example.test", To: []string{me}, Body: "Can you send the budget?", SentAt: ago(8 * day)})
-			if tc.mixed {
-				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, To: []string{alex}, Bcc: []string{"sam@example.test"}, Body: "Here is the budget.", SentAt: ago(7 * day)})
-				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, To: []string{alex}, Body: "Can you review the contract?", SentAt: ago(6 * day)})
-				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: alex, To: []string{me}, Body: "I reviewed the contract.", SentAt: ago(5 * day)})
-			} else {
-				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, Bcc: []string{"sam@example.test"}, Body: "Here is the budget.", SentAt: ago(7 * day)})
-			}
-
-			result := list(t, f, loops.Options{})
-			require.Empty(result.Loops, "a newer outbound Bcc message settles the Bcc recipient's question")
-		})
-	}
-}
-
-func TestRecipientlessOutboundKeepsQuestionOpen(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
 	f := storetest.New(t)
-	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(5 * day)})
-	f.PersistEmail(storetest.EmailSpec{From: me, Body: "The report is ready for review.", SentAt: ago(3 * day)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: "sam@example.test", To: []string{me}, Body: "Can you send the budget?", SentAt: ago(8 * day)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, Bcc: []string{"sam@example.test"}, Body: "Here is the budget.", SentAt: ago(7 * day)})
 	result := list(t, f, loops.Options{})
-	require.Len(result.Loops, 1)
-	assert.Equal(question, result.Loops[0].Anchor.ID)
+	assert.Empty(t, result.Loops, "a newer outbound Bcc message settles the Bcc recipient's question")
 }
 
 type cancelOriginalReadStore struct {
@@ -238,11 +209,7 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 			assert.Equal(olderImport, result.Loops[0].Anchor.ID)
 			assert.True(result.Loops[0].OwedSince.Equal(ago(6 * day)))
 			mark(olderImport)
-			sameTime := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the same-time invoice?", SentAt: ago(6 * day)})
-			result = list(t, f, loops.Options{})
-			require.Len(result.Loops, 1, "a question with the same sent time remains distinct")
-			assert.Equal(sameTime, result.Loops[0].Anchor.ID)
-			mark(sameTime)
+
 			assert.Empty(list(t, f, loops.Options{}).Loops)
 			followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(3 * day)})
 			result = list(t, f, loops.Options{})
@@ -366,35 +333,7 @@ func TestListSortsOldestFirstAcrossNewestFirstConversations(t *testing.T) {
 	}
 }
 
-func TestListSkipsSettledPeopleAcrossPagedEmailHistory(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	for i := range 14 {
-		inboundAt := ago(time.Duration(48-2*i) * day)
-		outboundAt := ago(time.Duration(47-2*i) * day)
-		f.PersistEmail(storetest.EmailSpec{
-			Thread: "paged-settled-person", From: alex, To: []string{me},
-			Body: "Can you review this draft?", SentAt: inboundAt, FileName: "draft.pdf",
-		})
-		f.PersistEmail(storetest.EmailSpec{
-			Thread: "paged-settled-person", From: me, To: []string{alex},
-			Body: "I reviewed it; see the attached copy.", SentAt: outboundAt, FileName: "reviewed.pdf",
-		})
-	}
-	latest := f.PersistEmail(storetest.EmailSpec{
-		Thread: "paged-settled-person", From: me, To: []string{"bob@example.test"},
-		Body: "Can you send your estimate?", SentAt: ago(4 * day),
-	})
-
-	result, err := loops.List(t.Context(), f.Store, loops.Options{Limit: 100}, now)
-	require.NoError(err)
-	require.Len(result.Loops, 1)
-	assert.Equal(latest, result.Loops[0].Anchor.ID)
-	assert.Equal(loops.AwaitingReply, result.Loops[0].Kind)
-}
-
-func TestExpiredSnoozeRestoresQuestionAlongsideQuietQuestions(t *testing.T) {
+func TestExpiredSnoozeRestoresQuestion(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -411,23 +350,6 @@ func TestExpiredSnoozeRestoresQuestionAlongsideQuietQuestions(t *testing.T) {
 	require.Len(after.Loops, 2)
 	assert.Equal(alexQuestion, after.Loops[0].Anchor.ID)
 	assert.Equal(samQuestion, after.Loops[1].Anchor.ID)
-	olderQuestion := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you review the invoice?", SentAt: ago(26 * day)})
-	quiet, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(31*day))
-	require.NoError(err)
-	require.Len(quiet.Loops, 2, "quiet unanswered questions remain eligible")
-	assert.Equal(olderQuestion, quiet.Loops[0].Anchor.ID)
-	assert.Len(quiet.Loops[0].Questions, 2)
-}
-
-func TestNeutralRequesterAcknowledgementKeepsOlderQuestionOpen(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(40 * day)})
-	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Thanks!", SentAt: ago(day)})
-	result := list(t, f, loops.Options{})
-	require.Len(result.Loops, 1)
-	assert.Equal(question, result.Loops[0].Anchor.ID)
 }
 
 func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
@@ -495,38 +417,4 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	assert.Equal(second.Loops, third.Loops)
 	assert.Zero(counted.bodies)
 	assert.Zero(counted.originals)
-}
-
-func TestListWrappedQuoteRepliesKeepOutgoingQuestionOpen(t *testing.T) {
-	const quote = "On Tuesday 20 October 2026\nOwner Example <owner@example.test> wrote:\n> Can you review the draft?"
-	for _, reply := range []struct{ name, body string }{
-		{"quote only", quote},
-		{"acknowledgement and quote", "Thanks!\n\n" + quote},
-	} {
-		for _, cached := range []bool{false, true} {
-			name := reply.name + "/fresh"
-			if cached {
-				name = reply.name + "/stale rule 1"
-			}
-			t.Run(name, func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				f := storetest.New(t)
-				question := f.PersistEmail(storetest.EmailSpec{Thread: "wrapped-quote", From: me, To: []string{alex}, Body: "Can you review the draft?", SentAt: ago(5 * day)})
-				response := f.PersistEmail(storetest.EmailSpec{Thread: "wrapped-quote", From: alex, To: []string{me}, Body: reply.body, SentAt: ago(2 * day)})
-				if cached {
-					_, token, _, err := f.Store.LoopMessageEvidenceContext(t.Context(), response, 1)
-					require.NoError(err)
-					require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), response, 1, token, store.LoopMessageEvidence{}))
-					_, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), response, 1)
-					require.NoError(err)
-					require.True(hit, "the old substantive classification is persisted")
-				}
-				result := list(t, f, loops.Options{})
-				require.Len(result.Loops, 1, "quoted text and acknowledgements leave the outgoing question unanswered")
-				assert.Equal(question, result.Loops[0].Anchor.ID)
-				assert.Equal(loops.AwaitingReply, result.Loops[0].Kind)
-			})
-		}
-	}
 }

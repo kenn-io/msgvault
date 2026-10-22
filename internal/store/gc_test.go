@@ -204,14 +204,14 @@ func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 	require := require.New(t)
 	f := newSQLiteGCFixture(t)
 	now := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
-	cutoffAt := now.Add(-4 * 24 * time.Hour)
-	cutoff := f.PersistEmail(storetest.EmailSpec{
+	questionAt := now.Add(-4 * 24 * time.Hour)
+	question := f.PersistEmail(storetest.EmailSpec{
 		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
-		Body: "Can you send the invoice?", SentAt: cutoffAt,
+		Body: "Can you send the invoice?", SentAt: questionAt,
 	})
-	_, err := loops.Done(t.Context(), f.Store, cutoff, now)
+	_, err := loops.Done(t.Context(), f.Store, question, now)
 	require.NoError(err)
-	sourceMessageID, err := f.Store.GetMessageSourceID(cutoff)
+	sourceMessageID, err := f.Store.GetMessageSourceID(question)
 	require.NoError(err)
 	require.NoError(f.Store.MarkMessageDeleted(f.Source.ID, sourceMessageID))
 	plan, err := f.Store.PlanGCContext(t.Context())
@@ -223,9 +223,9 @@ func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 
 	replacement := f.PersistEmail(storetest.EmailSpec{
 		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
-		Body: "Can you send a new invoice?", SentAt: cutoffAt,
+		Body: "Can you send a new invoice?", SentAt: questionAt,
 	})
-	require.Equal(cutoff, replacement, "SQLite reused the purged question ID")
+	require.Equal(question, replacement, "SQLite reused the purged question ID")
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
 	require.NoError(err)
 	require.Len(result.Loops, 1, "a distinct question remains visible after the marked question was purged")

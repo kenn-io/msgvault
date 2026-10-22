@@ -18,7 +18,7 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
 	ctx := t.Context()
 	expected := store.LoopMessageEvidence{Asks: true}
-	save := func() {
+	save := func() string {
 		t.Helper()
 		_, token, _, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
 		require.NoError(err)
@@ -27,6 +27,8 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		require.NoError(err)
 		require.True(hit)
 		assert.Equal(expected, got)
+
+		return token
 	}
 	save()
 	_, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 2)
@@ -43,12 +45,19 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		{`INSERT INTO message_raw(message_id,raw_data,raw_format,compression) VALUES (?, ?, 'mime', 'none')`, []any{id, []byte("Content-Type: text/plain\r\n\r\nCan you send it?")}},
 		{`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`, []any{[]byte("Auto-Submitted: auto-replied\r\n\r\nCan you send it?"), id}},
 	} {
-		save()
+		staleToken := save()
 		_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(mutation.statement), mutation.args...)
 		require.NoError(err)
-		_, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+		_, currentToken, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
 		require.NoError(err)
 		assert.False(hit, mutation.statement)
+		fresh := store.LoopMessageEvidence{Acknowledgement: true}
+		require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, currentToken, fresh))
+		require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, staleToken, expected))
+		got, _, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+		require.NoError(err)
+		require.True(hit)
+		assert.Equal(fresh, got, "a completed read from before invalidation cannot overwrite fresh evidence")
 	}
 	save()
 	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM messages WHERE id = ?`), id)
@@ -64,6 +73,8 @@ func TestLoopEvidenceSchemaUpgrade(t *testing.T) {
 	f := storetest.New(t)
 	_, err := f.Store.DB().ExecContext(t.Context(), `DROP TABLE loop_message_evidence`)
 	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE loop_decisions`)
+	require.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), `UPDATE archive_metadata SET value='10' WHERE key='schema_version'`)
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
@@ -71,37 +82,8 @@ func TestLoopEvidenceSchemaUpgrade(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
 	assert.Zero(count)
-}
-
-func TestLoopEvidenceCannotRestoreInvalidatedComputation(t *testing.T) {
-	for _, table := range []string{"message_bodies", "message_raw"} {
-		t.Run(table, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := storetest.New(t)
-			id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send it?", SentAt: time.Now().Add(-48 * time.Hour)})
-			_, staleToken, _, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
-			require.NoError(err)
-			mutation := `UPDATE message_bodies SET body_text = ? WHERE message_id = ?`
-			var value any = "Thanks!"
-			expected := store.LoopMessageEvidence{Acknowledgement: true}
-			if table == "message_raw" {
-				mutation = `UPDATE message_raw SET raw_data = ?, compression = 'none' WHERE message_id = ?`
-				value = []byte("Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nCan you send it?")
-				expected = store.LoopMessageEvidence{Asks: true, Automated: true}
-			}
-			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(mutation), value, id)
-			require.NoError(err)
-			_, currentToken, _, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
-			require.NoError(err)
-			require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, currentToken, expected))
-			require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, staleToken, store.LoopMessageEvidence{Asks: true}))
-			got, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
-			require.NoError(err)
-			require.True(hit)
-			assert.Equal(expected, got, "a completed read from before invalidation cannot overwrite fresh evidence")
-		})
-	}
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM loop_decisions`).Scan(&count))
+	assert.Zero(count)
 }
 
 func TestLoopEvidenceSurvivesUnchangedImports(t *testing.T) {

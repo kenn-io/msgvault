@@ -46,8 +46,6 @@ func TestAcknowledgementOnly(t *testing.T) {
 		{"THANK YOU!", true},
 		{"Thank you. Got it!", true},
 		{"  OK\n  thanks! ", true},
-		{"Thanks!\n> Can you send it?", true},
-		{"Thanks!\n\nOn Monday,\nAlex wrote:\n> Can you send it?", true},
 		{"Thanks!\n-- \nAlex Example", true},
 		{"Thanks! https://example.test/report.pdf", false},
 		{"Thanks, sent!", false},

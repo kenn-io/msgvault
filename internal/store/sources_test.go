@@ -1398,17 +1398,27 @@ func TestInitSchema_MigratesOAuthAppColumn(t *testing.T) {
 	assert.Equal("acme", sources[0].OAuthApp.String, "OAuthApp value")
 }
 
-// TestInitSchema_AddsLiveMessageColumnsToLegacyMessagesTable verifies that
-// InitSchema adds missing dedup-hide columns to a supported legacy table.
-func TestInitSchema_AddsLiveMessageColumnsToLegacyMessagesTable(t *testing.T) {
+// TestInitSchema_AddsDeletedAtToLegacyMessagesTable verifies the
+// upgrade-path migration: a database whose `messages` table already has
+// every other column the embedded schema indexes reference, but is
+// missing the dedup-hide column `deleted_at`, gets the column added by
+// InitSchema. Without the ALTER, every read path that references
+// `deleted_at` (LiveMessagesWhere, the dedup engine, the cache
+// staleness check) fails on upgraded databases with "no such column".
+func TestInitSchema_AddsDeletedAtToLegacyMessagesTable(t *testing.T) {
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
 	st, err := store.Open(dbPath)
 	require.NoError(err, "open store")
 	t.Cleanup(func() { _ = st.Close() })
 
-	// This legacy table only omits the dedup-hide columns deleted_at and
-	// delete_batch_id. Send state and metadata existed in the first schema.
+	// Build a messages table that has every column the embedded
+	// schema's CREATE INDEX statements reference (sender_id,
+	// deleted_from_source_at, message_type, …) but DOES NOT have the
+	// new dedup-hide columns (`deleted_at`, `delete_batch_id`).
+	// Approximates a legacy DB just before this branch landed.
+	// metadata has been on messages since the first schema and the activity
+	// queue trigger names it, so a legacy table must carry it too.
 	_, err = st.DB().Exec(`
 		CREATE TABLE messages (
 			id INTEGER PRIMARY KEY,
@@ -1447,7 +1457,9 @@ func TestInitSchema_AddsLiveMessageColumnsToLegacyMessagesTable(t *testing.T) {
 	// already exist, like deleted_from_source_at).
 	require.NoError(st.InitSchema(), "InitSchema on legacy DB")
 
-	// The live predicate reads both deleted_at and deleted_from_source_at.
+	// Confirm the canonical live-messages predicate runs without
+	// "no such column": this is the failure mode codex flagged. The
+	// query uses both deleted_at and deleted_from_source_at.
 	var n int
 	require.NoError(st.DB().QueryRow(
 		"SELECT COUNT(*) FROM messages WHERE "+store.LiveMessagesWhere("", true),

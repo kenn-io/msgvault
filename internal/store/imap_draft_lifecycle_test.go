@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
-	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -37,6 +36,7 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 					SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
 					MessageType: store.MessageTypeEmail, ConversationID: conversationID,
 					SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+					SentAt:   sql.NullTime{Time: loopAgo(4 * loopDay), Valid: true},
 				},
 				Recipients: []store.RecipientSet{
 					{Type: "from", ParticipantIDs: ids[:1], DisplayNames: []string{""}, EmailAddresses: []string{"alice@example.com"}},
@@ -112,90 +112,20 @@ func TestManagedIMAPDraftLifecycleAndRetention(t *testing.T) {
 	`), draft.CurrentMessageID).Scan(&oldDeleted))
 	requirements.True(oldDeleted.Valid)
 	assertWritten(draft.CurrentMessageID, published.CurrentMessageID)
-}
-
-func TestRetiredIMAPReplyDraftDoesNotSettleLoop(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	const ownerAddress = "alice@example.test"
-	const counterpartyAddress = "bob@example.test"
-	source, err := st.GetOrCreateSource("imap", "imap://alice@example.test:143")
-	requirements.NoError(err)
-	requirements.NoError(st.AddAccountIdentity(source.ID, ownerAddress, "manual"))
-	conversationID, err := st.EnsureConversation(source.ID, "reply-draft-loop", "Reply draft loop")
-	requirements.NoError(err)
-	ownerID, err := st.EnsureParticipant(ownerAddress, "", "example.test")
-	requirements.NoError(err)
-	counterpartyID, err := st.EnsureParticipant(counterpartyAddress, "", "example.test")
-	requirements.NoError(err)
-
-	question, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: source.ID, SourceMessageID: "question", MessageType: store.MessageTypeEmail,
-			ConversationID: conversationID, SenderID: sql.NullInt64{Int64: counterpartyID, Valid: true},
-			SentAt: sql.NullTime{Time: loopAgo(5 * loopDay), Valid: true},
-		},
-		Recipients: []store.RecipientSet{
-			{Type: "from", ParticipantIDs: []int64{counterpartyID}, EmailAddresses: []string{counterpartyAddress}},
-			{Type: "to", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{ownerAddress}},
-		},
-		BodyText: sql.NullString{String: "Can you send the contract?", Valid: true},
-		RawMIME:  []byte("From: " + counterpartyAddress + "\r\nTo: " + ownerAddress + "\r\n\r\nCan you send the contract?\r\n"),
-	})
-	requirements.NoError(err)
-
-	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 1}
-	participants := []store.ParticipantPersistData{
-		{EmailAddress: ownerAddress, Domain: "example.test"},
-		{EmailAddress: counterpartyAddress, Domain: "example.test"},
+	for _, id := range []int64{draft.CurrentMessageID, published.CurrentMessageID} {
+		var authored bool
+		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT draft_authored FROM messages WHERE id = ?`), id).Scan(&authored))
+		assertions.True(authored)
 	}
-	build := func(receipt store.IMAPDraftReceipt, body string) func([]int64) *store.MessagePersistData {
-		return func(ids []int64) *store.MessagePersistData {
-			return &store.MessagePersistData{
-				Message: &store.Message{
-					SourceID: source.ID, SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
-					MessageType: store.MessageTypeEmail, ConversationID: conversationID,
-					SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
-					SentAt:   sql.NullTime{Time: loopAgo(4 * loopDay), Valid: true},
-				},
-				Recipients: []store.RecipientSet{
-					{Type: "from", ParticipantIDs: ids[:1], EmailAddresses: []string{ownerAddress}},
-					{Type: "to", ParticipantIDs: ids[1:], EmailAddresses: []string{counterpartyAddress}},
-				},
-				BodyText: sql.NullString{String: body, Valid: true},
-				RawMIME:  []byte("From: " + ownerAddress + "\r\nTo: " + counterpartyAddress + "\r\n\r\n" + body + "\r\n"),
-			}
+	var walked []int64
+	for conv, err := range st.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationID}) {
+		requirements.NoError(err)
+		for message, err := range conv.Walk() {
+			requirements.NoError(err)
+			walked = append(walked, message.ID)
 		}
 	}
-	current, err := st.PersistIMAPDraftContext(t.Context(), receipt, participants, build(receipt, "Here is the contract."))
-	requirements.NoError(err)
-	replacementBody := "Here is the revised contract."
-	replacementRaw := []byte("From: " + ownerAddress + "\r\nTo: " + counterpartyAddress + "\r\n\r\n" + replacementBody + "\r\n")
-	_, err = st.ClaimIMAPDraftContext(t.Context(), current.DraftID, current.Revision,
-		store.IMAPDraftOperationEdit, replacementRaw)
-	requirements.NoError(err)
-	replacement := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 1, UID: 2}
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(t.Context(), current.DraftID, current.Revision, "append_uidplus", &replacement))
-	published, err := st.PublishIMAPDraftReplacementContext(
-		t.Context(), current.DraftID, current.Revision, participants,
-		build(replacement, replacementBody),
-	)
-	requirements.NoError(err)
-	requirements.NoError(st.RecordIMAPDraftOutcomeContext(
-		t.Context(), published.DraftID, published.Revision, store.IMAPDraftCodeRemoved, nil,
-	))
-	_, err = st.FinishIMAPDraftRemovalContext(t.Context(), published.DraftID, published.Revision)
-	requirements.NoError(err)
-
-	var draftAuthored bool
-	requirements.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT draft_authored FROM messages WHERE id = ?`), current.CurrentMessageID).Scan(&draftAuthored))
-	assertions.True(draftAuthored, "draft provenance survives label, membership, and pending-reference cleanup")
-	afterEdit, err := loops.List(t.Context(), st, loops.Options{}, loopNow)
-	requirements.NoError(err)
-	requirements.Len(afterEdit.Loops, 1, "retiring an unsent reply draft must leave the request open")
-	assertions.Equal(question, afterEdit.Loops[0].Anchor.ID)
+	assertions.Empty(walked, "live and retired draft snapshots stay outside the conversation walk")
 }
 
 func TestManagedIMAPDraftAttachmentReplacement(t *testing.T) {
