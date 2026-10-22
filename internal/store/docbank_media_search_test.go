@@ -66,22 +66,10 @@ func TestDocumentSearchVersionsAndOccurrences(t *testing.T) {
 		}
 	}
 	scope := &personscope.Scope{ParticipantIDs: []int64{participant}, Directions: []personscope.Direction{personscope.FromPerson}}
-	versions, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope, nil)
+	ids, truncated, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope)
 	require.NoError(err)
-	var ids []string
-	for _, version := range versions {
-		ids = append(ids, version.VersionID)
-	}
+	assert.False(truncated)
 	assert.Equal([]string{"00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004", "00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000008", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000009"}, ids)
-	for i := range versions {
-		page, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", scope, &versions[i])
-		require.NoError(err)
-		if i == len(versions)-1 {
-			assert.Empty(page)
-		} else {
-			assert.Equal(versions[i+1:], page)
-		}
-	}
 	occurrences, err := f.Store.DocumentSearchOccurrences(t.Context(), "attachments", scope, ids)
 	require.NoError(err)
 	var mids []int64
@@ -118,4 +106,37 @@ func TestDocumentSearchSharedVersionOccurrences(t *testing.T) {
 	require.Len(occurrences, 2)
 	assert.Equal(recent, occurrences[0].MessageID)
 	assert.Equal(old, occurrences[1].MessageID)
+}
+
+func TestDocumentSearchVersionsTruncated(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	old := f.CreateMessage("old files")
+	recent := f.CreateMessage("recent file")
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), old)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), recent)
+	require.NoError(err)
+	tx, err := f.Store.DB().Begin()
+	require.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+	for i := range 4097 {
+		hash := fmt.Sprintf("%064x", i)
+		mid := old
+		if i == 4096 {
+			mid = recent
+		}
+		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), mid, hash, hash[:2]+"/"+hash)
+		require.NoError(err)
+		_, err = tx.Exec(f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
+		require.NoError(err)
+	}
+	require.NoError(tx.Commit())
+	ids, truncated, err := f.Store.DocumentSearchVersions(t.Context(), "attachments", nil)
+	require.NoError(err)
+	assert.True(truncated)
+	require.Len(ids, 4096)
+	assert.Equal("00000000-0000-4000-8000-000000001000", ids[0])
+	assert.NotContains(ids, "00000000-0000-4000-8000-000000000fff")
 }

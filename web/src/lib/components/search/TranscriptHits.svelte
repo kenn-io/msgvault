@@ -218,7 +218,7 @@
         {/each}
       </ol>
       {#if result.attachments.results.length === 0 && !result.attachments.error}<p>No matches in text Docbank has extracted from mirrored attachments.</p>{/if}
-      {#if result.attachments.truncated}<p class="coverage" role="status">More may match</p>{/if}
+      {#if result.attachments.truncated}<p class="coverage" role="status">Only the newest 4096 mirrored files were searched. Add a Person filter to search older files.</p>{/if}
     </section>
   {/if}
 </section>

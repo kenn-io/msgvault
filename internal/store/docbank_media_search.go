@@ -73,44 +73,30 @@ func documentSearchRows(destination string, scope *personscope.Scope) (string, [
 	return query, args
 }
 
-// DocumentSearchVersion is a delivered version and its newest visible message date.
-// Together they form the cursor for newest-first pagination, with undated versions last.
-type DocumentSearchVersion struct {
-	VersionID  string
-	OccurredAt *time.Time
-}
-
-// DocumentSearchVersions pages delivered versions after the previous ordering key.
-func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope, after *DocumentSearchVersion) ([]DocumentSearchVersion, error) {
+// DocumentSearchVersions returns up to 4096 delivered versions, newest first.
+// A further version marks the search scope as truncated.
+func (s *Store) DocumentSearchVersions(ctx context.Context, destination string, scope *personscope.Scope) ([]string, bool, error) {
 	query, args := documentSearchRows(destination, scope)
-	const newest = "MAX(COALESCE(m.sent_at,m.received_at,m.internal_date))"
-	query = `SELECT d.version_id, ` + newest + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id`
-	if after != nil {
-		if after.OccurredAt == nil {
-			query += ` HAVING ` + newest + ` IS NULL AND d.version_id > ?`
-			args = append(args, after.VersionID)
-		} else {
-			query += ` HAVING (` + newest + ` < ? OR ` + newest + ` IS NULL OR (` + newest + ` = ? AND d.version_id > ?))`
-			args = append(args, *after.OccurredAt, *after.OccurredAt, after.VersionID)
-		}
-	}
-	query += ` ORDER BY ` + newest + ` DESC NULLS LAST, d.version_id LIMIT 4096`
+	query = `SELECT d.version_id` + query + ` AND d.state = 'delivered' AND d.version_id <> '' GROUP BY d.version_id
+ ORDER BY MAX(COALESCE(m.sent_at,m.received_at,m.internal_date)) DESC NULLS LAST, d.version_id LIMIT 4097`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
-		return nil, fmt.Errorf("list document search versions: %w", err)
+		return nil, false, fmt.Errorf("list document search versions: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var versions []DocumentSearchVersion
+	var versions []string
 	for rows.Next() {
-		var version DocumentSearchVersion
-		var date nullableTimestamp
-		if err := rows.Scan(&version.VersionID, &date); err != nil {
-			return nil, fmt.Errorf("scan document search version: %w", err)
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, false, fmt.Errorf("scan document search version: %w", err)
 		}
-		version.OccurredAt = optionalTimestamp(date)
 		versions = append(versions, version)
 	}
-	return versions, rows.Err()
+	truncated := len(versions) > 4096
+	if truncated {
+		versions = versions[:4096]
+	}
+	return versions, truncated, rows.Err()
 }
 
 // DocumentSearchOccurrences maps hit versions to their current visible attachments.

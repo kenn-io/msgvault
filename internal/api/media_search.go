@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/beeper"
@@ -142,20 +143,30 @@ func (s *Server) handleMediaSearch(w http.ResponseWriter, r *http.Request) {
 		s.writePersonScopeError(w, reference, err, "media")
 		return
 	}
-	response, err := reader.search(r.Context(), q, limit, scope, resolve)
+	searchCtx, cancel := context.WithTimeout(r.Context(), docbankBudget(r.Context()))
+	defer cancel()
+	var response MediaSearchResponse
+	var attachments MediaAttachmentSearch
+	var attachmentErr error
+	var searches sync.WaitGroup
+	searches.Go(func() {
+		response, err = reader.search(searchCtx, q, limit, scope, resolve)
+	})
+	if s.docbankAttachments != nil {
+		searches.Go(func() {
+			attachments, attachmentErr = s.docbankAttachments.SearchAttachments(searchCtx, q, limit, scope, resolve)
+		})
+	}
+	searches.Wait()
 	if scopeErr, ok := errors.AsType[*mediaSearchScopeError](err); ok {
 		s.writePersonScopeError(w, reference, scopeErr.err, "media")
 		return
 	}
-	if s.writeIfContextError(w, r.Context().Err()) {
+	if scopeErr, ok := errors.AsType[*mediaSearchScopeError](attachmentErr); ok {
+		s.writePersonScopeError(w, reference, scopeErr.err, "media")
 		return
 	}
 	if s.docbankAttachments != nil {
-		attachments, attachmentErr := s.docbankAttachments.SearchAttachments(r.Context(), q, limit, scope, resolve)
-		if scopeErr, ok := errors.AsType[*mediaSearchScopeError](attachmentErr); ok {
-			s.writePersonScopeError(w, reference, scopeErr.err, "media")
-			return
-		}
 		response.Attachments = &attachments
 		if attachments.Error != nil {
 			s.logger.Warn("search mirrored attachments", "code", attachments.Error.Error)
@@ -280,18 +291,16 @@ func (reader *MessageRecordingReader) search(ctx context.Context, query string, 
 			fence.ContentVersionIDs = append(fence.ContentVersionIDs, selector.ContentVersionID)
 		}
 	}
-	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
-	defer cancel()
 	request := docbankmedia.SearchRequest{Query: query, Mode: "lexical", Limit: docbankmedia.MaxSearchResults, Profile: suppliedTranscriptProfile, ContentFirst: true}
 	var report docbankmedia.SearchReport
 	if len(fence.ContentVersionIDs) == 0 {
-		if err := reader.Client.ValidateSearch(remoteCtx, request); err != nil {
+		if err := reader.Client.ValidateSearch(ctx, request); err != nil {
 			return response, err
 		}
 		response.Coverage.State = "complete"
 	} else {
 		request.Fence, request.MediaSources = &fence, selectors
-		report, err = reader.Client.Search(remoteCtx, request)
+		report, err = reader.Client.Search(ctx, request)
 		if err != nil {
 			return response, err
 		}

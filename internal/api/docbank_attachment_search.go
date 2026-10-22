@@ -26,68 +26,39 @@ type MediaAttachmentSearch struct {
 	Error     *ErrorResponse          `json:"error,omitempty"`
 }
 
-// SearchAttachments searches delivered attachment versions newest chunk first.
-// Each chunk keeps Docbank's ranking and maps only to currently visible messages.
+// SearchAttachments searches the newest delivered attachment versions.
+// It keeps Docbank's ranking and maps only to currently visible messages.
 func (reader *DocbankAttachmentReader) SearchAttachments(ctx context.Context, query string, limit int, scope *personscope.Scope, resolve func() (*personscope.Scope, error)) (MediaAttachmentSearch, error) {
 	response := MediaAttachmentSearch{Results: []MediaAttachmentResult{}}
-	remoteCtx, cancel := context.WithTimeout(ctx, docbankBudget(ctx))
-	defer cancel()
-	var after *store.DocumentSearchVersion
-	var hits []docbankmedia.SearchHit
 	fail := func(err error) (MediaAttachmentSearch, error) {
-		response.Truncated = response.Truncated || after != nil || len(hits) > 0
-		// A budget spent after the first chunk keeps the hits so far as a truncated result.
-		if _, recheck := reader.visible(ctx, &response, hits, limit, resolve); recheck == nil && after != nil && remoteCtx.Err() != nil && ctx.Err() == nil {
-			return response, nil
-		}
 		response.Error = attachmentSearchError(err)
 		return response, err
 	}
-	for {
-		versions, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, after)
-		if err != nil {
-			return fail(err)
-		}
-		if len(versions) == 0 {
-			return response, nil
-		}
-		versionIDs := make([]string, 0, len(versions))
-		for _, version := range versions {
-			versionIDs = append(versionIDs, version.VersionID)
-		}
-		vault, err := reader.Client.VaultUID(remoteCtx)
-		if err != nil {
-			return fail(err)
-		}
-		// Docbank lexical search spans profiles but requires a registered name.
-		report, err := reader.Client.SearchDocuments(remoteCtx, docbankmedia.SearchRequest{
-			Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
-			Limit: limit - len(response.Results), Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versionIDs},
-		})
-		if err != nil {
-			return fail(err)
-		}
-		hits = append(hits, report.Results...)
-		response.Truncated = response.Truncated || report.Truncated
-		// Remap every chunk's hits so messages hidden during this call drop out.
-		if scope, err = reader.visible(remoteCtx, &response, hits, limit, resolve); err != nil {
-			return fail(err)
-		}
-		after = &versions[len(versions)-1]
-		if len(response.Results) == limit {
-			if len(versions) == docbankmedia.MaxSearchVersions {
-				next, err := reader.Store.DocumentSearchVersions(remoteCtx, reader.Destination, scope, after)
-				if err != nil {
-					return fail(err)
-				}
-				response.Truncated = response.Truncated || len(next) > 0
-			}
-			return response, nil
-		}
-		if len(versions) < docbankmedia.MaxSearchVersions {
-			return response, nil
-		}
+	versions, truncated, err := reader.Store.DocumentSearchVersions(ctx, reader.Destination, scope)
+	if err != nil {
+		return fail(err)
 	}
+	response.Truncated = truncated
+	if len(versions) == 0 {
+		return response, nil
+	}
+	vault, err := reader.Client.VaultUID(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	// Docbank lexical search spans profiles but requires a registered name.
+	report, err := reader.Client.SearchDocuments(ctx, docbankmedia.SearchRequest{
+		Query: query, Mode: "lexical", ContentFirst: true, Profile: suppliedTranscriptProfile,
+		Limit: limit, Fence: &docbankmedia.SearchFence{VaultUID: vault, ContentVersionIDs: versions},
+	})
+	if err != nil {
+		return fail(err)
+	}
+	response.Truncated = response.Truncated || report.Truncated
+	if _, err := reader.visible(ctx, &response, report.Results, limit, resolve); err != nil {
+		return fail(err)
+	}
+	return response, nil
 }
 
 // visible replaces response.Results with the hits' attachments in the current

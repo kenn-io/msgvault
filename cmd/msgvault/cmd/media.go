@@ -74,6 +74,11 @@ func newMediaCmd(open func(context.Context) (*daemonclient.Client, func(), error
 			if _, err := fmt.Fprintf(command.OutOrStdout(), "Attachments truncated %t\n", response.Attachments.Truncated); err != nil {
 				return fmt.Errorf("render media search status: %w", err)
 			}
+			if response.Attachments.Truncated {
+				if _, err := fmt.Fprintln(command.OutOrStdout(), "Only the newest 4096 mirrored files were searched. Set --person to search older files."); err != nil {
+					return fmt.Errorf("render media search status: %w", err)
+				}
+			}
 			if response.Attachments.ErrorData != nil && response.Attachments.ErrorData.Message != nil {
 				if _, err := fmt.Fprintln(command.OutOrStdout(), textutil.SanitizeTerminal(*response.Attachments.ErrorData.Message)); err != nil {
 					return fmt.Errorf("render media search status: %w", err)

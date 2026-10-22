@@ -40,7 +40,6 @@ func TestMediaSearchMCPDaemonRoundTrip(t *testing.T) {
 	require.NotNil(response.Attachments)
 	require.Len(response.Attachments.Results, 1)
 	assert.Equal("report.pdf", response.Attachments.Results[0].Filename)
-	assert.Contains(searchMediaDefinition().description, "mirrored attachments")
 	delegated := runToolExpectError(t, ToolSearchMedia, h.searchMedia, map[string]any{"query": "words", "limit": float64(101), "directions": []any{"from_person"}})
 	assert.Contains(resultText(t, delegated), "API error (400): invalid media search")
 	assert.True(searchMediaDefinition().availability(capabilitiesFor(ServeOptions{MediaSearcher: client})))

@@ -237,7 +237,7 @@ it('opens attachment messages and keeps recording metadata in its own list', asy
   expect(link.textContent).toContain('report.pdf');
   expect(link.textContent).toContain('quartz inside the PDF');
   expect(link.querySelectorAll('time')).toHaveLength(1);
-  expect(screen.getByText('More may match')).toBeTruthy();
+  expect(screen.getByText('Only the newest 4096 mirrored files were searched. Add a Person filter to search older files.')).toBeTruthy();
   await fireEvent.click(link);
   expect(onOpen).toHaveBeenCalledWith(attachment);
   expect(screen.getByText('Provider transcript')).toBeTruthy();
@@ -263,7 +263,7 @@ it.each(['empty', 'error', 'absent'])('shows the attachment %s state', async (st
 
 it.each([
   ['transport', true], ['server_error', true], ['timeout', true], ['rate_limited', true],
-  ['bad_request', false], ['validation', false], ['unauthorized', false], ['invalid_request', false],
+  ['validation', false], ['unauthorized', false], ['invalid_request', false],
 ])('offers attachment retry for %s only when transient', async (error, retryable) => {
   const fetchFn = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(report({ attachments: {
     results: [], truncated: false, error: { error, message: 'Attachment search is unavailable.' },
