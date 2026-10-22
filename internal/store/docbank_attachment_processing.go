@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -31,29 +32,59 @@ func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, 
 	return err
 }
 
-func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, n int) ([]DocbankAttachmentProcessing, error) {
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT d.content_hash, d.node_id, d.version_id,
- COALESCE(p.fingerprint, ''), COALESCE(p.outcome, ''), COALESCE(p.job_id, '')
- FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
- ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
- AND p.version_id = d.version_id AND p.fingerprint = ?
- WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> ''
- AND (p.content_hash IS NULL OR p.next_action_at <= ?)
- ORDER BY CASE WHEN p.content_hash IS NULL THEN 0 ELSE 1 END, p.next_action_at, d.content_hash LIMIT ?`),
-		fingerprint, dest, s.timestampValue(time.Now().UTC()), n)
-	if err != nil {
-		return nil, fmt.Errorf("read attachment processing requests: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
+// DocbankAttachmentProcessingCursor visits unasked files once before polling due jobs.
+// Use a fresh cursor for each pass and each profile fingerprint.
+type DocbankAttachmentProcessingCursor struct {
+	afterHash   string
+	unaskedDone bool
+}
+
+func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
 	var result []DocbankAttachmentProcessing
-	for rows.Next() {
-		var d DocbankAttachmentProcessing
-		if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.JobID); err != nil {
+	for len(result) < n {
+		unasked := !cursor.unaskedDone
+		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', ''
+ FROM docbank_attachment_deliveries d
+ WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> '' AND d.content_hash > ?
+ AND NOT EXISTS (SELECT 1 FROM docbank_attachment_processing p
+ WHERE p.destination_key = d.destination_key AND p.content_hash = d.content_hash
+ AND p.version_id = d.version_id AND p.fingerprint = ?)
+ ORDER BY d.content_hash LIMIT ?`
+		args := []any{dest, cursor.afterHash, fingerprint, n - len(result)}
+		if !unasked {
+			query = `SELECT d.content_hash, d.node_id, d.version_id, p.fingerprint, p.outcome, p.job_id
+ FROM docbank_attachment_processing p JOIN docbank_attachment_deliveries d
+ ON d.destination_key = p.destination_key AND d.content_hash = p.content_hash AND d.version_id = p.version_id
+ WHERE p.destination_key = ? AND p.fingerprint = ? AND p.next_action_at <= ?
+ AND d.state = 'delivered' AND d.version_id <> ''
+ ORDER BY p.next_action_at, p.content_hash LIMIT ?`
+			args = []any{dest, fingerprint, s.timestampValue(time.Now().UTC()), n - len(result)}
+		}
+		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
+		if err != nil {
+			return nil, fmt.Errorf("read attachment processing requests: %w", err)
+		}
+		for rows.Next() {
+			var d DocbankAttachmentProcessing
+			if err := rows.Scan(&d.ContentHash, &d.NodeID, &d.VersionID, &d.Fingerprint, &d.Outcome, &d.JobID); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			result = append(result, d)
+			if unasked {
+				cursor.afterHash = d.ContentHash
+			}
+		}
+		err = errors.Join(rows.Err(), rows.Close())
+		if err != nil {
 			return nil, err
 		}
-		result = append(result, d)
+		if !unasked {
+			break
+		}
+		cursor.unaskedDone = len(result) < n
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest string, d DocbankAttachmentProcessing, nextActionAt time.Time) error {
