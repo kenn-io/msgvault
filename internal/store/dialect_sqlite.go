@@ -2103,6 +2103,9 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN provider_started_at DATETIME`, "person_enrichment_attempts.provider_started_at"},
 		{`ALTER TABLE person_enrichment_attempts ADD COLUMN dispatch_authorized_at DATETIME`, "person_enrichment_attempts.dispatch_authorized_at"},
 		{`ALTER TABLE person_enrichment_work ADD COLUMN has_fresh_trigger BOOLEAN NOT NULL DEFAULT FALSE`, "person_enrichment_work.has_fresh_trigger"},
+		{`ALTER TABLE person_tracking ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto'))`, "person_tracking.provenance"},
+		{`ALTER TABLE person_tracking ADD COLUMN actor TEXT NOT NULL DEFAULT ''`, "person_tracking.actor"},
+		{`ALTER TABLE person_brief_enrollments ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual' CHECK (provenance IN ('manual', 'auto'))`, "person_brief_enrollments.provenance"},
 	}
 }
 

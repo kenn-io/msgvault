@@ -29,6 +29,10 @@ const (
 	identityMatchEvidenceTableName         = "identity_match_evidence"
 	identityMatchEvidenceSourcesTableName  = "identity_match_evidence_sources"
 	personMergeActionDeduplicated          = "deduplicated"
+	personTierOptOutsTableName             = "person_tier_opt_outs"
+	personTierStateTableName               = "person_tier_state"
+	personTierObservationsTableName        = "person_tier_observations"
+	personTierEventsTableName              = "person_tier_events"
 	personAttributeValuesTableName         = "person_attribute_values"
 	personContactPointsTableName           = "person_contact_points"
 	personMergeReviewCandidatesTableName   = "person_merge_review_candidates"
@@ -115,6 +119,7 @@ type personMergeReferenceKind string
 const (
 	personMergeReferenceDirect      personMergeReferenceKind = "direct"
 	personMergeReferencePolymorphic personMergeReferenceKind = "polymorphic"
+	personMergeReferenceHistorical  personMergeReferenceKind = "historical"
 )
 
 type personMergeReference struct {
@@ -146,6 +151,10 @@ func directPersonReference(column string) personMergeReference {
 	return personMergeReference{Kind: personMergeReferenceDirect, IDColumn: column}
 }
 
+func historicalPersonReference(column string) personMergeReference {
+	return personMergeReference{Kind: personMergeReferenceHistorical, IDColumn: column}
+}
+
 func polymorphicPersonReference(idColumn, kindColumn string) personMergeReference {
 	return personMergeReference{
 		Kind: personMergeReferencePolymorphic, IDColumn: idColumn,
@@ -159,29 +168,48 @@ const personMergePersonIDColumn = "person_id"
 // point at a person. Operation tables are classified but not recursively
 // snapshotted; their targeted lineage updates are journaled separately.
 var personMergeTableRegistry = map[string]personMergeTableSpec{
+	personTierOptOutsTableName: {
+		TableName: personTierOptOutsTableName, KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	personTierStateTableName: {
+		TableName: personTierStateTableName, KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	personTierObservationsTableName: {
+		TableName: personTierObservationsTableName, KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
+	},
+	personTierEventsTableName: {
+		TableName: personTierEventsTableName, KeyColumn: "id", Snapshot: true,
+		PersonReferences: []personMergeReference{
+			directPersonReference(personMergePersonIDColumn),
+			historicalPersonReference("merged_from_person_id"),
+		},
+	},
 	"person_participants": {
 		TableName: "person_participants", KeyColumn: "participant_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_tracking": {
-		TableName: "person_tracking", KeyColumn: "person_id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_tracking", KeyColumn: personMergePersonIDColumn, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"vcard_resource_envelopes": {
 		TableName: "vcard_resource_envelopes", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"carddav_resources": {
 		TableName: "carddav_resources", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"carddav_publications": {
-		TableName: "carddav_publications", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "carddav_publications", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_carddav_inference_state": {
-		TableName: "person_carddav_inference_state", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_carddav_inference_state", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_uid_aliases": {
 		TableName: "person_uid_aliases", KeyColumn: "retired_uid", Snapshot: true,
@@ -197,14 +225,14 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	personRelationshipReviewsTableName: {
 		TableName: personRelationshipReviewsTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{
-			directPersonReference("person_id"),
+			directPersonReference(personMergePersonIDColumn),
 			directPersonReference("matched_person_id"),
 		},
 	},
 	personAttributeValuesTableName: {
 		TableName: personAttributeValuesTableName, KeyColumn: "id", Snapshot: true,
 		PersonReferences: []personMergeReference{
-			directPersonReference("person_id"),
+			directPersonReference(personMergePersonIDColumn),
 			polymorphicPersonReference("value_record_id", "value_record_type"),
 		},
 	},
@@ -269,31 +297,31 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	// events are profile state, however, and must survive an exact split.
 	"person_fact_generations": {
 		TableName: "person_fact_generations", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_evidence": {
 		TableName: "person_fact_evidence", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_claims": {
 		TableName: "person_fact_claims", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_evidence_status_events": {
 		TableName: "person_fact_evidence_status_events", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_resolutions": {
 		TableName: "person_fact_resolutions", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_decisions": {
 		TableName: "person_fact_decisions", KeyColumn: "id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_fact_pin_events": {
 		TableName: "person_fact_pin_events", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	// Brief enrollment is profile state, like tracking, and moves to the
 	// survivor. Brief versions belong to the fact generation that produced
@@ -310,27 +338,27 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	},
 	"person_names": {
 		TableName: "person_names", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	personContactPointsTableName: {
 		TableName: personContactPointsTableName, KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_addresses": {
 		TableName: "person_addresses", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_dates": {
 		TableName: "person_dates", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_categories": {
 		TableName: "person_categories", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_media": {
 		TableName: "person_media", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	identityMatchCandidatesTableName: {
 		TableName: identityMatchCandidatesTableName, KeyColumn: "id", Snapshot: true,
@@ -355,21 +383,21 @@ var personMergeTableRegistry = map[string]personMergeTableSpec{
 	},
 	"employments": {
 		TableName: "employments", KeyColumn: "id", Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"activity_event_persons": {
 		TableName: "activity_event_persons", KeyColumn: "message_id",
-		KeyColumns: []string{"message_id", "person_id"}, Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		KeyColumns: []string{"message_id", personMergePersonIDColumn}, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"person_contact_state": {
-		TableName: "person_contact_state", KeyColumn: "person_id", Snapshot: false,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		TableName: "person_contact_state", KeyColumn: personMergePersonIDColumn, Snapshot: false,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 	"daily_note_entry_persons": {
 		TableName: "daily_note_entry_persons", KeyColumn: "entry_id",
-		KeyColumns: []string{"entry_id", "person_id"}, Snapshot: true,
-		PersonReferences: []personMergeReference{directPersonReference("person_id")},
+		KeyColumns: []string{"entry_id", personMergePersonIDColumn}, Snapshot: true,
+		PersonReferences: []personMergeReference{directPersonReference(personMergePersonIDColumn)},
 	},
 }
 
@@ -577,7 +605,7 @@ func (s *Store) capturePersonMergeTableTx(
 	orderColumns := append([]string(nil), keyColumns...)
 	for _, reference := range spec.PersonReferences {
 		switch reference.Kind {
-		case personMergeReferenceDirect:
+		case personMergeReferenceDirect, personMergeReferenceHistorical:
 			predicates = append(predicates,
 				fmt.Sprintf("(%s = ? OR %s = ?)", reference.IDColumn, reference.IDColumn))
 			args = append(args, survivorID, absorbedID)
@@ -678,7 +706,7 @@ func personMergeRowProvenance(
 	table string, values []any, indexes map[string]int, absorbedID int64,
 ) personMergeProvenanceKind {
 	if table == personAttributeValuesTableName {
-		if index, ok := indexes["person_id"]; ok {
+		if index, ok := indexes[personMergePersonIDColumn]; ok {
 			if id, valid := personMergeSnapshotInt64(values[index]); valid && id == absorbedID {
 				return personMergeProvenanceAbsorbedProfile
 			}
@@ -844,6 +872,9 @@ func personMergeRowOrigin(
 	absorbedID int64,
 ) personMergeOriginSide {
 	for _, reference := range references {
+		if reference.Kind == personMergeReferenceHistorical {
+			continue
+		}
 		if reference.Kind == personMergeReferencePolymorphic &&
 			personMergeSnapshotTextValue(values[indexes[reference.KindColumn]]) != reference.KindValue {
 			continue

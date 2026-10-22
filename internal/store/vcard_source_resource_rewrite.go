@@ -126,7 +126,7 @@ func (s *Store) bumpVCardSourceResourceOwnersTx(
 		return err
 	}
 	ownerIDs, err := s.vcardSourceResourceIDsTx(ctx, tx,
-		sourceResourceColumns(vcardPersonComponentTables, "person_id"),
+		sourceResourceColumns(vcardPersonComponentTables, personMergePersonIDColumn),
 		sourceRef, sourceResourceUID)
 	if err != nil {
 		return err
@@ -134,7 +134,7 @@ func (s *Store) bumpVCardSourceResourceOwnersTx(
 	relatedIDs, err := s.vcardSourceResourceIDsTx(ctx, tx, []sourceResourceColumn{
 		{table: personRelationshipsTableName, column: "source_person_id"},
 		{table: personRelationshipsTableName, column: "target_person_id"},
-		{table: "person_relationship_reviews", column: "person_id"},
+		{table: "person_relationship_reviews", column: personMergePersonIDColumn},
 	}, sourceRef, sourceResourceUID)
 	if err != nil {
 		return err
