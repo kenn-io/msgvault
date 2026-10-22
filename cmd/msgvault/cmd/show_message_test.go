@@ -78,7 +78,7 @@ func TestShowMessageUsesLocalDaemonHTTPAndPreservesTextOutput(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	dataDir := t.TempDir()
-	server, messageRequests := messageHTTPDaemon(t, "")
+	server, messageRequests := messageHTTPDaemon(t, "", false)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 
 	savedCfg := cfg
@@ -173,6 +173,8 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 		{"JSON flag true", `<div style="display:none">Hidden</div>`, true, false, true},
 		{"JSON flag false", `<p>Visible</p>`, true, false, false},
 		{"visible text", `<p>Visible</p>`, false, false, false},
+		{"stored flag without HTML", "", false, false, true},
+		{"stored flag overrides HTML", `<div hidden>Hidden</div>`, true, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -182,7 +184,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 			})
 			showMessageJSON, showMessageBodyOnly, showMessageStripQuoted = tc.json, tc.bodyOnly, false
 			dataDir := t.TempDir()
-			server, _ := messageHTTPDaemon(t, tc.html)
+			server, _ := messageHTTPDaemon(t, tc.html, tc.hidden)
 			writeStatsHTTPDaemonRuntime(t, dataDir, server)
 			cfg := &config.Config{HomeDir: dataDir, Data: config.DataConfig{DataDir: dataDir}}
 			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{useLocal: true})
@@ -213,7 +215,7 @@ func TestShowMessageHiddenHTMLText(t *testing.T) {
 	}
 }
 
-func messageHTTPDaemon(t *testing.T, bodyHTML string) (*httptest.Server, *atomic.Int32) {
+func messageHTTPDaemon(t *testing.T, bodyHTML string, hidden bool) (*httptest.Server, *atomic.Int32) {
 	t.Helper()
 	requests := &atomic.Int32{}
 	mux := http.NewServeMux()
@@ -234,21 +236,22 @@ func messageHTTPDaemon(t *testing.T, bodyHTML string) (*httptest.Server, *atomic
 		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id":                42,
-			"source_message_id": "remote-42",
-			"rfc822_message_id": "Case-ID@example.test",
-			"conversation_id":   7,
-			"subject":           "Test Subject",
-			"snippet":           "short",
-			"sent_at":           "2024-01-02T03:04:05Z",
-			"size_estimate":     512,
-			"has_attachments":   false,
-			"from":              []map[string]string{{"email": "alice@example.com", "name": "Alice"}},
-			"to":                []map[string]string{{"email": "bob@example.com", "name": "Bob"}},
-			"labels":            []string{"INBOX"},
-			"attachments":       []any{},
-			"body_text":         "Hello over HTTP",
-			"body_html":         bodyHTML,
+			"id":                  42,
+			"source_message_id":   "remote-42",
+			"rfc822_message_id":   "Case-ID@example.test",
+			"conversation_id":     7,
+			"subject":             "Test Subject",
+			"snippet":             "short",
+			"sent_at":             "2024-01-02T03:04:05Z",
+			"size_estimate":       512,
+			"has_attachments":     false,
+			"from":                []map[string]string{{"email": "alice@example.com", "name": "Alice"}},
+			"to":                  []map[string]string{{"email": "bob@example.com", "name": "Bob"}},
+			"labels":              []string{"INBOX"},
+			"attachments":         []any{},
+			"body_text":           "Hello over HTTP",
+			"body_html":           bodyHTML,
+			"hidden_text_present": hidden,
 		})
 	})
 	server := httptest.NewServer(mux)
@@ -338,7 +341,7 @@ func TestShowMessageJSONPreservesRFCMessageIDFromDaemon(t *testing.T) {
 
 	assert, require := assert.New(t), require.New(t)
 	dataDir := t.TempDir()
-	server, _ := messageHTTPDaemon(t, "")
+	server, _ := messageHTTPDaemon(t, "", false)
 	writeStatsHTTPDaemonRuntime(t, dataDir, server)
 	oldCfg, oldLocal, oldJSON := cfg, useLocal, showMessageJSON
 	t.Cleanup(func() { cfg, useLocal, showMessageJSON = oldCfg, oldLocal, oldJSON })

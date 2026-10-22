@@ -918,6 +918,7 @@ type CLIQueryMessageSummary struct {
 	FromName             string     `json:"from_name" validate:"required"`
 	FromPhone            *string    `json:"from_phone,omitzero"`
 	HasAttachments       bool       `json:"has_attachments"`
+	HiddenTextPresent    bool       `json:"hidden_text_present"`
 	ID                   int64      `json:"id"`
 	Labels               []string   `json:"labels" validate:"required"`
 	MatchSnippet         *string    `json:"match_snippet,omitzero"`
@@ -2602,6 +2603,7 @@ type CliMessageResponse struct {
 	DeletedAt            *time.Time             `json:"deleted_at" validate:"required"`
 	From                 []CliMessageAddress    `json:"from" validate:"required"`
 	HasAttachments       bool                   `json:"has_attachments"`
+	HiddenTextPresent    bool                   `json:"hidden_text_present"`
 	ID                   int64                  `json:"id"`
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitzero"`
@@ -6266,30 +6268,31 @@ func (h HybridGenerationSummary) Validate() error {
 }
 
 type HybridSearchItem struct {
-	AttachmentCount  *int64              `json:"attachment_count,omitempty"`
-	AttachmentNames  []string            `json:"attachment_names,omitempty"`
-	Bcc              []string            `json:"bcc,omitempty"`
-	Cc               []string            `json:"cc,omitempty"`
-	ConversationID   *int64              `json:"conversation_id,omitempty"`
-	DeletedAt        *string             `json:"deleted_at,omitzero"`
-	From             string              `json:"from" validate:"required"`
-	FromEmail        *string             `json:"from_email,omitzero"`
-	FromName         *string             `json:"from_name,omitzero"`
-	FromPhone        *string             `json:"from_phone,omitzero"`
-	HasAttachments   bool                `json:"has_attachments"`
-	ID               int64               `json:"id"`
-	Labels           []string            `json:"labels" validate:"required"`
-	Matches          []HybridSearchMatch `json:"matches,omitempty"`
-	MatchesTruncated *bool               `json:"matches_truncated,omitempty"`
-	MessageType      *string             `json:"message_type,omitzero"`
-	Score            *ScoreBreakdown     `json:"score,omitempty"`
-	SentAt           string              `json:"sent_at" validate:"required"`
-	SizeBytes        int64               `json:"size_bytes"`
-	Snippet          string              `json:"snippet" validate:"required"`
-	SourceID         *int64              `json:"source_id,omitempty"`
-	SourceMessageID  *string             `json:"source_message_id,omitzero"`
-	Subject          string              `json:"subject" validate:"required"`
-	To               []string            `json:"to" validate:"required"`
+	AttachmentCount   *int64              `json:"attachment_count,omitempty"`
+	AttachmentNames   []string            `json:"attachment_names,omitempty"`
+	Bcc               []string            `json:"bcc,omitempty"`
+	Cc                []string            `json:"cc,omitempty"`
+	ConversationID    *int64              `json:"conversation_id,omitempty"`
+	DeletedAt         *string             `json:"deleted_at,omitzero"`
+	From              string              `json:"from" validate:"required"`
+	FromEmail         *string             `json:"from_email,omitzero"`
+	FromName          *string             `json:"from_name,omitzero"`
+	FromPhone         *string             `json:"from_phone,omitzero"`
+	HasAttachments    bool                `json:"has_attachments"`
+	HiddenTextPresent bool                `json:"hidden_text_present"`
+	ID                int64               `json:"id"`
+	Labels            []string            `json:"labels" validate:"required"`
+	Matches           []HybridSearchMatch `json:"matches,omitempty"`
+	MatchesTruncated  *bool               `json:"matches_truncated,omitempty"`
+	MessageType       *string             `json:"message_type,omitzero"`
+	Score             *ScoreBreakdown     `json:"score,omitempty"`
+	SentAt            string              `json:"sent_at" validate:"required"`
+	SizeBytes         int64               `json:"size_bytes"`
+	Snippet           string              `json:"snippet" validate:"required"`
+	SourceID          *int64              `json:"source_id,omitempty"`
+	SourceMessageID   *string             `json:"source_message_id,omitzero"`
+	Subject           string              `json:"subject" validate:"required"`
+	To                []string            `json:"to" validate:"required"`
 }
 
 func (h HybridSearchItem) Validate() error {
@@ -7873,6 +7876,7 @@ type MessageDetail struct {
 	FromName          *string  `json:"from_name,omitzero"`
 	FromPhone         *string  `json:"from_phone,omitzero"`
 	HasAttachments    bool     `json:"has_attachments"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
 	ID                int64    `json:"id"`
 	IsFromMe          *bool    `json:"is_from_me,omitempty"`
 	Labels            []string `json:"labels" validate:"required"`
@@ -8038,25 +8042,26 @@ func (m MessageReference) Validate() error {
 }
 
 type MessageSummary struct {
-	Bcc             []string `json:"bcc,omitempty"`
-	Cc              []string `json:"cc,omitempty"`
-	ConversationID  *int64   `json:"conversation_id,omitempty"`
-	DeletedAt       *string  `json:"deleted_at,omitzero"`
-	From            string   `json:"from" validate:"required"`
-	FromEmail       *string  `json:"from_email,omitzero"`
-	FromName        *string  `json:"from_name,omitzero"`
-	FromPhone       *string  `json:"from_phone,omitzero"`
-	HasAttachments  bool     `json:"has_attachments"`
-	ID              int64    `json:"id"`
-	Labels          []string `json:"labels" validate:"required"`
-	MessageType     *string  `json:"message_type,omitzero"`
-	SentAt          string   `json:"sent_at" validate:"required"`
-	SizeBytes       int64    `json:"size_bytes"`
-	Snippet         string   `json:"snippet" validate:"required"`
-	SourceID        *int64   `json:"source_id,omitempty"`
-	SourceMessageID *string  `json:"source_message_id,omitzero"`
-	Subject         string   `json:"subject" validate:"required"`
-	To              []string `json:"to" validate:"required"`
+	Bcc               []string `json:"bcc,omitempty"`
+	Cc                []string `json:"cc,omitempty"`
+	ConversationID    *int64   `json:"conversation_id,omitempty"`
+	DeletedAt         *string  `json:"deleted_at,omitzero"`
+	From              string   `json:"from" validate:"required"`
+	FromEmail         *string  `json:"from_email,omitzero"`
+	FromName          *string  `json:"from_name,omitzero"`
+	FromPhone         *string  `json:"from_phone,omitzero"`
+	HasAttachments    bool     `json:"has_attachments"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
+	ID                int64    `json:"id"`
+	Labels            []string `json:"labels" validate:"required"`
+	MessageType       *string  `json:"message_type,omitzero"`
+	SentAt            string   `json:"sent_at" validate:"required"`
+	SizeBytes         int64    `json:"size_bytes"`
+	Snippet           string   `json:"snippet" validate:"required"`
+	SourceID          *int64   `json:"source_id,omitempty"`
+	SourceMessageID   *string  `json:"source_message_id,omitzero"`
+	Subject           string   `json:"subject" validate:"required"`
+	To                []string `json:"to" validate:"required"`
 }
 
 func (m MessageSummary) Validate() error {

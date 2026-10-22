@@ -210,6 +210,8 @@ func TestShowThreadHiddenHTMLText(t *testing.T) {
 		{"visible text", `<p>Visible text</p>`, false, false},
 		{"hidden JSON", `<div hidden>Hidden text</div>`, true, true},
 		{"visible JSON", `<p>Visible text</p>`, true, false},
+		{"stored flag without HTML", "", false, true},
+		{"stored flag overrides HTML", `<div hidden>Hidden text</div>`, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -231,6 +233,7 @@ func TestShowThreadHiddenHTMLText(t *testing.T) {
 					}
 					assert.NoError(json.NewEncoder(w).Encode(map[string]any{
 						"id": id, "conversation_id": 7, "body_text": "Archived text", "body_html": bodyHTML,
+						"hidden_text_present": id != 1 && tc.hidden,
 					}))
 				case "/api/v1/telemetry/events":
 					w.WriteHeader(http.StatusAccepted)

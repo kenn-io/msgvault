@@ -377,6 +377,7 @@ func queryMessageSummaryFromGenerated(msg generated.CLIQueryMessageSummary) quer
 		Subject:              msg.Subject,
 		Snippet:              msg.Snippet,
 		MatchSnippet:         stringValue(msg.MatchSnippet),
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		AttachmentNames:      msg.AttachmentNames,
 		FromEmail:            msg.FromEmail,
 		FromName:             msg.FromName,
@@ -438,6 +439,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 		Attachments:          cliMessageAttachmentsFromGenerated(resp.Attachments),
 		BodyText:             resp.BodyText,
 		BodyHTML:             resp.BodyHTML,
+		HiddenTextPresent:    resp.HiddenTextPresent,
 	}
 }
 

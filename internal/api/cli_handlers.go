@@ -897,6 +897,7 @@ type cliMessageResponse struct {
 	DeletedAt            *time.Time                `json:"deleted_at"`
 	SizeEstimate         int64                     `json:"size_estimate"`
 	HasAttachments       bool                      `json:"has_attachments"`
+	HiddenTextPresent    bool                      `json:"hidden_text_present"`
 	From                 []cliMessageAddress       `json:"from"`
 	To                   []cliMessageAddress       `json:"to"`
 	Cc                   []cliMessageAddress       `json:"cc"`
@@ -3746,6 +3747,7 @@ func cliMessageResponseFromQuery(msg *query.MessageDetail) cliMessageResponse {
 		DeletedAt:            msg.DeletedAt,
 		SizeEstimate:         msg.SizeEstimate,
 		HasAttachments:       msg.HasAttachments,
+		HiddenTextPresent:    msg.HiddenTextPresent,
 		From:                 cliMessageAddresses(msg.From),
 		To:                   cliMessageAddresses(msg.To),
 		Cc:                   cliMessageAddresses(msg.Cc),

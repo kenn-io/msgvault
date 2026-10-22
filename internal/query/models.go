@@ -26,8 +26,9 @@ type AggregateRow struct {
 // MessageSummary represents a message in list views.
 // Contains enough information for display without fetching the full body.
 type MessageSummary struct {
-	AttachmentNames []string `json:"attachment_names,omitzero"`
-	MatchSnippet    string   `json:"match_snippet,omitempty"`
+	AttachmentNames   []string `json:"attachment_names,omitzero"`
+	MatchSnippet      string   `json:"match_snippet,omitempty"`
+	HiddenTextPresent bool     `json:"hidden_text_present"`
 	// WebURL is derived by the daemon client for browser navigation.
 	WebURL                       string     `json:"web_url,omitempty"`
 	ID                           int64      `json:"id"`
@@ -88,6 +89,7 @@ type MessageDetail struct {
 	SizeEstimate         int64      `json:"size_estimate"`
 	HasAttachments       bool       `json:"has_attachments"`
 	IsFromMe             bool       `json:"is_from_me"`
+	HiddenTextPresent    bool       `json:"hidden_text_present"`
 
 	// Participants
 	From []Address `json:"from"`
