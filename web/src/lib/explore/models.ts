@@ -36,6 +36,7 @@ import type {
   SourceIdentitiesResponse as GeneratedSourceIdentitiesResponse,
   SourceIdentityResponse as GeneratedSourceIdentityResponse,
 } from '../api/generated/models';
+import { trimAttributeText } from '../directory/attribute-text';
 import type { SettingsNavigationAuthority } from '../carddav/navigation';
 
 export type EntryRow = GeneratedEntryRow;
@@ -205,10 +206,31 @@ export function isEmailMessageType(messageType: string): boolean {
   return messageType === '' || messageType === 'email';
 }
 
-export function isValidSourceID(value: string | undefined): value is string {
-  if (value === undefined || !/^\d+$/.test(value)) return false;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0;
+/** Reads a saved identity direction the way the API does; undefined when it is not one. */
+export function identityDirection(value: string | undefined): IdentityDirection | undefined {
+  // Go lowers U+0130 to plain "i"; JS leaves a combining dot.
+  const direction = value === undefined ? '' : trimAttributeText(value).replaceAll('\u0130', 'i').toLowerCase();
+  return direction === 'any' || direction === 'sender' || direction === 'recipient' ? direction : undefined;
+}
+
+/** Returns the stored value of the one source filter whose trimmed values are all equal. */
+export function singleSourceValue(filters: ExploreFilter[]): string | undefined {
+  const sources = filters.filter((filter) => filter.dimension === 'source');
+  const values = sources.length === 1 ? sources[0]!.values : [];
+  return values.length > 0 && values.every((value) => trimAttributeText(value) === trimAttributeText(values[0]!)) ? values[0] : undefined;
+}
+
+/** Reads a filter ID the way the API does: trimmed, positive int64, "01" and "+1" allowed. */
+export function filterID(value: string | undefined): bigint | undefined {
+  const text = value === undefined ? undefined : trimAttributeText(value);
+  if (text === undefined || !/^\+?\d+$/.test(text)) return undefined;
+  const id = BigInt(text);
+  return id > 0n && id <= 9223372036854775807n ? id : undefined;
+}
+
+export function sameFilterID(a: string | undefined, b: string | undefined): boolean {
+  const id = filterID(a);
+  return id !== undefined && id === filterID(b);
 }
 
 export interface ExploreResult {

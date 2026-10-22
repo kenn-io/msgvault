@@ -1963,6 +1963,50 @@ func TestGetCLIMessage_NotFound(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load(), "a missing message must not be retried")
 }
 
+func TestGetCLIMessagePlainTextErrorBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		check  func(t *testing.T, err error)
+	}{
+		{
+			name:   "not found",
+			status: http.StatusNotFound,
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				assert.ErrorIs(t, err, store.ErrMessageNotFound)
+			},
+		},
+		{
+			name:   "server error",
+			status: http.StatusInternalServerError,
+			check: func(t *testing.T, err error) {
+				t.Helper()
+				apiErr, ok := errors.AsType[*APIError](err)
+				require.True(t, ok, "want *APIError, got %v", err)
+				assert.Equal(t, http.StatusInternalServerError, apiErr.Status)
+				assert.Equal(t, "upstream unavailable\n", apiErr.Message)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte("upstream unavailable\n"))
+			}))
+			defer srv.Close()
+
+			s := newTestStore(srv, "key")
+			_, err := s.GetCLIMessage(context.Background(), "missing")
+			require.Error(t, err)
+			var decodeErr *runtime.ResponseDecodeError
+			assert.NotErrorAs(t, err, &decodeErr, "a plain-text error page is not a contract failure")
+			tc.check(t, err)
+		})
+	}
+}
+
 func TestGetCLIMessageRateLimitRetryAfter(t *testing.T) {
 	for _, dateHeader := range []bool{false, true} {
 		t.Run(fmt.Sprintf("date=%t", dateHeader), func(t *testing.T) {

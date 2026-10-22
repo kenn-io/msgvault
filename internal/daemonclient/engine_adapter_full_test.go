@@ -1146,14 +1146,14 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		assert.Equal("example.com,test.org", r.URL.Query().Get("domains"), "domains")
 		assert.Equal(after.Format(time.RFC3339), r.URL.Query().Get("after"), "after")
 		assert.Equal(before.Format(time.RFC3339), r.URL.Query().Get("before"), "before")
-		assert.Equal("25", r.URL.Query().Get("limit"), "limit")
+		assert.Equal("1", r.URL.Query().Get("limit"), "limit")
 		assert.Equal("50", r.URL.Query().Get("offset"), "offset")
 		assert.Equal([]string{"4", "7"}, r.URL.Query()["source_ids"], "source scope")
 		writeJSONResponse(t, w, map[string]any{
 			"count":    1,
-			"has_more": false,
+			"has_more": true,
 			"offset":   50,
-			"limit":    25,
+			"limit":    1,
 			"messages": []map[string]any{
 				{
 					"id":              84,
@@ -1177,14 +1177,15 @@ func TestEngineSearchByDomainsUsesGeneratedClientAdapter(t *testing.T) {
 		[]string{"example.com", "test.org"},
 		&after,
 		&before,
-		25,
+		1,
 		50,
 		[]int64{4, 7},
 	)
 	require.NoError(err, "SearchByDomains")
-	require.Len(results, 1, "results")
-	assert.Equal(int64(84), results[0].ID, "ID")
-	assert.Equal("alice@example.com", results[0].FromEmail, "FromEmail")
+	require.Len(results.Messages, 1, "results")
+	assert.Equal(int64(84), results.Messages[0].ID, "ID")
+	assert.Equal("alice@example.com", results.Messages[0].FromEmail, "FromEmail")
+	assert.True(results.HasMore, "daemon has_more survives the adapter")
 }
 
 func TestEngineTimeFiltersPreserveUTCNanoseconds(t *testing.T) {
@@ -1731,6 +1732,42 @@ func TestEngineGetMessageSummariesByIDs_CarriesFromAndAttachmentCount(t *testing
 	assert.True(s.HasAttachments, "HasAttachments")
 	assert.True(s.HiddenTextPresent, "HiddenTextPresent")
 }
+
+func TestEngineGetMessageSummariesByIDsPreservesDeletedAt(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	deletedAt, err := time.Parse(time.RFC3339Nano, "2026-03-18T15:00:00.123456789-07:00")
+	require.NoError(err)
+	epoch := time.Unix(0, 0).UTC()
+	fixtures := map[string]map[string]any{
+		"/api/v1/messages/42": {"id": 42, "deleted_at": deletedAt.Format(time.RFC3339Nano)},
+		"/api/v1/messages/7":  {"id": 7},
+		"/api/v1/messages/99": {"id": 99, "deleted_at": nil},
+		"/api/v1/messages/3":  {"id": 3, "deleted_at": epoch.Format(time.RFC3339Nano)},
+	}
+	store := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) {
+		fixture, ok := fixtures[r.URL.Path]
+		assert.True(ok, "unexpected path: %s", r.URL.Path)
+		writeJSONResponse(t, w, fixture)
+	})
+	engine := NewEngineAdapter(store)
+	ids := []int64{42, 7, 99, 3, 42}
+	want := []*time.Time{&deletedAt, nil, nil, &epoch, &deletedAt}
+
+	summaries, err := engine.GetMessageSummariesByIDs(context.Background(), ids)
+	require.NoError(err)
+	require.Len(summaries, len(ids))
+	for i, summary := range summaries {
+		assert.Equal(ids[i], summary.ID)
+		if want[i] == nil {
+			assert.Nil(summary.DeletedAt, "message %d", summary.ID)
+			continue
+		}
+		require.NotNil(summary.DeletedAt, "message %d", summary.ID)
+		assert.Equal(want[i].UTC(), summary.DeletedAt.UTC(), "message %d", summary.ID)
+	}
+}
+
 func TestEngineSearchSerializesMessageTypes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

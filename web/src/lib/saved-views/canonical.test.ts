@@ -3,11 +3,12 @@ import { describe, expect, it } from 'vitest';
 import legacyPipes from '../../../../testdata/savedview_legacy_pipes.json';
 import {
   defaultExploreURLState,
+  ExploreState,
   parseExploreURLState,
   serializeExploreURLState
 } from '../explore/state.svelte';
 import type { ExploreURLState } from '../explore/models';
-import { canonicalSavedViewState, exploreStateFromSavedView, savedViewSummary } from './canonical';
+import { canonicalSavedViewState, exploreStateFromSavedView, savedViewSummary, type CanonicalState } from './canonical';
 
 const everything: ExploreURLState = {
   ...defaultExploreURLState,
@@ -28,7 +29,34 @@ function reopened(state: ExploreURLState): ExploreURLState {
   return parseExploreURLState(serializeExploreURLState({ ...defaultExploreURLState, ...opened }));
 }
 
+function openedAndReloaded(saved: CanonicalState) {
+  window.history.replaceState(null, '', '/');
+  const state = new ExploreState(window);
+  try {
+    state.replaceCommittedNavigation(exploreStateFromSavedView(saved));
+    return {
+      opened: state.current.filters,
+      reloaded: parseExploreURLState(window.location.search).filters
+    };
+  } finally {
+    state.destroy();
+  }
+}
+
 describe('saved-view canonical state', () => {
+  it('keeps a saved identity filter on open and URL-only reload', () => {
+    const identity = ['1 ', 'person@example.com', 'SENDER'];
+    const saved: CanonicalState = { filters: [
+      { field: 'source', operator: 'in', values: [' 1'] },
+      { field: 'identity', operator: 'in', values: identity }
+    ] };
+    const expected = [
+      { dimension: 'source', values: [' 1'] },
+      { dimension: 'identity', values: identity }
+    ];
+    expect(openedAndReloaded(saved)).toEqual({ opened: expected, reloaded: expected });
+  });
+
   it.each(legacyPipes)('opens schema $schema_version $search_mode query $query', ({ schema_version, search_mode, query, want }) => {
     expect(exploreStateFromSavedView({ query, search_mode: search_mode as ExploreURLState['searchMode'] | undefined }, schema_version).query).toBe(want);
   });

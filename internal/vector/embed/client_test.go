@@ -73,7 +73,7 @@ func decodeRequest(t *testing.T, r *http.Request) embeddingRequest {
 	return req
 }
 
-func newRecordingOpenAIClient(t *testing.T) (*Client, *[][]string) {
+func newRecordingOpenAIClient(t *testing.T, dim int) (*Client, *[][]string) {
 	t.Helper()
 	calls := &[][]string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -81,18 +81,19 @@ func newRecordingOpenAIClient(t *testing.T) (*Client, *[][]string) {
 		*calls = append(*calls, append([]string(nil), req.Input...))
 		vectors := make([][]float32, len(req.Input))
 		for i := range req.Input {
-			vectors[i] = []float32{float32(i + 1)}
+			vectors[i] = make([]float32, dim)
+			vectors[i][0] = float32(i + 1)
 		}
 		writeEmbeddings(t, w, vectors)
 	}))
 	t.Cleanup(srv.Close)
-	return NewClient(Config{Endpoint: srv.URL, Model: "test-model", Dimension: 1}), calls
+	return NewClient(Config{Endpoint: srv.URL, Model: "test-model", Dimension: dim}), calls
 }
 
 // TestClient_EmbedDocumentsFlattensWithoutChangingOrder catches adapters that
 // reorder chunks or lose document boundaries around a flat provider request.
 func TestClient_EmbedDocumentsFlattensWithoutChangingOrder(t *testing.T) {
-	client, calls := newRecordingOpenAIClient(t)
+	client, calls := newRecordingOpenAIClient(t, 1)
 	docs := []DocumentInput{{Chunks: []string{"a", "b"}}, {Chunks: []string{"c"}}}
 
 	got, err := client.EmbedDocuments(context.Background(), docs)
@@ -105,7 +106,7 @@ func TestClient_EmbedDocumentsFlattensWithoutChangingOrder(t *testing.T) {
 // TestClient_EmbedQueryUsesSingleInput catches query adapters that batch or
 // discard the one vector returned by the flat provider request.
 func TestClient_EmbedQueryUsesSingleInput(t *testing.T) {
-	client, calls := newRecordingOpenAIClient(t)
+	client, calls := newRecordingOpenAIClient(t, 1)
 
 	got, err := client.EmbedQuery(context.Background(), "find this")
 

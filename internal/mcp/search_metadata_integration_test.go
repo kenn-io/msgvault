@@ -101,3 +101,49 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert.Equal(int32(1), requests.Load())
 	assert.Len(observer.Statements(), 3)
 }
+
+// TestSearchByDomainsPagesThroughDaemon pages a real archive across offset
+// 1000 through MCP, the daemon adapter, and the HTTP handler.
+func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
+	const total = 1501
+	db, _ := sqlobserve.Open(t, nil)
+	seedMetadataSearch(t, db)
+	_, err := db.Exec(`WITH RECURSIVE n(i) AS (SELECT 4 UNION ALL SELECT i+1 FROM n WHERE i < ?)
+ INSERT INTO messages (id,conversation_id,source_id,source_message_id,message_type,sent_at,subject,snippet)
+ SELECT i,1,1,'m'||i,'email',datetime('2024-02-01', '+'||i||' seconds'),'note '||i,'preview' FROM n;
+ INSERT INTO participants (id,email_address,domain) VALUES (1,'peer@example.com','example.com');
+ INSERT INTO message_recipients (message_id,participant_id,recipient_type) SELECT id,1,'to' FROM messages;`, total)
+	require.NoError(t, err)
+	var requests atomic.Int32
+	h := newTestHandlers(metadataDaemon(t, query.NewSQLiteEngine(db), &requests))
+
+	type page struct {
+		returned, offset int
+		hasMore          bool
+	}
+	var pages []page
+	var got []int64
+	offset := 1000
+	for range 3 {
+		resp := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains, map[string]any{
+			"domains": "example.com",
+			"limit":   float64(5000),
+			"offset":  float64(offset),
+		})
+		pages = append(pages, page{resp.Returned, resp.Offset, resp.HasMore})
+		for _, m := range resp.Data {
+			got = append(got, m.ID)
+		}
+		if !resp.HasMore {
+			break
+		}
+		offset += resp.Returned
+	}
+
+	assert.Equal(t, []page{{500, 1000, true}, {1, 1500, false}}, pages)
+	want := make([]int64, total-1000)
+	for i := range want {
+		want[i] = int64(total - 1000 - i)
+	}
+	assert.Equal(t, want, got, "newest first, each message once")
+}

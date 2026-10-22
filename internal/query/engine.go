@@ -99,7 +99,8 @@ type Engine interface {
 
 	// SearchByDomains returns messages where any participant (from, to, cc, or bcc)
 	// belongs to one of the given domains. Non-empty sourceIDs limit results to those accounts.
-	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]MessageSummary, error)
+	// HasMore reports whether another page follows the returned messages.
+	SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) (DomainSearchResult, error)
 
 	// Account queries
 	ListAccounts(ctx context.Context) ([]AccountInfo, error)
@@ -233,6 +234,13 @@ type PeopleInboxAnalyzer interface {
 // retains its composite subject/body/participant semantics.
 type MessageBodySearcher interface {
 	SearchMessageBodies(ctx context.Context, query *search.Query, limit, offset int) (*SearchFastResult, error)
+}
+
+// DomainSearchResult is one page of SearchByDomains matches. HasMore reports
+// whether a match remains beyond the page.
+type DomainSearchResult struct {
+	Messages []MessageSummary
+	HasMore  bool
 }
 
 // SearchFastResult carries messages and index status, with optional totals and aggregate stats.

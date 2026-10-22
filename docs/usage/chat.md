@@ -325,7 +325,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `semantic_search_messages` | Semantic search over preprocessed message subjects and bodies when [vector search](/docs/usage/vector-search/) is configured. Returns scored chunk excerpts; `min_score` filters excerpts, not ranked messages. | `query` (string, required), `mode` (string: `vector`/`hybrid`, default `hybrid`), `explain` (bool), `min_score` (number), `limit` (int), `offset` (int), `account` (string) |
 | `search_in_message` | Find case-insensitive literal matches within one message body, with raw-body offsets and line numbers. | `id` (int, required), `query` (string, required), `limit` (int), `offset` (int) |
 | `find_similar_messages` | Nearest-neighbor search from a seed message's embedding. Requires vector search to be configured and an active index generation. | `message_id` (int, required), `limit` (int), `account` (string), `message_type` (string), `after` (string), `before` (string), `has_attachment` (bool) |
-| `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. | `domains` (comma-separated string, required), `limit` (int), `offset` (int), `after` (string), `before` (string) |
+| `search_by_domains` | Find messages where any participant (`from`, `to`, or `cc`) belongs to one of several domains, regardless of direction. Returns `data`, `returned`, `offset`, and `has_more`; add `returned` to `offset` to page while `has_more` is true. | `domains` (comma-separated string, required), `limit` (int, default 100, max 500), `offset` (int), `after` (string), `before` (string) |
 | `get_message` | Get message details with windowed body paging | `id` (int, required), `offset` (int), `center_at` (int), `max_chars` (int), `body_format` (string: `auto`/`text`/`html`), `full_body` (bool) |
 | `list_messages` | List messages with filters | `from` (string), `to` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool), `conversation_id` (int), `limit` (int), `offset` (int), `account` (string) |
 | `list_thread` | List visible archived messages in one conversation, oldest first, with `has_raw` marking messages whose original `.eml` is stored. See [Export original emails](#export-original-emails). | exactly one of `id` (int), `source_message_id` (string), or `thread_id` (string); `account` (string), `limit` (1–500, default 100), `offset` (int) |
@@ -403,7 +403,7 @@ place. `last_talked` includes the last contact time and channel; its `brief` is
 
 Use `offset` and `limit` to request subsequent pages. `search_metadata`,
 `search_message_bodies`, `semantic_search_messages`, and `list_messages` default to `limit = 20` and
-cap it at 50. `search_message_bodies`, `semantic_search_messages`, and `list_messages` use this
+cap it at 50. `search_message_bodies`, `semantic_search_messages`, `list_messages`, and `search_by_domains` use this
 `total = -1` shape because they do not run a separate count query.
 `search_metadata` accepts msgvault's local subset of Gmail-like syntax,
 including case-insensitive literal `list:` and `list-id:` List-Id filters.

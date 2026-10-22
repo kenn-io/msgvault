@@ -33,6 +33,9 @@ type AccountListResponse struct {
 
 func (a AccountListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Accounts, "required"); err != nil {
+		errors = errors.Append("Accounts", err)
+	}
 	for i, item := range a.Accounts {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -137,6 +140,9 @@ func (a ActionsPage) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
 		}
+	}
+	if err := typesValidator.Var(a.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
 	}
 	for i, item := range a.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -286,6 +292,9 @@ func (a AgentTokenIssueResponse) Validate() error {
 	if err := typesValidator.Var(a.Secret, "required"); err != nil {
 		errors = errors.Append("Secret", err)
 	}
+	if err := typesValidator.Var(a.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
 	for i, item := range a.Sources {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -305,6 +314,9 @@ type AgentTokenListResponse struct {
 
 func (a AgentTokenListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Tokens, "required"); err != nil {
+		errors = errors.Append("Tokens", err)
+	}
 	for i, item := range a.Tokens {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -352,6 +364,9 @@ func (a AgentTokenView) Validate() error {
 	if err := typesValidator.Var(a.Permissions, "required"); err != nil {
 		errors = errors.Append("Permissions", err)
 	}
+	if err := typesValidator.Var(a.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
 	for i, item := range a.Sources {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -374,6 +389,9 @@ type AggregateResponse struct {
 
 func (a AggregateResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range a.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -632,6 +650,9 @@ type AttributeDefinitionsResponse struct {
 
 func (a AttributeDefinitionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Definitions, "required"); err != nil {
+		errors = errors.Append("Definitions", err)
+	}
 	for i, item := range a.Definitions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -814,6 +835,9 @@ type CLIDeduplicatePlanResponse struct {
 
 func (c CLIDeduplicatePlanResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range c.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1284,6 +1308,9 @@ func (c CalendarResult) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(c.Plan, "required"); err != nil {
+		errors = errors.Append("Plan", err)
+	}
 	for i, item := range c.Plan {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1293,6 +1320,9 @@ func (c CalendarResult) Validate() error {
 	}
 	if err := typesValidator.Var(c.SendUpdates, "required"); err != nil {
 		errors = errors.Append("SendUpdates", err)
+	}
+	if err := typesValidator.Var(c.Writes, "required"); err != nil {
+		errors = errors.Append("Writes", err)
 	}
 	for i, item := range c.Writes {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1483,6 +1513,9 @@ type CardDAVBooksResponse struct {
 
 func (c CardDAVBooksResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Books, "required"); err != nil {
+		errors = errors.Append("Books", err)
+	}
 	for i, item := range c.Books {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1516,6 +1549,9 @@ func (c CardDAVConflictDetailResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("AddressBook", err)
 		}
+	}
+	if err := typesValidator.Var(c.AllowedResolutions, "required"); err != nil {
+		errors = errors.Append("AllowedResolutions", err)
 	}
 	for i, item := range c.AllowedResolutions {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -1610,6 +1646,9 @@ func (c CardDAVConflictResponse) Validate() error {
 			errors = errors.Append("AddressBook", err)
 		}
 	}
+	if err := typesValidator.Var(c.AllowedResolutions, "required"); err != nil {
+		errors = errors.Append("AllowedResolutions", err)
+	}
 	for i, item := range c.AllowedResolutions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1650,6 +1689,9 @@ type CardDAVConflictsResponse struct {
 
 func (c CardDAVConflictsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Conflicts, "required"); err != nil {
+		errors = errors.Append("Conflicts", err)
+	}
 	for i, item := range c.Conflicts {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1694,6 +1736,9 @@ type CardDAVConnectionsResponse struct {
 
 func (c CardDAVConnectionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Connections, "required"); err != nil {
+		errors = errors.Append("Connections", err)
+	}
 	for i, item := range c.Connections {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1928,6 +1973,9 @@ type CardDAVRunsResponse struct {
 
 func (c CardDAVRunsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Runs, "required"); err != nil {
+		errors = errors.Append("Runs", err)
+	}
 	for i, item := range c.Runs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2027,6 +2075,9 @@ func (c Catalog) Validate() error {
 	if err := typesValidator.Var(c.Fingerprint, "required"); err != nil {
 		errors = errors.Append("Fingerprint", err)
 	}
+	if err := typesValidator.Var(c.Targets, "required"); err != nil {
+		errors = errors.Append("Targets", err)
+	}
 	for i, item := range c.Targets {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2069,7 +2120,7 @@ func (c ChangedMessageJSON) Validate() error {
 
 type ChangesResponse struct {
 	// CompleteThrough Instant the feed is complete through: every change committed strictly below it is reachable from this page's cursor. Null means no commit bound has been established yet; keep polling
-	CompleteThrough *time.Time           `json:"complete_through,omitempty" validate:"required"`
+	CompleteThrough *time.Time           `json:"complete_through" validate:"required"`
 	Count           int64                `json:"count"`
 	HasMore         bool                 `json:"has_more"`
 	Messages        []ChangedMessageJSON `json:"messages" validate:"required"`
@@ -2085,6 +2136,9 @@ func (c ChangesResponse) Validate() error {
 		if err := typesValidator.Var(c.CompleteThrough, "required"); err != nil {
 			errors = errors.Append("CompleteThrough", err)
 		}
+	}
+	if err := typesValidator.Var(c.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
 	}
 	for i, item := range c.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2115,13 +2169,13 @@ func (c ChoiceDescriptor) Validate() error {
 }
 
 type CliAccountResponse struct {
-	Alias              *string          `json:"alias,omitzero" validate:"required"`
+	Alias              *string          `json:"alias" validate:"required"`
 	DisplayName        string           `json:"display_name" validate:"required"`
 	Email              string           `json:"email" validate:"required"`
 	HistoryOnly        bool             `json:"history_only"`
 	ID                 int64            `json:"id"`
 	Identifier         string           `json:"identifier" validate:"required"`
-	LastSync           *time.Time       `json:"last_sync,omitempty" validate:"required"`
+	LastSync           *time.Time       `json:"last_sync" validate:"required"`
 	MergedIntoSourceID int64            `json:"merged_into_source_id"`
 	MessageCount       int64            `json:"message_count"`
 	OauthApp           *string          `json:"oauth_app,omitzero"`
@@ -2176,6 +2230,9 @@ type CliAccountsResponse struct {
 
 func (c CliAccountsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Accounts, "required"); err != nil {
+		errors = errors.Append("Accounts", err)
+	}
 	for i, item := range c.Accounts {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2257,6 +2314,9 @@ type CliCollectionsResponse struct {
 
 func (c CliCollectionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Collections, "required"); err != nil {
+		errors = errors.Append("Collections", err)
+	}
 	for i, item := range c.Collections {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2290,6 +2350,9 @@ type CliDeleteDedupedExecuteRequest struct {
 
 func (c CliDeleteDedupedExecuteRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.ExpectedBatches, "required"); err != nil {
+		errors = errors.Append("ExpectedBatches", err)
+	}
 	for i, item := range c.ExpectedBatches {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2341,6 +2404,9 @@ type CliIdentitiesResponse struct {
 
 func (c CliIdentitiesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range c.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2436,14 +2502,14 @@ type CliMessageResponse struct {
 	BodyText             string                 `json:"body_text" validate:"required"`
 	Cc                   []CliMessageAddress    `json:"cc" validate:"required"`
 	ConversationID       int64                  `json:"conversation_id"`
-	DeletedAt            *time.Time             `json:"deleted_at,omitempty" validate:"required"`
+	DeletedAt            *time.Time             `json:"deleted_at" validate:"required"`
 	From                 []CliMessageAddress    `json:"from" validate:"required"`
 	HasAttachments       bool                   `json:"has_attachments"`
 	HiddenTextPresent    bool                   `json:"hidden_text_present"`
 	ID                   int64                  `json:"id"`
 	Labels               []string               `json:"labels" validate:"required"`
 	MessageType          *string                `json:"message_type,omitzero"`
-	ReceivedAt           *time.Time             `json:"received_at,omitempty" validate:"required"`
+	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
@@ -2457,12 +2523,18 @@ type CliMessageResponse struct {
 
 func (c CliMessageResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Attachments, "required"); err != nil {
+		errors = errors.Append("Attachments", err)
+	}
 	for i, item := range c.Attachments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Attachments[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(c.Bcc, "required"); err != nil {
+		errors = errors.Append("Bcc", err)
 	}
 	for i, item := range c.Bcc {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2477,6 +2549,9 @@ func (c CliMessageResponse) Validate() error {
 	if err := typesValidator.Var(c.BodyText, "required"); err != nil {
 		errors = errors.Append("BodyText", err)
 	}
+	if err := typesValidator.Var(c.Cc, "required"); err != nil {
+		errors = errors.Append("Cc", err)
+	}
 	for i, item := range c.Cc {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2488,6 +2563,9 @@ func (c CliMessageResponse) Validate() error {
 		if err := typesValidator.Var(c.DeletedAt, "required"); err != nil {
 			errors = errors.Append("DeletedAt", err)
 		}
+	}
+	if err := typesValidator.Var(c.From, "required"); err != nil {
+		errors = errors.Append("From", err)
 	}
 	for i, item := range c.From {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2518,6 +2596,9 @@ func (c CliMessageResponse) Validate() error {
 	}
 	if err := typesValidator.Var(c.Subject, "required"); err != nil {
 		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(c.To, "required"); err != nil {
+		errors = errors.Append("To", err)
 	}
 	for i, item := range c.To {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -2577,6 +2658,9 @@ type CliSearchResponse struct {
 
 func (c CliSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range c.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2647,6 +2731,9 @@ type CommunicationServicesResponse struct {
 
 func (c CommunicationServicesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Services, "required"); err != nil {
+		errors = errors.Append("Services", err)
+	}
 	for i, item := range c.Services {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2715,6 +2802,9 @@ type ContactCandidatePage struct {
 
 func (c ContactCandidatePage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Candidates, "required"); err != nil {
+		errors = errors.Append("Candidates", err)
+	}
 	for i, item := range c.Candidates {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2736,6 +2826,9 @@ type ContactObservationPage struct {
 
 func (c ContactObservationPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range c.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2757,6 +2850,9 @@ type ContactPointPage struct {
 
 func (c ContactPointPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range c.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2837,6 +2933,9 @@ type ConversationResponse struct {
 
 func (c ConversationResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range c.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3033,6 +3132,9 @@ type DailyNoteEntriesResponse struct {
 
 func (d DailyNoteEntriesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Entries, "required"); err != nil {
+		errors = errors.Append("Entries", err)
+	}
 	for i, item := range d.Entries {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3073,6 +3175,9 @@ type DayPage struct {
 
 func (d DayPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Entries, "required"); err != nil {
+		errors = errors.Append("Entries", err)
+	}
 	for i, item := range d.Entries {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3082,6 +3187,9 @@ func (d DayPage) Validate() error {
 	}
 	if err := typesValidator.Var(d.LocalDate, "required"); err != nil {
 		errors = errors.Append("LocalDate", err)
+	}
+	if err := typesValidator.Var(d.Persons, "required"); err != nil {
+		errors = errors.Append("Persons", err)
 	}
 	for i, item := range d.Persons {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -3109,6 +3217,9 @@ type DayPerson struct {
 
 func (d DayPerson) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Activity, "required"); err != nil {
+		errors = errors.Append("Activity", err)
+	}
 	for i, item := range d.Activity {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3177,6 +3288,9 @@ func (d DeepSearchResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("BodyContexts[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(d.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
 	}
 	for i, item := range d.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -3290,6 +3404,9 @@ type DirectoryPeopleResponse struct {
 
 func (d DirectoryPeopleResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
 	for i, item := range d.People {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3318,6 +3435,9 @@ type DirectoryPersonSummary struct {
 
 func (d DirectoryPersonSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.CarddavBindings, "required"); err != nil {
+		errors = errors.Append("CarddavBindings", err)
+	}
 	for i, item := range d.CarddavBindings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3436,6 +3556,9 @@ func (d DiscoverResult) Validate() error {
 	if err := typesValidator.Var(d.Account, "required"); err != nil {
 		errors = errors.Append("Account", err)
 	}
+	if err := typesValidator.Var(d.Applied, "required"); err != nil {
+		errors = errors.Append("Applied", err)
+	}
 	for i, item := range d.Applied {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3443,12 +3566,18 @@ func (d DiscoverResult) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(d.Candidates, "required"); err != nil {
+		errors = errors.Append("Candidates", err)
+	}
 	for i, item := range d.Candidates {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Candidates[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(d.Rejected, "required"); err != nil {
+		errors = errors.Append("Rejected", err)
 	}
 	for i, item := range d.Rejected {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -3594,6 +3723,9 @@ type DocumentIndexStatus struct {
 
 func (d DocumentIndexStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Failures, "required"); err != nil {
+		errors = errors.Append("Failures", err)
+	}
 	for i, item := range d.Failures {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3658,6 +3790,9 @@ type DocumentSearchResponse struct {
 
 func (d DocumentSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range d.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -3835,6 +3970,9 @@ type DocumentVectorGenerationStatus struct {
 
 func (d DocumentVectorGenerationStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(d.Failures, "required"); err != nil {
+		errors = errors.Append("Failures", err)
+	}
 	for i, item := range d.Failures {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4007,6 +4145,9 @@ func (d DomainSearchHTTPResponse) Validate() error {
 	if err := typesValidator.Var(d.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(d.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range d.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4049,6 +4190,9 @@ func (d DomainSummary) Validate() error {
 	}
 	if err := typesValidator.Var(d.LastAt, "required"); err != nil {
 		errors = errors.Append("LastAt", err)
+	}
+	if err := typesValidator.Var(d.SourceCounts, "required"); err != nil {
+		errors = errors.Append("SourceCounts", err)
 	}
 	for i, item := range d.SourceCounts {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -4164,6 +4308,9 @@ func (e EmbeddingDiagnostics) Validate() error {
 				errors = errors.Append("LastError", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(e.RecentBatches, "required"); err != nil {
+		errors = errors.Append("RecentBatches", err)
 	}
 	for i, item := range e.RecentBatches {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -4407,6 +4554,9 @@ type EmploymentsResponse struct {
 
 func (e EmploymentsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Employments, "required"); err != nil {
+		errors = errors.Append("Employments", err)
+	}
 	for i, item := range e.Employments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4666,6 +4816,9 @@ func (e ExploreFilesHTTPResponse) Validate() error {
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(e.Files, "required"); err != nil {
+		errors = errors.Append("Files", err)
+	}
 	for i, item := range e.Files {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4698,6 +4851,9 @@ func (e ExploreFilter) Validate() error {
 	}
 	if err := typesValidator.Var(e.Values, "required"); err != nil {
 		errors = errors.Append("Values", err)
+	}
+	if e.Values != nil && len(e.Values) < 1 {
+		errors = errors.Add("Values", fmt.Sprintf("must have at least 1 items, got %d", len(e.Values)))
 	}
 	if len(errors) == 0 {
 		return nil
@@ -4768,6 +4924,15 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(e.Grouping, "required"); err != nil {
+		errors = errors.Append("Grouping", err)
+	}
+	if e.Grouping != nil && len(e.Grouping) < 1 {
+		errors = errors.Add("Grouping", fmt.Sprintf("must have at least 1 items, got %d", len(e.Grouping)))
+	}
+	if len(e.Grouping) > 1 {
+		errors = errors.Add("Grouping", fmt.Sprintf("must have at most 1 items, got %d", len(e.Grouping)))
+	}
 	for i, item := range e.Grouping {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4793,6 +4958,9 @@ func (e ExploreGroupsHTTPRequest) Validate() error {
 				errors = errors.Append("SearchMode", err)
 			}
 		}
+	}
+	if len(e.Sort) > 1 {
+		errors = errors.Add("Sort", fmt.Sprintf("must have at most 1 items, got %d", len(e.Sort)))
 	}
 	for i, item := range e.Sort {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -4821,6 +4989,9 @@ func (e ExploreGroupsHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if err := typesValidator.Var(e.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
 	}
 	for i, item := range e.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -4920,6 +5091,9 @@ func (e ExploreHTTPResponse) Validate() error {
 	if err := typesValidator.Var(e.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(e.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range e.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -4953,6 +5127,12 @@ func (e ExploreMatchCountsRequest) Validate() error {
 	if err := typesValidator.Var(e.RowKeys, "required"); err != nil {
 		errors = errors.Append("RowKeys", err)
 	}
+	if e.RowKeys != nil && len(e.RowKeys) < 1 {
+		errors = errors.Add("RowKeys", fmt.Sprintf("must have at least 1 items, got %d", len(e.RowKeys)))
+	}
+	if len(e.RowKeys) > 500 {
+		errors = errors.Add("RowKeys", fmt.Sprintf("must have at most 500 items, got %d", len(e.RowKeys)))
+	}
 	if len(errors) == 0 {
 		return nil
 	}
@@ -4973,6 +5153,9 @@ func (e ExploreMatchCountsResponse) Validate() error {
 	}
 	if err := typesValidator.Var(e.CanonicalQueryHash, "required"); err != nil {
 		errors = errors.Append("CanonicalQueryHash", err)
+	}
+	if err := typesValidator.Var(e.Counts, "required"); err != nil {
+		errors = errors.Append("Counts", err)
 	}
 	for i, item := range e.Counts {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -5022,6 +5205,9 @@ type ExplorePreflightResponse struct {
 
 func (e ExplorePreflightResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.ActionTargets, "required"); err != nil {
+		errors = errors.Append("ActionTargets", err)
+	}
 	for i, item := range e.ActionTargets {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5042,6 +5228,9 @@ func (e ExplorePreflightResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("SearchProvenance", err)
 		}
+	}
+	if err := typesValidator.Var(e.UnavailableActions, "required"); err != nil {
+		errors = errors.Append("UnavailableActions", err)
 	}
 	for i, item := range e.UnavailableActions {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -5159,6 +5348,15 @@ func (f FileGroupsHTTPRequest) Validate() error {
 	if err := typesValidator.Var(f.Grouping, "required,min=1,max=1"); err != nil {
 		errors = errors.Append("Grouping", err)
 	}
+	if err := typesValidator.Var(f.Grouping, "required"); err != nil {
+		errors = errors.Append("Grouping", err)
+	}
+	if f.Grouping != nil && len(f.Grouping) < 1 {
+		errors = errors.Add("Grouping", fmt.Sprintf("must have at least 1 items, got %d", len(f.Grouping)))
+	}
+	if len(f.Grouping) > 1 {
+		errors = errors.Add("Grouping", fmt.Sprintf("must have at most 1 items, got %d", len(f.Grouping)))
+	}
 	for i, item := range f.Grouping {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5175,6 +5373,9 @@ func (f FileGroupsHTTPRequest) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Predicate", err)
 		}
+	}
+	if len(f.Sort) > 1 {
+		errors = errors.Add("Sort", fmt.Sprintf("must have at most 1 items, got %d", len(f.Sort)))
 	}
 	for i, item := range f.Sort {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -5203,6 +5404,9 @@ func (f FileGroupsHTTPResponse) Validate() error {
 	if err := typesValidator.Var(f.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(f.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range f.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5228,10 +5432,10 @@ type FileMetadataResponse struct {
 	ConversationID   int64                            `json:"conversation_id"`
 	Docbank          []DocbankAttachmentRef           `json:"docbank,omitempty"`
 	EntryKey         string                           `json:"entry_key" validate:"required"`
-	Filename         *string                          `json:"filename,omitzero" validate:"required"`
+	Filename         *string                          `json:"filename" validate:"required"`
 	ID               int64                            `json:"id"`
 	MessageID        int64                            `json:"message_id"`
-	MimeType         *string                          `json:"mime_type,omitzero" validate:"required"`
+	MimeType         *string                          `json:"mime_type" validate:"required"`
 	SizeBytes        int64                            `json:"size_bytes"`
 	URL              *string                          `json:"url,omitzero"`
 }
@@ -5319,6 +5523,9 @@ func (f FileSearchHTTPResponse) Validate() error {
 	if err := typesValidator.Var(f.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(f.Files, "required"); err != nil {
+		errors = errors.Append("Files", err)
+	}
 	for i, item := range f.Files {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5343,12 +5550,12 @@ type FileSearchRow struct {
 	ContentState       FileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                     `json:"conversation_id"`
 	EntryKey           string                    `json:"entry_key" validate:"required"`
-	Filename           *string                   `json:"filename,omitzero" validate:"required"`
+	Filename           *string                   `json:"filename" validate:"required"`
 	ID                 int64                     `json:"id"`
 	Key                string                    `json:"key" validate:"required"`
 	MessageID          int64                     `json:"message_id"`
 	MimeFamily         string                    `json:"mime_family" validate:"required"`
-	MimeType           *string                   `json:"mime_type,omitzero" validate:"required"`
+	MimeType           *string                   `json:"mime_type" validate:"required"`
 	OccurredAt         time.Time                 `json:"occurred_at" validate:"required"`
 	ParticipantDomains []string                  `json:"participant_domains,omitempty"`
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
@@ -5428,6 +5635,9 @@ type FileSuggestionHTTPRequest struct {
 
 func (f FileSuggestionHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if len(f.AccountScopes) > 16 {
+		errors = errors.Add("AccountScopes", fmt.Sprintf("must have at most 16 items, got %d", len(f.AccountScopes)))
+	}
 	for i, item := range f.AccountScopes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5443,12 +5653,18 @@ func (f FileSuggestionHTTPRequest) Validate() error {
 			errors = errors.Append("Limit", err)
 		}
 	}
+	if len(f.MimeFamilies) > 8 {
+		errors = errors.Add("MimeFamilies", fmt.Sprintf("must have at most 8 items, got %d", len(f.MimeFamilies)))
+	}
 	for i, item := range f.MimeFamilies {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("MimeFamilies[%d]", i), err)
 			}
 		}
+	}
+	if len(f.SourceIds) > 64 {
+		errors = errors.Add("SourceIds", fmt.Sprintf("must have at most 64 items, got %d", len(f.SourceIds)))
 	}
 	if len(errors) == 0 {
 		return nil
@@ -5466,6 +5682,9 @@ func (f FileSuggestionHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(f.IndexRevision, "required"); err != nil {
 		errors = errors.Append("IndexRevision", err)
+	}
+	if err := typesValidator.Var(f.Suggestions, "required"); err != nil {
+		errors = errors.Append("Suggestions", err)
 	}
 	for i, item := range f.Suggestions {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -5489,7 +5708,7 @@ type FileSuggestionRow struct {
 	ID               int64                          `json:"id"`
 	MessageID        int64                          `json:"message_id"`
 	MimeFamily       FileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
-	MimeType         *string                        `json:"mime_type,omitzero" validate:"required"`
+	MimeType         *string                        `json:"mime_type" validate:"required"`
 	OccurredAt       *time.Time                     `json:"occurred_at" validate:"omitempty"`
 	SizeBytes        int64                          `json:"size_bytes"`
 	SourceID         int64                          `json:"source_id"`
@@ -5541,6 +5760,9 @@ type FilteredMessagesResponse struct {
 
 func (f FilteredMessagesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(f.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range f.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5613,6 +5835,9 @@ type GCalCalendarBusy struct {
 
 func (g GCalCalendarBusy) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Busy, "required"); err != nil {
+		errors = errors.Append("Busy", err)
+	}
 	for i, item := range g.Busy {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -5835,6 +6060,9 @@ type GCalReminders struct {
 
 func (g GCalReminders) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(g.Overrides, "required"); err != nil {
+		errors = errors.Append("Overrides", err)
+	}
 	for i, item := range g.Overrides {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6040,6 +6268,9 @@ func (h HybridSearchResponse) Validate() error {
 	if err := typesValidator.Var(h.Query, "required"); err != nil {
 		errors = errors.Append("Query", err)
 	}
+	if err := typesValidator.Var(h.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range h.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6159,6 +6390,9 @@ func (i IdentityMatchCandidate) Validate() error {
 	if err := typesValidator.Var(i.CreatedAt, "required"); err != nil {
 		errors = errors.Append("CreatedAt", err)
 	}
+	if err := typesValidator.Var(i.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
 	for i, item := range i.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6216,6 +6450,9 @@ type IdentityMatchCandidatesResponse struct {
 
 func (i IdentityMatchCandidatesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Candidates, "required"); err != nil {
+		errors = errors.Append("Candidates", err)
+	}
 	for i, item := range i.Candidates {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6340,6 +6577,9 @@ type IdentityRouteSuggestionPage struct {
 
 func (i IdentityRouteSuggestionPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range i.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6428,7 +6668,25 @@ type ImportJobRequest struct {
 }
 
 func (i ImportJobRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Account, "required,min=1"); err != nil {
+		errors = errors.Append("Account", err)
+	}
+	if err := runtime.ValidatePattern(i.After, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("After", err)
+	}
+	if err := runtime.ValidatePattern(i.Before, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("Before", err)
+	}
+	if i.Limit != nil {
+		if err := typesValidator.Var(i.Limit, "omitempty,gte=0"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ImportJobResponse struct {
@@ -6436,11 +6694,11 @@ type ImportJobResponse struct {
 	Added      int64                   `json:"added"`
 	CreatedAt  time.Time               `json:"created_at" validate:"required"`
 	ErrorData  *string                 `json:"error,omitzero"`
-	FinishedAt *time.Time              `json:"finished_at,omitempty" validate:"required"`
+	FinishedAt *time.Time              `json:"finished_at" validate:"required"`
 	JobID      string                  `json:"job_id" validate:"required"`
 	Processed  int64                   `json:"processed"`
 	Skipped    int64                   `json:"skipped"`
-	StartedAt  *time.Time              `json:"started_at,omitempty" validate:"required"`
+	StartedAt  *time.Time              `json:"started_at" validate:"required"`
 	Status     ImportJobResponseStatus `json:"status" validate:"required"`
 	Summary    *ImportJobSummary       `json:"summary,omitempty"`
 }
@@ -6502,6 +6760,9 @@ type ImportRequest struct {
 
 func (i ImportRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(i.Entries, "required"); err != nil {
+		errors = errors.Append("Entries", err)
+	}
 	for i, item := range i.Entries {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6528,12 +6789,18 @@ func (i ImportResult) Validate() error {
 	if err := typesValidator.Var(i.Account, "required"); err != nil {
 		errors = errors.Append("Account", err)
 	}
+	if err := typesValidator.Var(i.Applied, "required"); err != nil {
+		errors = errors.Append("Applied", err)
+	}
 	for i, item := range i.Applied {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Applied[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(i.Candidates, "required"); err != nil {
+		errors = errors.Append("Candidates", err)
 	}
 	for i, item := range i.Candidates {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -6557,6 +6824,15 @@ type KataEvidenceLinkRequest struct {
 
 func (k KataEvidenceLinkRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	if k.Evidence != nil && len(k.Evidence) < 1 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at least 1 items, got %d", len(k.Evidence)))
+	}
+	if len(k.Evidence) > 32 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at most 32 items, got %d", len(k.Evidence)))
+	}
 	for i, item := range k.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6576,6 +6852,15 @@ type KataEvidencePrepareRequest struct {
 
 func (k KataEvidencePrepareRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Selectors, "required"); err != nil {
+		errors = errors.Append("Selectors", err)
+	}
+	if k.Selectors != nil && len(k.Selectors) < 1 {
+		errors = errors.Add("Selectors", fmt.Sprintf("must have at least 1 items, got %d", len(k.Selectors)))
+	}
+	if len(k.Selectors) > 32 {
+		errors = errors.Add("Selectors", fmt.Sprintf("must have at most 32 items, got %d", len(k.Selectors)))
+	}
 	for i, item := range k.Selectors {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6595,6 +6880,9 @@ type KataEvidencePrepareResponse struct {
 
 func (k KataEvidencePrepareResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
 	for i, item := range k.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6647,6 +6935,9 @@ func (k KataIssueContextResponse) Validate() error {
 			errors = errors.Append("Issue", err)
 		}
 	}
+	if err := typesValidator.Var(k.Passages, "required"); err != nil {
+		errors = errors.Append("Passages", err)
+	}
 	for i, item := range k.Passages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6674,6 +6965,15 @@ func (k KataIssueCreateRequest) Validate() error {
 		if err := typesValidator.Var(k.Brief, "omitempty,max=2000"); err != nil {
 			errors = errors.Append("Brief", err)
 		}
+	}
+	if err := typesValidator.Var(k.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
+	if k.Evidence != nil && len(k.Evidence) < 1 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at least 1 items, got %d", len(k.Evidence)))
+	}
+	if len(k.Evidence) > 32 {
+		errors = errors.Add("Evidence", fmt.Sprintf("must have at most 32 items, got %d", len(k.Evidence)))
 	}
 	for i, item := range k.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -6710,6 +7010,9 @@ type KataIssueListResponse struct {
 
 func (k KataIssueListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(k.Issues, "required"); err != nil {
+		errors = errors.Append("Issues", err)
+	}
 	for i, item := range k.Issues {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6764,6 +7067,9 @@ type ListDeletionsResponse struct {
 
 func (l ListDeletionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Manifests, "required"); err != nil {
+		errors = errors.Append("Manifests", err)
+	}
 	for i, item := range l.Manifests {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6784,6 +7090,9 @@ type MCPCapabilities struct {
 
 func (m MCPCapabilities) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Routes, "required"); err != nil {
+		errors = errors.Append("Routes", err)
+	}
 	for i, item := range m.Routes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -6908,6 +7217,9 @@ func (m MediaSearchResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Coverage", err)
 		}
+	}
+	if err := typesValidator.Var(m.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
 	}
 	for i, item := range m.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -7279,7 +7591,7 @@ type MeetingRef struct {
 	ArchivePath      string     `json:"archive_path" validate:"required"`
 	ConversationID   int64      `json:"conversation_id"`
 	MessageID        int64      `json:"message_id"`
-	OccurredAt       *time.Time `json:"occurred_at,omitempty" validate:"required"`
+	OccurredAt       *time.Time `json:"occurred_at" validate:"required"`
 	SourceID         int64      `json:"source_id"`
 	SourceIdentifier string     `json:"source_identifier" validate:"required"`
 	SourceMessageID  string     `json:"source_message_id" validate:"required"`
@@ -7312,6 +7624,12 @@ func (m MeetingScopeRequest) Validate() error {
 			}
 		}
 	}
+	if m.Domains != nil && len(m.Domains) < 1 {
+		errors = errors.Add("Domains", fmt.Sprintf("must have at least 1 items, got %d", len(m.Domains)))
+	}
+	if len(m.Domains) > 100 {
+		errors = errors.Add("Domains", fmt.Sprintf("must have at most 100 items, got %d", len(m.Domains)))
+	}
 	if v, ok := any(m.MessageIds).(runtime.Validator); ok && v != nil {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("MessageIds", err)
@@ -7322,8 +7640,14 @@ func (m MeetingScopeRequest) Validate() error {
 			errors = errors.Append("ParticipantID", err)
 		}
 	}
+	if m.ParticipantIds != nil && len(m.ParticipantIds) < 1 {
+		errors = errors.Add("ParticipantIds", fmt.Sprintf("must have at least 1 items, got %d", len(m.ParticipantIds)))
+	}
+	if len(m.ParticipantIds) > 100 {
+		errors = errors.Add("ParticipantIds", fmt.Sprintf("must have at most 100 items, got %d", len(m.ParticipantIds)))
+	}
 	for i, item := range m.ParticipantIds {
-		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+		if err := typesValidator.Var(item, "gte=1,lte=9007199254740991"); err != nil {
 			errors = errors.Append(fmt.Sprintf("ParticipantIds[%d]", i), err)
 		}
 	}
@@ -7332,8 +7656,14 @@ func (m MeetingScopeRequest) Validate() error {
 			errors = errors.Append("PersonID", err)
 		}
 	}
+	if m.SourceIds != nil && len(m.SourceIds) < 1 {
+		errors = errors.Add("SourceIds", fmt.Sprintf("must have at least 1 items, got %d", len(m.SourceIds)))
+	}
+	if len(m.SourceIds) > 100 {
+		errors = errors.Add("SourceIds", fmt.Sprintf("must have at most 100 items, got %d", len(m.SourceIds)))
+	}
 	for i, item := range m.SourceIds {
-		if err := typesValidator.Var(item, "omitempty,gte=1,lte=9007199254740991"); err != nil {
+		if err := typesValidator.Var(item, "gte=1,lte=9007199254740991"); err != nil {
 			errors = errors.Append(fmt.Sprintf("SourceIds[%d]", i), err)
 		}
 	}
@@ -7394,6 +7724,9 @@ type MessageDetail struct {
 
 func (m MessageDetail) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Attachments, "required"); err != nil {
+		errors = errors.Append("Attachments", err)
+	}
 	for i, item := range m.Attachments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7437,6 +7770,9 @@ type MessageListResponse struct {
 
 func (m MessageListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range m.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7467,7 +7803,7 @@ func (m MessageRecord) Validate() error {
 
 type MessageRecording struct {
 	AttachmentID int64                 `json:"attachment_id"`
-	Filename     *string               `json:"filename,omitzero" validate:"required"`
+	Filename     *string               `json:"filename" validate:"required"`
 	SizeBytes    int64                 `json:"size_bytes"`
 	State        MessageRecordingState `json:"state" validate:"required"`
 	Transcript   *MessageTranscript    `json:"transcript,omitempty"`
@@ -7503,6 +7839,9 @@ type MessageRecordingsResponse struct {
 
 func (m MessageRecordingsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Recordings, "required"); err != nil {
+		errors = errors.Append("Recordings", err)
+	}
 	for i, item := range m.Recordings {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7569,6 +7908,20 @@ type MessageTagChange struct {
 	Remove  []string `json:"remove,omitempty"`
 }
 
+func (m MessageTagChange) Validate() error {
+	var errors runtime.ValidationErrors
+	if len(m.Add) > 100 {
+		errors = errors.Add("Add", fmt.Sprintf("must have at most 100 items, got %d", len(m.Add)))
+	}
+	if len(m.Remove) > 100 {
+		errors = errors.Add("Remove", fmt.Sprintf("must have at most 100 items, got %d", len(m.Remove)))
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MessageTagError struct {
 	ErrorData string            `json:"error" validate:"required"`
 	Message   string            `json:"message" validate:"required"`
@@ -7618,6 +7971,9 @@ type MessageTagResult struct {
 
 func (m MessageTagResult) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.AvailableTags, "required"); err != nil {
+		errors = errors.Append("AvailableTags", err)
+	}
 	for i, item := range m.AvailableTags {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7662,6 +8018,9 @@ func (m MessageTranscript) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Origin", err)
 		}
+	}
+	if err := typesValidator.Var(m.Units, "required"); err != nil {
+		errors = errors.Append("Units", err)
 	}
 	for i, item := range m.Units {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -7750,6 +8109,9 @@ type MessagingRoutePage struct {
 
 func (m MessagingRoutePage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range m.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7780,6 +8142,9 @@ func (m Metrics) Validate() error {
 	if err := typesValidator.Var(m.ArchiveUID, "required"); err != nil {
 		errors = errors.Append("ArchiveUID", err)
 	}
+	if err := typesValidator.Var(m.DurationByBasis, "required"); err != nil {
+		errors = errors.Append("DurationByBasis", err)
+	}
 	for i, item := range m.DurationByBasis {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7796,6 +8161,9 @@ func (m Metrics) Validate() error {
 		if err := typesValidator.Var(m.LastMeetingAt, "required"); err != nil {
 			errors = errors.Append("LastMeetingAt", err)
 		}
+	}
+	if err := typesValidator.Var(m.Months, "required"); err != nil {
+		errors = errors.Append("Months", err)
 	}
 	for i, item := range m.Months {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -7854,6 +8222,9 @@ func (m MuesliRemoteMeeting) Validate() error {
 			errors = errors.Append("ContactsState", err)
 		}
 	}
+	if len(m.Participants) > 200 {
+		errors = errors.Add("Participants", fmt.Sprintf("must have at most 200 items, got %d", len(m.Participants)))
+	}
 	for i, item := range m.Participants {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -7893,10 +8264,22 @@ func (m MuesliRemoteParticipant) Validate() error {
 			errors = errors.Append("Anchor", err)
 		}
 	}
+	if len(m.ContactReviewPhones) > 50 {
+		errors = errors.Add("ContactReviewPhones", fmt.Sprintf("must have at most 50 items, got %d", len(m.ContactReviewPhones)))
+	}
+	if len(m.Emails) > 50 {
+		errors = errors.Add("Emails", fmt.Sprintf("must have at most 50 items, got %d", len(m.Emails)))
+	}
+	if len(m.LinkExcludedAddresses) > 50 {
+		errors = errors.Add("LinkExcludedAddresses", fmt.Sprintf("must have at most 50 items, got %d", len(m.LinkExcludedAddresses)))
+	}
 	if m.Name != nil {
 		if err := typesValidator.Var(m.Name, "omitempty,max=1024"); err != nil {
 			errors = errors.Append("Name", err)
 		}
+	}
+	if len(m.Phones) > 50 {
+		errors = errors.Add("Phones", fmt.Sprintf("must have at most 50 items, got %d", len(m.Phones)))
 	}
 	if m.Ref != nil {
 		if err := typesValidator.Var(m.Ref, "omitempty,max=16"); err != nil {
@@ -8145,6 +8528,9 @@ func (o OperationLaneStatus) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(o.SupportedActions, "required"); err != nil {
+		errors = errors.Append("SupportedActions", err)
+	}
 	for i, item := range o.SupportedActions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8221,6 +8607,9 @@ type OperationRunDetail struct {
 
 func (o OperationRunDetail) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Counters, "required"); err != nil {
+		errors = errors.Append("Counters", err)
+	}
 	for i, item := range o.Counters {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8263,6 +8652,9 @@ func (o OperationRunDetail) Validate() error {
 			errors = errors.Append("State", err)
 		}
 	}
+	if err := typesValidator.Var(o.SupportedActions, "required"); err != nil {
+		errors = errors.Append("SupportedActions", err)
+	}
 	for i, item := range o.SupportedActions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8299,6 +8691,9 @@ type OperationRunSummary struct {
 
 func (o OperationRunSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Counters, "required"); err != nil {
+		errors = errors.Append("Counters", err)
+	}
 	for i, item := range o.Counters {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8359,12 +8754,18 @@ func (o OperationRunsResponse) Validate() error {
 	if err := typesValidator.Var(o.MembershipRevision, "gte=0"); err != nil {
 		errors = errors.Append("MembershipRevision", err)
 	}
+	if err := typesValidator.Var(o.Runs, "required"); err != nil {
+		errors = errors.Append("Runs", err)
+	}
 	for i, item := range o.Runs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Runs[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(o.UnavailableKinds, "required"); err != nil {
+		errors = errors.Append("UnavailableKinds", err)
 	}
 	for i, item := range o.UnavailableKinds {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -8385,6 +8786,9 @@ type OperationStatusResponse struct {
 
 func (o OperationStatusResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Lanes, "required"); err != nil {
+		errors = errors.Append("Lanes", err)
+	}
 	for i, item := range o.Lanes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -8612,6 +9016,9 @@ type OrganizationAttributesResponse struct {
 
 func (o OrganizationAttributesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Values, "required"); err != nil {
+		errors = errors.Append("Values", err)
+	}
 	for i, item := range o.Values {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9068,12 +9475,18 @@ type OrganizationProfile struct {
 
 func (o OrganizationProfile) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Addresses, "required"); err != nil {
+		errors = errors.Append("Addresses", err)
+	}
 	for i, item := range o.Addresses {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(o.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
 	}
 	for i, item := range o.Categories {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -9082,12 +9495,18 @@ func (o OrganizationProfile) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(o.ContactPoints, "required"); err != nil {
+		errors = errors.Append("ContactPoints", err)
+	}
 	for i, item := range o.ContactPoints {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(o.Identifiers, "required"); err != nil {
+		errors = errors.Append("Identifiers", err)
 	}
 	for i, item := range o.Identifiers {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -9096,12 +9515,18 @@ func (o OrganizationProfile) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(o.Media, "required"); err != nil {
+		errors = errors.Append("Media", err)
+	}
 	for i, item := range o.Media {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Media[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(o.Names, "required"); err != nil {
+		errors = errors.Append("Names", err)
 	}
 	for i, item := range o.Names {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -9189,6 +9614,9 @@ type OrganizationsResponse struct {
 
 func (o OrganizationsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(o.Organizations, "required"); err != nil {
+		errors = errors.Append("Organizations", err)
+	}
 	for i, item := range o.Organizations {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9239,6 +9667,9 @@ func (p ParticipantCompletionHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if err := typesValidator.Var(p.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
 	}
 	for i, item := range p.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -9366,6 +9797,9 @@ func (p ParticipantSearchHTTPResponse) Validate() error {
 	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(p.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range p.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9469,6 +9903,9 @@ type PeopleCodexModelsResponse struct {
 
 func (p PeopleCodexModelsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Models, "required"); err != nil {
+		errors = errors.Append("Models", err)
+	}
 	for i, item := range p.Models {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9494,7 +9931,32 @@ type PeopleCodexProfileRequest struct {
 }
 
 func (p PeopleCodexProfileRequest) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AllowedSources, "required"); err != nil {
+		errors = errors.Append("AllowedSources", err)
+	}
+	if p.AllowedSources != nil && len(p.AllowedSources) < 1 {
+		errors = errors.Add("AllowedSources", fmt.Sprintf("must have at least 1 items, got %d", len(p.AllowedSources)))
+	}
+	if err := typesValidator.Var(p.Model, "required,min=1"); err != nil {
+		errors = errors.Append("Model", err)
+	}
+	if err := typesValidator.Var(p.ReasoningEffort, "required,min=1"); err != nil {
+		errors = errors.Append("ReasoningEffort", err)
+	}
+	if err := typesValidator.Var(p.RetentionPosture, "required,min=1"); err != nil {
+		errors = errors.Append("RetentionPosture", err)
+	}
+	if err := typesValidator.Var(p.SourceSince, "required"); err != nil {
+		errors = errors.Append("SourceSince", err)
+	}
+	if err := typesValidator.Var(p.TrainingPosture, "required,min=1"); err != nil {
+		errors = errors.Append("TrainingPosture", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PeopleInferenceCheckResponse struct {
@@ -9555,6 +10017,9 @@ func (p PeopleInferencePresetCreateRequest) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.AllowedSources, "required"); err != nil {
 		errors = errors.Append("AllowedSources", err)
+	}
+	if p.AllowedSources != nil && len(p.AllowedSources) < 1 {
+		errors = errors.Add("AllowedSources", fmt.Sprintf("must have at least 1 items, got %d", len(p.AllowedSources)))
 	}
 	if err := typesValidator.Var(p.Model, "required,min=1"); err != nil {
 		errors = errors.Append("Model", err)
@@ -9627,6 +10092,9 @@ type PeopleInferenceSettingsResponse struct {
 
 func (p PeopleInferenceSettingsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Profiles, "required"); err != nil {
+		errors = errors.Append("Profiles", err)
+	}
 	for i, item := range p.Profiles {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9646,6 +10114,9 @@ type PeopleResponse struct {
 
 func (p PeopleResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.People, "required"); err != nil {
+		errors = errors.Append("People", err)
+	}
 	for i, item := range p.People {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9868,6 +10339,9 @@ type PersonAgendaResult struct {
 
 func (p PersonAgendaResult) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range p.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -9931,6 +10405,9 @@ type PersonAttributeGroup struct {
 
 func (p PersonAttributeGroup) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Current, "required"); err != nil {
+		errors = errors.Append("Current", err)
+	}
 	for i, item := range p.Current {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10033,6 +10510,9 @@ type PersonAttributesResponse struct {
 
 func (p PersonAttributesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Attributes, "required"); err != nil {
+		errors = errors.Append("Attributes", err)
+	}
 	for i, item := range p.Attributes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10073,6 +10553,9 @@ func (p PersonBrief) Validate() error {
 			errors = errors.Append("Boundary", err)
 		}
 	}
+	if err := typesValidator.Var(p.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
 	for i, item := range p.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10108,6 +10591,9 @@ func (p PersonBrief) Validate() error {
 	}
 	if err := typesValidator.Var(p.RendererPolicy, "required"); err != nil {
 		errors = errors.Append("RendererPolicy", err)
+	}
+	if err := typesValidator.Var(p.Sentences, "required"); err != nil {
+		errors = errors.Append("Sentences", err)
 	}
 	for i, item := range p.Sentences {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -10189,6 +10675,9 @@ type PersonBriefVersionsResponse struct {
 
 func (p PersonBriefVersionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Versions, "required"); err != nil {
+		errors = errors.Append("Versions", err)
+	}
 	for i, item := range p.Versions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10278,6 +10767,9 @@ type PersonCluster struct {
 
 func (p PersonCluster) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Edges, "required"); err != nil {
+		errors = errors.Append("Edges", err)
+	}
 	for i, item := range p.Edges {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10537,12 +11029,18 @@ type PersonDayPage struct {
 
 func (p PersonDayPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Activity, "required"); err != nil {
+		errors = errors.Append("Activity", err)
+	}
 	for i, item := range p.Activity {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Activity[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Entries, "required"); err != nil {
+		errors = errors.Append("Entries", err)
 	}
 	for i, item := range p.Entries {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -10568,6 +11066,9 @@ type PersonDaysPage struct {
 
 func (p PersonDaysPage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Days, "required"); err != nil {
+		errors = errors.Append("Days", err)
+	}
 	for i, item := range p.Days {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10786,6 +11287,9 @@ type PersonFactClaimsResponse struct {
 
 func (p PersonFactClaimsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Claims, "required"); err != nil {
+		errors = errors.Append("Claims", err)
+	}
 	for i, item := range p.Claims {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10853,6 +11357,9 @@ type PersonFactDecisionsResponse struct {
 
 func (p PersonFactDecisionsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Decisions, "required"); err != nil {
+		errors = errors.Append("Decisions", err)
+	}
 	for i, item := range p.Decisions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10868,24 +11375,24 @@ func (p PersonFactDecisionsResponse) Validate() error {
 
 type PersonFactEvidence struct {
 	Authority       string                         `json:"authority" validate:"required"`
-	ContentSha256   *string                        `json:"content_sha256,omitzero" validate:"required"`
+	ContentSha256   *string                        `json:"content_sha256" validate:"required"`
 	CreatedAt       time.Time                      `json:"created_at" validate:"required"`
 	Directness      string                         `json:"directness" validate:"required"`
 	EventTime       time.Time                      `json:"event_time" validate:"required"`
 	EvidenceKey     string                         `json:"evidence_key" validate:"required"`
-	Excerpt         *string                        `json:"excerpt,omitzero" validate:"required"`
+	Excerpt         *string                        `json:"excerpt" validate:"required"`
 	ID              int64                          `json:"id"`
 	IdentityScore   int64                          `json:"identity_score"`
 	LatestStatus    *PersonFactEvidenceStatusEvent `json:"latest_status,omitempty"`
 	RecordedTime    time.Time                      `json:"recorded_time" validate:"required"`
 	SourceClass     string                         `json:"source_class" validate:"required"`
-	SourceRef       *string                        `json:"source_ref,omitzero" validate:"required"`
-	SourceURL       *string                        `json:"source_url,omitzero" validate:"required"`
-	SourceVersion   *string                        `json:"source_version,omitzero" validate:"required"`
+	SourceRef       *string                        `json:"source_ref" validate:"required"`
+	SourceURL       *string                        `json:"source_url" validate:"required"`
+	SourceVersion   *string                        `json:"source_version" validate:"required"`
 	SpanEnd         *int64                         `json:"span_end,omitempty"`
 	SpanStart       *int64                         `json:"span_start,omitempty"`
 	SubjectPersonID *int64                         `json:"subject_person_id,omitempty"`
-	SubjectRef      *string                        `json:"subject_ref,omitzero" validate:"required"`
+	SubjectRef      *string                        `json:"subject_ref" validate:"required"`
 	Supported       bool                           `json:"supported"`
 }
 
@@ -10949,6 +11456,9 @@ type PersonFactEvidenceResponse struct {
 
 func (p PersonFactEvidenceResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Evidence, "required"); err != nil {
+		errors = errors.Append("Evidence", err)
+	}
 	for i, item := range p.Evidence {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -10968,7 +11478,7 @@ type PersonFactEvidenceStatusEvent struct {
 	GenerationID  int64     `json:"generation_id"`
 	ID            int64     `json:"id"`
 	Reason        string    `json:"reason" validate:"required"`
-	SourceVersion *string   `json:"source_version,omitzero" validate:"required"`
+	SourceVersion *string   `json:"source_version" validate:"required"`
 	Supported     bool      `json:"supported"`
 }
 
@@ -10982,6 +11492,9 @@ type PersonFactEvidenceStatusEventsResponse struct {
 
 func (p PersonFactEvidenceStatusEventsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Events, "required"); err != nil {
+		errors = errors.Append("Events", err)
+	}
 	for i, item := range p.Events {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11003,12 +11516,18 @@ type PersonFactPinWrite struct {
 
 func (p PersonFactPinWrite) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Projections, "required"); err != nil {
+		errors = errors.Append("Projections", err)
+	}
 	for i, item := range p.Projections {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Projections[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Resolutions, "required"); err != nil {
+		errors = errors.Append("Resolutions", err)
 	}
 	for i, item := range p.Resolutions {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11034,6 +11553,9 @@ type PersonFactPinsResponse struct {
 
 func (p PersonFactPinsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Pins, "required"); err != nil {
+		errors = errors.Append("Pins", err)
+	}
 	for i, item := range p.Pins {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11059,6 +11581,9 @@ type PersonFactResolutionResult struct {
 
 func (p PersonFactResolutionResult) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Decisions, "required"); err != nil {
+		errors = errors.Append("Decisions", err)
+	}
 	for i, item := range p.Decisions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11068,6 +11593,9 @@ func (p PersonFactResolutionResult) Validate() error {
 	}
 	if err := typesValidator.Var(p.InputFingerprint, "required"); err != nil {
 		errors = errors.Append("InputFingerprint", err)
+	}
+	if err := typesValidator.Var(p.Projections, "required"); err != nil {
+		errors = errors.Append("Projections", err)
 	}
 	for i, item := range p.Projections {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11111,6 +11639,9 @@ type PersonFileProvenance struct {
 
 func (p PersonFileProvenance) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Directions, "required"); err != nil {
+		errors = errors.Append("Directions", err)
+	}
 	for i, item := range p.Directions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11120,6 +11651,9 @@ func (p PersonFileProvenance) Validate() error {
 	}
 	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
 		errors = errors.Append("ParticipantIds", err)
+	}
+	if err := typesValidator.Var(p.Roles, "required"); err != nil {
+		errors = errors.Append("Roles", err)
 	}
 	for i, item := range p.Roles {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11190,6 +11724,9 @@ func (p PersonFileSearchHTTPResponse) Validate() error {
 	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(p.Files, "required"); err != nil {
+		errors = errors.Append("Files", err)
+	}
 	for i, item := range p.Files {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11214,12 +11751,12 @@ type PersonFileSearchRow struct {
 	ContentState       PersonFileSearchRowContentState `json:"content_state" validate:"required"`
 	ConversationID     int64                           `json:"conversation_id"`
 	EntryKey           string                          `json:"entry_key" validate:"required"`
-	Filename           *string                         `json:"filename,omitzero" validate:"required"`
+	Filename           *string                         `json:"filename" validate:"required"`
 	ID                 int64                           `json:"id"`
 	Key                string                          `json:"key" validate:"required"`
 	MessageID          int64                           `json:"message_id"`
 	MimeFamily         string                          `json:"mime_family" validate:"required"`
-	MimeType           *string                         `json:"mime_type,omitzero" validate:"required"`
+	MimeType           *string                         `json:"mime_type" validate:"required"`
 	OccurredAt         time.Time                       `json:"occurred_at" validate:"required"`
 	ParticipantDomains []string                        `json:"participant_domains,omitempty"`
 	ParticipantIds     []int64                         `json:"participant_ids,omitempty"`
@@ -11297,6 +11834,9 @@ type PersonFileSuggestionHTTPRequest struct {
 
 func (p PersonFileSuggestionHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if len(p.AccountScopes) > 16 {
+		errors = errors.Add("AccountScopes", fmt.Sprintf("must have at most 16 items, got %d", len(p.AccountScopes)))
+	}
 	for i, item := range p.AccountScopes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11319,12 +11859,18 @@ func (p PersonFileSuggestionHTTPRequest) Validate() error {
 			errors = errors.Append("Limit", err)
 		}
 	}
+	if len(p.MimeFamilies) > 8 {
+		errors = errors.Add("MimeFamilies", fmt.Sprintf("must have at most 8 items, got %d", len(p.MimeFamilies)))
+	}
 	for i, item := range p.MimeFamilies {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("MimeFamilies[%d]", i), err)
 			}
 		}
+	}
+	if len(p.SourceIds) > 64 {
+		errors = errors.Add("SourceIds", fmt.Sprintf("must have at most 64 items, got %d", len(p.SourceIds)))
 	}
 	if len(errors) == 0 {
 		return nil
@@ -11342,6 +11888,9 @@ func (p PersonFileSuggestionHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.IndexRevision, "required"); err != nil {
 		errors = errors.Append("IndexRevision", err)
+	}
+	if err := typesValidator.Var(p.Suggestions, "required"); err != nil {
+		errors = errors.Append("Suggestions", err)
 	}
 	for i, item := range p.Suggestions {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11365,7 +11914,7 @@ type PersonFileSuggestionRow struct {
 	ID               int64                                `json:"id"`
 	MessageID        int64                                `json:"message_id"`
 	MimeFamily       PersonFileSuggestionRowMimeFamily    `json:"mime_family" validate:"required"`
-	MimeType         *string                              `json:"mime_type,omitzero" validate:"required"`
+	MimeType         *string                              `json:"mime_type" validate:"required"`
 	OccurredAt       *time.Time                           `json:"occurred_at" validate:"omitempty"`
 	PersonProvenance Provenance                           `json:"person_provenance"`
 	SizeBytes        int64                                `json:"size_bytes"`
@@ -11436,6 +11985,9 @@ type PersonIdentitiesResponse struct {
 
 func (p PersonIdentitiesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Identities, "required"); err != nil {
+		errors = errors.Append("Identities", err)
+	}
 	for i, item := range p.Identities {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11474,6 +12026,9 @@ func (p PersonInboxResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(p.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if err := typesValidator.Var(p.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
 	}
 	for i, item := range p.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11540,6 +12095,9 @@ type PersonMatchJudgmentHistoryResponse struct {
 
 func (p PersonMatchJudgmentHistoryResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Judgments, "required"); err != nil {
+		errors = errors.Append("Judgments", err)
+	}
 	for i, item := range p.Judgments {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11571,6 +12129,9 @@ func (p PersonMatchScoringResponse) Validate() error {
 				errors = errors.Append("ErrorData", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
 	}
 	for i, item := range p.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11731,12 +12292,18 @@ func (p PersonMergeDetail) Validate() error {
 			errors = errors.Append("Merge", err)
 		}
 	}
+	if err := typesValidator.Var(p.Participants, "required"); err != nil {
+		errors = errors.Append("Participants", err)
+	}
 	for i, item := range p.Participants {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Participants[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.ReviewCandidates, "required"); err != nil {
+		errors = errors.Append("ReviewCandidates", err)
 	}
 	for i, item := range p.ReviewCandidates {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11745,12 +12312,18 @@ func (p PersonMergeDetail) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(p.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range p.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Rows[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Splits, "required"); err != nil {
+		errors = errors.Append("Splits", err)
 	}
 	for i, item := range p.Splits {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11811,6 +12384,9 @@ func (p PersonMergeRequiredError) Validate() error {
 	if err := typesValidator.Var(p.Message, "required"); err != nil {
 		errors = errors.Append("Message", err)
 	}
+	if err := typesValidator.Var(p.Profiles, "required"); err != nil {
+		errors = errors.Append("Profiles", err)
+	}
 	for i, item := range p.Profiles {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -11848,6 +12424,9 @@ func (p PersonMergeResult) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Person", err)
 		}
+	}
+	if err := typesValidator.Var(p.ReviewCandidates, "required"); err != nil {
+		errors = errors.Append("ReviewCandidates", err)
 	}
 	for i, item := range p.ReviewCandidates {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -11962,6 +12541,9 @@ type PersonMergesResponse struct {
 
 func (p PersonMergesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Merges, "required"); err != nil {
+		errors = errors.Append("Merges", err)
+	}
 	for i, item := range p.Merges {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12140,12 +12722,18 @@ type PersonNetwork struct {
 
 func (p PersonNetwork) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Edges, "required"); err != nil {
+		errors = errors.Append("Edges", err)
+	}
 	for i, item := range p.Edges {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Edges[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Nodes, "required"); err != nil {
+		errors = errors.Append("Nodes", err)
 	}
 	for i, item := range p.Nodes {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12179,12 +12767,18 @@ type PersonProfileHistory struct {
 
 func (p PersonProfileHistory) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Addresses, "required"); err != nil {
+		errors = errors.Append("Addresses", err)
+	}
 	for i, item := range p.Addresses {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
 	}
 	for i, item := range p.Categories {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12193,12 +12787,18 @@ func (p PersonProfileHistory) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(p.ContactPoints, "required"); err != nil {
+		errors = errors.Append("ContactPoints", err)
+	}
 	for i, item := range p.ContactPoints {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Dates, "required"); err != nil {
+		errors = errors.Append("Dates", err)
 	}
 	for i, item := range p.Dates {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12207,6 +12807,9 @@ func (p PersonProfileHistory) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(p.Media, "required"); err != nil {
+		errors = errors.Append("Media", err)
+	}
 	for i, item := range p.Media {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12214,12 +12817,18 @@ func (p PersonProfileHistory) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(p.Names, "required"); err != nil {
+		errors = errors.Append("Names", err)
+	}
 	for i, item := range p.Names {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Names[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.Observations, "required"); err != nil {
+		errors = errors.Append("Observations", err)
 	}
 	for i, item := range p.Observations {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12414,6 +13023,9 @@ type PersonRelationshipsResponse struct {
 
 func (p PersonRelationshipsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Relationships, "required"); err != nil {
+		errors = errors.Append("Relationships", err)
+	}
 	for i, item := range p.Relationships {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12442,6 +13054,9 @@ type PersonSearchResponse struct {
 
 func (p PersonSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range p.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12504,6 +13119,9 @@ type PersonSplitResult struct {
 
 func (p PersonSplitResult) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.AmbiguousRows, "required"); err != nil {
+		errors = errors.Append("AmbiguousRows", err)
+	}
 	for i, item := range p.AmbiguousRows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12533,6 +13151,9 @@ func (p PersonSplitResult) Validate() error {
 	}
 	if err := typesValidator.Var(p.UIDAliasDisposition, "required"); err != nil {
 		errors = errors.Append("UIDAliasDisposition", err)
+	}
+	if err := typesValidator.Var(p.UnrestoredRows, "required"); err != nil {
+		errors = errors.Append("UnrestoredRows", err)
 	}
 	for i, item := range p.UnrestoredRows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12585,6 +13206,9 @@ func (p PersonSummary) Validate() error {
 	if err := typesValidator.Var(p.FirstAt, "required"); err != nil {
 		errors = errors.Append("FirstAt", err)
 	}
+	if err := typesValidator.Var(p.Identifiers, "required"); err != nil {
+		errors = errors.Append("Identifiers", err)
+	}
 	for i, item := range p.Identifiers {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12601,6 +13225,9 @@ func (p PersonSummary) Validate() error {
 				errors = errors.Append("Profile", err)
 			}
 		}
+	}
+	if err := typesValidator.Var(p.SourceCounts, "required"); err != nil {
+		errors = errors.Append("SourceCounts", err)
 	}
 	for i, item := range p.SourceCounts {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12674,6 +13301,9 @@ type Provenance struct {
 
 func (p Provenance) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Directions, "required"); err != nil {
+		errors = errors.Append("Directions", err)
+	}
 	for i, item := range p.Directions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12683,6 +13313,9 @@ func (p Provenance) Validate() error {
 	}
 	if err := typesValidator.Var(p.ParticipantIds, "required"); err != nil {
 		errors = errors.Append("ParticipantIds", err)
+	}
+	if err := typesValidator.Var(p.Roles, "required"); err != nil {
+		errors = errors.Append("Roles", err)
 	}
 	for i, item := range p.Roles {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -12913,6 +13546,9 @@ type RelationshipCalendarHTTPResponse struct {
 
 func (r RelationshipCalendarHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Annual, "required"); err != nil {
+		errors = errors.Append("Annual", err)
+	}
 	for i, item := range r.Annual {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -12927,6 +13563,9 @@ func (r RelationshipCalendarHTTPResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Current", err)
 		}
+	}
+	if err := typesValidator.Var(r.Days, "required"); err != nil {
+		errors = errors.Append("Days", err)
 	}
 	for i, item := range r.Days {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -13013,6 +13652,9 @@ type RelationshipReviewsResponse struct {
 
 func (r RelationshipReviewsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Reviews, "required"); err != nil {
+		errors = errors.Append("Reviews", err)
+	}
 	for i, item := range r.Reviews {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13112,6 +13754,9 @@ func (r RelationshipTimelineHTTPResponse) Validate() error {
 	if err := typesValidator.Var(r.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(r.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
+	}
 	for i, item := range r.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13155,6 +13800,9 @@ type RelationshipTypesResponse struct {
 
 func (r RelationshipTypesResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.RelationshipTypes, "required"); err != nil {
+		errors = errors.Append("RelationshipTypes", err)
+	}
 	for i, item := range r.RelationshipTypes {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13207,6 +13855,9 @@ func (r RelationshipsHTTPResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(r.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
+	}
+	if err := typesValidator.Var(r.Rows, "required"); err != nil {
+		errors = errors.Append("Rows", err)
 	}
 	for i, item := range r.Rows {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -13513,6 +14164,9 @@ type SavedViewsResponse struct {
 
 func (s SavedViewsResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.SavedViews, "required"); err != nil {
+		errors = errors.Append("SavedViews", err)
+	}
 	for i, item := range s.SavedViews {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13533,6 +14187,9 @@ type SchedulerStatusResponse struct {
 
 func (s SchedulerStatusResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Accounts, "required"); err != nil {
+		errors = errors.Append("Accounts", err)
+	}
 	for i, item := range s.Accounts {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13609,6 +14266,9 @@ type SearchCoverageResponse struct {
 
 func (s SearchCoverageResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Actions, "required"); err != nil {
+		errors = errors.Append("Actions", err)
+	}
 	for i, item := range s.Actions {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13641,6 +14301,9 @@ type SearchFastResponse struct {
 
 func (s SearchFastResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range s.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13686,6 +14349,9 @@ func (s SearchResponse) Validate() error {
 	if err := typesValidator.Var(s.QueryMode, "required"); err != nil {
 		errors = errors.Append("QueryMode", err)
 	}
+	if err := typesValidator.Var(s.Results, "required"); err != nil {
+		errors = errors.Append("Results", err)
+	}
 	for i, item := range s.Results {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -13715,6 +14381,9 @@ type SearchResult struct {
 
 func (s SearchResult) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range s.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14011,7 +14680,7 @@ type SettingOff struct {
 	Label     string   `json:"label" validate:"required"`
 	OnMinimum *float64 `json:"on_minimum,omitempty"`
 	Suggest   *string  `json:"suggest,omitzero"`
-	Value     *string  `json:"value,omitzero" validate:"required"`
+	Value     *string  `json:"value" validate:"required"`
 }
 
 func (s SettingOff) Validate() error {
@@ -14149,6 +14818,12 @@ type SettingsPatchRequest struct {
 
 func (s SettingsPatchRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Updates, "required"); err != nil {
+		errors = errors.Append("Updates", err)
+	}
+	if s.Updates != nil && len(s.Updates) < 1 {
+		errors = errors.Add("Updates", fmt.Sprintf("must have at least 1 items, got %d", len(s.Updates)))
+	}
 	for i, item := range s.Updates {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14175,6 +14850,9 @@ func (s SettingsResponse) Validate() error {
 	if err := typesValidator.Var(s.CredentialEtag, "required"); err != nil {
 		errors = errors.Append("CredentialEtag", err)
 	}
+	if err := typesValidator.Var(s.Groups, "required"); err != nil {
+		errors = errors.Append("Groups", err)
+	}
 	for i, item := range s.Groups {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14188,6 +14866,9 @@ func (s SettingsResponse) Validate() error {
 				errors = errors.Append(fmt.Sprintf("PersonEnrichmentProviders[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(s.Settings, "required"); err != nil {
+		errors = errors.Append("Settings", err)
 	}
 	for i, item := range s.Settings {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14215,6 +14896,9 @@ func (s SimilarSearchResponse) Validate() error {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Generation", err)
 		}
+	}
+	if err := typesValidator.Var(s.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
 	}
 	for i, item := range s.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14258,6 +14942,9 @@ func (s SourceIdentitiesResponse) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(s.Account, "required"); err != nil {
 		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(s.Identities, "required"); err != nil {
+		errors = errors.Append("Identities", err)
 	}
 	for i, item := range s.Identities {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14309,13 +14996,13 @@ func (s SourceReference) Validate() error {
 type SourceStatus struct {
 	ActiveSync            *SyncRunStatus `json:"active_sync,omitempty"`
 	CanSync               bool           `json:"can_sync"`
-	DisplayName           *string        `json:"display_name,omitzero" validate:"required"`
+	DisplayName           *string        `json:"display_name" validate:"required"`
 	ID                    int64          `json:"id"`
 	Identifier            string         `json:"identifier" validate:"required"`
 	LastSuccessfulSync    *SyncRunStatus `json:"last_successful_sync,omitempty"`
-	LastSyncAt            *string        `json:"last_sync_at,omitzero" validate:"required"`
+	LastSyncAt            *string        `json:"last_sync_at" validate:"required"`
 	LatestSync            *SyncRunStatus `json:"latest_sync,omitempty"`
-	NextSyncAt            *string        `json:"next_sync_at,omitzero" validate:"required"`
+	NextSyncAt            *string        `json:"next_sync_at" validate:"required"`
 	Schedule              *string        `json:"schedule,omitzero"`
 	Scheduled             bool           `json:"scheduled"`
 	SchedulerLastError    *string        `json:"scheduler_last_error,omitzero"`
@@ -14386,6 +15073,9 @@ type SourceStatusResponse struct {
 
 func (s SourceStatusResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Sources, "required"); err != nil {
+		errors = errors.Append("Sources", err)
+	}
 	for i, item := range s.Sources {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14579,6 +15269,9 @@ func (s Status) Validate() error {
 			errors = errors.Append("DuplicateCost", err)
 		}
 	}
+	if err := typesValidator.Var(s.Formats, "required"); err != nil {
+		errors = errors.Append("Formats", err)
+	}
 	for i, item := range s.Formats {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14623,12 +15316,18 @@ type StructuredPersonProfile struct {
 
 func (s StructuredPersonProfile) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(s.Addresses, "required"); err != nil {
+		errors = errors.Append("Addresses", err)
+	}
 	for i, item := range s.Addresses {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Addresses[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(s.Categories, "required"); err != nil {
+		errors = errors.Append("Categories", err)
 	}
 	for i, item := range s.Categories {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14637,12 +15336,18 @@ func (s StructuredPersonProfile) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(s.ContactPoints, "required"); err != nil {
+		errors = errors.Append("ContactPoints", err)
+	}
 	for i, item := range s.ContactPoints {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("ContactPoints[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(s.Dates, "required"); err != nil {
+		errors = errors.Append("Dates", err)
 	}
 	for i, item := range s.Dates {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14651,12 +15356,18 @@ func (s StructuredPersonProfile) Validate() error {
 			}
 		}
 	}
+	if err := typesValidator.Var(s.Media, "required"); err != nil {
+		errors = errors.Append("Media", err)
+	}
 	for i, item := range s.Media {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Media[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(s.Names, "required"); err != nil {
+		errors = errors.Append("Names", err)
 	}
 	for i, item := range s.Names {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14691,6 +15402,15 @@ func (s Summary) Validate() error {
 	}
 	if err := typesValidator.Var(s.DateRange, "required"); err != nil {
 		errors = errors.Append("DateRange", err)
+	}
+	if s.DateRange != nil && len(s.DateRange) < 2 {
+		errors = errors.Add("DateRange", fmt.Sprintf("must have at least 2 items, got %d", len(s.DateRange)))
+	}
+	if len(s.DateRange) > 2 {
+		errors = errors.Add("DateRange", fmt.Sprintf("must have at most 2 items, got %d", len(s.DateRange)))
+	}
+	if err := typesValidator.Var(s.TopSenders, "required"); err != nil {
+		errors = errors.Append("TopSenders", err)
 	}
 	for i, item := range s.TopSenders {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14749,8 +15469,8 @@ func (s SyncRunItemStatus) Validate() error {
 }
 
 type SyncRunStatus struct {
-	CompletedAt       *string             `json:"completed_at,omitzero" validate:"required"`
-	ErrorMessage      *string             `json:"error_message,omitzero" validate:"required"`
+	CompletedAt       *string             `json:"completed_at" validate:"required"`
+	ErrorMessage      *string             `json:"error_message" validate:"required"`
 	ErrorsCount       int64               `json:"errors_count"`
 	ID                int64               `json:"id"`
 	ItemErrors        []SyncRunItemStatus `json:"item_errors,omitempty"`
@@ -14815,6 +15535,9 @@ func (t TargetDescriptor) Validate() error {
 	if err := typesValidator.Var(t.Cardinality, "required"); err != nil {
 		errors = errors.Append("Cardinality", err)
 	}
+	if err := typesValidator.Var(t.Choices, "required"); err != nil {
+		errors = errors.Append("Choices", err)
+	}
 	for i, item := range t.Choices {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14824,6 +15547,9 @@ func (t TargetDescriptor) Validate() error {
 	}
 	if err := typesValidator.Var(t.Description, "required"); err != nil {
 		errors = errors.Append("Description", err)
+	}
+	if err := typesValidator.Var(t.Fields, "required"); err != nil {
+		errors = errors.Append("Fields", err)
 	}
 	for i, item := range t.Fields {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -14919,6 +15645,9 @@ func (t TaskLinkLookupResponse) Validate() error {
 	if err := typesValidator.Var(t.State, "required"); err != nil {
 		errors = errors.Append("State", err)
 	}
+	if err := typesValidator.Var(t.Tasks, "required"); err != nil {
+		errors = errors.Append("Tasks", err)
+	}
 	for i, item := range t.Tasks {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -14998,6 +15727,9 @@ type TaskSearchResponse struct {
 
 func (t TaskSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Tasks, "required"); err != nil {
+		errors = errors.Append("Tasks", err)
+	}
 	for i, item := range t.Tasks {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -15107,6 +15839,9 @@ func (t TextConversationsResponse) Validate() error {
 	if err := typesValidator.Var(t.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(t.Conversations, "required"); err != nil {
+		errors = errors.Append("Conversations", err)
+	}
 	for i, item := range t.Conversations {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -15134,6 +15869,9 @@ func (t TextMessagesResponse) Validate() error {
 	if err := typesValidator.Var(t.CacheRevision, "required"); err != nil {
 		errors = errors.Append("CacheRevision", err)
 	}
+	if err := typesValidator.Var(t.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range t.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -15158,6 +15896,9 @@ type TextSearchResponse struct {
 
 func (t TextSearchResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
+	}
 	for i, item := range t.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -15186,12 +15927,18 @@ type ThreadMessage struct {
 
 func (t ThreadMessage) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(t.Cc, "required"); err != nil {
+		errors = errors.Append("Cc", err)
+	}
 	for i, item := range t.Cc {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Cc[%d]", i), err)
 			}
 		}
+	}
+	if err := typesValidator.Var(t.From, "required"); err != nil {
+		errors = errors.Append("From", err)
 	}
 	for i, item := range t.From {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -15205,6 +15952,9 @@ func (t ThreadMessage) Validate() error {
 	}
 	if err := typesValidator.Var(t.Subject, "required"); err != nil {
 		errors = errors.Append("Subject", err)
+	}
+	if err := typesValidator.Var(t.To, "required"); err != nil {
+		errors = errors.Append("To", err)
 	}
 	for i, item := range t.To {
 		if v, ok := any(item).(runtime.Validator); ok {
@@ -15238,6 +15988,9 @@ func (t ThreadPage) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(t.Account, "required"); err != nil {
 		errors = errors.Append("Account", err)
+	}
+	if err := typesValidator.Var(t.Messages, "required"); err != nil {
+		errors = errors.Append("Messages", err)
 	}
 	for i, item := range t.Messages {
 		if v, ok := any(item).(runtime.Validator); ok {
