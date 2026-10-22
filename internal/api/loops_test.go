@@ -196,3 +196,31 @@ func TestDelegatedLoopRoutesRequireOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestLoopActionsRetryAfterIncompleteEvidence(t *testing.T) {
+	for _, action := range []string{"done", "snooze"} {
+		t.Run(action, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			now := time.Now().UTC()
+			anchor := f.PersistEmail(storetest.EmailSpec{Thread: "uncached-action", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the original?", SentAt: now.Add(-80 * 24 * time.Hour), NoRaw: true})
+			for i := range 1000 {
+				f.PersistEmail(storetest.EmailSpec{Thread: "uncached-action", From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Any update?", SentAt: now.Add(-4*24*time.Hour - time.Duration(i)*time.Minute), NoRaw: true})
+			}
+			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
+			fixture := &loopFixture{f: f, router: server.Router()}
+			body := ""
+			if action == "snooze" {
+				body = fmt.Sprintf(`{"until":%q}`, now.Add(24*time.Hour).Format(time.RFC3339))
+			}
+			path := fmt.Sprintf("/api/v1/loops/%d/%s", anchor, action)
+			first := fixture.do(t, http.MethodPost, path, body)
+			assert.Equal(http.StatusServiceUnavailable, first.Code, first.Body.String())
+			assert.Equal("1", first.Header().Get("Retry-After"))
+			assert.Contains(first.Body.String(), `"loop_scan_incomplete"`)
+			second := fixture.do(t, http.MethodPost, path, body)
+			require.Equal(http.StatusOK, second.Code, second.Body.String())
+		})
+	}
+}

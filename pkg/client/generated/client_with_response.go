@@ -13440,6 +13440,9 @@ func (c *Client) MarkLoopDoneWithResponse(ctx context.Context, options *MarkLoop
 				}
 			}
 		}
+		out.Headers503 = &MarkLoopDoneResp503Headers{
+			RetryAfter: resp.Headers.Get("Retry-After"),
+		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	default:
 		return out, runtime.NewClientAPIError(fmt.Errorf("unexpected status code: %d", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
@@ -13615,6 +13618,9 @@ func (c *Client) SnoozeLoopWithResponse(ctx context.Context, options *SnoozeLoop
 					Err:           err,
 				}
 			}
+		}
+		out.Headers503 = &SnoozeLoopResp503Headers{
+			RetryAfter: resp.Headers.Get("Retry-After"),
 		}
 		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
 	default:

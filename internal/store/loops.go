@@ -88,7 +88,8 @@ type LoopConversation struct {
 	// Messages are the newest live messages, newest first.
 	Messages []LoopMessage
 
-	earlier iter.Seq2[LoopMessage, error]
+	earlier         iter.Seq2[LoopMessage, error]
+	lastActivityKey any
 }
 
 // HasEarlier is true when the conversation holds live messages older than
@@ -165,13 +166,13 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 		owners, err := s.loopOwnerIdentities(ctx)
 		var heads []LoopConversation
 		if err == nil {
-			heads, err = s.loopConversationHeads(ctx, q, 0)
+			heads, err = s.loopConversationHeads(ctx, q, nil)
 		}
 		if err != nil {
 			yield(LoopConversation{}, err)
 			return
 		}
-		for offset := 0; len(heads) > 0; {
+		for len(heads) > 0 {
 			chunk, err := s.loopChunk(ctx, heads, owners)
 			if err != nil {
 				yield(LoopConversation{}, err)
@@ -182,8 +183,8 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 					return
 				}
 			}
-			offset += len(heads)
-			heads, err = s.loopConversationHeads(ctx, q, offset)
+			after := heads[len(heads)-1]
+			heads, err = s.loopConversationHeads(ctx, q, &after)
 			if err != nil {
 				yield(LoopConversation{}, err)
 				return
@@ -195,10 +196,15 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 // loopConversationHeads picks the conversations to read, newest first. With a
 // PersonID, it keeps conversations where one of the person's participants
 // sent, received, or belongs.
-func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, offset int) ([]LoopConversation, error) {
+func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *LoopConversation) ([]LoopConversation, error) {
 	query, args := s.loopConversationQuery(q)
-	query += ` LIMIT ? OFFSET ?`
-	args = append(args, loopChunkConversations, offset)
+	if after != nil {
+		key := s.loopTimeKey("m.sent_at")
+		query += ` HAVING (MAX(` + key + `) < ? OR (MAX(` + key + `) = ? AND m.conversation_id < ?))`
+		args = append(args, after.lastActivityKey, after.lastActivityKey, after.ConversationID)
+	}
+	query += ` ORDER BY last_activity_key DESC, m.conversation_id DESC LIMIT ?`
+	args = append(args, loopChunkConversations)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list loop conversations: %w", err)
@@ -208,7 +214,7 @@ func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, offset i
 	for rows.Next() {
 		var c LoopConversation
 		var first nullableTimestamp
-		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType, &first); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType, &first, &c.lastActivityKey); err != nil {
 			return nil, err
 		}
 		c.FirstAt = first.Time
@@ -226,7 +232,7 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 				ORDER BY ` + s.loopTimeKey("x.sent_at") + `, x.id LIMIT 1)`
 	}
 	query := `SELECT m.conversation_id, c.source_id, c.conversation_type,
-			` + firstAt + ` AS first_at
+			` + firstAt + ` AS first_at, MAX(` + s.loopTimeKey("m.sent_at") + `) AS last_activity_key
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id
@@ -250,8 +256,7 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 				WHERE cp.conversation_id = c.id AND cp.participant_id = pp.participant_id)))`
 		args = append(args, q.PersonID)
 	}
-	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type
-		ORDER BY MAX(` + s.loopTimeKey("m.sent_at") + `) DESC, m.conversation_id DESC`
+	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type`
 	return query, args
 }
 
@@ -754,9 +759,8 @@ func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, versio
 	var e LoopMessageEvidence
 	var token string
 	var facts sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT e.token, e.facts FROM loop_message_evidence e
- JOIN messages m ON m.id = e.message_id
- WHERE e.message_id = ? AND e.body_version = CAST(m.last_modified AS TEXT) AND e.rule_version = ?`, id, version).Scan(&token, &facts)
+	err := s.db.QueryRowContext(ctx, `SELECT token, facts FROM loop_message_evidence
+ WHERE message_id = ? AND rule_version = ?`, id, version).Scan(&token, &facts)
 	if err == nil && facts.Valid {
 		err = json.Unmarshal([]byte(facts.String), &e)
 		return e, token, err == nil, err
@@ -765,22 +769,21 @@ func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, versio
 		return e, "", false, err
 	}
 	token = rand.Text()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,body_version,token,facts)
- SELECT id, ?, CAST(last_modified AS TEXT), ?, NULL FROM messages WHERE id = ?
- ON CONFLICT(message_id) DO UPDATE SET rule_version=excluded.rule_version, body_version=excluded.body_version, token=excluded.token, facts=NULL`, version, token, id)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO loop_message_evidence(message_id,rule_version,token,facts)
+ SELECT id, ?, ?, NULL FROM messages WHERE id = ?
+ ON CONFLICT(message_id) DO UPDATE SET rule_version=excluded.rule_version, token=excluded.token, facts=NULL`, version, token, id)
 	return e, token, false, err
 }
 
 // SaveLoopMessageEvidenceContext saves only while the computation's token is
 // current. Body and original edits delete it, preventing a stale computation
-// from restoring invalidated facts even when last_modified shares a clock tick.
+// from restoring invalidated facts while unchanged imports retain their tokens.
 func (s *Store) SaveLoopMessageEvidenceContext(ctx context.Context, id int64, version int, token string, e LoopMessageEvidence) error {
 	facts, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE loop_message_evidence SET facts = ?
- WHERE message_id = ? AND rule_version = ? AND token = ?
- AND body_version = (SELECT CAST(last_modified AS TEXT) FROM messages WHERE id = ?)`, string(facts), id, version, token, id)
+ WHERE message_id = ? AND rule_version = ? AND token = ?`, string(facts), id, version, token)
 	return err
 }

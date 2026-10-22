@@ -110,6 +110,10 @@ it done. "And the invoice?" on Wednesday starts a new visible wait dated
 Wednesday. An invoice question from Sunday imported afterward also appears.
 A message that asks nothing leaves the loop hidden.
 
+If an action reaches the evidence limit, retry it to continue checking the
+conversation before saving the decision. The HTTP API returns
+`503 loop_scan_incomplete` with `Retry-After: 1` for this condition.
+
 Each question keeps its own decision when dates change or accounts merge.
 The list shows the oldest question that is neither done nor actively snoozed,
 and uses that question's age and message ID. Distinct questions keep their

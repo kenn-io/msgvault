@@ -23886,7 +23886,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+          description: "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+          headers:
+            Retry-After:
+              description: Seconds before retrying an incomplete evidence scan
+              schema:
+                type: string
         default:
           content:
             application/json:
@@ -23970,7 +23975,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-          description: Error
+          description: "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+          headers:
+            Retry-After:
+              description: Seconds before retrying an incomplete evidence scan
+              schema:
+                type: string
         default:
           content:
             application/json:

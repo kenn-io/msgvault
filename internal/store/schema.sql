@@ -4685,7 +4685,6 @@ CREATE TABLE IF NOT EXISTS loop_decisions (
 CREATE TABLE IF NOT EXISTS loop_message_evidence (
  message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
  rule_version INTEGER NOT NULL,
- body_version TEXT NOT NULL,
  token TEXT NOT NULL,
  facts TEXT
 );
@@ -4694,7 +4693,8 @@ AFTER INSERT ON message_raw FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_update
-AFTER UPDATE ON message_raw FOR EACH ROW BEGIN
+AFTER UPDATE ON message_raw FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.raw_data IS NOT NEW.raw_data OR OLD.raw_format IS NOT NEW.raw_format OR OLD.compression IS NOT NEW.compression OR OLD.encryption_version IS NOT NEW.encryption_version BEGIN
  DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_delete
@@ -4706,7 +4706,8 @@ AFTER INSERT ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_update
-AFTER UPDATE ON message_bodies FOR EACH ROW BEGIN
+AFTER UPDATE ON message_bodies FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text BEGIN
  DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete

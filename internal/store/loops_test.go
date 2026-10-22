@@ -873,3 +873,27 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 	listed := listLoops(t, f, loopNow)
 	assert.Len(listed, 2, "two addresses linked to one person form a direct chat")
 }
+
+func TestLoopConversationPagingSurvivesNewRecentConversation(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	original := make(map[int64]bool)
+	for i := range 205 {
+		id := f.PersistEmail(storetest.EmailSpec{Thread: "page-" + strconv.Itoa(i), From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(3*loopDay + time.Duration(i)*time.Minute)})
+		original[conversationOf(t, f, id)] = true
+	}
+	counts := make(map[int64]int)
+	yields := 0
+	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		require.NoError(err)
+		counts[conv.ConversationID]++
+		yields++
+		if yields == 200 {
+			f.PersistEmail(storetest.EmailSpec{Thread: "new-recent", From: loopAlex, To: []string{loopOwner}, Body: "Can you review it?", SentAt: loopAgo(2 * loopDay)})
+		}
+	}
+	for id := range original {
+		assert.Equal(1, counts[id], "original conversation %d must be visited exactly once", id)
+	}
+}

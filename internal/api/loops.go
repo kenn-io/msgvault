@@ -77,6 +77,8 @@ func (s *Server) registerLoopRoutes(api huma.API) {
 		}
 		op.Responses = jsonResponsesFor[LoopDecisionResponse](api)
 		addActivityErrorResponses(api, op.Responses, op.Errors...)
+		op.Responses["503"].Description = "Open loops unavailable, or loop_scan_incomplete: retry to continue checking retained evidence"
+		op.Responses["503"].Headers = map[string]*huma.Param{"Retry-After": {Description: "Seconds before retrying an incomplete evidence scan", Schema: &huma.Schema{Type: huma.TypeString}}}
 		id := pathNamedIntegerParam("message_id", "ID of the message that anchors the loop")
 		minimum := float64(1)
 		id.Schema.Minimum = &minimum
@@ -199,6 +201,9 @@ func (s *Server) applyLoopDecision(
 	switch {
 	case errors.Is(err, errSnoozeNotFuture):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, loops.ErrEvidenceIncomplete):
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusServiceUnavailable, "loop_scan_incomplete", "More history remains. Retry this action to continue checking.")
 	case errors.Is(err, loops.ErrNotOpen):
 		writeError(w, http.StatusNotFound, "loop_not_found", "That message does not anchor an open loop")
 	case err != nil:

@@ -4238,12 +4238,14 @@ CREATE TABLE IF NOT EXISTS loop_decisions (
 CREATE TABLE IF NOT EXISTS loop_message_evidence (
  message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
  rule_version INTEGER NOT NULL,
- body_version TEXT NOT NULL,
  token TEXT NOT NULL,
  facts TEXT
 );
 CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_raw() RETURNS TRIGGER AS $$
 BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.raw_data IS NOT DISTINCT FROM NEW.raw_data AND OLD.raw_format IS NOT DISTINCT FROM NEW.raw_format AND OLD.compression IS NOT DISTINCT FROM NEW.compression AND OLD.encryption_version IS NOT DISTINCT FROM NEW.encryption_version THEN
+ RETURN NULL;
+ END IF;
  DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
  RETURN NULL;
 END;
@@ -4253,6 +4255,9 @@ CREATE TRIGGER trg_loop_evidence_message_raw AFTER INSERT OR UPDATE OR DELETE ON
  FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_raw();
 CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
 BEGIN
+ IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text THEN
+ RETURN NULL;
+ END IF;
  DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
  RETURN NULL;
 END;

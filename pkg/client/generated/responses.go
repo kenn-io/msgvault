@@ -5191,6 +5191,10 @@ type ListLoopsResp struct {
 	JSON503      *ListLoopsErrorResponseJSON503
 }
 
+type MarkLoopDoneResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
+}
+
 type MarkLoopDoneResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5204,6 +5208,11 @@ type MarkLoopDoneResp struct {
 	JSON415      *MarkLoopDoneErrorResponseJSON415
 	JSON500      *MarkLoopDoneErrorResponseJSON500
 	JSON503      *MarkLoopDoneErrorResponseJSON503
+	Headers503   *MarkLoopDoneResp503Headers
+}
+
+type SnoozeLoopResp503Headers struct {
+	RetryAfter string `header:"Retry-After"`
 }
 
 type SnoozeLoopResp struct {
@@ -5219,6 +5228,7 @@ type SnoozeLoopResp struct {
 	JSON415      *SnoozeLoopErrorResponseJSON415
 	JSON500      *SnoozeLoopErrorResponseJSON500
 	JSON503      *SnoozeLoopErrorResponseJSON503
+	Headers503   *SnoozeLoopResp503Headers
 }
 
 type GetMCPCapabilitiesResp struct {

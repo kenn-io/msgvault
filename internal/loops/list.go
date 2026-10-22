@@ -36,7 +36,15 @@ type Result struct {
 const MaxListEvidenceComputations = 1000
 const evidenceVersion = 1
 
-var errEvidenceBudget = errors.New("loops: message evidence budget exhausted")
+// EvidenceIncompleteError means an action needs another request to finish reading evidence.
+type EvidenceIncompleteError struct{}
+
+func (*EvidenceIncompleteError) Error() string {
+	return "loops: evidence incomplete; retry to continue checking"
+}
+
+// ErrEvidenceIncomplete allows callers to retry after retained evidence advances.
+var ErrEvidenceIncomplete = &EvidenceIncompleteError{}
 
 // Store is what List, Done, and Snooze read and write; *store.Store
 // implements it.
@@ -64,7 +72,7 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 		return e, err
 	}
 	if r.left == 0 {
-		return e, errEvidenceBudget
+		return e, ErrEvidenceIncomplete
 	}
 	r.left--
 	body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
@@ -147,7 +155,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	if err != nil && ctx.Err() != nil {
 		return Result{}, ctx.Err()
 	}
-	incomplete := errors.Is(err, errEvidenceBudget)
+	incomplete := errors.Is(err, ErrEvidenceIncomplete)
 	if err != nil && !incomplete {
 		return Result{}, err
 	}

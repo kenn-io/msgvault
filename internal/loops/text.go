@@ -17,9 +17,9 @@ var (
 	acknowledgement = regexp.MustCompile(`(?i)^(?:(?:thanks|thank you|thx|ty|many thanks|got it|noted|received|ack|ok|okay|cheers|perfect|great)[\s!.,]*)+$`)
 )
 
-// ownText uses the shared quote and signature preprocessor.
+// ownText removes loop-specific quotations while preserving replies above and below them.
 func ownText(body string) string {
-	text, _ := preprocess.Preprocess("", body, 0, preprocess.Config{StripQuotes: true, StripSignatures: true})
+	text, _ := preprocess.Preprocess("", preprocess.StripReplyQuotes(body), 0, preprocess.Config{StripSignatures: true})
 	return text
 }
 
