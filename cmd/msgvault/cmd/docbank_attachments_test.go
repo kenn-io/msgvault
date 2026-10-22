@@ -94,46 +94,59 @@ func mustDocbankAttachmentDestination(t *testing.T, st *store.Store, cfg config.
 
 func TestDocbankAttachmentStatusCLI(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
-		want string
+		name                    string
+		args                    []string
+		method, path            string
+		status                  int
+		response, want, notWant string
 	}{
-		{"text", []string{"attachments", "status"}, "Folder: /msgvault\nDelivered: 1\nSending: 4\nFiles left to examine: 2\nFailed: 3\nforbidden: 3\nretrying: 4"},
-		{"error_without_profile", []string{"attachments", "status"}, "Last error: upload unavailable"},
-		{"processing", []string{"attachments", "status"}, "Last error: grant consent in Docbank\nDocument profile: documents\nText extracted: 2\nProcessing: 1\nNot yet requested: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2"},
-		{"no_counts", []string{"attachments", "status"}, "State: running"},
-		{"json", []string{"attachments", "status", "--json"}, `"upload_consent":true`},
-		{"backfill", []string{"attachments", "backfill"}, "Attachment mirror backfill scheduled."},
+		{
+			name: "text", args: []string{"attachments", "status"},
+			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`,
+			want:     "Folder: /msgvault\nDelivered: 1\nSending: 4\nFiles left to examine: 2\nFailed: 3\nforbidden: 3\nretrying: 4",
+			notWant:  "Document profile",
+		},
+		{
+			name: "error_without_profile", args: []string{"attachments", "status"},
+			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`,
+			want:     "Last error: upload unavailable", notWant: "Document profile",
+		},
+		{
+			name: "processing", args: []string{"attachments", "status"},
+			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"grant consent in Docbank","processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`,
+			want:     "Document profile: documents\nText extracted: 2\nProcessing: 1\nNot yet requested: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2",
+		},
+		{
+			name: "no_counts", args: []string{"attachments", "status"},
+			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
+			response: `{"state":"running","upload_consent":false,"folder":"/msgvault"}`,
+			want:     "State: running",
+		},
+		{
+			name: "json", args: []string{"attachments", "status", "--json"},
+			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`,
+			want:     `"upload_consent":true`,
+		},
+		{
+			name: "backfill", args: []string{"attachments", "backfill"},
+			method: http.MethodPost, path: "/api/v1/integrations/docbank/attachments/backfill", status: http.StatusAccepted,
+			response: `{"status":"scheduled"}`,
+			want:     "Attachment mirror backfill scheduled.",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				method, path := http.MethodGet, "/api/v1/integrations/docbank/attachments"
-				if tc.name == "backfill" {
-					method, path = http.MethodPost, path+"/backfill"
-				}
-				assert.Equal(method, r.Method)
-				assert.Equal(path, r.URL.Path)
+				assert.Equal(tc.method, r.Method)
+				assert.Equal(tc.path, r.URL.Path)
 				w.Header().Set("Content-Type", "application/json")
-				if tc.name == "backfill" {
-					w.WriteHeader(http.StatusAccepted)
-					_, _ = io.WriteString(w, `{"status":"scheduled"}`)
-					return
-				}
-				if tc.name == "no_counts" {
-					_, _ = io.WriteString(w, `{"state":"running","upload_consent":false,"folder":"/msgvault"}`)
-					return
-				}
-				if tc.name == "error_without_profile" {
-					_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`)
-					return
-				}
-				if tc.name == "processing" {
-					_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"grant consent in Docbank","processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`)
-					return
-				}
-				_, _ = io.WriteString(w, `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.response)
 			}))
 			defer daemon.Close()
 			command := newDocbankCmd(func(context.Context) (*daemonclient.Client, func(), error) {
@@ -149,13 +162,13 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			command.SetArgs(tc.args)
 			require.NoError(command.ExecuteContext(t.Context()))
 			assert.Contains(output.String(), tc.want)
-			if tc.name == "text" {
-				assert.Contains(output.String(), "Last error: upload failed")
-				assert.NotContains(output.String(), "Document profile")
+			if tc.notWant != "" {
+				assert.NotContains(output.String(), tc.notWant)
 			}
 		})
 	}
 }
+
 func TestDocbankAttachmentConsumerLifecycle(t *testing.T) {
 	for _, change := range []string{"consent", "disabled", "folder", "endpoint"} {
 		t.Run(change, func(t *testing.T) {
