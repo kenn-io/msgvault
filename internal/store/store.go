@@ -1859,9 +1859,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		ctx, migrationActivityProjectionTriggers, 1, false,
 		func(ctx context.Context) error {
 			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
-				return s.dialect.EnsureActivityProjectionTriggers(
+				if err := s.dialect.EnsureActivityProjectionTriggers(
 					boundQuerier{ctx: ctx, q: tx},
-				)
+				); err != nil {
+					return err
+				}
+				return s.reprojectDraftEvidenceTx(ctx, tx)
 			})
 		},
 	); err != nil {

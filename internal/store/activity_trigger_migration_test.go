@@ -5,11 +5,51 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f, personID := activityProjectionFixture(t)
+	olderAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	newerAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	olderID := f.NewMessage().WithSentAt(olderAt).Create(t, f.Store)
+	messageID := f.NewMessage().WithSentAt(newerAt).Create(t, f.Store)
+	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{
+		activityProjectionForMessage(t, f, olderID, personID, olderAt),
+		activityProjectionForMessage(t, f, messageID, personID, newerAt),
+	})
+	require.NoError(err)
+	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+	// Reproduce an older projector's event without running attribution hooks.
+	_, err = activityExec(f.Store, `INSERT INTO message_labels(message_id, label_id) VALUES (?, ?)`, messageID, labels["DRAFT"])
+	require.NoError(err)
+	var revisionBefore int64
+	require.NoError(activityQueryRow(f.Store, `SELECT revision FROM activity_projection_queue WHERE message_id = ?`, messageID).Scan(&revisionBefore))
+	_, err = activityExec(f.Store, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`)
+	require.NoError(err)
+	require.NoError(f.Store.InitSchema())
+	queued, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(queued, 1)
+	assert.Equal(messageID, queued[0].MessageID)
+	assert.False(queued[0].Eligible)
+	assert.Greater(queued[0].Queue.Revision, revisionBefore)
+	projection := activityProjectionFromCandidate(t, queued[0], personID, newerAt)
+	projection.Event = nil
+	_, err = f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{projection})
+	require.NoError(err)
+	state, err := f.Store.ContactStateContext(t.Context(), personID, newerAt)
+	require.NoError(err)
+	require.NotNil(state.LastContactAt)
+	assert.Equal(olderAt, state.LastContactAt.UTC())
+	assert.Equal(int64(1), state.InteractionCount)
+}
 
 // The helper initializes an archive through the combined message and attachment
 // trigger migration, then this test proves that activity triggers are installed.

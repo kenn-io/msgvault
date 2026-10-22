@@ -79,7 +79,9 @@ const (
 	// v4: the messages trigger narrowed on both backends to
 	// MessagesActivityColumns with a value-change guard, so embedding and
 	// FTS bookkeeping sweeps no longer requeue the archive.
-	migrationActivityProjectionTriggers = "activity_projection_triggers_v4"
+	// v5: is_sent joined MessagesActivityColumns, and messages projected while
+	// unsent are requeued so the projector retracts them.
+	migrationActivityProjectionTriggers = "activity_projection_triggers_v5"
 	migrationPersonInferenceProviderV2  = "person_inference_provider_v2"
 	migrationPersonSweepCallsV2         = "person_sweep_calls_v2"
 	migrationProviderConsentsV1         = "provider_consents_v1"
@@ -149,6 +151,19 @@ func (s *Store) backfillSyncRunResumeMetadata(
 		  )
 	`, GmailHistoryRecoveryRequestFingerprint); err != nil {
 		return fmt.Errorf("backfill Gmail history recovery request fingerprints: %w", err)
+	}
+	return nil
+}
+
+// reprojectDraftEvidenceTx requeues unsent mail with activity events so the
+// projector retracts it.
+func (s *Store) reprojectDraftEvidenceTx(ctx context.Context, tx *loggedTx) error {
+	if _, err := tx.ExecContext(ctx, requeueActivityProjectionSQL(`
+		SELECT ae.message_id, 1, CURRENT_TIMESTAMP
+		FROM activity_events ae JOIN messages m ON m.id = ae.message_id
+		LEFT JOIN sources src ON src.id = m.source_id
+		WHERE `+s.activityUnsentSQL())); err != nil {
+		return fmt.Errorf("requeue unsent activity: %w", err)
 	}
 	return nil
 }

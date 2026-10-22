@@ -166,6 +166,8 @@ person and UID.
 
 ### Browse people by last contact
 
+Drafts and unsent messages don't set last contact or cadence.
+
 Use `person directory` to browse promoted people, most recent contact first. It queries the selected daemon and returns a page of up to 50 people by default.
 
 ```bash

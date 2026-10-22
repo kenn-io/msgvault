@@ -952,6 +952,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		  AND label_id IN (SELECT id FROM labels)`); err != nil {
 		return nil, fmt.Errorf("copy message_labels: %w", err)
 	}
+	if err := markSubsetUnsent(tx); err != nil {
+		return nil, err
+	}
 
 	// A Matrix cursor can carry pending relation events from rooms outside
 	// the subset, so exports start Matrix sync over.
@@ -3009,6 +3012,22 @@ func markSubsetDraftsAuthored(tx *sql.Tx) error {
 			WHERE m.id IN (SELECT id FROM selected_messages)
 			  AND ` + draftEvidenceInSchemaSQL("src.", "m", "s") + `)`); err != nil {
 		return fmt.Errorf("record subset draft authorship: %w", err)
+	}
+	return nil
+}
+
+// markSubsetUnsent keeps selected messages unsent when their unsent evidence,
+// such as an IMAP \Draft flag or a draft record, stays in the source archive.
+func markSubsetUnsent(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE messages SET is_sent = FALSE
+		WHERE id IN (
+			SELECT m.id FROM src.messages m JOIN src.sources src ON src.id = m.source_id
+			WHERE m.id IN (SELECT id FROM selected_messages)
+			  AND ` + activityUnsentInSchemaSQL("src.", false) + `)
+		AND NOT EXISTS (
+			SELECT 1 FROM main.messages m JOIN main.sources src ON src.id = m.source_id
+			WHERE m.id = messages.id AND ` + activityUnsentInSchemaSQL("main.", false) + `)`); err != nil {
+		return fmt.Errorf("record subset unsent messages: %w", err)
 	}
 	return nil
 }

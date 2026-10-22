@@ -701,6 +701,7 @@ func (err *ErrActivityProjectionStale) Error() string {
 // the authoritative write transaction.
 type ActivityProjectionToken struct {
 	MessageID               int64
+	Unsent                  bool
 	SourceID                int64
 	LastModified            time.Time
 	Queue                   ActivityQueueObservation
@@ -1411,13 +1412,15 @@ func (s *Store) validateActivityMessageTx(
 		conversationID sql.NullInt64
 		messageType    string
 		lastModified   sql.NullTime
+		unsent         bool
 	)
 	err := tx.QueryRowContext(ctx, `
-		SELECT source_id, conversation_id, COALESCE(message_type, ''), last_modified
-		FROM messages
-		WHERE id = ?`+s.dialect.SelectForUpdate(),
+		SELECT m.source_id, m.conversation_id, COALESCE(m.message_type, ''), m.last_modified,
+			(SELECT `+s.activityUnsentSQL()+` FROM sources src WHERE src.id = m.source_id)
+		FROM messages m
+		WHERE m.id = ?`+s.dialect.SelectForUpdate(),
 		token.MessageID,
-	).Scan(&sourceID, &conversationID, &messageType, &lastModified)
+	).Scan(&sourceID, &conversationID, &messageType, &lastModified, &unsent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return &ErrActivityProjectionStale{
 			MessageID: token.MessageID,
@@ -1428,6 +1431,7 @@ func (s *Store) validateActivityMessageTx(
 		return fmt.Errorf("lock activity message %d: %w", token.MessageID, err)
 	}
 	if !lastModified.Valid ||
+		unsent != token.Unsent ||
 		sourceID != token.SourceID ||
 		messageType != token.MessageType ||
 		!lastModified.Time.Equal(token.LastModified) ||
