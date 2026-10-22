@@ -542,13 +542,20 @@ describe('Explore URL state', () => {
     }
   });
 
-  it('restores an identity facet tuple from the URL', () => {
+  it.each([
+    ['a canonical tuple', ['42'], ['42', 'archive@example.com', 'sender']],
+    ['a leading-zero source and plus-signed identity ID', ['01'], ['+1', 'archive@example.com', 'any']],
+    ['an int64 maximum with a padded direction', ['9223372036854775807'], ['+09223372036854775807', 'archive@example.com', ' recipient ']],
+    ['a Go-lowercased direction', ['1'], ['1', 'archive@example.com', 'RECİPİENT']],
+    ['a source with a leading NEL', ['\u00851'], ['1', 'archive@example.com', 'any']],
+    ['a duplicated source', ['1', ' 1'], ['1', 'archive@example.com', 'sender']]
+  ])('restores an identity facet tuple from the URL with %s', (_description, sources, identity) => {
     const state: ExploreURLState = {
       ...defaultExploreURLState,
       workspace: 'everything',
       filters: [
-        { dimension: 'source', values: ['42'] },
-        { dimension: 'identity', values: ['42', 'archive@example.com', 'sender'] }
+        { dimension: 'source', values: sources },
+        { dimension: 'identity', values: identity }
       ]
     };
 
@@ -612,6 +619,34 @@ describe('Explore URL state', () => {
         { dimension: 'source', values: ['14'] },
         { dimension: 'identity', values: ['14', 'first@example.com', 'any'] },
         { dimension: 'identity', values: ['14', 'second@example.com', 'sender'] }
+      ]
+    ],
+    [
+      'a zero source ID',
+      [
+        { dimension: 'source', values: ['0'] },
+        { dimension: 'identity', values: ['0', 'archive@example.com', 'any'] }
+      ]
+    ],
+    [
+      'a negative source ID',
+      [
+        { dimension: 'source', values: ['-1'] },
+        { dimension: 'identity', values: ['-1', 'archive@example.com', 'any'] }
+      ]
+    ],
+    [
+      'an int64 overflow ID',
+      [
+        { dimension: 'source', values: ['9223372036854775808'] },
+        { dimension: 'identity', values: ['9223372036854775808', 'archive@example.com', 'any'] }
+      ]
+    ],
+    [
+      'IDs that collide after number rounding',
+      [
+        { dimension: 'source', values: ['9007199254740992'] },
+        { dimension: 'identity', values: ['9007199254740993', 'archive@example.com', 'any'] }
       ]
     ]
   ])('drops identity URL state with %s', (_description, malformedFilters) => {

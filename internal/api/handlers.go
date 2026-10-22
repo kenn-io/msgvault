@@ -3618,12 +3618,12 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		sourceIDs = []int64{*filter.SourceID}
 	}
 	requestLimit := filter.Pagination.Limit
-	messages, err := engine.SearchByDomains(
+	result, err := engine.SearchByDomains(
 		r.Context(),
 		domains,
 		filter.After,
 		filter.Before,
-		requestLimit+1,
+		requestLimit,
 		filter.Pagination.Offset,
 		sourceIDs,
 	)
@@ -3633,19 +3633,14 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasMore := len(messages) > requestLimit
-	if hasMore {
-		messages = messages[:requestLimit]
-	}
-
-	summaries := make([]MessageSummary, len(messages))
-	for i, m := range messages {
+	summaries := make([]MessageSummary, len(result.Messages))
+	for i, m := range result.Messages {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		Count:    len(summaries),
-		HasMore:  hasMore,
+		HasMore:  result.HasMore,
 		Offset:   filter.Pagination.Offset,
 		Limit:    requestLimit,
 		Messages: summaries,

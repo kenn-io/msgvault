@@ -755,7 +755,7 @@ func (h *handlers) searchMetadata(ctx context.Context, req toolRequest) (*toolRe
 		return toolErrorResult(err.Error()), nil
 	}
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := intArg(args, toolArgOffset, 0)
 
 	account, _ := args[toolArgAccount].(string)
 	selection, err := h.resolveAccount(ctx, account)
@@ -941,7 +941,7 @@ func (h *handlers) searchMessageBodies(ctx context.Context, req toolRequest) (*t
 		return toolErrorResult(err.Error()), nil
 	}
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := intArg(args, toolArgOffset, 0)
 
 	account, _ := args[toolArgAccount].(string)
 	selection, err := h.resolveAccount(ctx, account)
@@ -1100,7 +1100,7 @@ func (h *handlers) searchMessageBodiesHybrid(
 	sourceID := selection.sourceID
 
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := intArg(args, toolArgOffset, 0)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 
@@ -1252,7 +1252,7 @@ func (h *handlers) searchMessageBodiesHybridViaSearcher(
 	queryStr string, parsed *search.Query, mode string, explain bool,
 ) (*toolResult, error) {
 	limit := searchLimitArg(args)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := intArg(args, toolArgOffset, 0)
 
 	freeText := strings.Join(parsed.TextTerms, " ")
 	if freeText == "" {
@@ -1865,7 +1865,7 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 
 	mode, _ := args[toolArgMode].(string)
 	limit := limitArg(args, toolArgLimit, 10)
-	offset := limitArg(args, toolArgOffset, 0)
+	offset := intArg(args, toolArgOffset, 0)
 
 	switch mode {
 	case "", "keyword":
@@ -2093,7 +2093,7 @@ func (h *handlers) listMessages(ctx context.Context, req toolRequest) (*toolResu
 	filter := query.MessageFilter{
 		Pagination: query.Pagination{
 			Limit:  listLimitArg(args) + 1,
-			Offset: limitArg(args, toolArgOffset, 0),
+			Offset: intArg(args, toolArgOffset, 0),
 		},
 	}
 	selection.applyToFilter(&filter)
@@ -2235,11 +2235,9 @@ func (h *handlers) aggregate(ctx context.Context, req toolRequest) (*toolResult,
 	return jsonResult(aggregateResponse{Data: nonNilSlice(rows)})
 }
 
-// limitArg extracts a non-negative integer limit from a map, with a default.
-// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
-// result sets.
 // intArg extracts a non-negative integer from args without the maxLimit clamp
-// used by limitArg. Suitable for body-text offsets and similar unbounded values.
+// used by limitArg. It reads unbounded non-negative integers such as
+// pagination and body offsets.
 func intArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {
@@ -2251,6 +2249,9 @@ func intArg(args map[string]any, key string, def int) int {
 	return int(v)
 }
 
+// limitArg extracts a non-negative integer limit from a map, with a default.
+// JSON numbers arrive as float64. Clamps to maxLimit to prevent excessive
+// result sets.
 func limitArg(args map[string]any, key string, def int) int {
 	v, ok := args[key].(float64)
 	if !ok {
@@ -2577,7 +2578,10 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 	}
 
 	limit := limitArg(args, toolArgLimit, 100)
-	offset := limitArg(args, toolArgOffset, 0)
+	if limit == 0 {
+		limit = 100
+	}
+	offset := intArg(args, toolArgOffset, 0)
 
 	afterDate, err := getDateArg(args, toolArgAfter)
 	if err != nil {
@@ -2588,12 +2592,13 @@ func (h *handlers) searchByDomains(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult(err.Error()), nil
 	}
 
-	results, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
+	result, err := h.engine.SearchByDomains(ctx, domains, afterDate, beforeDate, limit, offset, nil)
 	if err != nil {
 		return nil, newInternalError("search messages by domain", err)
 	}
 
-	return jsonResult(searchByDomainsResponse{Data: nonNilSlice(results)})
+	return jsonResult(searchByDomainsResponse(newPaginatedResponseNoTotal(
+		result.Messages, offset, result.HasMore)))
 }
 
 func nonNilSlice[T any](values []T) []T {

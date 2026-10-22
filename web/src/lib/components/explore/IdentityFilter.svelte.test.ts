@@ -19,6 +19,39 @@ function catalog(identities: string[] = ['primary@example.test', 'shop@example.t
 }
 
 describe('IdentityFilter', () => {
+  it.each([
+    { source: '+14', identitySource: '014', direction: 'SENDER', requested: '14', label: 'Sent via' },
+    { source: '9007199254740993', identitySource: '+09007199254740993', direction: 'sender', label: 'Sent via' },
+    { source: '1', identitySource: '1', direction: 'any', requested: '1', label: 'Any', identifier: ' shop@example.test ' }
+  ])('keeps restored source $source and identity $identitySource selected', async ({
+    source, identitySource, direction, requested, label, identifier = 'shop@example.test'
+  }) => {
+    const onChange = vi.fn<(filters: ExploreFilter[]) => void>();
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
+    render(IdentityFilter, {
+      client: createAPIClient(fetchFn),
+      filters: [
+        { dimension: 'source', values: [source].flat() },
+        { dimension: 'identity', values: [identitySource, identifier, direction] }
+      ],
+      onChange
+    });
+
+    const identity = await screen.findByRole('combobox', { name: /^Identity: shop@example\.test/ });
+    expect(screen.getByRole('combobox', { name: `Identity direction: ${label}` })).toBeDefined();
+    await waitFor(() => expect(identity).toHaveProperty('disabled', false));
+    if (requested === undefined) {
+      // The catalog endpoint takes a JSON-number ID; never request a rounded source.
+      expect(fetchFn).not.toHaveBeenCalled();
+    } else {
+      expect(fetchFn).toHaveBeenCalledOnce();
+      expect(new URL((fetchFn.mock.calls[0]![0] as Request).url).pathname)
+        .toBe(`/api/v1/sources/${requested}/identities`);
+      expect(identity.getAttribute('aria-label')).not.toContain('unavailable');
+    }
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('appears only for exactly one source and does not create source or account options', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(catalog()));
     const rendered = render(IdentityFilter, {

@@ -700,7 +700,7 @@ func TestSearchByDomains_HidesDeleted(t *testing.T) {
 
 	all, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, nil)
 	require.NoError(err, "SearchByDomains baseline")
-	require.Len(all, 5, "baseline result count")
+	require.Len(all.Messages, 5, "baseline result count")
 
 	// Dedup-soft-delete one message — must always be hidden.
 	env.MarkDedupLoserByID(1)
@@ -709,8 +709,8 @@ func TestSearchByDomains_HidesDeleted(t *testing.T) {
 
 	results, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, nil)
 	require.NoError(err, "SearchByDomains after deletes")
-	assert.Len(results, 3, "after deletes")
-	for _, r := range results {
+	assert.Len(results.Messages, 3, "after deletes")
+	for _, r := range results.Messages {
 		assert.NotEqual(int64(1), r.ID, "dedup-loser message 1 leaked into results")
 		assert.NotEqual(int64(2), r.ID, "source-deleted message 2 leaked into results")
 	}
@@ -723,10 +723,36 @@ func TestSearchByDomains_SourceFilter(t *testing.T) {
 
 	own, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, []int64{1})
 	require.NoError(err)
-	require.Len(own, 5, "the fixture's own source keeps every match")
+	require.Len(own.Messages, 5, "the fixture's own source keeps every match")
 	other, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, 100, 0, []int64{999})
 	require.NoError(err)
-	require.Empty(other, "another source filters every match out")
+	require.Empty(other.Messages, "another source filters every match out")
+}
+
+// TestSearchByDomains_HasMore verifies the engine probes one row past the
+// page, so a page that ends exactly on the last match reports no more.
+func TestSearchByDomains_HasMore(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name          string
+		limit, offset int
+		wantLen       int
+		wantHasMore   bool
+	}{
+		{"partial page", 2, 0, 2, true},
+		{"exactly the remaining matches", 5, 0, 5, false},
+		{"exactly full last page", 2, 3, 2, false},
+		{"past the end", 2, 9, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := env.Engine.SearchByDomains(ctx, []string{"example.com"}, nil, nil, tc.limit, tc.offset, nil)
+			require.NoError(t, err)
+			assert.Len(t, got.Messages, tc.wantLen)
+			assert.Equal(t, tc.wantHasMore, got.HasMore)
+		})
+	}
 }
 
 func TestSearch_DeletionScope(t *testing.T) {

@@ -25,6 +25,7 @@ All notable changes to msgvault, grouped by release.
 - Anonymous telemetry now honors `DO_NOT_TRACK` and stays off in CI and non-release builds. The CLI and terminal UI also honor opt-outs in their own environment.
 - Anonymous telemetry omits the SDK's operating system, distribution, and Go version properties. msgvault's own OS and architecture fields remain.
 - msgvault's [anonymous telemetry](configuration.md#telemetry) now counts searches, message opens and manual syncs from the web, TUI and CLI, with no query text, IDs or archive content. The CLI and TUI wait at most 50 ms for pending reports at exit.
+- MCP message searches, `search_in_message`, and `list_messages` now page past offset 1000: add `returned` to `offset` while `has_more` is true. `search_by_domains` returns `returned`, `offset`, and `has_more`, caps pages at 500 rows, and treats a zero limit as the default of 100.
 
 - [Cron schedules](configuration.md#cron-schedules) use go-cron instead of
   the unmaintained robfig/cron. A run in the hour that clocks skip for

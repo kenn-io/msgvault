@@ -43,6 +43,11 @@ func newRemoteClientFixture(t *testing.T, collectionsWrite bool) *remoteClientFi
 		}}
 		options.OperationGate = gate
 	})
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		require.NoError(t, f.srv.Shutdown(ctx))
+	})
 	return &remoteClientFixture{cliOriginalFixture: f}
 }
 
@@ -118,13 +123,11 @@ func TestRemoteClientRoutes(t *testing.T) { //nolint:paralleltest // swaps the p
 		routeCase{writer, remoteClientTestReaderKey, http.MethodDelete, "/api/v1/cli/collections/reader", "", http.StatusOK},
 	))
 
-	// Search index repair must release the gate before the busy-gate assertions.
-	require.Eventually(
-		func() bool { return !reader.srv.ftsEnsureRunning.Load() },
-		10*time.Second,
-		time.Millisecond,
-		"FTS ensure worker stops running",
-	)
+	// The search route above starts real asynchronous index maintenance. Finish
+	// that phase before testing deliberately blocked writes with a short limit.
+	require.Eventually(func() bool {
+		return reader.srv.ftsIndexComplete.Load() && !reader.srv.ftsEnsureRunning.Load()
+	}, 10*time.Second, 10*time.Millisecond, "the search index worker must finish before the busy-gate phase")
 
 	// Forbidden writes bypass the busy gate; permitted reader writes hide its holder.
 	orig := operationGateWaitLimit

@@ -4065,46 +4065,54 @@ func TestSearchByDomains(t *testing.T) {
 		var capturedDomains []string
 		var capturedLimit, capturedOffset int
 		eng := &querytest.MockEngine{
-			SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
+			SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
 				capturedDomains = domains
 				capturedLimit = limit
 				capturedOffset = offset
 				assert.NotNil(after, "expected after to be set")
 				assert.NotNil(before, "expected before to be set")
-				return []query.MessageSummary{
-					testutil.NewMessageSummary(1).WithSubject("Match").Build(),
+				return query.DomainSearchResult{
+					Messages: []query.MessageSummary{
+						testutil.NewMessageSummary(1).WithSubject("Match").Build(),
+					},
+					HasMore: true,
 				}, nil
 			},
 		}
 		h := newTestHandlers(eng)
 
-		response := runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
+		response := runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains,
 			map[string]any{
 				"domains": "acme.com,globex.com",
-				"limit":   float64(50),
+				"limit":   float64(1),
 				"offset":  float64(10),
 				"after":   "2024-01-01",
 				"before":  "2024-12-31",
 			})
 		assert.Len(response.Data, 1, "msgs")
+		assert.Equal(1, response.Returned, "returned")
+		assert.Equal(10, response.Offset, "offset echoed")
+		assert.True(response.HasMore, "the engine's has_more is reported as is")
 		assert.Equal([]string{"acme.com", "globex.com"}, capturedDomains, "domains")
-		assert.Equal(50, capturedLimit, "limit")
+		assert.Equal(1, capturedLimit, "limit")
 		assert.Equal(10, capturedOffset, "offset")
 	})
 
 	t.Run("default limit and offset", func(t *testing.T) {
-		var capturedLimit, capturedOffset int
+		var capturedLimit, capturedOffset, calls int
 		eng := &querytest.MockEngine{
-			SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
+			SearchByDomainsFunc: func(_ context.Context, _ []string, _, _ *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
+				calls++
 				capturedLimit = limit
 				capturedOffset = offset
-				return nil, nil
+				return query.DomainSearchResult{}, nil
 			},
 		}
 		h := newTestHandlers(eng)
 
-		runTool[dataResponse[query.MessageSummary]](t, "search_by_domains", h.searchByDomains,
+		runTool[searchByDomainsResponse](t, "search_by_domains", h.searchByDomains,
 			map[string]any{"domains": "acme.com"})
+		assert.Equal(t, 1, calls, "one engine call per page")
 		assert.Equal(t, 100, capturedLimit, "default limit")
 		assert.Equal(t, 0, capturedOffset, "default offset")
 	})

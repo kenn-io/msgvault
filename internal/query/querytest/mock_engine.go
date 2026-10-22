@@ -47,7 +47,7 @@ type MockEngine struct {
 	GetDeletionTargetsByMessageIDsFunc      func(context.Context, []int64) ([]query.DeletionTarget, error)
 	GetDeletionTargetsBySearchFunc          func(context.Context, *search.Query, query.MessageFilter, query.DeletionSearchMode) ([]query.DeletionTarget, error)
 	GetDeletionTargetsByAggregateSearchFunc func(context.Context, string, query.MessageFilter, query.ViewType, string) ([]query.DeletionTarget, error)
-	SearchByDomainsFunc                     func(context.Context, []string, *time.Time, *time.Time, int, int, []int64) ([]query.MessageSummary, error)
+	SearchByDomainsFunc                     func(context.Context, []string, *time.Time, *time.Time, int, int, []int64) (query.DomainSearchResult, error)
 	SearchFastWithStatsFunc                 func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error)
 	GetMessageRawFunc                       func(context.Context, int64) ([]byte, error)
 	GetMessageSummariesByIDsFunc            func(context.Context, []int64) ([]query.MessageSummary, error)
@@ -294,11 +294,11 @@ func (m *MockEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids []i
 	return m.defaultDeletionTargets(), nil
 }
 
-func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
+func (m *MockEngine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) (query.DomainSearchResult, error) {
 	if m.SearchByDomainsFunc != nil {
 		return m.SearchByDomainsFunc(ctx, domains, after, before, limit, offset, sourceIDs)
 	}
-	return m.SearchResults, nil
+	return query.DomainSearchResult{Messages: m.SearchResults}, nil
 }
 
 func (m *MockEngine) ListAccounts(_ context.Context) ([]query.AccountInfo, error) {

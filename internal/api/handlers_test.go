@@ -5588,25 +5588,22 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	var gotAfter, gotBefore *time.Time
 	var gotLimit, gotOffset int
 	engine := &querytest.MockEngine{
-		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) ([]query.MessageSummary, error) {
+		SearchByDomainsFunc: func(_ context.Context, domains []string, after, before *time.Time, limit, offset int, _ []int64) (query.DomainSearchResult, error) {
 			gotDomains = domains
 			gotAfter = after
 			gotBefore = before
 			gotLimit = limit
 			gotOffset = offset
-			return []query.MessageSummary{
-				{
-					ID:        1,
-					Subject:   "First",
-					FromEmail: "alice@example.com",
-					SentAt:    time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+			return query.DomainSearchResult{
+				Messages: []query.MessageSummary{
+					{
+						ID:        1,
+						Subject:   "First",
+						FromEmail: "alice@example.com",
+						SentAt:    time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC),
+					},
 				},
-				{
-					ID:        2,
-					Subject:   "Second",
-					FromEmail: "bob@test.org",
-					SentAt:    time.Date(2024, 1, 16, 10, 30, 0, 0, time.UTC),
-				},
+				HasMore: true,
 			}, nil
 		},
 	}
@@ -5627,7 +5624,7 @@ func TestHandleSearchByDomainsUsesQueryEngine(t *testing.T) {
 	assert.Equal("2024-01-01", gotAfter.Format("2006-01-02"), "after")
 	require.NotNil(gotBefore, "before")
 	assert.Equal("2024-02-01", gotBefore.Format("2006-01-02"), "before")
-	assert.Equal(2, gotLimit, "fetch limit should probe one extra row")
+	assert.Equal(1, gotLimit, "the engine probes for more, so the handler asks for the page size")
 	assert.Equal(3, gotOffset, "offset")
 
 	var resp FilteredMessagesResponse

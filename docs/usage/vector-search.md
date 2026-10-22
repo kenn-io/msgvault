@@ -835,8 +835,10 @@ vector tied back to the same message.
 - Chunking at `max_input_chars` with overlap for long messages.
 
 Messages deleted at the source (`deleted_from_source_at IS NOT NULL`)
-are skipped entirely. Messages that become empty after preprocessing
-are marked complete and not sent to the embedding endpoint.
+are skipped entirely. Messages that are empty or contain only whitespace
+and invisible characters after preprocessing are marked complete and never
+sent to the embedding endpoint.
+Chunks containing only such characters are dropped.
 
 The [contextual API format](#contextual-chat-and-meeting-embeddings) uses
 conversation windows for Beeper and meeting-aware chunks for transcripts.

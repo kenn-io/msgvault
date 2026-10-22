@@ -2156,12 +2156,12 @@ func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
 	t.Run("domains", func(t *testing.T) {
 		want, err := sqliteEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
-		assertSubjects(t, want, "inside bound")
+		assertSubjects(t, want.Messages, "inside bound")
 
 		delegatingEngine := &DuckDBEngine{sqliteEngine: sqliteEngine}
 		got, err := delegatingEngine.SearchByDomains(ctx, []string{"offset.example"}, parsed.AfterDate, parsed.BeforeDate, 50, 0, nil)
 		require.NoError(t, err)
-		assertSubjects(t, got, "inside bound")
+		assertSubjects(t, got.Messages, "inside bound")
 	})
 
 	t.Run("stats", func(t *testing.T) {

@@ -26,13 +26,13 @@ describe('AccountFilter', () => {
     expect(onChange).toHaveBeenCalledWith([{ dimension: 'account', values: ['unattributed:7'] }]);
   });
 
-  it('reports pending repair and keeps other filters when selecting an alias', async () => {
+  it('reports pending repair and keeps other filters when selecting an alias under a padded source', async () => {
     const fetchFn = accountsResponse([
       { key: 'identity:7:d29ya0BleGFtcGxlLm9yZw', source_id: 7, account_address: 'work@example.org', message_count: 3, source_deleted_count: 0 },
       { key: 'unattributed:7', source_id: 7, unattributed: true, message_count: 1, source_deleted_count: 0, pending_count: 1 },
     ]);
     const onChange = vi.fn();
-    const filters = [{ dimension: 'source' as const, values: ['7'] }];
+    const filters = [{ dimension: 'source' as const, values: [' +07'] }];
     render(AccountFilter, { client: createAPIClient(fetchFn), filters, onChange });
     expect((await screen.findByRole('status')).textContent).toContain('Attribution repair pending for 1 messages.');
     const select = await screen.findByRole('combobox', { name: /^Account:/ });

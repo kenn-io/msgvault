@@ -916,6 +916,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			Subject:              md.Subject,
 			Snippet:              md.Snippet,
 			SentAt:               md.SentAt,
+			DeletedAt:            md.DeletedAt,
 			SizeEstimate:         md.SizeEstimate,
 			HasAttachments:       md.HasAttachments,
 			AttachmentCount:      len(md.Attachments),
@@ -1412,9 +1413,9 @@ func (c *Client) requireListIDCapability(
 	return nil
 }
 
-func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) ([]query.MessageSummary, error) {
+func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, before *time.Time, limit, offset int, sourceIDs []int64) (query.DomainSearchResult, error) {
 	if sourceIDs != nil && len(sourceIDs) == 0 {
-		return []query.MessageSummary{}, nil
+		return query.DomainSearchResult{Messages: []query.MessageSummary{}}, nil
 	}
 	resp, err := APIResponse(e.store, func(client *apiclient.Client) (*generated.SearchMessagesByDomainsResp, error) {
 		return client.SearchMessagesByDomainsWithResponse(ctx, &generated.SearchMessagesByDomainsRequestOptions{
@@ -1429,12 +1430,15 @@ func (e *Engine) SearchByDomains(ctx context.Context, domains []string, after, b
 		})
 	})
 	if err != nil {
-		return nil, err
+		return query.DomainSearchResult{}, err
 	}
 	if resp.JSON200 == nil {
-		return nil, nil
+		return query.DomainSearchResult{}, nil
 	}
-	return e.store.messageSummariesWithURLs(resp.JSON200.Messages), nil
+	return query.DomainSearchResult{
+		Messages: e.store.messageSummariesWithURLs(resp.JSON200.Messages),
+		HasMore:  resp.JSON200.HasMore,
+	}, nil
 }
 
 // ListAccounts returns all archive source accounts.

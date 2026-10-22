@@ -853,10 +853,10 @@ func searchByDomainsDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolSearchByDomains,
 		"Find messages where any participant (from, to, or cc) belongs to one of the given domains. Searches all accounts available to this session. "+
-			"Useful for finding all communication with a company regardless of direction. Returns an object with a data array of matching message summaries.",
+			"Useful for finding all communication with a company regardless of direction. Returns data, returned, offset, has_more, and total (always -1); page with offset while has_more is true.",
 		closedObject(map[string]*jsonschema.Schema{
 			toolArgDomains: stringSchema("Comma-separated domain names (e.g. 'gobright.com,ascentae.com')"),
-			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100)", 100),
+			toolArgLimit:   nonNegativeIntegerSchema("Maximum results to return (default 100, max 500)", 100),
 			toolArgOffset:  offsetProperty(),
 			toolArgAfter:   afterProperty(),
 			toolArgBefore:  beforeProperty(),
@@ -991,9 +991,7 @@ type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {
 	Data []query.AggregateRow `json:"data"`
 }
-type searchByDomainsResponse struct {
-	Data []query.MessageSummary `json:"data"`
-}
+type searchByDomainsResponse paginatedResponse[query.MessageSummary]
 
 type getAttachmentResponse struct {
 	Docbank  []store.DocbankAttachmentRef `json:"docbank,omitempty"`
