@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -94,6 +95,12 @@ Examples:
 				}
 				enc := jsontext.NewEncoder(cmd.OutOrStdout(), jsontext.WithIndent("  "))
 				return json.MarshalEncode(enc, map[string]any{"conversation_id": page.ConversationID, "total": page.Total, "offset": page.Offset, "has_more": page.HasMore, "messages": values}, json.Deterministic(true))
+			}
+			for _, msg := range messages {
+				if mime.HTMLHasHiddenText(msg.BodyHTML) {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: this message's HTML may hide text.")
+					break
+				}
 			}
 			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Thread %d (%d messages, offset %d)\n", page.ConversationID, page.Total, page.Offset); err != nil {
 				return fmt.Errorf("write thread: %w", err)

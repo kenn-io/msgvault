@@ -3018,6 +3018,54 @@ func TestAccountFilter(t *testing.T) {
 	})
 }
 
+func TestSearchInMessageHiddenHTMLText(t *testing.T) {
+	for _, tc := range []struct {
+		name, html, mode string
+		offset, matches  int
+		hidden           bool
+	}{
+		{"hidden keyword", `<div hidden>semantic body</div>`, "keyword", 0, 1, true},
+		{"hidden keyword exhausted", `<div hidden>semantic body</div>`, "keyword", 99, 0, true},
+		{"visible keyword", `<p>semantic body</p>`, "keyword", 0, 1, false},
+		{"hidden vector", `<div hidden>semantic body</div>`, searchModeVector, 0, 1, true},
+		{"hidden vector exhausted", `<div hidden>semantic body</div>`, searchModeVector, 99, 0, true},
+		{"visible vector", `<p>semantic body</p>`, searchModeVector, 0, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			f := storetest.New(t)
+			id := f.CreateMessage("stored-html")
+			require.NoError(f.Store.UpsertMessageBody(id,
+				sql.NullString{String: "semantic body", Valid: true},
+				sql.NullString{String: tc.html, Valid: true}))
+			h := newTestHandlers(query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL()))
+			if tc.mode == searchModeVector {
+				h.vectorCfg = testSimilarVectorConfig()
+				backend := &fakeBackend{
+					active: testSimilarActiveGeneration(h.vectorCfg),
+					chunkHits: map[int64][]vector.ChunkHit{
+						id: {{ChunkCharStart: 0, ChunkCharEnd: len("semantic body"), Score: 0.9}},
+					},
+				}
+				h.backend = backend
+				h.hybridEngine = hybrid.NewEngine(backend, nil, realEmbedder{dim: 4}, hybrid.Config{
+					ExpectedFingerprint: h.vectorCfg.GenerationFingerprint(), RRFK: 60, KPerSignal: 10,
+				})
+			}
+			resp := runTool[struct {
+				paginatedInMessageMatches
+
+				HiddenTextPresent *bool `json:"hidden_text_present"`
+			}](t, "search_in_message", h.searchInMessage, map[string]any{
+				"id": float64(id), "query": "semantic", "mode": tc.mode, "offset": float64(tc.offset),
+			})
+			require.NotNil(resp.HiddenTextPresent)
+			assert.Equal(tc.hidden, *resp.HiddenTextPresent)
+			assert.Len(resp.Data, tc.matches)
+		})
+	}
+}
+
 func TestSearchInMessage(t *testing.T) {
 	t.Run("reports line and centered snippet", func(t *testing.T) {
 		assert := assert.New(t)

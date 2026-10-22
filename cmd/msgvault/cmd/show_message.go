@@ -249,6 +249,7 @@ func messageJSONValue(msg *query.MessageDetail) map[string]any {
 		"attachments":            attachments,
 		"body_text":              msg.BodyText,
 		"body_html":              msg.BodyHTML,
+		"hidden_text_present":    mime.HTMLHasHiddenText(msg.BodyHTML),
 	}
 
 	if msg.RelatedMessageID != nil {
@@ -272,7 +273,6 @@ func outputMessageJSON(w io.Writer, msg *query.MessageDetail) error {
 		msg = readableMessageDetail(msg)
 	}
 	output := messageJSONValue(msg)
-	output["hidden_text_present"] = mime.HTMLHasHiddenText(msg.BodyHTML)
 	enc := jsontext.NewEncoder(w, jsontext.WithIndent("  "))
 	return json.MarshalEncode(enc, output, json.Deterministic(true))
 }

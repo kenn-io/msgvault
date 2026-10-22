@@ -4629,10 +4629,14 @@ preserved. With JSON, cleaning changes
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
 On newer `main` builds, JSON also includes `hidden_text_present`, which reports
-whether inline styles or the `hidden` attribute may hide readable text in the
-stored HTML. Text output writes `Warning: this message's HTML may hide text.`
-to stderr when flagged, including with `--body-only`. Message bodies stay
-unchanged. Detection excludes stylesheets and browser layout.
+whether the stored HTML may hide readable text. The check uses a set of
+inline-style heuristics, plus `hidden` and legacy color attributes. Non-blank
+HTML that fails to parse also sets the flag. Text output writes
+`Warning: this message's HTML may hide text.` to stderr when flagged, including
+with `--body-only`. Message bodies stay unchanged. The check excludes
+stylesheets and browser layout. MCP `get_message` and `search_in_message`
+return the same flag. Search result rows from CLI search and MCP
+`search_message_bodies` aren't flagged.
 
 ## show-thread
 
@@ -4656,6 +4660,10 @@ JSON includes `conversation_id`, `total`, `offset`, `has_more`, and `messages`
 containing message details with cleaned `body_text`. Text and JSON use the same
 `--strip-quoted` policy. Pass `--strip-quoted=false` to
 keep the archived body text unchanged.
+
+Each message in `show-thread --json` includes `hidden_text_present`, using the
+same check as `show-message`. Text output prints the same stderr warning once
+when any message on the shown page is flagged.
 
 ---
 
