@@ -81,8 +81,9 @@ func runSyncDiscord(cmd *cobra.Command, deps discordCommandDeps, selector string
 		// A re-derivation pass runs before sync creation and can commit archive
 		// changes before cancellation or a fatal repair error. Either that pass
 		// or a sync run requires cache maintenance.
-		// Core message persistence can precede later participant, media, or
-		// reply failures, so MessagesProcessed is not a safe write indicator.
+		// Earlier messages, catalog entries, or participant identities may
+		// survive a later snapshot or media failure. MessagesProcessed alone
+		// is therefore not a safe write indicator.
 		if discordSummaryNeedsCacheRefresh(summary) {
 			anyWrites = true
 		}
@@ -181,11 +182,13 @@ func importDiscordSource(
 	after time.Time,
 	progress func(string),
 ) (*discord.ImportSummary, error) {
-	importer, err := newDiscordImporterForSource(st, source, deps)
+	importer, botID, err := newDiscordImporterForSource(ctx, st, source, deps)
 	if err != nil {
 		return nil, err
 	}
-	return importer.Import(ctx, discordImportOptions(source, deps, full, after, progress))
+	opts := discordImportOptions(source, deps, full, after, progress)
+	opts.BotUserID = botID
+	return importer.Import(ctx, opts)
 }
 
 func init() {

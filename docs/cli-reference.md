@@ -2197,7 +2197,7 @@ msgvault backup create [flags]
 |---|---|
 | `--repo <dir>` | Backup repository directory |
 | `--include-config` | Include `config.toml` verbatim; may contain API keys |
-| `--include-tokens` | Include OAuth token files |
+| `--include-tokens` | Include OAuth token files, client secrets, and the MCP Events key |
 | `--allow-plaintext-secrets` | Allow config/tokens in an unencrypted repository |
 | `--tag <text>` | Optional label recorded on the snapshot manifest |
 | `--force-unlock` | Break a stale exclusive repository lock before creating |
@@ -4082,6 +4082,15 @@ and preserves stored keys. See [stored credentials](configuration.md#stored-prov
 for input security, runtime precedence, and sweep-provider commands.
 
 ## mcp
+
+### Inspect Events delivery
+
+On unreleased `main`, `msgvault mcp events status --json` reads the selected
+local or remote daemon's owner-only delivery state. It reports subscription
+state, stop reason, refresh deadline, settled cursor and epoch, pending attempts,
+last outcome, and dead-letter and loop-guard counts. Callback URLs, secrets,
+and encrypted secret values are omitted. A disabled daemon reports Events
+unavailable. See [MCP Events](usage/chat.md#events) for setup and protocol limits.
 
 ### Discover running HTTP listeners
 

@@ -114,6 +114,7 @@ type fakeBeeper struct {
 	cancelOnMessageListChatID string
 	blockMessageListChatID    string
 	messageListStarted        chan struct{}
+	appendOnHeadList          map[string]fakeMsg
 	reqs                      []string // "PATH?QUERY" per request, in order
 }
 
@@ -268,6 +269,15 @@ func (f *fakeBeeper) cancelMessageListFor(chatID string, cancelFn func()) {
 	defer f.mu.Unlock()
 	f.cancelOnMessageListChatID = chatID
 	f.cancelFn = cancelFn
+}
+
+func (f *fakeBeeper) appendOnNextHeadList(chatID string, message fakeMsg) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.appendOnHeadList == nil {
+		f.appendOnHeadList = make(map[string]fakeMsg)
+	}
+	f.appendOnHeadList[chatID] = message
 }
 
 func (f *fakeBeeper) server() *httptest.Server {
@@ -497,6 +507,15 @@ func (f *fakeBeeper) writeMessages(w http.ResponseWriter, r *http.Request, chatI
 	direction := q.Get("direction")
 	if cursor != "" && direction == "" {
 		direction = "before"
+	}
+	if cursor == "" && direction == "" {
+		if message, ok := f.appendOnHeadList[chatID]; ok {
+			ch.Msgs = append(ch.Msgs, message)
+			if message.Timestamp.After(ch.LastActivity) {
+				ch.LastActivity = message.Timestamp
+			}
+			delete(f.appendOnHeadList, chatID)
+		}
 	}
 
 	msgs := ch.Msgs // oldest → newest

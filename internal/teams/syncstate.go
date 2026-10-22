@@ -2,6 +2,7 @@ package teams
 
 import (
 	"encoding/json/v2"
+	"maps"
 	"time"
 )
 
@@ -9,12 +10,14 @@ import (
 // sync_runs.cursor_after. Chats use a max-lastModifiedDateTime timestamp;
 // channels use an @odata.deltaLink.
 type SyncState struct {
-	Chats    map[string]string `json:"chats"`    // chatID -> max lastModifiedDateTime (RFC3339)
-	Channels map[string]string `json:"channels"` // "teamID/channelID" -> deltaLink
+	Chats             map[string]string `json:"chats"`    // chatID -> max lastModifiedDateTime (RFC3339)
+	Channels          map[string]string `json:"channels"` // "teamID/channelID" -> deltaLink
+	CoveredChats      map[string]bool   `json:"covered_chats,omitempty"`
+	ResetChatBaseline bool              `json:"reset_chat_baseline,omitempty"`
 }
 
 func NewSyncState() *SyncState {
-	return &SyncState{Chats: map[string]string{}, Channels: map[string]string{}}
+	return &SyncState{Chats: map[string]string{}, Channels: map[string]string{}, CoveredChats: map[string]bool{}}
 }
 
 func LoadSyncState(blob string) (*SyncState, error) {
@@ -31,6 +34,9 @@ func LoadSyncState(blob string) (*SyncState, error) {
 	if s.Channels == nil {
 		s.Channels = map[string]string{}
 	}
+	if s.CoveredChats == nil {
+		s.CoveredChats = map[string]bool{}
+	}
 	return s, nil
 }
 
@@ -44,8 +50,18 @@ func (s *SyncState) SetChatCursor(chatID, cursor string) { s.Chats[chatID] = cur
 func (s *SyncState) ChannelDelta(key string) string      { return s.Channels[key] }
 func (s *SyncState) SetChannelDelta(key, link string)    { s.Channels[key] = link }
 
+// ChatCovered accepts completed empty history or a valid legacy chat cursor.
+func (s *SyncState) ChatCovered(chatID string) bool {
+	if s.CoveredChats[chatID] {
+		return true
+	}
+	_, err := time.Parse(time.RFC3339Nano, s.Chats[chatID])
+	return err == nil
+}
+
 // Merge incorporates cursors from other into s, keeping the more-advanced value for
-// each conversation. If other is nil it is silently ignored.
+// each conversation. A full-repair checkpoint replaces chat coverage instead.
+// If other is nil or s itself it is silently ignored.
 //
 // Chat cursors are RFC3339Nano timestamps. They are parsed before comparison
 // because RFC3339Nano omits trailing fractional zeroes, so string ordering is
@@ -55,12 +71,30 @@ func (s *SyncState) SetChannelDelta(key, link string)    { s.Channels[key] = lin
 // always prefer other's link when it is non-empty, on the assumption that other
 // represents a more recent (checkpoint) run whose cursor is at least as advanced.
 func (s *SyncState) Merge(other *SyncState) {
-	if other == nil {
+	if other == nil || other == s {
 		return
 	}
-	for chatID, cursor := range other.Chats {
-		if chatCursorAfter(cursor, s.Chats[chatID]) {
-			s.Chats[chatID] = cursor
+	if other.ResetChatBaseline {
+		// An interrupted full repair must not inherit an older successful
+		// run's coverage. Channel tokens keep their existing merge semantics.
+		s.Chats = map[string]string{}
+		s.CoveredChats = map[string]bool{}
+		maps.Copy(s.Chats, other.Chats)
+		maps.Copy(s.CoveredChats, other.CoveredChats)
+		s.ResetChatBaseline = true
+	} else {
+		for chatID, cursor := range other.Chats {
+			if chatCursorAfter(cursor, s.Chats[chatID]) {
+				s.Chats[chatID] = cursor
+			}
+		}
+		if s.CoveredChats == nil {
+			s.CoveredChats = map[string]bool{}
+		}
+		for chatID, covered := range other.CoveredChats {
+			if covered {
+				s.CoveredChats[chatID] = true
+			}
 		}
 	}
 	for key, link := range other.Channels {

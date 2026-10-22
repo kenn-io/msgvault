@@ -40,6 +40,7 @@ type fakeGraph struct {
 	version    map[string]int      // message ID -> content version
 	categories map[string][]string // present entries are authoritative category snapshots
 
+	rawOverride    map[string]string // optional complete synthetic MIME
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
 	attachmentBody map[string]string // message ID -> base64 file content
@@ -50,6 +51,8 @@ type fakeGraph struct {
 	attachDir      string            // attachments directory; a fresh one when empty
 	throttle       bool              // answer the next $value with 429 once
 	denied         bool              // answer move and permanentDelete with 403
+	deltaPageSize  int               // optional incremental page-size override; zero uses pageSize
+	deltaStopAt    int               // fail one incremental continuation at this offset
 	pageSize       int
 	stopAt         int    // fail the delta page at this skip offset, when non-zero
 	stopStatus     int    // HTTP status returned by stopAt
@@ -177,6 +180,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 			body = "From: a@example.com\r\nSubject: " + id + "\r\nMIME-Version: 1.0\r\n" +
 				"Content-Type: multipart mixed; boundary=b\r\n\r\n--b\r\n\r\nbody\r\n--b--\r\n"
 		}
+		if override, ok := f.rawOverride[id]; ok {
+			body = override
+		}
 		_, _ = w.Write([]byte(body)) //nolint:gosec // local test server returns fixture MIME
 	case r.Method == http.MethodPost && strings.HasPrefix(p, "/me/messages/"):
 		f.write(w, r)
@@ -258,6 +264,9 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 		pos = strconv.Itoa(len(f.log))
 	}
 	skip, _ := strconv.Atoi(get("skip"))
+	if deltaSkip := get("delta_skip"); deltaSkip != "" {
+		skip, _ = strconv.Atoi(deltaSkip)
+	}
 	if f.stopAt != 0 && skip == f.stopAt && (get("token") != "") == f.stopInDelta {
 		f.stopAt = 0
 		http.Error(w, "boom", f.stopStatus)
@@ -274,10 +283,16 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 			return
 		}
 		start, _ := strconv.Atoi(tok)
-		stop, _ := strconv.Atoi(pos)
+		roundEnd := len(f.log)
+		if saved := get("pos"); saved != "" {
+			roundEnd, _ = strconv.Atoi(saved)
+		}
+		if saved := get("delta_end"); saved != "" {
+			roundEnd, _ = strconv.Atoi(saved)
+		}
 		seen := map[string]bool{}
 		var out []map[string]any
-		for _, c := range f.log[start:stop] {
+		for _, c := range f.log[start:roundEnd] {
 			id := c.id
 			if seen[id] || (c.from != folder && f.folder[id] != folder) {
 				continue
@@ -293,14 +308,27 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
 			}
 		}
-		end := min(skip+f.pageSize, len(out))
-		resp := map[string]any{"value": out[skip:end]}
-		if end < len(out) {
-			resp["@odata.nextLink"] = link("t", "token="+tok, "skip="+strconv.Itoa(end), "pos="+pos)
-		} else {
-			resp["@odata.deltaLink"] = link("t", "token="+pos)
+		pageSize := f.deltaPageSize
+		if pageSize <= 0 {
+			pageSize = f.pageSize
 		}
-		f.writeJSON(w, resp)
+		if f.deltaStopAt > 0 && get("delta_skip") != "" && skip == f.deltaStopAt {
+			f.deltaStopAt = 0
+			http.Error(w, "synthetic delta interruption", http.StatusBadRequest)
+			return
+		}
+		end := min(skip+pageSize, len(out))
+		response := map[string]any{"value": out[skip:end]}
+		if end < len(out) {
+			if f.deltaPageSize > 0 {
+				response["@odata.nextLink"] = link("d", "token="+tok, "delta_skip="+strconv.Itoa(end), "delta_end="+strconv.Itoa(roundEnd))
+			} else {
+				response["@odata.nextLink"] = link("t", "token="+tok, "skip="+strconv.Itoa(end), "pos="+strconv.Itoa(roundEnd))
+			}
+		} else {
+			response["@odata.deltaLink"] = link("t", "token="+strconv.Itoa(roundEnd))
+		}
+		f.writeJSON(w, response)
 		return
 	}
 	// A walk lists the folder in log order. pos pins the log position that
@@ -542,6 +570,60 @@ func TestImportRefreshReplacesAttachments(t *testing.T) {
 	assert.Equal([2]int{0, 0}, attachments(t, st))
 }
 
+func TestImportRefreshPreservesUnchangedMIMEAttachmentIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.withAttachment["m1"] = true
+	f.withAttachment["m2"] = true
+	f.put("m1", "inbox")
+	f.put("m2", "inbox")
+	_, err := f.sync(t, st)
+	require.NoError(err)
+
+	var messageID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id = ?`), "m1").Scan(&messageID))
+	var attachmentID, laterMessageID, laterAttachmentID int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM attachments WHERE message_id = ? AND source_attachment_id IS NULL`), messageID).
+		Scan(&attachmentID))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM messages WHERE source_message_id = ?`), "m2").Scan(&laterMessageID))
+	require.NoError(st.UpsertAttachmentRecord(t.Context(), laterMessageID, store.AttachmentWrite{
+		Filename: "identity-sentinel.bin", SourceAttachmentID: "sentinel:m2",
+		SourcePartKey: "sentinel:m2",
+	}))
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id FROM attachments WHERE message_id = ? AND source_part_key = ?`), laterMessageID, "sentinel:m2").
+		Scan(&laterAttachmentID))
+	require.Greater(laterAttachmentID, attachmentID,
+		"the provider attachment prevents SQLite from reusing the deleted maximum ID")
+
+	thumbnailHash := strings.Repeat("c", 64)
+	thumbnailPath := "cc/" + thumbnailHash
+	_, err = st.DB().Exec(st.Rebind(`
+		UPDATE attachments SET thumbnail_hash = ?, thumbnail_path = ? WHERE id = ?`),
+		thumbnailHash, thumbnailPath, attachmentID)
+	require.NoError(err)
+
+	f.version["m1"] = 1
+	f.put("m1", "inbox")
+	_, err = f.sync(t, st)
+	require.NoError(err)
+
+	var gotID int64
+	var gotThumbnailHash, gotThumbnailPath string
+	require.NoError(st.DB().QueryRow(st.Rebind(`
+		SELECT id, COALESCE(thumbnail_hash, ''), COALESCE(thumbnail_path, '')
+		FROM attachments WHERE message_id = ? AND source_attachment_id IS NULL`), messageID).
+		Scan(&gotID, &gotThumbnailHash, &gotThumbnailPath))
+	assert.Equal(attachmentID, gotID, "unchanged MIME parts keep their attachment identity")
+	assert.Equal(thumbnailHash, gotThumbnailHash)
+	assert.Equal(thumbnailPath, gotThumbnailPath)
+}
+
 // attachments returns the attachment row count and attachment_count of m1.
 func attachments(t *testing.T, st *store.Store) [2]int {
 	t.Helper()
@@ -752,7 +834,7 @@ func TestImportNewMessageAttachmentWriteFails(t *testing.T) {
 	sum, err := f.sync(t, st)
 	require.NoError(err)
 	assert.Equal(1, sum.Errors)
-	assert.Equal([2]int{0, 0}, attachments(t, st))
+	assert.Empty(state(t, st), "failed file preparation must not publish a partial message")
 
 	f.attachDir = ""
 	f.expired["inbox"] = true // the next sync walks, and a walk skips known messages
@@ -901,7 +983,7 @@ func TestImportFailedRetryKeepsMarker(t *testing.T) {
 	f.put("m1", "inbox")
 	f.put("m2", "inbox")
 	f.put("m3", "inbox")
-	f.stopAt = 2 // the second page fails after m1 is stored
+	f.stopAt = 2 // the second page fails after m1 is queued for retry
 	_, err := f.sync(t, st)
 	require.Error(err)
 
@@ -909,7 +991,7 @@ func TestImportFailedRetryKeepsMarker(t *testing.T) {
 	f.badValue["m1"] = true
 	sum, err := f.sync(t, st)
 	require.NoError(err)
-	assert.Equal(1, sum.Errors)
+	assert.Equal(2, sum.Errors, "the queued retry and restarted history page both observe the failed download")
 
 	f.badValue["m1"] = false
 	_, err = f.sync(t, st)
@@ -1010,16 +1092,17 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	f := newFakeGraph(t)
-	blocker := filepath.Join(t.TempDir(), "file")
-	require.NoError(os.WriteFile(blocker, nil, 0o600))
-	f.attachDir = filepath.Join(blocker, "attachments")
 	f.withAttachment["m1"] = true
 	f.put("m1", "inbox")
-	f.put("m2", "inbox")
-	f.put("m3", "inbox")
-	f.stopAt = 2
 	_, err := f.sync(t, st)
+	require.NoError(err) // deletion failure needs an already archived message
+	f.badValue["m1"] = true
+	f.put("m1", "inbox")
+	f.gone["archive"] = true // keep the retry only in a failed run's checkpoint
+	_, err = f.sync(t, st)
 	require.Error(err)
+	f.badValue["m1"] = false
+	f.gone["archive"] = false
 
 	f.goneOnValue["m1"] = true
 	_, err = st.DB().Exec(`CREATE TRIGGER reject_delete BEFORE UPDATE OF deleted_from_source_at ON messages
@@ -1032,5 +1115,5 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	require.NotNil(run)
 	var cursors map[string]string
 	require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &cursors))
-	assert.Equal(t, "inbox", cursors["retry:m1"])
+	assert.JSONEq(t, `{"version":1,"folder_id":"inbox","mode":"live"}`, cursors["retry:m1"])
 }

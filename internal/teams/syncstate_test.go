@@ -92,3 +92,15 @@ func TestSyncStateMergeParsesVariablePrecisionTimestamps(t *testing.T) {
 	baseline.Merge(other)
 	assert.Equal(t, "2025-01-01T00:00:00.1Z", baseline.ChatCursor("chatA"))
 }
+
+func TestSyncStateResetMergeSelf(t *testing.T) {
+	require := require.New(t)
+	state, err := LoadSyncState(`{"chats":{"chat":"2026-01-01T00:00:00Z"},"covered_chats":{"empty":true},"reset_chat_baseline":true}`)
+	require.NoError(err)
+	before, err := state.Marshal()
+	require.NoError(err)
+	state.Merge(state)
+	after, err := state.Marshal()
+	require.NoError(err)
+	assert.JSONEq(t, before, after, "merging the same checkpoint is idempotent")
+}

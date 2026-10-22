@@ -2371,7 +2371,7 @@ var exclusiveLockTables = []string{
 	// Scoped writes fence sync_runs first. Source-first sync transactions take
 	// lockSyncMaintenanceGate before their source lock, so maintenance waits
 	// here without holding tables those transactions still need.
-	"sync_runs", "sources", "source_messaging_route_failures", "conversations", "conversation_participants",
+	"sync_runs", "sources", "mcp_event_source_refs", "source_messaging_route_failures", "conversations", "conversation_participants",
 	"messages", "message_recipients", "message_labels", "message_bodies", "message_raw",
 	"message_delivery_addresses",
 	"meeting_details", "meeting_action_items",
@@ -2438,8 +2438,11 @@ func (d *PostgreSQLDialect) BeginExclusive(ctx context.Context, conn *sql.Conn) 
 		identityRevisionKey); err != nil {
 		return rollback(err)
 	}
+	// Exclude disabled Events writers' KEY SHARE locks before table locks.
+	// A later capture fence must not upgrade the row lock while holding tables
+	// those writers need to finish.
 	if _, err := conn.ExecContext(ctx,
-		"UPDATE archive_metadata SET value = value WHERE key = $1",
+		"SELECT value FROM archive_metadata WHERE key = $1 FOR UPDATE",
 		identityRevisionKey); err != nil {
 		return rollback(err)
 	}

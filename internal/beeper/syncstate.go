@@ -17,6 +17,9 @@ type ChatState struct {
 	Visited bool   `json:"visited,omitzero"`
 	Newest  string `json:"newest,omitempty"`
 	Oldest  string `json:"oldest,omitempty"`
+	// BackfillFirst records whether the next limited run should service an
+	// unfinished history walk before the live cursor.
+	BackfillFirst bool `json:"backfill_first,omitzero"`
 	// TailProbeCursor resumes a budget-limited history probe at the page
 	// boundary it reached, rather than spending every run re-reading the same
 	// oldest pages.
@@ -127,6 +130,7 @@ func (s *SyncState) Merge(other *SyncState) {
 		}
 		cs.Visited = ocs.Visited
 		cs.TailProbeCursor = ocs.TailProbeCursor
+		cs.BackfillFirst = ocs.BackfillFirst
 		if len(ocs.PendingReplies) > 0 {
 			cs.PendingReplies = ocs.PendingReplies
 		}
