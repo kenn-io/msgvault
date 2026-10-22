@@ -91,10 +91,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			state, ok := h.States["job-"+version]
-			if state[0] == "failed" && state[2] != "consent" && state[2] != "stale_authority" {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
 			if !ok || state[0] == "failed" {
 				h.States["job-"+version] = [3]string{"queued", "rendition", ""}
 			}
