@@ -1410,6 +1410,32 @@ func TestAttachmentMirrorProcessingUnknownStateKeepsPolling(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Extracted)
 }
 
+func TestAttachmentMirrorProcessingRevokedConsentBlocks(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.delivered("a")
+	require.NoError(r.runBatch(t.Context()))
+	// Consent was revoked after the job was queued, and Docbank still refuses a new build.
+	r.processing.States["job-a"] = [3]string{"failed", "rendition", "consent"}
+	r.processing.JobFaults["a"], r.processing.Reasons["a"] = http.StatusPreconditionRequired, "processing_consent_required"
+	r.processingDue()
+	err := r.runBatch(t.Context())
+	require.ErrorContains(err, "document_profile \"documents\": check the profile and grant consent in Docbank")
+	assert.Contains(err.Error(), "processing_consent_required")
+	assert.Empty(r.processingCounts().Outcomes)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	// Renewed consent resumes the file on the next pass.
+	delete(r.processing.JobFaults, "a")
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal([]string{"a", "a", "a"}, r.processing.Jobs)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+	r.processing.States["job-a"] = [3]string{"completed", "rendition", ""}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+}
+
 func TestAttachmentMirrorProcessingBackfillRecovery(t *testing.T) {
 	for _, code := range []string{"provider_timeout", "stale_authority"} {
 		t.Run(code, func(t *testing.T) {
