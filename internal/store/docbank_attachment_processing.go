@@ -32,7 +32,7 @@ func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, 
 	return err
 }
 
-// DocbankAttachmentProcessingCursor visits unasked files once before polling due jobs.
+// DocbankAttachmentProcessingCursor visits unasked files once, after polling due jobs.
 // Use a fresh cursor for each pass and each profile fingerprint.
 type DocbankAttachmentProcessingCursor struct {
 	afterHash   string
@@ -41,8 +41,10 @@ type DocbankAttachmentProcessingCursor struct {
 
 func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
 	var result []DocbankAttachmentProcessing
-	for len(result) < n {
-		unasked := !cursor.unaskedDone
+	for _, unasked := range []bool{false, true} {
+		if len(result) >= n || unasked && cursor.unaskedDone {
+			break
+		}
 		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', ''
  FROM docbank_attachment_deliveries d
  WHERE d.destination_key = ? AND d.state = 'delivered' AND d.version_id <> '' AND d.content_hash > ?
@@ -79,10 +81,9 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		if err != nil {
 			return nil, err
 		}
-		if !unasked {
-			break
+		if unasked {
+			cursor.unaskedDone = len(result) < n
 		}
-		cursor.unaskedDone = len(result) < n
 	}
 	return result, nil
 }

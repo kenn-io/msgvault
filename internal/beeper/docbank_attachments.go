@@ -40,11 +40,12 @@ type AttachmentMirror struct {
 	blobs interface {
 		OpenStream(ctx context.Context, hash string) (io.ReadCloser, int64, error)
 	}
-	client        *docbankmedia.Client
-	destination   string
-	options       AttachmentMirrorOptions
-	gate          func(context.Context) (func(), bool)
-	uploadTimeout time.Duration
+	client              *docbankmedia.Client
+	destination         string
+	options             AttachmentMirrorOptions
+	gate                func(context.Context) (func(), bool)
+	uploadTimeout       time.Duration
+	documentFingerprint string
 }
 
 // AttachmentMirrorOptions is the part of the Docbank config the mirror needs.
@@ -537,10 +538,13 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 		}
 		return false, fmt.Errorf("document_profile %q: %w", w.options.DocumentProfile, err)
 	}
-	if err := w.gated(ctx, func() error {
-		return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, w.options.DocumentProfile, profile.Fingerprint)
-	}); err != nil {
-		return false, endMediaPass(err)
+	if profile.Fingerprint != w.documentFingerprint {
+		if err := w.gated(ctx, func() error {
+			return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, w.options.DocumentProfile, profile.Fingerprint)
+		}); err != nil {
+			return false, endMediaPass(err)
+		}
+		w.documentFingerprint = profile.Fingerprint
 	}
 	var failures attachmentRetryStreak
 	var cursor store.DocbankAttachmentProcessingCursor

@@ -1043,6 +1043,38 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal(int64(1), r.processingCounts().Requested)
 }
 
+func TestAttachmentMirrorProcessingUnchangedFingerprint(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.worker.options.DocumentProfile = "documents"
+	more, err := r.worker.processDocuments(t.Context(), time.Now().Add(time.Minute))
+	require.NoError(err)
+	assert.False(more)
+	// Reject redundant metadata writes while allowing a changed fingerprint.
+	trigger := `CREATE TRIGGER reject_unchanged_fingerprint BEFORE UPDATE ON archive_metadata
+ WHEN OLD.key LIKE 'docbank-processing:%' AND OLD.value = NEW.value
+ BEGIN SELECT RAISE(ABORT, 'unchanged fingerprint'); END`
+	if r.f.Store.IsPostgreSQL() {
+		trigger = `CREATE FUNCTION reject_unchanged_fingerprint() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN IF OLD.key LIKE 'docbank-processing:%' AND OLD.value = NEW.value THEN
+ RAISE EXCEPTION 'unchanged fingerprint'; END IF; RETURN NEW; END $$;
+ CREATE TRIGGER reject_unchanged_fingerprint BEFORE UPDATE ON archive_metadata
+ FOR EACH ROW EXECUTE FUNCTION reject_unchanged_fingerprint()`
+	}
+	_, err = r.f.Store.DB().Exec(trigger)
+	require.NoError(err)
+	more, err = r.worker.processDocuments(t.Context(), time.Now().Add(time.Minute))
+	require.NoError(err)
+	assert.False(more)
+	r.processing.Fingerprint = "profile-two"
+	r.delivered("a")
+	more, err = r.worker.processDocuments(t.Context(), time.Now().Add(time.Minute))
+	require.NoError(err)
+	assert.False(more)
+	assert.Equal(int64(1), r.processingCounts().Requested)
+}
+
 func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 	for _, tc := range []struct{ state, phase, code, outcome string }{
 		{"completed", "rendition", "", "extracted"},
