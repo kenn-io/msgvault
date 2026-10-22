@@ -114,7 +114,6 @@ func TestLoopConversationWalksNewestFirstAcrossPages(t *testing.T) {
 	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{ConversationID: conversationOf(t, f, in)}) {
 		requirements.NoError(err)
 		seen++
-		assertions.True(conv.FirstAt.Equal(loopAgo(3*loopDay)), "FirstAt %s skips the deleted message", conv.FirstAt)
 		first = len(conv.Messages)
 		for m, err := range conv.Walk() {
 			requirements.NoError(err)
@@ -419,10 +418,8 @@ func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) 
 		heads = append(heads, conversation)
 	}
 	require.Len(heads, 2, "the 05:00 UTC conversation is before Since")
-	assert.Equal(conversationOf(t, f, firstQuestion), heads[1].ConversationID)
-	assert.True(heads[1].FirstAt.Equal(time.Date(2026, 10, 15, 6, 0, 0, 1_000, time.UTC)), "FirstAt must preserve the earliest instant's microsecond precision")
-	assert.Equal(conversationOf(t, f, secondQuestion), heads[0].ConversationID)
-	assert.True(heads[0].FirstAt.Equal(time.Date(2026, 10, 15, 6, 30, 0, 0, time.UTC)))
+	assert.Equal(conversationOf(t, f, firstQuestion), heads[0].ConversationID)
+	assert.Equal(conversationOf(t, f, secondQuestion), heads[1].ConversationID)
 
 	result := listLoops(t, f, loopNow)
 	require.Len(result, 1, "the two answered conversations must stay closed across page boundaries")

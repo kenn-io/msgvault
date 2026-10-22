@@ -34,7 +34,7 @@ type Result struct {
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
 const MaxListEvidenceComputations = 1000
-const evidenceVersion = 2
+const evidenceVersion = 3
 
 // EvidenceIncompleteError means an action needs another request to finish reading evidence.
 type EvidenceIncompleteError struct{}
@@ -64,6 +64,22 @@ type storeReader struct {
 	ctx  context.Context
 	st   Store
 	left int
+	chat bool
+}
+
+// in points the reader at one conversation's messages.
+func (r *storeReader) in(conv store.LoopConversation) *storeReader {
+	r.chat = conv.ConversationType == "direct_chat"
+	return r
+}
+
+// original reads an email's stored MIME evidence. A direct chat has no MIME
+// original, so its evidence comes from the body text alone.
+func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, error) {
+	if r.chat {
+		return mime.AutomationSignals{}, false, false, nil
+	}
+	return r.st.LoopOriginalEvidenceContext(r.ctx, id)
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
@@ -79,7 +95,7 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 	if err != nil {
 		return e, err
 	}
-	signals, attachment, unreadable, err := r.st.LoopOriginalEvidenceContext(r.ctx, id)
+	signals, attachment, unreadable, err := r.original(id)
 	if err != nil {
 		return e, err
 	}
@@ -96,15 +112,24 @@ func classify(body string, signals mime.AutomationSignals, attachment, unreadabl
 	}
 }
 
-// find derives loops only from conversations whose detection completed.
+// recent limits q to conversations with live activity within ActivityWindow
+// of now. The Store keeps conversations with a snooze decision after it.
+func recent(q store.LoopQuery, now time.Time) store.LoopQuery {
+	q.Since = now.Add(-ActivityWindow)
+	return q
+}
+
+// find derives loops only from conversations whose detection completed. It
+// reads recently active conversations oldest activity first, so a request
+// that stops at MaxListEvidenceComputations has reached the oldest ones.
 func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, found func(Loop) error) (int, error) {
 	reader := &storeReader{ctx: ctx, st: st, left: MaxListEvidenceComputations}
 	var unparsed int
-	for conv, err := range st.LoopConversationsContext(ctx, q) {
+	for conv, err := range st.LoopConversationsContext(ctx, recent(q, now)) {
 		if err != nil {
 			return 0, err
 		}
-		detection, err := Detect(conv, reader)
+		detection, err := Detect(conv, reader.in(conv))
 		if err != nil {
 			return unparsed, err
 		}

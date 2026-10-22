@@ -425,7 +425,7 @@ func TestSearchConfig_PointerSemantics_FromTOML(t *testing.T) {
 // and DB rows is stable for operators.
 func TestPreprocessConfig_FingerprintFormat(t *testing.T) {
 	allOn := PreprocessConfig{}
-	assert.Equal(t, "p1-111111", allOn.Fingerprint(), "default Fingerprint()")
+	assert.Equal(t, "p2-111111", allOn.Fingerprint(), "default Fingerprint()")
 
 	f := false
 	allOff := PreprocessConfig{
@@ -436,7 +436,7 @@ func TestPreprocessConfig_FingerprintFormat(t *testing.T) {
 		StripURLTracking:   &f,
 		CollapseWhitespace: &f,
 	}
-	assert.Equal(t, "p1-000000", allOff.Fingerprint(), "all-off Fingerprint()")
+	assert.Equal(t, "p2-000000", allOff.Fingerprint(), "all-off Fingerprint()")
 }
 
 // TestPreprocessConfig_FingerprintChangesPerToggle ensures every toggle
@@ -485,7 +485,7 @@ func TestConfig_GenerationFingerprintFolds(t *testing.T) {
 		Embeddings: EmbeddingsConfig{Model: "nomic-embed", Dimension: 768, MaxInputChars: 6000},
 	}
 	got := base.GenerationFingerprint()
-	want := fmt.Sprintf("nomic-embed:768:p1-111111:c6000:e%d", embedPolicyVersion)
+	want := fmt.Sprintf("nomic-embed:768:p2-111111:c6000:e%d", embedPolicyVersion)
 	assert.Equal(t, want, got)
 
 	// Flipping the model invalidates.

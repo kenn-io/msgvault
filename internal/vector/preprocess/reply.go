@@ -1,5 +1,8 @@
 package preprocess
 
+// IMPORTANT: this file is part of Preprocess(). The preprocessVersion rule
+// at the top of preprocess.go applies here too.
+
 import "regexp"
 
 // notReplyStart begins a line that is not itself an "On ..." attribution, so an
@@ -20,7 +23,8 @@ var (
 	quotedLine = regexp.MustCompile(`(?m)^[ \t]*>+[ \t]?.*\n?`)
 )
 
-// StripReplyQuotes removes wrapped and indented quotations for loop detection.
+// StripReplyQuotes removes wrapped and indented quotations for loop detection
+// and Preprocess's StripQuotes stage.
 // It keeps authored text above and below marked quotations.
 func StripReplyQuotes(body string) string {
 	body = quotedReply.ReplaceAllString(body, "")

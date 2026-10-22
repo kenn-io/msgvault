@@ -2,6 +2,7 @@ package loops_test
 
 import (
 	"context"
+	"database/sql"
 	"strconv"
 	"testing"
 	"time"
@@ -234,7 +235,7 @@ func TestDoneAcceptsWhatListShows(t *testing.T) {
 	}{
 		{name: "missing message", missing: true, wantErr: true},
 		{name: "inside the grace period", age: 2 * time.Hour, wantErr: true},
-		{name: "silent for 31 days", age: 31 * day},
+		{name: "silent for 31 days", age: 31 * day, wantErr: true},
 		{name: "grace period passed", age: 2 * time.Hour, advance: 23 * time.Hour},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -392,7 +393,7 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	for i := range loops.MaxListEvidenceComputations {
 		f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(4*day + time.Duration(i)*time.Minute)})
 	}
-	current := f.PersistEmail(storetest.EmailSpec{Thread: "current", From: "sam@example.test", To: []string{me}, Body: "Can you send the current draft?", SentAt: ago(2 * day)})
+	current := f.PersistEmail(storetest.EmailSpec{Thread: "current", From: "sam@example.test", To: []string{me}, Body: "Can you send the current draft?", SentAt: ago(5 * day)})
 	counted := &countingStore{Store: f.Store}
 	first, err := loops.List(t.Context(), counted, loops.Options{}, now)
 	require.NoError(err)
@@ -417,4 +418,99 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	assert.Equal(second.Loops, third.Loops)
 	assert.Zero(counted.bodies)
 	assert.Zero(counted.originals)
+}
+
+func TestListAndActionsUseLatestConversationActivity(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		recentReply bool
+		snoozed     bool
+		wantOpen    bool
+	}{
+		{name: "quiet for more than 30 days"},
+		{name: "old question with recent acknowledgement", recentReply: true, wantOpen: true},
+		{name: "expired snooze beyond 30 days", snoozed: true, wantOpen: true},
+	} {
+		for _, action := range []string{"done", "snooze"} {
+			t.Run(tc.name+"/"+action, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				f := storetest.New(t)
+				question := f.PersistEmail(storetest.EmailSpec{Thread: "activity-window", From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(45 * day)})
+				if tc.recentReply {
+					f.PersistEmail(storetest.EmailSpec{Thread: "activity-window", From: alex, To: []string{me}, Body: "Thanks!", SentAt: ago(day)})
+				}
+				if tc.snoozed {
+					_, err := loops.Snooze(t.Context(), f.Store, question, ago(day), ago(40*day))
+					require.NoError(err)
+				}
+
+				result := list(t, f, loops.Options{})
+				if tc.wantOpen {
+					require.Len(result.Loops, 1)
+					assert.Equal(question, result.Loops[0].Anchor.ID)
+				} else {
+					assert.Empty(result.Loops, "quiet conversations leave the 30-day activity window")
+				}
+				var err error
+				if action == "done" {
+					_, err = loops.Done(t.Context(), f.Store, question, now)
+				} else {
+					_, err = loops.Snooze(t.Context(), f.Store, question, now.Add(day), now)
+				}
+				if tc.wantOpen {
+					assert.NoError(err)
+				} else {
+					assert.ErrorIs(err, loops.ErrNotOpen)
+				}
+			})
+		}
+	}
+}
+
+func TestColdListIncludesOldestEligibleLoopBeforeEvidenceCap(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	var oldest int64
+	for i := range loops.MaxListEvidenceComputations + 1 {
+		oldest = f.PersistEmail(storetest.EmailSpec{
+			Thread: "eligible-" + strconv.Itoa(i), From: alex, To: []string{me},
+			Body: "Can you send the contract?", SentAt: ago(2*day + time.Duration(i)*time.Minute),
+		})
+	}
+
+	result := list(t, f, loops.Options{Limit: 1})
+	require.Len(result.Loops, 1)
+	assert.True(result.CoverageIncomplete)
+	assert.Equal(oldest, result.Loops[0].Anchor.ID, "the first partial response must include the oldest eligible question")
+}
+
+func TestListChatDoesNotReadMIMEOriginal(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, me, "manual"))
+	owner := f.EnsureParticipant(me, "", "example.com")
+	friend := f.EnsureParticipant(alex, "", "example.test")
+	conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "chat-question", "direct_chat", "Question")
+	require.NoError(err)
+	require.NoError(f.Store.EnsureConversationParticipant(conversation, owner, "member"))
+	require.NoError(f.Store.EnsureConversationParticipant(conversation, friend, "member"))
+	question, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: f.Source.ID, ConversationID: conversation, MessageType: "whatsapp", SourceMessageID: "chat-question",
+			SenderID: sql.NullInt64{Int64: friend, Valid: true}, SentAt: sql.NullTime{Time: ago(2 * day), Valid: true},
+		},
+		BodyText: sql.NullString{String: "Can you send the contract?", Valid: true},
+	})
+	require.NoError(err)
+	counted := &countingStore{Store: f.Store}
+
+	result, err := loops.List(t.Context(), counted, loops.Options{}, now)
+	require.NoError(err)
+	require.Len(result.Loops, 1)
+	assert.Equal(question, result.Loops[0].Anchor.ID)
+	assert.Equal(store.ChannelChat, result.Loops[0].Channel)
+	assert.Zero(counted.originals, "chat detection must skip email MIME evidence")
 }

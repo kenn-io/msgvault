@@ -82,19 +82,12 @@ type LoopConversation struct {
 	SourceID         int64
 	ConversationType string
 	GroupChat        bool
-	// FirstAt is the time of the conversation's oldest live message. No loop
-	// in it can start earlier.
-	FirstAt time.Time
 	// Messages are the newest live messages, newest first.
 	Messages []LoopMessage
 
 	earlier         iter.Seq2[LoopMessage, error]
 	lastActivityKey any
 }
-
-// HasEarlier is true when the conversation holds live messages older than
-// Messages, which Walk reads on demand.
-func (c LoopConversation) HasEarlier() bool { return c.earlier != nil }
 
 // Walk yields the conversation's live messages newest first: Messages, then
 // older pages read only as far as the caller asks.
@@ -159,8 +152,8 @@ func (s *Store) loopTimeParam(instant time.Time) any {
 	return sqliteutil.TimestampKey(instant)
 }
 
-// LoopConversationsContext yields conversations newest-activity first in bounded
-// chunks. Each conversation walks messages newest first on demand.
+// LoopConversationsContext yields conversations oldest-activity first in bounded
+// chunks, so a bounded caller reaches its oldest conversations first. Each conversation walks messages newest first on demand.
 func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.Seq2[LoopConversation, error] {
 	return func(yield func(LoopConversation, error) bool) {
 		owners, err := s.loopOwnerIdentities(ctx)
@@ -193,17 +186,18 @@ func (s *Store) LoopConversationsContext(ctx context.Context, q LoopQuery) iter.
 	}
 }
 
-// loopConversationHeads picks the conversations to read, newest first. With a
+// loopConversationHeads picks the conversations to read, oldest activity
+// first. With a
 // PersonID, it keeps conversations where one of the person's participants
 // sent, received, or belongs.
 func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *LoopConversation) ([]LoopConversation, error) {
 	query, args := s.loopConversationQuery(q)
 	if after != nil {
 		key := s.loopTimeKey("m.sent_at")
-		query += ` HAVING (MAX(` + key + `) < ? OR (MAX(` + key + `) = ? AND m.conversation_id < ?))`
+		query += ` HAVING (MAX(` + key + `) > ? OR (MAX(` + key + `) = ? AND m.conversation_id > ?))`
 		args = append(args, after.lastActivityKey, after.lastActivityKey, after.ConversationID)
 	}
-	query += ` ORDER BY last_activity_key DESC, m.conversation_id DESC LIMIT ?`
+	query += ` ORDER BY last_activity_key, m.conversation_id LIMIT ?`
 	args = append(args, loopChunkConversations)
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -213,26 +207,17 @@ func (s *Store) loopConversationHeads(ctx context.Context, q LoopQuery, after *L
 	var heads []LoopConversation
 	for rows.Next() {
 		var c LoopConversation
-		var first nullableTimestamp
-		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType, &first, &c.lastActivityKey); err != nil {
+		if err := rows.Scan(&c.ConversationID, &c.SourceID, &c.ConversationType, &c.lastActivityKey); err != nil {
 			return nil, err
 		}
-		c.FirstAt = first.Time
 		heads = append(heads, c)
 	}
 	return heads, rows.Err()
 }
 
 func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
-	firstAt := `(SELECT MIN(x.sent_at) FROM messages x JOIN sources xs ON xs.id = x.source_id
-				WHERE x.conversation_id = m.conversation_id AND ` + loopLiveMessageSQL("x", "xs") + `)`
-	if !s.IsPostgreSQL() {
-		firstAt = `(SELECT x.sent_at FROM messages x JOIN sources xs ON xs.id = x.source_id
-				WHERE x.conversation_id = m.conversation_id AND ` + loopLiveMessageSQL("x", "xs") + `
-				ORDER BY ` + s.loopTimeKey("x.sent_at") + `, x.id LIMIT 1)`
-	}
 	query := `SELECT m.conversation_id, c.source_id, c.conversation_type,
-			` + firstAt + ` AS first_at, MAX(` + s.loopTimeKey("m.sent_at") + `) AS last_activity_key
+			MAX(` + s.loopTimeKey("m.sent_at") + `) AS last_activity_key
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN sources src ON src.id = m.source_id

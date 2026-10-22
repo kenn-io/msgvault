@@ -35,3 +35,10 @@ func TestStripReplyQuotes(t *testing.T) {
 		})
 	}
 }
+
+func TestPreprocessStripQuotesRemovesWrappedAttribution(t *testing.T) {
+	body := "Thanks!\n\nOn Tuesday 20 October 2026\nAlex Example <alex@example.test> wrote:\n  > Can you send the contract?\n\nThe report is attached."
+	got, truncated := Preprocess("", body, 0, Config{StripQuotes: true, CollapseWhitespace: true})
+	assert.Equal(t, "Thanks!\n\nThe report is attached.", got)
+	assert.False(t, truncated)
+}
