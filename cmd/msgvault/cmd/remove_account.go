@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/mscalendar"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/slack"
@@ -419,6 +421,22 @@ func runRemoveAccountLocalWithMatrixLock(cmd *cobra.Command, args []string, matr
 			fmt.Fprintf(os.Stderr,
 				"Warning: could not remove Microsoft Graph mail token: %v\n", err,
 			)
+		}
+	case mscalendar.SourceType:
+		// One token serves every calendar of the account. Keep it while
+		// another of its calendars remains.
+		var calCfg struct {
+			AccountEmail string `json:"account_email"`
+		}
+		_ = json.Unmarshal([]byte(source.SyncConfig.String), &calCfg)
+		remaining, lerr := s.GetSourcesByTypeAndAccount(mscalendar.SourceType, calCfg.AccountEmail)
+		switch {
+		case lerr != nil:
+			fmt.Fprintf(os.Stderr, "Warning: could not check remaining Microsoft calendars: %v\n", lerr)
+		case calCfg.AccountEmail != "" && len(remaining) == 0:
+			if err := newGraphCalendarManager(state).DeleteToken(calCfg.AccountEmail); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not remove Microsoft Graph calendar token: %v\n", err)
+			}
 		}
 	case sourceTypeDiscord:
 		// Discord credential cleanup is part of the lifecycle-locked cascade

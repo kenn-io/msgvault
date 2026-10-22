@@ -31,6 +31,7 @@ import (
 	"go.kenn.io/msgvault/internal/discord"
 	matrixsource "go.kenn.io/msgvault/internal/matrix"
 	"go.kenn.io/msgvault/internal/microsoft"
+	"go.kenn.io/msgvault/internal/mscalendar"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/slack"
@@ -1445,6 +1446,41 @@ func TestRemoveAccountCmd_TeamsRemovesGraphToken(t *testing.T) {
 
 	_, err = os.Stat(tokenPath)
 	assert.True(t, os.IsNotExist(err), "Graph token file should be removed for teams source")
+}
+
+func TestRemoveAccountCmd_MSCalendarRemovesTokenAfterLastCalendar(t *testing.T) {
+	requirements := require.New(t)
+	tmpDir := t.TempDir()
+	tokensDir := filepath.Join(tmpDir, "tokens")
+	requirements.NoError(os.MkdirAll(tokensDir, 0700))
+	s, err := store.Open(filepath.Join(tmpDir, "msgvault.db"))
+	requirements.NoError(err)
+	requirements.NoError(s.InitSchema())
+	for _, id := range []string{"cal-a", "cal-b"} {
+		src, err := s.GetOrCreateSource(mscalendar.SourceType, "tok@example.com/"+id)
+		requirements.NoError(err)
+		requirements.NoError(s.UpdateSourceSyncConfig(src.ID, `{"account_email":"tok@example.com","calendar_id":"`+id+`"}`))
+	}
+	_ = s.Close()
+	tokenPath := microsoft.NewGraphCalendarManager("client-id", "", "", tokensDir, nil).TokenPath("tok@example.com")
+	requirements.NoError(os.WriteFile(tokenPath, []byte(`{}`), 0600))
+
+	cfg := &config.Config{
+		HomeDir:   tmpDir,
+		Data:      config.DataConfig{DataDir: tmpDir},
+		Microsoft: config.MicrosoftConfig{ClientID: "client-id"},
+	}
+	remove := func(id string) {
+		root := newTestRootCmd()
+		root.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		root.AddCommand(newRemoveAccountLocalTestCmd())
+		root.SetArgs([]string{"remove-account", "tok@example.com/" + id, "--yes", "--type", mscalendar.SourceType})
+		requirements.NoError(root.Execute())
+	}
+	remove("cal-a")
+	requirements.FileExists(tokenPath, "another calendar still uses the token")
+	remove("cal-b")
+	requirements.NoFileExists(tokenPath)
 }
 
 func TestRemoveAccountCmd_DiscordDeletesTokenOnlyAfterFinalBotReference(t *testing.T) {

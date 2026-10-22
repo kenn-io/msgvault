@@ -43,6 +43,8 @@ func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event,
 	switch rawFormat {
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
+	case MSGraphRawFormat:
+		return decodeGraphEvent(raw, metadata, calendarZone)
 	default:
 		return Event{}, false, nil
 	}

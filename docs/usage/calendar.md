@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-17"
+last_edited: "2026-10-22"
 title: Google Calendar
 description: Archive Google Calendar events alongside your email, with full-text and semantic search over meetings, organizers, and attendees.
 ---
@@ -68,6 +68,19 @@ only read).
 | `--oauth-app` | Named OAuth app to use |
 | `--headless` | Print headless-server setup instructions instead of opening a browser |
 | `--write` | Also request `calendar.events` for event control; source write permissions are still required |
+
+## Microsoft 365 and Outlook.com, unreleased
+
+msgvault can also archive the calendars of a Microsoft 365 or Outlook.com mailbox through Microsoft Graph. It uses the `[microsoft]` app from `add-o365`. Add the delegated Graph permissions `Calendars.Read` and `MailboxSettings.Read` to that app.
+
+```bash
+msgvault add-calendar you@example.com --microsoft
+msgvault sync-calendar you@example.com
+```
+
+`--headless` signs in with a device code. msgvault registers the calendars that the mailbox owns and leaves out calendars that other people share with it. Each sync reads every event, because Graph has no change feed for a whole calendar. An event that a complete sync does not return is marked deleted, and the archive keeps it. `sync-calendar` accepts `--full` for Microsoft accounts, and it refuses the Google-only options `--calendar`, `--limit`, `--after`, `--before`, `--all-calendars`, `--min-access-role`, and `--noresume`. `add-calendar --microsoft` refuses `--calendars`, `--all-calendars`, `--min-access-role`, `--write`, and `--oauth-app`. A `[[gcal]]` entry with the same email and a `schedule` lets the daemon sync the account.
+
+Repeating events expand as Google events do. Edited occurrences appear at their new times. A monthly series on a day that a month lacks falls on the last day of that month, as in Outlook. Cancelled occurrences of a series do not appear, because Graph reports only their dates. Meeting rooms keep the `room` role and do not become contacts. Sync is read-only.
 
 ## Sync events
 

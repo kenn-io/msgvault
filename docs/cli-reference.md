@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-14"
+last_edited: "2026-10-22"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1709,6 +1709,7 @@ msgvault add-calendar <email> [flags]
 | `--all-calendars` | Include reader/freeBusyReader (subscribed, holiday) calendars |
 | `--min-access-role` | Minimum access role: `owner`, `writer`, or `reader` |
 | `--calendars` | Comma-separated calendar IDs to register |
+| `--microsoft` | Archive the calendars of a Microsoft 365 or Outlook.com mailbox through Microsoft Graph, read-only. `sync-calendar` then syncs the account |
 
 ---
 

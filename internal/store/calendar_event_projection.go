@@ -59,14 +59,14 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read calendar projection raw: %w", err)
 	}
-	if format.String != gcalmodel.RawFormat {
+	if format.String != gcalmodel.RawFormat && format.String != calevent.MSGraphRawFormat {
 		return clearProjection()
 	}
 	var config sql.NullString
 	if err := q.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
 		return fmt.Errorf("read calendar projection source: %w", err)
 	}
-	event, ok := decodeCalendarProjection(stored, compression, []byte(metadata.String), calendarConfigZone(config))
+	event, ok := decodeCalendarProjection(format.String, stored, compression, []byte(metadata.String), calendarConfigZone(config))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -120,12 +120,12 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	return nil
 }
 
-func decodeCalendarProjection(stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
+func decodeCalendarProjection(format string, stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	var event calevent.Event
 	var ok bool
 	if err == nil {
-		event, ok, err = calevent.Decode(gcalmodel.RawFormat, raw, metadata, zone)
+		event, ok, err = calevent.Decode(format, raw, metadata, zone)
 	}
 	if err != nil {
 		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true
@@ -203,4 +203,32 @@ func calendarConfigZone(config sql.NullString) string {
 		return ""
 	}
 	return value.Zone
+}
+
+// CalendarSeriesEditsContext returns the archived edits of a source, deleted
+// ones included: source message ID to series provider ID. Calendar writers
+// store an edit in the conversation "event:<series ID>", so an edit is found
+// even after its typed row was dropped.
+func (s *Store) CalendarSeriesEditsContext(ctx context.Context, sourceID int64) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.source_message_id, c.source_conversation_id
+		FROM messages m JOIN conversations c ON c.id = m.conversation_id
+		WHERE m.source_id = ? AND m.message_type = 'calendar_event'
+		  AND m.deleted_at IS NULL
+		  AND c.source_conversation_id LIKE 'event:%'`, sourceID)
+	if err != nil {
+		return nil, fmt.Errorf("list calendar series edits: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, conversation string
+		if err := rows.Scan(&id, &conversation); err != nil {
+			return nil, fmt.Errorf("scan calendar series edit: %w", err)
+		}
+		if series := strings.TrimPrefix(conversation, "event:"); series != id {
+			out[id] = series
+		}
+	}
+	return out, rows.Err()
 }

@@ -259,8 +259,8 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 			return fmt.Errorf("rule parameter %s is not supported for this frequency", key)
 		}
 	}
-	if opt.Freq == rrule.MONTHLY && (seen["BYMONTHDAY"] && (seen["BYDAY"] || seen["BYSETPOS"]) || seen["BYSETPOS"] && !seen["BYDAY"]) {
-		return errors.New("monthly recurrence requires BYMONTHDAY or BYDAY with optional BYSETPOS")
+	if opt.Freq == rrule.MONTHLY && (seen["BYMONTHDAY"] && seen["BYDAY"] || seen["BYSETPOS"] && !seen["BYDAY"] && !seen["BYMONTHDAY"]) {
+		return errors.New("monthly recurrence requires BYMONTHDAY or BYDAY, each with optional BYSETPOS")
 	}
 	if opt.Freq == rrule.YEARLY && (seen["BYMONTHDAY"] || seen["BYDAY"]) &&
 		(!seen["BYMONTH"] || seen["BYMONTHDAY"] && seen["BYDAY"]) {

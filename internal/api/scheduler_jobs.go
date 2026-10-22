@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/mscalendar"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/omi"
@@ -107,8 +108,9 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		// Store identifier == config OwnerPhone (see
 		// internal/synctechsms/importer.go GetOrCreateSource call).
 		return "synctech-sms:" + identifier, true
-	case gcal.SourceType:
-		// Store identifier is "<accountEmail>/<calendarID>" (one store
+	case gcal.SourceType, mscalendar.SourceType:
+		// A [[gcal]] entry also schedules Microsoft calendars (see
+		// runConfiguredGCalSync). Store identifier is "<accountEmail>/<calendarID>" (one store
 		// source per calendar; see internal/calsync/calsync.go
 		// sourceIdentifier). One scheduler job syncs every calendar for an
 		// account, so the job name is keyed on the account-email prefix.

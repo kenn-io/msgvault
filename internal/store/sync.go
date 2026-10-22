@@ -1857,7 +1857,12 @@ func (s *Store) UpdateSourceDisplayNameContext(
 // change to that mailbox re-derives the source's events in the same
 // transaction.
 func (s *Store) UpdateSourceSyncConfig(sourceID int64, configJSON string) error {
-	ctx := context.Background()
+	return s.UpdateSourceSyncConfigContext(context.Background(), sourceID, configJSON)
+}
+
+// UpdateSourceSyncConfigContext is the request-aware form of
+// UpdateSourceSyncConfig.
+func (s *Store) UpdateSourceSyncConfigContext(ctx context.Context, sourceID int64, configJSON string) error {
 	newConfig := sql.NullString{String: configJSON, Valid: true}
 	// The source lock orders this write against every derivation of the
 	// source's events, so the comparison below sees the config they used.
