@@ -137,14 +137,14 @@ question. Deleting a question removes only that question's decision.
 - The list reads conversations that are not mailing-list mail and have a
   message in the last 30 days or a snooze decision, oldest first. It stops once it holds more loops
   than you asked for, so a list with few or no loops reads every one of those
-  conversations. It opens a stored original only for a message that could
-  change the answer, such as the one that starts a wait. Automated mail among
-  a conversation's newest messages means more originals, up to one per
-  message, and the list takes longer. The figures below come from 3,000
-  conversations of one or two human messages each, on one machine. A list that
-  stopped at 50 loops took 0.25 seconds, and a list with no loops took 1 second
-  for plain-text messages and 12 seconds when each message carried a 96 KiB
-  attachment. Each person-card view runs the same list for that person's conversations.
+  conversations. It reads a stored original only when it could change the
+  answer. Each list checks at most 1,000 stored originals. If it needs another,
+  it stops and returns completed conversations with `coverage_incomplete` set;
+  other loops may be missing. A very large eligible set can still exceed the
+  API's default 60-second request budget, which returns HTTP 500
+  (`internal_error`) without a partial list. Lowering `--limit` may not shorten
+  a sparse scan. Each person-card view follows the same limit for that person's
+  conversations.
 - A requester leaves the list after 30 days without activity, even when a
   question remains unanswered. Their unanswered questions can return when
   they become active again. An exact snoozed question returns after expiry,

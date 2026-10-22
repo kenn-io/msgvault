@@ -6854,7 +6854,9 @@ func (l LoopItem) Validate() error {
 }
 
 type LoopListResponse struct {
-	Items []LoopItem `json:"items" validate:"required"`
+	// CoverageIncomplete True when the scan reached the stored original read limit; returned items may be incomplete
+	CoverageIncomplete bool       `json:"coverage_incomplete"`
+	Items              []LoopItem `json:"items" validate:"required"`
 
 	// SkippedUnparseable Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop
 	SkippedUnparseable int64 `json:"skipped_unparseable"`

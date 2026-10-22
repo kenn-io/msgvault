@@ -81,6 +81,66 @@ func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *test
 	require.Empty(result.Loops, "the PDF reply settles the incoming question")
 }
 
+func TestListBccReplySettlesTheRecipientQuestion(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mixed bool
+	}{
+		{name: "direct Bcc reply"},
+		{name: "Bcc reply remains visible when its To recipient is settled", mixed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			f := storetest.New(t)
+			f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: "sam@example.test", To: []string{me}, Body: "Can you send the budget?", SentAt: ago(8 * day)})
+			if tc.mixed {
+				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, To: []string{alex}, Bcc: []string{"sam@example.test"}, Body: "Here is the budget.", SentAt: ago(7 * day)})
+				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, To: []string{alex}, Body: "Can you review the contract?", SentAt: ago(6 * day)})
+				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: alex, To: []string{me}, Body: "I reviewed the contract.", SentAt: ago(5 * day)})
+			} else {
+				f.PersistEmail(storetest.EmailSpec{Thread: "bcc-settlement", From: me, Bcc: []string{"sam@example.test"}, Body: "Here is the budget.", SentAt: ago(7 * day)})
+			}
+
+			result := list(t, f, loops.Options{})
+			require.Empty(result.Loops, "a newer outbound Bcc message settles the Bcc recipient's question")
+		})
+	}
+}
+
+func TestRecipientlessOutboundKeepsQuestionOpen(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(5 * day)})
+	f.PersistEmail(storetest.EmailSpec{From: me, Body: "The report is ready for review.", SentAt: ago(3 * day)})
+	result := list(t, f, loops.Options{})
+	require.Len(result.Loops, 1)
+	assert.Equal(question, result.Loops[0].Anchor.ID)
+}
+
+func TestListBoundsStoredOriginalReads(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	st := storetest.NewLoopOriginalReadStore(f.Store, loops.MaxListOriginalReads+1, now)
+	result, err := loops.List(t.Context(), st, loops.Options{}, now)
+	require.NoError(err)
+	assert.Equal(loops.MaxListOriginalReads, st.OriginalReads, "a list request caps stored MIME reads")
+	assert.True(result.CoverageIncomplete)
+	require.Len(result.Loops, 1, "the complete conversation before exhaustion stays in the result")
+}
+
+func TestListReturnsCanceledOriginalRead(t *testing.T) {
+	require := require.New(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	f := storetest.New(t)
+	st := storetest.NewLoopOriginalReadStore(f.Store, 1, now)
+	result, err := loops.List(ctx, st, loops.Options{}, now)
+	require.ErrorIs(err, context.Canceled)
+	require.False(result.CoverageIncomplete)
+}
+
 func TestListPersonFilterRetainsUnansweredQuestionAfterAnotherPersonIsAnswered(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -139,49 +199,6 @@ func TestListReplyFromLinkedAddressSettles(t *testing.T) {
 }
 
 func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
-	for _, tt := range []struct {
-		name          string
-		first, second time.Duration
-		state         string
-	}{
-		{name: "older import after done", first: -3 * day, second: -5 * day, state: store.LoopStateDone},
-		{name: "older import after snooze", first: -3 * day, second: -5 * day, state: store.LoopStateSnoozed},
-		{name: "identical sent time", first: -3 * day, second: -3 * day, state: store.LoopStateDone},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: now.Add(tt.first)})
-			var err error
-			if tt.state == store.LoopStateDone {
-				_, err = loops.Done(t.Context(), f.Store, question, now)
-			} else {
-				_, err = loops.Snooze(t.Context(), f.Store, question, now.Add(5*day), now)
-			}
-			require.NoError(err)
-			require.Empty(list(t, f, loops.Options{}).Loops, "the question you marked stays hidden")
-			imported := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: now.Add(tt.second)})
-			result := list(t, f, loops.Options{})
-			require.Len(result.Loops, 1, "an unseen question brings the loop back")
-			assert.Equal(imported, result.Loops[0].Anchor.ID)
-			if tt.first != tt.second {
-				until := now.Add(day)
-				decision, err := loops.Snooze(t.Context(), f.Store, imported, until, now)
-				require.NoError(err)
-				assert.Equal(store.LoopStateSnoozed, decision.State)
-				require.NotNil(decision.SnoozedUntil)
-				assert.True(until.Equal(*decision.SnoozedUntil))
-				later, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(2*day))
-				require.NoError(err)
-				require.Len(later.Loops, 1, "the imported question reopens at its own deadline")
-				assert.Equal(imported, later.Loops[0].Anchor.ID)
-				marks, err := f.Store.LoopMarksContext(t.Context())
-				require.NoError(err)
-				assert.Equal(tt.state, marks[question].State, "the earlier decision stays intact")
-			}
-		})
-	}
 	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
 		t.Run(state, func(t *testing.T) {
 			assert := assert.New(t)
@@ -207,9 +224,21 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 			}
 			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Just following up.", SentAt: ago(4 * day)})
 			assert.Empty(list(t, f, loops.Options{}).Loops, "a follow-up that asks nothing leaves it hidden")
-			followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(3 * day)})
+			olderImport := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(6 * day)})
 			result := list(t, f, loops.Options{})
-			require.Len(result.Loops, 1, "an unseen question brings the loop back")
+			require.Len(result.Loops, 1, "an older imported question brings the loop back")
+			assert.Equal(olderImport, result.Loops[0].Anchor.ID)
+			assert.True(result.Loops[0].OwedSince.Equal(ago(6 * day)))
+			mark(olderImport)
+			sameTime := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the same-time invoice?", SentAt: ago(6 * day)})
+			result = list(t, f, loops.Options{})
+			require.Len(result.Loops, 1, "a question with the same sent time remains distinct")
+			assert.Equal(sameTime, result.Loops[0].Anchor.ID)
+			mark(sameTime)
+			assert.Empty(list(t, f, loops.Options{}).Loops)
+			followUp := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(3 * day)})
+			result = list(t, f, loops.Options{})
+			require.Len(result.Loops, 1, "a newer unseen question brings the loop back")
 			assert.Equal(followUp, result.Loops[0].Anchor.ID)
 			assert.True(result.Loops[0].OwedSince.Equal(ago(3 * day)))
 			mark(followUp)
@@ -387,12 +416,13 @@ func TestExpiredSnoozeOnlyRestoresItsQuestion(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	alexQuestion := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(25 * day)})
-	f.PersistEmail(storetest.EmailSpec{From: "sam@example.test", To: []string{me}, Body: "Can you send the report?", SentAt: ago(24 * day)})
+	samQuestion := f.PersistEmail(storetest.EmailSpec{From: "sam@example.test", To: []string{me}, Body: "Can you send the report?", SentAt: ago(24 * day)})
 	_, err := loops.Snooze(t.Context(), f.Store, alexQuestion, now.Add(30*day), now)
 	require.NoError(err)
-	before, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(15*day))
+	before, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(5*day))
 	require.NoError(err)
-	assert.Empty(before.Loops)
+	require.Len(before.Loops, 1)
+	assert.Equal(samQuestion, before.Loops[0].Anchor.ID, "the active snooze hides Alex while Sam remains open")
 	after, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(31*day))
 	require.NoError(err)
 	require.Len(after.Loops, 1)
@@ -405,31 +435,15 @@ func TestExpiredSnoozeOnlyRestoresItsQuestion(t *testing.T) {
 }
 
 func TestNeutralRequesterAcknowledgementKeepsOlderQuestionOpen(t *testing.T) {
-	for _, tc := range []struct {
-		name, body, raw string
-		visible         bool
-	}{
-		{name: "human acknowledgement", body: "Thanks!", visible: true},
-		{name: "automated acknowledgement", body: "Thanks!", raw: "Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nThanks!"},
-		{name: "automated update", body: "The ticket was updated.", raw: "Auto-Submitted: auto-replied\r\nContent-Type: text/plain\r\n\r\nThe ticket was updated."},
-		{name: "unreadable update", body: "The ticket was updated.", raw: "MIME-Version: 1.0\r\nContent-Type: multipart mixed; boundary=outer\r\n\r\n--outer--\r\n"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(40 * day)})
-			require.Empty(list(t, f, loops.Options{}).Loops)
-			f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: tc.body, Raw: tc.raw, SentAt: ago(day)})
-			result := list(t, f, loops.Options{})
-			if tc.visible {
-				require.Len(result.Loops, 1)
-				assert.Equal(question, result.Loops[0].Anchor.ID)
-			} else {
-				assert.Empty(result.Loops, "automation and unreadable originals cannot revive a quiet request")
-			}
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	question := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(40 * day)})
+	require.Empty(list(t, f, loops.Options{}).Loops)
+	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Thanks!", SentAt: ago(day)})
+	result := list(t, f, loops.Options{})
+	require.Len(result.Loops, 1)
+	assert.Equal(question, result.Loops[0].Anchor.ID)
 }
 
 func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {

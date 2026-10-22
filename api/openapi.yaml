@@ -7350,6 +7350,9 @@ components:
     LoopListResponse:
       additionalProperties: true
       properties:
+        coverage_incomplete:
+          description: True when the scan reached the stored original read limit; returned items may be incomplete
+          type: boolean
         items:
           items:
             $ref: "#/components/schemas/LoopItem"
@@ -7364,6 +7367,7 @@ components:
       required:
         - items
         - truncated
+        - coverage_incomplete
         - skipped_unparseable
       type: object
     MCPCapabilities:

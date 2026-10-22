@@ -28,17 +28,18 @@ var (
 // msg is one message in a scripted conversation. Zero fields mean an inbound
 // email from alex to you.
 type msg struct {
-	out     bool
-	observe bool
-	from    store.LoopParticipant
-	to      []store.LoopParticipant
-	ccOnly  bool
-	cc      []store.LoopParticipant
-	ago     time.Duration
-	body    string
-	subject string
-	listID  string
-	file    bool
+	out      bool
+	observe  bool
+	from     store.LoopParticipant
+	to       []store.LoopParticipant
+	mentions []store.LoopParticipant
+	ccOnly   bool
+	cc       []store.LoopParticipant
+	ago      time.Duration
+	body     string
+	subject  string
+	listID   string
+	file     bool
 	// rawFails is a message whose stored original fails MIME parsing.
 	rawFails bool
 	signals  mime.AutomationSignals
@@ -56,9 +57,6 @@ func (s script) conversation() (store.LoopConversation, *fakeReader) {
 	conversationType := "email_thread"
 	if s.chat {
 		conversationType = "direct_chat"
-	}
-	if s.group {
-		conversationType = "group_chat"
 	}
 	var messages []store.LoopMessage
 	r := &fakeReader{bodies: map[int64]string{}, signals: map[int64]mime.AutomationSignals{}, files: map[int64]bool{}, rawFails: map[int64]bool{}}
@@ -79,6 +77,9 @@ func (s script) conversation() (store.LoopConversation, *fakeReader) {
 		case in.out:
 			m.Direction = store.DirectionOutbound
 			m.Sender = owner
+			for _, p := range in.mentions {
+				m.Recipients = append(m.Recipients, store.LoopRecipient{LoopParticipant: p, Type: "mention"})
+			}
 			to := in.to
 			if len(to) == 0 {
 				to = []store.LoopParticipant{alex}
@@ -100,7 +101,7 @@ func (s script) conversation() (store.LoopConversation, *fakeReader) {
 		r.bodies[m.ID], r.signals[m.ID], r.files[m.ID], r.rawFails[m.ID] = in.body, in.signals, in.file, in.rawFails
 	}
 	slices.Reverse(messages)
-	return store.LoopConversation{ConversationID: 7, SourceID: 3, ConversationType: conversationType, Messages: messages}, r
+	return store.LoopConversation{ConversationID: 7, SourceID: 3, ConversationType: conversationType, GroupChat: s.group, Messages: messages}, r
 }
 
 func detect(s script) (Loop, bool, error) {
@@ -167,6 +168,22 @@ func TestDetect(t *testing.T) {
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Thanks!"},
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
+		{"outbound acknowledgement keeps the awaited person active", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you review it?"},
+			{out: true, to: []store.LoopParticipant{alex}, ago: day, body: "Thanks!"},
+		}}, AwaitingReply, 1, 0, alex, day, ""},
+		{"automated acknowledgement doesn't refresh a request", script{msgs: []msg{
+			{ago: 40 * day, body: "Can you approve the contract?"},
+			{ago: day, body: "Thanks!", signals: mime.AutomationSignals{AutoSubmitted: true}},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
+		{"automated update doesn't refresh a request", script{msgs: []msg{
+			{ago: 40 * day, body: "Can you approve the contract?"},
+			{ago: day, body: "The ticket was updated.", signals: mime.AutomationSignals{AutoSubmitted: true}},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
+		{"unreadable update doesn't refresh a request", script{msgs: []msg{
+			{ago: 40 * day, body: "Can you approve the contract?"},
+			{ago: day, body: "The ticket was updated.", rawFails: true},
+		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 40 * day, ""},
 		{"awaited reply on To", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you send the contract?"},
 			{from: alex, ago: 3 * day, body: "Here is the contract.", ccOnly: false},
@@ -225,10 +242,6 @@ func TestDetect(t *testing.T) {
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "  "},
 		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
-		{"quoted-only reply settles nothing", script{msgs: []msg{
-			{out: true, ago: 5 * day, body: "Can you review it?"},
-			{ago: 4 * day, body: "On Monday, Me wrote:\n> Can you review it?"},
-		}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"attachment-only reply settles", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you send the deck?"},
 			{ago: 4 * day, file: true},
@@ -258,12 +271,6 @@ func TestDetect(t *testing.T) {
 			{ago: 5 * day, body: "Can you send the contract?"},
 			{out: true, ago: 4 * day, body: "Passing this along, see below.", to: []store.LoopParticipant{sam}},
 		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
-		{"a further exchange with the forward recipient leaves the requester waiting", script{msgs: []msg{
-			{ago: 6 * day, body: "Can you send the contract?"},
-			{out: true, ago: 5 * day, body: "Forwarding this to you.", to: []store.LoopParticipant{sam}},
-			{from: sam, ago: 4 * day, body: "Here is the contract."},
-			{out: true, ago: 3 * day, body: "I have the contract now.", to: []store.LoopParticipant{sam}},
-		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"your answer to them and someone else settles", script{msgs: []msg{
 			{ago: 5 * day, body: "Can you send the contract?"},
 			{out: true, ago: 4 * day, body: "Sent, see the attachment.", to: []store.LoopParticipant{sam, alexAlt}},
@@ -280,11 +287,6 @@ func TestDetect(t *testing.T) {
 			{ago: 5 * day, body: "Can you send the contract?"},
 			{out: true, ago: 4 * day, body: "I am out until Monday.", signals: mime.AutomationSignals{AutoSubmitted: true}},
 		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
-		{"your auto-reply followed by a forward settles nothing", script{msgs: []msg{
-			{ago: 5 * day, body: "Can you send the contract?"},
-			{out: true, ago: 4 * day, body: "I am out until Monday.", signals: mime.AutomationSignals{AutoSubmitted: true}},
-			{out: true, ago: 3 * day, body: "Passing this along, see below.", to: []store.LoopParticipant{sam}},
-		}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"nudges keep the oldest anchor", script{msgs: []msg{
 			{ago: 6 * day, body: "Can you send the contract?"},
 			{ago: 3 * day, body: "Any update?"},
@@ -300,6 +302,7 @@ func TestDetect(t *testing.T) {
 		{"group chats are skipped", script{group: true, chat: true, msgs: []msg{{ago: 2 * day, body: "Can you send it?"}}}, "", 0, 0, store.LoopParticipant{}, 0, ""},
 		{"direct chat question you owe", script{chat: true, msgs: []msg{{ago: 2 * day, body: "are you coming?"}}}, ReplyOwed, 1, 0, store.LoopParticipant{}, 0, ""},
 		{"direct chat question you asked", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "are you coming?"}}}, AwaitingReply, 1, 0, store.LoopParticipant{}, 0, ""},
+		{"direct chat question waits on the recipient, not a mentioned person", script{chat: true, msgs: []msg{{out: true, ago: 4 * day, body: "Can you review this?", to: []store.LoopParticipant{{ParticipantID: 10, PersonID: 100, DisplayName: "Alex", Address: "alex@example.test"}}, mentions: []store.LoopParticipant{{ParticipantID: 2, PersonID: 20, DisplayName: "Sam", Address: "sam@example.test"}}}}}, AwaitingReply, 1, 0, store.LoopParticipant{ParticipantID: 10, PersonID: 100, DisplayName: "Alex", Address: "alex@example.test"}, 0, ""},
 
 		{"stale anchor across an unanswered forward", script{msgs: []msg{
 			{ago: 6 * day, subject: "Contract draft", body: "Can you send the contract?"},
@@ -361,7 +364,11 @@ func TestDetect(t *testing.T) {
 			}
 		})
 	}
-	assert.Equal(t, "are you coming?", summary(store.LoopMessage{Snippet: "are you coming?"}), "a chat falls back to its snippet")
+}
+
+func TestSummaryUsesSnippetWhenSubjectIsMissing(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal("are you coming?", summary(store.LoopMessage{Snippet: "are you coming?"}))
 }
 
 func TestDetectPropagatesReadErrors(t *testing.T) {

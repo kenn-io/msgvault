@@ -4,6 +4,8 @@
 import type { LoopItem } from "./loopItem";
 
 export interface LoopListResponse {
+  /** True when the scan reached the stored original read limit; returned items may be incomplete */
+  coverage_incomplete: boolean;
   items: LoopItem[];
   /** Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop */
   skipped_unparseable: number;

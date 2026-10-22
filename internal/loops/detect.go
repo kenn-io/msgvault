@@ -39,13 +39,9 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 		if neutral {
 			// A neutral acknowledgement counts as activity but opens or
 			// settles no question.
-			if key := participantIdentity(m.Sender); w.acknowledges(m) && latest[key].IsZero() {
-				vouched, err := w.vouched(m)
-				if err != nil {
+			if key := w.activityKey(m); w.acknowledges(m) && key != (loopParticipantIdentity{}) {
+				if err := w.touch(latest, key, m); err != nil {
 					return Detection{}, err
-				}
-				if vouched {
-					latest[key] = m.OccurredAt
 				}
 			}
 			continue
@@ -53,19 +49,9 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 		if err := w.settle(m); err != nil {
 			return Detection{}, err
 		}
-		cp := m.Sender
-		if m.Direction == store.DirectionOutbound {
-			cp, _ = w.awaitedParticipant(m)
-		}
-		key := participantIdentity(cp)
-		if latest[key].IsZero() {
-			vouched, err := w.vouched(m)
-			if err != nil {
-				return Detection{}, err
-			}
-			if vouched {
-				latest[key] = m.OccurredAt
-			}
+		key := w.activityKey(m)
+		if err := w.touch(latest, key, m); err != nil {
+			return Detection{}, err
 		}
 		kind, cp, ok, err := w.opens(m)
 		if err != nil {
@@ -100,6 +86,32 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 		return int(a.Anchor.ID - b.Anchor.ID)
 	})
 	return result, nil
+}
+
+// activityKey identifies whose turn a message keeps active: the sender of an
+// inbound message, or the awaited recipient of an outbound one.
+func (w *walker) activityKey(m store.LoopMessage) loopParticipantIdentity {
+	cp := m.Sender
+	if m.Direction == store.DirectionOutbound {
+		cp, _ = w.awaitedParticipant(m)
+	}
+	return participantIdentity(cp)
+}
+
+// touch records m as the latest activity for key unless newer activity is
+// already known or the stored original does not vouch for m.
+func (w *walker) touch(latest map[loopParticipantIdentity]time.Time, key loopParticipantIdentity, m store.LoopMessage) error {
+	if !latest[key].IsZero() {
+		return nil
+	}
+	vouched, err := w.vouched(m)
+	if err != nil {
+		return err
+	}
+	if vouched {
+		latest[key] = m.OccurredAt
+	}
+	return nil
 }
 
 type walker struct {
@@ -165,7 +177,7 @@ func (w *walker) isSettledParticipantMessage(m store.LoopMessage) bool {
 	case store.DirectionOutbound:
 		relevant := false
 		for _, recipient := range m.Recipients {
-			if recipient.IsOwner || (recipient.Type != "to" && recipient.Type != "cc") {
+			if recipient.IsOwner || (recipient.Type != "to" && recipient.Type != "cc" && recipient.Type != "bcc") {
 				continue
 			}
 			relevant = true
@@ -259,12 +271,12 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 	return false, nil
 }
 
-// acknowledges reports whether an inbound neutral message contains only an
-// acknowledgement. Its timestamp can keep an unanswered question recent
-// without opening or settling a loop.
+// acknowledges reports whether a neutral inbound or outbound message contains
+// only an acknowledgement. Its timestamp can keep an unanswered question
+// recent without opening or settling a loop.
 func (w *walker) acknowledges(m store.LoopMessage) bool {
 	text, ok := w.texts[m.ID]
-	return m.Direction == store.DirectionInbound && ok && strings.TrimSpace(text) != "" && isAcknowledgementOnly(text)
+	return ok && strings.TrimSpace(text) != "" && isAcknowledgementOnly(text)
 }
 
 // vouched reports whether the stored original leaves a message in play: it is
@@ -388,7 +400,7 @@ func (w *walker) answeredByNewerOutbound(sender store.LoopParticipant) (bool, er
 	}
 	for _, m := range w.sent {
 		if !slices.ContainsFunc(m.Recipients, func(r store.LoopRecipient) bool {
-			return (r.Type == "to" || r.Type == "cc") && !r.IsOwner &&
+			return (r.Type == "to" || r.Type == "cc" || r.Type == "bcc") && !r.IsOwner &&
 				(r.ParticipantID == sender.ParticipantID || (r.PersonID != 0 && r.PersonID == sender.PersonID))
 		}) {
 			continue
@@ -421,7 +433,8 @@ func (w *walker) awaitedParticipant(m store.LoopMessage) (store.LoopParticipant,
 	var found []store.LoopParticipant
 	seen := map[loopParticipantIdentity]bool{}
 	for _, r := range m.Recipients {
-		if r.IsOwner || r.ParticipantID == 0 || (w.email && r.Type != "to") {
+		if r.IsOwner || r.ParticipantID == 0 ||
+			(w.email && r.Type != "to") || (!w.email && r.Type != "to" && r.Type != "member") {
 			continue
 		}
 		key := participantIdentity(r.LoopParticipant)

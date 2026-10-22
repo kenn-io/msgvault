@@ -52,9 +52,11 @@ msgvault loops snooze 4521 --until 48h
 oldest first, with the age, person, subject, and message ID of each loop. A
 section with no loops is left out. The footer counts both sections. When `--limit` cuts the list, the footer says so
 and gives no counts. A line also says how many stored messages could not be
-read, when there are any. An empty list prints
-`No open loops.` A message that is not an open loop, such as one you already answered, fails
-with `<id> isn't an open loop.`
+read, when there are any. If the scan needs more than 1,000 stored originals,
+the command returns completed conversations and warns that more loops may be
+missing; JSON sets `coverage_incomplete`. An empty complete list prints
+`No open loops.` A message that is not an open loop, such as one you already
+answered, fails with `<id> isn't an open loop.`
 
 ## meetings
 

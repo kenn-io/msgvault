@@ -11,6 +11,7 @@
   let loading = $state(true);
   let failed = $state(false);
   let truncated = $state(false);
+  let coverageIncomplete = $state(false);
   let unreadable = $state(0);
 
   $effect(() => {
@@ -19,6 +20,7 @@
     const controller = new AbortController();
     items = [];
     truncated = false;
+    coverageIncomplete = false;
     unreadable = 0;
     failed = false;
     loading = true;
@@ -32,6 +34,7 @@
         if (!result.data) throw new Error('Open loops are unavailable.');
         items = result.data.items ?? [];
         truncated = Boolean(result.data.truncated);
+        coverageIncomplete = Boolean(result.data.coverage_incomplete);
         unreadable = result.data.skipped_unparseable ?? 0;
       } catch {
         if (controller.signal.aborted) return;
@@ -64,6 +67,7 @@
       </header>
       {#if loading}<p role="status">Loading open loops…</p>
       {:else if failed}<p role="alert">Couldn't load open loops.</p>
+      {:else if items.length === 0 && coverageIncomplete}<p>No loops found in the messages checked.</p>
       {:else if items.length === 0}<p>Nothing open with this person in the last 30 days.</p>
       {:else}
         <ul>
@@ -82,6 +86,9 @@
         <p class="note">
           {unreadable === 1 ? '1 message' : `${unreadable} messages`} could not be read, so a reply in {unreadable === 1 ? 'it' : 'one'} may have settled a loop.
         </p>
+      {/if}
+      {#if !loading && !failed && coverageIncomplete}
+        <p class="note">Only 1,000 stored messages were checked; more loops may be missing.</p>
       {/if}
     </div>
   </Card>

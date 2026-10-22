@@ -335,6 +335,7 @@ type EmailSpec struct {
 	Thread  string
 	From    string
 	To      []string
+	Bcc     []string
 	Subject string
 	Body    string
 	// Raw is the stored original. Empty stores a plain message built from
@@ -361,6 +362,10 @@ func (f *Fixture) PersistEmail(spec EmailSpec) int64 {
 	for _, address := range spec.To {
 		to = append(to, f.EnsureParticipant(address, "", "example.com"))
 	}
+	var bcc []int64
+	for _, address := range spec.Bcc {
+		bcc = append(bcc, f.EnsureParticipant(address, "", "example.com"))
+	}
 	data := &store.MessagePersistData{
 		Message: &store.Message{
 			SourceID: f.Source.ID, ConversationID: convID, MessageType: store.MessageTypeEmail,
@@ -375,10 +380,11 @@ func (f *Fixture) PersistEmail(spec EmailSpec) int64 {
 		Recipients: []store.RecipientSet{
 			{Type: "from", ParticipantIDs: []int64{from}, EmailAddresses: []string{spec.From}},
 			{Type: "to", ParticipantIDs: to, EmailAddresses: spec.To},
+			{Type: "bcc", ParticipantIDs: bcc, EmailAddresses: spec.Bcc},
 		},
 	}
 	if spec.Raw == "" && !spec.NoRaw {
-		spec.Raw = string(email.NewMessage().From(spec.From).To(strings.Join(spec.To, ", ")).
+		spec.Raw = string(email.NewMessage().From(spec.From).To(strings.Join(spec.To, ", ")).Bcc(strings.Join(spec.Bcc, ", ")).
 			Subject(spec.Subject).Date(spec.SentAt.Format(time.RFC1123Z)).Body(spec.Body).CRLF().Bytes())
 	}
 	if spec.Raw != "" {

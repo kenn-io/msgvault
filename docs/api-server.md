@@ -1743,7 +1743,12 @@ item has `kind`, `anchor_message_id`,
 `owed_since_at`, and `last_activity_at`. `truncated` is true when more loops are
 open than `limit`. `skipped_unparseable` counts stored messages the list could
 not read, because their original failed to parse. A reply in one of them may
-have settled a loop that still lists. A bad parameter returns 400.
+have settled a loop that still lists. The scan checks at most 1,000 stored
+originals per request. If it needs another, it returns completed conversations
+and sets `coverage_incomplete`; other loops may be missing. A very large
+eligible set can still exceed the default 60-second request budget and return
+HTTP 500 (`internal_error`) without partial results. A smaller `limit` may not
+reduce that work. A bad parameter returns 400.
 
 `POST /api/v1/loops/{message_id}/done` and
 `POST /api/v1/loops/{message_id}/snooze` with `{"until": "<RFC3339 time>"}`

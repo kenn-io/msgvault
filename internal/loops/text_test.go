@@ -55,6 +55,7 @@ func TestAsks(t *testing.T) {
 		{"approval above wrapped quote", "Approved, go ahead.\n\n" + quote, "Approved, go ahead."},
 		{"approval below wrapped quote", quote + "\nApproved, go ahead.", "Approved, go ahead."},
 		{"approval below wrapped attribution with blank line", "On Monday, October 12, 2026 at 9:00 AM,\nAlex <alex@example.test> wrote:\n\n> Can you approve the contract?\n\nApproved, go ahead.", "Approved, go ahead."},
+		{"bottom-posted answer after an indented quote", "On Monday, Me wrote:\n\n  > Can you send the contract?\n\nI sent it.", "I sent it."},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, strings.TrimSpace(ownText(tt.body)))

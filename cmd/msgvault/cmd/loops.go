@@ -175,7 +175,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	if len(result.Items) == 0 {
 		var sb strings.Builder
 		sb.WriteString("No open loops.\n")
-		writeSkippedOriginals(&sb, result.SkippedUnparseable)
+		writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
 		if _, err := io.WriteString(w, sb.String()); err != nil {
 			return fmt.Errorf("write loops: %w", err)
 		}
@@ -214,25 +214,31 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	}
 	if result.Truncated {
 		// The page holds the oldest loops, so its counts are not the totals.
-		fmt.Fprintf(&sb, "\nShowing the oldest %d. Use --limit to see more.\n", limit)
+		if limit < loops.MaxLimit {
+			fmt.Fprintf(&sb, "\nShowing the oldest %d. Use --limit up to %d to see more.\n", limit, loops.MaxLimit)
+		} else {
+			fmt.Fprintf(&sb, "\nShowing the oldest %d. Results are capped at %d.\n", limit, loops.MaxLimit)
+		}
 	} else {
 		fmt.Fprintf(&sb, "\n%d waiting on you, %d waiting on them.\n", counts[0], counts[1])
 	}
-	writeSkippedOriginals(&sb, result.SkippedUnparseable)
+	writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
 	if _, err := io.WriteString(w, sb.String()); err != nil {
 		return fmt.Errorf("write loops: %w", err)
 	}
 	return nil
 }
 
-// writeSkippedOriginals says how many stored originals could not be read. Their
-// replies may have settled loops that still list, so the gap is stated.
-func writeSkippedOriginals(sb *strings.Builder, skipped int64) {
+// writeLoopWarnings reports unreadable originals and incomplete archive scans.
+func writeLoopWarnings(sb *strings.Builder, skipped int64, incomplete bool) {
 	switch {
 	case skipped == 1:
 		sb.WriteString("1 stored message could not be read, so a reply in it may have settled a loop.\n")
 	case skipped > 1:
 		fmt.Fprintf(sb, "%d stored messages could not be read, so a reply in one may have settled a loop.\n", skipped)
+	}
+	if incomplete {
+		fmt.Fprintf(sb, "Only %d stored messages were checked; more loops may be missing.\n", loops.MaxListOriginalReads)
 	}
 }
 

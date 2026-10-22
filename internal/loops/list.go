@@ -1,6 +1,7 @@
 package loops
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -21,10 +22,37 @@ type Options struct {
 // Result is the oldest-first slice of open loops. Truncated is set when more
 // than Limit loops are open. SkippedUnparseable counts the stored originals
 // the list could not read, which may hide a reply that settled a loop.
+// CoverageIncomplete is set when List stopped after MaxListOriginalReads
+// stored originals; the loops come from the conversations read in full.
 type Result struct {
 	Loops              []Loop
 	Truncated          bool
 	SkippedUnparseable int
+	CoverageIncomplete bool
+}
+
+// MaxListOriginalReads caps the stored MIME originals one List reads.
+const MaxListOriginalReads = 1000
+
+var errOriginalBudget = errors.New("loops: stored original read budget exhausted")
+
+// originalBudget fails stored original reads past its budget, so List stops
+// before the read that would exceed it.
+type originalBudget struct {
+	Store
+
+	left int
+}
+
+func (b *originalBudget) LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (mime.AutomationSignals, bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return mime.AutomationSignals{}, false, false, err
+	}
+	if b.left <= 0 {
+		return mime.AutomationSignals{}, false, false, errOriginalBudget
+	}
+	b.left--
+	return b.Store.LoopOriginalEvidenceContext(ctx, messageID)
 }
 
 // Store is what List, Done, and Snooze read and write; *store.Store
@@ -53,7 +81,8 @@ func (r storeReader) Original(id int64) (mime.AutomationSignals, bool, bool, err
 // find runs Detect over the conversations q selects, oldest first message
 // first, and passes each loop that lists at now to found. Before it reads a
 // conversation it asks done with that conversation's first message time, and
-// it stops when done says so. It returns how many originals it could not read.
+// it stops when done says so. It returns how many originals it could not read
+// in the conversations it finished, even when it also returns an error.
 func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks map[int64]store.LoopMark, done func(first time.Time) bool, found func(Loop) error) (int, error) {
 	reader := storeReader{ctx: ctx, st: st}
 	var unparsed int
@@ -66,7 +95,7 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 		}
 		detection, err := Detect(conv, reader)
 		if err != nil {
-			return 0, err
+			return unparsed, err
 		}
 		unparsed += detection.Unparsed
 		for _, loop := range detection.Loops {
@@ -102,7 +131,7 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{Since: now.Add(-Lookback), PersonID: opts.PersonID}, now, marks,
+	unparsed, err := find(ctx, &originalBudget{Store: st, left: MaxListOriginalReads}, store.LoopQuery{Since: now.Add(-Lookback), PersonID: opts.PersonID}, now, marks,
 		func(first time.Time) bool {
 			return len(kept) > opts.Limit && kept[opts.Limit-1].OwedSince.Before(first)
 		},
@@ -111,19 +140,20 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 				return nil
 			}
 			at, _ := slices.BinarySearchFunc(kept, l, func(a, b Loop) int {
-				if c := a.OwedSince.Compare(b.OwedSince); c != 0 {
-					return c
-				}
-				return int(a.Anchor.ID - b.Anchor.ID)
+				return cmp.Or(a.OwedSince.Compare(b.OwedSince), cmp.Compare(a.Anchor.ID, b.Anchor.ID))
 			})
 			kept = slices.Insert(kept, at, l)
 			kept = kept[:min(len(kept), opts.Limit+1)]
 			return nil
 		})
-	if err != nil {
+	if err != nil && ctx.Err() != nil {
+		return Result{}, ctx.Err()
+	}
+	incomplete := errors.Is(err, errOriginalBudget)
+	if err != nil && !incomplete {
 		return Result{}, err
 	}
-	result := Result{Loops: kept, SkippedUnparseable: unparsed}
+	result := Result{Loops: kept, SkippedUnparseable: unparsed, CoverageIncomplete: incomplete}
 	if len(kept) > opts.Limit {
 		result.Loops, result.Truncated = kept[:opts.Limit], true
 	}

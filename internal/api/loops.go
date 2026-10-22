@@ -35,8 +35,9 @@ type LoopItem struct {
 
 // LoopListResponse lists open loops oldest first.
 type LoopListResponse struct {
-	Items     []LoopItem `json:"items"`
-	Truncated bool       `json:"truncated" doc:"True when more loops are open than limit returned"`
+	Items              []LoopItem `json:"items"`
+	Truncated          bool       `json:"truncated" doc:"True when more loops are open than limit returned"`
+	CoverageIncomplete bool       `json:"coverage_incomplete" doc:"True when the scan reached the stored original read limit; returned items may be incomplete"`
 	// SkippedUnparseable counts stored originals the list could not parse. A reply in one of them may have settled a loop that still lists.
 	SkippedUnparseable int `json:"skipped_unparseable" doc:"Stored originals that failed to parse and were passed over; a reply in one may have settled a listed loop"`
 }
@@ -133,7 +134,7 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to list open loops")
 		return
 	}
-	response := LoopListResponse{Items: make([]LoopItem, 0, len(result.Loops)), Truncated: result.Truncated, SkippedUnparseable: result.SkippedUnparseable}
+	response := loopListResponse(result)
 	for _, l := range result.Loops {
 		item := LoopItem{
 			Kind: l.Kind, AnchorMessageID: l.Anchor.ID, ConversationID: l.ConversationID, SourceID: l.SourceID,
@@ -150,6 +151,13 @@ func (s *Server) handleListLoops(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)
+}
+
+func loopListResponse(result loops.Result) LoopListResponse {
+	return LoopListResponse{
+		Items: make([]LoopItem, 0, len(result.Loops)), Truncated: result.Truncated,
+		CoverageIncomplete: result.CoverageIncomplete, SkippedUnparseable: result.SkippedUnparseable,
+	}
 }
 
 func (s *Server) handleLoopDone(w http.ResponseWriter, r *http.Request) {

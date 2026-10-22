@@ -26,9 +26,15 @@ function clientFor(
   items: ReturnType<typeof loop>[],
   truncated = false,
   skipped = 0,
+  coverageIncomplete = false,
 ) {
   const fetcher = vi.fn<typeof fetch>(async () =>
-    Response.json({ items, truncated, skipped_unparseable: skipped }),
+    Response.json({
+      items,
+      truncated,
+      skipped_unparseable: skipped,
+      coverage_incomplete: coverageIncomplete,
+    }),
   );
   return { client: createAPIClient(fetcher), fetcher };
 }
@@ -97,6 +103,22 @@ describe("PersonOpenLoops", () => {
     expect(screen.queryByText(/open$/)).toBeNull();
   });
 
+  it("warns when the scan could not cover all stored originals", async () => {
+    const { client } = clientFor([loop()], false, 0, true);
+    const view = render(PersonOpenLoops, { client, personID: 7 });
+    expect(
+      await screen.findByText(
+        "Only 1,000 stored messages were checked; more loops may be missing.",
+      ),
+    ).toBeDefined();
+    view.unmount();
+
+    const empty = clientFor([], false, 0, true);
+    render(PersonOpenLoops, { client: empty.client, personID: 7 });
+    expect(await screen.findByText("No loops found in the messages checked."))
+      .toBeDefined();
+  });
+
   it("shows an error", async () => {
     const client = createAPIClient(
       vi.fn<typeof fetch>(async () =>
@@ -112,7 +134,7 @@ describe("PersonOpenLoops", () => {
     );
   });
 
-  it("clears old results and ignores a late response after selection changes", async () => {
+  it("ignores a late response after selection changes", async () => {
     let resolveOld!: (response: Response | PromiseLike<Response>) => void;
     const old = new Promise<Response>((resolve) => {
       resolveOld = resolve;
@@ -122,7 +144,12 @@ describe("PersonOpenLoops", () => {
         const request = input instanceof Request ? input : new Request(input);
         return new URL(request.url).searchParams.get("person_id") === "7"
           ? old
-          : Response.json({ items: [], truncated: false, skipped_unparseable: 0 });
+          : Response.json({
+              items: [],
+              truncated: false,
+              skipped_unparseable: 0,
+              coverage_incomplete: false,
+            });
       }),
     );
     const view = render(PersonOpenLoops, { client, personID: 7 });
@@ -131,7 +158,12 @@ describe("PersonOpenLoops", () => {
       await screen.findByText("Nothing open with this person in the last 30 days."),
     ).toBeDefined();
     resolveOld(
-      Response.json({ items: [loop()], truncated: false, skipped_unparseable: 0 }),
+      Response.json({
+        items: [loop()],
+        truncated: false,
+        skipped_unparseable: 0,
+        coverage_incomplete: false,
+      }),
     );
     await old;
     // Let HTTP decoding finish before checking for a late DOM update.

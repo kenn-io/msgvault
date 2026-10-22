@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -105,8 +106,9 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.NoError(err)
 	assert.Regexp(fmt.Sprintf(`^Snoozed %d until \w{3} \w{3} \d{1,2} \d{1,2}:\d{2} [AP]M \S+\.\n$`, anchor), output)
 
-	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
-	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor))
+	missing := anchor + 10000
+	_, err = runLoops(ctx, t, "done", strconv.FormatInt(missing, 10))
+	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", missing))
 
 	ctx, anchor, _ = loopsDaemon(t)
 	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
@@ -160,8 +162,14 @@ func TestWriteLoopsLayout(t *testing.T) {
 Waiting on them
   5d   Sam Rivera                         Lunch Friday?    4380
 
-Showing the oldest 50. Use --limit to see more.
+Showing the oldest 50. Use --limit up to 200 to see more.
 `, out.String(), "a truncated page does not claim totals")
+
+	out.Reset()
+	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, Items: []generated.LoopItem{
+		item("awaiting_reply", "email", "Lunch Friday?", 120*time.Hour, "Sam Rivera", "", 4380),
+	}}, loops.MaxLimit, now))
+	assert.Contains(out.String(), "Showing the oldest 200. Results are capped at 200.\n")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 2, Items: []generated.LoopItem{
@@ -187,6 +195,10 @@ Showing the oldest 50. Use --limit to see more.
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 1}, 50, now))
 	assert.Equal("No open loops.\n1 stored message could not be read, so a reply in it may have settled a loop.\n", out.String())
+
+	out.Reset()
+	require.NoError(writeLoops(&out, generated.LoopListResponse{CoverageIncomplete: true}, 50, now))
+	assert.Equal("No open loops.\nOnly 1000 stored messages were checked; more loops may be missing.\n", out.String())
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Items: []generated.LoopItem{
