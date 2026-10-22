@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/calendarfixture"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -1547,6 +1548,325 @@ func TestPersistRepairMessageLocksParticipantDirectoryBeforeIdentityGuard(t *tes
 	}
 }
 
+func TestPersistEmailCalendarLocksBeforeEnvelopeParticipantReferences(t *testing.T) {
+	require := require.New(t)
+	fixture := seedRepairStoreFixture(t)
+	if !fixture.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory and row locks are required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var organizerID, guestID int64
+	_, err := fixture.Store.PersistMessageWithParticipantsContext(ctx,
+		[]store.ParticipantPersistData{
+			{EmailAddress: "organizer@example.com", Domain: "example.com"},
+			{EmailAddress: "guest@example.org", Domain: "example.org"},
+		},
+		func(participantIDs []int64) *store.MessagePersistData {
+			organizerID, guestID = participantIDs[0], participantIDs[1]
+			return &store.MessagePersistData{
+				Message: &store.Message{SourceID: fixture.SourceID, SourceMessageID: "calendar-envelope-seed"},
+				Conversation: &store.ConversationPersistData{
+					SourceConversationID: "calendar-envelope-seed",
+					ConversationType:     "email_thread",
+				},
+			}
+		},
+	)
+	require.NoError(err)
+
+	blocker, err := fixture.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_ = blocker.Rollback()
+		}
+	})
+	_, err = blocker.ExecContext(ctx, `
+		SELECT pg_advisory_xact_lock(
+			hashtextextended('participant-directory-mutation', 0)
+		)`)
+	require.NoError(err)
+
+	result := make(chan error, 1)
+	go func() {
+		_, persistErr := fixture.Store.PersistMessageContext(ctx, &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: fixture.SourceID, SourceMessageID: "calendar-envelope-invite",
+				MessageType: "email", SenderID: sql.NullInt64{Int64: organizerID, Valid: true},
+			},
+			Conversation: &store.ConversationPersistData{SourceConversationID: "calendar-envelope-invite", ConversationType: "email_thread"},
+			Recipients: []store.RecipientSet{
+				{Type: "from", ParticipantIDs: []int64{organizerID}},
+				{Type: "to", ParticipantIDs: []int64{guestID}},
+			},
+			RawMIME:  calendarfixture.EmailFrom("organizer@example.com", []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:lock-order@example.test\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")),
+			BodyText: sql.NullString{String: "Invite message", Valid: true},
+		})
+		result <- persistErr
+	}()
+	waitForPostgreSQLLockWait(t, fixture.Store, "%pg_advisory_xact_lock%")
+
+	var lockedParticipantID int64
+	require.NoError(blocker.QueryRowContext(ctx,
+		fixture.Store.Rebind(`SELECT id FROM participants WHERE id=? FOR UPDATE`), organizerID,
+	).Scan(&lockedParticipantID), "calendar import must lock the directory before parent envelope references")
+	require.Equal(organizerID, lockedParticipantID)
+	require.NoError(blocker.Commit())
+	held = false
+	select {
+	case err := <-result:
+		require.NoError(err)
+	case <-ctx.Done():
+		require.FailNow("email calendar import did not finish after releasing the directory lock", ctx.Err())
+	}
+}
+
+func TestEmailCalendarEntryPointsLockDirectoryBeforeRows(t *testing.T) {
+	for _, entry := range []string{"single-participant-gmail-adoption", "raw-replacement", "repair-page"} {
+		t.Run(entry, func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			source, err := st.GetOrCreateSource("gmail", "organizer@example.test")
+			require.NoError(err)
+			participants := []store.ParticipantPersistData{{EmailAddress: "organizer@example.test", Domain: "example.test"}}
+			build := func(key string, raw []byte) func([]int64) *store.MessagePersistData {
+				return func(ids []int64) *store.MessagePersistData {
+					return &store.MessagePersistData{
+						Message: &store.Message{
+							SourceID: source.ID, SourceMessageID: key, MessageType: "email",
+							SenderID: sql.NullInt64{Int64: ids[0], Valid: true},
+						},
+						Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "email_thread"},
+						Recipients: []store.RecipientSet{{
+							Type: "from", ParticipantIDs: ids, EmailAddresses: []string{"organizer@example.test"},
+						}},
+						RawMIME: raw,
+					}
+				}
+			}
+			receipt := store.GmailDraftReceipt{
+				SourceID: source.ID, GmailDraftID: "directory-lock-draft",
+				GmailMessageID: "original", ThreadID: "original",
+			}
+			draft, err := st.PersistGmailDraftContext(ctx, receipt, participants,
+				build("original", []byte("From: organizer@example.test\r\n\r\nOriginal draft")))
+			require.NoError(err)
+			var participantID int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM participants WHERE email_address = ?`),
+				"organizer@example.test").Scan(&participantID))
+			raw := calendarfixture.EmailFrom("organizer@example.test", []byte(
+				"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n"+
+					"BEGIN:VEVENT\r\nUID:directory-lock@example.test\r\nDTSTART:20270302T120000Z\r\n"+
+					"ORGANIZER:mailto:organizer@example.test\r\nATTENDEE:mailto:guest@example.test\r\n"+
+					"END:VEVENT\r\nEND:VCALENDAR\r\n"))
+			var persist func() error
+			lockQuery := `SELECT id FROM messages WHERE id = ? FOR UPDATE NOWAIT`
+			lockID := draft.CurrentMessageID
+			switch entry {
+			case "single-participant-gmail-adoption":
+				lockID = participantID
+				lockQuery = `SELECT id FROM participants WHERE id = ? FOR UPDATE NOWAIT`
+				observed := receipt
+				observed.GmailMessageID = "observed"
+				persist = func() error {
+					_, err := st.AdoptGmailDraftObservationContext(ctx, draft.DraftID, draft.Revision,
+						observed, participants, build("observed", raw))
+					return err
+				}
+			case "raw-replacement":
+				persist = func() error {
+					return st.UpsertMessageRawWithFormatContext(ctx, draft.CurrentMessageID, raw, "mime")
+				}
+			case "repair-page":
+				// Clearing diagnostics on the first email must not lock its row
+				// before the next email acquires the calendar directory lock.
+				require.NoError(st.SetMessageMetadata(draft.CurrentMessageID,
+					sql.NullString{String: `{"calendar_invite_errors":["stale"]}`, Valid: true}))
+				_, err := st.PersistMessageContext(ctx, build("invite", raw)([]int64{participantID}))
+				require.NoError(err)
+				persist = func() error {
+					_, err := st.RepairEmailCalendarEventsContext(ctx, source.ID, nil)
+					return err
+				}
+			}
+			if st.IsPostgreSQL() {
+				blocker, err := st.DB().BeginTx(ctx, nil)
+				require.NoError(err)
+				t.Cleanup(func() { _ = blocker.Rollback() })
+				_, err = blocker.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('participant-directory-mutation', 0))`)
+				require.NoError(err)
+				result := make(chan error, 1)
+				go func() { result <- persist() }()
+				waitForPostgreSQLLockWait(t, st, "%pg_advisory_xact_lock%")
+
+				var lockedID int64
+				require.NoError(blocker.QueryRowContext(ctx, st.Rebind(lockQuery), lockID).Scan(&lockedID),
+					"calendar extraction must wait for the directory before locking participant or message rows")
+				require.Equal(lockID, lockedID)
+				require.NoError(blocker.Commit())
+				select {
+				case err := <-result:
+					require.NoError(err)
+				case <-ctx.Done():
+					require.FailNow("calendar extraction did not finish after releasing the directory lock", ctx.Err())
+				}
+			} else {
+				require.NoError(persist())
+			}
+			var events int
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT COUNT(*) FROM messages WHERE source_id = ? AND message_type = 'calendar_event'`), source.ID).Scan(&events))
+			assert.Equal(t, 1, events, "the invitation must still materialize after directory serialization")
+		})
+	}
+}
+
+func TestPersistRepairEmailCalendarLocksDirectoryBeforeSingleParticipant(t *testing.T) {
+	require := require.New(t)
+	fixture := seedRepairStoreFixture(t)
+	if !fixture.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory and row locks are required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var organizerID int64
+	_, err := fixture.Store.PersistMessageWithParticipantsContext(ctx,
+		[]store.ParticipantPersistData{{EmailAddress: "repair-owner@example.test", Domain: "example.test"}},
+		func(participantIDs []int64) *store.MessagePersistData {
+			organizerID = participantIDs[0]
+			return &store.MessagePersistData{
+				Message:      &store.Message{SourceID: fixture.SourceID, SourceMessageID: "repair-calendar-participant-seed"},
+				Conversation: &store.ConversationPersistData{SourceConversationID: "repair-calendar-participant-seed", ConversationType: "email_thread"},
+			}
+		})
+	require.NoError(err)
+
+	blocker, err := fixture.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_ = blocker.Rollback()
+		}
+	})
+	_, err = blocker.ExecContext(ctx, `
+		SELECT pg_advisory_xact_lock(
+			hashtextextended('participant-directory-mutation', 0)
+		)`)
+	require.NoError(err)
+
+	calendar := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:repair-lock-order@example.test\r\nDTSTART:20270302T120000Z\r\n" +
+		"ORGANIZER:mailto:repair-owner@example.test\r\nATTENDEE:mailto:guest@example.test\r\n" +
+		"END:VEVENT\r\nEND:VCALENDAR\r\n")
+	result := make(chan error, 1)
+	go func() {
+		_, persistErr := fixture.Store.PersistRepairMessageWithParticipantsContext(ctx, fixture.Guard,
+			[]store.ParticipantPersistData{{EmailAddress: "repair-owner@example.test", DisplayName: "Repair Owner", Domain: "example.test"}},
+			func(participantIDs []int64) *store.MessagePersistData {
+				return &store.MessagePersistData{
+					Message: &store.Message{
+						SourceID: fixture.SourceID, SourceMessageID: fixture.Guard.SourceMessageID,
+						MessageType: "email", SenderID: sql.NullInt64{Int64: participantIDs[0], Valid: true},
+					},
+					Conversation: &store.ConversationPersistData{SourceConversationID: "repair-thread", ConversationType: "email_thread"},
+					Recipients:   []store.RecipientSet{{Type: "from", ParticipantIDs: participantIDs}},
+					RawMIME:      calendarfixture.EmailFrom("repair-owner@example.test", calendar),
+					BodyText:     sql.NullString{String: "Calendar repair", Valid: true},
+				}
+			})
+		result <- persistErr
+	}()
+	waitForPostgreSQLLockWait(t, fixture.Store, "%pg_advisory_xact_lock%")
+
+	var lockedParticipantID int64
+	require.NoError(blocker.QueryRowContext(ctx,
+		fixture.Store.Rebind(`SELECT id FROM participants WHERE id=? FOR UPDATE NOWAIT`), organizerID,
+	).Scan(&lockedParticipantID), "single-participant repair must wait for the directory before locking its participant")
+	require.Equal(organizerID, lockedParticipantID)
+	require.NoError(blocker.Commit())
+	held = false
+	select {
+	case persistErr := <-result:
+		require.NoError(persistErr)
+	case <-ctx.Done():
+		require.FailNow("single-participant email calendar repair did not finish after releasing the directory lock", ctx.Err())
+	}
+}
+
+func TestPersistICalendarLocksDirectoryBeforeFirstComponent(t *testing.T) {
+	require := require.New(t)
+	fixture := seedRepairStoreFixture(t)
+	if !fixture.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL advisory and row locks are required")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var organizerID int64
+	_, err := fixture.Store.PersistMessageWithParticipantsContext(ctx,
+		[]store.ParticipantPersistData{{EmailAddress: "organizer@example.com", Domain: "example.com"}},
+		func(participantIDs []int64) *store.MessagePersistData {
+			organizerID = participantIDs[0]
+			return &store.MessagePersistData{
+				Message: &store.Message{
+					SourceID: fixture.SourceID, SourceMessageID: "calendar-participant-seed",
+					MessageType: "email", SenderID: sql.NullInt64{Int64: organizerID, Valid: true},
+				},
+				Conversation: &store.ConversationPersistData{
+					SourceConversationID: "calendar-participant-seed",
+					ConversationType:     "email_thread",
+				},
+			}
+		},
+	)
+	require.NoError(err)
+
+	blocker, err := fixture.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
+	held := true
+	t.Cleanup(func() {
+		if held {
+			_ = blocker.Rollback()
+		}
+	})
+	_, err = blocker.ExecContext(ctx, `
+		SELECT pg_advisory_xact_lock(
+			hashtextextended('participant-directory-mutation', 0)
+		)`)
+	require.NoError(err)
+	var lockedParticipantID int64
+	require.NoError(blocker.QueryRowContext(ctx,
+		fixture.Store.Rebind(`SELECT id FROM participants WHERE id=? FOR UPDATE`), organizerID,
+	).Scan(&lockedParticipantID))
+	require.Equal(organizerID, lockedParticipantID)
+
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:first@example.test\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\n" +
+		"ORGANIZER:mailto:organizer@example.com\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:second@example.test\r\nDTSTART:20270303T120000Z\r\nDURATION:PT1H\r\n" +
+		"ORGANIZER:mailto:organizer@example.com\r\nATTENDEE:mailto:guest@example.org\r\nEND:VEVENT\r\n" +
+		"END:VCALENDAR\r\n")
+	result := make(chan error, 1)
+	go func() {
+		_, persistErr := fixture.Store.PersistICalendarContext(ctx, fixture.SourceID, raw)
+		result <- persistErr
+	}()
+	waitForPostgreSQLLockWait(t, fixture.Store, "%pg_advisory_xact_lock%")
+
+	require.NoError(blocker.Commit())
+	held = false
+	select {
+	case err := <-result:
+		require.NoError(err)
+	case <-ctx.Done():
+		require.FailNow("calendar import did not finish after releasing the directory lock", ctx.Err())
+	}
+}
+
 func TestPersistRepairMessageHonorsCanceledContext(t *testing.T) {
 	fixture := seedRepairStoreFixture(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -2033,8 +2353,18 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 		source.ID, "primary-thread", "email_thread", "Primary",
 	)
 	require.NoError(err)
-	insertStoreTestMessage(t, st, source.ID, conversationID, "missing")
-	insertStoreTestMessage(t, st, source.ID, conversationID, "present")
+	insertEmail := func(sourceID, conversationID int64, sourceMessageID string) {
+		id := insertStoreTestMessage(t, st, sourceID, conversationID, sourceMessageID)
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type = 'email' WHERE id = ?`), id)
+		require.NoError(err)
+	}
+	insertEmail(source.ID, conversationID, "missing")
+	insertEmail(source.ID, conversationID, "present")
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: source.ID, SourceMessageID: "calendar-invite:generated", MessageType: "calendar_event",
+		ConversationID: conversationID, SentAt: sql.NullTime{Time: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
 
 	otherSource, err := st.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
@@ -2042,7 +2372,7 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 		otherSource.ID, "other-thread", "email_thread", "Other",
 	)
 	require.NoError(err)
-	insertStoreTestMessage(t, st, otherSource.ID, otherConversationID, "missing")
+	insertEmail(otherSource.ID, otherConversationID, "missing")
 
 	syncID, err := st.StartSync(source.ID, "full")
 	require.NoError(err)
@@ -2054,6 +2384,7 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 	assert.Equal(int64(1), reconciled)
 	assertMessageDeletedFromSource(t, st, source.ID, "missing", true)
 	assertMessageDeletedFromSource(t, st, source.ID, "present", false)
+	assertMessageDeletedFromSource(t, st, source.ID, "calendar-invite:generated", false)
 	assertMessageDeletedFromSource(t, st, otherSource.ID, "missing", false)
 	require.NoError(st.CompleteSync(syncID, "initial"))
 

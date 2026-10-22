@@ -118,6 +118,13 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 			_, _ = fmt.Fprintf(out, "  %d errors — re-run to retry\n", sum.Errors)
 		}
 	}
+	invites, err := s.RepairEmailCalendarEventsContext(ctx, src.ID, progress)
+	if err != nil {
+		return err
+	}
+	if invites.Changed != 0 || invites.Skipped != 0 {
+		_, _ = fmt.Fprintf(out, "%s: %d calendar events updated, %d calendar parts skipped (see calendar_invite_errors metadata)\n", label, invites.Changed, invites.Skipped)
+	}
 	report := func(sum store.AccountAttributionRepairSummary) {
 		progress(fmt.Sprintf("account attribution: %d messages", sum.Scanned))
 	}

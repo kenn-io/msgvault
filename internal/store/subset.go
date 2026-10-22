@@ -229,6 +229,17 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied meeting projection migration: %w", err)
 	}
 
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV2); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied calendar projection v2 migration: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()

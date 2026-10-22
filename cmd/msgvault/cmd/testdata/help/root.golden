@@ -111,6 +111,7 @@ Import local exports:
   import-eml          Import a tree of RFC 5322 .eml files
   import-emlx         Import Apple Mail .emlx files into msgvault
   import-gvoice       Import Google Voice history from Takeout export
+  import-ics          Import local ICS events
   import-imazing-csv  Import Messages CSV exports created by iMazing
   import-imessage     Import iMessages from local database
   import-maildir      Import a Maildir or Maildir++ archive
@@ -122,7 +123,7 @@ Import local exports:
   import-whatsapp     Import WhatsApp messages from an Android or Apple database
 
 Drafts, calendar, and Kata (write to providers):
-  calendar      Control live calendar events and query availability
+  calendar      Read archived events and control live calendars
   draft-compose Create an email, native Beeper, or local chat draft
   draft-delete  Delete a managed draft
   draft-edit    Replace the body of a managed draft

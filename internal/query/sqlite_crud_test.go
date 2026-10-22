@@ -2460,6 +2460,67 @@ func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	}
 }
 
+func TestDeletionTargetPathsExcludeCalendarArtifactsFromGmail(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	env := newTestEnv(t)
+	const calendarID int64 = 9001
+	_, err := env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
+		VALUES (?, 1, 1, 'calendar-invite:generated', 'calendar_event', '2024-01-15 10:00:00', 'Generated event', 'generated calendar content')`, calendarID)
+	requirements.NoError(err)
+	sourceID := int64(1)
+	filter := MessageFilter{SourceID: &sourceID}
+	_, err = env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject)
+		VALUES (9002, 1, 1, 'chat-message', 'google_chat', '2024-01-15 10:00:00', 'Chat')`)
+	requirements.NoError(err)
+	assertNoCalendarTarget := func(targets []DeletionTarget) {
+		ids := make([]int64, 0, len(targets))
+		for _, target := range targets {
+			ids = append(ids, target.MessageID)
+		}
+		assertions.NotContains(ids, calendarID)
+	}
+
+	byFilter, err := env.Engine.GetDeletionTargetsByFilter(env.Ctx, filter)
+	requirements.NoError(err)
+	assertNoCalendarTarget(byFilter)
+	var targetIDs []int64
+	for _, target := range byFilter {
+		targetIDs = append(targetIDs, target.MessageID)
+	}
+	assertions.Contains(targetIDs, int64(9002))
+	opts := DefaultAggregateOptions()
+	opts.SearchQuery = "message_type:email | message_type:google_chat | message_type:calendar_event"
+	archived, err := env.Engine.SubAggregate(env.Ctx, filter, ViewTime, opts)
+	requirements.NoError(err)
+	var count int64
+	for _, row := range archived {
+		count += row.Count
+	}
+	assertions.Equal(int64(len(byFilter)+1), count, "archive aggregates include explicitly requested calendar events")
+	preview, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{SourceID: &sourceID, SearchQuery: opts.SearchQuery})
+	requirements.NoError(err)
+	assertions.Equal(int64(len(byFilter)), preview.MessageCount)
+	q := &search.Query{MessageTypes: []string{"email", "google_chat", "calendar_event"}}
+	q.AccountIDs = []int64{sourceID}
+	searchPreview, err := env.Engine.Search(env.Ctx, q, 100, 0)
+	requirements.NoError(err)
+	searchTargets, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx, q, filter, DeletionSearchDeep)
+	requirements.NoError(err)
+	assertions.Len(searchPreview, len(searchTargets)+1)
+	bySearch, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx, search.Parse(""), filter, DeletionSearchDeep)
+	requirements.NoError(err)
+	assertNoCalendarTarget(bySearch)
+	byAggregate, err := env.Engine.GetDeletionTargetsByAggregateSearch(env.Ctx, "", MessageFilter{
+		SourceID: &sourceID, TimeRange: TimeRange{Period: "2024-01", Granularity: TimeMonth},
+	}, ViewTime, "2024-01")
+	requirements.NoError(err)
+	assertNoCalendarTarget(byAggregate)
+	byID, err := env.Engine.GetDeletionTargetsByMessageIDs(env.Ctx, []int64{calendarID})
+	requirements.NoError(err)
+	assertions.Empty(byID)
+}
+
 func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

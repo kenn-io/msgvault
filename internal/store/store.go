@@ -1471,6 +1471,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
+	if err := s.ensureCalendarEventStartWallColumn(ctx); err != nil {
+		return err
+	}
 	if !s.IsPostgreSQL() {
 		if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: s.db}); err != nil {
 			return err
@@ -2273,6 +2276,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	}
 	if err := s.runOnceMigration(ctx, migrationMeetingProjectionV1, meetingProjectionVersion, false, s.backfillMeetingProjectionsContext); err != nil {
 		return fmt.Errorf("initialize meeting projections: %w", err)
+	}
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV2, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 
 	// Probe availability through the dialect so it works uniformly for
