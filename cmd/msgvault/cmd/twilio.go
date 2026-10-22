@@ -248,18 +248,18 @@ func requireTwilioRegistered(st *store.Store, identifier string) (*store.Source,
 func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config.TwilioSource) error {
 	registered, err := requireTwilioRegistered(st, source.Identifier)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, errors.New("configuration is unavailable"))
 	}
 	client, accountEmail, err := newTwilioSourceClient(source)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, err)
 	}
 	summary, importErr := twilio.NewImporter(st, client).Import(ctx, twilio.ImportOptions{
 		Identifier: source.Identifier, AccountEmail: accountEmail,
@@ -270,6 +270,7 @@ func runConfiguredTwilioSync(ctx context.Context, st *store.Store, source config
 			state.logger.Warn("twilio sync diagnostic", "source", source.Identifier, "diagnostic", diagnostic)
 		}
 	}
+	_ = recordSyncAttempt(ctx, twilio.SourceType, source.Identifier, importErr)
 	refreshCtx := context.WithoutCancel(ctx)
 	refresh := func() error { return rebuildTwilioCacheAfterScheduledSync(refreshCtx, "twilio:"+source.Identifier) }
 	if importErr != nil {

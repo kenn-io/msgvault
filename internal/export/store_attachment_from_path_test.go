@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -90,4 +91,25 @@ func TestStoreAttachmentFromPath(t *testing.T) {
 		_, _, _, err := StoreAttachmentFromPath(attDir, src, 0)
 		require.Error(t, err)
 	})
+}
+
+func TestStoreAttachmentFromPathVerified(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	content := []byte("verified recording snapshot")
+	sum := sha256.Sum256(content)
+	wantHash := hex.EncodeToString(sum[:])
+	attDir := t.TempDir()
+	src := writeSrcFile(t, t.TempDir(), "recording.wav", content)
+
+	rel, hash, size, err := StoreAttachmentFromPathVerified(t.Context(), attDir, src, wantHash, int64(len(content)), int64(len(content)))
+	require.NoError(err)
+	assert.Equal(wantHash[:2]+"/"+wantHash, rel)
+	assert.Equal(wantHash, hash)
+	assert.Equal(int64(len(content)), size)
+
+	wrongHash := strings.Repeat("0", len(wantHash))
+	rel, _, _, err = StoreAttachmentFromPathVerified(t.Context(), t.TempDir(), src, wrongHash, int64(len(content)), int64(len(content)))
+	require.ErrorIs(err, ErrAttachmentSourceChanged)
+	assert.Empty(rel, "a mismatched snapshot is rejected before staging")
 }

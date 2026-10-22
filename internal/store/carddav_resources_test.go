@@ -365,6 +365,61 @@ func TestCardDAVResourceMovePreservesConcurrentLocalEditConflict(t *testing.T) {
 	assert.Equal(afterMove.Fingerprint, conflicts[0].LocalHash)
 }
 
+func TestCardDAVRebaseKeepsGeneratedFullNameOnNamelessPublication(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, account, book := newCardDAVResourceStore(t)
+	href := book.CanonicalURL + "nameless.vcf"
+	input := store.CardDAVRemoteResource{
+		Href: href, RemoteUID: "nameless", RemoteETag: `"one"`,
+		RemoteBody:   []byte("BEGIN:VCARD\r\nVERSION:4.0\r\nUID:nameless\r\nEND:VCARD\r\n"),
+		SemanticHash: "nameless-v1",
+	}
+	_, err := st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	require.NoError(err)
+	resource, err := st.GetCardDAVResourceContext(t.Context(), book.ID, href)
+	require.NoError(err)
+	require.NotNil(resource.PersonID)
+	personID := *resource.PersonID
+
+	input = publishCardDAVResource(t, st, book, input)
+	input.RemoteBody = bytes.Replace(input.RemoteBody, []byte("END:VCARD"), []byte("NOTE:Remote edit\r\nEND:VCARD"), 1)
+	input.DisplayName = "Unnamed Contact"
+	input.RemoteETag = `"two"`
+	input.SemanticHash = "nameless-note-v2"
+	_, err = st.ApplyCardDAVSyncPlanContext(t.Context(), store.CardDAVSyncPlan{
+		AddressBookID: book.ID, ConnectionGeneration: account.ConnectionGeneration,
+		SyncRevision: book.SyncRevision + 1, Upserts: []store.CardDAVRemoteResource{input},
+	})
+	require.NoError(err)
+
+	person, err := st.GetPersonContext(t.Context(), personID)
+	require.NoError(err)
+	_, err = st.UpdatePersonDisplayNameContext(t.Context(), personID, person.Revision, new("Local Example"))
+	require.NoError(err)
+	snapshot, err := st.LoadPersonVCardSnapshotContext(t.Context(), personID)
+	require.NoError(err)
+	envelope, err := st.GetVCardResourceEnvelopeContext(t.Context(), fmt.Sprintf("carddav:%d", book.ID), href)
+	require.NoError(err)
+	projected, err := vcardmap.ProjectPersonEnvelope(*snapshot, envelope.ResourceEnvelope)
+	require.NoError(err)
+	parsed, err := vcard.ParseResourceEnvelope(projected.StoredBody)
+	require.NoError(err)
+	var fullNames []string
+	for _, occurrence := range parsed.PropertyTree {
+		if occurrence.Property.Name != "FN" {
+			continue
+		}
+		value, valueErr := vcard.PropertyValue(parsed.RenderMetadata.StoredVersion, occurrence.Property)
+		require.NoError(valueErr)
+		fullNames = append(fullNames, value)
+	}
+	assert.Equal([]string{"Local Example"}, fullNames)
+}
+
 func TestCardDAVApplyRebasesUntouchedRemoteProjectionAndTombstoneBaseline(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

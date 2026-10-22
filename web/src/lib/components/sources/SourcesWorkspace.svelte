@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { reportError } from '../../telemetry/actions';
   import {
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
@@ -45,6 +46,7 @@
   let statusError = $state('');
   let triggerError = $state('');
   let triggering = $state<string>();
+  $effect(() => { if (triggerError) return reportError(() => client, () => 'sync'); });
   let controller: AbortController | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -255,6 +257,7 @@
       awaitingState = 'awaiting';
       await load();
     } catch (cause) {
+      if (disposed) return;
       triggerError = signal.aborted
         ? 'Starting sync timed out. Check source status before trying again.'
         : cause instanceof Error ? cause.message : `Unable to start sync for ${source.identifier}.`;

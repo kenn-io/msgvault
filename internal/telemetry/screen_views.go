@@ -69,7 +69,7 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	required, action := actionProperties[req.Event]
-	if !action && req.Event != EventScreenViewed {
+	if !action && req.Event != EventScreenViewed || req.Event == EventSyncFailed {
 		h.capture.ServeHTTP(w, r)
 		return
 	}
@@ -81,11 +81,11 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	surface, _ := req.Properties[propertySurface].(string)
+	if req.Event == EventErrorShown || req.Event == EventSyncFinished && surface == "cli" {
+		h.capture.ServeHTTP(w, r)
+		return
+	}
 	if req.Event == EventSyncFinished {
-		if surface == "cli" {
-			h.capture.ServeHTTP(w, r)
-			return
-		}
 		acceptedScreen(w)
 		return
 	}
@@ -97,7 +97,7 @@ func (h *screenCaptureHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		claim, _ = req.Properties["screen"].(string)
-	case EventSearchRun:
+	case EventSearchRun, EventSearchEmpty:
 		searchType, _ := req.Properties["search_type"].(string)
 		claim = req.Event + ":" + surface + ":" + searchType
 	default: // EventMessageOpened

@@ -240,6 +240,10 @@ func runHTTPSearch(cmd *cobra.Command, queryStr string) (result error) {
 		)
 		return query.HintRepairEncoding(fmt.Errorf("search: %w", err))
 	}
+	if searchOffset == 0 && strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 && resp.IndexState == "" {
+		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", "text", &result)
+	}
+
 	if resp.IndexBuilt {
 		// Pre-0.18 daemons built the index synchronously inside the request.
 		fmt.Fprintf(os.Stderr, "Built search index (%d messages indexed).\n", resp.IndexedMessages)

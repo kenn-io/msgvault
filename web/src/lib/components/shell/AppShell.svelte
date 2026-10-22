@@ -13,7 +13,8 @@
   } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
-  import { reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
     MeetingRef,
@@ -85,6 +86,7 @@
   import { EverythingSessionState } from './EverythingSessionState.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
 
+  const media = mediaReadiness();
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -526,7 +528,7 @@
         sortNotice = message ?? DEFAULT_SORT_NOTICE;
       },
       onRestorationFocus: () => focusGrid(),
-      onSearchAccepted: (query, mode, signal) => { reportWhenVisible(() => reportSearch(client, query, mode), signal); },
+      onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && !media?.absent ? undefined : count), signal); },
     },
   );
   // Owned here (not by EverythingWorkspace) so coverage-poll backoff, the
@@ -542,7 +544,11 @@
         ? { tone: 'unclean' as const, label: 'Archive needs attention', text: 'Attention' }
         : { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' }
   );
+  $effect(() => { if (archivedMeeting.error) return reportError(() => client, () => 'message'); });
+  $effect(() => { if ((exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' && exploreState.current.groupingChain.length > 0) && (loader.error || loader.pageError || loader.unavailable && loader.unavailable.readiness !== 'building')) return reportError(() => client, () => loader.errorKind ?? (exploreState.current.query.trim() ? 'search' : 'other')); });
   function submitGlobalSearch(query: string, mode: ExploreSearchMode): void {
+    loader.submitted = true;
+    loader.retry();
     const workspace = exploreState.current.workspace;
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
@@ -714,6 +720,7 @@
       anchor.click();
       URL.revokeObjectURL(objectURL);
     } catch (cause) {
+      loader.errorKind = 'other';
       loader.error = cause instanceof Error ? cause.message : 'Unable to export the selected message.';
     }
   }
@@ -1532,6 +1539,7 @@
             />
           {:else}
             <FilesWorkspace
+              bind:submitted={loader.submitted}
               {client}
               embedded
               showHeader={false}

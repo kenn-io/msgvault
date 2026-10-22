@@ -21,6 +21,10 @@ import (
 
 var attachmentLooseStores sync.Map
 
+// ErrAttachmentSourceChanged reports that a source no longer matches the
+// identity observed before it was staged.
+var ErrAttachmentSourceChanged = errors.New("attachment source changed")
+
 type attachmentLooseStoreKey struct {
 	baseDir string
 	staging packstore.StagingMode
@@ -254,6 +258,102 @@ func hashSourceFile(f *os.File, srcPath string, maxSize int64) (string, int64, e
 		return "", 0, fmt.Errorf("attachment source %q exceeds %d bytes", srcPath, maxSize)
 	}
 	return hex.EncodeToString(h.Sum(nil)), size, nil
+}
+
+// StoreAttachmentFromPathVerified stores a regular source file under its
+// verified content hash. It hashes the source before staging, verifies an
+// existing blob before returning it, and checks the same identity again while
+// staging a new blob. expectedHash and expectedSize must come from a prior
+// trusted snapshot; maxSize bounds both reads when positive.
+func StoreAttachmentFromPathVerified(ctx context.Context, attachmentsDir, srcPath, expectedHash string, expectedSize, maxSize int64) (string, string, int64, error) {
+	if attachmentsDir == "" || srcPath == "" || expectedHash == "" || expectedSize < 0 {
+		return "", "", 0, errors.New("attachments dir, source path, and expected identity are required")
+	}
+	expectedHash = strings.ToLower(expectedHash)
+	hash, err := packstore.ParseHash(expectedHash)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("parse attachment content hash: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", "", 0, err
+	}
+	linfo, err := os.Lstat(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("lstat attachment source: %w", err)
+	}
+	if !linfo.Mode().IsRegular() {
+		return "", "", 0, fmt.Errorf("attachment source %q is not a regular file", srcPath)
+	}
+	if linfo.Size() != expectedSize {
+		return "", "", linfo.Size(), ErrAttachmentSourceChanged
+	}
+	if maxSize > 0 && linfo.Size() > maxSize {
+		return "", "", 0, fmt.Errorf("attachment source %q is %d bytes (max %d)", srcPath, linfo.Size(), maxSize)
+	}
+	f, err := os.Open(srcPath)
+	if err != nil {
+		return "", "", 0, fmt.Errorf("open attachment source: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	baseDir, err := prepareStorageDir(attachmentsDir)
+	if err != nil {
+		return "", "", 0, err
+	}
+	contentHash, size, err := hashSourceFileContext(ctx, f, srcPath, maxSize)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if contentHash != expectedHash || size != expectedSize {
+		return "", contentHash, size, ErrAttachmentSourceChanged
+	}
+	loose, err := attachmentLooseStore(baseDir, packstore.StagingStoreDirectory)
+	if err != nil {
+		return "", contentHash, size, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", contentHash, size, fmt.Errorf("rewind attachment source: %w", err)
+	}
+	result, writeErr := loose.Write(ctx, &attachmentContextReader{ctx: ctx, r: f}, packstore.WriteOptions{
+		Durability:   packstore.AtomicPublication,
+		Dedup:        packstore.VerifyFullHash,
+		ExpectedHash: hash,
+		ExpectedSize: size,
+		SizeKnown:    true,
+		MaxBytes:     maxSize,
+	})
+	if writeErr != nil {
+		return "", contentHash, size, fmt.Errorf("store attachment source %q: %w", srcPath, writeErr)
+	}
+	recordLooseBlobCreated(baseDir, result.Created)
+	return path.Join(expectedHash[:2], expectedHash), expectedHash, size, nil
+}
+
+func hashSourceFileContext(ctx context.Context, f *os.File, srcPath string, maxSize int64) (string, int64, error) {
+	src := io.Reader(&attachmentContextReader{ctx: ctx, r: f})
+	if maxSize > 0 {
+		src = io.LimitReader(src, maxSize+1)
+	}
+	h := sha256.New()
+	size, err := io.Copy(h, src)
+	if err != nil {
+		return "", 0, fmt.Errorf("hash attachment source %q: %w", srcPath, err)
+	}
+	if maxSize > 0 && size > maxSize {
+		return "", 0, ErrAttachmentSourceChanged
+	}
+	return hex.EncodeToString(h.Sum(nil)), size, nil
+}
+
+type attachmentContextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *attachmentContextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 // StoreAttachmentFromPath streams the regular file at srcPath into

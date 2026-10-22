@@ -18,6 +18,7 @@ type MuesliImporter interface {
 }
 
 func (s *Server) registerMuesliImportRoute(api huma.API) {
+	s.registerMuesliRecordingRoute(api)
 	op := rawAPIV1Operation("importMuesli", http.MethodPost, "/import/muesli", "Import one recorder-local Muesli meeting")
 	op.RequestBody = jsonRequestBodyFor[muesli.RemoteRequest](api)
 	op.Responses = jsonResponsesFor[muesli.RemoteResult](api, http.StatusOK, http.StatusCreated)

@@ -237,24 +237,25 @@ func runConfiguredTwentySync(ctx context.Context, st *store.Store, source config
 	notRegistered := fmt.Errorf("twenty source %q is not registered; run msgvault add-twenty %s first", source.Identifier, source.Identifier)
 	registered, err := requireRegisteredMeetingSource(st, twenty.SourceType, source.Identifier, notRegistered)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}
 	if registered.MergedIntoSourceID != 0 {
 		return nil
 	}
 	email, err := source.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}
 	client, err := newTwentyClient(source.BaseURL, source.APIKey)
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, err)
 	}
 	summary, importErr := twenty.NewImporter(st, client).Import(ctx, twenty.ImportOptions{Identifier: source.Identifier, AccountEmail: email})
 	run := meetingSyncRun{provider: "twenty", identifier: source.Identifier, err: importErr}
 	if summary != nil {
 		run.writes = summary.MeetingsAdded + summary.MeetingsUpdated
 	}
+	_ = recordSyncAttempt(ctx, twenty.SourceType, source.Identifier, importErr)
 	return run.finishScheduled(ctx, "twenty:"+source.Identifier, rebuildTwentyCacheAfterScheduledSync)
 }
 

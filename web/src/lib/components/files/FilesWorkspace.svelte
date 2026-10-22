@@ -65,7 +65,7 @@
   import { isRetryableStatus } from '../../relationships/controller.svelte';
   import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes } from '../../util/format';
-  import { reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
+  import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
 
@@ -106,6 +106,7 @@
     { value: 'files', label: 'Files' },
   ];
   interface Props {
+    submitted?: boolean;
     client: APIClient;
     predicate: ExplorePredicate;
     identityScope?: IdentityFileScope;
@@ -134,6 +135,7 @@
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
   }
   let {
+    submitted = $bindable(false),
     client,
     predicate,
     identityScope = undefined,
@@ -174,6 +176,8 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
+  let rejectedImages = $state(0);
+  $effect(() => { rejectedImages; if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
@@ -271,7 +275,7 @@
       visualImageRevision,
     });
     signature;
-    if (signature === requestSignature) return;
+    if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
     unacknowledgedRestorationEpoch = restorationEpoch;
@@ -431,6 +435,8 @@
         return false;
       }
     }
+    const searchSubmitted = !cursor && submitted;
+    submitted = false;
     const requestPredicate = { ...predicate };
     const body = {
       predicate: requestPredicate,
@@ -506,7 +512,7 @@
         if (responseError.readiness === 'building') {
           cacheBuildRetry = setTimeout(() => {
             cacheBuildRetry = undefined;
-            if (currentGeneration === generation && !signal.aborted) reloadListing();
+            if (currentGeneration === generation && !signal.aborted) { submitted = searchSubmitted; reloadListing(); }
           }, 1000);
         }
       } else if (response.status === 503) error = message;
@@ -527,8 +533,11 @@
       return false;
     }
     if (!cursor) {
-      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text'), signal);
-      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => reportAction(client, 'search_run', 'search_type', 'semantic'), signal);
+      reportWhenVisible(() => reportSearch(client, requestPredicate.query ?? '', requestPredicate.search_mode ?? 'full_text', searchSubmitted && !body.visual_query && !body.visual_image_base64 ? (result.files ?? []).length : undefined), signal);
+      if (body.visual_query || body.visual_image_base64) reportWhenVisible(() => {
+        if (searchSubmitted && (result.files ?? []).length === 0) void reportAction(client, 'search_empty', 'search_type', 'semantic');
+        return reportAction(client, 'search_run', 'search_type', 'semantic');
+      }, signal);
     }
     if (cursor) seenCursors.add(cursor);
     error = '';
@@ -753,6 +762,7 @@
     if (!file) return;
     if (file.size > 20 * 1024 * 1024) {
       error = 'Visual query images must be 20 MiB or smaller.';
+      rejectedImages += 1;
       input.value = '';
       return;
     }
@@ -762,12 +772,12 @@
       reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
-    visualQuery = '';
+    submitted = true;
+    visualQuery = visualQueryDraft = '';
     visualImageName = file.name;
     visualImageBase64 = dataURL.slice(dataURL.indexOf(',') + 1);
     visualImageRevision += 1;
     clearTimeout(visualQueryDebounce);
-    visualQueryDraft = '';
   }
   function removeVisualImage(): void {
     if (!visualImageBase64 && !visualImageName) return;
@@ -843,6 +853,7 @@
           ariaLabel="Search attachment pixels"
           placeholder="Describe what is visible"
           oninput={commitVisualQuery}
+          onkeydown={(event) => { if (event.key === 'Enter' && visualQueryDraft.trim()) { clearTimeout(visualQueryDebounce); submitted = true; visualQuery = visualQueryDraft.trim(); } }}
         />
       </label>
       <label>

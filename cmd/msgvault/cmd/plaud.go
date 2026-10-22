@@ -441,26 +441,27 @@ func runConfiguredPlaudSync(ctx context.Context, st *store.Store, src config.Pla
 		if errors.Is(err, store.ErrSourceRetired) {
 			return nil
 		}
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	state := invocationFromContext(ctx)
 	if state == nil || state.cfg == nil {
-		return errors.New("configuration is unavailable")
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, errors.New("configuration is unavailable"))
 	}
 	email, err := src.EffectiveAccountEmail()
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	mgr := plaudManager(&src, state)
 	session, err := plaud.Connect(ctx, mgr.Endpoint(), mgr.Handler(src.Identifier))
 	if err != nil {
-		return err
+		return recordSyncAttempt(ctx, sourceTypePlaud, src.Identifier, err)
 	}
 	defer func() { _ = session.Close() }()
 	sum, err := plaud.NewImporter(st, session).Import(ctx, plaud.ImportOptions{Identifier: src.Identifier, AccountEmail: email})
 	return finishScheduledPlaudImport(ctx, src.Identifier, sum, err, rebuildCacheAfterScheduledSync)
 }
 func finishScheduledPlaudImport(ctx context.Context, identifier string, sum *plaud.ImportSummary, importErr error, refresh func(context.Context, string) error) error {
+	_ = recordSyncAttempt(ctx, sourceTypePlaud, identifier, importErr)
 	detached := context.WithoutCancel(ctx)
 	finish := func() error {
 		if refresh == nil {

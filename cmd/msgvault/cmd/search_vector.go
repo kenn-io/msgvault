@@ -87,6 +87,10 @@ func runHybridSearch(cmd *cobra.Command, queryStr, mode string, explain bool) (r
 	if searchSort == "date" {
 		sortSemanticResultsByDate(resp.Results)
 	}
+
+	if strings.TrimSpace(queryStr) != "" && len(resp.Results) == 0 {
+		defer reportSuccessfulCLIAction(cmd, s, "search_empty", "search_type", kind, &result)
+	}
 	if searchJSON {
 		return outputHybridResultsJSON(resp, explain)
 	}

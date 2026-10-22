@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -1240,6 +1241,57 @@ func (s *Store) GetCardDAVConflictDetailSourceContext(
 	return &source, nil
 }
 
+// releaseRejectedCardDAVRenameTx handles keep-remote when the remote edit left
+// a label-owned FN in place. If the display label has changed since that FN was
+// rendered, the choice rejects the rename: dropping FN ownership lets rebase
+// import the accepted FN instead of replaying the rename. Otherwise the label
+// keeps owning FN so later renames still reach the card.
+func (s *Store) releaseRejectedCardDAVRenameTx(
+	ctx context.Context, tx *loggedTx, personID int64, envelope *vcard.ResourceEnvelope,
+) error {
+	var displayName sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT display_name FROM persons WHERE id = ?`, personID).Scan(&displayName); err != nil {
+		return fmt.Errorf("load display label for CardDAV keep-remote: %w", err)
+	}
+	label := strings.TrimSpace(displayName.String)
+	renamed := false
+	for _, owner := range envelope.NativeMappings {
+		if !cardDAVScalarFullNameMapping(owner, envelope.SourceRef, personID) {
+			continue
+		}
+		index := slices.IndexFunc(envelope.PropertyTree, func(occurrence vcard.PropertyOccurrence) bool {
+			return occurrence.Identity.Equal(owner.Identity)
+		})
+		if index < 0 {
+			renamed = true
+			continue
+		}
+		value, err := vcard.PropertyValue(envelope.RenderMetadata.StoredVersion, envelope.PropertyTree[index].Property)
+		if err != nil {
+			return fmt.Errorf("decode retained CardDAV FN: %w", err)
+		}
+		renamed = renamed || strings.TrimSpace(value) != label
+	}
+	for _, occurrence := range envelope.PropertyTree {
+		if strings.EqualFold(occurrence.Property.Name, "FN") && occurrence.GeneratedFullName && label != "" {
+			renamed = true
+		}
+	}
+	if !renamed {
+		return nil
+	}
+	for index := range envelope.PropertyTree {
+		if strings.EqualFold(envelope.PropertyTree[index].Property.Name, "FN") {
+			envelope.PropertyTree[index].GeneratedFullName = false
+		}
+	}
+	envelope.NativeMappings = slices.DeleteFunc(envelope.NativeMappings, func(owner vcard.NativeMapping) bool {
+		return cardDAVScalarFullNameMapping(owner, envelope.SourceRef, personID)
+	})
+	envelope.Residue = vcard.ResidueWithMappings(envelope.PropertyTree, envelope.NativeMappings)
+	return nil
+}
+
 func (s *Store) ResolveCardDAVConflictRemoteContext(
 	ctx context.Context, input CardDAVConflictRemoteResolution,
 ) (*CardDAVConflict, error) {
@@ -1314,6 +1366,9 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 				if err != nil {
 					return err
 				}
+				if err := s.releaseRejectedCardDAVRenameTx(ctx, tx, *mapping.PersonID, &envelope); err != nil {
+					return err
+				}
 				unsafe, err := s.cardDAVRebaseDisplacesOwnerTx(ctx, tx, book.ID, *mapping.PersonID, input.Remote.Href, envelope, dropped)
 				if err != nil {
 					return err
@@ -1341,7 +1396,7 @@ func (s *Store) ResolveCardDAVConflictRemoteContext(
 					return fmt.Errorf("accept remote ownership of cleared imported display name: %w", err)
 				}
 			}
-			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, preparedEnvelope)
+			_, changed, err := s.applyCardDAVResourceTx(ctx, tx, book, input.Remote, false, preparedEnvelope, cardDAVRebaseAcceptRemote)
 			if err != nil {
 				return err
 			}

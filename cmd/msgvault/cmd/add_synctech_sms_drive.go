@@ -149,7 +149,7 @@ func runConfiguredSynctechSMSSourceWithStore(ctx context.Context, st *store.Stor
 func runScheduledSynctechSMSSource(ctx context.Context, st *store.Store, src config.SynctechSMSSource) error {
 	source, err := st.GetSourceByTypeAndIdentifier(synctechsms.SourceType, src.OwnerPhone)
 	if err != nil && !errors.Is(err, store.ErrSourceNotFound) {
-		return err
+		return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
 	}
 	if source != nil && source.MergedIntoSourceID != 0 {
 		return nil
@@ -160,16 +160,16 @@ func runScheduledSynctechSMSSource(ctx context.Context, st *store.Store, src con
 func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st *store.Store, src config.SynctechSMSSource, driveClient synctechsms.DriveClient) error {
 	opts := synctechImportOptions(src, invocationFromContext(ctx).cfg)
 	if opts.OwnerPhone == "" {
-		return fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name)
+		return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, fmt.Errorf("synctech-sms source %q owner_phone is required", src.Name))
 	}
 	var err error
 	switch src.Backend {
 	case "", localValue:
 		if src.Path == "" {
-			return fmt.Errorf("synctech-sms source %q path is required for local backend", src.Name)
+			return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, fmt.Errorf("synctech-sms source %q path is required for local backend", src.Name))
 		}
 		if _, err := ensureConfiguredSynctechSMSSource(st, src, opts, invocationFromContext(ctx)); err != nil {
-			return err
+			return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
 		}
 		_, err = synctechsms.NewImporter(st, opts).ImportPath(src.Path)
 	case "drive":
@@ -179,8 +179,9 @@ func runConfiguredSynctechSMSSourceWithStoreDriveClient(ctx context.Context, st 
 			_, err = runSynctechSMSDriveSource(ctx, st, src, opts)
 		}
 	default:
-		return fmt.Errorf("unsupported synctech-sms backend %q", src.Backend)
+		return recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, fmt.Errorf("unsupported synctech-sms backend %q", src.Backend))
 	}
+	_ = recordSyncAttempt(ctx, synctechsms.SourceType, src.OwnerPhone, err)
 	var refreshErr error
 	if !isDaemonCLISubprocess() {
 		refreshErr = rebuildCacheAfterScheduledSync(

@@ -25,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/plaud"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -452,4 +453,18 @@ func TestPlaudManualCacheClassification(t *testing.T) {
 	assert.True(t, manualSyncCLICommand([]string{"sync-plaud", "work"}))
 	assert.False(t, manualSyncCLICommand([]string{"sync-plaud", "work", "--probe"}))
 	assert.False(t, manualSyncCLICommand([]string{"sync-plaud", "work", "--probe=true"}))
+}
+
+func TestPlaudImportRecoveryPrecedesCacheRefresh(t *testing.T) {
+	state := testInvocationWithConfig(lifecycleTestConfig(t.TempDir()))
+	events := 0
+	state.syncFailures = &telemetry.SyncFailures{Capture: func(string, map[string]any) error { events++; return nil }}
+	failure := errors.New("provider unavailable")
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
+	cacheErr := errors.New("cache unavailable")
+	err := finishScheduledPlaudImport(withInvocation(t.Context(), state), "work", &plaud.ImportSummary{}, nil, func(context.Context, string) error { return cacheErr })
+	require.ErrorIs(t, err, cacheErr)
+	assert.Equal(t, 1, events)
+	state.syncFailures.Record(t.Context(), sourceTypePlaud, "work", failure)
+	assert.Equal(t, 2, events, "a successful import recovers the source even when its cache refresh fails")
 }

@@ -51,15 +51,16 @@ type CardDAVReviewArtifactFence struct {
 }
 
 type CardDAVPublicationReviewSource struct {
-	Person               Person
-	Snapshot             *PersonVCardSnapshot
-	Inference            CardDAVInferenceExportState
-	ConnectionGeneration int64
-	Book                 CardDAVAddressBook
-	Publication          *CardDAVPublication
-	Resource             *CardDAVResource
-	Envelope             *VCardResourceEnvelopeRecord
-	Conflict             *CardDAVConflict
+	Person                 Person
+	Snapshot               *PersonVCardSnapshot
+	Inference              CardDAVInferenceExportState
+	ConnectionGeneration   int64
+	Book                   CardDAVAddressBook
+	Publication            *CardDAVPublication
+	Resource               *CardDAVResource
+	Envelope               *VCardResourceEnvelopeRecord
+	HasImportedNameHistory bool
+	Conflict               *CardDAVConflict
 }
 
 // personInferenceExportProjection deliberately omits media bytes and every
@@ -497,6 +498,10 @@ func (s *Store) loadCardDAVPublicationReviewSourceTx(
 	href := ""
 	if resource != nil {
 		href = resource.Href
+		source.HasImportedNameHistory, err = s.hasCardDAVImportedNameHistoryTx(ctx, tx, source.Book.ID, personID, href)
+		if err != nil {
+			return nil, err
+		}
 		source.Envelope, err = s.findVCardResourceEnvelopeTx(ctx, tx, fmt.Sprintf("carddav:%d", source.Book.ID), href)
 		if err != nil {
 			return nil, err
@@ -520,6 +525,28 @@ func (s *Store) loadCardDAVPublicationReviewSourceTx(
 		return nil, ErrCardDAVNoWriteTarget
 	}
 	return source, nil
+}
+
+// HasCardDAVImportedNameHistoryContext includes superseded names: a retired
+// import still excludes an unowned FN from local publication fallback adoption.
+func (s *Store) HasCardDAVImportedNameHistoryContext(ctx context.Context, bookID, personID int64, href string) (bool, error) {
+	var found bool
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		var err error
+		found, err = s.hasCardDAVImportedNameHistoryTx(ctx, tx, bookID, personID, href)
+		return err
+	})
+	return found, err
+}
+
+func (s *Store) hasCardDAVImportedNameHistoryTx(ctx context.Context, tx *loggedTx, bookID, personID int64, href string) (bool, error) {
+	var found bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM person_names WHERE `+cardDAVImportedSourceFilter+`)`,
+		personID, ProvenanceCardDAVImport, fmt.Sprintf("carddav:%d", bookID), href).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("load CardDAV imported-name history: %w", err)
+	}
+	return found, nil
 }
 
 var (

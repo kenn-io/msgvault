@@ -8,7 +8,7 @@ export const KATA_RETRY_MS = 30_000;
 // Page-scoped integration settings apply only after a daemon restart.
 export class IntegrationReadiness {
   #probe: (signal: AbortSignal) => Promise<boolean | undefined>;
-  #ready = $state(false);
+  #ready = $state<boolean>();
   #started = false;
   #controller?: AbortController;
   #retry?: ReturnType<typeof setTimeout>;
@@ -22,8 +22,10 @@ export class IntegrationReadiness {
       this.#started = true;
       queueMicrotask(() => this.#check(true));
     }
-    return this.#ready;
+    return this.#ready === true;
   }
+
+  get absent(): boolean { this.ready; return this.#ready === false; }
 
   dispose(): void {
     this.#controller?.abort();

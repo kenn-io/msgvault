@@ -244,20 +244,22 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	APIPort           int           `toml:"api_port"`  // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
-	BindAddr          string        `toml:"bind_addr"` // Bind address (default: 127.0.0.1)
-	APIKey            string        `toml:"api_key"`   // API authentication key
-	APIKeyFile        string        `toml:"api_key_file"`
-	APIKeyEnv         string        `toml:"api_key_env"`
-	AllowInsecure     bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
-	AgentAccess       bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires an effective API key)
-	CORSOrigins       []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
-	CORSCredentials   bool          `toml:"cors_credentials"`    // Allow credentials in CORS
-	CORSMaxAge        int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
-	TrustedProxies    []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
-	DaemonIdleTimeout time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
-	DaemonAutoRestart string        `toml:"daemon_auto_restart"` // never, newer, or always
-	DaemonAutoStart   *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
+	// MuesliRecordingMaxBytes bounds authenticated recording streams; 0 = 4 GiB.
+	MuesliRecordingMaxBytes int64         `toml:"muesli_recording_max_bytes"`
+	APIPort                 int           `toml:"api_port"`  // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
+	BindAddr                string        `toml:"bind_addr"` // Bind address (default: 127.0.0.1)
+	APIKey                  string        `toml:"api_key"`   // API authentication key
+	APIKeyFile              string        `toml:"api_key_file"`
+	APIKeyEnv               string        `toml:"api_key_env"`
+	AllowInsecure           bool          `toml:"allow_insecure"`      // Allow unauthenticated non-loopback access
+	AgentAccess             bool          `toml:"agent_access"`        // Enable restricted agent grant tokens (requires an effective API key)
+	CORSOrigins             []string      `toml:"cors_origins"`        // Allowed CORS origins (empty = disabled)
+	CORSCredentials         bool          `toml:"cors_credentials"`    // Allow credentials in CORS
+	CORSMaxAge              int           `toml:"cors_max_age"`        // Preflight cache duration in seconds
+	TrustedProxies          []string      `toml:"trusted_proxies"`     // Reverse proxy IP/CIDR allowlist for forwarded scheme and host
+	DaemonIdleTimeout       time.Duration `toml:"daemon_idle_timeout"` // Background daemon idle timeout (0 disables)
+	DaemonAutoRestart       string        `toml:"daemon_auto_restart"` // never, newer, or always
+	DaemonAutoStart         *bool         `toml:"daemon_auto_start"`   // Let CLI commands start a local daemon when none is running; unset means true
 
 	credential runtimeCredential
 
@@ -2005,11 +2007,13 @@ func (s NotionMeetingsSource) EffectiveAccountEmail() (string, error) {
 // top-level [[muesli]] table. In remote mode the client reads local files;
 // same-host mode uses the daemon reader.
 type MuesliSource struct {
-	Identifier   string `toml:"identifier"`    // stable source label for add-/sync-muesli; defaults to "default" for a single entry
-	AccountEmail string `toml:"account_email"` // the person who records; attributed as each meeting's organizer
-	DBPath       string `toml:"db_path"`       // muesli.db path; empty = the stable app's default location
-	Schedule     string `toml:"schedule"`      // 5-field cron for the daemon or remote --watch; empty = manual only
-	Enabled      bool   `toml:"enabled"`
+	Recordings        bool   `toml:"recordings"`          // opt in to retaining saved audio
+	RecordingMaxBytes int64  `toml:"recording_max_bytes"` // 0 = 4 GiB per file
+	Identifier        string `toml:"identifier"`          // stable source label for add-/sync-muesli; defaults to "default" for a single entry
+	AccountEmail      string `toml:"account_email"`       // the person who records; attributed as each meeting's organizer
+	DBPath            string `toml:"db_path"`             // muesli.db path; empty = the stable app's default location
+	Schedule          string `toml:"schedule"`            // 5-field cron for the daemon or remote --watch; empty = manual only
+	Enabled           bool   `toml:"enabled"`
 	// Contacts resolves attendees through the Mac's Contacts app; nil = on.
 	Contacts *bool `toml:"contacts"`
 	// ContactsPath is the Contacts data folder; empty = macOS's default.
@@ -2017,6 +2021,16 @@ type MuesliSource struct {
 	// PhoneCountryCode lets national-format Contacts phone numbers convert to
 	// E.164, for example "1" or "44". Empty = only international numbers.
 	PhoneCountryCode string `toml:"phone_country_code"`
+}
+
+// DefaultMuesliRecordingMaxBytes permits long WAV recordings without buffering them.
+const DefaultMuesliRecordingMaxBytes int64 = 4 << 30
+
+func (s MuesliSource) EffectiveRecordingMaxBytes() int64 {
+	if s.RecordingMaxBytes > 0 {
+		return s.RecordingMaxBytes
+	}
+	return DefaultMuesliRecordingMaxBytes
 }
 
 // EffectiveAccountEmail returns the normalized primary identity configured
@@ -2252,7 +2266,13 @@ func (c *Config) validateMeetingSources() error {
 	if err := check("muesli", muesliIDs); err != nil {
 		return err
 	}
+	if c.Server.MuesliRecordingMaxBytes < 0 || c.Server.MuesliRecordingMaxBytes == int64(^uint64(0)>>1) {
+		return errors.New("server.muesli_recording_max_bytes must be nonnegative and below MaxInt64")
+	}
 	for i := range c.Muesli {
+		if c.Muesli[i].RecordingMaxBytes < 0 || c.Muesli[i].RecordingMaxBytes == int64(^uint64(0)>>1) {
+			return errors.New("muesli recording_max_bytes must be nonnegative and below MaxInt64")
+		}
 		email, err := c.Muesli[i].EffectiveAccountEmail()
 		if err != nil {
 			return err

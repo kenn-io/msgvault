@@ -108,7 +108,7 @@ func TestRegisterCardDAVSchedulerJobRequiresEnabledSchedule(t *testing.T) {
 			t.Cleanup(func() { sched.Stop() })
 			service := &scheduledCardDAVFixture{}
 			logger := slog.New(slog.DiscardHandler)
-			require.NoError(reconcileCardDAVSchedulerJob(sched, tt.config, service, logger, config.DefaultCardDAVConnection))
+			require.NoError(reconcileCardDAVSchedulerJob(sched, tt.config, service, logger, config.DefaultCardDAVConnection, nil))
 			status := sched.JobStatus()
 			if len(tt.wantStatus) == 0 {
 				assertions.Empty(status)
@@ -127,7 +127,7 @@ func TestRegisterCardDAVSchedulerJobSkipsUnavailableService(t *testing.T) {
 
 	require.NoError(t, reconcileCardDAVSchedulerJob(sched,
 		config.CardDAVConfig{Enabled: true, Schedule: "0 */6 * * *"}, nil,
-		slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection))
+		slog.New(slog.DiscardHandler), config.DefaultCardDAVConnection, nil))
 	assert.False(t, sched.IsJobScheduled(api.CardDAVJobName))
 }
 
@@ -160,7 +160,7 @@ func TestGoogleCardDAVSchedulerWaitsForAuthorization(t *testing.T) {
 	sched := scheduler.New(nil)
 	t.Cleanup(func() { sched.Stop() })
 	controller.SetScheduleReconciler(func(settings config.CardDAVConfig, service api.CardDAVOperations) error {
-		return reconcileCardDAVSchedulerJob(sched, settings, service, logger, config.DefaultCardDAVConnection)
+		return reconcileCardDAVSchedulerJob(sched, settings, service, logger, config.DefaultCardDAVConnection, nil)
 	})
 	required.NoError(controller.ReconcileSchedule(t.Context()))
 	status, err := controller.Status(testCtx, "")
@@ -202,7 +202,7 @@ func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T
 	service := &scheduledCardDAVFixture{}
 	logger := slog.New(slog.DiscardHandler)
 
-	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}, service, logger, config.DefaultCardDAVConnection))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}, service, logger, config.DefaultCardDAVConnection, nil))
 	require.NoError(sched.TriggerJob(api.CardDAVJobName))
 	assertions.Equal(1, service.syncs)
 	require.Len(service.options, 1)
@@ -211,14 +211,14 @@ func TestReconcileCardDAVSchedulerJobUpdatesRunsAndRemovesStableJob(t *testing.T
 	assertions.Equal(1, begin)
 	assertions.Equal(1, done)
 
-	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 2 * * *"}, service, logger, config.DefaultCardDAVConnection))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: true, Schedule: "0 2 * * *"}, service, logger, config.DefaultCardDAVConnection, nil))
 	status := sched.JobStatus()
 	require.Len(status, 1)
 	assertions.Equal("0 2 * * *", status[0].Schedule)
 	require.NoError(sched.TriggerJob(api.CardDAVJobName))
 	assertions.Equal(2, service.syncs)
 
-	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: false, Schedule: "0 2 * * *"}, service, logger, config.DefaultCardDAVConnection))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, config.CardDAVConfig{Enabled: false, Schedule: "0 2 * * *"}, service, logger, config.DefaultCardDAVConnection, nil))
 	assertions.False(sched.IsJobScheduled(api.CardDAVJobName))
 }
 
@@ -231,8 +231,8 @@ func TestCardDAVNamedSchedulerJobsRemainIndependent(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	primary, work := &scheduledCardDAVFixture{}, &scheduledCardDAVFixture{}
 	settings := config.CardDAVConfig{Enabled: true, Schedule: "0 1 * * *"}
-	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, primary, logger, config.DefaultCardDAVConnection))
-	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, work, logger, "work"))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, primary, logger, config.DefaultCardDAVConnection, nil))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, work, logger, "work", nil))
 	require.Len(sched.JobStatus(), 2)
 	require.NoError(sched.TriggerJob("carddav:work"))
 	assertions.Equal(0, primary.syncs)
@@ -240,7 +240,7 @@ func TestCardDAVNamedSchedulerJobsRemainIndependent(t *testing.T) {
 	require.Len(work.options, 1)
 	assertions.Equal(store.CardDAVSyncTriggerScheduled, work.options[0].Trigger)
 	settings.Schedule = "0 2 * * *"
-	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, work, logger, "work"))
+	require.NoError(reconcileCardDAVSchedulerJob(sched, settings, work, logger, "work", nil))
 	require.Len(sched.JobStatus(), 2)
 	require.NoError(sched.TriggerJob(api.CardDAVJobName))
 	assertions.Equal(1, primary.syncs)
@@ -252,7 +252,7 @@ func TestCardDAVNamedSchedulerJobsRemainIndependent(t *testing.T) {
 		}
 	}
 	for _, settings := range []config.CardDAVConfig{{Enabled: false, Schedule: "0 2 * * *"}, {Enabled: true, Schedule: "0 2 * * *"}} {
-		require.NoError(reconcileCardDAVSchedulerJob(sched, settings, nil, logger, "work"))
+		require.NoError(reconcileCardDAVSchedulerJob(sched, settings, nil, logger, "work", nil))
 		assertions.False(sched.IsJobScheduled("carddav:work"))
 		assertions.True(sched.IsJobScheduled(api.CardDAVJobName))
 	}

@@ -37,6 +37,7 @@ const TranscriptListsPerHour = 25
 // RequestInterval spaces requests evenly with no burst, so one client never
 // exceeds the hourly budget.
 var RequestInterval = time.Hour / TranscriptListsPerHour
+var ErrUnauthorized = errors.New("omi rejected api_key (401): use a Developer API key (omi_dev_...), not an MCP key")
 
 // NormalizeBaseURL accepts a backend root, including a reverse-proxy prefix.
 func NormalizeBaseURL(value string) (string, error) {
@@ -265,7 +266,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 		// the pass deadline.
 		serverErr = nil
 		if resp.StatusCode >= 500 {
-			serverErr = statusError(resp.StatusCode)
+			serverErr = &StatusError{StatusCode: resp.StatusCode}
 		}
 		var cooldownUntil time.Time
 		var cooldownErr error
@@ -316,7 +317,7 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 			}
 			return result, nil
 		case resp.StatusCode == http.StatusUnauthorized:
-			return nil, errors.New("omi rejected api_key (401): use a Developer API key (omi_dev_...), not an MCP key")
+			return nil, ErrUnauthorized
 		case resp.StatusCode == http.StatusForbidden:
 			return nil, errors.New("omi denied conversation access (403): check conversations:read scope and account access")
 		case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
@@ -332,13 +333,15 @@ func (c *Client) ListConversations(ctx context.Context, p ListParams) ([]Convers
 			case <-timer.C:
 			}
 		default:
-			return nil, statusError(resp.StatusCode)
+			return nil, &StatusError{StatusCode: resp.StatusCode}
 		}
 	}
 	return nil, errors.Join(errors.New("omi list conversations: exhausted retries"), serverErr)
 }
 
-// statusError omits the provider error body, which can contain private content.
-func statusError(status int) error {
-	return fmt.Errorf("omi list conversations: HTTP %d", status)
+// StatusError omits the provider error body, which can contain private content.
+type StatusError struct{ StatusCode int }
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("omi list conversations: HTTP %d", e.StatusCode)
 }
