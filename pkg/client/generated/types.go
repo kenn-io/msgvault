@@ -7173,6 +7173,9 @@ type LoopListResponse struct {
 
 func (l LoopListResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
 	for i, item := range l.Items {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

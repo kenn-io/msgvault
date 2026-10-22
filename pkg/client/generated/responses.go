@@ -1859,6 +1859,8 @@ type ListLoopsErrorResponseJSON500 = ErrorResponse
 
 type ListLoopsErrorResponseJSON503 = ErrorResponse
 
+type ListLoopsErrorResponseJSONDefault = ErrorResponse
+
 type MarkLoopDoneResponse = LoopDecisionResponse
 
 type MarkLoopDoneErrorResponse = ErrorResponse
@@ -1876,6 +1878,8 @@ type MarkLoopDoneErrorResponseJSON415 = ErrorResponse
 type MarkLoopDoneErrorResponseJSON500 = ErrorResponse
 
 type MarkLoopDoneErrorResponseJSON503 = ErrorResponse
+
+type MarkLoopDoneErrorResponseJSONDefault = ErrorResponse
 
 type ReopenLoopResponse = LoopDecisionResponse
 
@@ -1895,6 +1899,8 @@ type ReopenLoopErrorResponseJSON500 = ErrorResponse
 
 type ReopenLoopErrorResponseJSON503 = ErrorResponse
 
+type ReopenLoopErrorResponseJSONDefault = ErrorResponse
+
 type SnoozeLoopResponse = LoopDecisionResponse
 
 type SnoozeLoopErrorResponse = ErrorResponse
@@ -1912,6 +1918,8 @@ type SnoozeLoopErrorResponseJSON415 = ErrorResponse
 type SnoozeLoopErrorResponseJSON500 = ErrorResponse
 
 type SnoozeLoopErrorResponseJSON503 = ErrorResponse
+
+type SnoozeLoopErrorResponseJSONDefault = ErrorResponse
 
 type GetMCPCapabilitiesResponse = MCPCapabilities
 
@@ -5735,6 +5743,7 @@ type ListLoopsResp struct {
 	JSON403      *ListLoopsErrorResponseJSON403
 	JSON500      *ListLoopsErrorResponseJSON500
 	JSON503      *ListLoopsErrorResponseJSON503
+	JSONDefault  *ListLoopsErrorResponseJSONDefault
 }
 
 type MarkLoopDoneResp503Headers struct {
@@ -5755,6 +5764,7 @@ type MarkLoopDoneResp struct {
 	JSON500      *MarkLoopDoneErrorResponseJSON500
 	JSON503      *MarkLoopDoneErrorResponseJSON503
 	Headers503   *MarkLoopDoneResp503Headers
+	JSONDefault  *MarkLoopDoneErrorResponseJSONDefault
 }
 
 type ReopenLoopResp503Headers struct {
@@ -5775,6 +5785,7 @@ type ReopenLoopResp struct {
 	JSON500      *ReopenLoopErrorResponseJSON500
 	JSON503      *ReopenLoopErrorResponseJSON503
 	Headers503   *ReopenLoopResp503Headers
+	JSONDefault  *ReopenLoopErrorResponseJSONDefault
 }
 
 type SnoozeLoopResp503Headers struct {
@@ -5795,6 +5806,7 @@ type SnoozeLoopResp struct {
 	JSON500      *SnoozeLoopErrorResponseJSON500
 	JSON503      *SnoozeLoopErrorResponseJSON503
 	Headers503   *SnoozeLoopResp503Headers
+	JSONDefault  *SnoozeLoopErrorResponseJSONDefault
 }
 
 type GetMCPCapabilitiesResp struct {
