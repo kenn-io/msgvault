@@ -26,7 +26,6 @@ const (
 
 var envelopeParser = enmime.NewParser(
 	enmime.SetCustomParseMediaType(parseMediaTypeLenient),
-	enmime.DisableTextConversion(true),
 )
 
 // Message represents a parsed email message.
@@ -36,22 +35,21 @@ type Message struct {
 	// RawDateHeader holds the unparsed Date header even when Date could not
 	// be resolved, so callers can distinguish a missing header from one that
 	// failed to parse.
-	RawDateHeader     string
-	ReceivedDates     []time.Time
-	From              []Address
-	To                []Address
-	Cc                []Address
-	Bcc               []Address
-	ReplyTo           []Address
-	MessageID         string
-	InReplyTo         string
-	ListID            string
-	References        []string
-	BodyText          string
-	BodyHTML          string
-	HiddenTextPresent bool
-	Attachments       []Attachment
-	Errors            []string // Non-fatal parsing errors
+	RawDateHeader string
+	ReceivedDates []time.Time
+	From          []Address
+	To            []Address
+	Cc            []Address
+	Bcc           []Address
+	ReplyTo       []Address
+	MessageID     string
+	InReplyTo     string
+	ListID        string
+	References    []string
+	BodyText      string
+	BodyHTML      string
+	Attachments   []Attachment
+	Errors        []string // Non-fatal parsing errors
 }
 
 // Address represents an email address with optional display name.
@@ -119,12 +117,6 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 		ListID:    NormalizeListID(env.GetHeader("List-Id")),
 		BodyText:  env.Text,
 		BodyHTML:  env.HTML,
-	}
-	if env.Text == "" && env.HTML != "" {
-		msg.BodyText, msg.HiddenTextPresent, err = visibleHTMLText(env.HTML)
-		if err != nil {
-			msg.Errors = append(msg.Errors, fmt.Sprintf("Failed to downconvert HTML: %v", err))
-		}
 	}
 
 	// Parse date
@@ -831,7 +823,7 @@ func (m *Message) GetBodyText() string {
 	if m.BodyText != "" {
 		return m.BodyText
 	}
-	if m.BodyHTML != "" && !m.HiddenTextPresent {
+	if m.BodyHTML != "" {
 		return StripHTML(m.BodyHTML)
 	}
 	return ""

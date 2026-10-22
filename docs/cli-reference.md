@@ -4367,10 +4367,10 @@ preserved. With JSON, cleaning changes
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
 On newer `main` builds, JSON also includes `hidden_text_present`, which reports
-whether inline styles hide text in the stored HTML. Text output writes
-`Warning: this message's HTML hides text from readers.` to stderr when flagged,
-including with `--body-only`. Redirecting stdout saves only the body with
-`--body-only`.
+whether inline styles or the `hidden` attribute may hide readable text in the
+stored HTML. Text output writes `Warning: this message's HTML may hide text.`
+to stderr when flagged, including with `--body-only`. Message bodies stay
+unchanged. Detection excludes stylesheets and browser layout.
 
 ## show-thread
 

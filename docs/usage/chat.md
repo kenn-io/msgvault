@@ -419,11 +419,10 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 being returned in a single response.
 
 On newer `main` builds, each response includes `hidden_text_present`. It is
-true when supported inline styles hide letters or numbers in the stored HTML,
-including for mail with a plain-text alternative. Newly ingested HTML-only
-mail omits that text from its derived body. Existing stored bodies stay as
-archived. Detection covers inline styles; stylesheets and browser layout are
-outside this check.
+true when supported inline styles or the `hidden` attribute may hide letters
+or digits in the stored HTML, including for mail with a plain-text alternative.
+Message bodies stay unchanged. Detection excludes stylesheets and browser
+layout.
 
 ### Find a person's messaging routes
 

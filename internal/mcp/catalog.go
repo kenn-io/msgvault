@@ -655,7 +655,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
-			"hidden_text_present reports whether inline styles hide text in the message's HTML. "+
+			"hidden_text_present reports whether inline styles or hidden attributes may hide text in the message's HTML. "+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
 			"To read sequentially: call again with offset += body_returned. "+
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+

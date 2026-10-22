@@ -101,7 +101,7 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 		return outputMessageJSON(cmd.OutOrStdout(), msg)
 	}
 	if mime.HTMLHasHiddenText(msg.BodyHTML) {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: this message's HTML hides text from readers.")
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Warning: this message's HTML may hide text.")
 	}
 	return outputMessageText(cmd.OutOrStdout(), msg)
 }
