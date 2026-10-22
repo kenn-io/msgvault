@@ -12,6 +12,62 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func TestActivityUpgradeRepairsMaildirDraftAccountAttribution(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		activityEvent bool
+	}{
+		{name: "without_activity_event"},
+		{name: "with_activity_event", activityEvent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newAttrFixture(t, "maildir", "drafts@example.test")
+			f.confirm("drafts@example.test")
+			mail := attrMail{from: []string{"drafts@example.test"}, to: []string{"drafts@example.test"}}
+			messageID := f.persist(mail)
+			address, path := attribution(t, f.st, messageID)
+			require.Equal("drafts@example.test", address.String)
+			require.Equal("inbound", path.String)
+
+			if tc.activityEvent {
+				at := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+				_, err := activityExec(f.st, `
+					INSERT INTO activity_events (
+						message_id, ref_kind, source_id, channel, occurred_at, date_origin,
+						date_precision, timezone, utc_offset_minutes, local_date, direction,
+						owner_address, projected_last_modified, projected_identity_revision,
+						projected_account_identity_revision
+					) VALUES (?, 'message', ?, 'email', ?, 'sent_at', 'timestamp',
+						'UTC', 0, '2026-07-30', 'inbound', ?, ?, 1, 1)
+				`, messageID, f.source.ID, at, "drafts@example.test", at)
+				require.NoError(err)
+			}
+
+			draft, err := f.st.EnsureLabel(f.source.ID, "DRAFT", "Drafts", "system")
+			require.NoError(err)
+			// Older attribution ignored Maildir's DRAFT label. Attach it without
+			// current attribution hooks to preserve that pre-upgrade state.
+			_, err = activityExec(f.st, `INSERT INTO message_labels(message_id, label_id) VALUES (?, ?)`, messageID, draft)
+			require.NoError(err)
+			_, err = activityExec(f.st, `DELETE FROM applied_migrations WHERE name = 'activity_projection_triggers_v5'`)
+			require.NoError(err)
+			require.NoError(f.st.InitSchema())
+			_, err = f.st.RepairAccountAttributionContext(t.Context(), f.source.ID, nil)
+			require.NoError(err)
+
+			// Fresh attribution must agree with attribution repaired by the upgrade.
+			mail.labels = []int64{draft}
+			freshID := f.persist(mail)
+			_, freshPath := attribution(t, f.st, freshID)
+			require.Equal("sent", freshPath.String)
+			_, path = attribution(t, f.st, messageID)
+			assert.Equal("sent", path.String, "upgrade and repair must rederive the previously inbound Maildir draft")
+		})
+	}
+}
+
 func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
