@@ -138,3 +138,20 @@ func TestCacheRelatedChangeJournalInstallsOnExistingArchive(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal WHERE dataset = 'message_labels' AND message_id = ?`, messageID).Scan(&count))
 	assert.Equal(t, 1, count)
 }
+
+func TestCacheRelatedChangeJournalTracksHiddenTextFlag(t *testing.T) {
+	require := require.New(t)
+	testutil.SkipIfPostgres(t, "analytics cache journal is SQLite-only")
+	f := storetest.New(t)
+	st := f.Store
+	messageID, err := st.UpsertMessage(f.NewMessage().Build())
+	require.NoError(err)
+	var baseline int64
+	require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+	_, err = st.DB().Exec(`UPDATE messages SET hidden_text_present = 1 WHERE id = ?`, messageID)
+	require.NoError(err)
+	var count int
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+		WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, messageID).Scan(&count))
+	assert.Equal(t, 1, count)
+}

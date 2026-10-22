@@ -920,6 +920,7 @@ func (e *Engine) GetMessageSummariesByIDs(ctx context.Context, ids []int64) ([]q
 			SentAt:               md.SentAt,
 			SizeEstimate:         md.SizeEstimate,
 			HasAttachments:       md.HasAttachments,
+			HiddenTextPresent:    md.HiddenTextPresent,
 			AttachmentCount:      len(md.Attachments),
 			Labels:               md.Labels,
 		}
