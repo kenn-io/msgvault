@@ -53,10 +53,11 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 			require.False(seen[d.ContentHash], "file visited twice: %s", d.ContentHash)
 			seen[d.ContentHash] = true
 			if d.Outcome == "requested" {
-				assert.Equal(19950, unasked, "unasked files come before due jobs")
+				assert.Zero(unasked, "due jobs come before unasked files")
 				requested++
 				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "dest", d, time.Now().Add(time.Minute)))
 			} else {
+				require.Equal(25, requested, "poll every due job before planning new files")
 				unasked++
 			}
 		}
@@ -91,8 +92,8 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	require.Len(due, 2)
-	assert.Equal("a", due[0].ContentHash)
-	assert.Equal("b", due[1].ContentHash)
+	assert.Equal("b", due[0].ContentHash)
+	assert.Equal("a", due[1].ContentHash)
 	counts, err := f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(store.DocbankAttachmentProcessingSummary{Waiting: 2, Requested: 1, Extracted: 1, Outcomes: map[string]int64{"provider_timeout": 1, "operator_required": 1}}, counts)
@@ -103,7 +104,7 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	for _, d := range due {
 		hashes = append(hashes, d.ContentHash)
 	}
-	assert.Equal([]string{"a", "d", "e", "b"}, hashes)
+	assert.Equal([]string{"b", "a", "d", "e"}, hashes)
 	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Equal(int64(1), counts.Requested)
@@ -114,7 +115,7 @@ func TestDocbankAttachmentProcessingSelectionCountsAndRetry(t *testing.T) {
 	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "dest", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
 	require.NoError(err)
 	require.Len(due, 5)
-	assert.Equal("replacement", due[1].VersionID)
+	assert.Equal("replacement", due[2].VersionID)
 	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "dest", "documents")
 	require.NoError(err)
 	assert.Zero(counts.Extracted)
