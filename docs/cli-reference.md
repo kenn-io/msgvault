@@ -22,11 +22,30 @@ appear in full under Inherited Flags.
 | Edit live email tags | [message-tags](#message-tags) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
+| Understand call frequency | [calls](#calls), [call evidence](usage/call-history.md) |
 | Export | [export-messages](#export-messages), [export-eml](#export-eml), [export-attachments](#export-attachments), [create-subset](#create-subset) |
 | Review and remove mail | [stage-delete](#stage-delete), [delete-staged](#delete-staged), [deduplicate](#deduplicate), [gc](#gc) |
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## calls
+
+Import and inspect supplied call evidence through the selected daemon. Requires
+owner authentication and API schema 3.24.0 or newer. Output is JSON.
+
+```bash
+msgvault calls import observation.json   # omit the file or use - for stdin
+msgvault calls list --person-id 42 --limit 50 --after-id 100
+msgvault calls summary --person-id 42 --limit 50 --offset 0
+```
+
+Both read commands accept `--after` and `--before` as RFC3339 timestamps.
+The window includes `after` and excludes `before`; limits default to 50 and
+are capped at 100. List pagination uses observation message IDs; summary
+pagination uses a ranked-person offset.
+See [call evidence](usage/call-history.md) for formats, counting rules and
+source limitations.
 
 ## meetings
 

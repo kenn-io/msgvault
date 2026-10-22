@@ -47,6 +47,7 @@ Export:
 
 People, organizations, and identity:
   attribute-definition Manage portable attribute definitions
+  calls                Import and inspect call history
   carddav              Manage CardDAV connections, books, and conflicts
   collection           Manage named groups of accounts
   employment           Manage employment records linking people and organizations

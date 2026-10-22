@@ -1,5 +1,15 @@
 components:
   schemas:
+    AccessPoint:
+      properties:
+        kind:
+          type: string
+        value:
+          type: string
+      required:
+        - kind
+        - value
+      type: object
     AccountInfo:
       properties:
         display_name:
@@ -1475,6 +1485,138 @@ components:
         - calendar_id
         - event
         - archived
+      type: object
+    CallEvidenceResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/CallObservationView"
+          type: array
+      required:
+        - items
+      type: object
+    CallImportRequest:
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+        bindings:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        format:
+          type: string
+        record:
+          additionalProperties: true
+          type: object
+      required:
+        - format
+        - account
+        - record
+      type: object
+    CallImportResponse:
+      properties:
+        message_id:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+      required:
+        - message_id
+        - source_id
+      type: object
+    CallObservationView:
+      properties:
+        access_points:
+          items:
+            $ref: "#/components/schemas/AccessPoint"
+          type: array
+        account:
+          type: string
+        direction:
+          type: string
+        duration_seconds:
+          format: double
+          nullable: true
+          type: number
+          x-go-type: "*float64"
+          x-oapi-codegen-extra-tags:
+            validate: omitempty
+          x-omitempty: false
+        ended_at:
+          format: date-time
+          type: string
+        kind:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        native_call_id:
+          type: string
+        occurred_at:
+          format: date-time
+          type: string
+        outcome:
+          type: string
+        owner_participation:
+          type: string
+        participants:
+          items:
+            $ref: "#/components/schemas/CallParticipant"
+          type: array
+        precision:
+          type: string
+        provider:
+          type: string
+        record_id:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        timezone:
+          type: string
+        version:
+          format: int64
+          type: integer
+        withdrawn:
+          type: boolean
+      required:
+        - message_id
+        - source_id
+        - record_id
+        - participants
+        - version
+        - provider
+        - account
+        - kind
+        - direction
+        - outcome
+        - owner_participation
+        - occurred_at
+        - duration_seconds
+        - precision
+      type: object
+    CallParticipant:
+      properties:
+        participant_id:
+          format: int64
+          type: integer
+        participation:
+          type: string
+      required:
+        - participant_id
+        - participation
+      type: object
+    CallSummaryResponse:
+      properties:
+        items:
+          items:
+            $ref: "#/components/schemas/PersonCallSummary"
+          type: array
+      required:
+        - items
       type: object
     CancelDeletionResponse:
       properties:
@@ -10889,6 +11031,50 @@ components:
       required:
         - versions
       type: object
+    PersonCallSummary:
+      properties:
+        answered:
+          format: int64
+          type: integer
+        cancelled:
+          format: int64
+          type: integer
+        conflicting:
+          format: int64
+          type: integer
+        declined:
+          format: int64
+          type: integer
+        example_message_id:
+          format: int64
+          type: integer
+        missed:
+          format: int64
+          type: integer
+        person_id:
+          format: int64
+          type: integer
+        scheduled:
+          format: int64
+          type: integer
+        scheduled_cancelled:
+          format: int64
+          type: integer
+        unknown:
+          format: int64
+          type: integer
+      required:
+        - person_id
+        - answered
+        - missed
+        - declined
+        - cancelled
+        - unknown
+        - conflicting
+        - scheduled
+        - scheduled_cancelled
+        - example_message_id
+      type: object
     PersonCategory:
       properties:
         envelope:
@@ -16270,7 +16456,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.24.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -17320,6 +17506,100 @@ paths:
       summary: Control a live calendar event or query availability
       tags:
         - Calendar
+  /api/v1/calls:
+    get:
+      operationId: listCallObservations
+      parameters:
+        - in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: before
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallEvidenceResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Inspect call and scheduled meeting observations
+      tags:
+        - API
+  /api/v1/calls/summary:
+    get:
+      operationId: summarizeCalls
+      parameters:
+        - in: query
+          name: person_id
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: limit
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: offset
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: after
+          schema:
+            format: date-time
+            type: string
+        - in: query
+          name: before
+          schema:
+            format: date-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallSummaryResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Count call evidence per person
+      tags:
+        - API
   /api/v1/carddav/account:
     put:
       operationId: saveCardDAVAccount
@@ -22696,6 +22976,33 @@ paths:
       security:
         - apiKey: []
       summary: Remove a link edge between two participants
+      tags:
+        - API
+  /api/v1/import/calls:
+    post:
+      operationId: importCallObservation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CallImportRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallImportResponse"
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Import one supplied call or scheduled meeting observation
       tags:
         - API
   /api/v1/import/meeting:

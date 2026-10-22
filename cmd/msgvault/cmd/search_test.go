@@ -258,45 +258,50 @@ func TestSearchCmd_AccountFlagForwardsToRemoteHTTP(t *testing.T) {
 }
 
 func TestSearchCmd_MessageTypeFlagForwardsToRemoteMode(t *testing.T) {
-	cfg := testConfigValue()
-	useLocal := false
+	for _, messageType := range []string{"sms", "call_record"} {
+		t.Run(messageType, func(t *testing.T) {
+			cfg := testConfigValue()
+			useLocal := false
 
-	savedCfg := cfg
-	savedUseLocal := useLocal
-	defer func() {
-		cfg = savedCfg
-		useLocal = savedUseLocal
-		resetSearchFlags()
-	}()
+			savedCfg := cfg
+			savedUseLocal := useLocal
+			defer func() {
+				cfg = savedCfg
+				useLocal = savedUseLocal
+				resetSearchFlags()
+			}()
 
-	var gotQuery string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
-		gotQuery = r.URL.Query().Get("q")
-		assert.Equal(t, "sms", r.URL.Query().Get("message_type"), "message_type query")
-		w.Header().Set("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(map[string]any{
-			"results": []map[string]any{},
+			var gotQuery, gotMessageType string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/api/v1/cli/search", r.URL.Path, "path")
+				gotQuery = r.URL.Query().Get("q")
+				gotMessageType = r.URL.Query().Get("message_type")
+				w.Header().Set("Content-Type", "application/json")
+				err := json.NewEncoder(w).Encode(map[string]any{
+					"results": []map[string]any{},
+				})
+				assert.NoError(t, err, "write response")
+			}))
+			defer srv.Close()
+
+			cfg = &config.Config{}
+			testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			_ = testCtx
+			cfg.Remote.URL = srv.URL
+			cfg.Remote.AllowInsecure = true
+			useLocal = false
+
+			root := newTestRootCmd()
+			root.SetContext(testCtx)
+			root.AddCommand(searchCmd)
+			root.SetArgs([]string{"search", "--message-type", messageType, "lunch"})
+
+			err := root.Execute()
+			require.NoError(t, err, "message-type remote search should be forwarded")
+			assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
+			assert.Equal(t, messageType, gotMessageType, "message_type query")
 		})
-		assert.NoError(t, err, "write response")
-	}))
-	defer srv.Close()
-
-	cfg = &config.Config{}
-	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	cfg.Remote.URL = srv.URL
-	cfg.Remote.AllowInsecure = true
-	useLocal = false
-
-	root := newTestRootCmd()
-	root.SetContext(testCtx)
-	root.AddCommand(searchCmd)
-	root.SetArgs([]string{"search", "--message-type", "sms", "lunch"})
-
-	err := root.Execute()
-	require.NoError(t, err, "message-type remote search should be forwarded")
-	assert.Equal(t, "lunch", gotQuery, "remote query should keep search terms")
+	}
 }
 
 func TestSearchCmd_DeletionScopeForwardsToRemoteFTS(t *testing.T) {

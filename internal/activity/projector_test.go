@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -46,6 +47,74 @@ func TestProjectorRunOnceDrainsQueueAndBuildsContactState(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("message:"+formatProjectorID(messageID), state.LastContactRef)
 	assert.False(state.Stale)
+}
+
+func TestProjectorDrainsCallImportAndFollowingContactActivity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+
+	peerID := f.EnsureParticipant("peer@example.com", "Peer", "example.com")
+	person, created, err := f.Store.CreatePersonFromParticipant(peerID)
+	requirements.NoError(err)
+	requirements.True(created)
+	ownerID := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+	requirements.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	emailConversationID, err := f.Store.EnsureConversationWithType(
+		f.Source.ID, "activity-email", "email_thread", "Activity Email")
+	requirements.NoError(err)
+
+	callRaw := []byte(`{"id":"100","channel_id":"200","type":3,"timestamp":"2026-10-01T11:00:00Z","call":{"participants":["1","2"]}}`)
+	call, err := (callhistory.ImportRequest{
+		Format: "discord", Account: "1", Record: callRaw,
+		Bindings: map[string]int64{"2": peerID},
+	}).Observation()
+	requirements.NoError(err)
+	callSource, err := f.Store.GetOrCreateSource(callhistory.SourceType, call.SourceIdentifier())
+	requirements.NoError(err)
+	callMessageID, err := f.Store.PutCallObservationContext(t.Context(), callSource.ID, call)
+	requirements.NoError(err)
+
+	contactAt := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	email := f.NewMessage().WithSourceMessageID("contact-after-call").WithSentAt(contactAt).Build()
+	email.ConversationID = emailConversationID
+	emailID, err := f.Store.UpsertMessage(email)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(
+		emailID, "from", []int64{peerID}, []string{"Peer"}))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(
+		emailID, "to", []int64{ownerID}, []string{"Owner"}))
+	queued, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	requirements.NoError(err)
+	requirements.Len(queued, 2)
+
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 10})
+	requirements.NoError(err)
+	result, err := projector.RunOnce(t.Context())
+	requirements.NoError(err)
+	assertions.GreaterOrEqual(result.Processed, 2)
+	remaining, err := f.Store.ListActivityProjectionQueueContext(t.Context(), 10)
+	requirements.NoError(err)
+	assertions.Empty(remaining)
+
+	var callChannel store.ActivityChannel
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT channel FROM activity_events WHERE message_id = ?`), callMessageID).Scan(&callChannel))
+	assertions.Equal(store.ChannelOther, callChannel)
+	var callPersonLinks int
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT COUNT(*) FROM activity_event_persons WHERE message_id = ?`), callMessageID).Scan(&callPersonLinks))
+	assertions.Zero(callPersonLinks)
+
+	var emailChannel store.ActivityChannel
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+		`SELECT channel FROM activity_events WHERE message_id = ?`), emailID).Scan(&emailChannel))
+	assertions.Equal(store.ChannelEmail, emailChannel)
+	state, err := f.Store.ContactStateContext(t.Context(), person.ID, contactAt)
+	requirements.NoError(err)
+	assertions.Equal("message:"+formatProjectorID(emailID), state.LastContactRef)
+	assertions.Equal(store.ChannelEmail, state.LastContactChannel)
+	assertions.False(state.Stale)
 }
 
 func TestProjectorCompletesAfterNullLastModifiedUpgrade(t *testing.T) {
