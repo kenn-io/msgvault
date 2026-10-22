@@ -99,6 +99,8 @@ func testSetupPGSchema(t *testing.T, db *sql.DB) {
 			subject TEXT,
 			has_attachments BOOLEAN DEFAULT FALSE,
 			size_estimate BIGINT,
+			received_at TIMESTAMPTZ,
+			internal_date TIMESTAMPTZ,
 			sent_at TIMESTAMPTZ,
 			deleted_at TIMESTAMPTZ,
 			deleted_from_source_at TIMESTAMPTZ,

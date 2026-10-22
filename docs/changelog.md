@@ -25,6 +25,7 @@ All notable changes to msgvault, grouped by release.
 - Schedules with a step as large as its range, such as `*/60 * * * *`, and
   an empty zone name, such as `CRON_TZ= 0 3 * * *`, are now rejected. Replace
   them before upgrading, for example with `0 * * * *` and `0 3 * * *`.
+- [Topical people search](usage/people.md#find-who-knows-about-a-topic) ranks saved people and unsaved contacts from authored archive evidence, with score breakdowns, message citations and coverage warnings. Available through `person who-knows`, the owner-only HTTP API, and the read-only `find_who_knows` MCP tool in schema 3.24.0.
 
 - Message [search](usage/searching.md#match-any-of-several-searches) accepts up to eight pipe-separated alternatives in full-text mode. API schema 3.19.0 adds support for remote clients.
 - A standalone ` | ` between searches used to be literal text and now means OR; `"a | b"` keeps it literal.

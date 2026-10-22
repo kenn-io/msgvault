@@ -10,6 +10,7 @@ import (
 	"math"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,6 +44,30 @@ func TestAcceleratedSearchReranksFiltersAndDeduplicates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, hits, 2)
 	assert.Equal(t, []int64{2, 3}, []int64{hits[0].MessageID, hits[1].MessageID})
+}
+
+func TestAcceleratedSearchDateFiltersUseReceivedAndInternalDates(t *testing.T) {
+	backend, generationID, mainDB := openAcceleratedSearchBackend(t, 2, 4, Options{})
+	require.NoError(t, backend.Upsert(t.Context(), generationID, []vector.Chunk{
+		{MessageID: 1, Vector: unitVec(4, 0)},
+		{MessageID: 2, Vector: unitVec(4, 0)},
+	}))
+	installReadyFlatAccelerator(t, backend, generationID, 4)
+
+	base := "2026-09-18T12:00:00Z"
+	_, err := mainDB.Exec(`UPDATE messages SET received_at = ? WHERE id = 1`, base)
+	require.NoError(t, err)
+	_, err = mainDB.Exec(`UPDATE messages SET internal_date = ? WHERE id = 2`, "2026-09-18T13:00:00Z")
+	require.NoError(t, err)
+	after := time.Date(2026, 9, 18, 0, 0, 0, 0, time.UTC)
+	before := after.Add(24 * time.Hour)
+
+	hits, metadata, err := backend.SearchWithMetadata(t.Context(), generationID,
+		unitVec(4, 0), 2, vector.Filter{After: &after, Before: &before})
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+	assert.Equal(t, []int64{1, 2}, []int64{hits[0].MessageID, hits[1].MessageID})
+	assert.Equal(t, "exact-filter", metadata.Accelerator)
 }
 
 func TestExactSearchMetadataReportsFullPageSaturation(t *testing.T) {
@@ -394,6 +419,9 @@ func openAcceleratedSearchBackend(
 		source_id INTEGER,
 		conversation_id INTEGER,
 		message_type TEXT NOT NULL DEFAULT 'email',
+		sent_at DATETIME,
+		received_at DATETIME,
+		internal_date DATETIME,
 		deleted_at DATETIME,
 		deleted_from_source_at DATETIME
 	)`)

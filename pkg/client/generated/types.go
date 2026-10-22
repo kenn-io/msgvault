@@ -15513,3 +15513,489 @@ type VisualTextSearchRequest struct {
 func (v VisualTextSearchRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
+
+type WhoKnowsBreakdown struct {
+	Affinity            float64    `json:"affinity"`
+	AskMeAboutMatches   []string   `json:"ask_me_about_matches" validate:"required"`
+	AuthoredMessages    int64      `json:"authored_messages"`
+	Breadth             float64    `json:"breadth"`
+	ChannelsAuthored    []string   `json:"channels_authored" validate:"required"`
+	Declared            float64    `json:"declared"`
+	Depth               float64    `json:"depth"`
+	Evidence            float64    `json:"evidence"`
+	EvidenceTotal       int64      `json:"evidence_total"`
+	LatestAuthoredAt    *time.Time `json:"latest_authored_at" validate:"omitempty"`
+	OmittedContribution float64    `json:"omitted_contribution"`
+	OrgMatch            float64    `json:"org_match"`
+	OrganizationMatches []string   `json:"organization_matches" validate:"required"`
+	ProfileScore        *float64   `json:"profile_score" validate:"omitempty"`
+	ProfileSearch       string     `json:"profile_search" validate:"required"`
+	ProfileSim          float64    `json:"profile_sim"`
+	RawAuthored         float64    `json:"raw_authored"`
+	RawReceived         float64    `json:"raw_received"`
+	ReceivedMessages    int64      `json:"received_messages"`
+	ShownContribution   float64    `json:"shown_contribution"`
+	ThreadsAuthored     int64      `json:"threads_authored"`
+}
+
+func (w WhoKnowsBreakdown) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsContactCoverage struct {
+	Dirty            int64      `json:"dirty"`
+	Missing          int64      `json:"missing"`
+	OldestComputedAt *time.Time `json:"oldest_computed_at" validate:"omitempty"`
+	Outdated         int64      `json:"outdated"`
+	RankedPeople     int64      `json:"ranked_people"`
+}
+
+type WhoKnowsCoverage struct {
+	ContactState WhoKnowsContactCoverage `json:"contact_state"`
+	Generation   WhoKnowsGeneration      `json:"generation"`
+	Messages     WhoKnowsMessageCoverage `json:"messages"`
+	PeopleIndex  WhoKnowsPeopleCoverage  `json:"people_index"`
+	Scope        WhoKnowsScope           `json:"scope"`
+	Stale        bool                    `json:"stale"`
+	StaleReasons []string                `json:"stale_reasons" validate:"required"`
+}
+
+func (w WhoKnowsCoverage) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.ContactState).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ContactState", err)
+		}
+	}
+	if v, ok := any(w.Generation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Generation", err)
+		}
+	}
+	if v, ok := any(w.Messages).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Messages", err)
+		}
+	}
+	if v, ok := any(w.PeopleIndex).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PeopleIndex", err)
+		}
+	}
+	if v, ok := any(w.Scope).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Scope", err)
+		}
+	}
+	if err := typesValidator.Var(w.StaleReasons, "required"); err != nil {
+		errors = errors.Append("StaleReasons", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsEvidence struct {
+	Contribution        float64          `json:"contribution"`
+	ConversationID      int64            `json:"conversation_id"`
+	Excerpt             *WhoKnowsExcerpt `json:"excerpt" validate:"omitempty"`
+	ExcerptError        bool             `json:"excerpt_error"`
+	Flags               []string         `json:"flags" validate:"required"`
+	MessageID           int64            `json:"message_id"`
+	MessageType         string           `json:"message_type" validate:"required"`
+	Recency             float64          `json:"recency"`
+	Relevance           float64          `json:"relevance"`
+	Role                string           `json:"role" validate:"required"`
+	SenderAuthenticated bool             `json:"sender_authenticated"`
+	SentAt              *time.Time       `json:"sent_at" validate:"omitempty"`
+	Snippet             string           `json:"snippet" validate:"omitempty"`
+	SourceMessageID     string           `json:"source_message_id" validate:"omitempty"`
+	Subject             string           `json:"subject" validate:"omitempty"`
+	VectorScore         *float64         `json:"vector_score" validate:"omitempty"`
+	Weight              float64          `json:"weight"`
+}
+
+func (w WhoKnowsEvidence) Validate() error {
+	var errors runtime.ValidationErrors
+	if w.Excerpt != nil {
+		if v, ok := any(w.Excerpt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Excerpt", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(w.Flags, "required"); err != nil {
+		errors = errors.Append("Flags", err)
+	}
+	if err := typesValidator.Var(w.MessageType, "required"); err != nil {
+		errors = errors.Append("MessageType", err)
+	}
+	if err := typesValidator.Var(w.Role, "required"); err != nil {
+		errors = errors.Append("Role", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsExcerpt struct {
+	CharOffset *int64  `json:"char_offset" validate:"omitempty"`
+	Line       *int64  `json:"line" validate:"omitempty"`
+	Score      float64 `json:"score"`
+	Snippet    string  `json:"snippet" validate:"omitempty"`
+}
+
+func (w WhoKnowsExcerpt) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsExcluded struct {
+	AutomatedSenders   int64 `json:"automated_senders"`
+	LargeRooms         int64 `json:"large_rooms"`
+	MessageTypes       int64 `json:"message_types"`
+	OwnerMessages      int64 `json:"owner_messages"`
+	OwnerPeople        int64 `json:"owner_people"`
+	UnresolvedMessages int64 `json:"unresolved_messages"`
+}
+
+type WhoKnowsGeneration struct {
+	Dimension   int64  `json:"dimension"`
+	Fingerprint string `json:"fingerprint" validate:"required"`
+	ID          int64  `json:"id"`
+	Model       string `json:"model" validate:"required"`
+	State       string `json:"state" validate:"required"`
+}
+
+func (w WhoKnowsGeneration) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsMessageCoverage struct {
+	CoverageSampledAt time.Time `json:"coverage_sampled_at" validate:"omitempty"`
+	Current           int64     `json:"current"`
+	Eligible          int64     `json:"eligible"`
+	Pending           int64     `json:"pending"`
+}
+
+func (w WhoKnowsMessageCoverage) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsOrganization struct {
+	Name           string `json:"name" validate:"required"`
+	OrganizationID int64  `json:"organization_id"`
+	Title          string `json:"title" validate:"omitempty"`
+}
+
+func (w WhoKnowsOrganization) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsOrganizationGroup struct {
+	Name           string  `json:"name" validate:"required"`
+	OrganizationID int64   `json:"organization_id"`
+	People         []int64 `json:"people" validate:"required"`
+	Score          float64 `json:"score"`
+}
+
+func (w WhoKnowsOrganizationGroup) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsParams struct {
+	After                *time.Time         `json:"after" validate:"omitempty"`
+	AutomatedPatterns    []string           `json:"automated_patterns" validate:"required"`
+	Before               *time.Time         `json:"before" validate:"omitempty"`
+	Candidates           int64              `json:"candidates"`
+	Evidence             int64              `json:"evidence"`
+	ExcludedMessageTypes []string           `json:"excluded_message_types" validate:"required"`
+	HalfLifeDays         int64              `json:"half_life_days"`
+	IncludeOrganizations bool               `json:"include_organizations"`
+	IncludeOwner         bool               `json:"include_owner"`
+	IncludeUnsaved       bool               `json:"include_unsaved"`
+	Limit                int64              `json:"limit"`
+	MaxCandidatePeople   int64              `json:"max_candidate_people"`
+	MaxRosterEdges       int64              `json:"max_roster_edges"`
+	MinProfileScore      float64            `json:"min_profile_score"`
+	MinScore             float64            `json:"min_score"`
+	Tiebreak             string             `json:"tiebreak" validate:"required"`
+	Weights              map[string]float64 `json:"weights"`
+}
+
+func (w WhoKnowsParams) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsPeopleCoverage struct {
+	Complete  bool `json:"complete"`
+	Consented bool `json:"consented"`
+	Enabled   bool `json:"enabled"`
+}
+
+type WhoKnowsRanked struct {
+	Breakdown     WhoKnowsBreakdown      `json:"breakdown"`
+	DisplayName   string                 `json:"display_name" validate:"omitempty"`
+	EmailAddress  *string                `json:"email_address,omitzero"`
+	Evidence      []WhoKnowsEvidence     `json:"evidence" validate:"required"`
+	Flags         []string               `json:"flags" validate:"required"`
+	Organizations []WhoKnowsOrganization `json:"organizations" validate:"required"`
+	ParticipantID *int64                 `json:"participant_id,omitempty"`
+	PersonID      *int64                 `json:"person_id,omitempty"`
+	PromoteHint   *string                `json:"promote_hint,omitzero"`
+	Rank          int64                  `json:"rank"`
+	Score         float64                `json:"score"`
+	Tiebreak      WhoKnowsTieValue       `json:"tiebreak"`
+	VcardUID      *string                `json:"vcard_uid,omitzero"`
+}
+
+func (w WhoKnowsRanked) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Breakdown).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Breakdown", err)
+		}
+	}
+	for i, item := range w.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(w.Flags, "required"); err != nil {
+		errors = errors.Append("Flags", err)
+	}
+	for i, item := range w.Organizations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Organizations[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(w.Tiebreak).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Tiebreak", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsResponse struct {
+	Coverage          WhoKnowsCoverage            `json:"coverage"`
+	Excluded          WhoKnowsExcluded            `json:"excluded"`
+	GeneratedAt       time.Time                   `json:"generated_at" validate:"required"`
+	LimitsApplied     []string                    `json:"limits_applied" validate:"required"`
+	Organizations     []WhoKnowsOrganizationGroup `json:"organizations,omitempty"`
+	Params            WhoKnowsParams              `json:"params"`
+	People            []WhoKnowsRanked            `json:"people" validate:"required"`
+	Reason            *string                     `json:"reason,omitzero" validate:"required"`
+	Retrieval         WhoKnowsRetrieval           `json:"retrieval"`
+	Tiebreak          WhoKnowsTiebreak            `json:"tiebreak"`
+	Topic             string                      `json:"topic" validate:"required"`
+	UnsavedCandidates []WhoKnowsUnsavedCandidate  `json:"unsaved_candidates" validate:"required"`
+}
+
+func (w WhoKnowsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Coverage).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Coverage", err)
+		}
+	}
+	if v, ok := any(w.Excluded).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Excluded", err)
+		}
+	}
+	if err := typesValidator.Var(w.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	if err := typesValidator.Var(w.LimitsApplied, "required"); err != nil {
+		errors = errors.Append("LimitsApplied", err)
+	}
+	for i, item := range w.Organizations {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Organizations[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(w.Params).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Params", err)
+		}
+	}
+	for i, item := range w.People {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("People[%d]", i), err)
+			}
+		}
+	}
+	if w.Reason != nil {
+		if err := typesValidator.Var(w.Reason, "required"); err != nil {
+			errors = errors.Append("Reason", err)
+		}
+	}
+	if v, ok := any(w.Retrieval).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Retrieval", err)
+		}
+	}
+	if v, ok := any(w.Tiebreak).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Tiebreak", err)
+		}
+	}
+	if err := typesValidator.Var(w.Topic, "required"); err != nil {
+		errors = errors.Append("Topic", err)
+	}
+	for i, item := range w.UnsavedCandidates {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("UnsavedCandidates[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsRetrieval struct {
+	Accelerator            string             `json:"accelerator" validate:"omitempty"`
+	CandidatesAfterFilters int64              `json:"candidates_after_filters"`
+	CandidatesEffective    int64              `json:"candidates_effective"`
+	CandidatesRequested    int64              `json:"candidates_requested"`
+	Generation             WhoKnowsGeneration `json:"generation"`
+	Mode                   string             `json:"mode" validate:"required"`
+	PoolSaturated          bool               `json:"pool_saturated"`
+	Timings                WhoKnowsTimings    `json:"timings"`
+	TookMs                 float64            `json:"took_ms"`
+	TopVectorScore         *float64           `json:"top_vector_score" validate:"omitempty"`
+	Underfilled            bool               `json:"underfilled"`
+}
+
+func (w WhoKnowsRetrieval) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Generation).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Generation", err)
+		}
+	}
+	if err := typesValidator.Var(w.Mode, "required"); err != nil {
+		errors = errors.Append("Mode", err)
+	}
+	if v, ok := any(w.Timings).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Timings", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type WhoKnowsScope struct {
+	Accounts     []int64  `json:"accounts" validate:"required"`
+	MessageTypes []string `json:"message_types" validate:"required"`
+}
+
+func (w WhoKnowsScope) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsTieValue struct {
+	LastContactAt *time.Time `json:"last_contact_at" validate:"omitempty"`
+	Temperature   *int64     `json:"temperature" validate:"omitempty"`
+}
+
+type WhoKnowsTiebreak struct {
+	Applied   string `json:"applied" validate:"required"`
+	Requested string `json:"requested" validate:"required"`
+}
+
+func (w WhoKnowsTiebreak) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsTimings struct {
+	AttributionMs      float64 `json:"attribution_ms"`
+	DeclaredMs         float64 `json:"declared_ms"`
+	HydrationMs        float64 `json:"hydration_ms"`
+	ProfileEmbeddingMs float64 `json:"profile_embedding_ms"`
+	ProfileMs          float64 `json:"profile_ms"`
+	QueryEmbeddingMs   float64 `json:"query_embedding_ms"`
+	RetrievalMs        float64 `json:"retrieval_ms"`
+	TiebreakMs         float64 `json:"tiebreak_ms"`
+}
+
+type WhoKnowsUnsavedBreakdown struct {
+	AskMeAboutMatches   []string   `json:"ask_me_about_matches" validate:"required"`
+	AuthoredMessages    int64      `json:"authored_messages"`
+	Breadth             float64    `json:"breadth"`
+	ChannelsAuthored    []string   `json:"channels_authored" validate:"required"`
+	Depth               float64    `json:"depth"`
+	Evidence            float64    `json:"evidence"`
+	EvidenceTotal       int64      `json:"evidence_total"`
+	LatestAuthoredAt    *time.Time `json:"latest_authored_at" validate:"omitempty"`
+	OmittedContribution float64    `json:"omitted_contribution"`
+	OrgMatch            float64    `json:"org_match"`
+	OrganizationMatches []string   `json:"organization_matches" validate:"required"`
+	ProfileScore        *float64   `json:"profile_score" validate:"omitempty"`
+	ProfileSearch       string     `json:"profile_search" validate:"required"`
+	ProfileSim          float64    `json:"profile_sim"`
+	RawAuthored         float64    `json:"raw_authored"`
+	RawReceived         float64    `json:"raw_received"`
+	ReceivedMessages    int64      `json:"received_messages"`
+	ShownContribution   float64    `json:"shown_contribution"`
+	ThreadsAuthored     int64      `json:"threads_authored"`
+}
+
+func (w WhoKnowsUnsavedBreakdown) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WhoKnowsUnsavedCandidate struct {
+	Breakdown     WhoKnowsUnsavedBreakdown `json:"breakdown"`
+	DisplayName   string                   `json:"display_name" validate:"omitempty"`
+	EmailAddress  string                   `json:"email_address" validate:"omitempty"`
+	Evidence      []WhoKnowsEvidence       `json:"evidence" validate:"required"`
+	Flags         []string                 `json:"flags" validate:"required"`
+	ParticipantID int64                    `json:"participant_id"`
+	PromoteHint   string                   `json:"promote_hint" validate:"required"`
+	Score         float64                  `json:"score"`
+}
+
+func (w WhoKnowsUnsavedCandidate) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Breakdown).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Breakdown", err)
+		}
+	}
+	for i, item := range w.Evidence {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Evidence[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(w.Flags, "required"); err != nil {
+		errors = errors.Append("Flags", err)
+	}
+	if err := typesValidator.Var(w.PromoteHint, "required"); err != nil {
+		errors = errors.Append("PromoteHint", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}

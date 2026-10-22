@@ -66,7 +66,7 @@ func newEngineFixture(t *testing.T) *engineFixture {
 	require.NoError(t, err, "open main")
 	t.Cleanup(func() { _ = mainDB.Close() })
 
-	// sent_at is DATETIME (text) to match the production schema.
+	// Message timestamps are DATETIME (text) to match the production schema.
 	schema := `
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
@@ -77,6 +77,8 @@ CREATE TABLE messages (
     has_attachments INTEGER DEFAULT 0,
     size_estimate INTEGER,
     sent_at DATETIME,
+    received_at DATETIME,
+    internal_date DATETIME,
     deleted_at DATETIME,
     deleted_from_source_at DATETIME
 );

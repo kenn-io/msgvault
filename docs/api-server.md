@@ -153,12 +153,39 @@ recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
 
+## Find who knows about a topic
+
+On unreleased `main`, `GET /api/v1/people/who-knows?q=<topic>` ranks people by
+archived topical evidence. This route is owner-only and returns `Cache-Control:
+no-store`. Restricted agent tokens cannot use it.
+
+Parameters use the [CLI options](cli-reference.md#person-who-knows), with
+`half_life_days` as an integer, `include_unsaved=true` and
+`include_organizations=true`. The body includes `params`, `people`,
+`unsaved_candidates`, optional `organizations`, `excluded`, `limits_applied`,
+`coverage`, `retrieval` and `tiebreak`. Every person has an unrounded score,
+component breakdown and bounded citations. Empty results carry
+`reason: "no_relevant_evidence"`.
+
+`q` must contain free text. Invalid ranges, dates and enums return
+`400 invalid_parameter`; missing free text returns `400 missing_free_text`.
+Search initialization failures retain `503 vector_not_enabled`, `index_stale`,
+`index_building` and `embedding_timeout`; incompatible scoped indexes return
+`400 index_scope_mismatch`. Missing people resolution returns
+`503 person_scope_unavailable`; other search failures return
+`503 semantic_search_unavailable`. Context cancellation propagates through reads.
+
+See [topical people search](usage/people.md#find-who-knows-about-a-topic) for the
+scoring formula, coverage meanings, bounded retrieval and query egress.
+
 ## API compatibility
 
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.23.0**.
+it is separate from the binary release version. The current schema is **3.24.0**.
+
+Schema 3.24.0 adds owner-only topical people search at `GET /api/v1/people/who-knows`.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,

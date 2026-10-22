@@ -1574,11 +1574,11 @@ func (b *Backend) filteredMessageIDsLimit(ctx context.Context, f vector.Filter, 
 		args = append(args, *f.HasAttachment)
 	}
 	if f.After != nil {
-		clauses = append(clauses, "julianday(m.sent_at) >= julianday(?)")
+		clauses = append(clauses, "julianday(COALESCE(m.sent_at, m.received_at, m.internal_date)) >= julianday(?)")
 		args = append(args, f.After.UTC().Format(time.RFC3339Nano))
 	}
 	if f.Before != nil {
-		clauses = append(clauses, "julianday(m.sent_at) < julianday(?)")
+		clauses = append(clauses, "julianday(COALESCE(m.sent_at, m.received_at, m.internal_date)) < julianday(?)")
 		args = append(args, f.Before.UTC().Format(time.RFC3339Nano))
 	}
 	if f.LargerThan != nil {
