@@ -49,6 +49,19 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 	if !f.Store.IsPostgreSQL() {
 		_, err := f.Store.DB().Exec(`
 			DROP TRIGGER trg_cache_message_facts_update;
+			CREATE TRIGGER trg_cache_message_facts_update
+			AFTER UPDATE OF sender_id, is_from_me, source_is_from_me,
+				has_attachments, attachment_count, account_address, account_path
+				ON messages FOR EACH ROW
+			WHEN OLD.sender_id IS NOT NEW.sender_id OR OLD.is_from_me IS NOT NEW.is_from_me
+				OR OLD.source_is_from_me IS NOT NEW.source_is_from_me
+				OR OLD.has_attachments IS NOT NEW.has_attachments
+				OR OLD.attachment_count IS NOT NEW.attachment_count
+				OR OLD.account_address IS NOT NEW.account_address
+				OR OLD.account_path IS NOT NEW.account_path BEGIN
+				INSERT INTO cache_related_change_journal (dataset, message_id)
+				VALUES ('message_facts', NEW.id);
+			END;
 			UPDATE applied_migrations SET version = 2 WHERE name = 'cache_message_source_attribution';
 		`)
 		require.NoError(err)
@@ -64,11 +77,6 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 		`SELECT CAST(content_changed_at AS TEXT) FROM messages WHERE id = ?`), ids[0]).Scan(&before))
 
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
-	if !f.Store.IsPostgreSQL() {
-		var triggerSQL string
-		require.NoError(f.Store.DB().QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'trg_cache_message_facts_update'`).Scan(&triggerSQL))
-		assert.Contains(triggerSQL, "OLD.hidden_text_present IS NOT NEW.hidden_text_present")
-	}
 	for i, id := range ids {
 		var hidden bool
 		require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(
@@ -82,6 +90,16 @@ func TestInitSchemaBackfillsHiddenHTMLText(t *testing.T) {
 	applied, err := f.Store.IsMigrationApplied(migration)
 	require.NoError(err)
 	assert.True(applied)
+	if !f.Store.IsPostgreSQL() {
+		var baseline int64
+		require.NoError(f.Store.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&baseline))
+		_, err := f.Store.DB().Exec(`UPDATE messages SET hidden_text_present = 0 WHERE id = ?`, ids[0])
+		require.NoError(err)
+		var count int
+		require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM cache_related_change_journal
+			WHERE seq > ? AND dataset = 'message_facts' AND message_id = ?`, baseline, ids[0]).Scan(&count))
+		assert.Equal(1, count)
+	}
 
 	// An older writer can add unflagged HTML; the ledger must still prevent a rescan.
 	_, err = f.Store.DB().Exec(f.Store.Rebind(`UPDATE message_bodies SET body_html = ? WHERE message_id = ?`),
