@@ -92,6 +92,49 @@ func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	require.True(response.CoverageIncomplete)
 }
 
+func TestListLoopsWaitsForBackupFreezeBeforeWritingEvidence(t *testing.T) { //nolint:paralleltest // swaps the package-level operationGateWaitLimit
+	assert := assert.New(t)
+	require := require.New(t)
+
+	oldLimit := operationGateWaitLimit
+	operationGateWaitLimit = 20 * time.Millisecond
+	t.Cleanup(func() { operationGateWaitLimit = oldLimit })
+
+	l := newLoopFixture(t)
+	srv := NewServerWithOptions(ServerOptions{
+		Config:        &config.Config{Server: config.ServerConfig{APIPort: 8080}},
+		Store:         l.f.Store,
+		Scheduler:     newMockScheduler(),
+		Logger:        testLogger(),
+		OperationGate: NewSerialOperationGate(),
+	})
+	l.router = srv.Router()
+
+	token := beginBackupFreeze(t, srv)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil)
+	request.RemoteAddr = "127.0.0.1:54321"
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	require.Equal(http.StatusServiceUnavailable, response.Code, response.Body.String())
+	var errResponse ErrorResponse
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &errResponse))
+	assert.Equal("operation_in_progress", errResponse.Error)
+	var evidenceCount int
+	require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&evidenceCount))
+	assert.Zero(evidenceCount, "the list must not write evidence while the backup freeze holds the gate")
+
+	ended := httptest.NewRecorder()
+	srv.Router().ServeHTTP(ended, endBackupFreeze(t, token))
+	require.Equal(http.StatusOK, ended.Code, ended.Body.String())
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil)
+	listRequest.RemoteAddr = "127.0.0.1:54321"
+	listed := httptest.NewRecorder()
+	srv.Router().ServeHTTP(listed, listRequest)
+	require.Equal(http.StatusOK, listed.Code, listed.Body.String())
+	require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&evidenceCount))
+	assert.Positive(evidenceCount, "the list stores evidence after the backup freeze ends")
+}
+
 func TestListLoopsRejectsBadQuery(t *testing.T) {
 	l := newLoopFixture(t)
 	for _, query := range []string{"?limit=0", "?limit=201", "?person_id=0", "?person_id=x", "?limit=1&limit=2", "?person_id=%ZZ", "?limit=%ZZ"} {

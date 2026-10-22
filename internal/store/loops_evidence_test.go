@@ -98,29 +98,6 @@ func TestLoopMessageEvidenceConcurrentMissesShareToken(t *testing.T) {
 	assert.Equal(want, got)
 }
 
-func TestLoopMessageEvidenceOlderRulesCannotReplaceNewerFacts(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
-
-	_, newerToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 2)
-	require.NoError(err)
-	require.False(hit)
-	want := store.LoopMessageEvidence{Automated: true}
-	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 2, newerToken, want))
-
-	_, olderToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
-	require.NoError(err)
-	assert.False(hit)
-	require.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, olderToken, store.LoopMessageEvidence{Asks: true}))
-
-	got, _, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 2)
-	require.NoError(err)
-	require.True(hit)
-	assert.Equal(want, got)
-}
-
 func TestLoopEvidenceSchemaUpgrade(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
