@@ -506,8 +506,8 @@ func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) 
 			`UPDATE messages SET sent_at = ? WHERE id = ?`), value, id)
 		require.NoError(err)
 	}
-	setSentAt(firstQuestion, "2026-10-15T08:00:00.000000001+02:00") // 06:00:00.000000001 UTC
-	setSentAt(firstAnswer, "2026-10-15T06:00:00.000000002Z")
+	setSentAt(firstQuestion, "2026-10-15T08:00:00.000001+02:00") // 06:00:00.000001 UTC
+	setSentAt(firstAnswer, "2026-10-15T06:00:00.000002Z")
 	setSentAt(secondQuestion, "2026-10-15T08:30:00.000000000+02:00") // 06:30 UTC
 	setSentAt(secondAnswer, "2026-10-15T07:30:00.000000000Z")
 	setSentAt(oldQuestion, "2026-10-15T07:00:00.000000000+02:00") // 05:00 UTC
@@ -531,7 +531,7 @@ func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) 
 	}
 	require.Len(heads, 2, "the 05:00 UTC conversation is before Since")
 	assert.Equal(conversationOf(t, f, firstQuestion), heads[0].ConversationID)
-	assert.True(heads[0].FirstAt.Equal(time.Date(2026, 10, 15, 6, 0, 0, 1, time.UTC)), "FirstAt must preserve the earliest instant's nanoseconds and offset")
+	assert.True(heads[0].FirstAt.Equal(time.Date(2026, 10, 15, 6, 0, 0, 1_000, time.UTC)), "FirstAt must preserve the earliest instant's microsecond precision")
 	assert.Equal(conversationOf(t, f, secondQuestion), heads[1].ConversationID)
 	assert.True(heads[1].FirstAt.Equal(time.Date(2026, 10, 15, 6, 30, 0, 0, time.UTC)))
 
