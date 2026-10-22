@@ -15,6 +15,7 @@ function createMemoryStorage(): Storage {
       return data.size;
     },
     clear() {
+      for (const key of data.keys()) delete this[key];
       data.clear();
     },
     getItem(key) {
@@ -25,9 +26,11 @@ function createMemoryStorage(): Storage {
     },
     removeItem(key) {
       data.delete(key);
+      delete this[key];
     },
     setItem(key, value) {
       data.set(key, value);
+      Object.defineProperty(this, key, { configurable: true, enumerable: true, get: () => data.get(key) });
     }
   };
 }
@@ -44,6 +47,15 @@ Object.defineProperty(globalThis, 'sessionStorage', {
   configurable: true,
   writable: true,
   value: createMemoryStorage()
+});
+
+// Svelte's reactive window values subscribe while shared components load.
+window.matchMedia = (media: string): MediaQueryList => Object.assign(new EventTarget(), {
+  media,
+  matches: false,
+  onchange: null,
+  addListener() {},
+  removeListener() {},
 });
 
 class TestResizeObserver implements ResizeObserver {

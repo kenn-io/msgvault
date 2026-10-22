@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -111,12 +112,15 @@ func Enabled(configEnabled bool) bool {
 }
 
 func buildReporter(opts Options, endpoint string, logger *slog.Logger) (*posthog.Reporter, error) {
+	claims := posthog.NewDailyClaims(filepath.Join(opts.DataDir, "telemetry-screen-claims.json"))
 	allowed := []posthog.Option{
 		posthog.WithAllowedEvent(posthog.EventDaemonActive),
 		posthog.WithAllowedEvent(EventAppOpened, posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web"))),
 		posthog.WithAllowedEvent(EventScreenViewed,
 			posthog.AllowProperty("screen", posthog.AllowStringValues(screenNames...)),
-			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui"))),
+			posthog.RequireProperty(propertySurface, posthog.AllowStringValues("web", "tui"))),
+		posthog.WithDailyEvent(EventScreenViewed, "screen", claims),
+		posthog.WithDailyEvent(EventMessageOpened, propertySurface, claims),
 		posthog.WithAllowedEvent(EventSessionEnded,
 			posthog.AllowProperty(propertySurface, posthog.AllowStringValues("web", "tui")),
 			posthog.AllowProperty("duration_bucket", posthog.AllowStringValues("under_1m", "1_to_5m", "5_to_30m", "over_30m"))),
