@@ -26,6 +26,7 @@ const (
 	NotionMeetings    = "notion_meetings"
 	Omi               = "omi"
 	Muesli            = "muesli"
+	Chatwoot          = "chatwoot"
 	SynctechSMS       = "synctech_sms"
 	CardDAV           = "carddav"
 	Twenty            = "twenty"
@@ -74,6 +75,7 @@ var registrations = []registration{
 	{Descriptor{Type: NotionMeetings, Transport: "api_poll"}, []string{"sync-notion-meetings"}, false},
 	{Descriptor{Type: Omi, Transport: "api_poll", Meetings: true}, []string{"sync-omi"}, false},
 	{Descriptor{Type: Muesli, Transport: "local_snapshot_poll"}, []string{"sync-muesli"}, false},
+	{Descriptor{Type: Chatwoot, Transport: "api_poll", Limitations: []string{"events_producer_unavailable"}}, []string{"sync-chatwoot"}, false},
 	{Descriptor{Type: SynctechSMS, Transport: "backup_poll", Imports: true, Limitations: []string{"backup_import_transport"}}, []string{"sync-synctech-sms", "import-synctech-sms"}, false},
 	{Descriptor{Type: Twenty, Transport: "graphql_poll", Limitations: []string{"events_producer_unavailable"}}, []string{"sync-twenty"}, false},
 	{Descriptor{Type: CardDAV, Transport: "dav_poll", Limitations: []string{"contacts_only"}}, []string{"sync-carddav"}, false},
