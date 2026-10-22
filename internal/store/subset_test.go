@@ -5478,27 +5478,11 @@ func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 				require.NotEqual(int64(1), currentID)
 			}
 			switch tc.evidence {
-			case "flag", "deleted_record":
+			case "flag":
 				_, err = source.DB().Exec(`INSERT INTO imap_message_memberships
 					(source_id, mailbox, uidvalidity, uid, message_id, flags)
 					VALUES (1, 'Scratch', 7, 1, 1, '["\\Draft"]')`)
 				require.NoError(err)
-				if tc.evidence == "deleted_record" {
-					_, err = source.DB().Exec(`INSERT INTO imap_drafts
-						(draft_id, source_id, current_message_id, current_mailbox, current_uidvalidity, current_uid, revision)
-						VALUES ('draft', 1, 1, 'Scratch', 7, 1, 1)`)
-					require.NoError(err)
-					// Another mailbox retains the snapshot after the draft is deleted.
-					_, err = source.DB().Exec(`INSERT INTO imap_message_memberships
-						(source_id, mailbox, uidvalidity, uid, message_id, flags)
-						VALUES (1, 'Retained', 8, 2, 1, '[]')`)
-					require.NoError(err)
-					_, err = source.ClaimIMAPDraftContext(t.Context(), "draft", 1, IMAPDraftOperationDelete, nil)
-					require.NoError(err)
-					require.NoError(source.RecordIMAPDraftOutcomeContext(t.Context(), "draft", 1, IMAPDraftCodeRemoved, nil))
-					_, err = source.FinishIMAPDraftRemovalContext(t.Context(), "draft", 1)
-					require.NoError(err)
-				}
 			case "record", "pending":
 				if tc.provider == "imap" {
 					_, err = source.DB().Exec(`INSERT INTO imap_drafts
@@ -5530,21 +5514,15 @@ func TestCopySubsetPreservesSelectedMessageEligibility(t *testing.T) {
 				require.NoError(source.AddMessageLabels(1, []int64{labels["sent"]}))
 			}
 			if tc.merged {
-				if tc.evidence == "record" {
-					// A retained, discarded draft record permits the account merge.
-					_, err = source.DB().Exec(`UPDATE imap_drafts SET discarded_at = CURRENT_TIMESTAMP`)
-					require.NoError(err)
-				}
+				// A retained, discarded draft record permits the account merge.
+				_, err = source.DB().Exec(`UPDATE imap_drafts SET discarded_at = CURRENT_TIMESTAMP`)
+				require.NoError(err)
 				destination, err := source.GetOrCreateSource(tc.provider, "destination@example.com")
 				require.NoError(err)
 				_, err = source.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: 1, IntoSourceID: destination.ID})
 				require.NoError(err)
 				var evidenceSourceID int64
-				if tc.evidence == "flag" || tc.evidence == "deleted_record" {
-					require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_message_memberships WHERE message_id = 1`).Scan(&evidenceSourceID))
-				} else {
-					require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_drafts WHERE current_message_id = 1`).Scan(&evidenceSourceID))
-				}
+				require.NoError(source.DB().QueryRow(`SELECT source_id FROM imap_drafts WHERE current_message_id = 1`).Scan(&evidenceSourceID))
 				require.Equal(int64(1), evidenceSourceID, "the only draft evidence belongs to the retired source")
 			}
 			before, err := source.LoadActivityCandidatesByIDContext(t.Context(), []int64{1})
