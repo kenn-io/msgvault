@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,6 +115,51 @@ func TestEnsureAttachmentFolderCreatesParents(t *testing.T) {
 			}
 			assert.Equal([]string{"/msgvault", "/msgvault/files"}, created)
 		})
+	}
+}
+
+func TestVaultUIDCanceledLookupDuringAnotherRequest(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/info", r.URL.Path)
+		close(started)
+		<-release
+		_, _ = w.Write([]byte(`{"vault_id":"vault"}`))
+	}))
+	defer remote.Close()
+	client, err := NewClient(remote.URL, nil)
+	require.NoError(err)
+	first := make(chan error, 1)
+	secondDone := make(chan struct{})
+	go func() {
+		_, err := client.VaultUID(t.Context())
+		first <- err
+	}()
+	defer func() {
+		close(release)
+		assert.NoError(<-first)
+		<-secondDone
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		assert.Fail("first vault lookup did not reach Docbank")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	second := make(chan error, 1)
+	go func() {
+		defer close(secondDone)
+		_, err := client.VaultUID(ctx)
+		second <- err
+	}()
+	select {
+	case err := <-second:
+		require.ErrorIs(err, context.Canceled)
+	case <-time.After(5 * time.Second):
+		assert.Fail("canceled lookup waited for another HTTP request")
 	}
 }
 

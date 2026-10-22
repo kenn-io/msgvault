@@ -221,7 +221,7 @@ func (c *Client) SearchDocuments(ctx context.Context, request SearchRequest) (Se
 		hit.Excerpt = plainSearchExcerpt(hit.Excerpt)
 		results = append(results, hit)
 	}
-	report.Results = results
+	report.Truncated, report.Results = report.Truncated || len(results) < len(report.Results) && len(report.Results) == request.Limit, results
 	return report, nil
 }
 

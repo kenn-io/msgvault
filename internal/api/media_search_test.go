@@ -102,6 +102,9 @@ func newMediaSearchFixture(t *testing.T) *mediaSearchFixture {
 				return
 			}
 			if len(request.MediaSources) == 0 {
+				for _, id := range request.Fence.ContentVersionIDs {
+					assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`, id)
+				}
 				f.documentRequests = append(f.documentRequests, request)
 				assert.Equal(t, suppliedTranscriptProfile, request.Profile)
 				if f.duringDocumentSearch != nil {
@@ -897,9 +900,9 @@ func (f *mediaSearchFixture) document(t *testing.T, server *Server) (int64, int6
 	for _, mid := range []int64{first, second} {
 		require.NoError(t, f.f.Store.UpsertAttachmentRecord(t.Context(), mid, store.AttachmentWrite{ContentHash: hash, Filename: "report.pdf", StoragePath: "aa/" + hash, State: "stored"}))
 	}
-	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "document-version"}, ""))
+	require.NoError(t, f.f.Store.RecordDocbankAttachment(t.Context(), "attachments", store.DocbankAttachmentDelivery{ContentHash: hash}, store.DocbankAttachmentRef{NodeID: 7, VersionID: "00000000-0000-4000-8000-000000000001"}, ""))
 	server.docbankAttachments = &DocbankAttachmentReader{Store: f.f.Store, Client: f.client, Destination: "attachments"}
-	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: "document-version", Rank: 1, Excerpt: "\x01quartz\x02 in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}}
+	f.documentReport = &docbankmedia.SearchReport{RequestedMode: "lexical", ActualMode: "lexical", Coverage: docbankmedia.SearchCoverage{State: "unknown"}, Results: []docbankmedia.SearchHit{{VaultUID: "vault", NodeID: 7, ContentVersionID: "00000000-0000-4000-8000-000000000001", Rank: 1, Excerpt: "\x01quartz\x02 in the PDF", Evidence: []docbankmedia.SearchEvidence{{Kind: "content_blob"}}}}}
 	return first, second
 }
 
@@ -949,7 +952,7 @@ func TestMediaSearchDocuments(t *testing.T) {
 				query += "&participant_id=" + strconv.FormatInt(participant, 10)
 			}
 			status, response, raw := searchMediaFor(t, server, query)
-			if scenario == "both fail" || scenario == "recording failure without attachment matches" {
+			if scenario == "both fail" {
 				assert.Equal(http.StatusServiceUnavailable, status, raw)
 				return
 			}
@@ -960,7 +963,7 @@ func TestMediaSearchDocuments(t *testing.T) {
 			}
 			require.NotNil(response.Attachments)
 			switch scenario {
-			case "recording failure":
+			case "recording failure", "recording failure without attachment matches":
 				require.NotNil(response.RecordingsError)
 				assert.Empty(response.Results)
 				assert.True(response.Partial)
@@ -977,6 +980,10 @@ func TestMediaSearchDocuments(t *testing.T) {
 				return
 			}
 			want := 2
+			if scenario == "recording failure without attachment matches" {
+				assert.Nil(response.Attachments.Error)
+				want = 0
+			}
 			if scenario == "hidden during search" || scenario == "unlinked during search" {
 				want = 0
 			}
@@ -1019,7 +1026,7 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 				}
 				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO attachments(message_id,filename,content_hash,storage_path,attachment_state) VALUES (?,'report.pdf',?,?,'stored')`), messageID, hash, hash[:2]+"/"+hash)
 				require.NoError(err)
-				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("version-%04d", i))
+				_, err = tx.Exec(f.f.Store.Rebind(`INSERT INTO docbank_attachment_deliveries(destination_key,content_hash,upload_name,mime_type,state,node_id,version_id,endpoint,folder) VALUES ('attachments',?,'report.pdf','application/pdf','delivered',7,?,'','')`), hash, fmt.Sprintf("00000000-0000-4000-8000-%012x", i))
 				require.NoError(err)
 			}
 			require.NoError(tx.Commit())
@@ -1051,7 +1058,7 @@ func TestMediaSearchDocumentChunks(t *testing.T) {
 				assert.Len(f.documentRequests, 1)
 			} else {
 				require.Len(f.documentRequests, 2)
-				assert.Equal([]string{"version-4096"}, f.documentRequests[1].Fence.ContentVersionIDs)
+				assert.Equal([]string{"00000000-0000-4000-8000-000000001000"}, f.documentRequests[1].Fence.ContentVersionIDs)
 			}
 			if scenario == "both fail later" {
 				require.NotNil(response.RecordingsError)

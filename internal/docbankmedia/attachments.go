@@ -103,10 +103,8 @@ func (c *Client) UploadAttachment(ctx context.Context, parent int64, name, media
 
 // VaultUID identifies the vault selected by the configured Docbank endpoint.
 func (c *Client) VaultUID(ctx context.Context) (string, error) {
-	c.vaultMu.Lock()
-	defer c.vaultMu.Unlock()
-	if c.vaultUID != "" {
-		return c.vaultUID, nil
+	if cached := c.vaultUID.Load(); cached != nil {
+		return *cached, nil
 	}
 	var info struct {
 		VaultID string `json:"vault_id"`
@@ -117,12 +115,10 @@ func (c *Client) VaultUID(ctx context.Context) (string, error) {
 	if info.VaultID == "" {
 		return "", ErrInvalidReceipt
 	}
-	c.vaultUID = info.VaultID
-	return c.vaultUID, nil
+	c.vaultUID.Store(&info.VaultID)
+	return info.VaultID, nil
 }
 
 func (c *Client) clearVaultUID() {
-	c.vaultMu.Lock()
-	defer c.vaultMu.Unlock()
-	c.vaultUID = ""
+	c.vaultUID.Store(nil)
 }

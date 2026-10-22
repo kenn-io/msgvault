@@ -192,7 +192,7 @@ func TestSearchSelectedEvidenceBoundary(t *testing.T) {
 }
 
 func TestSearchDocumentsContract(t *testing.T) {
-	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "selections", "timed blob", "bad timing", "mixed"} {
+	for _, fault := range []string{"", "vault", "version", "node", "rank", "selection", "media", "timing", "kind", "node name", "full name page", "selections", "timed blob", "bad timing", "mixed"} {
 		t.Run(fault, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -210,7 +210,7 @@ func TestSearchDocumentsContract(t *testing.T) {
 				report.MediaSourceSelection = true
 			case "selections":
 				report.MediaSelections = []SearchMediaSelection{{Origin: "generated"}}
-			case "node name":
+			case "node name", "full name page":
 				report.Results[0].Evidence[0].Kind = "node_name"
 			case "media":
 				report.Results[0].Evidence[0].MediaSources = []SearchMediaSource{{SourceID: "source"}}
@@ -238,10 +238,15 @@ func TestSearchDocumentsContract(t *testing.T) {
 			defer remote.Close()
 			client, err := NewClient(remote.URL, nil)
 			require.NoError(err)
-			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: 20, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
-			if fault == "node name" {
+			limit := 20
+			if fault == "full name page" {
+				limit = 1
+			}
+			got, err := client.SearchDocuments(t.Context(), SearchRequest{Query: "quartz", Mode: "lexical", Limit: limit, Profile: "supplied-transcript", ContentFirst: true, Fence: &SearchFence{VaultUID: "vault", ContentVersionIDs: []string{"version"}}})
+			if fault == "node name" || fault == "full name page" {
 				require.NoError(err)
 				assert.Empty(got.Results)
+				assert.Equal(fault == "full name page", got.Truncated)
 				return
 			}
 			if fault != "" && fault != "timing" && fault != "timed blob" && fault != "mixed" {
