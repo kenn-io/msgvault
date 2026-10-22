@@ -12,6 +12,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/config"
 )
 
 func TestMCPCapabilitiesRequiresOwner(t *testing.T) {
@@ -64,4 +65,31 @@ func TestMCPCapabilitiesRouteIsRegistered(t *testing.T) {
 	operation := doc.Paths["/api/v1/mcp/capabilities"].Get
 	requirements.NotNil(operation)
 	assertions.Equal("getMCPCapabilities", operation.OperationID)
+}
+
+func TestMCPCapabilitiesDescribeRealLoopRoutes(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Logger: testLogger()})
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/mcp/capabilities", nil))
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	var capabilities MCPCapabilitiesResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &capabilities))
+	routes := map[string]apiprotocol.MCPRouteDescriptor{}
+	for _, route := range capabilities.Routes {
+		routes[route.OperationID] = route
+	}
+	for _, tc := range []struct{ id, method, path string }{
+		{"listLoops", http.MethodGet, "/api/v1/loops"},
+		{"markLoopDone", http.MethodPost, "/api/v1/loops/{message_id}/done"},
+		{"snoozeLoop", http.MethodPost, "/api/v1/loops/{message_id}/snooze"},
+		{"reopenLoop", http.MethodPost, "/api/v1/loops/{message_id}/reopen"},
+	} {
+		requirements.Contains(routes, tc.id)
+		assertions.Equal(tc.method, routes[tc.id].Method)
+		assertions.Equal(tc.path, routes[tc.id].Path)
+	}
+	assertions.ElementsMatch([]string{"limit", "person_id"}, routes["listLoops"].QueryParameters)
+	assertions.Contains(routes["snoozeLoop"].RequestProperties, "until")
 }

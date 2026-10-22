@@ -692,6 +692,21 @@ Omitted fields are preserved; `false` and empty arrays are explicit changes.
 A stale ETag returns `settings_conflict`. Selection changes retain archived data
 and may require a daemon restart; inspect `pending_restart` in the response.
 
+## Open loops
+
+On unreleased `main`, owner-connected assistants can list unanswered questions and make approved decisions through the daemon. Each tool requires discovery of its exact daemon route and required fields; API schema 3.25.0 alone does not enable it. Delegated sessions expose none of these tools.
+
+| Tool | Effect | Parameters |
+|---|---|---|
+| `list_open_loops` | List `reply_owed` and `awaiting_reply` questions. | Optional positive JSON-safe `person_id`; `limit` from 1 to 200, default 50 |
+| `close_open_loop` | Mark done the currently eligible questions in the anchor's conversation. | Required `message_id` |
+| `snooze_open_loop` | Snooze the currently eligible questions in the anchor's conversation. | Required `message_id` and `until` |
+| `reopen_open_loop` | Clear the saved decision on one exact question. | Required `message_id` from an earlier list or decision receipt |
+
+Use `anchor_message_id` as `message_id`. Done and snooze recheck the conversation before saving. The tools return the daemon's list or decision response. See [Open loops](open-loops.md#use-an-assistant) for evidence warnings, deadlines, and retry behavior.
+
+Every decision requires `--allow-loop-writes` and per-call approval identifying the action and anchor ID. Snooze approval includes its resolved deadline and offset. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer; older HTTP clients retain the list.
+
 ## Write controls
 
 Enable only the writes intended for the assistant's session:
@@ -700,6 +715,7 @@ Enable only the writes intended for the assistant's session:
 |---|---|---|
 | Native email tag edits, Saved View management, attachment export, deletion staging, and drafts | Available by default | `--http-allow-writes` |
 | Person promotion, display names, and Notes | `--allow-profile-writes` | `--http-allow-writes --allow-profile-writes` |
+| Open-loop done, snooze, and reopen | `--allow-loop-writes` | `--http-allow-writes --allow-loop-writes` |
 | Source sync and Slack selection | `--allow-source-writes` | `--http-allow-writes --allow-source-writes` |
 | Calendar events | `--allow-calendar-writes` | `--http-allow-writes --allow-calendar-writes` |
 
@@ -775,6 +791,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--allow-loop-writes` | `false` | On unreleased `main`, expose open-loop done, snooze, and reopen decisions. Each call requires approval. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |

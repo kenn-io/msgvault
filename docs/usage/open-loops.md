@@ -143,6 +143,23 @@ snooze when duplicate decisions meet, and two snoozes retain the later
 deadline. A deliberate new snooze can replace an earlier deadline on an open
 question. Deleting a question removes only that question's decision.
 
+## Use an assistant
+
+On unreleased `main`, an owner-connected MCP assistant can call `list_open_loops`, `close_open_loop`, `snooze_open_loop`, and `reopen_open_loop`. The daemon must advertise each exact route and its required fields. API schema 3.25.0 alone is insufficient. Delegated sessions expose none of these tools.
+
+Start MCP with `--allow-loop-writes` to allow done, snooze, and reopen. Each decision needs approval for that call, showing the action and exact anchor ID. HTTP also requires `--http-allow-writes` and MCP protocol `2026-07-28` or newer. Older HTTP clients retain the list.
+
+1. Call `list_open_loops` with an optional positive JSON-safe `person_id` and a `limit` from 1 to 200, default 50. The list includes both `reply_owed` and `awaiting_reply`.
+2. Pass a returned `anchor_message_id` as `message_id` to `close_open_loop` or `snooze_open_loop`. They recheck the conversation and cover its currently eligible questions. The done tool retains the name `close_open_loop`; its receipt uses state `done`.
+3. For snooze, supply `until` as RFC3339, including fractional seconds, or `YYYY-MM-DD` at midnight in the MCP process's local timezone. Approval shows the resolved instant and offset. The deadline must still be future when execution starts. MCP rejects relative durations such as `24h`; the CLI accepts them.
+4. To clear one question's saved decision, call `reopen_open_loop` with its exact `message_id` from an earlier list or decision receipt. A hidden question is absent from the current list.
+
+The tools return the daemon's list and decision responses. In a list, `coverage_incomplete` means call again to continue checking retained evidence. `truncated` means narrow by `person_id`; there is no cursor. `skipped_unparseable` counts unreadable originals, one of which may contain a reply that settled a listed loop. These warnings describe evidence coverage, rather than source freshness.
+
+A write refused with `loop_scan_incomplete` saves no decision. Wait at least the daemon's `Retry-After: 1` second, then start a new call and approve it again. Approval is consumed by an attempted write, and MCP performs no automatic write retry. Transport interruptions and unclassified write failures can report `operation_may_have_completed: true`; inspect the archive before deciding what to do next.
+
+The adapter provides the current general list and decision receipts. Ranked waiting, held, and closed views, detail/history, source freshness reports, mute controls, decision notes, kind filters, commitment kinds, and cursor paging belong to the replaced projection and are outside this workflow. Old loop-row `id` values identify different objects; use the new anchor `message_id`.
+
 ## Limits
 
 - A reply settles a loop when it is archived in the same conversation. If
