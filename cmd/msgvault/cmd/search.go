@@ -69,7 +69,8 @@ Supported operators:
   newer_than:  Relative date
   larger:      Size filter (5M, 100K)
   smaller:     Size filter
-  message_type: Message type filter (sms, mms, whatsapp, teams, email, meeting_transcript)
+  message_type: Message type filter (sms, mms, whatsapp, teams, email,
+                 meeting_transcript, call_record)
   received:    Exact confirmed address that received the mail
   account:     Exact confirmed address that received or sent the mail, or owns the calendar event
 
@@ -413,5 +414,6 @@ func init() {
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")
 	searchCmd.Flags().StringSliceVar(&searchMessageTypes, "message-type", nil,
-		"Limit results to message type(s), e.g. email, sms, calendar_event, meeting_transcript")
+		"Limit results to message type(s), e.g. email, sms, calendar_event, "+
+			"meeting_transcript, call_record")
 }

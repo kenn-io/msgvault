@@ -76,6 +76,7 @@ func TestRefresherShutdownStopsDelayedRequests(t *testing.T) {
 			return nil
 		}, nil)
 		r.RequestAfter(time.Hour, "startup")
+		r.RequestAfterQuiet(time.Hour, "call-history")
 		time.Sleep(30 * time.Minute)
 		require.NoError(r.Shutdown(context.Background()))
 		time.Sleep(time.Hour)
@@ -162,6 +163,35 @@ func TestRefresherRequestAfterKeepsOnlyEarliestTimer(t *testing.T) {
 		time.Sleep(3 * time.Hour)
 		synctest.Wait()
 		assert.Equal(int32(1), runs.Load(), "later delayed requests were folded into the earliest")
+		require.NoError(r.Shutdown(context.Background()))
+	})
+}
+
+func TestRefresherRequestAfterQuietCoalescesWrites(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		var mu sync.Mutex
+		var seen []string
+		r := newBackgroundCacheRefresher(context.Background(), func(_ context.Context, id string) error {
+			mu.Lock()
+			seen = append(seen, id)
+			mu.Unlock()
+			return nil
+		}, nil)
+
+		r.RequestAfterQuiet(time.Second, "first")
+		time.Sleep(900 * time.Millisecond)
+		r.RequestAfterQuiet(time.Second, "last")
+		time.Sleep(900 * time.Millisecond)
+		synctest.Wait()
+		assert.Empty(seen, "writes inside the quiet period should postpone the request")
+
+		time.Sleep(100 * time.Millisecond)
+		synctest.Wait()
+		mu.Lock()
+		assert.Equal([]string{"last"}, seen)
+		mu.Unlock()
 		require.NoError(r.Shutdown(context.Background()))
 	})
 }

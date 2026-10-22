@@ -4084,6 +4084,21 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
 -- Current normalized source evidence, rebuilt from authoritative meeting raw.
+CREATE TABLE IF NOT EXISTS call_details (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    projection_version INTEGER NOT NULL,
+    canonical_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    owner_participation TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL,
+    duration_seconds DOUBLE PRECISION,
+    withdrawn BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_call_details_identity ON call_details(canonical_key, message_id);
+CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
+
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     projection_version INTEGER NOT NULL,
