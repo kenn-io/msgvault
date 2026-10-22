@@ -79,11 +79,12 @@ func inlineHTMLStyle(node *html.Node) map[string]string {
 			continue
 		}
 		for _, declaration := range inlineHTMLDeclarations(attr.Val) {
-			name := strings.ToLower(declaration.Property)
+			// Decode escapes after parsing so an escaped ";" or "!" stays a value character.
+			name := strings.ToLower(decodeInlineCSSEscapes(declaration.Property))
 			value := strings.ToLower(declaration.Value)
 			// Douceur misses "! important" with whitespace after the bang.
 			isImportant := declaration.Important || inlineCSSImportant.MatchString(value)
-			value = inlineCSSImportant.ReplaceAllString(value, "")
+			value = strings.ToLower(decodeInlineCSSEscapes(inlineCSSImportant.ReplaceAllString(value, "")))
 			if name == "background" {
 				name = "background-color"
 			}
@@ -127,11 +128,7 @@ func inlineHTMLDeclarations(value string) []*css.Declaration {
 			clean.Reset()
 			continue
 		}
-		value := token.Value
-		if token.Type != scanner.TokenString && token.Type != scanner.TokenURI {
-			value = decodeInlineCSSEscapes(value)
-		}
-		clean.WriteString(value)
+		clean.WriteString(token.Value)
 	}
 	// Douceur needs a terminator to retain the last declaration's value.
 	if declaration := strings.TrimSpace(clean.String()); declaration != "" {
