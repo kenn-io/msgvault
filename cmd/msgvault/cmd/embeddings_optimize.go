@@ -22,7 +22,8 @@ var embeddingsOptimizeCmd = &cobra.Command{
 	Use:   "optimize [generation-id]",
 	Short: "Build or remove the SQLite search accelerator",
 	Long: "Build a restartable SQLite approximate-search index from embeddings already stored locally. " +
-		"No text or embedding-provider request is made. When omitted, generation-id defaults to the active generation.",
+		"No text or embedding-provider request is made. When omitted, generation-id defaults to the active generation. " +
+		"Preparation yields to other archive operations between committed batches; training and publication remain exclusive.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: runEmbeddingsOptimizeCommand,
 }
@@ -53,6 +54,12 @@ func runEmbeddingsOptimizeCommand(cmd *cobra.Command, args []string) error {
 }
 
 func runEmbeddingsOptimize(cmd *cobra.Command, args []string) error {
+	return runEmbeddingsOptimizeManaged(cmd, args, nil)
+}
+
+// A non-nil afterBatch means the daemon owns write admission and yields its
+// operation gate between committed batches. Direct callers retain the file lock.
+func runEmbeddingsOptimizeManaged(cmd *cobra.Command, args []string, afterBatch func() error) error {
 	state := invocationFromCommand(cmd)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
@@ -64,11 +71,13 @@ func runEmbeddingsOptimize(cmd *cobra.Command, args []string) error {
 	if store.IsPostgresURL(cfg.DatabaseDSN()) {
 		return errors.New("embeddings optimize is only needed for SQLite; PostgreSQL uses its native vector index")
 	}
-	release, err := acquireDirectSQLiteWriteLock(cfg, state)
-	if err != nil {
-		return err
+	if afterBatch == nil {
+		release, err := acquireDirectSQLiteWriteLock(cfg, state)
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
-	defer release()
 	if err := ensureMainSchema(state); err != nil {
 		return err
 	}
@@ -99,12 +108,22 @@ func runEmbeddingsOptimize(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Generation %d accelerator dropped; exact vectors retained.\n", generationID)
 		return nil
 	}
-	plan, err := sqliteBackend.PrepareAccelerator(cmd.Context(), generationID, sqlitevec.OptimizeOptions{
-		Threads: cfg.Vector.Search.ANNThreads,
+	options := sqlitevec.OptimizeOptions{
+		Threads:    cfg.Vector.Search.ANNThreads,
+		AfterBatch: afterBatch,
 		Progress: func(progress sqlitevec.OptimizeProgress) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Preparing accelerator: %d/%d vectors\n", progress.IndexedCount, progress.TotalCount)
 		},
-	})
+	}
+	var plan sqlitevec.OptimizePlan
+	for {
+		plan, err = sqliteBackend.PrepareAccelerator(cmd.Context(), generationID, options)
+		if afterBatch == nil || !errors.Is(err, sqlitevec.ErrAcceleratorSourceChanged) {
+			break
+		}
+		// The selected generation stays pinned. Existing preparation logic
+		// resets the partial copy against the new source revision.
+	}
 	if err != nil {
 		closeBackend()
 		return fmt.Errorf("prepare accelerator: %w", err)

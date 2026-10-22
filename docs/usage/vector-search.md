@@ -418,8 +418,12 @@ msgvault embeddings optimize
 The optimizer reads stored vectors only. It does not call the embedding
 provider. Copy progress is committed in batches, native training runs in a
 disposable child process, and publication happens only after integrity checks.
-The daemon pauses scheduled embedding and other gated writes for the whole
-operation; searches remain available. If the command is interrupted, run it
+The daemon lets imports and other archive writes run between committed copy
+batches, then resumes preparation. If stored vectors changed during the pause,
+it restarts the copy against the new revision. Native training and publication
+remain exclusive and pause other archive writes; searches remain available.
+Configure SQL tracing on the daemon rather than passing `--log-sql` or
+`--log-sql-slow-ms` to optimize. If the command is interrupted, run it
 again. Search stays exact until the accelerator is ready, then `sqlite_accelerator = "auto"` switches semantic and
 hybrid retrieval to bounded ANN candidates with exact reranking. New embedding
 writes update a ready accelerator in the same transaction.
