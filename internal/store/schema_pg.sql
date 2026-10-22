@@ -4235,3 +4235,15 @@ CREATE TABLE IF NOT EXISTS conversation_policy (
  override_tier TEXT CHECK (override_tier IN ('full','cold','stub','skip')),
  last_activity_at TIMESTAMPTZ
 );
+
+-- Processing requests belong to the mirrored version and Docbank profile fingerprint.
+CREATE TABLE IF NOT EXISTS docbank_attachment_processing (
+ destination_key TEXT NOT NULL,
+ content_hash TEXT NOT NULL,
+ version_id TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ outcome TEXT NOT NULL,
+ job_id TEXT NOT NULL,
+ next_action_at TIMESTAMPTZ,
+ PRIMARY KEY (destination_key, content_hash)
+);

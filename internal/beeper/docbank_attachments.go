@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"hash"
 	"io"
 	"mime"
@@ -49,9 +50,10 @@ type AttachmentMirror struct {
 // AttachmentMirrorOptions is the part of the Docbank config the mirror needs.
 // The config package imports this one through recordingref, so it cannot be named here.
 type AttachmentMirrorOptions struct {
-	URL            string
-	Folder         string
-	AttachmentsDir string
+	URL             string
+	Folder          string
+	AttachmentsDir  string
+	DocumentProfile string
 }
 
 func NewAttachmentMirror(
@@ -95,11 +97,15 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	if err != nil {
 		return false, endMediaPass(err)
 	}
+	processMore, processErr := w.processDocuments(ctx, queueDeadline)
 	uploadMore, err := w.drain(ctx, deadline)
 	if errors.Is(err, errBeeperMediaGateBusy) {
-		return false, nil
+		return false, endMediaPass(processErr)
 	}
-	return discoverMore || replayMore || uploadMore, err
+	if processErr != nil {
+		return processMore, errors.Join(endMediaPass(processErr), err)
+	}
+	return discoverMore || replayMore || processMore || uploadMore, err
 }
 
 // gated runs one Store step under the operation gate so backup freeze sees no writer.
@@ -506,4 +512,143 @@ func (w *AttachmentMirror) replayChange(ctx context.Context, change store.Attach
 		}
 		return w.store.QueueDocbankAttachmentIntents(ctx, w.destination, attachmentUploadMetadata(d))
 	})
+}
+
+// processDocuments visits due files until every request has an outcome or a next look.
+func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.Time) (bool, error) {
+	if w.options.DocumentProfile == "" {
+		return false, nil
+	}
+	actionCtx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
+	profile, err := w.client.Profile(actionCtx, w.options.DocumentProfile)
+	cancel()
+	if err == nil && !profile.Rendition {
+		err = errors.New("profile has no rendition stage")
+	}
+	if err != nil {
+		return false, w.processingBlocked(err)
+	}
+	if err := w.gated(ctx, func() error {
+		return w.store.SaveDocbankAttachmentProcessingFingerprint(ctx, w.destination, profile.Fingerprint)
+	}); err != nil {
+		return false, err
+	}
+	var reported, streak error
+	for {
+		var files []store.DocbankAttachmentProcessing
+		err := w.gated(ctx, func() (err error) {
+			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, 20)
+			return err
+		})
+		if err != nil {
+			return false, errors.Join(reported, streak, err)
+		}
+		if len(files) == 0 {
+			return false, errors.Join(reported, streak)
+		}
+		for _, d := range files {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if !time.Now().Before(deadline) {
+				return true, errors.Join(reported, streak)
+			}
+			actionCtx, cancel := context.WithTimeout(ctx, beeperMediaActionTimeout)
+			var job docbankmedia.JobStatus
+			jobID := d.JobID
+			if d.Outcome == "requested" {
+				job, err = w.client.JobStatus(actionCtx, jobID)
+			} else {
+				selector := docbankmedia.ProcessingSelector{NodeID: d.NodeID, ContentVersionID: d.VersionID, Profile: w.options.DocumentProfile}
+				var plan docbankmedia.ProcessingPlan
+				plan, err = w.client.PlanProcessing(actionCtx, selector)
+				if err == nil {
+					jobID, err = w.client.StartProcessing(actionCtx, selector, plan.Fingerprint)
+				}
+				job.State = "queued"
+			}
+			cancel()
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			answer := processingAnswer(job, err)
+			if answer.blocked {
+				return false, errors.Join(reported, streak, w.processingBlocked(err))
+			}
+			d.Fingerprint, d.Outcome, d.JobID = profile.Fingerprint, answer.outcome, jobID
+			var next time.Time
+			if answer.delay != 0 {
+				next = time.Now().UTC().Add(answer.delay)
+			}
+			if saveErr := w.gated(ctx, func() error {
+				return w.store.RecordDocbankAttachmentProcessing(ctx, w.destination, d, next)
+			}); saveErr != nil {
+				return false, errors.Join(reported, streak, err, saveErr)
+			}
+			if answer.retry {
+				if streak != nil {
+					return false, errors.Join(reported, streak, err)
+				}
+				streak = err
+			} else {
+				reported, streak = errors.Join(reported, streak), nil
+			}
+		}
+	}
+}
+
+func (w *AttachmentMirror) processingBlocked(err error) error {
+	return fmt.Errorf("document_profile %q: check the profile and grant consent in Docbank: %w", w.options.DocumentProfile, err)
+}
+
+type documentProcessingAnswer struct {
+	outcome string
+	delay   time.Duration
+	retry   bool
+	blocked bool
+}
+
+// processingAnswer is the single classification of Docbank answers into saved steps.
+func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingAnswer {
+	if err == nil {
+		outcome := processingJobOutcome(job)
+		answer := documentProcessingAnswer{outcome: outcome}
+		if outcome == "requested" {
+			answer.delay = store.BeeperMediaPollDelay
+		}
+		return answer
+	}
+	httpErr, isHTTP := errors.AsType[*docbankmedia.HTTPError](err)
+	if errors.Is(err, docbankmedia.ErrCredentialUnavailable) || isHTTP && (httpErr.Status == http.StatusUnauthorized || httpErr.Status == http.StatusForbidden ||
+		strings.HasPrefix(httpErr.Reason, "processing_consent_") || strings.HasPrefix(httpErr.Reason, "processing_profile_")) {
+		return documentProcessingAnswer{blocked: true}
+	}
+	if errors.Is(err, docbankmedia.ErrInvalidReceipt) {
+		return documentProcessingAnswer{outcome: docbankmedia.ErrorCode(err)}
+	}
+	if docbankmedia.Retryable(err) || isHTTP && httpErr.Status == http.StatusConflict && httpErr.Reason == "processing_plan_changed" {
+		return documentProcessingAnswer{delay: store.BeeperMediaRetryDelay, retry: true}
+	}
+	code := docbankmedia.ErrorCode(err)
+	if isHTTP && httpErr.Reason != "" {
+		code = httpErr.Reason
+	}
+	return documentProcessingAnswer{outcome: code}
+}
+
+func processingJobOutcome(job docbankmedia.JobStatus) string {
+	switch {
+	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
+		return "extracted"
+	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
+		return "requested"
+	case job.State == "operator_required":
+		return "operator_required"
+	case job.FailureCode != "":
+		return job.FailureCode
+	case job.State != "":
+		return job.State
+	default:
+		return "invalid_receipt"
+	}
 }

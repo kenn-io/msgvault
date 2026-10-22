@@ -133,6 +133,7 @@ type DocbankIntegrationConfig struct {
 	APIKey                  string   `toml:"api_key"`
 	APIKeyFile              string   `toml:"api_key_file"`
 	AllSourcesUploadConsent bool     `toml:"all_sources_upload_consent"`
+	DocumentProfile         string   `toml:"document_profile"`
 	ASRProfile              string   `toml:"asr_profile"`
 	ReferenceConsent        bool     `toml:"reference_consent"`
 	ReferenceOrigins        []string `toml:"reference_origins"`
@@ -1212,6 +1213,7 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.deferDaemonError(cfg.Integrations.Tasks.Validate("tasks"))
 	cfg.Integrations.Kata.ApplyDefaults()
 	cfg.deferDaemonError(cfg.Integrations.Kata.Validate("kata"))
+	cfg.Integrations.Docbank.DocumentProfile = strings.TrimSpace(cfg.Integrations.Docbank.DocumentProfile)
 	cfg.deferDaemonError(cfg.Integrations.Docbank.validate())
 	cfg.Activity.ApplyDefaults()
 	if err := cfg.Activity.Validate(); err != nil {
