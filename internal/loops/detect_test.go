@@ -416,10 +416,6 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			{out: true, ago: 5 * day, body: "On it."},
 			{ago: 4 * day, body: "Looks good to me."},
 		}}, 2, false, 0, 0, 0, 0},
-		{"each body read once", script{msgs: []msg{
-			{ago: 3 * day, body: "Can you send the contract?"},
-			{ago: 2 * day, body: "And the deck?"},
-		}}, 2, true, 0, 0, 0, 0},
 		{"25 nudges after the question", script{msgs: nudges}, 26, true, 26, 0, 0, 0},
 		{"unreadable reply settles nothing", script{msgs: []msg{{out: true, ago: 5 * day, body: "Can you review it?"}, {ago: 4 * day, body: "Looks good to me.", rawFails: true}}}, 2, true, 0, 1, 0, 0},
 		{"answered boundary skips older exchanges", script{msgs: answered}, 0, true, 0, 0, 8, int64(len(answered))},

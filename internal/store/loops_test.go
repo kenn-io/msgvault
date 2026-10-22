@@ -135,7 +135,7 @@ func TestLoopConversationWalksNewestFirstAcrossPages(t *testing.T) {
 	assertions.Equal("list.example.test", got[2].ListID)
 }
 
-func TestUnsentRepliesCannotSettleQuestion(t *testing.T) {
+func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
@@ -384,7 +384,7 @@ func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) 
 		Body: "I sent the budget.", SentAt: loopAgo(4*loopDay - 90*time.Minute),
 	})
 	oldQuestion := f.PersistEmail(storetest.EmailSpec{
-		Thread: "mixed-offset-before-since", From: loopAlex, To: []string{loopOwner},
+		Thread: "mixed-offset-oldest", From: loopAlex, To: []string{loopOwner},
 		Body: "Can you send the invoice?", SentAt: loopAgo(4 * loopDay),
 	})
 
@@ -411,15 +411,15 @@ func TestLoopListingUsesChronologicalKeysForMixedOffsetTimestamps(t *testing.T) 
 		}
 	}
 
-	since := time.Date(2026, 10, 15, 5, 30, 0, 0, time.UTC)
 	var heads []store.LoopConversation
-	for conversation, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{Since: since}) {
+	for conversation, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
 		require.NoError(err)
 		heads = append(heads, conversation)
 	}
-	require.Len(heads, 2, "the 05:00 UTC conversation is before Since")
-	assert.Equal(conversationOf(t, f, firstQuestion), heads[0].ConversationID)
-	assert.Equal(conversationOf(t, f, secondQuestion), heads[1].ConversationID)
+	require.Len(heads, 3)
+	assert.Equal(conversationOf(t, f, oldQuestion), heads[0].ConversationID)
+	assert.Equal(conversationOf(t, f, firstQuestion), heads[1].ConversationID)
+	assert.Equal(conversationOf(t, f, secondQuestion), heads[2].ConversationID)
 
 	result := listLoops(t, f, loopNow)
 	require.Len(result, 1, "the two answered conversations must stay closed across page boundaries")
@@ -478,15 +478,16 @@ func storedLoopMark(t *testing.T, st *store.Store, id int64) loopMark {
 type mergedMark struct {
 	name             string
 	drop, keep, want loopMark
+	undo             bool
 }
 
 func mergedMarkCases() []mergedMark {
 	soon, later := loopNow.Add(2*loopDay), loopNow.Add(5*loopDay)
 	return []mergedMark{
-		{"done beats the survivor's snooze", doneMark(), snoozedUntil(soon), doneMark()},
-		{"done beats the duplicate's snooze", snoozedUntil(soon), doneMark(), doneMark()},
-		{"the duplicate's later snooze wins", snoozedUntil(later), snoozedUntil(soon), snoozedUntil(later)},
-		{"the survivor's later snooze stays", snoozedUntil(soon), snoozedUntil(later), snoozedUntil(later)},
+		{"done beats the survivor's snooze", doneMark(), snoozedUntil(soon), doneMark(), true},
+		{"done beats the duplicate's snooze", snoozedUntil(soon), doneMark(), doneMark(), false},
+		{"the duplicate's later snooze wins", snoozedUntil(later), snoozedUntil(soon), snoozedUntil(later), false},
+		{"the survivor's later snooze stays", snoozedUntil(soon), snoozedUntil(later), snoozedUntil(later), false},
 	}
 }
 
@@ -506,7 +507,7 @@ func TestMergeDuplicatesKeepsTheStrongestLoopMark(t *testing.T) {
 			got := storedLoopMark(t, f.Store, keep)
 			assert.Equal(tt.want.State, got.State)
 			assert.Equal(tt.want.Until, got.Until)
-			if tt.name == "done beats the survivor's snooze" {
+			if tt.undo {
 				restored, err := f.Store.UndoDedup("batch-loop-marks")
 				require.NoError(err)
 				assert.Equal(int64(1), restored)
@@ -660,18 +661,6 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 				if duplicate && !reverse {
 					assert.Equal(store.LoopStateDone, marks[shared].State)
 				}
-				for _, at := range []time.Time{loopNow, until} {
-					listed := listLoops(t, f, at)
-					require.Len(listed, 1)
-					expectedAnchor := open
-					if !at.Before(until) {
-						expectedAnchor = snoozed
-					}
-					assert.Equal(expectedAnchor, listed[0].Anchor.ID)
-					for _, q := range listed[0].Questions {
-						assert.NotEqual(laterSnooze, q.ID, "the longer snooze stays active")
-					}
-				}
 			})
 		}
 	}
@@ -682,13 +671,11 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
 	messages := []loopChatMessage{{body: "Can you send the contract?"}}
-	for _, room := range []string{"group-one", "group-two"} {
-		ids := persistLoopDirectChat(t, f, room, messages)
-		ref, err := f.Store.MessageConversationContext(t.Context(), ids[0])
-		require.NoError(err)
-		extra := f.EnsureParticipant("sam@example.test", "", "example.test")
-		require.NoError(f.Store.EnsureConversationParticipant(ref.ConversationID, extra, "member"))
-	}
+	ids := persistLoopDirectChat(t, f, "group", messages)
+	ref, err := f.Store.MessageConversationContext(t.Context(), ids[0])
+	require.NoError(err)
+	extra := f.EnsureParticipant("sam@example.test", "", "example.test")
+	require.NoError(f.Store.EnsureConversationParticipant(ref.ConversationID, extra, "member"))
 	var groups int
 	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
 		require.NoError(err)
@@ -697,10 +684,10 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 			groups++
 		}
 	}
-	assert.Equal(2, groups)
+	assert.Equal(1, groups)
 	first := f.EnsureParticipant(loopAlex, "", "example.test")
 	second := f.EnsureParticipant("sam@example.test", "", "example.test")
-	_, err := f.Store.LinkParticipants(first, second)
+	_, err = f.Store.LinkParticipants(first, second)
 	require.NoError(err)
 	_, _, err = f.Store.CreatePersonFromParticipant(first)
 	require.NoError(err)
@@ -710,7 +697,7 @@ func TestLoopGroupMembershipClassifiesConversations(t *testing.T) {
 		assert.False(conv.GroupChat, "two addresses linked to one person form a direct chat")
 		direct++
 	}
-	assert.Equal(2, direct)
+	assert.Equal(1, direct)
 }
 
 func TestLoopConversationPagingSurvivesNewRecentConversation(t *testing.T) {

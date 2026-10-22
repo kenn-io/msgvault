@@ -272,11 +272,25 @@ func TestImportedGroupMMSPreservesConversationMembership(t *testing.T) {
 	imp := NewImporter(f.Store, ImportOptions{OwnerPhone: "+15550000001", IncludeMMS: true})
 	_, err := imp.ImportPath(dir)
 	require.NoError(err)
-	groups := make(map[string]bool)
-	for conv, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
-		require.NoError(err)
-		require.Len(conv.Messages, 1)
-		groups[conv.Messages[0].Sender.Address] = conv.GroupChat
+	rows, err := f.Store.DB().QueryContext(t.Context(), `
+		SELECT sender.phone_number, member.phone_number
+		FROM messages m
+		JOIN participants sender ON sender.id = m.sender_id
+		JOIN conversation_participants cp ON cp.conversation_id = m.conversation_id
+		JOIN participants member ON member.id = cp.participant_id
+		ORDER BY sender.phone_number, member.phone_number`)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	members := make(map[string][]string)
+	for rows.Next() {
+		var sender, member string
+		require.NoError(rows.Scan(&sender, &member))
+		members[sender] = append(members[sender], member)
 	}
-	assert.Equal(map[string]bool{"+15550000001": true, "+15550000004": true, "+15550000006": false}, groups)
+	require.NoError(rows.Err())
+	assert.Equal(map[string][]string{
+		"+15550000001": {"+15550000001", "+15550000002", "+15550000003"},
+		"+15550000004": {"+15550000001", "+15550000004", "+15550000005"},
+		"+15550000006": {"+15550000001", "+15550000006"},
+	}, members)
 }

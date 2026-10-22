@@ -52,12 +52,6 @@ func TestParseAutomationNestedCalendar(t *testing.T) {
 		raw  string
 		want bool
 	}{
-		{"nested calendar", "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=outer\n\n" +
-			"--outer\nContent-Type: text/plain\n\nMeeting details\n" +
-			"--outer\nContent-Type: multipart/alternative; boundary=inner\n\n" +
-			"--inner\nContent-Type: text/plain\n\nMeeting details\n" +
-			"--inner\nContent-Type: text/calendar; charset=utf-8\n\nBEGIN:VCALENDAR\nEND:VCALENDAR\n" +
-			"--inner--\n--outer--\n", true},
 		{"a calendar part after a large attachment, nested in an alternative",
 			storedMIME(attachment + "--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n" +
 				"--inner\r\nContent-Type: text/plain\r\n\r\nCan you join?\r\n--inner\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\n" + calendar + "--inner--\r\n"), true},

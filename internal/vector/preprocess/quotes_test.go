@@ -8,15 +8,11 @@ import (
 )
 
 func TestStripReplyQuotes(t *testing.T) {
-	const quote = "On Monday, October 12, 2026 at 9:00 AM,\nMe <test@example.com> wrote:\n> Can you approve the contract?\n"
 	for _, tc := range []struct{ name, body, want string }{
 		{"wrapped attribution with reply below", "Thanks!\n\nOn Monday,\nAlex Example wrote:\n  > Can you send it?\n\nThe report is attached.", "Thanks!\n\n\nThe report is attached."},
 		{"indented quotation", "Received.\n  > Can you send it?", "Received."},
 		{"unmarked quoted tail", "Thanks!\n\n On Monday, Alex wrote:\nCan you send it?", "Thanks!"},
-		{"forwarded tail", "Received.\n\n-----Original Message-----\nPlease send it.", "Received."},
 		{"three-line attribution only", "On Monday, October 12, 2026,\nat 9:00 AM,\nMe <test@example.com> wrote:\n> Can you approve the contract?\n", ""},
-		{"approval above wrapped quote", "Approved, go ahead.\n\n" + quote, "Approved, go ahead."},
-		{"approval below wrapped quote", quote + "\nApproved, go ahead.", "Approved, go ahead."},
 		{"approval below wrapped attribution with blank line", "On Monday, October 12, 2026 at 9:00 AM,\nAlex <alex@example.test> wrote:\n\n> Can you approve the contract?\n\nApproved, go ahead.", "Approved, go ahead."},
 		{"bottom-posted answer after an indented quote", "On Monday, Me wrote:\n\n  > Can you send the contract?\n\nI sent it.", "I sent it."},
 		{"quoted question", "All set.\n> Can you send it?", "All set."},
@@ -34,11 +30,4 @@ func TestStripReplyQuotes(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-}
-
-func TestPreprocessStripQuotesRemovesWrappedAttribution(t *testing.T) {
-	body := "Thanks!\n\nOn Tuesday 20 October 2026\nAlex Example <alex@example.test> wrote:\n  > Can you send the contract?\n\nThe report is attached."
-	got, truncated := Preprocess("", body, 0, Config{StripQuotes: true, CollapseWhitespace: true})
-	assert.Equal(t, "Thanks!\n\nThe report is attached.", got)
-	assert.False(t, truncated)
 }

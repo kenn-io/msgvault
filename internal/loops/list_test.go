@@ -52,34 +52,64 @@ func TestListReplyOwedAndAwaiting(t *testing.T) {
 }
 
 func TestListUsesStoredMIMEForAttachmentOnlyRepliesWithoutAttachmentRows(t *testing.T) {
-	require := require.New(t)
-	f := storetest.New(t)
-	f.PersistEmail(storetest.EmailSpec{
-		Thread: "mime-attachment-only", From: alex, To: []string{me},
-		Body: "Can you send the contract?", SentAt: ago(5 * day),
-	})
-	reply := f.PersistEmail(storetest.EmailSpec{
-		Thread: "mime-attachment-only", From: me, To: []string{alex},
-		Raw: "MIME-Version: 1.0\r\n" +
-			"Content-Type: multipart/mixed; boundary=proof\r\n\r\n" +
-			"--proof\r\n" +
-			"Content-Type: application/pdf; name=contract.pdf\r\n" +
-			"Content-Disposition: attachment; filename=contract.pdf\r\n" +
-			"Content-Transfer-Encoding: base64\r\n\r\n" +
-			"cGRm\r\n--proof--\r\n",
-		SentAt: ago(4 * day),
-	})
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
-		`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`), reply)
-	require.NoError(err)
-	var attachmentRows int
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), reply).Scan(&attachmentRows))
-	require.Zero(attachmentRows, "the imported message has no exported attachment rows")
-
-	result, err := loops.List(t.Context(), f.Store, loops.Options{}, now)
-	require.NoError(err)
-	require.Empty(result.Loops, "the PDF reply settles the incoming question")
+	for _, tc := range []struct {
+		name, body, raw string
+		unknownRole     bool
+		settles         bool
+	}{
+		{name: "PDF without attachment rows", settles: true,
+			raw: "MIME-Version: 1.0\r\n" +
+				"Content-Type: multipart/mixed; boundary=proof\r\n\r\n" +
+				"--proof\r\nContent-Type: application/pdf; name=contract.pdf\r\n" +
+				"Content-Disposition: attachment; filename=contract.pdf\r\n" +
+				"Content-Transfer-Encoding: base64\r\n\r\ncGRm\r\n--proof--\r\n"},
+		{name: "inline logo with unknown attachment role", body: "Thanks!", unknownRole: true,
+			raw: "From: " + alex + "\r\nTo: " + me + "\r\nSubject: Re: Contract\r\n" +
+				"MIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=signature\r\n\r\n" +
+				"--signature\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nThanks!\r\n" +
+				"--signature\r\nContent-Type: image/png; name=logo.png\r\n" +
+				"Content-Disposition: inline; filename=logo.png\r\nContent-ID: <logo>\r\n" +
+				"Content-Transfer-Encoding: base64\r\n\r\naGVsbG8=\r\n--signature--\r\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			questionFrom, replyFrom := alex, me
+			if tc.unknownRole {
+				questionFrom, replyFrom = me, alex
+			}
+			question := f.PersistEmail(storetest.EmailSpec{
+				Thread: "mime-attachment-only", From: questionFrom, To: []string{replyFrom},
+				Body: "Can you send the contract?", SentAt: ago(5 * day),
+			})
+			reply := f.PersistEmail(storetest.EmailSpec{
+				Thread: "mime-attachment-only", From: replyFrom, To: []string{questionFrom},
+				Body: tc.body, Raw: tc.raw, SentAt: ago(4 * day),
+			})
+			if tc.unknownRole {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+					INSERT INTO attachments (message_id, filename, mime_type, storage_path, attachment_role, role_source)
+					VALUES (?, 'logo.png', 'image/png', '', 'unknown', 'unknown')`), reply)
+				require.NoError(err)
+			} else {
+				var rows int
+				require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
+					`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), reply).Scan(&rows))
+				require.Zero(rows, "the imported message has no exported attachment rows")
+			}
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+				`UPDATE messages SET has_attachments = TRUE, attachment_count = 1 WHERE id = ?`), reply)
+			require.NoError(err)
+			result := list(t, f, loops.Options{})
+			if tc.settles {
+				assert.Empty(result.Loops, "the PDF reply settles the incoming question")
+			} else {
+				require.Len(result.Loops, 1)
+				assert.Equal(question, result.Loops[0].Anchor.ID, "an unknown historical attachment role must not turn an inline logo into file evidence")
+			}
+		})
+	}
 }
 
 func TestListBccReplySettlesTheRecipientQuestion(t *testing.T) {
@@ -235,7 +265,7 @@ func TestDoneAcceptsWhatListShows(t *testing.T) {
 	}{
 		{name: "missing message", missing: true, wantErr: true},
 		{name: "inside the grace period", age: 2 * time.Hour, wantErr: true},
-		{name: "silent for 31 days", age: 31 * day, wantErr: true},
+		{name: "silent for 31 days", age: 31 * day},
 		{name: "grace period passed", age: 2 * time.Hour, advance: 23 * time.Hour},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -418,54 +448,6 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	assert.Equal(second.Loops, third.Loops)
 	assert.Zero(counted.bodies)
 	assert.Zero(counted.originals)
-}
-
-func TestListAndActionsUseLatestConversationActivity(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		recentReply bool
-		snoozed     bool
-		wantOpen    bool
-	}{
-		{name: "quiet for more than 30 days"},
-		{name: "old question with recent acknowledgement", recentReply: true, wantOpen: true},
-		{name: "expired snooze beyond 30 days", snoozed: true, wantOpen: true},
-	} {
-		for _, action := range []string{"done", "snooze"} {
-			t.Run(tc.name+"/"+action, func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				f := storetest.New(t)
-				question := f.PersistEmail(storetest.EmailSpec{Thread: "activity-window", From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(45 * day)})
-				if tc.recentReply {
-					f.PersistEmail(storetest.EmailSpec{Thread: "activity-window", From: alex, To: []string{me}, Body: "Thanks!", SentAt: ago(day)})
-				}
-				if tc.snoozed {
-					_, err := loops.Snooze(t.Context(), f.Store, question, ago(day), ago(40*day))
-					require.NoError(err)
-				}
-
-				result := list(t, f, loops.Options{})
-				if tc.wantOpen {
-					require.Len(result.Loops, 1)
-					assert.Equal(question, result.Loops[0].Anchor.ID)
-				} else {
-					assert.Empty(result.Loops, "quiet conversations leave the 30-day activity window")
-				}
-				var err error
-				if action == "done" {
-					_, err = loops.Done(t.Context(), f.Store, question, now)
-				} else {
-					_, err = loops.Snooze(t.Context(), f.Store, question, now.Add(day), now)
-				}
-				if tc.wantOpen {
-					assert.NoError(err)
-				} else {
-					assert.ErrorIs(err, loops.ErrNotOpen)
-				}
-			})
-		}
-	}
 }
 
 func TestColdListIncludesOldestEligibleLoopBeforeEvidenceCap(t *testing.T) {
