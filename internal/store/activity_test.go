@@ -1503,6 +1503,10 @@ func TestActivityDraftFlipRejectsLoadedProjection(t *testing.T) {
 	at := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	id := f.NewMessage().WithSentAt(at).Create(t, f.Store)
 	labels := f.EnsureLabels(map[string]string{"DRAFT": "Drafts"}, "system")
+	// Establish draft_authored before loading the projection so the later label
+	// change leaves last_modified unchanged, including on PostgreSQL.
+	require.NoError(f.Store.AddMessageLabels(id, []int64{labels["DRAFT"]}))
+	require.NoError(f.Store.RemoveMessageLabels(id, []int64{labels["DRAFT"]}))
 	initial := activityProjectionForMessage(t, f, id, personID, at)
 	initial.Event = nil
 	_, err := f.Store.ProjectActivityBatchContext(t.Context(), []store.ActivityProjection{initial})
