@@ -2003,7 +2003,6 @@ func (d *SQLiteDialect) LegacyColumnMigrations() []ColumnMigration {
 		{`ALTER TABLE messages ADD COLUMN account_address TEXT`, "account_address"},
 		{`ALTER TABLE messages ADD COLUMN account_path TEXT`, "account_path"},
 		{`ALTER TABLE messages ADD COLUMN draft_authored BOOLEAN NOT NULL DEFAULT FALSE`, "draft_authored"},
-		{`ALTER TABLE messages ADD COLUMN is_sent BOOLEAN DEFAULT TRUE`, "messages.is_sent"},
 		{`ALTER TABLE sources ADD COLUMN oauth_app TEXT`, "oauth_app"},
 		{`ALTER TABLE participants ADD COLUMN phone_number TEXT`, "phone_number"},
 		{`ALTER TABLE participants ADD COLUMN canonical_id TEXT`, "canonical_id"},

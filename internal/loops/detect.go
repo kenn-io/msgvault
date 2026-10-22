@@ -37,6 +37,11 @@ func Detect(conv store.LoopConversation, r Reader) (Detection, error) {
 			return Detection{}, err
 		}
 		if neutral {
+			// A neutral acknowledgement counts as activity but opens or
+			// settles no question.
+			if key := participantIdentity(m.Sender); w.acknowledges(m) && latest[key].IsZero() {
+				latest[key] = m.OccurredAt
+			}
 			continue
 		}
 		if err := w.settle(m); err != nil {
@@ -235,6 +240,14 @@ func (w *walker) neutral(m store.LoopMessage) (bool, error) {
 	return false, nil
 }
 
+// acknowledges reports whether an inbound neutral message contains only an
+// acknowledgement. Its timestamp can keep an unanswered question recent
+// without opening or settling a loop.
+func (w *walker) acknowledges(m store.LoopMessage) bool {
+	text, ok := w.texts[m.ID]
+	return m.Direction == store.DirectionInbound && ok && strings.TrimSpace(text) != "" && isAcknowledgementOnly(text)
+}
+
 // vouched reports whether the stored original leaves a message in play: it is
 // not an automatic reply, calendar item, or bulk mail, and it parses. Chats
 // have no original. A message with no stored original is judged by its
@@ -391,20 +404,13 @@ func (w *walker) addressedToOwner(m store.LoopMessage) bool {
 // person are one recipient. An email to several people is group handling,
 // which is deferred.
 func (w *walker) awaitedParticipant(m store.LoopMessage) (store.LoopParticipant, bool) {
-	type person struct {
-		linked bool
-		id     int64
-	}
 	var found []store.LoopParticipant
-	seen := map[person]bool{}
+	seen := map[loopParticipantIdentity]bool{}
 	for _, r := range m.Recipients {
 		if r.IsOwner || r.ParticipantID == 0 || (w.email && r.Type != "to") {
 			continue
 		}
-		key := person{id: r.ParticipantID}
-		if r.PersonID != 0 {
-			key = person{linked: true, id: r.PersonID}
-		}
+		key := participantIdentity(r.LoopParticipant)
 		if !seen[key] {
 			seen[key] = true
 			found = append(found, r.LoopParticipant)

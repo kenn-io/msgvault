@@ -70,7 +70,7 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 		}
 		unparsed += detection.Unparsed
 		for _, loop := range detection.Loops {
-			if loop, ok := openQuestions(loop, marks, now); ok && listsAt(loop, now) {
+			if loop, ok := openQuestions(loop, marks, now); ok {
 				if err := found(loop); err != nil {
 					return 0, err
 				}
@@ -80,14 +80,14 @@ func find(ctx context.Context, st Store, q store.LoopQuery, now time.Time, marks
 	return unparsed, nil
 }
 
-// listsAt is whether a loop has waited long enough to list: a reply you owe
-// after 24 hours, and a reply you await after 72.
-func listsAt(l Loop, now time.Time) bool {
+// graceElapsed is whether a question has waited long enough to list: a reply
+// you owe after 24 hours, and a reply you await after 72.
+func graceElapsed(kind string, asked, now time.Time) bool {
 	after := ReplyOwedAfter
-	if l.Kind == AwaitingReply {
+	if kind == AwaitingReply {
 		after = AwaitingAfter
 	}
-	return !now.Before(l.OwedSince.Add(after))
+	return !now.Before(asked.Add(after))
 }
 
 // List returns unanswered questions from recently active requesters.
@@ -131,10 +131,14 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 }
 
 // openQuestions applies exact decisions before choosing the visible anchor.
-// List and actions use the same selection, including the new anchor's age.
+// List and actions use the same selection, and each question must be past
+// its own grace period.
 func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Loop, bool) {
 	loop.Questions = slices.DeleteFunc(loop.Questions, func(question store.LoopMessage) bool {
 		mark := marks[question.ID]
+		if !graceElapsed(loop.Kind, question.OccurredAt, now) {
+			return true
+		}
 		if loop.LastActivity.Before(now.Add(-Lookback)) {
 			return mark.State != store.LoopStateSnoozed || mark.SnoozedUntil == nil || now.Before(*mark.SnoozedUntil)
 		}

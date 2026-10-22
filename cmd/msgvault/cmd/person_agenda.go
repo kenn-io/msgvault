@@ -43,7 +43,7 @@ func newPersonAgendaCommand() *cobra.Command {
 				return err
 			}
 			if jsonOutput {
-				return writeCommandJSON(cmd, result)
+				return writePersonAgendaJSON(cmd, result)
 			}
 			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(writer, "LIST\tREF\tSTATE\tPRIORITY\tTITLE")
@@ -235,15 +235,13 @@ func openPersonAgendaClient(cmd *cobra.Command) (*daemonclient.Client, func(), e
 	return client, func() { _ = client.Close() }, nil
 }
 
-// writeCommandJSON writes value as compact deterministic JSON to the command's
-// output, for the agenda, task, and loop commands.
-func writeCommandJSON(cmd *cobra.Command, value any) error {
+func writePersonAgendaJSON(cmd *cobra.Command, value any) error {
 	return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), value, json.Deterministic(true))
 }
 
 func writePersonAgendaItem(cmd *cobra.Command, item generated.PersonAgendaItem, jsonOutput bool) error {
 	if jsonOutput {
-		return writeCommandJSON(cmd, item)
+		return writePersonAgendaJSON(cmd, item)
 	}
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", textutil.SanitizeTerminal(item.Ref), textutil.SanitizeTerminal(item.Title))
 	if err != nil {

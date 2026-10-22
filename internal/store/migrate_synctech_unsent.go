@@ -104,21 +104,12 @@ func synctechRawRecordIsUnsent(messageType string, raw []byte) bool {
 }
 
 func markSynctechMessagesUnsent(ctx context.Context, tx *loggedTx, ids []int64) error {
-	for start := 0; start < len(ids); start += synctechMigrationPageSize {
-		end := min(start+synctechMigrationPageSize, len(ids))
-		page := ids[start:end]
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(page)), ",")
-		if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_sent = FALSE WHERE id IN (`+placeholders+`)`, int64Args(page)...); err != nil {
-			return fmt.Errorf("mark Synctech drafts and unsent messages: %w", err)
-		}
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_sent = FALSE WHERE id IN (`+placeholders+`)`, appendInt64Args(nil, ids)...); err != nil {
+		return fmt.Errorf("mark Synctech drafts and unsent messages: %w", err)
 	}
 	return nil
-}
-
-func int64Args(ids []int64) []any {
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	return args
 }
