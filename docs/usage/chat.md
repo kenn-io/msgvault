@@ -435,6 +435,13 @@ assistant can tell a cancelled or moved event from a confirmed one. A field
 is `null` when the stored event does not carry it; calendar sync does not
 store a `sequence` of 0, so a `null` sequence usually means 0.
 
+On newer `main` builds, each response includes `hidden_text_present`. It is
+true when supported inline styles hide letters or numbers in the stored HTML,
+including for mail with a plain-text alternative. Newly ingested HTML-only
+mail omits that text from its derived body. Existing stored bodies stay as
+archived. Detection covers inline styles; stylesheets and browser layout are
+outside this check.
+
 ### Find a person's messaging routes
 
 The unreleased contact tools require daemon API schema 3.20.0. First call

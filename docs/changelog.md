@@ -16,6 +16,7 @@ All notable changes to msgvault, grouped by release.
   explicit unfiltered, unlimited `sync-full` to discover older messages omitted
   by earlier full syncs; that backfill can increase Gmail API use, transfer, and
   local storage. Incremental sync does not backfill old omissions by itself.
+- Newly ingested HTML-only email omits text hidden by common inline styles from its derived text. MCP `get_message` and `show-message --json` report `hidden_text_present` from the original HTML, including for previously archived mail. `show-message` warns on stderr.
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.

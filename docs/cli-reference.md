@@ -4628,6 +4628,12 @@ preserved. With JSON, cleaning changes
 
 JSON includes `web_url` when the selected daemon can provide a browser link.
 
+On newer `main` builds, JSON also includes `hidden_text_present`, which reports
+whether inline styles hide text in the stored HTML. Text output writes
+`Warning: this message's HTML hides text from readers.` to stderr when flagged,
+including with `--body-only`. Redirecting stdout saves only the body with
+`--body-only`.
+
 ## show-thread
 
 On newer `main` builds, read a conversation in chronological order with quoted

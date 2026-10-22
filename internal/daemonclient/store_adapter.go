@@ -170,6 +170,7 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		HasAttachments:  m.HasAttachments,
 		SizeEstimate:    m.SizeBytes,
 		Body:            m.Body,
+		BodyHTML:        stringValue(m.BodyHTML),
 		Attachments:     apiAttachmentsFromGenerated(m.Attachments),
 	}
 	return msg
