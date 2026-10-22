@@ -90,7 +90,12 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]string{"code": h.Reasons[version]}))
 				return
 			}
-			if _, ok := h.States["job-"+version]; !ok {
+			state, ok := h.States["job-"+version]
+			if state[0] == "failed" && state[2] != "consent" && state[2] != "stale_authority" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			if !ok || state[0] == "failed" {
 				h.States["job-"+version] = [3]string{"queued", "rendition", ""}
 			}
 			assert.NoError(h.T, json.NewEncoder(w).Encode(map[string]any{"type": "job", "job": map[string]string{"id": "job-" + version}}))
