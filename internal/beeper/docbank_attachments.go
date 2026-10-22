@@ -586,7 +586,6 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 				return false, ctx.Err()
 			}
 			answer := processingAnswer(job, err)
-			failures.reported = errors.Join(failures.reported, answer.err)
 			if answer.blocked {
 				return false, errors.Join(failures.reported, failures.streak, w.processingBlocked(err))
 			}
@@ -626,14 +625,13 @@ type documentProcessingAnswer struct {
 	delay   time.Duration
 	retry   bool
 	blocked bool
-	err     error
 }
 
 // processingAnswer is the single classification of Docbank answers into saved steps.
 func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingAnswer {
 	if err == nil {
-		outcome, stateErr := processingJobOutcome(job)
-		answer := documentProcessingAnswer{outcome: outcome, err: stateErr}
+		outcome := processingJobOutcome(job)
+		answer := documentProcessingAnswer{outcome: outcome}
 		if outcome == "requested" {
 			answer.delay = store.BeeperMediaPollDelay
 		}
@@ -657,23 +655,23 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 	return documentProcessingAnswer{outcome: code}
 }
 
-func processingJobOutcome(job docbankmedia.JobStatus) (string, error) {
+func processingJobOutcome(job docbankmedia.JobStatus) string {
 	switch {
 	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
 		// Docbank publishes rendition text before starting embeddings, even if embeddings fail.
-		return "extracted", nil
+		return "extracted"
 	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":
-		return "requested", nil
+		return "requested"
 	case job.State == "operator_required":
-		return "operator_required", nil
+		return "operator_required"
 	case job.State == "failed" || job.State == "abandoned":
-		if job.FailureCode != "" {
-			return job.FailureCode, nil
+		if job.FailureCode != "" && len(job.FailureCode) <= 128 && strings.Trim(job.FailureCode, "abcdefghijklmnopqrstuvwxyz_") == "" {
+			return job.FailureCode
 		}
-		return job.State, nil
+		return job.State
 	case job.State != "":
-		return "requested", fmt.Errorf("unrecognized Docbank processing job state %q", job.State)
+		return "requested"
 	default:
-		return "invalid_receipt", nil
+		return "invalid_receipt"
 	}
 }
