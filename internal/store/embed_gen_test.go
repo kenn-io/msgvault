@@ -112,6 +112,27 @@ func TestCoverageCountsScopedVariantsFilterBySource(t *testing.T) {
 	assert.Equal(int64(3), missingB, "all of source B's messages are missing for gen 7")
 }
 
+func TestCoverageCountsScopedIncludesLegacyEmailWithNullType(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: conversationID,
+		SourceMessageID: "legacy-unembedded", MessageType: store.MessageTypeEmail,
+	})
+	require.NoError(err, "create legacy email")
+	_, err = st.DB().Exec(st.Rebind(
+		`UPDATE messages SET message_type = NULL WHERE id = ?`), messageID)
+	require.NoError(err, "restore the legacy NULL message type")
+
+	live, stamped, _, missing, err := st.CoverageCountsScoped(t.Context(), 7, []string{"email"}, nil)
+	require.NoError(err, "CoverageCountsScoped")
+	assert.Equal(int64(1), live, "legacy NULL type is email")
+	assert.Equal(int64(0), stamped)
+	assert.Equal(int64(1), missing)
+}
+
 func TestScopedFiltersComposeMessageTypesAndSources(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	fx := seedEmbedScopeFixture(t, st)

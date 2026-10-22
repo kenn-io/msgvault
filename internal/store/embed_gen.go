@@ -695,19 +695,22 @@ func (s *Store) countLiveMessagesScoped(ctx context.Context, messageTypes []stri
 }
 
 // liveMessagesWhereScoped builds the live-messages predicate narrowed by the
-// embed build scope: message_type IN (...) and/or source_id IN (...). Empty
-// slices leave that dimension unrestricted.
+// embed build scope: message_type IN (...) and/or source_id IN (...). Email
+// scopes also include legacy NULL and empty message_type values. Empty slices
+// leave that dimension unrestricted.
 func liveMessagesWhereScoped(messageTypes []string, sourceIDs []int64) (string, []any) {
 	where := LiveMessagesWhere("", true)
 	var args []any
 	types := normalizeMessageTypes(messageTypes)
 	if len(types) > 0 {
 		placeholders := make([]string, len(types))
+		where += " AND COALESCE(NULLIF(message_type, ''), ?) IN ("
+		args = append(args, MessageTypeEmail)
 		for i, typ := range types {
 			placeholders[i] = "?"
 			args = append(args, typ)
 		}
-		where += " AND message_type IN (" + strings.Join(placeholders, ",") + ")"
+		where += strings.Join(placeholders, ",") + ")"
 	}
 	ids := normalizeScopeSourceIDs(sourceIDs)
 	if len(ids) > 0 {

@@ -317,6 +317,24 @@ func TestFindChecksCoverageBeforeAnsweringEmpty(t *testing.T) {
 		"a wait that can't be counted is partial")
 }
 
+func TestFindReportsPartialIndexForUnembeddedLegacyEmail(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := newServiceFixture(t)
+
+	message := f.NewMessage().WithSourceMessageID("legacy-unembedded-email").Build()
+	messageID, err := f.Store.UpsertMessage(message)
+	require.NoError(err, "create legacy email")
+	_, err = f.Store.DB().Exec(f.Store.Rebind(
+		`UPDATE messages SET message_type = '' WHERE id = ?`), messageID)
+	require.NoError(err, "restore the legacy empty message type")
+	f.service.Data = f.Store
+
+	got := f.find("sailboat insurance")
+	assert.Equal([]string{whoknows.LimitPartialIndex}, got.Limits,
+		"an empty result must report an unembedded legacy email")
+}
+
 // The owner's mail can fill the whole pool. A real answer that made the pool
 // is found; one beyond it is reported as a limit, never as nobody.
 func TestFindReportsAFullPoolWhenOwnerMailFillsIt(t *testing.T) {
