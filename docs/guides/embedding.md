@@ -13,6 +13,41 @@ accept a context; the caller controls cancellation, scheduling, and shutdown.
 
 This package is newer than the latest release.
 
+## Reuse MCP tool definitions
+
+`go.kenn.io/msgvault/pkg/mcp` lets a Go application reuse the native MCP
+schemas without running the standalone MCP server. Call `ReadTool` with an
+explicit tool name, then register the returned definition with your own handler:
+
+```go
+import (
+    sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+    msgvaultmcp "go.kenn.io/msgvault/pkg/mcp"
+)
+
+// readMessages is the application's typed MCP handler.
+tool, err := msgvaultmcp.ReadTool("list_messages")
+if err != nil {
+    return err
+}
+sdkmcp.AddTool(server, tool, readMessages)
+```
+
+The lookup includes the base read-only catalog. Write tools and tools requiring
+optional backends, such as `query_sql` and `search_documents`, return an error,
+as do unknown names. Each result is an independent copy, including nested
+schemas and annotations; schemas use `map[string]any`. Looking up a definition
+does not register it or expose other tools.
+
+The application supplies execution, authentication, authorization, and transport.
+It must implement the selected tool's documented behavior and response bounds.
+The SDK's generic `AddTool` function validates the input and output schemas;
+the lower-level `server.AddTool` method leaves validation to the caller.
+Neither a schema nor its read-only annotation enforces access to archive data.
+In particular, `archive.WithSourceScope` applies to the HTTP handler described
+below, not to arbitrary MCP handlers. This package does not open an archive,
+discover configuration, or start a daemon or listener.
+
 ## Open an archive
 
 For SQLite, run schema setup before opening the archive:
