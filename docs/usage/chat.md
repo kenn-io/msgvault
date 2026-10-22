@@ -437,7 +437,9 @@ store a `sequence` of 0, so a `null` sequence usually means 0.
 
 On newer `main` builds, `get_message` and `search_in_message` include
 the best-effort flag `hidden_text_present`. True means the stored HTML likely hides
-readable text. False does not guarantee that text is visible.
+readable text. False does not guarantee that text is visible. Many newsletters
+hide a preview line, called a preheader, and those set the flag too. The flag
+marks hidden text rather than malicious intent.
 The CLI readers `show-message` and `show-thread` return
 the same flag in JSON and warn on stderr for text output. The check uses a set
 of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
