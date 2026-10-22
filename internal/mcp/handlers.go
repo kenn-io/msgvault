@@ -1845,7 +1845,10 @@ func (h *handlers) vectorMatchesInMessage(
 
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
+		return jsonResult(searchInMessageResponse{
+			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
+			HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+		})
 	}
 	end := min(offset+limit, len(allMatches))
 	page := allMatches[offset:end]
@@ -1853,7 +1856,10 @@ func (h *handlers) vectorMatchesInMessage(
 	if len(page) > limit {
 		page = page[:limit]
 	}
-	return jsonResult(searchInMessageResponse(newPaginatedResponse(page, total, offset)))
+	return jsonResult(searchInMessageResponse{
+		paginatedResponse: newPaginatedResponse(page, total, offset),
+		HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+	})
 }
 
 func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolResult, error) {
@@ -1896,10 +1902,16 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 	allMatches := findTermMatches(msg.BodyText, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
-		return jsonResult(searchInMessageResponse(newPaginatedResponse([]messageMatch{}, total, offset)))
+		return jsonResult(searchInMessageResponse{
+			paginatedResponse: newPaginatedResponse([]messageMatch{}, total, offset),
+			HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+		})
 	}
 	end := min(offset+limit, len(allMatches))
-	return jsonResult(searchInMessageResponse(newPaginatedResponse(allMatches[offset:end], total, offset)))
+	return jsonResult(searchInMessageResponse{
+		paginatedResponse: newPaginatedResponse(allMatches[offset:end], total, offset),
+		HiddenTextPresent: mime.HTMLHasHiddenText(msg.BodyHTML),
+	})
 }
 
 func findTermMatches(body, term string) []messageMatch {

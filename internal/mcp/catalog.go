@@ -991,7 +991,11 @@ type searchMetadataResponse struct {
 
 	IndexState string `json:"index_state,omitempty"`
 }
-type searchInMessageResponse paginatedResponse[messageMatch]
+type searchInMessageResponse struct {
+	paginatedResponse[messageMatch]
+
+	HiddenTextPresent bool `json:"hidden_text_present"`
+}
 type listMessagesResponse paginatedResponse[query.MessageSummary]
 type aggregateResponse struct {
 	Data []query.AggregateRow `json:"data"`

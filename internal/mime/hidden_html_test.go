@@ -1,6 +1,7 @@
 package mime
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,8 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		hidden bool
 	}{
 		{"display none", `<div style="display:none">Text</div>`, true},
+		{"trailing semicolon", `<div style="display:none;">Text</div>`, true},
+		{"empty declarations", `<div style=";color:white; ; background:white; ;">Text</div>`, true},
 		{"display block", `<div style="display:block">Text</div>`, false},
 		{"display none first", `<div style="display:none;display:block">Text</div>`, true},
 		{"display none last", `<div style="display:block;display:none">Text</div>`, true},
@@ -36,12 +39,25 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"case and important", `<div style=" DISPLAY : NONE !important ">Text</div>`, true},
 		{"CSS comment", `<div style="display:no/* c */ne">Text</div>`, true},
 		{"visible CSS comment", `<div style="display:blo/* c */ck">Text</div>`, false},
+		{"escaped property and value", `<div style="d\69splay:n\6fne">Text</div>`, true},
+		{"escaped whitespace terminator", `<div style="dis\000070 lay:no\6e e">Text</div>`, true},
+		{"simple escape", `<div style="displa\y:no\ne">Text</div>`, true},
+		{"quoted semicolon preserves color", `<div style="color:white;font-family:'x;color:black;';background:white">Text</div>`, true},
+		{"quoted hiding declaration", `<div style="font-family:'x;display:none;';display:block">Text</div>`, false},
+		{"quoted comment delimiter", `<div style="font-family:'/*';display:none">Text</div>`, true},
+		{"mso hide all", `<div style="mso-hide:all">Text</div>`, true},
+		{"mso hide none", `<div style="mso-hide:none">Text</div>`, false},
 		{"visibility hidden", `<div style="visibility:hidden"><span>Text</span></div>`, true},
 		{"visibility visible", `<div style="visibility:visible">Text</div>`, false},
 		{"opacity zero", `<div style="opacity:0.0">Text</div>`, true},
 		{"opacity nonzero", `<div style="opacity:0.1">Text</div>`, false},
 		{"zero font", `<span style="font-size:0em">Text</span>`, true},
+		{"subpixel font", `<span style="font-size:0.5px">Text</span>`, true},
+		{"subpixel font boundary", `<span style="font-size:0.99px">Text</span>`, true},
+		{"one pixel font", `<span style="font-size:1px">Text</span>`, false},
+		{"relative font", `<span style="font-size:0.5em">Text</span>`, false},
 		{"nonzero font", `<span style="font-size:14px">Text</span>`, false},
+		{"zero line height", `<span style="line-height:0">Text</span>`, false},
 		{"zero height clipped", `<div style="height:0px;overflow:hidden">Text</div>`, true},
 		{"height without clipping", `<div style="height:0px">Text</div>`, false},
 		{"zero max height clipped", `<div style="max-height:0;overflow-y:clip">Text</div>`, true},
@@ -57,6 +73,11 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"rem offset", `<div style="position:fixed;top:-100rem">Text</div>`, true},
 		{"nearby rem offset", `<div style="position:fixed;top:-99rem">Text</div>`, false},
 		{"static offset", `<div style="left:-2000px">Text</div>`, false},
+		{"offscreen left margin", `<div style="margin-left:-1000px">Text</div>`, true},
+		{"offscreen top margin", `<div style="margin-top:-1000px">Text</div>`, true},
+		{"offscreen em margin", `<div style="margin-left:-100em">Text</div>`, true},
+		{"offscreen rem margin", `<div style="margin-top:-100rem">Text</div>`, true},
+		{"nearby margin", `<div style="margin-left:-999px;margin-top:-99em">Text</div>`, false},
 		{"text indent", `<div style="text-indent:-9999px">Text</div>`, true},
 		{"text indent em", `<div style="text-indent:-100em">Text</div>`, true},
 		{"nearby text indent", `<div style="text-indent:-999px">Text</div>`, false},
@@ -69,6 +90,16 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"no hidden attribute", `<div>Text</div>`, false},
 		{"matching named and hex", `<div style="color:white;background:#fff">Text</div>`, true},
 		{"different named and hex", `<div style="color:black;background:#fff">Text</div>`, false},
+		{"matching named red", `<div style="color:red;background:red">Text</div>`, true},
+		{"matching named aliceblue", `<div style="color:aliceblue;background:#f0f8ff">Text</div>`, true},
+		{"matching named gray synonyms", `<div style="color:darkslategrey;background:darkslategray">Text</div>`, true},
+		{"font color and bgcolor", `<table bgcolor="red"><tr><td><font color="red">Text</font></td></tr></table>`, true},
+		{"bgcolor and CSS color", `<body bgcolor="white"><span style="color:white">Text</span></body>`, true},
+		{"font color and CSS background", `<font color="white" style="background:white">Text</font>`, true},
+		{"CSS overrides font color", `<font style="color:black;background:white" color="white">Text</font>`, false},
+		{"CSS overrides bgcolor", `<div style="color:white;background:black" bgcolor="white">Text</div>`, false},
+		{"invalid CSS keeps font color", `<font color="white" style="color:bogus;background:white">Text</font>`, true},
+		{"invalid CSS keeps bgcolor", `<div bgcolor="white" style="color:white;background:bogus">Text</div>`, true},
 		{"matching RGB and hex", `<div style="color:rgb(255,255,255);background-color:#ffffff">Text</div>`, true},
 		{"different RGB and hex", `<div style="color:rgb(0,0,0);background-color:#ffffff">Text</div>`, false},
 		{"matching short hex", `<div style="color:#ABC;background:#aabbcc">Text</div>`, true},
@@ -81,23 +112,55 @@ func TestHTMLHasHiddenText(t *testing.T) {
 		{"ancestor background", `<div style="background:white"><span style="color:white">Text</span></div>`, true},
 		{"child background", `<div style="color:white;background:white"><span style="background:black">Text</span></div>`, false},
 		{"inherited color", `<div style="color:black"><span style="background:#000">Text</span></div>`, true},
+		{"explicit inherited color", `<div style="color:white;background:white"><span style="color:inherit">Text</span></div>`, true},
+		{"current color", `<div style="color:white;background:white"><span style="color:currentcolor">Text</span></div>`, true},
+		{"inherited color overrides local color", `<div style="color:black;background:white"><span style="color:white;color:inherit">Text</span></div>`, false},
 		{"transparent child background", `<div style="background:white"><span style="color:white;background:transparent">Text</span></div>`, true},
 		{"last color wins", `<div style="color:black;color:white;background:white">Text</div>`, true},
 		{"visible last color", `<div style="color:white;color:black;background:white">Text</div>`, false},
 		{"important color wins", `<div style="color:white!important;color:black;background:white">Text</div>`, true},
 		{"visible important color", `<div style="color:white;color:black!important;background:white">Text</div>`, false},
+		{"invalid trailing color", `<div style="color:white;color:whiet;background:white">Text</div>`, true},
+		{"invalid trailing transparent color", `<div style="color:transparent;color:bogus">Text</div>`, true},
+		{"invalid important color", `<div style="color:white;color:bogus!important;background:white">Text</div>`, true},
 		{"last background wins", `<div style="color:white;background:black;background-color:white">Text</div>`, true},
 		{"important background wins", `<div style="color:white;background:black!important;background-color:white">Text</div>`, false},
+		{"invalid trailing background", `<div style="color:white;background:white;background:bogus">Text</div>`, true},
+		{"invalid important background", `<div style="color:white;background:white;background-color:bogus!important">Text</div>`, true},
 		{"unknown colors", `<div style="color:var(--ink);background:var(--ink)">Text</div>`, false},
 		{"hidden padding", `<div style="display:none">&#8203;&zwnj;&nbsp;!</div>`, false},
 		{"hidden empty element", `<div hidden></div>`, false},
+		{"hidden image alt", `<img hidden alt="Hidden alt">`, true},
+		{"hidden punctuation attributes", `<div hidden><a href="#!"><img alt="?!"></a></div>`, false},
 		{"hidden number", `<div hidden>123</div>`, true},
 		{"hidden Unicode", `<div hidden>你好</div>`, true},
 		{"leading BOM", "\ufeff<div hidden>Text</div>", true},
+		{"HTML parse failure", `<div hidden>Text</div>` + strings.Repeat("<div>", 513), true},
+		{"HTML parse failure without text", strings.Repeat("<div>", 513), true},
 		{"empty HTML", "", false},
+		{"blank HTML", " \n\t", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.hidden, HTMLHasHiddenText(tc.html))
+		})
+	}
+}
+
+func TestHTMLHasHiddenTextAttributeBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name, html, text string
+		hidden           bool
+	}{
+		{"hidden image link", `<a style="display:none"><img alt="Hidden alt"></a>`, "Hidden alt", true},
+		{"hidden punctuation link", `<div hidden><a href="https://example.com/hidden">!</a></div>`, "https://example.com/hidden", true},
+		{"hidden numeric alt", `<a style="color:transparent"><img alt="123"></a>`, "123", true},
+		{"visible image link", `<a><img alt="Visible alt"></a>`, "Visible alt", false},
+		{"visible punctuation link", `<a href="https://example.com/visible">!</a>`, "https://example.com/visible", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := parseEmail(t, emailOptions{ContentType: "text/html", Body: tc.html})
+			assert.Contains(t, msg.BodyText, tc.text)
+			assert.Equal(t, tc.hidden, HTMLHasHiddenText(msg.BodyHTML))
 		})
 	}
 }
