@@ -143,6 +143,17 @@ type ListCardDAVBooksQuery struct {
 	Connection *string `json:"connection,omitempty"`
 }
 
+func (l ListCardDAVBooksQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := runtime.ValidatePattern(l.Connection, `^[a-z][a-z0-9_-]{0,63}$`); err != nil {
+		errors = errors.Append("Connection", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ListCardDAVRunsQuery struct {
 	// Limit Maximum runs to return (default 25, max 100)
 	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=100"`
@@ -155,12 +166,40 @@ type ListCardDAVRunsQuery struct {
 }
 
 func (l ListCardDAVRunsQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+	var errors runtime.ValidationErrors
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=100"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if l.BeforeID != nil {
+		if err := typesValidator.Var(l.BeforeID, "omitempty,gte=1"); err != nil {
+			errors = errors.Append("BeforeID", err)
+		}
+	}
+	if err := runtime.ValidatePattern(l.Connection, `^[a-z][a-z0-9_-]{0,63}$`); err != nil {
+		errors = errors.Append("Connection", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type GetCardDAVStatusQuery struct {
 	// Connection Saved connection name; omit for all connections
 	Connection *string `json:"connection,omitempty"`
+}
+
+func (g GetCardDAVStatusQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := runtime.ValidatePattern(g.Connection, `^[a-z][a-z0-9_-]{0,63}$`); err != nil {
+		errors = errors.Append("Connection", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type GetCLIAttachmentQuery struct {
@@ -997,7 +1036,27 @@ type ListPersonActivityDaysQuery struct {
 }
 
 func (l ListPersonActivityDaysQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+	var errors runtime.ValidationErrors
+	if err := runtime.ValidatePattern(l.From, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("From", err)
+	}
+	if err := runtime.ValidatePattern(l.To, `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`); err != nil {
+		errors = errors.Append("To", err)
+	}
+	if l.Limit != nil {
+		if err := typesValidator.Var(l.Limit, "omitempty,gte=1,lte=500"); err != nil {
+			errors = errors.Append("Limit", err)
+		}
+	}
+	if l.Offset != nil {
+		if err := typesValidator.Var(l.Offset, "omitempty,gte=0"); err != nil {
+			errors = errors.Append("Offset", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type GetPersonActivityDayQuery struct {
