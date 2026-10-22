@@ -127,6 +127,7 @@ export class RelationshipsController {
    * cleared by clearTarget. */
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
+  detailMissing = $state(false);
   timelineRows = $state<RelationshipTimelineRow[]>([]);
   timelineCursor = $state<string | null>(null);
   timelineLoading = $state(false);
@@ -381,6 +382,7 @@ export class RelationshipsController {
     this.lastPredicate = predicate;
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     this.detail = null;
+    this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineError = null;
@@ -455,19 +457,12 @@ export class RelationshipsController {
           : undefined,
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
-      const summary = summaryResponse?.data?.summary;
       const base = personResponse.data;
+      const summary = summaryResponse?.data?.summary ??
+        (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
       if (base) this.detail = summary ? mergePersonDetail(base, summary) : base;
       else if (summary) this.detail = summary;
-      if (
-        !base &&
-        !this.handleDetailCacheBuilding(personResponse.error, personResponse.response.status, generation, signal)
-      )
-        this.timelineError ||= errorMessage(personResponse.error, personResponse.response.status);
-      if (summaryResponse && !summaryResponse.data) {
-        if (!this.handleDetailCacheBuilding(summaryResponse.error, summaryResponse.response.status, generation, signal))
-          this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
-      }
+      this.reportDetailFailures(personResponse, summaryResponse, generation, signal);
       return base ?? summary ?? null;
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
@@ -499,19 +494,12 @@ export class RelationshipsController {
           : undefined,
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return;
-      const summary = summaryResponse?.data?.summary;
       const base = detailResponse.data;
+      const summary = summaryResponse?.data?.summary ??
+        (base && noMatchingActivity(detailResponse, summaryResponse) ? { ...base, ...NO_DOMAIN_ACTIVITY } : undefined);
       if (base) this.detail = summary ? { ...base, ...summary } : base;
       else if (summary) this.detail = summary;
-      if (
-        !base &&
-        !this.handleDetailCacheBuilding(detailResponse.error, detailResponse.response.status, generation, signal)
-      )
-        this.timelineError ||= errorMessage(detailResponse.error, detailResponse.response.status);
-      if (summaryResponse && !summaryResponse.data) {
-        if (!this.handleDetailCacheBuilding(summaryResponse.error, summaryResponse.response.status, generation, signal))
-          this.timelineError ||= errorMessage(summaryResponse.error, summaryResponse.response.status);
-      }
+      this.reportDetailFailures(detailResponse, summaryResponse, generation, signal);
     } catch (cause: unknown) {
       if (!signal.aborted && generation === this.detailGeneration) this.timelineError ||= errorMessage(cause, 0);
     }
@@ -533,6 +521,7 @@ export class RelationshipsController {
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
+    this.detailMissing = false;
     this.timelineRows = [];
     this.timelineCursor = null;
     this.timelineLoading = false;
@@ -878,6 +867,23 @@ export class RelationshipsController {
     clearTimeout(this.cacheBuildRetry);
     this.cacheBuildRetry = undefined;
   }
+  /** A detail 404 means no contact activity; a summary 404 means no filter matches. */
+  private reportDetailFailures(
+    detail: FetchResult,
+    summary: FetchResult | undefined,
+    generation: number,
+    signal: AbortSignal,
+  ): void {
+    for (const result of [detail, summary]) {
+      if (!result || result.data || (result === summary && noMatchingActivity(detail, summary))) continue;
+      if (result === detail && result.response.status === 404) {
+        this.detailMissing = true;
+        continue;
+      }
+      if (!this.handleDetailCacheBuilding(result.error, result.response.status, generation, signal))
+        this.timelineError ||= errorMessage(result.error, result.response.status);
+    }
+  }
   private handleDetailCacheBuilding(error: unknown, status: number, generation: number, signal: AbortSignal): boolean {
     if (
       signal.aborted ||
@@ -975,6 +981,17 @@ function contextPredicate(predicate: ExplorePredicate): ExplorePredicate {
 function hasActiveFilters(context: ExplorePredicate): boolean {
   return (context.filters ?? []).length > 0;
 }
+type FetchResult = { data?: unknown; error?: unknown; response: Response };
+/** The contextual /summary 404s when no sent activity matches the filters;
+ * with the unfiltered detail present, that is an empty result, not an error. */
+function noMatchingActivity(detail: FetchResult, summary: FetchResult | undefined): boolean {
+  return detail.data !== undefined && summary?.response.status === 404;
+}
+const NO_PERSON_ACTIVITY = {
+  activity_count: 0, file_count: 0, meeting_count: 0, source_counts: [],
+  current_relationship_temperature: 0, peak_relationship_temperature: 0, peak_relationship_year: 0,
+} satisfies Partial<PersonSummary>;
+const NO_DOMAIN_ACTIVITY = { activity_count: 0, file_count: 0, person_count: 0, source_counts: [] } satisfies Partial<DomainSummary>;
 /** Contextual summary metrics win; the unfiltered GET remains the
  * source of live cluster metadata (identifiers, member/edge graph) that
  * analytical summaries do not enrich. */

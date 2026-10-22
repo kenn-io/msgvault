@@ -1316,22 +1316,60 @@ describe('RelationshipsController filtered header metrics', () => {
     await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });
   });
 
-  it('shows the contextual domain summary metrics with the active filters applied', async () => {
+  it('clears contextual person metrics without losing cluster metadata when the summary is missing', async () => {
+    const base = { ...clusterPerson(12), source_counts: [{ source_type: 'gmail', count: 500 }], meeting_count: 8, current_relationship_temperature: 50, peak_relationship_temperature: 80, peak_relationship_year: 2025 };
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = pathOf(request);
+      if (path === '/api/v1/participants/12') return Response.json(base);
+      if (path === '/api/v1/participants/12/summary') return Response.json({ error: 'Person not found' }, { status: 404 });
+      if (path === '/api/v1/relationships/12/timeline') {
+        return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      }
+      if (path === '/api/v1/relationships/12/calendar') return Response.json({
+        participant_id: 12, canonical_id: 12, year: 2026, timezone: 'UTC', days: [], annual: [],
+        current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
+        peak_temperature: 80, peak_year: 2025, scoring_timezone: 'UTC', score_version: 1, effective_date: '2026-07-19', cache_revision: 'cache-rel', identity_revision: 1
+      });
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', filtered);
+
+    const detail = controller.detail as PersonSummary;
+    expect.soft(detail.source_counts).toEqual([]);
+    expect.soft(detail.activity_count).toBe(0);
+    expect.soft(detail.file_count).toBe(0);
+    expect.soft(detail.meeting_count).toBe(0);
+    expect.soft(detail.current_relationship_temperature).toBe(0);
+    expect.soft(detail.peak_relationship_temperature).toBe(0);
+    expect.soft(detail.peak_relationship_year).toBe(0);
+    expect(detail.cluster).toEqual(base.cluster);
+    expect(detail.identifiers).toEqual(base.identifiers);
+    expect.soft(controller.timelineError).toBeNull();
+  });
+
+  it.each([
+    {
+      name: 'matching summary', status: 200,
+      response: { summary: { ...domainSummary('example.com'), activity_count: 5, file_count: 1, person_count: 2 }, cache_revision: 'cache-rel', search_provenance: {} },
+      expected: { detail: { domain: 'example.com', activity_count: 5, file_count: 1, person_count: 2, first_at: when, last_at: when } }
+    },
+    {
+      name: 'empty summary', status: 404, response: { error: 'Domain not found' },
+      expected: { detail: { domain: 'example.com', activity_count: 0, file_count: 0, person_count: 0, source_counts: [] }, timelineRows: [], timelineError: null }
+    }
+  ])('shows contextual domain metrics with active filters: $name', async ({ status, response, expected }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
       if (path === '/api/v1/domains/example.com' && request.method === 'GET') {
-        return Response.json({ ...domainSummary('example.com'), activity_count: 900, file_count: 40, person_count: 60 });
+        return Response.json({ ...domainSummary('example.com'), activity_count: 900, file_count: 40, person_count: 60, source_counts: [{ source_type: 'gmail', count: 900 }] });
       }
-      if (path === '/api/v1/domains/example.com/summary') {
-        return Response.json({
-          summary: { ...domainSummary('example.com'), activity_count: 5, file_count: 1, person_count: 2 },
-          cache_revision: 'cache-rel',
-          search_provenance: {}
-        });
-      }
+      if (path === '/api/v1/domains/example.com/summary') return Response.json(response, { status });
       if (path === '/api/v1/domains/example.com/timeline') {
         return Response.json({ rows: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} });
       }
@@ -1341,10 +1379,7 @@ describe('RelationshipsController filtered header metrics', () => {
 
     await controller.openTarget('domain:example.com', filtered);
 
-    const detail = controller.detail as DomainSummary;
-    expect(detail.activity_count).toBe(5);
-    expect(detail.file_count).toBe(1);
-    expect(detail.person_count).toBe(2);
+    expect(controller).toMatchObject(expected);
     const summaryRequest = requests.find((request) => pathOf(request) === '/api/v1/domains/example.com/summary');
     await expect(summaryRequest!.clone().json()).resolves.toEqual({ filters: [sourceFilter], presentation: 'table' });
   });
@@ -2007,5 +2042,30 @@ describe('RelationshipsController abort/destroy', () => {
 
     expect(signals[0]!.aborted).toBe(true);
     expect(signals[1]!.aborted).toBe(false);
+  });
+});
+
+describe('RelationshipsController draft-only targets', () => {
+  it.each([
+    { target: 'cluster:12', detailPath: '/api/v1/participants/12', timelinePath: '/api/v1/relationships/12/timeline' },
+    { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', timelinePath: '/api/v1/domains/example.com/timeline' }
+  ])('opens $target without a detail error or calendar', async ({ target, detailPath, timelinePath }) => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      const path = pathOf(request);
+      if (path === detailPath) return Response.json({ error: 'No contact activity' }, { status: 404 });
+      if (path === timelinePath) return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      throw new Error(`unexpected path ${path}`);
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget(target, { filters: [], presentation: 'table' });
+
+    expect.soft(controller.timelineError).toBeNull();
+    expect.soft(controller.detail).toBeNull();
+    expect.soft(controller.detailMissing).toBe(true);
+    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
   });
 });

@@ -286,6 +286,7 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	}
 
 	search(primary)
+	assertions.True(engine.request.Explore.SentOnly)
 	requirements.NotNil(engine.request.Person)
 	assertions.ElementsMatch([]int64{primary, secondary}, engine.request.Person.ParticipantIDs,
 		"a linked participant's files search must scope to every cluster member")
@@ -313,6 +314,12 @@ func TestPersonFilesSearchWidensScopeToIdentityCluster(t *testing.T) {
 	requirements.NotNil(engine.request.Person)
 	assertions.Equal([]int64{solo}, engine.request.Person.ParticipantIDs,
 		"an unlinked participant stays scoped to its own ID")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/files/search", bytes.NewBufferString(`{"predicate":{}}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.False(engine.request.Explore.SentOnly)
 }
 
 func TestPersonFilesSearchUsesOnePopulationForDurableAndParticipantReferences(t *testing.T) {

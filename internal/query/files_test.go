@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"testing"
 	"time"
 
@@ -735,6 +736,20 @@ func TestGroupFilesLabelsRosterOnlyParticipants(t *testing.T) {
 	assertions.Equal(int64(1), result.Rows[1].Count)
 }
 
+func TestGroupFilesDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
+	engine, canonical := draftOnlyClusterLabelFixture(t, "")
+	groups, err := engine.GroupFiles(t.Context(), FileGroupRequest{Dimension: "participant"})
+	require.NoError(t, err)
+	var label string
+	for _, row := range groups.Rows {
+		if row.Key == strconv.FormatInt(canonical, 10) {
+			label = row.Label
+			assert.Equal(t, int64(1), row.Count)
+		}
+	}
+	assert.Equal(t, "Alice Alias", label)
+}
+
 // linkedParticipantFilesFixture builds an attachment archive where alice and
 // her work alias are one linked identity cluster (canonical = alice, the
 // smallest member ID): one file's message lists BOTH aliases, one file's
@@ -852,4 +867,33 @@ func TestGroupFilesNamesUnavailableCache(t *testing.T) {
 	var unavailable *CacheUnavailableError
 	require.ErrorAs(t, err, &unavailable)
 	assert.Equal(t, CacheAbsent, unavailable.Readiness)
+}
+
+func TestSearchFilesSentOnlyExcludesDraftAttachments(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	sent := b.AddMessage(MessageOpt{SourceID: source, Subject: "Sent report"})
+	draft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Draft report"})
+	b.AddAttachmentWithMIME(41, sent, 100, "report.pdf", "application/pdf")
+	b.AddAttachmentWithMIME(42, draft, 100, "draft.pdf", "application/pdf")
+	b.unsentMessages = "(SELECT " + strconv.FormatInt(draft, 10) + "::BIGINT AS message_id)"
+	engine := b.BuildEngine()
+	for _, sentOnly := range []bool{false, true} {
+		result, err := engine.SearchFiles(t.Context(), FileSearchRequest{
+			Explore: ExploreRequest{SentOnly: sentOnly},
+			Sort:    SortSpec{Field: "filename", Direction: "asc"}, Page: PageSpec{Limit: 25},
+		})
+		requirements.NoError(err)
+		var filenames []string
+		for _, file := range result.Files {
+			filenames = append(filenames, file.Filename)
+		}
+		if sentOnly {
+			assertions.Equal([]string{"report.pdf"}, filenames)
+		} else {
+			assertions.Equal([]string{"draft.pdf", "report.pdf"}, filenames)
+		}
+	}
 }

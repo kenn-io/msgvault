@@ -22,24 +22,14 @@ func TestRelationshipActivityMatchesLegacyRowSet(t *testing.T) {
 		return parquetDatasetGlob(root, dataset)
 	}
 
-	query := `
-		WITH legacy AS (` + buildLegacyRelationshipActivitySQL(path) + `),
-		production AS (` + buildRelationshipActivitySQL(path, 2026) + `)
-		SELECT
-			(SELECT count(*) FROM (SELECT * FROM legacy EXCEPT SELECT * FROM production)),
-			(SELECT count(*) FROM (SELECT * FROM production EXCEPT SELECT * FROM legacy))`
-	var legacyOnly, productionOnly int64
-	requirements.NoError(db.QueryRow(query).Scan(&legacyOnly, &productionOnly))
-	assertions.Zero(legacyOnly)
-	assertions.Zero(productionOnly)
 	normalized := ExpandedActivityRelation(
-		"("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), 2026)+")",
+		"("+buildSparseRelationshipActivitySQL(path, readParquetRelation([]string{path("messages")}, true), readParquetRelation([]string{path("message_recipients")}, false), 2026, "")+")",
 		readParquetRelation([]string{path("conversation_participants")}, false),
 		readParquetRelation([]string{path("participants")}, false),
 		readParquetRelation([]string{path("participant_clusters")}, false),
 		readParquetRelation([]string{path("owner_participants")}, false),
 	)
-	query = `SELECT count(*) FROM (
+	query := `SELECT count(*) FROM (
 		(SELECT * FROM (` + buildLegacyRelationshipActivitySQL(path) + `)
 		 EXCEPT ALL SELECT * FROM ` + normalized + `)
 		UNION ALL
@@ -805,6 +795,7 @@ WITH message_facts AS (
 	       m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
+	       false AS unsent,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id
 	FROM read_parquet('%s', hive_partitioning=true, union_by_name=true) m
@@ -846,7 +837,7 @@ WITH message_facts AS (
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
 	   m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
 	   m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-	   m.deleted_from_source,
+	   m.deleted_from_source, m.unsent,
 	   c.canonical_id, c.participant_domain,
 	   coalesce(bool_or(e.is_direct)
 	       FILTER (WHERE c.canonical_id IS NOT NULL), false) AS is_direct,
@@ -866,7 +857,7 @@ LEFT JOIN owner_canon o USING (canonical_id)
 GROUP BY m.message_id, m.conversation_id, m.source_id, m.source_type,
 	     m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
 	     m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-	     m.deleted_from_source,
+	     m.deleted_from_source, m.unsent,
 	     c.canonical_id, c.participant_domain, o.canonical_id, m.occurred_year`,
 		EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
@@ -898,6 +889,7 @@ WITH message_facts AS (
 	       m.attachment_count::INTEGER AS attachment_count,
 	       coalesce(m.has_attachments::BOOLEAN, false) AS has_attachments,
 	       (m.deleted_from_source_at IS NOT NULL) AS deleted_from_source,
+	       false AS unsent,
 	       year(m.sent_at)::SMALLINT AS occurred_year,
 	       m.sender_id::BIGINT AS sender_id,
 	       m.owner_participant_id::BIGINT AS owner_participant_id
@@ -965,7 +957,7 @@ WITH message_facts AS (
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source,
+       m.deleted_from_source, m.unsent,
        cm.canonical_id, cm.participant_domain,
        coalesce(d.is_direct, false) AS is_direct,
        true AS is_conversation_member,
@@ -987,7 +979,7 @@ UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source,
+       m.deleted_from_source, m.unsent,
        d.canonical_id, d.participant_domain,
        d.is_direct,
        false AS is_conversation_member,
@@ -1010,7 +1002,7 @@ UNION ALL
 SELECT m.message_id, m.conversation_id, m.source_id, m.source_type,
        m.occurred_at, m.message_type, m.conversation_type, m.entry_kind,
        m.is_chat, m.is_from_me, m.attachment_count, m.has_attachments,
-       m.deleted_from_source,
+       m.deleted_from_source, m.unsent,
        NULL::BIGINT AS canonical_id,
        NULL::VARCHAR AS participant_domain,
        false AS is_direct,

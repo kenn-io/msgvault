@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -235,6 +237,23 @@ func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
 	assert.Equal("after", fp)
 }
 
+func bobExchangeFixture(t *testing.T) (*TestDataBuilder, int64) {
+	t.Helper()
+	b := NewTestDataBuilder(t)
+	sourceID := b.AddSource("me@example.test")
+	me := b.AddParticipant("me@example.test", "example.test", "Me")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	received := b.AddMessage(MessageOpt{Subject: "Hello from Bob", SentAt: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)})
+	b.AddFrom(received, bob, "Bob")
+	b.AddTo(received, me, "Me")
+	sent := b.AddMessage(MessageOpt{Subject: "Reply to Bob", SentAt: time.Date(2024, 1, 16, 10, 0, 0, 0, time.UTC), IsFromMe: true})
+	b.AddFrom(sent, me, "Me")
+	b.AddTo(sent, bob, "Bob")
+	b.AddOwnerParticipant(sourceID, me)
+
+	return b, sent
+}
+
 // TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap is the
 // regression test for view-based analytical endpoints (Explore, Relationships,
 // People, timelines) retaining stale view definitions after a live cache
@@ -247,17 +266,7 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 	require := require.New(t)
 	assert := assert.New(t)
 
-	b := NewTestDataBuilder(t)
-	sourceID := b.AddSource("me@test.com")
-	me := b.AddParticipant("me@test.com", "test.com", "Me")
-	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
-	received := b.AddMessage(MessageOpt{Subject: "Hello from Bob", SentAt: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)})
-	b.AddFrom(received, bob, "Bob")
-	b.AddTo(received, me, "Me")
-	sent := b.AddMessage(MessageOpt{Subject: "Reply to Bob", SentAt: time.Date(2024, 1, 16, 10, 0, 0, 0, time.UTC), IsFromMe: true})
-	b.AddFrom(sent, me, "Me")
-	b.AddTo(sent, bob, "Bob")
-	b.AddOwnerParticipant(sourceID, me)
+	b, _ := bobExchangeFixture(t)
 
 	analyticsDir, cleanup := b.Build()
 	t.Cleanup(cleanup)
@@ -308,6 +317,73 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 	assert.Equal(exploreAfter.CacheRevision, relAfter.CacheRevision)
 	assert.NotEqual(relBefore.CacheRevision, relAfter.CacheRevision,
 		"relationship reads must report the newly committed revision")
+}
+
+func TestDuckDBEngine_ReloadsUnsentIDsAfterCommittedPublication(t *testing.T) {
+	for _, outcome := range []string{"sent publication", "transient unreadable activity"} {
+		t.Run(outcome, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			b, sent := bobExchangeFixture(t)
+			b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", sent)
+			root, cleanup := b.Build()
+			t.Cleanup(cleanup)
+			engine, err := NewDuckDBEngine(root, "", nil)
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(engine.Close()) })
+			_, err = engine.db.Exec("SET enable_external_file_cache = false")
+			require.NoError(err)
+			after := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			request := PersonSearchRequest{Explore: ExploreRequest{Context: Context{After: &after}}, Query: "Bob"}
+			people, err := engine.SearchPeople(t.Context(), request)
+			require.NoError(err)
+			require.Len(people.Rows, 1)
+			assert.Equal(int64(1), people.Rows[0].ActivityCount)
+			assert.Equal(time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), people.Rows[0].LastAt)
+
+			wantCount := int64(2)
+			wantLast := time.Date(2024, 1, 16, 10, 0, 0, 0, time.UTC)
+			if outcome == "sent publication" {
+				_, err = identityindex.Build(t.Context(), engine.db, identityindex.BuildOptions{
+					Mode: identityindex.ModeFull, StagedBaseRoot: root, OutputRoot: root,
+				})
+				require.NoError(err)
+				republishCacheStateForTest(t, root)
+			} else {
+				activity := firstRequiredParquetForTest(t, root, identityindex.DatasetActivity)
+				original, err := os.ReadFile(activity)
+				require.NoError(err)
+				unreadable := append([]byte(nil), original...)
+				copy(unreadable[len(unreadable)-4:], "FAIL")
+				require.NoError(os.WriteFile(activity, unreadable, 0o600))
+				info, err := os.Stat(activity)
+				require.NoError(err)
+				republishCacheStateForTest(t, root)
+				messages, err := engine.ListMessages(t.Context(), MessageFilter{})
+				require.NoError(err, "base messages remain available when contact refresh fails")
+				assert.Len(messages, 2)
+				_, err = engine.SearchPeople(t.Context(), request)
+				require.Error(err, "contact reads must reject stale exclusions")
+				require.ErrorContains(err, "load unsent message IDs", "surface the refresh failure instead of querying a missing exclusion table")
+				_, err = engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{Explore: ExploreRequest{SentOnly: true}})
+				require.ErrorContains(err, "load unsent message IDs", "SentOnly analysis must reject the prior exclusion set")
+				require.NoError(os.WriteFile(activity, original, 0o600))
+				// Restore the bytes without a new marker or shard-stat change. A failed
+				// contact refresh must retry even when the committed signature is unchanged.
+				require.NoError(os.Chtimes(activity, info.ModTime(), info.ModTime()))
+				wantCount = 1
+				wantLast = time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+			}
+			people, err = engine.SearchPeople(t.Context(), request)
+			require.NoError(err, "contact reads recover on retry")
+			require.Len(people.Rows, 1)
+			assert.Equal(wantCount, people.Rows[0].ActivityCount)
+			assert.Equal(wantLast, people.Rows[0].LastAt)
+			messages, err := engine.ListMessages(t.Context(), MessageFilter{})
+			require.NoError(err)
+			assert.Len(messages, 2)
+		})
+	}
 }
 
 // TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks is the performance

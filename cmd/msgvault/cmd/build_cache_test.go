@@ -86,6 +86,9 @@ func setupTestSQLite(t *testing.T) string {
 	// Create schema
 	schema := `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
+		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
+		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
+		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE sources (
 			id INTEGER PRIMARY KEY,
 			source_type TEXT NOT NULL DEFAULT 'gmail',
@@ -111,6 +114,8 @@ func setupTestSQLite(t *testing.T) string {
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
 			is_from_me BOOLEAN DEFAULT FALSE,
+			is_sent BOOLEAN DEFAULT TRUE,
+			metadata TEXT,
 			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
@@ -147,7 +152,8 @@ func setupTestSQLite(t *testing.T) string {
 			source_id INTEGER NOT NULL REFERENCES sources(id),
 			source_label_id TEXT,
 			name TEXT NOT NULL,
-			label_type TEXT
+			label_type TEXT,
+			system_role TEXT
 		);
 
 		CREATE TABLE message_labels (
@@ -155,6 +161,8 @@ func setupTestSQLite(t *testing.T) string {
 			label_id INTEGER NOT NULL REFERENCES labels(id),
 			PRIMARY KEY (message_id, label_id)
 		);
+
+		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
 
 		CREATE TABLE attachments (
 			id INTEGER PRIMARY KEY,
@@ -2972,13 +2980,17 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	db, _ := sql.Open("sqlite3", dbPath)
 	_, _ = db.Exec(`
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
+		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
+		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
+		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, deleted_at DATETIME);
+		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
 		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
 		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
 		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
-		CREATE TABLE labels (id INTEGER PRIMARY KEY, name TEXT);
+		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
 		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
+		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
 		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
 		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
 		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
@@ -3241,6 +3253,9 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 
 	schema := `
 		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
+		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
+		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
+		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
 		CREATE TABLE sources (
 			id INTEGER PRIMARY KEY,
 			source_type TEXT NOT NULL DEFAULT 'gmail',
@@ -3265,6 +3280,8 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			sender_id INTEGER,
 			message_type TEXT NOT NULL DEFAULT 'email',
 			is_from_me BOOLEAN DEFAULT FALSE,
+			is_sent BOOLEAN DEFAULT TRUE,
+			metadata TEXT,
 			deleted_at DATETIME,
 			UNIQUE(source_id, source_message_id)
 		);
@@ -3292,13 +3309,15 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 			source_id INTEGER NOT NULL REFERENCES sources(id),
 			source_label_id TEXT,
 			name TEXT NOT NULL,
-			label_type TEXT
+			label_type TEXT,
+			system_role TEXT
 		);
 		CREATE TABLE message_labels (
 			message_id INTEGER NOT NULL REFERENCES messages(id),
 			label_id INTEGER NOT NULL REFERENCES labels(id),
 			PRIMARY KEY (message_id, label_id)
 		);
+		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
 		CREATE TABLE attachments (
 			id INTEGER PRIMARY KEY,
 			message_id INTEGER NOT NULL REFERENCES messages(id),
@@ -3747,10 +3766,11 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 		LastMessageID: lastMessageID,
 		LastSyncAt:    syncAt,
 		SchemaVersion: cacheSchemaVersion,
-		// Both fingerprints hash zero rows in these fixtures, so both are
+		// These fingerprints hash zero rows in these fixtures, so they are
 		// the empty-input sha256 digest.
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ConversationTypesFingerprint:        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		UnsentFingerprint:                   "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
@@ -4330,6 +4350,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 		SchemaVersion:                       cacheSchemaVersion,
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 		ConversationTypesFingerprint:        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		UnsentFingerprint:                   "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
 	}
 	data, err := json.Marshal(state)
 	require.NoError(err, "marshal sync state")

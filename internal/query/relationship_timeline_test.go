@@ -73,6 +73,55 @@ func TestDuckDBTimezoneConversionUsesBundledICU(t *testing.T) {
 	}
 }
 
+func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "gmail")
+	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	alice := b.AddParticipant("alice@example.net", "example.net", "Alice")
+	bob := b.AddParticipant("bob@example.org", "example.org", "Bob")
+	july1 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	received := b.AddMessage(MessageOpt{SourceID: source, Subject: "Received", SentAt: july1})
+	b.AddFrom(received, bob, "Bob")
+	b.AddTo(received, owner, "Owner")
+	bobDraft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Bob draft", SentAt: july1.AddDate(0, 0, 19), IsFromMe: true})
+	b.AddFrom(bobDraft, owner, "Owner")
+	b.AddTo(bobDraft, bob, "Bob")
+	aliceDraft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Alice draft", SentAt: july1.AddDate(0, 0, 20), IsFromMe: true})
+	b.AddFrom(aliceDraft, owner, "Owner")
+	b.AddTo(aliceDraft, alice, "Alice")
+	b.unsentMessages = fmt.Sprintf("(SELECT unnest([%d::BIGINT, %d::BIGINT]) AS message_id)", bobDraft, aliceDraft)
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name     string
+		context  Context
+		sentOnly bool
+		count    int64
+		firstID  int64
+	}{
+		{"draft_only_contact", Context{ParticipantIDs: []int64{alice}}, true, 0, 0},
+		{"mixed_contact", Context{ParticipantIDs: []int64{bob}}, true, 1, received},
+		{"explore", Context{}, false, 3, aliceDraft},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			page, err := engine.Explore(t.Context(), ExploreRequest{
+				Context: tc.context, SentOnly: tc.sentOnly, Page: PageSpec{Limit: 1},
+			})
+			require.NoError(err)
+			assert.Equal(tc.count, page.TotalCount)
+			if tc.count == 0 {
+				assert.Empty(page.Rows)
+				return
+			}
+			require.Len(page.Rows, 1)
+			assert.Equal(&tc.firstID, page.Rows[0].AnchorMessageID)
+		})
+	}
+}
+
 // buildTimelineFixture constructs the mandatory Task 6 scenario: a cluster
 // person (P, linked with alias P2) with three chat messages in one
 // conversation — two at 23:00/23:30 UTC on 2026-07-13, one at 00:30 UTC the
