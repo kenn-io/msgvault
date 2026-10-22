@@ -89,6 +89,7 @@ var topLevelCommandGroups = map[string]string{
 	"export-eml":             helpGroupExport,
 	"export-messages":        helpGroupExport,
 	"export-token":           helpGroupOperations,
+	"family":                 helpGroupRead,
 	"find-chat":              helpGroupRead,
 	"gc":                     helpGroupDelete,
 	"identity":               helpGroupPeople,

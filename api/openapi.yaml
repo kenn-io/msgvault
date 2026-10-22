@@ -4518,6 +4518,301 @@ components:
         - total_known_seconds
         - average_known_seconds
       type: object
+    EmailFamily:
+      additionalProperties: true
+      properties:
+        anchor_message_id:
+          format: int64
+          type: integer
+        decisions:
+          items:
+            $ref: "#/components/schemas/EmailFamilyDecision"
+          type: array
+        handling:
+          $ref: "#/components/schemas/Handling"
+        members:
+          items:
+            $ref: "#/components/schemas/EmailFamilyMember"
+          type: array
+        revision:
+          type: string
+        truncated:
+          type: boolean
+      required:
+        - anchor_message_id
+        - members
+        - handling
+        - truncated
+        - revision
+        - decisions
+      type: object
+    EmailFamilyDecision:
+      additionalProperties: true
+      properties:
+        actor_kind:
+          type: string
+        actor_ref:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        expected_member_count:
+          format: int64
+          type: integer
+        id:
+          format: int64
+          type: integer
+        kind:
+          type: string
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        request_key:
+          type: string
+        request_sha256:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        undone_at:
+          format: date-time
+          type: string
+      required:
+        - id
+        - request_key
+        - kind
+        - state
+        - revision
+        - request_sha256
+        - expected_member_count
+        - actor_kind
+        - actor_ref
+        - created_at
+        - message_ids
+      type: object
+    EmailFamilyDecisionInput:
+      additionalProperties: false
+      properties:
+        actor_kind:
+          type: string
+        actor_ref:
+          type: string
+        expected_family_revision:
+          type: string
+        kind:
+          type: string
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        request_key:
+          type: string
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - request_key
+        - kind
+        - message_ids
+        - actor_kind
+      type: object
+    EmailFamilyDecisionPreview:
+      additionalProperties: true
+      properties:
+        before_revision:
+          type: string
+        family:
+          $ref: "#/components/schemas/EmailFamily"
+      required:
+        - before_revision
+        - family
+      type: object
+    EmailFamilyDecisionResult:
+      additionalProperties: true
+      properties:
+        decision:
+          $ref: "#/components/schemas/EmailFamilyDecision"
+        family:
+          $ref: "#/components/schemas/EmailFamily"
+      required:
+        - decision
+        - family
+      type: object
+    EmailFamilyDecisionUndo:
+      additionalProperties: false
+      properties:
+        expected_family_revision:
+          type: string
+        expected_revision:
+          format: int64
+          type: integer
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - expected_revision
+        - expected_family_revision
+      type: object
+    EmailFamilyEnvelope:
+      additionalProperties: true
+      properties:
+        address:
+          type: string
+        kind:
+          type: string
+      required:
+        - kind
+        - address
+      type: object
+    EmailFamilyExportInput:
+      additionalProperties: false
+      properties:
+        expected_family_revision:
+          type: string
+        source_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - expected_family_revision
+      type: object
+    EmailFamilyMember:
+      additionalProperties: true
+      properties:
+        account_address:
+          type: string
+        account_path:
+          type: string
+        attribution_complete:
+          type: boolean
+        confirmed_source_sender:
+          type: boolean
+        conversation_id:
+          format: int64
+          type: integer
+        draft:
+          type: boolean
+        envelopes:
+          items:
+            $ref: "#/components/schemas/EmailFamilyEnvelope"
+          type: array
+        evidence_kinds:
+          items:
+            type: string
+          type: array
+        external_recipient:
+          type: boolean
+        incoming:
+          type: boolean
+        internal_date:
+          format: date-time
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        linkage:
+          $ref: "#/components/schemas/EmailLinkage"
+        local_handled:
+          type: boolean
+        message_id:
+          format: int64
+          type: integer
+        occurred_at:
+          format: date-time
+          type: string
+        positive_sent:
+          type: boolean
+        provider_thread_id:
+          type: string
+        raw_sha256:
+          type: string
+        received_at:
+          format: date-time
+          type: string
+        sent_at:
+          format: date-time
+          type: string
+        snippet:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        source_identifier:
+          type: string
+        source_message_id:
+          type: string
+        source_type:
+          type: string
+        subject:
+          type: string
+        unavailable_reasons:
+          items:
+            type: string
+          type: array
+      required:
+        - source_message_id
+        - evidence_kinds
+        - conversation_id
+        - source_identifier
+        - account_address
+        - account_path
+        - subject
+        - snippet
+        - labels
+        - raw_sha256
+        - envelopes
+        - occurred_at
+        - incoming
+        - attribution_complete
+        - unavailable_reasons
+        - confirmed_source_sender
+        - positive_sent
+        - draft
+        - external_recipient
+        - local_handled
+        - source_type
+        - message_id
+        - source_id
+        - provider_thread_id
+        - linkage
+      type: object
+    EmailLinkage:
+      additionalProperties: true
+      properties:
+        attached_originals:
+          items:
+            type: string
+          type: array
+        message_id:
+          type: string
+        outcome:
+          type: string
+        references:
+          items:
+            type: string
+          type: array
+        replies:
+          items:
+            type: string
+          type: array
+        version:
+          format: int64
+          type: integer
+      required:
+        - version
+        - outcome
+      type: object
     EmbeddingBatch:
       additionalProperties: true
       properties:
@@ -6392,6 +6687,31 @@ components:
           type: array
       required:
         - gmail_ids
+      type: object
+    Handling:
+      additionalProperties: true
+      properties:
+        outbound_evidence_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        outstanding_event_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+        reasons:
+          items:
+            type: string
+          type: array
+        state:
+          type: string
+      required:
+        - state
+        - outstanding_event_ids
+        - outbound_evidence_ids
+        - reasons
       type: object
     HealthResponse:
       additionalProperties: true
@@ -16525,7 +16845,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.23.0
+  version: 3.26.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -24109,6 +24429,337 @@ paths:
       summary: List messages whose content changed since a cursor
       tags:
         - API
+  /api/v1/messages/family/decisions:
+    get:
+      operationId: listEmailFamilyDecisions
+      parameters:
+        - description: Live archived message ID
+          in: query
+          name: message_id
+          schema:
+            format: int64
+            type: integer
+        - description: Narrow the source set
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/EmailFamilyDecision"
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read the latest 20 local decisions for one live copy
+      tags:
+        - API
+    post:
+      operationId: applyEmailFamilyDecision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Apply a reversible local email family decision
+      tags:
+        - API
+  /api/v1/messages/family/decisions/preview:
+    post:
+      operationId: previewEmailFamilyDecision
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionPreview"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Preview local links or exact-copy handling without saving
+      tags:
+        - API
+  /api/v1/messages/family/decisions/{id}:
+    get:
+      operationId: getEmailFamilyDecision
+      parameters:
+        - description: Decision ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Narrow the source set
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read a local decision and its current surviving copy union
+      tags:
+        - API
+  /api/v1/messages/family/decisions/{id}/undo:
+    post:
+      operationId: undoEmailFamilyDecision
+      parameters:
+        - description: Decision ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyDecisionUndo"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamilyDecisionResult"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Undo one local family decision with revision checks
+      tags:
+        - API
   /api/v1/messages/filter:
     get:
       operationId: filterMessages
@@ -24444,6 +25095,146 @@ paths:
       security:
         - apiKey: []
       summary: Get one message
+      tags:
+        - API
+  /api/v1/messages/{id}/family:
+    get:
+      operationId: getEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+        - description: Source IDs to include; repeat or comma-separate. Empty excludes all.
+          in: query
+          name: source_id
+          schema:
+            items:
+              format: int64
+              type: integer
+            type: array
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmailFamily"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read related archived email copies and explicit handling evidence
+      tags:
+        - API
+  /api/v1/messages/{id}/family/export:
+    post:
+      operationId: exportEmailFamily
+      parameters:
+        - description: Live archived email message ID
+          in: path
+          name: id
+          required: true
+          schema:
+            format: int64
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmailFamilyExportInput"
+        required: true
+      responses:
+        "200":
+          content:
+            application/zip:
+              schema:
+                contentMediaType: application/octet-stream
+                format: binary
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Download archived email copies and provenance from one snapshot
       tags:
         - API
   /api/v1/messages/{id}/inline:

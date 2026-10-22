@@ -914,7 +914,7 @@ func TestOperationGateMiddlewareSkipsCardDAVAccountTestWhileGateHeld(t *testing.
 // coverage route) must be classified read-only, and the table must not
 // carry stale entries for routes that no longer exist. The remote-image proxy,
 // CardDAV account test, participant completion, evidence preparation, Saved View
-// run, and message tag endpoints are pinned non-Exploration entries. Message tags
+// run, message tag, and email family read endpoints are pinned non-Exploration entries. Message tags
 // acquire the gate in their handler for writes. Each entry must remain a POST route.
 func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	t.Parallel()
@@ -938,7 +938,14 @@ func TestReadOnlyPostRoutePatternsMatchExplorationRoutes(t *testing.T) {
 	require.NotNil(messageTags, "message tags route must exist")
 	require.NotNil(messageTags.Post, "message tags must be registered as POST")
 
+	familyReads := []string{"/api/v1/messages/family/decisions/preview", "/api/v1/messages/{id}/family/export"}
+	for _, path := range familyReads {
+		route := doc.Paths[path]
+		require.NotNil(route, "email family route must exist: %s", path)
+		require.NotNil(route.Post, "email family read must use POST: %s", path)
+	}
 	expected := []string{remoteImagePath, cardDAVAccountTestPath, completionPath, kataEvidencePreparePath, "/api/v1/saved-views/{id}/run", messageTagsPath}
+	expected = append(expected, familyReads...)
 	for path, item := range doc.Paths {
 		if item.Post != nil && slices.Contains(item.Post.Tags, "Exploration") {
 			expected = append(expected, path)

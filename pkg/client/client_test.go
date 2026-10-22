@@ -1023,6 +1023,48 @@ func TestListChangedMessagesRoundTripsTheCursorVerbatim(t *testing.T) {
 	require.NotNil(second, "second page")
 }
 
+func TestGetEmailFamilyPreservesEmptySourceSelection(t *testing.T) {
+	requirements := require.New(t)
+
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{}`)
+	}))
+	t.Cleanup(server.Close)
+
+	c, err := New(server.URL)
+	requirements.NoError(err, "New")
+
+	for _, tc := range []struct {
+		name        string
+		sourceIDs   []int64
+		wantPresent bool
+	}{
+		{name: "explicitly empty selection", sourceIDs: []int64{}, wantPresent: true},
+		{name: "omitted selection", sourceIDs: nil, wantPresent: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			gotQuery = nil
+			_, err := c.GetEmailFamily(context.Background(), &generated.GetEmailFamilyRequestOptions{
+				PathParams: &generated.GetEmailFamilyPath{ID: 901},
+				Query:      &generated.GetEmailFamilyQuery{SourceID: tc.sourceIDs},
+			})
+			requirements.NoError(err, "GetEmailFamily")
+
+			if tc.wantPresent {
+				assertions.Contains(gotQuery, "source_id", "an explicitly empty selection must be sent")
+				assertions.Empty(gotQuery.Get("source_id"), "empty selection query value")
+			} else {
+				assertions.NotContains(gotQuery, "source_id", "nil selection must stay omitted")
+			}
+		})
+	}
+}
+
 // TestListChangedMessagesDecodesTheDocumentedErrors covers the half of the
 // contract the success paths cannot: the responses a consumer has to act on
 // differently from one another.
