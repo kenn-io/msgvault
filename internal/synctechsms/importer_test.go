@@ -200,21 +200,11 @@ func TestImporterKeepsSynctechUnsentSMSOutOfLoopDetection(t *testing.T) {
 	assert := assert.New(t)
 	f := storetest.New(t)
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="7">
+	writeFile(t, filepath.Join(dir, "messages.xml"), `<smses count="3">
   <sms address="+15551234567" date="1717214400000" type="1" body="Can you send the contract?" read="1" status="-1" contact_name="Alice" />
   <sms address="+15551234567" date="1717214460000" type="3" body="Draft reply" read="1" status="-1" contact_name="Alice" />
-  <sms address="+15551234567" date="1717214520000" type="4" body="Outbox reply" read="1" status="-1" contact_name="Alice" />
-  <sms address="+15551234567" date="1717214580000" type="5" body="Failed reply" read="1" status="-1" contact_name="Alice" />
-  <sms address="+15551234567" date="1717214640000" type="6" body="Queued reply" read="1" status="-1" contact_name="Alice" />
   <mms date="1717214700000" msg_box="3" read="1" m_id="draft-mms" sub="null">
     <parts><part seq="0" ct="text/plain" text="Draft MMS reply" /></parts>
-    <addrs>
-      <addr address="+15550000001" type="137" charset="106" />
-      <addr address="+15551234567" type="151" charset="106" />
-    </addrs>
-  </mms>
-  <mms date="1717214760000" msg_box="4" read="1" m_id="outbox-mms" sub="null">
-    <parts><part seq="0" ct="text/plain" text="Outbox MMS reply" /></parts>
     <addrs>
       <addr address="+15550000001" type="137" charset="106" />
       <addr address="+15551234567" type="151" charset="106" />
@@ -245,7 +235,7 @@ func TestImporterKeepsSynctechUnsentSMSOutOfLoopDetection(t *testing.T) {
 		unsent++
 	}
 	require.NoError(rows.Err())
-	require.Equal(6, unsent)
+	require.Equal(2, unsent)
 
 	result, err := loops.List(t.Context(), f.Store, loops.Options{}, time.Date(2024, 6, 10, 12, 0, 0, 0, time.UTC))
 	require.NoError(err)

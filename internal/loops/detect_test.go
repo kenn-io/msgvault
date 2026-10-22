@@ -154,6 +154,26 @@ func TestDetect(t *testing.T) {
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Thanks!"},
 		}}, AwaitingReply, 1, 0},
+		{"awaited reply on To", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you send the contract?"},
+			{from: alex, ago: 3 * day, body: "Here is the contract.", ccOnly: false},
+		}}, "", 0, 0},
+		{"awaited reply on Cc", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you send the contract?"},
+			{from: alex, ago: 3 * day, body: "Here is the contract.", ccOnly: true},
+		}}, "", 0, 0},
+		{"unrelated Cc reply", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you send the contract?"},
+			{from: sam, ago: 3 * day, body: "Here is the contract.", ccOnly: true},
+		}}, AwaitingReply, 1, 0},
+		{"quoted Cc reply", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you send the contract?"},
+			{from: alex, ago: 3 * day, body: "> Can you send the contract?", ccOnly: true},
+		}}, AwaitingReply, 1, 0},
+		{"another person asks on Cc", script{msgs: []msg{
+			{out: true, ago: 5 * day, body: "Can you send the contract?"},
+			{from: sam, ago: 3 * day, body: "Could you send the report?", ccOnly: true},
+		}}, AwaitingReply, 1, 0},
 		{"human support reply settles", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you reset my account?", to: []store.LoopParticipant{support}},
 			{from: support, ago: 4 * day, body: "Done, you can log in again."},
@@ -437,32 +457,33 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 		nudges = append(nudges, msg{ago: time.Duration(29-i) * hour, body: "Any update?"})
 	}
 	for _, tt := range []struct {
-		name   string
-		script script
-		parses int
-		open   bool
+		name      string
+		script    script
+		parses    int
+		open      bool
+		questions int
 	}{
-		{"a statement with nothing before it", script{msgs: []msg{{ago: 2 * day, body: "See you Saturday!"}}}, 0, false},
-		{"an acknowledgement", script{msgs: []msg{{ago: day + hour, body: "Thanks!"}}}, 0, false},
-		{"a question", script{msgs: []msg{{ago: 2 * day, body: "Can you send the contract?"}}}, 1, true},
+		{"a statement with nothing before it", script{msgs: []msg{{ago: 2 * day, body: "See you Saturday!"}}}, 0, false, 0},
+		{"an acknowledgement", script{msgs: []msg{{ago: day + hour, body: "Thanks!"}}}, 0, false, 0},
+		{"a question", script{msgs: []msg{{ago: 2 * day, body: "Can you send the contract?"}}}, 1, true, 0},
 		{"a statement your own question may hide behind", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Out of office.", signals: mime.AutomationSignals{AutoSubmitted: true}},
-		}}, 2, true},
+		}}, 2, true, 0},
 		{"an answered two-message thread", script{msgs: []msg{
 			{out: true, ago: 5 * day, body: "Can you review it?"},
 			{ago: 4 * day, body: "Looks good to me."},
-		}}, 2, false},
+		}}, 2, false, 0},
 		{"an older asking message on the answering side", script{msgs: []msg{
 			{ago: 6 * day, body: "Can you send the contract?"},
 			{out: true, ago: 5 * day, body: "On it."},
 			{ago: 4 * day, body: "Looks good to me."},
-		}}, 2, false},
+		}}, 2, false, 0},
 		{"each body read once", script{msgs: []msg{
 			{ago: 3 * day, body: "Can you send the contract?"},
 			{ago: 2 * day, body: "And the deck?"},
-		}}, 2, true},
-		{"25 nudges after the question", script{msgs: nudges}, 26, true},
+		}}, 2, true, 0},
+		{"25 nudges after the question", script{msgs: nudges}, 26, true, 26},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -472,8 +493,8 @@ func TestDetectParsesOriginalsOnlyWhenTheyCanChangeTheAnswer(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(tt.open, len(detection.Loops) > 0)
 			assert.Equal(tt.parses, reader.parses, "originals parsed")
-			if tt.name == "25 nudges after the question" {
-				assert.Len(detection.Loops[0].Questions, 26, "each eligible question can keep the loop open after a partial mark")
+			if tt.questions > 0 {
+				assert.Len(detection.Loops[0].Questions, tt.questions, "each eligible question can keep the loop open after a partial mark")
 			}
 			for id, n := range reader.reads {
 				assert.Equal(1, n, "message %d body read count", id)

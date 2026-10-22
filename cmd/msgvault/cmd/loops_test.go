@@ -53,7 +53,7 @@ func loopsDaemon(t *testing.T) (context.Context, int64, int64) {
 func TestLoopsListReadsTheDaemonAndPassesLimit(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	ctx, _, _ := loopsDaemon(t)
+	ctx, _, personID := loopsDaemon(t)
 	output, err := runLoops(ctx, t, "list")
 	require.NoError(err)
 	assert.Contains(output, "alex@example.test")
@@ -65,6 +65,13 @@ func TestLoopsListReadsTheDaemonAndPassesLimit(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(output), &decoded))
 	require.Len(decoded.Items, 1)
 	assert.True(decoded.Truncated, "--limit reached the daemon")
+	output, err = runLoops(ctx, t, "list", "--person", strconv.FormatInt(personID, 10), "--json")
+	require.NoError(err)
+	var filtered generated.LoopListResponse
+	require.NoError(json.Unmarshal([]byte(output), &filtered))
+	require.Len(filtered.Items, 1)
+	require.NotNil(filtered.Items[0].Counterparty.PersonID)
+	assert.Equal(personID, *filtered.Items[0].Counterparty.PersonID)
 }
 
 func TestLoopsListRejectsBadFlags(t *testing.T) {
@@ -191,21 +198,4 @@ Showing the oldest 50. Use --limit to see more.
 	}}, 50, now))
 	assert.Contains(out.String(), "(unknown)   (no subject)")
 	assert.NotContains(out.String(), "Waiting on you")
-}
-
-func TestLoopsListFiltersByPerson(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	ctx, _, personID := loopsDaemon(t)
-	output, err := runLoops(ctx, t, "list", "--person", strconv.FormatInt(personID, 10))
-	require.NoError(err)
-	assert.Contains(output, "Contract draft")
-	assert.NotContains(output, "Lunch Friday?")
-	output, err = runLoops(ctx, t, "list", "--person", strconv.FormatInt(personID, 10), "--json")
-	require.NoError(err)
-	var decoded generated.LoopListResponse
-	require.NoError(json.Unmarshal([]byte(output), &decoded))
-	require.Len(decoded.Items, 1)
-	require.NotNil(decoded.Items[0].Counterparty.PersonID)
-	assert.Equal(personID, *decoded.Items[0].Counterparty.PersonID)
 }

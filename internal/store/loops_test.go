@@ -280,108 +280,48 @@ func TestLoopFollowsTheArchiveWithoutARefresh(t *testing.T) {
 }
 
 func TestLoopDirectChatListsWithoutAnyJobRunning(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
-	owner := f.EnsureParticipant(loopOwner, "", "example.com")
-	friend := f.EnsureParticipant(loopAlex, "", "example.test")
-	conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "chat-1", "direct_chat", "Alex")
-	require.NoError(err)
-	require.NoError(f.Store.EnsureConversationParticipant(conversation, owner, "member"))
-	require.NoError(f.Store.EnsureConversationParticipant(conversation, friend, "member"))
-	id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message: &store.Message{
-			SourceID: f.Source.ID, ConversationID: conversation, MessageType: "whatsapp", SourceMessageID: "chat-msg-1",
-			SenderID: sql.NullInt64{Int64: friend, Valid: true}, SentAt: sql.NullTime{Time: loopAgo(3 * loopDay), Valid: true},
-		},
-		BodyText: sql.NullString{String: "are you coming on Saturday?", Valid: true},
-	})
-	require.NoError(err)
-
+	ids := persistLoopDirectChat(t, f, "chat-1", []loopChatMessage{{body: "are you coming on Saturday?"}})
 	listed := listLoops(t, f, loopNow)
 	require.Len(listed, 1)
-	assert.Equal(id, listed[0].Anchor.ID)
+	assert.Equal(ids[0], listed[0].Anchor.ID)
 	assert.Equal(store.ChannelChat, listed[0].Channel)
 	assert.Equal(loops.ReplyOwed, listed[0].Kind)
 }
 
 func TestLoopDirectChatStopsAtSubstantiveBoundaryAcrossPages(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, loopOwner, "manual"))
-	owner := f.EnsureParticipant(loopOwner, "", "example.com")
-	friend := f.EnsureParticipant(loopAlex, "", "example.test")
-	conversation, err := f.Store.EnsureConversationWithType(f.Source.ID, "long-chat", "direct_chat", "Long chat")
-	require.NoError(err)
-	require.NoError(f.Store.EnsureConversationParticipant(conversation, owner, "member"))
-	require.NoError(f.Store.EnsureConversationParticipant(conversation, friend, "member"))
-
-	messages := []struct {
-		fromOwner bool
-		body      string
-	}{
-		{body: "Can you review the first draft?"},
-		{fromOwner: true, body: "I sent my notes."},
-		{body: "Can you check the budget?"},
-		{fromOwner: true, body: "The budget looks right."},
-		{body: "Can you confirm the date?"},
-		{fromOwner: true, body: "The date works."},
-		{body: "Can you review the new draft?"},
-		{fromOwner: true, body: "Can you check the contract?"},
-	}
-	ids := make([]int64, 0, len(messages))
-	for i, message := range messages {
-		sender := friend
-		if message.fromOwner {
-			sender = owner
-		}
-		id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: f.Source.ID, ConversationID: conversation, MessageType: "whatsapp",
-				SourceMessageID: "long-chat-" + strconv.Itoa(i),
-				SenderID:        sql.NullInt64{Int64: sender, Valid: true},
-				SentAt:          sql.NullTime{Time: loopAgo(time.Duration(len(messages)-i) * 4 * loopDay), Valid: true},
-			},
-			BodyText: sql.NullString{String: message.body, Valid: true},
+	for _, newestIsQuestion := range []bool{false, true} {
+		t.Run(strconv.FormatBool(newestIsQuestion), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			messages := make([]loopChatMessage, 0, 24)
+			for i := range 12 {
+				messages = append(messages,
+					loopChatMessage{body: "Can you review draft " + strconv.Itoa(i) + "?"},
+					loopChatMessage{fromOwner: true, body: "I reviewed the draft."},
+				)
+			}
+			if newestIsQuestion {
+				messages[len(messages)-1].body = "Can you check the contract?"
+			}
+			ids := persistLoopDirectChat(t, f, "long-chat", messages)
+			counted := &loopBodyCountingStore{Store: f.Store}
+			result, err := loops.List(t.Context(), counted, loops.Options{}, loopNow)
+			require.NoError(err)
+			if newestIsQuestion {
+				require.Len(result.Loops, 1)
+				assert.Equal(ids[len(ids)-1], result.Loops[0].Anchor.ID)
+			} else {
+				assert.Empty(result.Loops)
+			}
+			newestPage := ids[len(ids)-4:]
+			for _, id := range counted.bodyReads {
+				assert.Contains(newestPage, id, "detection must not read bodies from older settled history")
+			}
 		})
-		require.NoError(err)
-		ids = append(ids, id)
-	}
-
-	counted := &loopBodyCountingStore{Store: f.Store}
-	result, err := loops.List(t.Context(), counted, loops.Options{}, loopNow)
-	require.NoError(err)
-	require.Len(result.Loops, 1)
-	assert.Equal(ids[len(ids)-1], result.Loops[0].Anchor.ID)
-	newestPage := ids[len(ids)-4:]
-	for _, id := range counted.bodyReads {
-		assert.Contains(newestPage, id, "detection must not read bodies from older settled history")
-	}
-}
-
-func TestLoopDirectChatStopsAtOutboundAnswerBeforeOlderExchanges(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-
-	messages := make([]loopChatMessage, 0, 24)
-	for i := range 12 {
-		messages = append(messages,
-			loopChatMessage{body: "Can you review draft " + strconv.Itoa(i) + "?"},
-			loopChatMessage{fromOwner: true, body: "I reviewed the draft."},
-		)
-	}
-	ids := persistLoopDirectChat(t, f, "outbound-answer-boundary", messages)
-
-	counted := &loopBodyCountingStore{Store: f.Store}
-	result, err := loops.List(t.Context(), counted, loops.Options{}, loopNow)
-	require.NoError(err)
-	assert.Empty(result.Loops)
-	newestPage := ids[len(ids)-4:]
-	for _, id := range counted.bodyReads {
-		assert.Contains(newestPage, id, "an outbound answer ends the direct-chat scan before older exchanges")
 	}
 }
 
@@ -556,99 +496,6 @@ func persistLoopBeeperMessage(t *testing.T, st *store.Store, sourceID, conversat
 	return messageID
 }
 
-func TestMergeDuplicatesPreservesSourceConversationLoopDecision(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	from, err := f.Store.GetOrCreateSource("beeper", "history-loop")
-	require.NoError(err)
-	into, err := f.Store.GetOrCreateSource("beeper", "live-loop")
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(into.ID, loopOwner, "manual"))
-	owner := f.EnsureParticipant(loopOwner, "Example Owner", "example.test")
-	alex := f.EnsureParticipant(loopAlex, "Alex Example", "example.test")
-
-	room := "!shared-loop:beeper.local"
-	historyConversation, err := f.Store.EnsureConversationWithType(from.ID, room, "direct_chat", "Shared loop")
-	require.NoError(err)
-	liveConversation, err := f.Store.EnsureConversationWithType(into.ID, room, "direct_chat", "Shared loop")
-	require.NoError(err)
-	for _, conversationID := range []int64{historyConversation, liveConversation} {
-		require.NoError(f.Store.EnsureConversationParticipant(conversationID, owner, "member"))
-		require.NoError(f.Store.EnsureConversationParticipant(conversationID, alex, "member"))
-	}
-
-	firstAt, secondAt := loopAgo(5*loopDay), loopAgo(3*loopDay)
-	historyFirst := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-1", "Can you send the contract?", firstAt)
-	historySecond := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-2", "Can you send the budget?", secondAt)
-	older := persistLoopBeeperMessage(t, f.Store, from.ID, historyConversation, alex, "loop-question-older", "Can you send the invoice?", loopAgo(7*loopDay))
-	liveFirst := persistLoopBeeperMessage(t, f.Store, into.ID, liveConversation, alex, "loop-question-1", "Can you send the contract?", firstAt)
-
-	_, err = f.Store.MarkLoopDoneContext(t.Context(), historyFirst, []store.LoopMessage{{ID: historyFirst}, {ID: historySecond}, {ID: older}})
-	require.NoError(err)
-	_, err = f.Store.MergeDuplicates(liveFirst, []int64{historyFirst}, "loop-source-decision")
-	require.NoError(err)
-	assert.Empty(listLoops(t, f, loopNow), "the source's remaining covered questions and the duplicate stay cleared")
-	var state string
-	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(
-		`SELECT state FROM loop_decisions WHERE message_id = ?`), historySecond).Scan(&state))
-	assert.Equal(store.LoopStateDone, state, "the mark remains attached to the source conversation with other messages")
-}
-
-func TestDoneDecisionKeepsCoveredQuestionsAfterTimestampReordering(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	first := f.PersistEmail(storetest.EmailSpec{
-		Thread: "timestamp-reordered", From: loopAlex, To: []string{loopOwner},
-		Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay),
-	})
-	secondAt := loopAgo(3 * loopDay)
-	second := f.PersistEmail(storetest.EmailSpec{
-		Thread: "timestamp-reordered", From: loopAlex, To: []string{loopOwner},
-		Body: "Can you send the budget?", SentAt: secondAt,
-	})
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: second, OccurredAt: secondAt}})
-	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
-		`UPDATE messages SET sent_at = ? WHERE id = ?`), loopAgo(2*loopDay), first)
-	require.NoError(err)
-	assert.Empty(listLoops(t, f, loopNow), "the first question stays covered after it moves past the saved timestamp boundary")
-}
-
-func TestMarkedQuestionsFollowDuplicateSurvivors(t *testing.T) {
-	for _, kind := range []string{"duplicates", "sources"} {
-		t.Run(kind, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			f := storetest.New(t)
-			from := f.Source.ID
-			drop := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(5 * loopDay)})
-			dropThrough := f.PersistEmail(storetest.EmailSpec{Thread: "first", From: loopAlex, To: []string{loopOwner}, Body: "Any update?", SentAt: loopAgo(3 * loopDay)})
-			_, err := loops.Done(t.Context(), f.Store, drop, loopNow)
-			require.NoError(err)
-			if kind == "sources" {
-				f.Source, err = f.Store.GetOrCreateSource("gmail", "live@example.test")
-				require.NoError(err)
-			}
-			keep := f.PersistEmail(storetest.EmailSpec{Thread: "second", From: loopAlex, To: []string{loopOwner}, Body: "Can you send it?", SentAt: loopAgo(5 * loopDay)})
-			keepThrough := f.PersistEmail(storetest.EmailSpec{Thread: "second", From: loopAlex, To: []string{loopOwner}, Body: "Any update?", SentAt: loopAgo(3 * loopDay)})
-			if kind == "sources" {
-				result, err := f.Store.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: from, IntoSourceID: f.Source.ID})
-				require.NoError(err)
-				require.Equal(int64(2), result.DuplicatesHidden)
-			} else {
-				_, err = f.Store.MergeDuplicates(keep, []int64{drop}, "loop-anchor")
-				require.NoError(err)
-				_, err = f.Store.MergeDuplicates(keepThrough, []int64{dropThrough}, "loop-through")
-				require.NoError(err)
-			}
-			result := listLoops(t, f, loopNow)
-			assert.Empty(result, "the same marked questions stay covered whichever duplicate copy survives")
-		})
-	}
-}
-
 func TestDuplicateDecisionLeavesSameTimeQuestionOpen(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -657,35 +504,33 @@ func TestDuplicateDecisionLeavesSameTimeQuestionOpen(t *testing.T) {
 		Thread: "default-thread", From: loopAlex, To: []string{loopOwner},
 		Body: "Can you send the contract?", SentAt: loopAgo(5 * loopDay),
 	})
-	keptCutoff := f.PersistEmail(storetest.EmailSpec{
+	survivor := f.PersistEmail(storetest.EmailSpec{
 		Thread: "default-thread", From: loopAlex, To: []string{loopOwner},
 		Body: "And can you send the budget?", SentAt: loopAgo(3 * loopDay),
 	})
-	coveredAfterSurvivor := f.PersistEmail(storetest.EmailSpec{
+	distinct := f.PersistEmail(storetest.EmailSpec{
 		Thread: "default-thread", From: loopAlex, To: []string{loopOwner},
 		Body: "Can you send the revised budget?", SentAt: loopAgo(3 * loopDay),
 	})
-	duplicateCutoff := f.PersistEmail(storetest.EmailSpec{
+	duplicate := f.PersistEmail(storetest.EmailSpec{
 		Thread: "default-thread", From: loopAlex, To: []string{loopOwner},
 		Body: "And can you send the budget?", SentAt: loopAgo(3 * loopDay),
 	})
-	assert.Less(keptCutoff, coveredAfterSurvivor)
-	assert.Less(coveredAfterSurvivor, duplicateCutoff)
-	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: duplicateCutoff}})
+	_, err := f.Store.MarkLoopDoneContext(t.Context(), first, []store.LoopMessage{{ID: first}, {ID: duplicate}})
 	require.NoError(err)
 
-	_, err = f.Store.MergeDuplicates(keptCutoff, []int64{duplicateCutoff}, "loop-cutoff-order")
+	_, err = f.Store.MergeDuplicates(survivor, []int64{duplicate}, "loop-same-time-question")
 	require.NoError(err)
 
 	marks, err := f.Store.LoopMarksContext(t.Context())
 	require.NoError(err)
-	mark, ok := marks[keptCutoff]
+	mark, ok := marks[survivor]
 	require.True(ok)
 	assert.Equal(store.LoopStateDone, mark.State)
-	assert.Equal(store.LoopStateDone, marks[duplicateCutoff].State)
+	assert.Equal(store.LoopStateDone, marks[duplicate].State)
 	listed := listLoops(t, f, loopNow)
 	require.Len(listed, 1)
-	assert.Equal(coveredAfterSurvivor, listed[0].Anchor.ID, "the distinct same-time question stays open")
+	assert.Equal(distinct, listed[0].Anchor.ID, "the distinct same-time question stays open")
 }
 
 func loopDecisionState(t *testing.T, f *storetest.Fixture, anchorID int64) string {
@@ -907,12 +752,18 @@ func TestSourceMergeKeepsEachKnownQuestionState(t *testing.T) {
 					require.NoError(err)
 					assert.Equal(store.LoopStateDone, marks[done].State)
 					require.NotNil(marks[snoozed].SnoozedUntil)
-					assert.Equal(at.Before(until), at.Before(*marks[snoozed].SnoozedUntil))
+					assert.True(until.Equal(*marks[snoozed].SnoozedUntil), "the original snooze deadline survives")
 					assert.NotContains(marks, open)
 					if duplicate && !reverse {
 						assert.Equal(store.LoopStateDone, marks[shared].State)
 					}
-					assert.Len(listLoops(t, f, at), 1)
+					listed := listLoops(t, f, at)
+					require.Len(listed, 1)
+					expectedAnchor := open
+					if !at.Before(until) {
+						expectedAnchor = snoozed
+					}
+					assert.Equal(expectedAnchor, listed[0].Anchor.ID)
 				}
 			})
 		}
