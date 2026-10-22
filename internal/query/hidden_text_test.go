@@ -2,7 +2,6 @@ package query_test
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
 	"testing"
 
@@ -26,10 +25,13 @@ func TestSearchRowsHiddenTextPresent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			id := f.CreateMessage(tc.name)
-			require.NoError(f.Store.UpsertMessageBody(id,
-				sql.NullString{String: "hiddenneedle", Valid: true},
-				sql.NullString{String: tc.html, Valid: true}))
-			_, err := f.Store.BackfillFTS(nil)
+			_, err := f.Store.DB().Exec(f.Store.Rebind(
+				`INSERT INTO message_bodies (message_id, body_text, body_html) VALUES (?, ?, ?)`), id, "hiddenneedle", tc.html)
+			require.NoError(err)
+			_, err = f.Store.DB().Exec(f.Store.Rebind(
+				`UPDATE messages SET hidden_text_present = ? WHERE id = ?`), tc.hidden, id)
+			require.NoError(err)
+			_, err = f.Store.BackfillFTS(nil)
 			require.NoError(err)
 			engine := query.NewEngine(f.Store.DB(), f.Store.IsPostgreSQL())
 			q := &search.Query{TextTerms: []string{"hiddenneedle"}, ConversationIDs: []int64{f.ConvID}}
@@ -64,11 +66,23 @@ func TestSearchRowsHiddenTextPresent(t *testing.T) {
 func TestSQLiteTextHiddenTextRows(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite timeline snapshots and FTS5 text search")
 	f := storetest.New(t)
-	id := f.CreateMessage("hidden")
-	_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET message_type = 'teams', snippet = 'hiddenneedle' WHERE id = ?`), id)
-	require.NoError(t, err)
-	require.NoError(t, f.Store.UpsertMessageBody(id, sql.NullString{String: "hiddenneedle", Valid: true}, sql.NullString{String: `<div hidden>hiddenneedle</div>`, Valid: true}))
-	_, err = f.Store.BackfillFTS(nil)
+	hiddenID := f.CreateMessage("hidden")
+	visibleID := f.CreateMessage("visible")
+	for _, tc := range []struct {
+		id     int64
+		hidden bool
+	}{
+		{hiddenID, true},
+		{visibleID, false},
+	} {
+		_, err := f.Store.DB().Exec(f.Store.Rebind(
+			`UPDATE messages SET message_type = 'teams', snippet = 'hiddenneedle', hidden_text_present = ? WHERE id = ?`), tc.hidden, tc.id)
+		require.NoError(t, err)
+		_, err = f.Store.DB().Exec(f.Store.Rebind(
+			`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), tc.id, "hiddenneedle")
+		require.NoError(t, err)
+	}
+	_, err := f.Store.BackfillFTS(nil)
 	require.NoError(t, err)
 	engine := query.NewSQLiteEngine(f.Store.DB())
 	for _, tc := range []struct {
@@ -89,8 +103,12 @@ func TestSQLiteTextHiddenTextRows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := tc.read(t.Context())
 			require.NoError(t, err)
-			require.Len(t, rows, 1)
-			assert.True(t, rows[0].HiddenTextPresent)
+			require.Len(t, rows, 2)
+			got := make(map[int64]bool)
+			for _, row := range rows {
+				got[row.ID] = row.HiddenTextPresent
+			}
+			assert.Equal(t, map[int64]bool{hiddenID: true, visibleID: false}, got)
 		})
 	}
 }
