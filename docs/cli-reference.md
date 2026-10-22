@@ -4549,7 +4549,7 @@ msgvault docbank attachments backfill
 `status` shows the mirror state and destination folder, delivered, sending and failed file counts, failure reasons, and all distinct eligible content hashes with no delivery record for this destination. Use
 `--json` for structured output. A running mirror shows `Last error` whenever set, including without a document profile. With `document_profile` set, it also shows `Document profile`, `Text extracted`, `Processing`, `Not yet requested`, and `Without text (<code>): N` for each failure or refusal code. These are local job outcomes for the profile fingerprint last read by the worker.
 
-`backfill` restarts discovery and retries failed uploads and failed or refused processing. It keeps requested and extracted jobs. For `operator_required`, fix the job in Docbank first, then run `backfill`. It requires attachment upload consent and a running attachment mirror
+`backfill` restarts discovery, retries failed uploads, and retries processing outcomes `consent` and `stale_authority` after you restore the required consent or authority in Docbank. It preserves other processing outcomes and their job IDs because Docbank refuses to rebuild terminal jobs. Resolve `operator_required` in Docbank. It requires attachment upload consent and a running attachment mirror
 job. Backfill resets discovery and requeues failed files with attempts reset in one transaction. The daemon drains the backlog at upload speed. The mirror includes files on dedup-hidden messages and excludes files whose attachment rows were removed. Upload names use `<first 12 hex of hash>-<sanitized basename>`. See [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased).
 
 ## show-message
