@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
@@ -732,6 +733,16 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 		SentAt:  sql.NullTime{Time: time.Date(2024, 5, 2, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err, "insert calendar event")
+	call := callhistory.Observation{
+		Version: 1, Provider: "zoom_phone", Account: "example/account", NativeCallID: "call-1",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC), Precision: "instant",
+		RecordID: "call-record-1", Raw: []byte(`{"call_id":"call-1"}`),
+	}
+	callSource, err := s.GetOrCreateSource(callhistory.SourceType, call.SourceIdentifier())
+	require.NoError(err, "create call source")
+	_, err = s.PutCallObservationContext(t.Context(), callSource.ID, call)
+	require.NoError(err, "import call record")
 	startStoreQueryAPIDaemon(t, tmpDir, s)
 
 	savedCfg := cfg
@@ -763,6 +774,19 @@ func TestSearchCmd_MessageTypeFlagScopesResults(t *testing.T) {
 	out := done()
 	require.NoError(err, "message-type search failed")
 	assert.Contains(out, "Calendar planning", "expected calendar event in output")
+	assert.NotContains(out, "Email hello", "email message must be filtered out")
+
+	resetSearchFlags()
+	done = captureStdout(t)
+	root = newTestRootCmd()
+	root.SetContext(testCtx)
+	root.AddCommand(searchCmd)
+	root.SetArgs([]string{"search", "--message-type", callhistory.MessageType, "--json"})
+	err = root.Execute()
+	out = done()
+	require.NoError(err, "call-record message-type search failed")
+	assert.Contains(out, "Call evidence", "expected imported call record in output")
+	assert.NotContains(out, "Calendar planning", "calendar event must be filtered out")
 	assert.NotContains(out, "Email hello", "email message must be filtered out")
 }
 
