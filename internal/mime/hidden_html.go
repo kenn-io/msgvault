@@ -3,36 +3,51 @@ package mime
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/aymerick/douceur/parser"
+	"github.com/gorilla/css/scanner"
+	"golang.org/x/image/colornames"
 	"golang.org/x/net/html"
 )
 
 // HTMLHasHiddenText reports whether inline styles or hidden attributes may hide letters or digits.
 // Stylesheets and browser layout are outside this check.
 func HTMLHasHiddenText(rawHTML string) bool {
-	doc, err := html.Parse(strings.NewReader(strings.TrimPrefix(rawHTML, "\ufeff")))
-	return err == nil && htmlHasHiddenText(doc, false, "", "")
+	rawHTML = strings.TrimSpace(strings.TrimPrefix(rawHTML, "\ufeff"))
+	if rawHTML == "" {
+		return false
+	}
+	doc, err := html.Parse(strings.NewReader(rawHTML))
+	return err != nil || htmlHasHiddenText(doc, false, "", "")
 }
 
 func htmlHasHiddenText(node *html.Node, hidden bool, color, background string) bool {
 	if node.Type == html.ElementNode {
 		style := inlineHTMLStyle(node)
 		hidden = hidden || hiddenHTMLElement(node, style)
-		if values := style["color"]; len(values) > 0 {
-			color = inlineHTMLColor(values[0])
+		if values := style["color"]; len(values) > 0 && values[0] != "inherit" && values[0] != "currentcolor" {
+			color = values[0]
 		}
 		if values := style["background-color"]; len(values) > 0 {
-			if value := inlineHTMLColor(values[0]); value != "transparent" {
-				background = value
+			if values[0] != "transparent" {
+				background = values[0]
 			}
 		}
 	}
-	if node.Type == html.TextNode && (hidden || color == "transparent" || color != "" && color == background) &&
-		strings.ContainsFunc(node.Data, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
-		return true
+	if hidden || color == "transparent" || color != "" && color == background {
+		if node.Type == html.TextNode && readableHTMLText(node.Data) {
+			return true
+		}
+		for _, attr := range node.Attr {
+			if (node.Data == "img" && attr.Key == "alt" || node.Data == "a" && attr.Key == "href") && readableHTMLText(attr.Val) {
+				return true
+			}
+		}
 	}
 	for child := node.FirstChild; child != nil; child = child.NextSibling {
 		if htmlHasHiddenText(child, hidden, color, background) {
@@ -42,47 +57,89 @@ func htmlHasHiddenText(node *html.Node, hidden bool, color, background string) b
 	return false
 }
 
+func readableHTMLText(value string) bool {
+	return strings.ContainsFunc(value, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) })
+}
+
 func inlineHTMLStyle(node *html.Node) map[string][]string {
 	style := make(map[string][]string)
 	important := make(map[string]bool)
+	for _, attr := range node.Attr {
+		if value := inlineHTMLColor(attr.Val); value != "" {
+			switch {
+			case attr.Key == "color" && node.Data == "font":
+				style["color"] = []string{value}
+			case attr.Key == "bgcolor":
+				style["background-color"] = []string{value}
+			}
+		}
+	}
 	for _, attr := range node.Attr {
 		if attr.Key != "style" {
 			continue
 		}
 		var clean strings.Builder
-		remaining := strings.ToLower(attr.Val)
-		for {
-			before, comment, found := strings.Cut(remaining, "/*")
-			clean.WriteString(before)
-			if !found {
-				break
-			}
-			_, remaining, _ = strings.Cut(comment, "*/")
-		}
-		for declaration := range strings.SplitSeq(clean.String(), ";") {
-			name, value, ok := strings.Cut(declaration, ":")
-			if !ok {
+		inDeclaration := false
+		scan := scanner.New(attr.Val)
+		for token := scan.Next(); token.Type != scanner.TokenEOF && token.Type != scanner.TokenError; token = scan.Next() {
+			if token.Type == scanner.TokenComment {
 				continue
 			}
-			name = strings.TrimSpace(name)
-			value, priority, _ := strings.Cut(value, "!")
-			value = strings.TrimSpace(value)
+			if token.Type == scanner.TokenChar && token.Value == ";" {
+				if !inDeclaration {
+					continue
+				}
+				inDeclaration = false
+			} else if token.Type != scanner.TokenS {
+				inDeclaration = true
+			}
+			value := token.Value
+			if token.Type != scanner.TokenString && token.Type != scanner.TokenURI {
+				value = decodeInlineCSSEscapes(value)
+			}
+			clean.WriteString(value)
+		}
+		// Douceur needs a terminator to retain the last declaration's value.
+		declarations, _ := parser.ParseDeclarations(strings.TrimRight(clean.String(), " \t\r\n\f;") + ";")
+		for _, declaration := range declarations {
+			name := strings.ToLower(declaration.Property)
+			value := strings.ToLower(declaration.Value)
 			if name == "background" {
 				name = "background-color"
 			}
 			// Keep every hiding declaration. Colors follow precedence so children can change the backdrop.
 			if name == "color" || name == "background-color" {
-				hasPriority := strings.TrimSpace(priority) == "important"
-				if important[name] && !hasPriority {
+				if name != "color" || value != "inherit" && value != "currentcolor" {
+					value = inlineHTMLColor(value)
+					if value == "" {
+						continue
+					}
+				}
+				if important[name] && !declaration.Important {
 					continue
 				}
-				important[name] = hasPriority
+				important[name] = declaration.Important
 				style[name] = nil
 			}
 			style[name] = append(style[name], value)
 		}
 	}
 	return style
+}
+
+var inlineCSSEscape = regexp.MustCompile(`\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\r\n\f])?|[^\r\n\f])`)
+
+func decodeInlineCSSEscapes(value string) string {
+	return inlineCSSEscape.ReplaceAllStringFunc(value, func(escape string) string {
+		number, err := strconv.ParseUint(strings.TrimSpace(escape[1:]), 16, 32)
+		if err != nil {
+			return escape[1:]
+		}
+		if number == 0 || number > unicode.MaxRune || !utf8.ValidRune(rune(number)) {
+			return "\ufffd"
+		}
+		return string(rune(number))
+	})
 }
 
 func hiddenHTMLElement(node *html.Node, style map[string][]string) bool {
@@ -99,8 +156,17 @@ func hiddenHTMLElement(node *html.Node, style map[string][]string) bool {
 				if property == "display" && value == "none" || property == "visibility" && value == "hidden" {
 					return true
 				}
-			case "opacity", "font-size":
+			case "mso-hide":
+				if value == "all" {
+					return true
+				}
+			case "opacity":
 				if zeroCSSLength(value) {
+					return true
+				}
+			case "font-size":
+				number, unit, valid := inlineCSSLength(value)
+				if valid && (number == 0 || unit == "px" && number > 0 && number < 1) {
 					return true
 				}
 			case "height", "max-height":
@@ -111,7 +177,7 @@ func hiddenHTMLElement(node *html.Node, style map[string][]string) bool {
 				positioned = positioned || value == "absolute" || value == "fixed"
 			case "left", "top":
 				offscreen = offscreen || offscreenCSSLength(value)
-			case "text-indent":
+			case "text-indent", "margin-left", "margin-top":
 				if offscreenCSSLength(value) {
 					return true
 				}
@@ -174,13 +240,11 @@ func emptyCSSRect(value string) bool {
 
 func inlineHTMLColor(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	switch value {
-	case "white":
-		return "#ffffff"
-	case "black":
-		return "#000000"
-	case "transparent":
+	if value == "transparent" {
 		return value
+	}
+	if color, ok := colornames.Map[value]; ok {
+		return fmt.Sprintf("#%02x%02x%02x", color.R, color.G, color.B)
 	}
 	if strings.HasPrefix(value, "#") {
 		hex := value[1:]

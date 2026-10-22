@@ -8,7 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
-- MCP `get_message` and `show-message --json` report `hidden_text_present` when inline styles or the `hidden` attribute may hide readable text in the stored HTML, including for previously archived mail. `show-message` warns on stderr. Message bodies stay unchanged. Detection excludes stylesheets and browser layout.
+- MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json`, report `hidden_text_present` when a set of inline-style heuristics, plus `hidden` and legacy color attributes, flags stored HTML that may hide readable text. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Previously archived mail is covered, and message bodies stay unchanged. Search result rows from CLI search and MCP `search_message_bodies` aren't flagged. The check excludes stylesheets and browser layout.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.

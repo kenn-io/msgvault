@@ -418,11 +418,15 @@ slice of the body plus `body_length`, `body_returned`, `offset`, and
 `has_more`, so unusually large messages are paged across calls instead of
 being returned in a single response.
 
-On newer `main` builds, each response includes `hidden_text_present`. It is
-true when supported inline styles or the `hidden` attribute may hide letters
-or digits in the stored HTML, including for mail with a plain-text alternative.
-Message bodies stay unchanged. Detection excludes stylesheets and browser
-layout.
+On newer `main` builds, `get_message` and `search_in_message` include
+`hidden_text_present`. The CLI readers `show-message` and `show-thread` return
+the same flag in JSON and warn on stderr for text output. The check uses a set
+of inline-style heuristics, plus `hidden` and legacy color attributes, to flag
+HTML that may hide letters or digits, including for mail with a plain-text
+alternative. Non-blank HTML that fails to parse also sets the flag.
+Message bodies stay unchanged. The check excludes stylesheets and browser
+layout. CLI search and MCP `search_message_bodies` return search result rows
+without this flag.
 
 ### Find a person's messaging routes
 
