@@ -7,7 +7,6 @@ export type OperationRunDetailLane =
 
 export const OperationRunDetailLane = {
   contacts: "contacts",
-  documents: "documents",
   messages: "messages",
   person_facts: "person_facts",
   visual_attachments: "visual_attachments",

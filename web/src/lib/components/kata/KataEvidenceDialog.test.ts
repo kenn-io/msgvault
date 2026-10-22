@@ -58,8 +58,7 @@ describe('KataEvidenceDialog', () => {
   const chunk = { kind: 'document_chunk' as const, message_id: 42, attachment_id: 12, extraction_id: 'extract-8', chunk_key: 'chunk-1', start_rune: 0, max_chars: 1000 };
   it.each([
     { kind: 'message', text: 'Café 🙂 send the budget by Friday', quote: 'send the budget', initial: selector, earlier: false },
-    // A file chunk opens at a search hit late in the chunk and pages back before narrowing.
-    { kind: 'document_chunk', text: 'x'.repeat(600) + 'Café 🙂 ship the draft', quote: 'ship the draft', initial: { ...chunk, start_rune: 500 }, earlier: true },
+
   ])('narrows a $kind citation to the selected text, counting runes', async ({ text, quote, initial, earlier }) => {
     type Wanted = { kind: string; start_rune: number; end_rune?: number; max_chars?: number };
     const requests: Wanted[] = [];
@@ -70,9 +69,7 @@ describe('KataEvidenceDialog', () => {
       const runes = [...text];
       const end = wanted.end_rune ?? Math.min(runes.length, wanted.start_rune + (wanted.max_chars ?? runes.length));
       const range = { start_rune: wanted.start_rune, end_rune: end };
-      const located = wanted.kind === 'message'
-        ? { message: { body_sha256: 'a'.repeat(64), ...range } }
-        : { attachment_id: 12, occurrence_key: 'occurrence', document_chunk: { canonical_blob_hash: 'a'.repeat(64), extraction_id: 'extract-8', manifest_checksum: 'b'.repeat(64), chunk_key: 'chunk-1', chunk_checksum: 'c'.repeat(64), ...range } };
+      const located = { message: { body_sha256: 'a'.repeat(64), ...range } };
       const reference = { version: 1, kind: wanted.kind, archive_uid: 'archive-example', message_id: 42, source_type: 'email', source_identifier: 'archive@example.com', source_message_id: 'message-example', ...located };
       const excerpt = runes.slice(wanted.start_rune, end).join('');
       return Response.json({ evidence: [{ id: `${wanted.start_rune}`.padStart(64, '0'), passage: `${wanted.start_rune}:${end}`.padStart(64, 'p'), reference, excerpt, display: { filename: 'transcript.txt' }, content_trust: 'untrusted', ...(end < runes.length ? { next_rune: end } : {}) }] });

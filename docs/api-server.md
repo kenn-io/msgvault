@@ -158,7 +158,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.27.0**.
+it is separate from the binary release version. The current schema is **4.0.0**.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -179,6 +179,8 @@ requests remain valid.
 
 Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
 routes, delivery receipts and status states.
+
+Schema 4.0.0 moves document processing and attachment text search to Docbank. Local document commands, search, status, and operation lanes are removed. Use [media search](https://msgvault.io/docs/api-server/#media-transcript-search) for mirrored attachment text. It also adds attachment processing outcomes, worker errors, and authenticated streamed Muesli recording imports.
 
 Schema 3.0.0 removes the unguarded
 `POST /api/v1/identity/match-candidates/{id}/accept` and `/reject` routes.
@@ -475,14 +477,13 @@ daemon or printed by `msgvault openapi`. See
 The API uses the same archive database and attachment store as other clients.
 SQLite is the default; PostgreSQL has [documented feature limits](architecture/postgresql.md).
 Keyword search and ordinary reads use stored data. Semantic and hybrid search
-also call the configured embedding endpoint. Profile, document, and enrichment
-operations have their own provider and consent contracts.
+also call the configured embedding endpoint. Profile and enrichment operations
+have their own provider and consent contracts. Docbank owns attachment text
+processing and its consent.
 
 Operation history includes durable worker runs, date filters, filter-bound
-pagination, error codes, and supported actions. `GET
-/api/v1/documents/status/current` reports the selected document extraction
-profile without requiring its identifier. The OpenAPI document defines exact
-request and response fields.
+pagination, error codes, and supported actions. The OpenAPI document defines
+exact request and response fields.
 
 Go integrations can use the generated client in `pkg/client`. The wrapper
 handles msgvault-specific response details such as deletion staging dry-runs

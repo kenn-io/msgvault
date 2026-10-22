@@ -38,11 +38,9 @@ func (s *Store) Finish(ctx context.Context, id operations.StableID, counters ope
 }
 
 var operationInvocationLedgers = map[operations.Kind]operationInvocationLedger{
-	operations.KindMessageEmbedding:   {table: "message_embedding_runs", truncated: true},
-	operations.KindPersonEmbedding:    {table: "person_embedding_runs", truncated: true},
-	operations.KindDocumentExtraction: {table: "document_extraction_runs"},
-	operations.KindDocumentEmbedding:  {table: "document_embedding_runs"},
-	operations.KindVisualEmbedding:    {table: "visual_embedding_runs", skipped: true},
+	operations.KindMessageEmbedding: {table: "message_embedding_runs", truncated: true},
+	operations.KindPersonEmbedding:  {table: "person_embedding_runs", truncated: true},
+	operations.KindVisualEmbedding:  {table: "visual_embedding_runs", skipped: true},
 }
 
 func (s *Store) BeginOperationInvocation(
@@ -355,8 +353,7 @@ func operationLane(kind operations.Kind) operations.Lane {
 		return operations.LaneMessages
 	case operations.KindPersonEmbedding:
 		return operations.LanePersonFacts
-	case operations.KindDocumentExtraction, operations.KindDocumentEmbedding:
-		return operations.LaneDocuments
+
 	case operations.KindVisualEmbedding:
 		return operations.LaneVisualAttachments
 	default:

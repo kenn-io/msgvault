@@ -117,8 +117,7 @@ func (s *Store) listOperationRunsForKindFrom(
 	switch kind {
 	case operations.KindCardDAVSync:
 		return s.listCardDAVOperationRunsFrom(ctx, queryer, query, fetchLimit)
-	case operations.KindDocumentEmbedding, operations.KindDocumentExtraction,
-		operations.KindMessageEmbedding, operations.KindPersonEmbedding,
+	case operations.KindMessageEmbedding, operations.KindPersonEmbedding,
 		operations.KindVisualEmbedding:
 		return s.listInvocationOperationRunsFrom(ctx, queryer, kind, query, fetchLimit)
 	case operations.KindPersonEnrichment:
@@ -488,8 +487,7 @@ func operationHistoryLane(kind operations.Kind) operations.Lane {
 		return operations.LanePersonFacts
 	case operations.KindCardDAVSync:
 		return operations.LaneContacts
-	case operations.KindDocumentExtraction, operations.KindDocumentEmbedding:
-		return operations.LaneDocuments
+
 	case operations.KindVisualEmbedding:
 		return operations.LaneVisualAttachments
 	default:

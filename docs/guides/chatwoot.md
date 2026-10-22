@@ -131,7 +131,7 @@ recordings can arrive as audio attachments. msgvault archives both source
 shapes and does not require Twilio credentials or a transcription API key.
 Chatwoot's own transcription settings and availability determine whether it
 supplies text. Optional msgvault attachment processing has its own configuration
-and consent; see [document indexing](../usage/document-indexing.md).
+and consent; see [Docbank document search](../configuration.md#search-document-text-through-docbank-unreleased).
 
 ## Understand sync limits
 

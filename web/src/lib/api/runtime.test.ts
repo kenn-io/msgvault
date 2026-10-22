@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   getAttachmentContent,
-  getDocumentIndexStatus,
+  searchMedia,
   getFileContent,
   runCLI,
   syncCLI
@@ -10,13 +10,13 @@ import { deleteCLICollection } from './generated/cli/cli';
 import { searchVisualAttachments } from './generated/exploration/exploration';
 
 describe('generated request serialization', () => {
-  it('sends each document media type as a separate query value', async () => {
+  it('sends each media search direction as a separate query value', async () => {
     let query!: URLSearchParams;
-    await getDocumentIndexStatus(
+    await searchMedia(
       {
-        profile_id: 'test-profile',
-        input_key: 'test-input',
-        media_type: ['text/plain', 'application/pdf']
+        q: 'synthetic query',
+        person_id: 7,
+        direction: ['from_person', 'to_person']
       },
       {
         fetch: async (url) => {
@@ -25,8 +25,8 @@ describe('generated request serialization', () => {
         }
       }
     );
-    expect(query.getAll('media_type')).toEqual(['text/plain', 'application/pdf']);
-    expect(query.get('profile_id')).toBe('test-profile');
+    expect(query.getAll('direction')).toEqual(['from_person', 'to_person']);
+    expect(query.get('person_id')).toBe('7');
   });
 
   it('preserves CLI folder selections, including literal commas', async () => {

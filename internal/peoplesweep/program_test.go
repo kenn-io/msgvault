@@ -149,7 +149,7 @@ func TestParseExtractionRejectsCrossBatchCitation(t *testing.T) {
 func TestPersonFactEvidenceInputPreservesHostMetadata(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
-	item := packetTestEvidence(12, SourceDocumentText, "I work at Example Labs")
+	item := packetTestEvidence(12, SourceMeetingText, "I work at Example Labs")
 
 	got, err := PersonFactEvidenceInput(item)
 	requirements.NoError(err)
@@ -177,7 +177,7 @@ func TestPersonFactEvidenceInputPreservesHostMetadata(t *testing.T) {
 
 func TestPersonFactEvidenceInputMapsSweepLaneToArchiveClass(t *testing.T) {
 	lanes := []SourceClass{
-		SourceConversationText, SourceMeetingText, SourceDocumentText,
+		SourceConversationText, SourceMeetingText, SourceMeetingText,
 		SourceAttachmentCaption, SourceAttachmentOCR,
 	}
 	for index, lane := range lanes {

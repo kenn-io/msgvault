@@ -532,11 +532,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := registerSQLiteMaintenanceJob(sched, s); err != nil {
 		return fmt.Errorf("schedule SQLite maintenance: %w", err)
 	}
-	if err := configureDocumentReconcileJob(
-		ctx, sched, s, cfg.Attachments.Documents.Enabled,
-	); err != nil {
-		return fmt.Errorf("configure document reconciliation: %w", err)
-	}
+
 	if err := registerFilenameDiscoveryJob(sched, s); err != nil {
 		return fmt.Errorf("schedule filename discovery: %w", err)
 	}
@@ -1873,9 +1869,6 @@ var _ api.ConversationWindowStore = (*storeAPIAdapter)(nil)
 var _ api.ChangedMessageLister = (*storeAPIAdapter)(nil)
 var _ api.ArchiveIdentifier = (*storeAPIAdapter)(nil)
 var _ operations.HistoryReader = (*storeAPIAdapter)(nil)
-var _ api.DocumentSearchStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentStatusStore = (*storeAPIAdapter)(nil)
-var _ api.DocumentVectorStatusStore = (*storeAPIAdapter)(nil)
 var _ api.ActivityStore = (*storeAPIAdapter)(nil)
 var _ api.ParticipantIdentityContextStore = (*storeAPIAdapter)(nil)
 
@@ -2024,77 +2017,6 @@ func (a *storeAPIAdapter) LaneStatus(
 	ctx context.Context, kind operations.Kind,
 ) (operations.LaneHistoryStatus, error) {
 	return a.store.LaneStatus(ctx, kind)
-}
-
-func (a *storeAPIAdapter) SearchDocuments(
-	ctx context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	ctx = a.invocationContext(ctx)
-	if err := reconcileDocumentOccurrencesForSearch(ctx, a.store); err != nil {
-		return store.DocumentSearchResponse{}, err
-	}
-	return a.store.SearchDocuments(ctx, request)
-}
-
-func (a *storeAPIAdapter) ReconcileDocumentOccurrences(ctx context.Context) error {
-	ctx = a.invocationContext(ctx)
-	return reconcileDocumentOccurrencesForSearch(ctx, a.store)
-}
-
-func (a *storeAPIAdapter) GetDocumentIndexStatusForScope(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (store.DocumentIndexStatus, error) {
-	return a.store.GetDocumentIndexStatusForScope(
-		ctx, profileID, extractionInputKey, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetCurrentDocumentIndexStatusScope(
-	ctx context.Context,
-) (string, []string, error) {
-	return a.store.GetCurrentDocumentIndexStatusScope(ctx)
-}
-
-func (a *storeAPIAdapter) GetActiveDocumentExtractionRebuild(
-	ctx context.Context,
-	profileID string,
-	extractionInputKey string,
-) (store.DocumentExtractionRebuild, error) {
-	return a.store.GetActiveDocumentExtractionRebuild(ctx, profileID, extractionInputKey)
-}
-
-func (a *storeAPIAdapter) CountIncompleteDocumentExtractionRebuild(
-	ctx context.Context,
-	rebuild store.DocumentExtractionRebuild,
-	allowedMediaTypes []string,
-	allowedMessageTypes []string,
-) (int64, error) {
-	return a.store.CountIncompleteDocumentExtractionRebuild(
-		ctx, rebuild, allowedMediaTypes, allowedMessageTypes,
-	)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorTargetProfileID(ctx context.Context) (string, error) {
-	return a.store.GetDocumentVectorTargetProfileID(ctx)
-}
-
-func (a *storeAPIAdapter) GetDocumentVectorOperationsStatus(
-	ctx context.Context,
-	configured store.DocumentVectorGenerationSpec,
-	documentEgressFingerprint, queryEgressFingerprint string,
-	generationID int64,
-	afterToken string,
-	limit int,
-) (store.DocumentVectorOperationsStatus, error) {
-	return a.store.GetDocumentVectorOperationsStatus(
-		ctx, configured, documentEgressFingerprint, queryEgressFingerprint,
-		generationID, afterToken, limit,
-	)
 }
 
 func (a *storeAPIAdapter) GetStats() (*api.StoreStats, error) {

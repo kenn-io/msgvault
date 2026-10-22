@@ -504,31 +504,6 @@ func TestPersonSweepCursorCASRejectsStaleSequence(t *testing.T) {
 	assert.Equal(t, cursors[0], loadPersonSweepCursor(t, f.store, key))
 }
 
-func TestPersonSweepCursorPersistsPartialDocumentProgress(t *testing.T) {
-	checks := assert.New(t)
-	must := require.New(t)
-	f := newPersonSweepJournalFixture(t, true, false)
-	f.insertMessage(t, "document-cursor", "email", f.aliceID,
-		time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC))
-	key := personSweepConversationCursorKey(f.alicePersonID)
-	key.SourceLane = peoplesweep.SourceDocumentText
-	cursors, err := f.store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{key})
-	must.NoError(err)
-	must.Len(cursors, 1)
-	reconcilePersonSweepFixture(t, f, peoplesweep.SourceDocumentText)
-	lease := claimPersonSweepFixture(t, f.store, "worker-a")
-
-	err = f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{
-		Key: key, Mode: peoplesweep.GenerationCursorOptimistic,
-		CursorFrom: cursors[0].OptimisticSequence, CursorThrough: cursors[0].OptimisticSequence,
-		DocumentToKey: "live:00000000000000000002",
-	})
-	must.NoError(err)
-	got := loadPersonSweepCursor(t, f.store, key)
-	checks.Equal(cursors[0].OptimisticSequence, got.OptimisticSequence)
-	checks.Equal("live:00000000000000000002", got.OptimisticDocumentKey)
-}
-
 func TestPersonSweepCursorSeparatesSourceAndFingerprints(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)

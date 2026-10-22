@@ -277,38 +277,6 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 	}
 }
 
-func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"build", `{"args":["documents","build","--capabilities","manifest.json"]}`},
-		{"consent", `{"args":["documents","consent-mistral","--yes"]}`},
-		{"retry", `{"args":["documents","retry","--hash","abc"]}`},
-		{"retire", `{"args":["documents","retire","profile","--yes"]}`},
-		// Status reconciles the occurrence index, which writes.
-		{"status", `{"args":["documents","status","--json"]}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gate := &recordingOperationGate{allow: true}
-			handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusNoContent)
-			}))
-
-			req := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(tc.body))
-			resp := httptest.NewRecorder()
-			handler.ServeHTTP(resp, req)
-
-			assert.Equal(t, http.StatusNoContent, resp.Code)
-			begin, done := gate.counts()
-			assert.Equal(t, 1, begin)
-			assert.Equal(t, 1, done)
-		})
-	}
-}
-
 func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
@@ -696,7 +664,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
-		{"documents search", `{"args":["documents","search","shipping damage"]}`},
 		{"list-deletions", `{"args":["list-deletions"]}`},
 		{"show-deletion with id", `{"args":["show-deletion","batch-123"]}`},
 	}
@@ -1312,7 +1279,6 @@ func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
 	assert := assert.New(t)
 	srv := &Server{cfg: &config.Config{}}
 	srv.cfg.Vector.Embeddings.APIKeyEnv = "MSGVAULT_EMBED_API_KEY"
-	srv.cfg.Attachments.Documents.APIKeyEnv = "MSGVAULT_DOCUMENT_API_KEY"
 	srv.cfg.People.Enrichment.SuppressionKeyEnv = "MSGVAULT_ENRICHMENT_SUPPRESSION_KEY"
 	srv.cfg.People.Enrichment.Providers = []personenrichment.ProviderConfig{{
 		APIKeyEnv: "MSGVAULT_EXA_API_KEY",
@@ -1320,7 +1286,6 @@ func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
 
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_IMAP_PASSWORD"), "static allowlist entry")
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"), "configured embedding api_key_env")
-	assert.True(srv.cliRunEnvAllowed("MSGVAULT_DOCUMENT_API_KEY"), "configured document api_key_env")
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_ENRICHMENT_SUPPRESSION_KEY"),
 		"configured enrichment suppression key")
 	assert.True(srv.cliRunEnvAllowed("MSGVAULT_EXA_API_KEY"), "configured enrichment provider key")
@@ -1329,8 +1294,6 @@ func TestCLIRunEnvAllowedPermitsConfiguredAPIKeyEnv(t *testing.T) {
 	unconfigured := &Server{cfg: &config.Config{}}
 	assert.False(unconfigured.cliRunEnvAllowed("MSGVAULT_EMBED_API_KEY"),
 		"key env rejected when not configured")
-	assert.False(unconfigured.cliRunEnvAllowed("MSGVAULT_DOCUMENT_API_KEY"),
-		"document key env rejected when not configured")
 }
 
 func healthResponseForServer(t *testing.T, srv *Server) HealthResponse {

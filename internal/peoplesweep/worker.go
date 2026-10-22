@@ -210,8 +210,7 @@ func encodePersonFactSourceCursor(cursor GenerationCursor) (personfacts.SourceCu
 	if err != nil {
 		return personfacts.SourceCursor{}, fmt.Errorf("encode person sweep cursor range: %w", err)
 	}
-	if cursor.Key.SourceLane != SourceDocumentText &&
-		(cursor.DocumentFromKey != "" || cursor.DocumentToKey != "") {
+	if cursor.DocumentFromKey != "" || cursor.DocumentToKey != "" {
 		return personfacts.SourceCursor{}, errors.New("person sweep document continuation requires document text")
 	}
 	return personfacts.SourceCursor{Lane: lane, Start: string(start), End: string(end)}, nil
@@ -223,7 +222,7 @@ func validateCursorKey(key CursorKey) error {
 	}
 	switch key.SourceLane {
 	case SourceConversationText, SourceMeetingText, SourceAttachmentCaption,
-		SourceAttachmentOCR, SourceDocumentText:
+		SourceAttachmentOCR:
 		return nil
 	default:
 		return fmt.Errorf("person sweep cursor key has unknown source lane %q", key.SourceLane)

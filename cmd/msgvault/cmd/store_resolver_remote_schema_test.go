@@ -103,7 +103,7 @@ func TestOpenRemoteStoreAcceptsCompatibleNewerMinorSchema(t *testing.T) {
 	healthRequests, testCtx := remoteSchemaStub(t, func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": "ok", "api_schema_version": "3.1.0",
+			"status": "ok", "api_schema_version": "4.1.0",
 		})
 	})
 
@@ -198,7 +198,7 @@ func TestDaemonRuntimeCompatibilityRejectsLegacyRecordWithoutSchemaVersion(t *te
 	require.ErrorContains(daemonRuntimeCompatibilityError(previousMajor),
 		`daemon API schema version "1.44.0" is incompatible`)
 
-	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "3.1.0"}
+	newerMinor := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "4.1.0"}
 	require.NoError(daemonRuntimeCompatibilityError(newerMinor))
 
 	previousSchema := &DaemonRuntime{API: daemonAPIVersion, APISchemaVersion: "2.35.0"}
@@ -253,10 +253,10 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 		version, minimum string
 		refused          bool
 	}{
-		{"3.0.0", daemonclient.AgentReadMinAPISchemaVersion, true},
-		{"3.8.0", daemonclient.AgentReadMinAPISchemaVersion, true},
+		{"4.0.0", "4.1.0", true},
+		{"4.0.1", "4.1.0", true},
 		{api.APISchemaVersion, daemonclient.AgentReadMinAPISchemaVersion, false},
-		{"3.0.0", "", false},
+		{"4.0.0", "", false},
 	} {
 		t.Run(tc.version+"/"+tc.minimum, func(t *testing.T) {
 			require := require.New(t)
@@ -269,7 +269,7 @@ func TestOpenAgentDelegatedStoreVerifiesAPISchema(t *testing.T) {
 			checks.Equal(int32(1), healthRequests.Load(), "one authenticated health probe")
 			if tc.refused {
 				require.ErrorContains(err, "upgrade the daemon and issue a read grant")
-				checks.Contains(err.Error(), daemonclient.AgentReadMinAPISchemaVersion)
+				checks.Contains(err.Error(), tc.minimum)
 				checks.Nil(client)
 				return
 			}

@@ -32,3 +32,21 @@ func (c *Client) SearchMedia(ctx context.Context, request MediaSearchOptions) (g
 	}
 	return *response.JSON200, nil
 }
+
+func optionalPositiveInt64Value(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
+}
+
+func documentDirectionStrings(directions []personscope.Direction) []string {
+	if len(directions) == 0 {
+		return nil
+	}
+	result := make([]string, len(directions))
+	for i, direction := range directions {
+		result[i] = string(direction)
+	}
+	return result
+}

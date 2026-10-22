@@ -378,7 +378,9 @@ import (
 // 3.25.0 adds archived chat discovery ranked by the best matching name or title.
 // 3.26.0 adds optional attachment text results and recording errors in media search.
 // 3.27.0 adds attachment processing outcomes and worker errors.
-const APISchemaVersion = "3.27.0"
+// 4.0.0 removes local document commands, search, status, and operation lanes.
+// Docbank owns document processing.
+const APISchemaVersion = "4.0.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1349,9 +1351,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		setEnumNames(counter.Properties["unit"], []any{
 			"OperationPublicCounterUnitAttachments",
 			"OperationPublicCounterUnitBooks",
-			"OperationPublicCounterUnitChunks",
 			"OperationPublicCounterUnitContacts",
-			"OperationPublicCounterUnitDocuments",
 			"OperationPublicCounterUnitMessages",
 			"OperationPublicCounterUnitPeople",
 			"OperationPublicCounterUnitWrites",

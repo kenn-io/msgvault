@@ -1679,12 +1679,8 @@ const cliRunPersonCommand = "person"
 // cliRunCommandAllowed reports whether a proxied CLI command may run through
 // the daemon CLI runner. Most commands are admitted by their leading word
 // alone; command groups whose subcommand matters are checked against their
-// nested command path. Backup admits only the frozen create path, documents
-// admits only mutations that must run under the daemon's writer lock, and
-// person admits only the provider consent boundary and sweep operations.
-// cliRunStatusSubcommand is the read-only status subcommand shared by the
-// document and document-vector command groups.
-const cliRunStatusSubcommand = "status"
+// nested command path. Backup admits only the frozen create path, and person
+// admits only the provider consent boundary and sweep operations.
 
 func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
@@ -1707,28 +1703,7 @@ func cliRunCommandAllowed(args []string) bool {
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}
-	if args[0] == "documents" {
-		if len(args) < 2 {
-			return false
-		}
-		if args[1] == "vectors" {
-			if len(args) < 3 {
-				return false
-			}
-			switch args[2] {
-			case "build", "consent", "rebuild", "resume", "retire", "retry", cliRunStatusSubcommand:
-				return true
-			default:
-				return false
-			}
-		}
-		switch args[1] {
-		case "build", "consent-mistral", "consent-docling", "purge-derived", "resume", "retire", "retry", cliRunStatusSubcommand:
-			return true
-		default:
-			return false
-		}
-	}
+
 	if args[0] == cliRunPersonCommand {
 		if len(args) < 3 {
 			return false
@@ -2097,7 +2072,6 @@ func (s *Server) cliRunEnvAllowed(name string) bool {
 	}
 	for _, keyEnv := range []string{
 		s.cfg.Vector.Embeddings.APIKeyEnv,
-		s.cfg.Attachments.Documents.APIKeyEnv,
 		s.configuredPeopleProviderKeyEnv(),
 		s.cfg.People.Enrichment.SuppressionKeyEnv,
 	} {

@@ -862,7 +862,7 @@ func TestPersonSweepWorkerRejectedBoundaryStillSeedsTheOverlap(t *testing.T) {
 }
 
 // TestPersonSweepWorkerPlansNoBriefWhenTheProfileHasNoBriefLane pins the
-// scheduled-mode half of the same gate: a document_text-only profile plans no
+// scheduled-mode half of the same gate: a meeting_text-only profile plans no
 // brief at all, so the attempt never builds a window that would fail on "no
 // allowed source lane" and record an internal brief failure. The decision is
 // made from the profile alone, before any durable state is read.
@@ -877,7 +877,7 @@ func TestPersonSweepWorkerPlansNoBriefWhenTheProfileHasNoBriefLane(t *testing.T)
 	for _, mode := range []BriefMode{BriefModeAuto, BriefModeForce} {
 		plan, err := worker.planPersonBrief(t.Context(), 7, mode, ProviderProfile{
 			Fingerprint: "profile", AllowSensitive: true,
-			AllowedSources: []SourceClass{SourceDocumentText},
+			AllowedSources: []SourceClass{SourceMeetingText},
 		}, now)
 		require.NoError(err, mode)
 		assert.False(plan.run, "%s mode plans no brief without a brief lane", mode)
@@ -886,14 +886,14 @@ func TestPersonSweepWorkerPlansNoBriefWhenTheProfileHasNoBriefLane(t *testing.T)
 
 	plan, err := worker.planPersonBrief(t.Context(), 7, BriefModeAuto, ProviderProfile{
 		Fingerprint: "profile", AllowSensitive: true,
-		AllowedSources: []SourceClass{SourceDocumentText, SourceMeetingText},
+		AllowedSources: []SourceClass{SourceMeetingText},
 	}, now)
 	require.NoError(err)
 	assert.False(plan.run, "meeting_text is not a brief lane in this version (R13)")
 
 	plan, err = worker.planPersonBrief(t.Context(), 7, BriefModeAuto, ProviderProfile{
 		Fingerprint: "profile", AllowSensitive: true,
-		AllowedSources: []SourceClass{SourceDocumentText, SourceConversationText},
+		AllowedSources: []SourceClass{SourceMeetingText, SourceConversationText},
 	}, now)
 	require.NoError(err)
 	assert.True(plan.run, "the conversation lane alone is enough to plan the brief")
@@ -947,10 +947,10 @@ func TestPersonSweepWorkerRefusesAForcedBriefTheLaneOrPolicyRulesOut(t *testing.
 			want: ErrPersonBriefPolicyRefused,
 		},
 		{
-			name: "the profile allows only the document lane",
+			name: "the profile allows only the meeting lane",
 			testCase: briefWorkerCase{
 				provider: func(provider *ProviderConfig) {
-					provider.AllowedSources = []SourceClass{SourceDocumentText}
+					provider.AllowedSources = []SourceClass{SourceMeetingText}
 				},
 			},
 			want: ErrPersonBriefNoSupportedLane,

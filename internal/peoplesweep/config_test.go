@@ -239,7 +239,7 @@ func TestProviderFingerprintIncludesEgressPolicy(t *testing.T) {
 		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider-policy" })},
 		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider-policy" })},
 		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceDocumentText}
+			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
 		})},
 		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
 		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
@@ -497,7 +497,7 @@ func TestProviderProfileFingerprintCoversConsentPolicy(t *testing.T) {
 		{"retention", providerMutation(func(p *peoplesweep.ProviderConfig) { p.RetentionPosture = "provider_policy" })},
 		{"training", providerMutation(func(p *peoplesweep.ProviderConfig) { p.TrainingPosture = "provider_policy" })},
 		{"sources", providerMutation(func(p *peoplesweep.ProviderConfig) {
-			p.AllowedSources = append(p.AllowedSources, peoplesweep.SourceDocumentText)
+			p.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
 		})},
 		{"source since", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceSince = "2024-01-01" })},
 		{"source until", providerMutation(func(p *peoplesweep.ProviderConfig) { p.SourceUntil = "2026-01-01" })},
@@ -919,4 +919,13 @@ func TestConfigValidationAcceptsNegotiatedProtocolCapabilities(t *testing.T) {
 			require.NoError(t, profile.Validate())
 		})
 	}
+}
+
+func TestRemovedDocumentSourceGuidesMigration(t *testing.T) {
+	cfg := validConfig()
+	for name, provider := range cfg.Providers {
+		provider.AllowedSources = []peoplesweep.SourceClass{"document_text"}
+		cfg.Providers[name] = provider
+	}
+	require.ErrorContains(t, cfg.Validate(), "document_text was removed; drop it from allowed_sources")
 }

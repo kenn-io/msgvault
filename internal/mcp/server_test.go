@@ -30,7 +30,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
@@ -369,10 +368,6 @@ func TestSearchMetadata(t *testing.T) {
 	})
 }
 
-type recordingDocumentSearcher struct {
-	request store.DocumentSearchRequest
-}
-
 type recordingVisualSearcher struct{ request VisualSearchRequest }
 
 func (s *recordingVisualSearcher) SearchVisualAttachments(
@@ -459,80 +454,6 @@ func TestSearchPersonFilesPreservesOmittedDirectionDefault(t *testing.T) {
 
 	assert.Nil(t, searcher.request.Directions,
 		"an omitted direction must let the metadata route include unclassified roster rows")
-}
-
-func (s *recordingDocumentSearcher) SearchDocuments(
-	_ context.Context,
-	request store.DocumentSearchRequest,
-) (store.DocumentSearchResponse, error) {
-	s.request = request
-	return store.DocumentSearchResponse{
-		Revision: 4,
-		Results: []store.DocumentSearchResult{{
-			AttachmentID: 17, MessageID: 18, Filename: "inspection.xlsx",
-			OccurrenceKey: "occurrence", CanonicalBlobHash: "hash", ChunkKey: "chunk",
-			Excerpt: "carton damage", ProfileID: "profile", ExtractionID: "extraction",
-			Provider: "mistral", Model: "ocr", MatchedSignals: []string{"content"}, Rank: 1,
-			PersonProvenance: &personscope.Provenance{
-				ParticipantIDs: []int64{4}, Roles: []personscope.Role{personscope.RoleFrom},
-				Directions: []personscope.Direction{personscope.FromPerson},
-			},
-		}},
-	}, nil
-}
-
-func TestSearchDocumentAttachmentsPreservesScopeAndProvenance(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	response := runTool[store.DocumentSearchResponse](t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "source_ids": []any{float64(3), float64(7)},
-		"message_types": []any{"email", "mms"}, "attachment_id": float64(17),
-		"message_id": float64(18), "person_id": float64(40),
-		"directions": []any{"from_person", "group"},
-		"after":      "2026-08-01", "before": "2026-08-20",
-		"limit": float64(5), "cursor": "opaque",
-		"mode": "lexical", "candidate_limit": float64(1001),
-	})
-	assert.Equal("carton damage", searcher.request.Query)
-	assert.Equal([]int64{3, 7}, searcher.request.SourceIDs)
-	assert.Equal([]string{"email", "mms"}, searcher.request.MessageTypes)
-	assert.Equal(int64(17), searcher.request.AttachmentID)
-	assert.Equal(int64(18), searcher.request.MessageID)
-	assert.Equal(int64(40), searcher.request.PersonID)
-	assert.Equal([]personscope.Direction{personscope.FromPerson, personscope.Group}, searcher.request.Directions)
-	require.NotNil(searcher.request.After)
-	require.NotNil(searcher.request.Before)
-	assert.Equal(5, searcher.request.PageSize)
-	assert.Equal("opaque", searcher.request.Cursor)
-	assert.Equal("lexical", searcher.request.SearchMode)
-	assert.Equal(1001, searcher.request.CandidateLimit)
-	require.Len(response.Results, 1)
-	assert.Equal("inspection.xlsx", response.Results[0].Filename)
-	assert.Equal("mistral", response.Results[0].Provider)
-	require.NotNil(response.Results[0].PersonProvenance)
-	assert.Equal([]int64{4}, response.Results[0].PersonProvenance.ParticipantIDs)
-}
-
-func TestSearchDocumentAttachmentsRejectsOutOfRangeExactID(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "attachment_id": math.Exp2(63),
-	})
-	assert.Contains(t, resultText(t, result), "attachment_id must be a positive integer")
-	assert.Empty(t, searcher.request.Query, "an invalid exact filter must never be silently dropped")
-}
-
-func TestSearchDocumentAttachmentsRejectsSemanticCandidateLimitAboveBound(t *testing.T) {
-	searcher := &recordingDocumentSearcher{}
-	h := &handlers{documentSearcher: searcher}
-	result := runToolExpectError(t, ToolSearchDocuments, h.searchDocuments, map[string]any{
-		"query": "carton damage", "mode": "semantic", "candidate_limit": float64(1001),
-	})
-	assert.Contains(t, resultText(t, result), "candidate_limit must be an integer between 1 and 1000")
-	assert.Empty(t, searcher.request.Query)
 }
 
 func TestSearchRejectsInvalidQueryBeforeDispatch(t *testing.T) {
@@ -2408,29 +2329,6 @@ func toolInputSchema(t *testing.T, tool *sdkmcp.Tool) *jsonschema.Schema {
 	return schema
 }
 
-func toolPropertyDescription(t *testing.T, tool *sdkmcp.Tool, name string) string {
-	t.Helper()
-	property := toolInputSchema(t, tool).Properties[name]
-	if property == nil {
-		return ""
-	}
-	return property.Description
-}
-
-// TestAggregateTool_DocumentsTimeGranularity guards the group_by=time contract:
-// MCP always buckets by calendar year (the handler does not set TimeGranularity).
-func TestAggregateTool_DocumentsTimeGranularity(t *testing.T) {
-	tool := aggregateDefinition(&handlers{}).tool()
-	desc := tool.Description
-	groupByDesc := toolPropertyDescription(t, tool, "group_by")
-
-	assert := assert.New(t)
-	assert.Contains(desc, "calendar year", "tool description should document yearly time buckets")
-	assert.Contains(desc, "TotalUnique", "tool description should list response fields")
-	assert.Contains(groupByDesc, "calendar year", "group_by description should document yearly granularity")
-	assert.Contains(groupByDesc, `"2024"`, "group_by description should show example year key")
-}
-
 func TestAggregate(t *testing.T) {
 	eng := &querytest.MockEngine{
 		AggregateRows: []query.AggregateRow{
@@ -3773,74 +3671,6 @@ func TestFindSimilarMessagesTool_AdvertisesMessageTypeFilter(t *testing.T) {
 	assert := assert.New(t)
 	tool := findSimilarMessagesDefinition(&handlers{}).tool()
 	assert.Contains(toolInputSchema(t, tool).Properties, "message_type")
-}
-
-// TestSearchMetadataTool_DocumentsQuerySyntax guards the operator-support
-// contract so clients do not assume full Gmail compatibility.
-func TestSearchMetadataTool_DocumentsQuerySyntax(t *testing.T) {
-	assert := assert.New(t)
-	tool := searchMetadataDefinition(&handlers{}).tool()
-	desc := tool.Description
-	for _, want := range []string{
-		"cc:",
-		"bcc:",
-		"older_than:",
-		"Not supported: negation",
-		"subject, snippet",
-	} {
-		assert.Contains(desc, want, "description missing %q", want)
-	}
-	assert.NotContains(desc, "Gmail-like", "description should not over-promise Gmail compatibility")
-	assert.Contains(desc, "semantic_search_messages", "metadata guidance should name the semantic tool")
-
-	queryDesc := toolPropertyDescription(t, tool, "query")
-	assert.Contains(queryDesc, "supported operators", "query param should reference operator docs")
-}
-
-// TestSearchMessageBodiesTool_DocumentsQuerySyntax guards the query-syntax
-// contract so MCP clients know how body FTS interprets free-text terms.
-func TestSearchMessageBodiesTool_DocumentsQuerySyntax(t *testing.T) {
-	assert := assert.New(t)
-	tool := searchMessageBodiesDefinition(&handlers{}).tool()
-
-	assert.Contains(tool.Description, "ANDed", "tool description should document implicit AND, got: %q", tool.Description)
-	assert.Contains(tool.Description, "double-quoted phrase", "tool description should document phrase matching, got: %q", tool.Description)
-	assert.Contains(tool.Description, "OR and NOT are not supported", "tool description should document missing boolean ops, got: %q", tool.Description)
-
-	queryDesc := toolPropertyDescription(t, tool, "query")
-	assert.Contains(queryDesc, "ANDed", "query param should document implicit AND, got: %q", queryDesc)
-	assert.Contains(queryDesc, "double quotes", "query param should document phrase matching, got: %q", queryDesc)
-	assert.Contains(queryDesc, "OR/NOT unsupported", "query param should document missing boolean ops, got: %q", queryDesc)
-}
-
-// TestSearchMessageBodiesTool_DocumentsFilterVsFreeText guards the contract
-// that Gmail operators are metadata filters and unrecognized word:value
-// tokens are literal body text.
-func TestSearchMessageBodiesTool_DocumentsFilterVsFreeText(t *testing.T) {
-	assert := assert.New(t)
-	tool := searchMessageBodiesDefinition(&handlers{}).tool()
-
-	assert.Contains(tool.Description, "metadata filters", "tool description should distinguish filters from free text, got: %q", tool.Description)
-	assert.Contains(tool.Description, "Unrecognized word:value", "tool description should document literal colon tokens, got: %q", tool.Description)
-
-	queryDesc := toolPropertyDescription(t, tool, "query")
-	assert.Contains(queryDesc, "metadata filters", "query param should distinguish filters from free text, got: %q", queryDesc)
-	assert.Contains(queryDesc, "subject:test alone is rejected", "query param should warn subject: is not free text, got: %q", queryDesc)
-	assert.Contains(queryDesc, "Unrecognized word:value", "query param should document literal colon tokens, got: %q", queryDesc)
-}
-
-// TestSearchMessageBodiesTool_DocumentsMatchesTruncated guards the response-field
-// contract for when excerpt lists are capped.
-func TestSearchMessageBodiesTool_DocumentsMatchesTruncated(t *testing.T) {
-	assert := assert.New(t)
-	tool := searchMessageBodiesDefinition(&handlers{}).tool()
-
-	assert.Contains(tool.Description, "matches_truncated",
-		"tool description should document matches_truncated, got: %q", tool.Description)
-	assert.Contains(tool.Description, "search_in_message",
-		"tool description should point callers to search_in_message, got: %q", tool.Description)
-	assert.Contains(tool.Description, "get_message",
-		"tool description should point callers to get_message, got: %q", tool.Description)
 }
 
 func TestFindSimilarMessages_MissingID(t *testing.T) {

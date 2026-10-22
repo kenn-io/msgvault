@@ -50,9 +50,9 @@ test('operations invokes only advertised CardDAV and visual actions and surfaces
 test('operations direct opaque detail never renders private native values', async ({ page }) => {
   await installOperations(page);
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'operations', operationRunID: OPERATION_REFERENCES.document
+    workspace: 'operations', operationRunID: OPERATION_REFERENCES.visual
   }))}`);
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Document extraction');
+  await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Visual embedding');
 
   const rendered = await page.locator('body').innerText();
   for (const sentinel of OPERATION_PRIVACY_SENTINELS) {
@@ -65,8 +65,6 @@ test('operations related links fetch and render their live status authorities', 
   await page.goto(operationsURL);
 
   for (const [linkName, statusName, expectedCopy, endpoint] of [
-    ['Open Document index status', 'Document index status', '4 of 5 owners ready', '/api/v1/documents/status/current'],
-    ['Open Document vector status', 'Document vector status', '7 of 9 chunks ready', '/api/v1/documents/vectors/status'],
     ['Open Visual attachment status', 'Visual attachment status', '8 of 10 attachments current', '/api/v1/multimodal/status']
   ] as const) {
     const link = page.getByRole('button', { name: linkName });
@@ -78,22 +76,8 @@ test('operations related links fetch and render their live status authorities', 
   }
 });
 
-test('operations sends confirmed unconfigured document and visual status links to setup without fetching them', async ({ page }) => {
+test('operations sends unconfigured visual status links to settings without fetching', async ({ page }) => {
   const fixture = await installOperations(page);
-  fixture.setOperationConfigured('document_extraction', false);
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Document index status' }).click();
-  const guide = page.getByRole('link', { name: 'Document indexing setup' });
-  await expect(guide).toBeVisible();
-  await expect(guide).toHaveAttribute('target', '_blank');
-  await expect(guide).toHaveAttribute(
-    'href',
-    'https://msgvault.io/docs/usage/document-indexing/#configure-the-policy'
-  );
-  await expect(page.getByText('Configured in config.toml on the daemon host.').first()).toBeVisible();
-  await expect(page.getByRole('button', { name: /document index settings/i })).toHaveCount(0);
-  expect(fixture.statusRequests).not.toContain('/api/v1/documents/status/current');
-
   fixture.setOperationConfigured('visual_embedding', false);
   await page.goto(operationsURL);
   await page.getByRole('button', { name: 'Open Visual attachment status' }).click();
@@ -105,19 +89,7 @@ test('operations sends confirmed unconfigured document and visual status links t
   await expect(settings.getByRole('heading', { level: 2, name: 'Search' })).toBeVisible();
 });
 
-test('operations keeps a configured but unavailable document authority retry-only', async ({ page }) => {
-  const fixture = await installOperations(page);
-  fixture.failNextDocumentStatus();
-  await page.goto(operationsURL);
-  await page.getByRole('button', { name: 'Open Document index status' }).click();
 
-  const status = page.getByRole('region', { name: 'Document index status' });
-  await expect(status.getByRole('alert')).toContainText('Unable to load document index status.');
-  await expect(status.getByRole('button', { name: 'Retry document index status' })).toBeVisible();
-  await expect(status.getByRole('button', { name: /settings/i })).toHaveCount(0);
-  await status.getByRole('button', { name: 'Retry document index status' }).click();
-  await expect(status).toContainText('4 of 5 owners ready');
-});
 
 test('the refresh control reloads status only and keeps paged history, detail, and focus', async ({ page }) => {
   await page.clock.install();

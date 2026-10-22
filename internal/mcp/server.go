@@ -55,7 +55,6 @@ const (
 	ToolFindSimilarMessages       = "find_similar_messages"
 	ToolSearchVisualAttachments   = "search_visual_attachments"
 	ToolSearchInMessage           = "search_in_message"
-	ToolSearchDocuments           = "search_document_attachments"
 	ToolSearchPersonFiles         = "search_person_files"
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
@@ -123,7 +122,6 @@ type ServeOptions struct {
 	HybridSearcher         HybridSearcher
 	SimilarSearcher        SimilarSearcher
 	DataDir                string
-	DocumentSearcher       DocumentSearcher
 	MediaSearcher          MediaSearcher
 	PersonFileSearcher     PersonFileSearcher
 	PeopleBackend          peoplebrowser.Backend
@@ -378,7 +376,6 @@ func newMCPServerWithPolicy(
 		hybridSearcher:       opts.HybridSearcher,
 		similarSearcher:      opts.SimilarSearcher,
 		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
 		mediaSearcher:        opts.MediaSearcher,
 		personFileSearcher:   opts.PersonFileSearcher,
 		peopleBackend:        opts.PeopleBackend,

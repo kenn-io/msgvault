@@ -14,17 +14,17 @@ test('desktop operations journey restores filters, pages, opaque detail, history
   const workspace = page.getByRole('main', { name: 'Operations' });
   await expect(workspace).toBeVisible();
   await expect(page.getByRole('region', { name: 'Operation lanes' }).getByRole('heading', { level: 2 }))
-    .toHaveText(['Messages', 'Facts', 'Contacts', 'Documents', 'Attachments']);
+    .toHaveText(['Messages', 'Person facts', 'Contacts', 'Attachments']);
   await expect(page.getByRole('status', { name: 'Unavailable operation history' }))
     .toContainText('Person embedding history is unavailable.');
 
-  await selectKitOption(page, 'Lane', 'Documents');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
-  await selectKitOption(page, 'Kind', 'Document extraction');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('kind')).toBe('document_extraction');
-  await selectKitOption(page, 'State', 'Partial');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('state')).toBe('partial');
-  await expect(page.getByRole('button', { name: 'Open Document extraction run' })).toBeVisible();
+  await selectKitOption(page, 'Lane', 'Attachments');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('visual_attachments');
+  await selectKitOption(page, 'Kind', 'Visual embedding');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('kind')).toBe('visual_embedding');
+  await selectKitOption(page, 'State', 'Running');
+  await expect.poll(() => fixture.listQueries.at(-1)?.get('state')).toBe('running');
+  await expect(page.getByRole('button', { name: 'Open Visual embedding run' })).toBeVisible();
 
   await page.goto(operationsURL({
     operationStartedFrom: '2026-08-29T00:00:00Z',

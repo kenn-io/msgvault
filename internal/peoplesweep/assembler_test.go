@@ -57,10 +57,6 @@ func (a *assemblyContextArchive) HydratePersonSweepMessages(context.Context, int
 	return []EvidenceItem{}, nil
 }
 
-func (a *assemblyContextArchive) SearchPersonSweepDocuments(context.Context, DocumentContextRequest) ([]EvidenceItem, error) {
-	return []EvidenceItem{}, nil
-}
-
 func TestAssemblerUsesTargetDescriptionsForBoundedContext(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
@@ -106,20 +102,20 @@ func TestAssemblerEmitsPartialDocumentCursorProgress(t *testing.T) {
 	must := require.New(t)
 	packet := packetTestPacket()
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	seed := packetTestEvidence(10, SourceDocumentText, "document chunk")
+	seed := packetTestEvidence(10, SourceMeetingText, "document chunk")
 	source := &assemblySourceStub{windows: map[GenerationCursorMode]PersonWindow{
 		GenerationCursorOptimistic: {
 			Seeds: []EvidenceItem{seed}, NextSequence: 10, NextDocumentKey: "live:00000000000000000002",
-			Changes: []ArchiveChange{{Sequence: 11, PersonID: 7, SourceLane: SourceDocumentText}},
+			Changes: []ArchiveChange{{Sequence: 11, PersonID: 7, SourceLane: SourceMeetingText}},
 		},
 	}, state: PersonFactState{}}
-	key := CursorKey{PersonID: 7, SourceLane: SourceDocumentText,
+	key := CursorKey{PersonID: 7, SourceLane: SourceMeetingText,
 		ProgramFingerprint: ProgramFingerprint(), CatalogFingerprint: packet.Catalog.Fingerprint}
 	result, err := (Assembler{Source: source, MaxBytes: 16_384, MaxItems: 10,
 		ContextPerTarget: 0}).Build(t.Context(), AssemblyRequest{
 		PersonID: 7, Cursors: []Cursor{{Key: key, OptimisticSequence: 10,
 			ReconciliationComplete: true, LastBackstopAt: &now}}, Catalog: packet.Catalog,
-		Profile: ProviderProfile{AllowedSources: []SourceClass{SourceDocumentText},
+		Profile: ProviderProfile{AllowedSources: []SourceClass{SourceMeetingText},
 			SourceSince: "2020-01-01", AllowSensitive: true},
 		Now: now, BackstopInterval: 24 * time.Hour,
 	})
@@ -135,8 +131,8 @@ func TestAssemblerEmitsPartialDocumentCursorProgress(t *testing.T) {
 func TestAssemblerEmitsPartialDocumentSourceKeyProgress(t *testing.T) {
 	packet := packetTestPacket()
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	seed := packetTestEvidence(10, SourceDocumentText, "document chunk")
-	key := CursorKey{PersonID: 7, SourceLane: SourceDocumentText,
+	seed := packetTestEvidence(10, SourceMeetingText, "document chunk")
+	key := CursorKey{PersonID: 7, SourceLane: SourceMeetingText,
 		ProgramFingerprint: ProgramFingerprint(), CatalogFingerprint: packet.Catalog.Fingerprint}
 	tests := []struct {
 		name      string
@@ -168,7 +164,7 @@ func TestAssemblerEmitsPartialDocumentSourceKeyProgress(t *testing.T) {
 			result, err := (Assembler{Source: source, MaxBytes: 16_384, MaxItems: 10,
 				ContextPerTarget: 0}).Build(t.Context(), AssemblyRequest{
 				PersonID: 7, Cursors: []Cursor{test.cursor}, Catalog: packet.Catalog,
-				Profile: ProviderProfile{AllowedSources: []SourceClass{SourceDocumentText},
+				Profile: ProviderProfile{AllowedSources: []SourceClass{SourceMeetingText},
 					SourceSince: "2020-01-01", AllowSensitive: true},
 				Now: now, BackstopInterval: 24 * time.Hour, ForceBackstop: test.force,
 			})

@@ -15,15 +15,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"go.kenn.io/docbank/document/mistral"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
-	vectordocument "go.kenn.io/msgvault/internal/vector/document"
 	"go.kenn.io/msgvault/internal/vector/pgvector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec"
 )
@@ -41,8 +38,6 @@ const (
 	laneTextSearch      = "text_search"
 	lanePersonSearch    = "person_search"
 	laneVisualSearch    = "visual_search"
-	laneDocuments       = "documents"
-	laneDocumentVectors = "document_vectors"
 	lanePeopleInference = "people_inference"
 	laneActivity        = "activity"
 	laneMediaPolicy     = "media_policy"
@@ -66,8 +61,7 @@ const (
 	setupOllamaProfile     = "ollama"
 	setupPostureDeclared   = "provider-declared"
 
-	setupVoyageManifestName  = "voyage-capabilities.json"
-	setupMistralManifestName = "mistral-capabilities.json"
+	setupVoyageManifestName = "voyage-capabilities.json"
 )
 
 // laneStatus is one row of the provider report. It answers, for one lane:
@@ -97,12 +91,9 @@ type laneReport struct {
 // incompatibility, PostgreSQL unreachable) and every consent is reported as
 // unknown rather than missing.
 type setupConsentState struct {
-	Documents         bool
-	Visual            bool
-	PersonInference   bool
-	PersonSemantic    bool
-	DocumentEmbedding bool
-	QueryEmbedding    bool
+	Visual          bool
+	PersonInference bool
+	PersonSemantic  bool
 }
 
 // setupEnvironment is what the report needs beyond the loaded config: the
@@ -209,11 +200,6 @@ func setupVisualManifestError(cfg *config.Config, env setupEnvironment) error {
 	return nil
 }
 
-// setupMistralManifestPath is the recommended Mistral capability manifest path.
-func setupMistralManifestPath(cfg *config.Config) string {
-	return filepath.Join(cfg.HomeDir, setupMistralManifestName)
-}
-
 // readSetupConsentState opens the archive read-only and reads every consent
 // the report shows. Failures return nil so a report never blocks on the
 // archive; the caller renders those consents as unknown.
@@ -234,19 +220,7 @@ func readSetupConsentState(ctx context.Context, cfg *config.Config) *setupConsen
 // hide the others.
 func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.Store) *setupConsentState {
 	state := &setupConsentState{}
-	if cfg.Vector.Enabled && cfg.Attachments.Documents.Index.Embeddings.Enabled {
-		if target, err := st.GetDocumentVectorTargetProfileID(ctx); err == nil {
-			if fingerprint, err := vectordocument.EgressFingerprint(target, cfg.Vector); err == nil {
-				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
-				state.DocumentEmbedding = err == nil && consent != nil && consent.Purpose == "document_embedding"
-			}
-			if fingerprint, err := vectordocument.QueryEgressFingerprint(target, cfg.Vector); err == nil {
-				consent, err := st.GetDocumentVectorConsent(ctx, fingerprint)
-				state.QueryEmbedding = err == nil && consent != nil && consent.Purpose == "query_embedding"
-			}
-		}
-	}
-	state.Documents = setupDocumentConsent(ctx, cfg, st)
+
 	state.Visual = setupVisualConsent(ctx, cfg, st)
 	if cfg.People.Sweep.Enabled {
 		if profile, err := cfg.People.Sweep.Profile(); err == nil {
@@ -263,26 +237,6 @@ func setupConsentFromStore(ctx context.Context, cfg *config.Config, st *store.St
 		}
 	}
 	return state
-}
-
-func setupDocumentConsent(ctx context.Context, cfg *config.Config, st *store.Store) bool {
-	if !cfg.Attachments.Documents.Enabled {
-		return false
-	}
-	var manifest mistral.CapabilityManifest
-	if cfg.Attachments.Documents.Provider == documentindex.ProviderMistral {
-		var err error
-		manifest, err = loadDocumentCapabilityManifest(setupMistralManifestPath(cfg))
-		if err != nil {
-			return false
-		}
-	}
-	_, profile, err := documentProfileForConfig(&cfg.Attachments.Documents, manifest)
-	if err != nil {
-		return false
-	}
-	consented, err := st.HasMatchingDocumentProviderConsent(ctx, profile)
-	return err == nil && consented
 }
 
 func setupVisualConsent(ctx context.Context, cfg *config.Config, st *store.Store) bool {
@@ -363,8 +317,6 @@ func buildLaneReport(cfg *config.Config, env setupEnvironment) laneReport {
 		textSearchLane(cfg, env),
 		personSearchLane(cfg, env),
 		visualSearchLane(cfg, env),
-		documentsLane(cfg, env),
-		documentVectorsLane(cfg, env),
 		peopleInferenceLane(cfg, env),
 		activityLane(cfg),
 		mediaPolicyLane(cfg),
@@ -500,105 +452,6 @@ func visualProbeCommand(cfg *config.Config) string {
 	return "msgvault multimodal probe --seeds <private-seed-dir> --out " + setupVoyageManifestPath(cfg) + " --yes"
 }
 
-func documentsLane(cfg *config.Config, env setupEnvironment) laneStatus {
-	lane := laneStatus{Lane: laneDocuments, Label: "Document attachments (extraction and lexical search)"}
-	documents := cfg.Attachments.Documents
-	if documents.Provider == documentindex.ProviderDocling {
-		lane.Provider, lane.Model = documents.Provider, documents.Model
-		lane.Reason = fmt.Sprintf("operator-controlled endpoint %s; retention=%s, training=%s; uploads are manual-only", documents.Endpoint, documents.RetentionPosture, documents.TrainingPosture)
-		if !documents.Enabled {
-			lane.State = laneStateOff
-			lane.Reason += "; set [attachments.documents] enabled = true"
-			return lane
-		}
-		lane.State = laneStateOn
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Documents })
-		if lane.Consent != consentActive {
-			lane.State = laneStatePending
-			lane.Next = []string{"msgvault documents consent-docling --yes", "msgvault documents build --yes"}
-		}
-		if documents.APIKeyEnv != "" {
-			env.reportMissingCredential(&lane, documents.APIKeyEnv)
-		}
-		return lane
-	}
-	manifest := setupMistralManifestPath(cfg)
-	if documents.Enabled {
-		lane.State = laneStateOn
-		lane.Provider = documents.Provider
-		lane.Model = documents.Model
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.Documents })
-		lane.Reason = fmt.Sprintf("region %s; retention=%s, training=%s; uploads are manual-only",
-			documents.Region, documents.RetentionPosture, documents.TrainingPosture)
-		if lane.Consent != consentActive {
-			lane.State = laneStatePending
-			if env.exists(manifest) {
-				lane.Next = []string{
-					"msgvault documents consent-mistral --capabilities " + manifest + " --yes",
-					"msgvault documents build --capabilities " + manifest + " --yes",
-				}
-			} else {
-				lane.Next = []string{
-					"msgvault documents probe-mistral --fixtures <private-fixture-dir> > " + manifest,
-					"msgvault documents consent-mistral --capabilities " + manifest + " --yes",
-				}
-			}
-		}
-		env.reportMissingCredential(&lane, documents.APIKeyEnv)
-		return lane
-	}
-	lane.State = laneStateOff
-	if env.hasEnv(documents.APIKeyEnv) {
-		lane.State = laneStatePending
-		lane.Reason = "key present but the lane is not configured"
-		lane.Next = []string{"msgvault setup providers"}
-		return lane
-	}
-	lane.Reason = "needs " + documents.APIKeyEnv + "; or configure a self-hosted Docling endpoint"
-	return lane
-}
-
-func documentVectorsLane(cfg *config.Config, env setupEnvironment) laneStatus {
-	lane := laneStatus{Lane: laneDocumentVectors, Label: "Document semantic search"}
-	documents := cfg.Attachments.Documents
-	switch {
-	case documents.Enabled && documents.Index.Embeddings.Enabled:
-		lane.State = laneStateOn
-		lane.Provider = embeddingProviderName(cfg.Vector.Embeddings.Endpoint)
-		lane.Model = cfg.Vector.Embeddings.Model
-		lane.Schedule = embedScheduleSummary(cfg.Vector.Embed.Schedule)
-		lane.Reason = "document chunks and search query text are sent to the text-search provider under separate consents"
-		if text := textSearchLane(cfg, env); text.State != laneStateOn {
-			lane.State = laneStatePending
-			lane.Reason += "; text search is not ready: " + text.Reason
-		}
-		lane.ConsentPurposes = map[string]string{
-			"document_embedding": env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding }),
-			"query_embedding":    env.consentState(func(s setupConsentState) bool { return s.QueryEmbedding }),
-		}
-		lane.Consent = env.consentState(func(s setupConsentState) bool { return s.DocumentEmbedding && s.QueryEmbedding })
-		if lane.Consent != consentActive {
-			lane.State = laneStatePending
-		}
-		if lane.ConsentPurposes["document_embedding"] != consentActive {
-			lane.Next = append(lane.Next, "msgvault documents vectors consent --yes")
-		}
-		if lane.ConsentPurposes["query_embedding"] != consentActive {
-			lane.Next = append(lane.Next, "msgvault documents vectors consent --purpose queries --yes")
-		}
-	case documents.Enabled && !cfg.Vector.Enabled:
-		lane.State = laneStateOff
-		lane.Reason = "requires the text-search lane"
-	case documents.Enabled:
-		lane.State = laneStateOff
-		lane.Reason = "set [attachments.documents.index.embeddings] enabled = true"
-	default:
-		lane.State = laneStateOff
-		lane.Reason = "requires the document lane"
-	}
-	return lane
-}
-
 func peopleInferenceLane(cfg *config.Config, env setupEnvironment) laneStatus {
 	lane := laneStatus{Lane: lanePeopleInference, Label: "People sweep (attribute maintenance)"}
 	sweep := cfg.People.Sweep
@@ -709,9 +562,7 @@ func liveMCPTools(cfg *config.Config) []string {
 	if cfg.Vector.Multimodal.Enabled {
 		tools = append(tools, "search_visual_attachments")
 	}
-	if cfg.Attachments.Documents.Enabled {
-		tools = append(tools, "search_document_attachments")
-	}
+
 	return tools
 }
 

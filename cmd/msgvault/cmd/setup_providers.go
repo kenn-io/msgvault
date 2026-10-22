@@ -21,7 +21,6 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/documentindex"
 	"go.kenn.io/msgvault/internal/peoplesweep"
 	"go.kenn.io/msgvault/internal/providercredentials"
 )
@@ -35,7 +34,6 @@ const (
 
 	// Consent gates: one explicit answer per hosted provider.
 	gateVoyage     = "voyage"
-	gateMistral    = "mistral"
 	gateOpenAI     = "openai"
 	gateOpenRouter = "openrouter"
 	gateVenice     = "venice"
@@ -52,8 +50,6 @@ type setupProvidersOptions struct {
 	dryRun                 bool
 	jsonOutput             bool
 	allowSensitive         bool
-	documentRetention      string
-	documentTraining       string
 	retentionPosture       string
 	trainingPosture        string
 	personRetentionPosture string
@@ -229,8 +225,6 @@ func (r ollamaProbeResult) hasModel(name string) bool {
 type setupDetection struct {
 	configKeys          toml.MetaData
 	voyageKey           bool
-	mistralKey          bool
-	mistralKeyEnv       string
 	openAIKey           bool
 	ollama              ollamaProbeResult
 	ollamaEndpoint      string
@@ -239,7 +233,6 @@ type setupDetection struct {
 	voyageManifestError string
 	visualKey           bool
 	visualUnavailable   string
-	mistralManifest     string
 	backend             string
 	backendUnavailable  string
 }
@@ -247,11 +240,9 @@ type setupDetection struct {
 func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setupProvidersDeps) setupDetection {
 	env := setupEnvironment{lookupEnv: deps.lookupEnv, fileExists: deps.fileExists}
 	detection := setupDetection{
-		voyageKey:     env.hasEnv(setupVoyageKeyEnv),
-		mistralKeyEnv: loaded.Attachments.Documents.APIKeyEnv,
-		openAIKey:     env.hasEnv(setupOpenAIKeyEnv),
+		voyageKey: env.hasEnv(setupVoyageKeyEnv),
+		openAIKey: env.hasEnv(setupOpenAIKeyEnv),
 	}
-	detection.mistralKey = env.hasEnv(detection.mistralKeyEnv)
 	detection.backend, detection.backendUnavailable = setupVectorBackend(loaded)
 	// A disabled lane retains operator settings. Validate those settings and
 	// resolve its own credential before proposing to enable it; the standard
@@ -278,9 +269,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 	} else {
 		detection.voyageManifest = setupVoyageManifestPath(loaded)
 	}
-	if path := setupMistralManifestPath(loaded); env.exists(path) {
-		detection.mistralManifest = path
-	}
+
 	// The local server is consulted only when nothing hosted is available
 	// for the lane it would fill, so a key holder never waits on a probe.
 	textUnconfigured := !loaded.Vector.Enabled && loaded.Vector.Embeddings.Endpoint == ""
@@ -339,7 +328,7 @@ func (p *setupProvidersPlan) gates() []string {
 		}
 	}
 	ordered := []string{}
-	for _, gate := range []string{gateVoyage, gateMistral, gateOpenAI, gateOpenRouter, gateVenice} {
+	for _, gate := range []string{gateVoyage, gateOpenAI, gateOpenRouter, gateVenice} {
 		if seen[gate] {
 			ordered = append(ordered, gate)
 		}
@@ -381,10 +370,9 @@ func (p *setupProvidersPlan) refreshDependencies(loaded *config.Config, detectio
 		switch lane.Lane {
 		case lanePersonSearch:
 			p.Lanes[i] = planPersonSearch(loaded, p, options)
-		case laneDocumentVectors:
-			p.Lanes[i] = planDocumentVectors(loaded, p)
+
 		case lanePeopleInference:
-			p.Lanes[i], p.inference = planPeopleInference(loaded, detection, p, options, now)
+			p.Lanes[i], p.inference = planPeopleInference(loaded, detection, options, now)
 		}
 	}
 }
@@ -428,12 +416,7 @@ func validateSetupProvidersOptions(options setupProvidersOptions) error {
 			return errors.New("--api-key-stdin and --credential-env are mutually exclusive")
 		}
 	}
-	if options.documentRetention != documentindex.RetentionStandard && options.documentRetention != documentindex.RetentionZDR {
-		return fmt.Errorf("--document-retention must be %q or %q", documentindex.RetentionStandard, documentindex.RetentionZDR)
-	}
-	if options.documentTraining != documentindex.TrainingDefaultOptOut && options.documentTraining != documentindex.TrainingOptedOut {
-		return fmt.Errorf("--document-training must be %q or %q", documentindex.TrainingDefaultOptOut, documentindex.TrainingOptedOut)
-	}
+
 	for name, value := range map[string]string{
 		"--retention-posture": options.retentionPosture, "--training-posture": options.trainingPosture,
 	} {
@@ -449,17 +432,13 @@ func validateSetupProvidersOptions(options setupProvidersOptions) error {
 // model even when a different key appears, because switching the embedding
 // policy invalidates the index and is the operator's call.
 func planSetupProviders(loaded *config.Config, detection setupDetection, options setupProvidersOptions, now time.Time) setupProvidersPlan {
-	// Later lanes read the plan so far: people search and document vectors
-	// depend on the text lane, and the sweep's evidence sources depend on the
-	// document lane, so the lanes are appended in dependency order.
+	// People search depends on the text lane, so plan it next.
 	plan := setupProvidersPlan{Lanes: []setupLanePlan{planTextSearch(loaded, detection)}}
 	person := planPersonSearch(loaded, &plan, options)
 	visual := planVisualSearch(loaded, detection)
-	documents := planDocuments(loaded, detection, options)
-	plan.Lanes = append(plan.Lanes, person, visual, documents)
-	vectors := planDocumentVectors(loaded, &plan)
-	inferenceLane, inference := planPeopleInference(loaded, detection, &plan, options, now)
-	plan.Lanes = append(plan.Lanes, vectors, inferenceLane)
+	plan.Lanes = append(plan.Lanes, person, visual)
+	inferenceLane, inference := planPeopleInference(loaded, detection, options, now)
+	plan.Lanes = append(plan.Lanes, inferenceLane)
 	plan.inference = inference
 	return plan
 }
@@ -646,91 +625,9 @@ func planVisualSearch(loaded *config.Config, detection setupDetection) setupLane
 	return lane
 }
 
-func planDocuments(loaded *config.Config, detection setupDetection, options setupProvidersOptions) setupLanePlan {
-	documents := loaded.Attachments.Documents
-	lane := setupLanePlan{Lane: laneDocuments, Label: "Document attachments", Provider: documents.Provider, Model: documents.Model}
-	if documents.Provider == documentindex.ProviderDocling {
-		lane.Reason = "operator-controlled endpoint " + documents.Endpoint
-		if documents.Enabled {
-			lane.Action = planActionKeep
-			lane.Reason += "; already enabled"
-		} else {
-			lane.Action = planActionSkip
-			lane.Reason += "; set [attachments.documents] enabled = true, then record Docling consent"
-		}
-		return lane
-	}
-	manifest := setupMistralManifestPath(loaded)
-	switch {
-	case documents.Enabled && documents.RetentionPosture != documentindex.RetentionUnknown && documents.TrainingPosture != documentindex.TrainingUnknown:
-		lane.Action = planActionKeep
-		lane.Reason = "already enabled"
-	case !detection.mistralKey:
-		lane.Action = planActionSkip
-		lane.Provider, lane.Model = "", ""
-		lane.Reason = "needs " + detection.mistralKeyEnv
-	default:
-		lane.Action, lane.Gate = planActionEnable, gateMistral
-		lane.Reason = fmt.Sprintf("EU endpoint, %s; recorded postures retention=%s, training=%s (override with --document-retention/--document-training)",
-			documents.Model, options.documentRetention, options.documentTraining)
-		lane.edits = []config.TableEdit{{
-			Path: []string{"attachments", "documents"},
-			Values: map[string]any{
-				"enabled": true, "retention_posture": options.documentRetention, "training_posture": options.documentTraining,
-			},
-		}}
-		if detection.mistralManifest != "" {
-			lane.next = []string{
-				"msgvault documents consent-mistral --capabilities " + manifest + " --yes",
-				"msgvault documents build --capabilities " + manifest + " --yes",
-			}
-		} else {
-			lane.next = []string{
-				"msgvault documents probe-mistral --fixtures <private-fixture-dir> > " + manifest,
-				"msgvault documents consent-mistral --capabilities " + manifest + " --yes",
-				"msgvault documents build --capabilities " + manifest + " --yes",
-			}
-		}
-	}
-	return lane
-}
-
-func planDocumentVectors(loaded *config.Config, plan *setupProvidersPlan) setupLanePlan {
-	lane := setupLanePlan{Lane: laneDocumentVectors, Label: "Document semantic search"}
-	documents := loaded.Attachments.Documents
-	switch {
-	case documents.Enabled && documents.Index.Embeddings.Enabled:
-		lane.Action = planActionKeep
-		lane.Reason = "already enabled"
-	case !plan.laneOn(laneDocuments):
-		lane.Action = planActionSkip
-		lane.Reason = "requires the document lane"
-	case !plan.laneOn(laneTextSearch):
-		lane.Action = planActionSkip
-		lane.Reason = "requires the text-search lane"
-	case textLaneProvider(plan) == "custom":
-		lane.Action = planActionSkip
-		lane.Reason = "custom hosted provider: configure [attachments.documents.index.embeddings] explicitly and consent separately to document and query text"
-	default:
-		lane.Action = planActionEnable
-		lane.Gate = textLaneGate(plan)
-		lane.Reason = "document chunks and search query text are sent to the text-search provider after separate document and query consents"
-		lane.edits = []config.TableEdit{{
-			Path: []string{"attachments", "documents", "index", "embeddings"}, Values: map[string]any{"enabled": true},
-		}}
-		lane.next = []string{
-			"msgvault documents vectors consent --yes",
-			"msgvault documents vectors consent --purpose queries --yes",
-			"msgvault documents vectors build",
-		}
-	}
-	return lane
-}
-
 func planPeopleInference(
 	loaded *config.Config,
 	detection setupDetection,
-	plan *setupProvidersPlan,
 	options setupProvidersOptions,
 	now time.Time,
 ) (setupLanePlan, *setupInferencePlan) {
@@ -751,9 +648,7 @@ func planPeopleInference(
 		return lane, nil
 	}
 	sources := []string{string(peoplesweep.SourceConversationText), string(peoplesweep.SourceMeetingText)}
-	if plan.laneOn(laneDocuments) {
-		sources = append(sources, string(peoplesweep.SourceDocumentText))
-	}
+
 	since := time.Date(now.Year()-1, time.January, 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
 	base := personProviderAddOptions{
 		custom: true, protocol: string(peoplesweep.ProtocolOpenAIChat),
@@ -840,15 +735,7 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		if plan.laneOn(laneVisualSearch) {
 			lines = append(lines, "  - eligible image and video attachment bytes with bounded message context, after `msgvault multimodal build --yes`")
 		}
-		if plan.laneOn(laneDocumentVectors) && textLaneProvider(plan) == "voyage" {
-			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`",
-				"  - document search query text, after `msgvault documents vectors consent --purpose queries --yes`")
-		}
-	case gateMistral:
-		lines = append(lines,
-			"Mistral (EU region, "+documentindex.ModelMistralOCR+") receives:",
-			"  - complete original bytes of standalone document attachments, only after the probe manifest and `msgvault documents consent-mistral --yes`",
-			"  - postures recorded now: retention="+planValue(plan, laneDocuments, "retention_posture")+", training="+planValue(plan, laneDocuments, "training_posture"))
+
 	case gateOpenAI:
 		lines = append(lines, "OpenAI ("+setupOpenAIEndpoint+") receives:")
 		if plan.laneOn(laneTextSearch) && textLaneProvider(plan) == "openai" {
@@ -857,10 +744,7 @@ func gateDisclosure(gate string, plan *setupProvidersPlan) string {
 		if plan.laneOn(lanePersonSearch) && textLaneProvider(plan) == "openai" {
 			lines = append(lines, "  - one curated, non-sensitive attribute document per person")
 		}
-		if plan.laneOn(laneDocumentVectors) && textLaneProvider(plan) == "openai" {
-			lines = append(lines, "  - extracted document text, after `msgvault documents vectors consent --yes`",
-				"  - document search query text, after `msgvault documents vectors consent --purpose queries --yes`")
-		}
+
 		if plan.inference != nil && plan.inference.gate == gateOpenAI {
 			choice := plan.inference.options
 			lines = append(lines, "  - bounded evidence packets of "+
@@ -899,20 +783,6 @@ func textLaneProvider(plan *setupProvidersPlan) string {
 	return ""
 }
 
-func planValue(plan *setupProvidersPlan, lane, key string) string {
-	for _, item := range plan.Lanes {
-		if item.Lane != lane {
-			continue
-		}
-		for _, edit := range item.edits {
-			if value, ok := edit.Values[key]; ok {
-				return fmt.Sprint(value)
-			}
-		}
-	}
-	return ""
-}
-
 func writeSetupPlan(w io.Writer, configPath string, plan *setupProvidersPlan) {
 	_, _ = fmt.Fprintf(w, "Provider setup plan for %s\n", configPath)
 	table := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -944,8 +814,6 @@ func newSetupProvidersCommand(deps setupProvidersDeps) *cobra.Command {
                    manifest exists
   ` + setupOpenAIKeyEnv + `   text search on the OpenAI-compatible path when no Voyage key
                    is present
-  MISTRAL_API_KEY  document attachment extraction, plus document vectors when a
-                   text lane is on
   (no keys)        a local Ollama server at [chat].server when it is reachable
 
 Choose a hosted people inference provider with --provider openai, openrouter,
@@ -960,7 +828,7 @@ flow.
 Hosted lanes require confirmation. Setup prints the planned changes and asks
 before writing them. Configured lanes keep their existing settings. Probe
 manifests are expected at
-<home>/` + setupVoyageManifestName + ` and <home>/` + setupMistralManifestName + `.
+<home>/` + setupVoyageManifestName + `.
 
 The people sweep can send archive excerpts and infer personal attributes.
 --allow-sensitive controls whether sensitive excerpts may be included.
@@ -979,10 +847,6 @@ The people sweep can send archive excerpts and infer personal attributes.
 	flags.BoolVar(&options.jsonOutput, flagJSON, false, "Output structured JSON")
 	flags.BoolVar(&options.allowSensitive, "allow-sensitive", false,
 		"Allow the people sweep to send sensitive archive excerpts to its inference provider and infer sensitive personal attributes")
-	flags.StringVar(&options.documentRetention, "document-retention", documentindex.RetentionStandard,
-		"Mistral retention posture to record: standard or zdr")
-	flags.StringVar(&options.documentTraining, "document-training", documentindex.TrainingDefaultOptOut,
-		"Mistral training posture to record: default-opt-out or opted-out")
 	flags.StringVar(&options.retentionPosture, "retention-posture", setupPostureDeclared,
 		"Retention assertion recorded for embedding and inference providers")
 	flags.StringVar(&options.trainingPosture, "training-posture", setupPostureDeclared,
@@ -1026,7 +890,7 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	if options.providerID != "" && loaded.People.Sweep.Enabled {
 		return errors.New("people sweep is already enabled; use person provider add and person provider use to change providers")
 	}
-	// Read saved assertions before config defaults turn an absent document
+	// Read saved assertions before config defaults turn an absent
 	// posture into "unknown". Only the corresponding explicit flag replaces
 	// an existing assertion; inference still uses its own command defaults.
 	var saved config.Config
@@ -1036,8 +900,6 @@ func runSetupProviders(command *cobra.Command, deps setupProvidersDeps, options 
 	}
 	options.personRetentionPosture = setupPosture(saved.Vector.People.RetentionPosture, options.retentionPosture, command.Flags().Changed("retention-posture"))
 	options.personTrainingPosture = setupPosture(saved.Vector.People.TrainingPosture, options.trainingPosture, command.Flags().Changed("training-posture"))
-	options.documentRetention = setupPosture(saved.Attachments.Documents.RetentionPosture, options.documentRetention, command.Flags().Changed("document-retention"))
-	options.documentTraining = setupPosture(saved.Attachments.Documents.TrainingPosture, options.documentTraining, command.Flags().Changed("document-training"))
 	now := time.Now()
 	if deps.now != nil {
 		now = deps.now()
